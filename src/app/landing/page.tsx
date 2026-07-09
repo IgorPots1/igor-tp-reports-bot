@@ -93,7 +93,7 @@ export default function LandingPage() {
           </div>
           <div className="hero-photo">
             <Image
-              src="/landing/hero.jpg"
+              src="/landing/01-hero.jpg"
               alt="Игорь Поцелуев на забеге"
               width={600}
               height={750}
@@ -164,7 +164,7 @@ export default function LandingPage() {
                 </div>
                 <div className="window-body">
                   <img
-                    src="/landing/calendar.jpg"
+                    src="/landing/02-calendar.jpg"
                     alt="Календарь тренировок"
                     loading="lazy"
                   />
@@ -300,7 +300,7 @@ export default function LandingPage() {
           <div className="analyze">
             <div className="analyze-img">
               <img
-                src="/landing/train.jpg"
+                src="/landing/03-garmin-report.jpg"
                 alt="Тренировка ученика"
                 loading="lazy"
               />
@@ -346,7 +346,7 @@ export default function LandingPage() {
           <div className="tech">
             <div className="tech-visual">
               <Image
-                src="/landing/technique.jpg"
+                src="/landing/04-technique.jpg"
                 alt="Разбор техники бега"
                 width={600}
                 height={450}
@@ -478,7 +478,7 @@ export default function LandingPage() {
           </div>
           <Carousel trackClassName="w-case">
             <div className="slide">
-              <img src="/landing/res-1.jpg" alt="Результат 1" loading="lazy" />
+              <img src="/landing/05-result-nadya.jpg" alt="Результат 1" loading="lazy" />
               <div className="case-cap">
                 <div className="delta">
                   1:52 <span className="ar">&rarr;</span> 1:44
@@ -489,7 +489,7 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="slide">
-              <img src="/landing/res-2.jpg" alt="Результат 2" loading="lazy" />
+              <img src="/landing/06-result-2-10-to-1-52.jpg" alt="Результат 2" loading="lazy" />
               <div className="case-cap">
                 <div className="delta">
                   2:10 <span className="ar">&rarr;</span> 1:52
@@ -498,7 +498,7 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="slide">
-              <img src="/landing/res-3.jpg" alt="Результат 3" loading="lazy" />
+              <img src="/landing/07-result-2-16-to-1-50.jpg" alt="Результат 3" loading="lazy" />
               <div className="case-cap">
                 <div className="delta">
                   2:16 <span className="ar">&rarr;</span> 1:50
@@ -507,7 +507,7 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="slide">
-              <img src="/landing/res-4.jpg" alt="Результат 4" loading="lazy" />
+              <img src="/landing/08-result-uglich-1-50-09.jpg" alt="Результат 4" loading="lazy" />
               <div className="case-cap">
                 <div className="delta">1:50:09</div>
                 <div className="sub">
@@ -516,7 +516,7 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="slide">
-              <img src="/landing/res-5.jpg" alt="Результат 5" loading="lazy" />
+              <img src="/landing/09-result-sochi-marathon.jpg" alt="Результат 5" loading="lazy" />
               <div className="case-cap">
                 <div className="delta">Первый марафон</div>
                 <div className="sub">
@@ -525,14 +525,14 @@ export default function LandingPage() {
               </div>
             </div>
             <div className="slide">
-              <img src="/landing/res-6.jpg" alt="Результат 6" loading="lazy" />
+              <img src="/landing/10-result-10k-47-43.jpg" alt="Результат 6" loading="lazy" />
               <div className="case-cap">
                 <div className="delta">10 км — 47:43</div>
                 <div className="sub">Личный рекорд на десятке</div>
               </div>
             </div>
             <div className="slide">
-              <img src="/landing/rev-12.jpg" alt="Результат 7" loading="lazy" />
+              <img src="/landing/11-result-capcity-1-51-47.jpg" alt="Результат 7" loading="lazy" />
               <div className="case-cap">
                 <div className="delta">1:51:47</div>
                 <div className="sub">
@@ -560,37 +560,37 @@ export default function LandingPage() {
           </div>
           <Carousel trackClassName="w-rev">
             <div className="slide">
-              <img src="/landing/rev-1.jpg" alt="Отзыв 1" loading="lazy" />
+              <img src="/landing/12-review-cheboksary.jpg" alt="Отзыв 1" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-2.jpg" alt="Отзыв 2" loading="lazy" />
+              <img src="/landing/13-review-sadovoe-pair.jpg" alt="Отзыв 2" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-3.jpg" alt="Отзыв 3" loading="lazy" />
+              <img src="/landing/14-review-bokeski.jpg" alt="Отзыв 3" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-4.jpg" alt="Отзыв 4" loading="lazy" />
+              <img src="/landing/15-review-itogi-2000km.jpg" alt="Отзыв 4" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-5.jpg" alt="Отзыв 5" loading="lazy" />
+              <img src="/landing/16-review-marina.jpg" alt="Отзыв 5" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-6.jpg" alt="Отзыв 6" loading="lazy" />
+              <img src="/landing/17-review-veronika.jpg" alt="Отзыв 6" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-7.jpg" alt="Отзыв 7" loading="lazy" />
+              <img src="/landing/18-review-podgorica.jpg" alt="Отзыв 7" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-8.jpg" alt="Отзыв 8" loading="lazy" />
+              <img src="/landing/19-video-1.jpg" alt="Отзыв 8" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-9.jpg" alt="Отзыв 9" loading="lazy" />
+              <img src="/landing/20-video-2.jpg" alt="Отзыв 9" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-10.jpg" alt="Отзыв 10" loading="lazy" />
+              <img src="/landing/21-video-3.jpg" alt="Отзыв 10" loading="lazy" />
             </div>
             <div className="slide">
-              <img src="/landing/rev-11.jpg" alt="Отзыв 11" loading="lazy" />
+              <img src="/landing/22-video-4.jpg" alt="Отзыв 11" loading="lazy" />
             </div>
           </Carousel>
         </div>
