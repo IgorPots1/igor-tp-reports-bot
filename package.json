@@ -36,6 +36,7 @@
     "tp-health-metrics-cache-report": "npm --prefix tools/trainingpeaks-export run tp-health-metrics-cache-report --",
     "tp-workouts-cache-scan": "npm --prefix tools/trainingpeaks-export run tp-workouts-cache-scan --",
     "tp-workouts-cache-report": "npm --prefix tools/trainingpeaks-export run tp-workouts-cache-report --",
+    "tp-fit-ingest-scan": "npm --prefix tools/trainingpeaks-export run tp-fit-ingest-scan --",
     "tp-probe-race-results": "npm --prefix tools/trainingpeaks-export run tp-probe-race-results --",
     "tp-probes-once": "npm --prefix tools/trainingpeaks-export run tp-probes-once --",
     "tp-probe-progress-evidence": "npm --prefix tools/trainingpeaks-export run tp-probe-progress-evidence --",

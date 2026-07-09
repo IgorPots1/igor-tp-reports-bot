@@ -69,6 +69,8 @@
     "check-prediction-validation-log": "tsx scripts/check-prediction-validation-log.ts",
     "tp-workouts-cache-scan": "tsx scripts/tp-workouts-cache-scan.ts",
     "tp-workouts-cache-report": "tsx scripts/tp-workouts-cache-report.ts",
+    "tp-fit-ingest-scan": "tsx scripts/tp-fit-ingest-scan.ts",
+    "check-fit-ingest-pipeline": "tsx scripts/check-fit-ingest-pipeline.ts",
     "tp-probe-workout-hidden-field": "tsx scripts/tp-probe-workout-hidden-field.ts",
     "tp-diagnose-workout-methodology-coverage": "tsx scripts/tp-diagnose-workout-methodology-coverage.ts",
     "tp-extract-methodology-candidates": "tsx scripts/tp-extract-methodology-candidates.ts",

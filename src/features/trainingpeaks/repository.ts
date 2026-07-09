@@ -918,6 +918,70 @@ export type TrainingPeaksWorkoutCacheUpsertRow = {
   source_snapshot?: unknown;
 };
 
+// FIT-ingest pipeline (stage 3): one row per lap. Written by the local
+// Mac-runner FIT ingest script (tp-fit-ingest-scan.ts). source is currently
+// always 'fit' — 'planned' rows (matched plan-structure steps) are not
+// populated yet.
+export type TrainingPeaksWorkoutLapUpsertRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number;
+  trainingpeaks_workout_id: number;
+  workout_cache_id: string;
+  lap_index: number;
+  source: "fit" | "planned";
+  start_offset_s?: number | null;
+  timer_time_s?: number | null;
+  elapsed_time_s?: number | null;
+  distance_m?: number | null;
+  avg_speed_mps?: number | null;
+  max_speed_mps?: number | null;
+  pace_sec_per_km?: number | null;
+  avg_hr?: number | null;
+  max_hr?: number | null;
+  min_hr?: number | null;
+  avg_cadence?: number | null;
+  max_cadence?: number | null;
+  avg_power?: number | null;
+  total_ascent_m?: number | null;
+  total_descent_m?: number | null;
+  lap_trigger?: string | null;
+  intensity?: string | null;
+  wkt_step_index?: number | null;
+  is_work?: boolean | null;
+  planned_target?: unknown;
+  source_snapshot?: unknown;
+  normalization_warnings?: string[];
+  scanned_at?: string;
+  scan_job_id?: string | null;
+};
+
+// FIT-ingest pipeline (stage 3): one row per workout, unique on
+// workout_cache_id. This stage only ever writes the metadata + cleaned avg_hr
+// subset of columns — the scalar columns (pct_time_*_target, rep_*,
+// hr_decoupling_pct, aerobic_ef, ...) are populated by a later ingest stage
+// and are intentionally absent from this upsert row type.
+export type TrainingPeaksWorkoutDerivedMetricsUpsertRow = {
+  student_id: string;
+  student_name: string;
+  trainingpeaks_athlete_id: number;
+  trainingpeaks_workout_id: number;
+  workout_cache_id: string;
+  workout_date: string;
+  workout_type?: string | null;
+  has_fit: boolean;
+  fallback_level: "fit_full" | "details_only" | "summary_only";
+  source_fit_file_id?: string | null;
+  match_confidence?: number | null;
+  hr_quality?: "good" | "degraded" | "unreliable" | null;
+  pct_hr_cleaned?: number | null;
+  avg_hr?: number | null;
+  source_snapshot?: unknown;
+  normalization_warnings?: string[];
+  scanned_at?: string;
+  scan_job_id?: string | null;
+};
+
 export type TrainingPeaksWorkoutCacheScanStatus = {
   id: string;
   studentId: string;
@@ -2315,6 +2379,79 @@ export async function getTrainingPeaksWorkoutCacheFreshness(input?: {
     latestScannedAt: (latestRow as { scanned_at: string } | null)?.scanned_at ?? null,
     rowCount: count ?? 0,
   };
+}
+
+// Historical observed max HR for an athlete, used as the HR-cleaning ceiling
+// basis (design doc section 4, step 1): max(laps.max_hr) across every
+// previously-ingested FIT lap. Returns null when there's no history yet
+// (first ingest), in which case the cleaning module falls back to the
+// absolute default ceiling.
+export async function getTrainingPeaksAthleteObservedMaxHr(
+  trainingPeaksAthleteId: number
+): Promise<number | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_laps")
+    .select("max_hr")
+    .eq("trainingpeaks_athlete_id", trainingPeaksAthleteId)
+    .not("max_hr", "is", null)
+    .order("max_hr", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to get observed max HR for TrainingPeaks athlete ${trainingPeaksAthleteId}: ${error.message}`
+    );
+  }
+
+  return (data as { max_hr: number } | null)?.max_hr ?? null;
+}
+
+// Re-inserts all laps for one workout_cache_id + source atomically via a
+// SECURITY DEFINER RPC (service_role has no DELETE on this table — see
+// 20260709160000_create_trainingpeaks_workout_laps_and_derived_metrics.sql).
+// Returns the number of rows inserted.
+export async function replaceTrainingPeaksWorkoutLaps(input: {
+  workoutCacheId: string;
+  source: "fit" | "planned";
+  rows: TrainingPeaksWorkoutLapUpsertRow[];
+}): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("replace_trainingpeaks_workout_laps", {
+    p_workout_cache_id: input.workoutCacheId,
+    p_source: input.source,
+    p_rows: input.rows,
+  });
+
+  if (error) {
+    throw new Error(`Failed to replace TrainingPeaks workout laps: ${error.message}`);
+  }
+
+  return typeof data === "number" ? data : 0;
+}
+
+export async function upsertTrainingPeaksWorkoutDerivedMetricsRows(
+  rows: TrainingPeaksWorkoutDerivedMetricsUpsertRow[]
+): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const updatedAt = new Date().toISOString();
+  const payload = rows.map((row) => ({
+    ...row,
+    updated_at: updatedAt,
+  }));
+
+  const { error } = await supabase
+    .from("trainingpeaks_workout_derived_metrics")
+    .upsert(payload, { onConflict: "workout_cache_id" });
+
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks workout derived metrics rows: ${error.message}`);
+  }
 }
 
 export async function listTrainingPeaksHealthMetricsForStudentDateRange(input: {
