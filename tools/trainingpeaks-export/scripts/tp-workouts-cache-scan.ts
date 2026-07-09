@@ -480,6 +480,10 @@ function collectStructureSummaryMetrics(input: unknown): {
   };
 }
 
+// Structure is stored verbatim up to this size so per-step target paces/zones
+// survive intact; only pathologically large payloads fall back to a summary.
+const STRUCTURE_INLINE_MAX_LENGTH = 100_000;
+
 function buildCompactStructure(value: unknown): unknown {
   if (value === null || value === undefined) {
     return null;
@@ -492,7 +496,7 @@ function buildCompactStructure(value: unknown): unknown {
     try {
       const parsed = JSON.parse(trimmed) as unknown;
       const serialized = JSON.stringify(parsed);
-      if (serialized.length <= 2000) {
+      if (serialized.length <= STRUCTURE_INLINE_MAX_LENGTH) {
         return parsed;
       }
       const metrics = collectStructureSummaryMetrics(parsed);
@@ -514,7 +518,7 @@ function buildCompactStructure(value: unknown): unknown {
   if (isRecord(value) || Array.isArray(value)) {
     try {
       const serialized = JSON.stringify(value);
-      if (serialized.length <= 2000) {
+      if (serialized.length <= STRUCTURE_INLINE_MAX_LENGTH) {
         return value;
       }
       const metrics = collectStructureSummaryMetrics(value);
@@ -562,6 +566,24 @@ function buildCompactSourceSnapshot(raw: TrainingPeaksWorkoutRaw): Record<string
     totalDistancePlanned: toFiniteNumber(raw.distancePlanned),
     workoutTypeValueId: readPositiveInt(raw.workoutTypeValueId),
     isHidden: typeof raw.isHidden === "boolean" ? raw.isHidden : null,
+    heartRateAverage: toFiniteNumber(raw.heartRateAverage),
+    heartRateMinimum: toFiniteNumber(raw.heartRateMinimum),
+    heartRateMaximum: toFiniteNumber(raw.heartRateMaximum),
+    velocityAverage: toFiniteNumber(raw.velocityAverage),
+    cadenceAverage: toFiniteNumber(raw.cadenceAverage),
+    cadenceMaximum: toFiniteNumber(raw.cadenceMaximum),
+    powerAverage: toFiniteNumber(raw.powerAverage),
+    powerMaximum: toFiniteNumber(raw.powerMaximum),
+    normalizedSpeedActual: toFiniteNumber(raw.normalizedSpeedActual),
+    normalizedPowerActual: toFiniteNumber(raw.normalizedPowerActual),
+    torqueAverage: toFiniteNumber(raw.torqueAverage),
+    torqueMaximum: toFiniteNumber(raw.torqueMaximum),
+    elevationGain: toFiniteNumber(raw.elevationGain),
+    elevationLoss: toFiniteNumber(raw.elevationLoss),
+    calories: toFiniteNumber(raw.calories),
+    rpe: toFiniteNumber(raw.rpe),
+    feeling: toFiniteNumber(raw.feeling),
+    complianceTssPercent: toFiniteNumber(raw.complianceTssPercent),
   };
 }
 
