@@ -12,3 +12,4 @@ create table if not exists public.leads (
 alter table public.leads enable row level security;
 
 -- Политик для anon/authenticated не создаём: пишем только service-role с сервера.
+grant all on public.leads to service_role;
