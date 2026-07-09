@@ -197,6 +197,7 @@ import {
   DEFAULT_COACH_TIMEZONE,
   getCoachTodayDateKey,
   normalizeOperationalSignalFollowUp,
+  readDateKeyInTimezone,
 } from "@/features/trainingpeaks/operational-follow-up";
 import {
   buildCanonicalEpisodeScheduleDisplayText,
@@ -720,6 +721,7 @@ export type TrainingPeaksAttentionSnapshot = {
   noContact5Days: TrainingPeaksAttentionSignal[];
   followUpToday: TrainingPeaksAttentionSignal[];
   followUpOverflowCount: number;
+  freshIllnessToday: TrainingPeaksAttentionSignal[];
   planConstraintsToday: TrainingPeaksAttentionSignal[];
   planConstraintsOverflowCount: number;
   movesToday: TrainingPeaksAttentionSignal[];
@@ -5323,6 +5325,22 @@ async function listOperationalHealthFollowUpsForAttention(
   });
 }
 
+async function listFreshIllnessTodayForAttention(
+  activeStudentNameById: ReadonlyMap<string, string | null>,
+  maxItems = 5
+): Promise<{ items: OperationalHealthFollowUpAttentionItem[]; overflowCount: number }> {
+  const asOfDate = getCoachTodayDateKey(DEFAULT_COACH_TIMEZONE);
+  const signals = await listTrainingPeaksOperationalSignals({ status: "active", limit: 200 });
+  const memoryDoubtBySignalId = await buildHealthSignalMemoryDoubtMap(signals.items);
+  return collectFreshIllnessTodayFromSignals({
+    signals: signals.items,
+    activeStudentNameById,
+    asOfDate,
+    maxItems,
+    memoryDoubtBySignalId,
+  });
+}
+
 type OperationalPlanningAttentionItem = {
   studentId: string;
   studentName: string | null;
@@ -5969,6 +5987,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
 
   let followUpToday: TrainingPeaksAttentionSignal[] = [];
   let followUpOverflowCount = 0;
+  let freshIllnessToday: TrainingPeaksAttentionSignal[] = [];
   let planConstraintsToday: TrainingPeaksAttentionSignal[] = [];
   let planConstraintsOverflowCount = 0;
   let movesToday: TrainingPeaksAttentionSignal[] = [];
@@ -6032,6 +6051,23 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   }
 
   try {
+    const fresh = await listFreshIllnessTodayForAttention(
+      activeStudentNameById,
+      ATTENTION_OPERATIONAL_LIST_MAX_ITEMS
+    );
+    freshIllnessToday = fresh.items.map((item) => ({
+      level: "today",
+      studentName: item.studentName,
+      studentId: item.studentId,
+      reason: item.reason,
+      memoryDoubt: item.memoryDoubt ?? null,
+      signalKind: "fresh_illness",
+    }));
+  } catch (error) {
+    console.warn("Failed to load fresh illness for attention snapshot", { error });
+  }
+
+  try {
     const scheduleSignals = await listOperationalScheduleSignalsForAttention(
       activeStudentNameById,
       ATTENTION_OPERATIONAL_LIST_MAX_ITEMS
@@ -6084,6 +6120,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     noContact5Days,
     followUpToday,
     followUpOverflowCount,
+    freshIllnessToday,
     planConstraintsToday,
     planConstraintsOverflowCount,
     movesToday,
@@ -8796,6 +8833,70 @@ export function collectOperationalHealthFollowUpsFromSignals(input: {
     items: limited,
     overflowCount,
   };
+}
+
+// Fresh illness reported TODAY — active health onset whose follow-up hasn't matured yet (pending_future),
+// which collectOperationalHealthFollowUpsFromSignals (pending_due/overdue only) skips. Gives the coach
+// same-day visibility. Disjoint from the matured set by construction; restricted to signals CREATED today
+// so an old not-yet-due signal never masquerades as fresh. One card per student.
+export function collectFreshIllnessTodayFromSignals(input: {
+  signals: TrainingPeaksStudentOperationalSignal[];
+  activeStudentNameById: ReadonlyMap<string, string | null>;
+  asOfDate: string;
+  maxItems?: number;
+  memoryDoubtBySignalId?: ReadonlyMap<string, HealthSignalMemoryDoubt>;
+}): { items: OperationalHealthFollowUpAttentionItem[]; overflowCount: number } {
+  const maxItems = input.maxItems ?? 5;
+  if (input.signals.length === 0) {
+    return { items: [], overflowCount: 0 };
+  }
+  const byStudent = new Map<string, OperationalHealthFollowUpAttentionItem>();
+  for (const signal of input.signals) {
+    if (signal.signalType !== "health_issue_started") {
+      continue;
+    }
+    if (shouldSkipOperationalSignalForAttentionHealthFollowUp(signal)) {
+      continue;
+    }
+    const createdKey = readDateKeyInTimezone(signal.createdAt, DEFAULT_COACH_TIMEZONE);
+    if (createdKey !== input.asOfDate) {
+      continue;
+    }
+    const followUp = normalizeOperationalSignalFollowUp(signal.metadata, {
+      asOfDate: input.asOfDate,
+      timeZone: DEFAULT_COACH_TIMEZONE,
+    });
+    if (followUp.state !== "pending_future") {
+      continue;
+    }
+    const reason = buildOperationalHealthFollowUpLifecycleBaseReason(signal, followUp.reason);
+    const item: OperationalHealthFollowUpAttentionItem = {
+      studentId: signal.studentId,
+      studentName: input.activeStudentNameById.get(signal.studentId) ?? null,
+      reason,
+      state: "pending_due",
+      dueDate: followUp.due_date,
+      daysOverdue: 0,
+      episodeKey: getSignalMetadataString(signal.metadata, "episode_key"),
+      signalId: signal.id,
+    };
+    const memoryDoubt = input.memoryDoubtBySignalId?.get(signal.id) ?? null;
+    if (memoryDoubt) {
+      item.memoryDoubt = memoryDoubt;
+      item.reason = `${item.reason}\n⚠️ память сомневается: ${memoryDoubt.reason}`;
+    }
+    const existing = byStudent.get(signal.studentId);
+    if (!existing || signal.id < existing.signalId) {
+      byStudent.set(signal.studentId, item);
+    }
+  }
+  const merged = [...byStudent.values()].sort(
+    (a, b) =>
+      (a.studentName ?? "").localeCompare(b.studentName ?? "", "ru-RU") ||
+      a.signalId.localeCompare(b.signalId)
+  );
+  const limited = merged.slice(0, maxItems);
+  return { items: limited, overflowCount: Math.max(0, merged.length - limited.length) };
 }
 
 export function collectOperationalScheduleSignalsForAttentionFromSignals(input: {

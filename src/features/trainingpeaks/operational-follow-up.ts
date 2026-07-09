@@ -45,7 +45,7 @@ function toDateKeyInTimezone(input: Date, timeZone: string): string {
   return formatter.format(input);
 }
 
-function readDateKeyInTimezone(raw: string | null, timeZone: string): string | null {
+export function readDateKeyInTimezone(raw: string | null, timeZone: string): string | null {
   if (!raw) {
     return null;
   }

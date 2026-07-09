@@ -10487,6 +10487,40 @@ export async function expireStaleZombiePlanSignal(input: {
   return { updated: true, reason: "ok" };
 }
 
+// Dismiss a FAILED move action from the coach desk (a "заглючивший перенос"). Supabase-ONLY, no TP call.
+// The attention snapshot surfaces failed actions unless status="rejected"; this flips a genuinely-failed
+// action to rejected so it stops surfacing. Guarded to execution_status="failed" + action_type="move_workout"
+// and not-already-rejected → can NEVER touch a pending/approved-live action. Idempotent (re-run = no-op).
+export async function dismissFailedTrainingPeaksMoveActionFromDesk(input: {
+  actionId: string;
+  decidedByChatId?: string | null;
+  decidedByUserId?: string | null;
+}): Promise<{ updated: boolean; reason: string }> {
+  const supabase = createSupabaseServerClient();
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      status: "rejected",
+      rejected_at: nowIso,
+      decided_by_chat_id: input.decidedByChatId ?? null,
+      decided_by_user_id: input.decidedByUserId ?? null,
+    })
+    .eq("id", input.actionId)
+    .eq("action_type", "move_workout")
+    .eq("execution_status", "failed")
+    .neq("status", "rejected")
+    .select("id")
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to dismiss failed move action ${input.actionId}: ${error.message}`);
+  }
+  if (!data) {
+    return { updated: false, reason: "not_failed_or_already_dismissed" };
+  }
+  return { updated: true, reason: "ok" };
+}
+
 // Слой 3 recovery bridge — batch-close a student's active illness signals when the coach confirms
 // recovery. Mirrors closeHealthSignalByAdminUi but keyed by student + signal types (one recovery
 // statement clears the whole illness episode, not a single row). Sets lifecycle_state=resolved so the

@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { resolveMiniAppCoach } from "@/features/telegram/miniapp-coach-resolver";
 import {
+  dismissFailedTrainingPeaksMoveActionFromDesk,
   dismissTrainingPeaksPlanSignalByCoach,
   rejectTrainingPeaksAction,
 } from "@/features/trainingpeaks/repository";
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   let initData = "";
-  let kind: "action" | "signal" | null = null;
+  let kind: "action" | "signal" | "failed_move" | null = null;
   let actionId = "";
   let signalId = "";
   let studentId = "";
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       studentId?: unknown;
     };
     initData = typeof body.initData === "string" ? body.initData : "";
-    kind = body.kind === "action" ? "action" : body.kind === "signal" ? "signal" : null;
+    kind = body.kind === "action" ? "action" : body.kind === "signal" ? "signal" : body.kind === "failed_move" ? "failed_move" : null;
     actionId = typeof body.actionId === "string" ? body.actionId.trim() : "";
     signalId = typeof body.signalId === "string" ? body.signalId.trim() : "";
     studentId = typeof body.studentId === "string" ? body.studentId.trim() : "";
@@ -79,6 +80,19 @@ export async function POST(request: NextRequest): Promise<Response> {
       const result = await dismissTrainingPeaksPlanSignalByCoach({
         signalId,
         studentId,
+        decidedByUserId: coach.coachTelegramId,
+      });
+      return jsonResponse(200, { ok: true, dismissed: result.updated });
+    }
+
+    if (kind === "failed_move") {
+      if (!actionId) {
+        return jsonResponse(400, { ok: false, error: "Не указана заявка." });
+      }
+      // Status write only (execution_status=failed → status=rejected). NO TrainingPeaks call.
+      const result = await dismissFailedTrainingPeaksMoveActionFromDesk({
+        actionId,
+        decidedByChatId: coach.coachTelegramId,
         decidedByUserId: coach.coachTelegramId,
       });
       return jsonResponse(200, { ok: true, dismissed: result.updated });

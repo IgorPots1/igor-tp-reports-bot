@@ -54,6 +54,7 @@ function emptySnapshot(): TrainingPeaksAttentionSnapshot {
     noContact5Days: [],
     followUpToday: [],
     followUpOverflowCount: 0,
+    freshIllnessToday: [],
     planConstraintsToday: [],
     planConstraintsOverflowCount: 0,
     movesToday: [],
@@ -168,9 +169,10 @@ function run(): void {
   assert(view.missed.some((r) => r.name === "Alexander Ivanov" && r.telegramUsername === "alex_tg"), "missed row tappable");
   assert(view.noContact.some((r) => r.name === "Margarita" && r.telegramUsername === null), "no-username tail row dimmed");
 
-  // Counts mirror sections.
+  // Counts mirror sections. No freshIllnessToday fixture here → freshCheck stays 0.
   assert(
     view.counts.check === 3 &&
+      view.counts.freshCheck === 0 &&
       view.counts.errors === 2 &&
       view.counts.plan === 3 &&
       view.counts.pain === 1 &&
@@ -178,6 +180,7 @@ function run(): void {
       view.counts.missed === 1,
     "counts mirror sections"
   );
+  assert(view.freshCheck.length === 0, "no fresh illness fixture → freshCheck empty");
 
   console.log(`${LOG_PREFIX} PASS`);
 }

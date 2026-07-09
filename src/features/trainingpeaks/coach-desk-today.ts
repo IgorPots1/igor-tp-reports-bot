@@ -25,18 +25,21 @@ export type CoachDeskCard = WithChat & { summary: string };
 export type CoachDeskDismiss =
   | { kind: "action"; actionId: string }
   | { kind: "signal"; signalId: string }
+  | { kind: "failed_move"; actionId: string }
   | null;
 
 export type CoachDeskPlanCard = CoachDeskCard & { dismiss: CoachDeskDismiss };
 
-// System failures (move execution failed, TP/race scan job failed) — NOT illness, so no "Снять".
-export type CoachDeskErrorCard = { name: string | null; summary: string };
+// System failures (move execution failed, TP/race scan job failed) — NOT illness, but a failed move
+// action carries a "Снять" (DB-only reject), so it needs the same dismiss handle as plan cards.
+export type CoachDeskErrorCard = { name: string | null; studentId: string | null; dismiss: CoachDeskDismiss; summary: string };
 
 export type CoachDeskNameRow = WithChat;
 
 export type CoachDeskTodayView = {
   scanAlert: string | null;
   check: CoachDeskHealthCard[]; // 🩺 illness, one per student, recovery-closable
+  freshCheck: CoachDeskHealthCard[]; // 🩺 fresh illness reported today (follow-up not yet due)
   errors: CoachDeskErrorCard[]; // ⚠️ system failures, informational
   plan: CoachDeskPlanCard[]; // 📅 availability / constraints / move candidates & requests
   pain: CoachDeskCard[]; // 🦵 injuries — admin-closable (manual only)
@@ -44,6 +47,7 @@ export type CoachDeskTodayView = {
   missed: CoachDeskNameRow[]; // 🏃 no completion recorded (from workout_cache — nightly)
   counts: {
     check: number;
+    freshCheck: number;
     errors: number;
     plan: number;
     moves: number;
@@ -137,6 +141,9 @@ function planDismiss(signal: TrainingPeaksAttentionSignal): CoachDeskDismiss {
   if (signal.signalKind === "operational_move" && signal.signalId) {
     return { kind: "signal", signalId: signal.signalId };
   }
+  if (signal.signalKind === "operational_schedule" && signal.signalId) {
+    return { kind: "signal", signalId: signal.signalId };
+  }
   return null;
 }
 
@@ -155,6 +162,11 @@ export function buildCoachDeskTodayView(
     .filter((signal) => !isScanAlertSignal(signal))
     .map((signal) => ({
       name: signal.studentName?.trim() || null,
+      studentId: signal.studentId ?? null,
+      dismiss:
+        signal.signalKind === "move_failed_action" && signal.actionId
+          ? { kind: "failed_move", actionId: signal.actionId }
+          : null,
       summary: stripNoiseParens(signal.reason.split("\n").join(" ")),
     }));
 
@@ -200,6 +212,46 @@ export function buildCoachDeskTodayView(
     doubt: card.doubt ?? null,
   }));
 
+  // 🩺 «Сообщили сегодня» — свежая болезнь (pending_future, created today). Отдельная под-секция,
+  // не дублируем ученика, уже показанного в дозревшем follow-up (check).
+  const checkStudentIds = new Set(check.map((c) => c.studentId).filter(Boolean));
+  const freshByStudent = new Map<string, CoachDeskHealthCard & { summaries: string[] }>();
+  for (const signal of snapshot.freshIllnessToday) {
+    const key = signal.studentId?.trim() || signal.studentName?.trim() || "";
+    if (!key || (signal.studentId && checkStudentIds.has(signal.studentId))) {
+      continue;
+    }
+    const summary = cleanHealthSummary(signal.reason);
+    const doubt = signal.memoryDoubt ? shortDoubtReason(signal.memoryDoubt) : null;
+    const existing = freshByStudent.get(key);
+    if (!existing) {
+      freshByStudent.set(key, {
+        studentId: signal.studentId ?? null,
+        name: displayName(signal),
+        telegramUsername: username(signal.studentId ?? null),
+        summary: "",
+        days: null,
+        doubt,
+        summaries: summary ? [summary] : [],
+      });
+      continue;
+    }
+    if (summary && !existing.summaries.includes(summary)) {
+      existing.summaries.push(summary);
+    }
+    if (!existing.doubt && doubt) {
+      existing.doubt = doubt;
+    }
+  }
+  const freshCheck: CoachDeskHealthCard[] = [...freshByStudent.values()].map((card) => ({
+    studentId: card.studentId,
+    name: card.name,
+    telegramUsername: card.telegramUsername,
+    summary: card.summaries.join(" · "),
+    days: card.days,
+    doubt: card.doubt ?? null,
+  }));
+
   // 📅 Учесть в плане — availability/constraints + move candidates & requests, with dismiss handles.
   const planSignals = [...snapshot.planConstraintsToday, ...snapshot.movesToday];
   const plan: CoachDeskPlanCard[] = planSignals.map((signal) => ({
@@ -230,6 +282,7 @@ export function buildCoachDeskTodayView(
   return {
     scanAlert,
     check,
+    freshCheck,
     errors,
     plan,
     pain,
@@ -237,6 +290,7 @@ export function buildCoachDeskTodayView(
     missed,
     counts: {
       check: check.length,
+      freshCheck: freshCheck.length,
       errors: errors.length,
       plan: plan.length,
       moves,

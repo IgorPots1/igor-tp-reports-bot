@@ -30,13 +30,18 @@ function openStudentChat(username: string | null) {
 type WithChat = { studentId: string | null; name: string; telegramUsername: string | null };
 type HealthCard = WithChat & { summary: string; days: number | null; doubt?: string | null };
 type Card = WithChat & { summary: string };
-type Dismiss = { kind: "action"; actionId: string } | { kind: "signal"; signalId: string } | null;
+type Dismiss =
+  | { kind: "action"; actionId: string }
+  | { kind: "signal"; signalId: string }
+  | { kind: "failed_move"; actionId: string }
+  | null;
 type PlanCard = Card & { dismiss: Dismiss };
-type ErrorCard = { name: string | null; summary: string };
+type ErrorCard = { name: string | null; studentId: string | null; dismiss?: Dismiss; summary: string };
 type NameRow = WithChat;
 type TodayView = {
   scanAlert: string | null;
   check: HealthCard[];
+  freshCheck: HealthCard[];
   errors: ErrorCard[];
   plan: PlanCard[];
   pain: Card[];
@@ -44,6 +49,7 @@ type TodayView = {
   missed: NameRow[];
   counts: {
     check: number;
+    freshCheck: number;
     errors: number;
     plan: number;
     moves: number;
@@ -371,7 +377,8 @@ export default function CoachDeskPage() {
             if (!prev) return prev;
             if (kind === "illness") {
               const check = prev.check.filter((c) => c.studentId !== studentId);
-              return { ...prev, check, counts: { ...prev.counts, check: check.length } };
+              const freshCheck = prev.freshCheck.filter((c) => c.studentId !== studentId);
+              return { ...prev, check, freshCheck, counts: { ...prev.counts, check: check.length, freshCheck: freshCheck.length } };
             }
             const pain = prev.pain.filter((c) => c.studentId !== studentId);
             return { ...prev, pain, counts: { ...prev.counts, pain: pain.length } };
@@ -398,7 +405,9 @@ export default function CoachDeskPage() {
         const body =
           dismiss.kind === "action"
             ? { initData, kind: "action", actionId: dismiss.actionId }
-            : { initData, kind: "signal", signalId: dismiss.signalId };
+            : dismiss.kind === "failed_move"
+              ? { initData, kind: "failed_move", actionId: dismiss.actionId }
+              : { initData, kind: "signal", signalId: dismiss.signalId };
         const res = await fetch("/api/m/desk/plan/dismiss", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -411,6 +420,41 @@ export default function CoachDeskPage() {
             const plan = prev.plan.filter((_, i) => i !== index);
             const moves = plan.filter((p) => p.dismiss !== null).length;
             return { ...prev, plan, counts: { ...prev.counts, plan: plan.length, moves } };
+          });
+        }
+      } catch {
+        /* leave the card; coach can retry */
+      } finally {
+        setDismissing((prev) => {
+          const next = new Set(prev);
+          next.delete(tag);
+          return next;
+        });
+      }
+    },
+    [initData]
+  );
+
+  const handleErrorDismiss = useCallback(
+    async (index: number, dismiss: NonNullable<Dismiss>) => {
+      const tag = `err:${index}`;
+      setDismissing((prev) => new Set(prev).add(tag));
+      try {
+        const body =
+          dismiss.kind === "failed_move"
+            ? { initData, kind: "failed_move", actionId: dismiss.actionId }
+            : { initData, kind: "signal", signalId: (dismiss as { signalId: string }).signalId };
+        const res = await fetch("/api/m/desk/plan/dismiss", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = (await res.json()) as { ok: boolean };
+        if (json.ok) {
+          setView((prev) => {
+            if (!prev) return prev;
+            const errors = prev.errors.filter((_, i) => i !== index);
+            return { ...prev, errors, counts: { ...prev.counts, errors: errors.length } };
           });
         }
       } catch {
@@ -527,7 +571,7 @@ export default function CoachDeskPage() {
               <span style={S.secTitle}>🩺 Проверить сегодня</span>
               <span style={S.secCount}>{view.counts.check}</span>
             </div>
-            {view.check.length === 0 && view.errors.length === 0 ? (
+            {view.check.length === 0 && view.freshCheck.length === 0 && view.errors.length === 0 ? (
               <p style={S.empty}>Никого проверять — чисто.</p>
             ) : null}
             {view.check.map((c, i) => (
@@ -558,6 +602,35 @@ export default function CoachDeskPage() {
                 </div>
               </div>
             ))}
+            {view.freshCheck.length > 0 ? (
+              <>
+                <p style={S.softNote}>сообщили сегодня</p>
+                {view.freshCheck.map((c, i) => (
+                  <div
+                    key={c.studentId ?? `fresh-${i}`}
+                    style={chatCardStyle(c.telegramUsername)}
+                    onClick={c.telegramUsername ? () => openStudentChat(c.telegramUsername) : undefined}
+                  >
+                    <CardName name={c.name} username={c.telegramUsername} />
+                    {c.summary ? <p style={S.summary}>{c.summary}</p> : null}
+                    {c.doubt ? <p style={S.doubtBadge}>⚠️ память сомневается: {c.doubt}</p> : null}
+                    <div style={S.actionRow}>
+                      <button
+                        type="button"
+                        style={S.closeBtn}
+                        disabled={closing.has(`illness:${c.studentId ?? ""}`)}
+                        onClick={(e) => {
+                          stop(e);
+                          handleClose(c.studentId, "illness");
+                        }}
+                      >
+                        {closing.has(`illness:${c.studentId ?? ""}`) ? "Снимаю…" : "Снять"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : null}
             {view.errors.length > 0 ? (
               <div style={S.errBlock}>
                 <p style={S.errHead}>⚠️ Ошибки / сбои · {view.errors.length}</p>
@@ -565,6 +638,22 @@ export default function CoachDeskPage() {
                   <div key={`err-${i}`} style={S.errCard}>
                     <span style={S.errName}>{e.name ?? "Система"}</span>
                     {e.summary ? <p style={S.errSummary}>{e.summary}</p> : null}
+                    {e.dismiss ? (
+                      <div style={S.dismissRow}>
+                        <span style={S.dismissNote}>в TrainingPeaks ничего не меняется</span>
+                        <button
+                          type="button"
+                          style={S.closeBtn}
+                          disabled={dismissing.has(`err:${i}`)}
+                          onClick={(ev) => {
+                            stop(ev);
+                            if (e.dismiss) void handleErrorDismiss(i, e.dismiss);
+                          }}
+                        >
+                          {dismissing.has(`err:${i}`) ? "Снимаю…" : "Снять"}
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
