@@ -976,6 +976,14 @@ export type TrainingPeaksWorkoutDerivedMetricsUpsertRow = {
   hr_quality?: "good" | "degraded" | "unreliable" | null;
   pct_hr_cleaned?: number | null;
   avg_hr?: number | null;
+  // Required (not optional): the DB check constraint
+  // trainingpeaks_workout_derived_metrics_decoupling_reason_check rejects any
+  // row where decoupling_valid=false and decoupling_invalid_reason is null.
+  // This stage never computes decoupling, so every row must set
+  // decoupling_valid=false with an explicit reason (e.g.
+  // 'not_computed_this_stage') — leaving these out fails every insert.
+  decoupling_valid: boolean;
+  decoupling_invalid_reason: string | null;
   source_snapshot?: unknown;
   normalization_warnings?: string[];
   scanned_at?: string;

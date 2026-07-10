@@ -61,6 +61,11 @@ import { buildDerivedMetricsFitFields, type FitIngestOutcome } from "./lib/fit-i
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
 
+// This stage never computes decoupling (that's a later ingest stage), so
+// decoupling_valid is always false and the DB requires a non-null reason
+// (trainingpeaks_workout_derived_metrics_decoupling_reason_check).
+const DECOUPLING_NOT_COMPUTED_REASON = "not_computed_this_stage";
+
 type CliArgs = {
   from: string;
   to: string;
@@ -285,6 +290,10 @@ async function ingestOneWorkoutFit(input: {
     workout_date: input.cacheRow.workoutDate,
     workout_type: workoutType,
     scanned_at: input.scannedAt,
+    // Required by the DB check constraint on every row this stage writes —
+    // see DECOUPLING_NOT_COMPUTED_REASON.
+    decoupling_valid: false,
+    decoupling_invalid_reason: DECOUPLING_NOT_COMPUTED_REASON,
   };
 
   const degraded = (outcome: FitIngestOutcome): IngestOneWorkoutResult => ({

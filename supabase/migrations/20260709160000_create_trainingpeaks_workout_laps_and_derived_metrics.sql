@@ -39,8 +39,10 @@ create table if not exists public.trainingpeaks_workout_laps (
   intensity text,                           -- FIT intensity (active/rest/warmup/cooldown)
   wkt_step_index integer,                   -- FIT wkt_step_index (structured-workout step ref, if any)
   is_work boolean,                          -- classified work-effort vs jog/rest lap; null = undetermined
-  planned_target jsonb not null default '{}'::jsonb,
-  -- matched target from plan-structure: {metric,min,max,unit,step_name,...}; not populated yet
+  planned_target jsonb,
+  -- matched target from plan-structure: {metric,min,max,unit,step_name,...}; not populated yet.
+  -- Nullable, no default: null = "no target matched" must stay distinct from
+  -- {} = "matched but empty" — collapsing them into '{}' would lose that signal.
 
   source_snapshot jsonb not null default '{}'::jsonb,
   normalization_warnings text[] not null default '{}'::text[],
@@ -152,6 +154,8 @@ create table if not exists public.trainingpeaks_workout_derived_metrics (
     check (hr_quality is null or hr_quality in ('good', 'degraded', 'unreliable')),
   constraint trainingpeaks_workout_derived_metrics_ef_flag_check
     check (ef_context_flag = 'context_dependent'),
+  constraint trainingpeaks_workout_derived_metrics_decoupling_reason_check
+    check (decoupling_valid = true or decoupling_invalid_reason is not null),
   constraint trainingpeaks_workout_derived_metrics_unique
     unique (workout_cache_id)
 );
@@ -276,7 +280,7 @@ begin
     x.intensity,
     x.wkt_step_index,
     x.is_work,
-    coalesce(x.planned_target, '{}'::jsonb),
+    x.planned_target,
     coalesce(x.source_snapshot, '{}'::jsonb),
     coalesce(x.normalization_warnings, '{}'::text[]),
     coalesce(x.scanned_at, now()),
