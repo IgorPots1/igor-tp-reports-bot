@@ -10431,6 +10431,9 @@ export async function autoCloseHealthSignalByMemoryResolved(input: {
   memoryItemId: string | null;
   memoryConfidence: number | null;
   reason: string;
+  pattern?: string;
+  tier?: string;
+  resolvedReason?: string;
 }): Promise<{ updated: boolean; reason: string }> {
   const supabase = createSupabaseServerClient();
   const appliedAt = new Date().toISOString();
@@ -10465,8 +10468,8 @@ export async function autoCloseHealthSignalByMemoryResolved(input: {
     memory_autoclose: {
       closed_at: appliedAt,
       actor: "memory_autoclose",
-      pattern: "already_resolved",
-      tier: "strong",
+      pattern: input.pattern ?? "already_resolved",
+      tier: input.tier ?? "strong",
       memory_item_id: input.memoryItemId,
       memory_confidence: input.memoryConfidence,
       reason: input.reason,
@@ -10479,7 +10482,7 @@ export async function autoCloseHealthSignalByMemoryResolved(input: {
       status: "expired",
       lifecycle_state: "resolved",
       lifecycle_state_updated_at: appliedAt,
-      resolved_reason: "memory_autoclose_already_resolved",
+      resolved_reason: input.resolvedReason ?? "memory_autoclose_already_resolved",
       resolved_at: appliedAt,
       metadata: nextMetadata,
       updated_at: appliedAt,

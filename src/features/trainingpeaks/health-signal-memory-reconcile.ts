@@ -18,7 +18,8 @@ export type HealthSignalMemoryDoubtPattern =
   | "already_resolved" // pattern 3 — same-message memory says the episode already passed
   | "pain_not_illness" // pattern 2 — it is pain/injury, mislabelled as illness
   | "self_chosen_pause" // pattern 4 — a voluntary rest / mild "по-женски", not an acute illness
-  | "no_health_corroboration"; // pattern 1 — no memory supports illness on the source message
+  | "no_health_corroboration" // pattern 1 — no memory supports illness on the source message
+  | "returned_to_training"; // pattern 5 — cross-fact: illness in the past, athlete is back training
 
 // weak  → mark only, never eligible for Step-2 auto-suppression.
 // medium→ reclassification candidate (pain, not illness) — nothing is lost, only retyped.
@@ -113,6 +114,29 @@ const ACUTE_ILLNESS_CUES = [
   "ангин",
 ];
 
+// Pattern 5 — return to training. CONFIRMED = a past/present fact that the athlete is already training or
+// functional again (autoclose-eligible when no current symptom lingers).
+const RETURN_CONFIRMED_CUES = [
+  "вчера бегал", "вчера работал", "уже бега", "уже трениру", "уже работа",
+  "сбегал", "побегал", "пробежал", "пробежала", "смог пробежа", "смогла пробежа",
+  "вышел на пробежк", "вышла на пробежк", "вернулся к трен", "вернулась к трен",
+  "вернулся в строй", "вернулась в строй", "готов трениров", "готова трениров",
+  "готов бегать", "готова бегать", "начал бегать", "начала бегать",
+];
+// INTENT = only a plan to return, no confirmed fact yet → mark-only, never autoclose.
+const RETURN_INTENT_CUES = [
+  "планирую верну", "планирует верну", "завтра пойду", "завтра побегу",
+  "сегодня пойду", "сегодня побегу", "думаю начать", "собираюсь верну",
+  "хочу верну", "буду возвращат",
+];
+// CURRENT symptoms still present → the illness is NOT safely over. Any of these caps the doubt at WEAK
+// (mark, never autoclose), even if a return cue is present. Past-tense "заболел/болел" is NOT here.
+const CURRENT_SYMPTOM_CUES = [
+  "температур", "рвот", "тошнит", "лежу", "слег", "озноб", "задыха",
+  "очень плохо", "совсем плохо", "плохо себя", "горло болит", "сильно боли",
+  "слабост", "кашель", "кашл",
+];
+
 function norm(text: string | null | undefined): string {
   return (text ?? "").toLowerCase().replace(/ё/gu, "е");
 }
@@ -204,6 +228,33 @@ export function evaluateHealthSignalMemoryDoubt(input: {
       memoryItemId: pauseMemory.id,
       memoryConfidence: pauseMemory.confidence ?? null,
     };
+  }
+
+  // ── Pattern 5 — returned to training (CROSS-FACT). Reaching here means the signal is illness (not pain
+  // — pattern 2 would have returned) and not a self-pause. If the same message ALSO carries a return-to-
+  // training fact (in ANY memory type on this obs — e.g. an availability/schedule "готов тренироваться"
+  // that the health branch ignores), the illness is likely already behind the athlete.
+  //   strong  = confirmed return + NO current symptom  → autoclose-eligible (Step 2)
+  //   weak    = intent only, OR return shadowed by a current symptom → mark, human confirms
+  const illnessMemory = sameMessageHealth.find((item) => item.memoryType === "health_status");
+  if (illnessMemory) {
+    const sameMsgText = sameMessage.map((item) => norm(item.summaryText)).join(" · ");
+    const hasConfirmedReturn = hasAny(sameMsgText, RETURN_CONFIRMED_CUES);
+    const hasIntentReturn = hasAny(sameMsgText, RETURN_INTENT_CUES);
+    const hasCurrentSymptom = hasAny(sameMsgText, CURRENT_SYMPTOM_CUES);
+    if (hasConfirmedReturn || hasIntentReturn) {
+      const strong = hasConfirmedReturn && !hasCurrentSymptom;
+      return {
+        suspected: true,
+        pattern: "returned_to_training",
+        tier: strong ? "strong" : "weak",
+        reason: strong
+          ? "память: болезнь в прошлом, ученик уже вернулся к тренировкам — возможно, сигнал устарел"
+          : "память: похоже, ученик возвращается к тренировкам — проверить",
+        memoryItemId: illnessMemory.id,
+        memoryConfidence: illnessMemory.confidence ?? null,
+      };
+    }
   }
 
   // ── Pattern 1 — no health corroboration on the source message (WEAK, absence tier) ─────────

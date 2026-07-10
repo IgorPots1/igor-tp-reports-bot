@@ -102,6 +102,8 @@ function shortDoubtReason(doubt: HealthSignalMemoryDoubt): string {
       return "самовыбранная пауза, не болезнь";
     case "no_health_corroboration":
       return "нет подтверждения — проверить, о ком речь";
+    case "returned_to_training":
+      return "похоже, вернулся к тренировкам";
     default:
       return "проверить сигнал";
   }

@@ -199,6 +199,139 @@ const CASES: Case[] = [
     ],
     expectPattern: null,
   },
+  // ── Pattern 5 — returned to training (cross-fact, live case: Alex 2026-07-10) ────────────────
+  {
+    // Alex — illness in the past, cross-fact same-obs availability confirms return. strong: no
+    // current symptom lingers alongside the confirmed return cue.
+    name: "Alex — returned to training, cross-fact strong",
+    signal: {
+      id: "synthetic-alex-return",
+      signalType: "health_issue_started",
+      structuredPayload: { health_issue_kind: "illness" },
+      sourceObservationId: "alex-obs",
+    },
+    memoryItems: [
+      mem({
+        memoryType: "health_status",
+        summaryText: "Заболел в начале недели, в среду не тренировался. Вчера работал, сегодня планирует вернуться.",
+        sourceObservationId: "alex-obs",
+        confidence: 0.85,
+      }),
+      mem({
+        memoryType: "schedule_constraint",
+        summaryText: "Сегодня и завтра готов тренироваться.",
+        sourceObservationId: "alex-obs",
+        confidence: 0.7,
+      }),
+    ],
+    expectPattern: "returned_to_training",
+    expectTier: "strong",
+  },
+  {
+    // Downgrade — confirmed return cue ("уже бегаю") but a CURRENT symptom ("температура") still
+    // present in the same message → capped at weak, never strong. CRITICAL assert.
+    name: "guard — return cue shadowed by current symptom caps at weak",
+    signal: {
+      id: "synthetic-return-symptom",
+      signalType: "health_issue_started",
+      structuredPayload: { health_issue_kind: "illness" },
+      sourceObservationId: "obs-return-symptom",
+    },
+    memoryItems: [
+      mem({
+        memoryType: "health_status",
+        summaryText: "Уже бегаю, но температура держится.",
+        sourceObservationId: "obs-return-symptom",
+        confidence: 0.85,
+      }),
+    ],
+    expectPattern: "returned_to_training",
+    expectTier: "weak",
+  },
+  {
+    // Intent-only — only a plan to return ("завтра пойду тренироваться"), no confirmed fact, no
+    // symptom → weak, never strong (mark-only, never autoclose).
+    name: "guard — intent-only return caps at weak",
+    signal: {
+      id: "synthetic-return-intent",
+      signalType: "health_issue_started",
+      structuredPayload: { health_issue_kind: "illness" },
+      sourceObservationId: "obs-return-intent",
+    },
+    memoryItems: [
+      mem({
+        memoryType: "health_status",
+        summaryText: "Болел, завтра пойду тренироваться.",
+        sourceObservationId: "obs-return-intent",
+        confidence: 0.85,
+      }),
+    ],
+    expectPattern: "returned_to_training",
+    expectTier: "weak",
+  },
+  {
+    // Real live illness — no return cue at all → NOT returned_to_training (health corroboration
+    // present, so also not no_health_corroboration; verdict is null, same shape as the existing
+    // "legit illness" guard above).
+    name: "guard — real live illness without return cue is not returned_to_training",
+    signal: {
+      id: "synthetic-live-illness",
+      signalType: "health_issue_started",
+      structuredPayload: { health_issue_kind: "illness" },
+      sourceObservationId: "obs-live-illness",
+    },
+    memoryItems: [
+      mem({
+        memoryType: "health_status",
+        summaryText: "Заболел, температура, лежу.",
+        sourceObservationId: "obs-live-illness",
+        confidence: 0.9,
+      }),
+    ],
+    expectPattern: null,
+  },
+  {
+    // pain_injury signalType is out of scope for the classifier entirely — never touched by the new
+    // pattern (or any pattern).
+    name: "guard — pain_injury signalType out of scope",
+    signal: {
+      id: "synthetic-pain-injury-signal",
+      signalType: "pain_injury",
+      structuredPayload: { health_issue_kind: "pain_or_injury" },
+      sourceObservationId: "obs-pain-signal",
+    },
+    memoryItems: [
+      mem({
+        memoryType: "pain_or_injury",
+        summaryText: "Вчера работал, уже тренируюсь как обычно.",
+        sourceObservationId: "obs-pain-signal",
+        confidence: 0.95,
+      }),
+    ],
+    expectPattern: null,
+  },
+  {
+    // Olesya regression — kind=pain_or_injury + pain_or_injury memory conf 0.95 must still classify
+    // as pain_not_illness (pattern 2), NOT be intercepted by the new returned_to_training pattern
+    // (her text also mentions "смогла пробежать", a return-shaped phrase).
+    name: "Olesya — regression: pain_not_illness not shadowed by pattern 5",
+    signal: {
+      id: "synthetic-olesya-regress",
+      signalType: "health_issue_started",
+      structuredPayload: { health_issue_kind: "pain_or_injury", health_state: "sick" },
+      sourceObservationId: "obs-olesya-regress",
+    },
+    memoryItems: [
+      mem({
+        memoryType: "pain_or_injury",
+        summaryText: "После интенсивного цикла болело колено; отдохнула 2 дня, сегодня смогла пробежать.",
+        sourceObservationId: "obs-olesya-regress",
+        confidence: 0.95,
+      }),
+    ],
+    expectPattern: "pain_not_illness",
+    expectTier: "medium",
+  },
 ];
 
 function run(): void {
@@ -230,8 +363,10 @@ function run(): void {
     );
   }
 
-  // 4 of 5 audit misfires flagged; Sofia (improving) not flagged.
-  assert(flagged === 5, `expected 5 doubts (4 misfires + 1 synthetic resolved), got ${flagged}`);
+  // 4 of 5 audit misfires flagged; Sofia (improving) not flagged. Plus pattern-5 fixtures: Alex
+  // (strong), return-symptom guard (weak), return-intent guard (weak), Olesya regression
+  // (pain_not_illness) — 4 more flagged; live-illness guard and pain_injury-signal guard stay null.
+  assert(flagged === 9, `expected 9 doubts (4 misfires + 1 synthetic resolved + 4 pattern-5 cases), got ${flagged}`);
 
   process.stdout.write(`${LOG_PREFIX} table:\n${rows.join("\n")}\n`);
   process.stdout.write(`${LOG_PREFIX} PASS (${CASES.length} cases, ${flagged} flagged)\n`);

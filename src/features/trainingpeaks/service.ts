@@ -8299,6 +8299,9 @@ export async function runHealthSignalMemoryAutoClose(): Promise<{
         memoryItemId: decision.memoryItemId,
         memoryConfidence: decision.memoryConfidence,
         reason: decision.reason,
+        pattern: decision.pattern,
+        tier: decision.tier,
+        resolvedReason: decision.resolvedReason,
       });
       if (result.updated) {
         closed += 1;

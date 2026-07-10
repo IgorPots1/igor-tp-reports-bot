@@ -1,4 +1,4 @@
-import type { HealthSignalMemoryDoubt } from "@/features/trainingpeaks/health-signal-memory-reconcile";
+import type { HealthSignalMemoryDoubt, HealthSignalMemoryDoubtPattern } from "@/features/trainingpeaks/health-signal-memory-reconcile";
 
 // Решение A / Шаг 2 — auto-close ONLY the single strongest memory misfire, behind a default-OFF flag.
 //
@@ -25,6 +25,19 @@ export const HEALTH_SIGNAL_AUTOCLOSE_MODE_ENV = "COACH_HEALTH_SIGNAL_AUTOCLOSE_M
 export const AUTOCLOSE_PATTERN = "already_resolved" as const;
 export const AUTOCLOSE_TIER = "strong" as const;
 
+export const AUTOCLOSE_RETURN_PATTERN = "returned_to_training" as const;
+// Both strong patterns Step 2 may auto-close: same-message "already over" OR "returned to training".
+export const AUTOCLOSE_ELIGIBLE_PATTERNS = new Set<HealthSignalMemoryDoubtPattern>([
+  AUTOCLOSE_PATTERN,
+  AUTOCLOSE_RETURN_PATTERN,
+]);
+// resolved_reason per pattern for the audit trace.
+export function autoCloseResolvedReasonForPattern(pattern: HealthSignalMemoryDoubtPattern): string {
+  return pattern === AUTOCLOSE_RETURN_PATTERN
+    ? "memory_autoclose_returned_to_training"
+    : "memory_autoclose_already_resolved";
+}
+
 export function readHealthSignalAutoCloseMode(
   env: NodeJS.ProcessEnv = process.env
 ): HealthSignalAutoCloseMode {
@@ -41,11 +54,12 @@ export function readHealthSignalAutoCloseMode(
 export type HealthSignalAutoCloseDecision =
   | {
       eligible: true;
-      pattern: typeof AUTOCLOSE_PATTERN;
+      pattern: HealthSignalMemoryDoubtPattern;
       tier: typeof AUTOCLOSE_TIER;
       memoryItemId: string | null;
       memoryConfidence: number | null;
       reason: string;
+      resolvedReason: string;
     }
   | { eligible: false; blockedReason: string };
 
@@ -65,7 +79,7 @@ export function decideHealthSignalAutoClose(input: {
   if (!doubt) {
     return { eligible: false, blockedReason: "no_doubt" };
   }
-  if (doubt.pattern !== AUTOCLOSE_PATTERN) {
+  if (!AUTOCLOSE_ELIGIBLE_PATTERNS.has(doubt.pattern)) {
     return { eligible: false, blockedReason: `pattern_${doubt.pattern}_not_auto` };
   }
   if (doubt.tier !== AUTOCLOSE_TIER) {
@@ -73,10 +87,11 @@ export function decideHealthSignalAutoClose(input: {
   }
   return {
     eligible: true,
-    pattern: AUTOCLOSE_PATTERN,
+    pattern: doubt.pattern,
     tier: AUTOCLOSE_TIER,
     memoryItemId: doubt.memoryItemId,
     memoryConfidence: doubt.memoryConfidence,
     reason: doubt.reason,
+    resolvedReason: autoCloseResolvedReasonForPattern(doubt.pattern),
   };
 }

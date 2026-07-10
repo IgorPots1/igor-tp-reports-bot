@@ -9,6 +9,7 @@ import {
   decideHealthSignalAutoClose,
   readHealthSignalAutoCloseMode,
 } from "@/features/trainingpeaks/health-signal-autoclose";
+import type { HealthSignalMemoryDoubt } from "@/features/trainingpeaks/health-signal-memory-reconcile";
 
 // Deterministic (no DB). Proves Step-2 auto-close eligibility: ONLY a strong `already_resolved` doubt
 // on a health_issue_started signal is eligible; every other pattern/tier is blocked. Runs the SAME
@@ -217,6 +218,80 @@ function runDecisionCases(): number {
   return eligibleCount;
 }
 
+// Direct-doubt cases for the two-strong-pattern eligibility set. Bypasses the classifier and
+// constructs the doubt literal directly so we test decideHealthSignalAutoClose's pattern gate in
+// isolation from evaluateHealthSignalMemoryDoubt's cue matching (already covered in the reconcile
+// checks). Proves: two strong patterns eligible (already_resolved, returned_to_training), weak
+// returned_to_training blocked, pain_injury signalType blocked regardless of doubt.
+function directDoubt(overrides: Partial<HealthSignalMemoryDoubt> & Pick<HealthSignalMemoryDoubt, "pattern" | "tier">): HealthSignalMemoryDoubt {
+  return {
+    suspected: true,
+    memoryItemId: null,
+    memoryConfidence: null,
+    reason: "test reason",
+    ...overrides,
+  };
+}
+
+function runDirectDoubtCases(): void {
+  // returned_to_training + strong → eligible, resolvedReason distinguishes it from already_resolved.
+  const returnedStrong = decideHealthSignalAutoClose({
+    signalType: "health_issue_started",
+    doubt: directDoubt({ pattern: "returned_to_training", tier: "strong" }),
+  });
+  assert(returnedStrong.eligible === true, "returned_to_training/strong must be eligible");
+  if (returnedStrong.eligible) {
+    assert(returnedStrong.pattern === "returned_to_training", "eligible pattern must be returned_to_training");
+    assert(
+      returnedStrong.resolvedReason === "memory_autoclose_returned_to_training",
+      `expected resolvedReason memory_autoclose_returned_to_training, got ${returnedStrong.resolvedReason}`
+    );
+  }
+
+  // returned_to_training + weak → blocked (mark-only, never autoclose).
+  const returnedWeak = decideHealthSignalAutoClose({
+    signalType: "health_issue_started",
+    doubt: directDoubt({ pattern: "returned_to_training", tier: "weak" }),
+  });
+  assert(returnedWeak.eligible === false, "returned_to_training/weak must be blocked");
+  if (!returnedWeak.eligible) {
+    assert(
+      returnedWeak.blockedReason === "tier_weak_not_auto",
+      `expected blockedReason tier_weak_not_auto, got ${returnedWeak.blockedReason}`
+    );
+  }
+
+  // already_resolved + strong → still eligible, resolvedReason unchanged (regression guard).
+  const resolvedStrong = decideHealthSignalAutoClose({
+    signalType: "health_issue_started",
+    doubt: directDoubt({ pattern: "already_resolved", tier: "strong" }),
+  });
+  assert(resolvedStrong.eligible === true, "already_resolved/strong must remain eligible (regression)");
+  if (resolvedStrong.eligible) {
+    assert(
+      resolvedStrong.resolvedReason === "memory_autoclose_already_resolved",
+      `expected resolvedReason memory_autoclose_already_resolved, got ${resolvedStrong.resolvedReason}`
+    );
+  }
+
+  // pain_injury signalType → blocked regardless of doubt strength.
+  const painInjurySignal = decideHealthSignalAutoClose({
+    signalType: "pain_injury",
+    doubt: directDoubt({ pattern: "returned_to_training", tier: "strong" }),
+  });
+  assert(painInjurySignal.eligible === false, "pain_injury signalType must be blocked");
+  if (!painInjurySignal.eligible) {
+    assert(
+      painInjurySignal.blockedReason === "not_health_issue_started",
+      `expected blockedReason not_health_issue_started, got ${painInjurySignal.blockedReason}`
+    );
+  }
+
+  process.stdout.write(
+    `${LOG_PREFIX} direct-doubt cases: returned_to_training/strong ELIGIBLE, returned_to_training/weak blocked, already_resolved/strong ELIGIBLE (regression), pain_injury signalType blocked\n`
+  );
+}
+
 function runFlagCases(): void {
   assert(readHealthSignalAutoCloseMode({}) === "off", "unset env must be off");
   assert(readHealthSignalAutoCloseMode({ COACH_HEALTH_SIGNAL_AUTOCLOSE_MODE: "" }) === "off", "empty must be off");
@@ -238,8 +313,9 @@ function run(): void {
   const eligibleCount = runDecisionCases();
   // Exactly ONE case (strong already_resolved) is eligible; the rest are blocked.
   assert(eligibleCount === 1, `expected exactly 1 eligible case, got ${eligibleCount}`);
+  runDirectDoubtCases();
   runFlagCases();
-  process.stdout.write(`${LOG_PREFIX} PASS (${CASES.length} decision cases, 1 eligible; flag reader OK)\n`);
+  process.stdout.write(`${LOG_PREFIX} PASS (${CASES.length} decision cases, 1 eligible; 4 direct-doubt cases; flag reader OK)\n`);
 }
 
 try {
