@@ -976,14 +976,42 @@ export type TrainingPeaksWorkoutDerivedMetricsUpsertRow = {
   hr_quality?: "good" | "degraded" | "unreliable" | null;
   pct_hr_cleaned?: number | null;
   avg_hr?: number | null;
+
+  // Goal-vs-actual (design doc section 2). target_source is 'plan' only when
+  // the plan's per-step targets resolve to an absolute HR/pace corridor;
+  // 'athlete_zones' is a schema-only placeholder (no zones data source
+  // exists yet) — always null in practice until that lookup is built.
+  pct_time_hr_target?: number | null;
+  pct_time_pace_target?: number | null;
+  target_source?: "plan" | "athlete_zones" | null;
+  time_in_zones?: unknown;
+  zone_basis?: "threshold_hr" | "max_hr_pct" | null;
+
+  // Interval rep scalars (design doc section 2 + 5c), work-laps only.
+  reps_detected_count?: number | null;
+  rep_detection_method?: "structure" | "lap_trigger" | "heuristic" | "none" | null;
+  rep_paces?: unknown;
+  rep_pace_fade_pct?: number | null;
+  rep_pace_cv?: number | null;
+  rep_peak_hrs?: unknown;
+  rep_recovery_drops?: unknown;
+
+  // Steady-effort / decoupling (design doc section 5b).
+  steady_duration_s?: number | null;
+  hr_decoupling_pct?: number | null;
   // Required (not optional): the DB check constraint
   // trainingpeaks_workout_derived_metrics_decoupling_reason_check rejects any
   // row where decoupling_valid=false and decoupling_invalid_reason is null.
-  // This stage never computes decoupling, so every row must set
-  // decoupling_valid=false with an explicit reason (e.g.
-  // 'not_computed_this_stage') — leaving these out fails every insert.
+  // Every row must set an explicit reason whenever decoupling wasn't
+  // computed (interval workout, no FIT, too short, not steady, ...).
   decoupling_valid: boolean;
   decoupling_invalid_reason: string | null;
+
+  // Comparison (design doc "вшитые ограничения" #2) — always accompanied by
+  // ef_context_flag='context_dependent' (DB default + check constraint;
+  // not set here, the default already satisfies it).
+  aerobic_ef?: number | null;
+
   source_snapshot?: unknown;
   normalization_warnings?: string[];
   scanned_at?: string;

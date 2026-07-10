@@ -28,6 +28,15 @@ export type DerivedMetricsFitFields = {
   avg_hr: number | null;
 };
 
+// Multiple device files on one workout aren't silently collapsed to "use the
+// first" — this returns the diagnostic warning to surface in the same
+// per-workout summary every other warning lands in, or null when there's
+// nothing to flag (the common single-file case, which stays silent).
+export function buildMultiDeviceFileWarning(fileInfoCount: number): string | null {
+  if (fileInfoCount <= 1) return null;
+  return `multiple device files (${fileInfoCount}) — used the first that parsed successfully, others ignored; verify`;
+}
+
 export function buildDerivedMetricsFitFields(outcome: FitIngestOutcome): DerivedMetricsFitFields {
   switch (outcome.kind) {
     case "no_details":

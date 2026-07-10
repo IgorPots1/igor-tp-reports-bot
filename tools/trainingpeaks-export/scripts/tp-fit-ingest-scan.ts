@@ -1,4 +1,4 @@
-// FIT-ingest pipeline (design doc stage 3: /Users/igor/dev-notes/20 Coach OS/
+// FIT-ingest pipeline (design doc stages 3+4: /Users/igor/dev-notes/20 Coach OS/
 // 2026-07-09 FIT Ingest & Derived Metrics Design.md, section 7 — architectural
 // boundary). LOCAL MAC RUNNER ONLY: uses a Playwright browser session + cookies
 // to call TrainingPeaks endpoints that require browser auth
@@ -10,7 +10,9 @@
 // For each completed workout in trainingpeaks_workout_cache within [from, to]:
 //   1. GET /details for workoutDeviceFileInfos[].fileId (mean-max curves are
 //      fetched here too but unused this stage — a later stage may use them
-//      for the details_only decoupling fallback).
+//      for the details_only decoupling fallback). Multiple device files ->
+//      still use the first that parses, but flag it in the diagnostic
+//      warnings rather than silently picking one.
 //   2. If a fileId exists, download it directly via /files/{fileId}
 //      (v1 then v6) and parse with fit-file-parser@3. Because the fileId
 //      comes from THIS workout's own /details response (not a fuzzy
@@ -20,11 +22,13 @@
 //   3. Clean records[].heart_rate BEFORE computing anything HR-derived
 //      (fit-hr-cleaning.ts) and classify laps as work/rest
 //      (fit-lap-work-detection.ts).
-//   4. Write laps (trainingpeaks_workout_laps, source='fit') and ONE derived
-//      row (trainingpeaks_workout_derived_metrics) per workout. This stage
-//      only ever writes the metadata + cleaned avg_hr subset of the derived
-//      row — the scalar columns (rep_*, hr_decoupling_pct, aerobic_ef, ...)
-//      are left null for a later ingest stage.
+//   4. From the SAME cleaned records + classified laps, compute the scalar
+//      columns in one pass: goal-vs-actual (fit-goal-vs-actual.ts), interval
+//      rep scalars over work laps (fit-interval-scalars.ts), and the
+//      steady-effort decoupling gate + aerobic_ef (fit-steady-decoupling.ts).
+//   5. Write laps (trainingpeaks_workout_laps, source='fit') and ONE derived
+//      row (trainingpeaks_workout_derived_metrics) per workout, now with the
+//      full scalar set populated.
 //
 // No FIT file (manual entry / treadmill) -> the derived row still gets
 // written with has_fit=false and an honest fallback_level; every place we
@@ -56,15 +60,24 @@ import {
 } from "./lib/fit-workout-normalization.ts";
 import { cleanHeartRateSeries, computeCleanedMovingAverageHr } from "./lib/fit-hr-cleaning.ts";
 import { detectWorkLaps } from "./lib/fit-lap-work-detection.ts";
-import { buildDerivedMetricsFitFields, type FitIngestOutcome } from "./lib/fit-ingest-outcome.ts";
+import {
+  buildDerivedMetricsFitFields,
+  buildMultiDeviceFileWarning,
+  type FitIngestOutcome,
+} from "./lib/fit-ingest-outcome.ts";
+import { computeGoalVsActual } from "./lib/fit-goal-vs-actual.ts";
+import { computeIntervalScalars } from "./lib/fit-interval-scalars.ts";
+import { computeAerobicEf, computeSteadyDecoupling } from "./lib/fit-steady-decoupling.ts";
+import { MIN_WORK_REPS_FOR_SCALARS } from "./lib/fit-scalar-constants.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
 
-// This stage never computes decoupling (that's a later ingest stage), so
-// decoupling_valid is always false and the DB requires a non-null reason
-// (trainingpeaks_workout_derived_metrics_decoupling_reason_check).
-const DECOUPLING_NOT_COMPUTED_REASON = "not_computed_this_stage";
+// No FIT records at all -> decoupling (and every other FIT-derived scalar)
+// can never be computed for this row, period — distinct from the
+// interval/too_short/not_steady reasons below, which only apply once we
+// actually have cleaned records to gate.
+const DECOUPLING_NO_FIT_RECORDS_REASON = "no_fit_records";
 
 type CliArgs = {
   from: string;
@@ -290,10 +303,11 @@ async function ingestOneWorkoutFit(input: {
     workout_date: input.cacheRow.workoutDate,
     workout_type: workoutType,
     scanned_at: input.scannedAt,
-    // Required by the DB check constraint on every row this stage writes —
-    // see DECOUPLING_NOT_COMPUTED_REASON.
+    // Default for the no-FIT-data branches (required by the DB check
+    // constraint); the fit_parsed branch below overrides these with the
+    // real computeSteadyDecoupling() result once records exist to gate.
     decoupling_valid: false,
-    decoupling_invalid_reason: DECOUPLING_NOT_COMPUTED_REASON,
+    decoupling_invalid_reason: DECOUPLING_NO_FIT_RECORDS_REASON,
   };
 
   const degraded = (outcome: FitIngestOutcome): IngestOneWorkoutResult => ({
@@ -337,6 +351,15 @@ async function ingestOneWorkoutFit(input: {
     return degraded({ kind: "no_fit_file" });
   }
 
+  // Multiple device files: we still take the primary one (first that
+  // downloads and parses, same as before), but this isn't silent — it lands
+  // in the same per-workout diagnostic summary every other warning does, so
+  // Igor sees it and can check which file was actually used.
+  const multiFileWarning = buildMultiDeviceFileWarning(fileInfos.length);
+  if (multiFileWarning) {
+    warnings.push(multiFileWarning);
+  }
+
   for (const info of fileInfos) {
     const fileId = typeof info.fileId === "number" ? info.fileId : null;
     if (!fileId) continue;
@@ -361,6 +384,28 @@ async function ingestOneWorkoutFit(input: {
       : null;
     const workDetection = detectWorkLaps({ laps: normalizedLaps, structureSnapshot });
     warnings.push(...workDetection.notes);
+
+    const workLapCount = [...workDetection.isWorkByLapIndex.values()].filter((v) => v === true).length;
+    const isIntervalWorkout = workDetection.method !== "none" && workLapCount >= MIN_WORK_REPS_FOR_SCALARS;
+
+    const decoupling = computeSteadyDecoupling({
+      cleanedRecords: cleaning.records,
+      isIntervalWorkout,
+      hrQuality: cleaning.hrQuality,
+    });
+    const intervalScalars = computeIntervalScalars({
+      laps: normalizedLaps,
+      isWorkByLapIndex: workDetection.isWorkByLapIndex,
+      cleanedRecords: cleaning.records,
+    });
+    const goalVsActual = computeGoalVsActual({
+      structureSnapshot,
+      cleanedRecords: cleaning.records,
+      hrQuality: cleaning.hrQuality,
+      observedMaxHr: input.observedMaxHr,
+    });
+    const aerobicEf = computeAerobicEf(cleaning.records, avgHr);
+    warnings.push(...intervalScalars.warnings, ...goalVsActual.warnings);
 
     const lapRows: TrainingPeaksWorkoutLapUpsertRow[] = normalizedLaps.map((lap) => ({
       student_id: input.cacheRow.studentId,
@@ -406,6 +451,23 @@ async function ingestOneWorkoutFit(input: {
           pctHrCleaned: cleaning.pctHrCleaned,
           avgHr,
         }),
+        pct_time_hr_target: goalVsActual.pctTimeHrTarget,
+        pct_time_pace_target: goalVsActual.pctTimePaceTarget,
+        target_source: goalVsActual.targetSource,
+        time_in_zones: goalVsActual.timeInZones,
+        zone_basis: goalVsActual.zoneBasis,
+        reps_detected_count: workLapCount,
+        rep_detection_method: workDetection.method,
+        rep_paces: intervalScalars.repPaces,
+        rep_pace_fade_pct: intervalScalars.repPaceFadePct,
+        rep_pace_cv: intervalScalars.repPaceCv,
+        rep_peak_hrs: intervalScalars.repPeakHrs,
+        rep_recovery_drops: intervalScalars.repRecoveryDrops,
+        steady_duration_s: decoupling.steadyDurationS,
+        hr_decoupling_pct: decoupling.hrDecouplingPct,
+        decoupling_valid: decoupling.decouplingValid,
+        decoupling_invalid_reason: decoupling.decouplingInvalidReason,
+        aerobic_ef: aerobicEf,
         normalization_warnings: warnings,
       },
       warnings,
