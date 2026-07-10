@@ -10341,6 +10341,64 @@ function applyMultiMessageMoveIntentCaution(input: {
   };
 }
 
+/**
+ * A move request we deliberately refuse to execute (no matching workout from today onward) must
+ * still reach the coach. The common real-world case is a student asking to move a *missed past*
+ * session forward: the source is invisible to the candidate filter, and the runner's hard gate
+ * rejects past sources anyway. Previously this was skipped silently — neither the student nor the
+ * coach learned anything. We log a review case instead. This never creates a move action and never
+ * executes anything.
+ */
+async function surfaceNoSuchWorkoutMoveRequestForCoachReview(input: {
+  student: TrainingPeaksStudent;
+  chatId: string;
+  messageId: string;
+  rawText: string;
+  parsed: ParsedTrainingPeaksMoveWorkoutPayload;
+}): Promise<void> {
+  const telegramMessageId = Number(input.messageId);
+  if (!Number.isFinite(telegramMessageId)) {
+    return;
+  }
+
+  try {
+    const existingCase = await getTrainingPeaksCoachCaseByTelegramMessageAndKind({
+      telegramChatId: input.chatId,
+      telegramMessageId,
+      caseKind: "move_workout_needs_review",
+    });
+    if (existingCase) {
+      return;
+    }
+
+    await insertTrainingPeaksCoachCase({
+      studentId: input.student.id,
+      caseKind: "move_workout_needs_review",
+      telegramChatId: input.chatId,
+      telegramMessageId,
+      status: "needs_review",
+      coachNotesJson: {
+        reason: "no_such_workout",
+        requested_workout: input.parsed.workoutDescriptor?.raw ?? null,
+        requested_workout_type: input.parsed.workoutDescriptor?.type ?? null,
+        target: formatTrainingPeaksMoveWorkoutTargetSummary(input.parsed.target),
+        text_preview: input.rawText.slice(0, 180),
+        hint:
+          "В плане от сегодня вперёд такой тренировки нет. Возможно, это перенос пропущенной " +
+          "тренировки из прошлого — автоматика её не двигает, перенеси вручную в TrainingPeaks.",
+      },
+    });
+  } catch (error) {
+    // Never let review-case bookkeeping break message handling.
+    console.warn("Failed to surface no_such_workout move request as coach case", {
+      studentId: input.student.id,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      error,
+    });
+  }
+}
+
 export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
   input: CreateTrainingPeaksMoveWorkoutActionFromTelegramInput
 ): Promise<CreateTrainingPeaksMoveWorkoutActionFromTelegramResult> {
@@ -10465,12 +10523,20 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
 
   // Greedy-fix: «давайте сделаю <тип> в <день>» where no such workout is in the plan is an ADD
   // request, not a move. Do NOT create a move card pulling an unrelated workout (creating workouts
-  // is a separate feature). Silently skip — the student can rephrase or the coach acts manually.
+  // is a separate feature). We still skip the move — but no longer silently: the request is logged
+  // as a coach review case so a genuine ask (e.g. moving a missed past session) is never lost.
   if (enrichedParsed.moveSituation === "no_such_workout") {
     console.info("Skipping TrainingPeaks move action — no such workout in plan (add request, not move)", {
       studentId: student.id,
       chatId: input.chatId,
       messageId: input.messageId,
+    });
+    await surfaceNoSuchWorkoutMoveRequestForCoachReview({
+      student,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      rawText: trimmedText,
+      parsed: enrichedParsed,
     });
     return { ok: false, reason: "no_such_workout_not_a_move", student };
   }
