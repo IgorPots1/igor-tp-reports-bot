@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { runTrainingPeaksAttentionDigest } from "@/features/trainingpeaks/attention-digest-run";
 import { sendWorkoutRecoveryConfirmations } from "@/features/telegram/trainingpeaks";
-import { runHealthSignalMemoryAutoClose } from "@/features/trainingpeaks/service";
+import { runHealthSignalMemoryAutoClose, runSignalZombieCleanup } from "@/features/trainingpeaks/service";
 import {
   createTrainingPeaksCronRunLog,
   expireTrainingPeaksOperationalSignals,
@@ -214,12 +214,31 @@ async function handleTrainingPeaksAttentionDigest(request: Request) {
     console.error("trainingpeaks_health_signal_memory_autoclose_failed", { error });
   }
 
+  // Зомби-чистка: expire stale valid_until=NULL plan-signals (COACH_SIGNAL_ZOMBIE_CLEANUP_MODE, default
+  // OFF). Self-contained + try/catch так же, как Шаг2 — падение чистки не роняет дайджест.
+  // off → no-op; dry_run → trace only; on → expire + trace.
+  let zombieCleanup: {
+    mode: string;
+    considered: number;
+    eligible: number;
+    closed: number;
+  } = { mode: "off", considered: 0, eligible: 0, closed: 0 };
+  try {
+    zombieCleanup = await runSignalZombieCleanup();
+    if (zombieCleanup.eligible > 0) {
+      console.info("trainingpeaks_signal_zombie_cleanup", zombieCleanup);
+    }
+  } catch (error) {
+    console.error("trainingpeaks_signal_zombie_cleanup_failed", { error });
+  }
+
   return jsonResponse(result.ok ? 200 : 500, {
     ok: result.ok,
     status: result.status,
     counts: result.counts,
     workoutRecovery,
     memoryAutoClose,
+    zombieCleanup,
   });
 }
 
