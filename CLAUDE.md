@@ -158,3 +158,23 @@ Every task report should include:
 - **Прод-push и деплой делает только Игорь.** Claude не пушит (нет кредов в песочнице) и не запускает прод-миграции; при необходимости миграции пишет файл в `supabase/migrations/` + команду применить (до деплоя).
 - **Obsidian как контекст:** волт «Igor Second Brain» (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents`) можно подключать как папку — Claude читает/ищет по заметкам (теги во фронтматтере, папки Agent-Hub / AI-Running-Coach / Ученики / Inbox) и складывает итоги задач туда же в том же формате (`ГГГГ-ММ-ДД - превью - хэш.md`, фронтматтер `type/source/category/tags`). Dev-summary по этому репозиторию → папка `Agent-Hub`.
 - **Координация с Cursor:** пока активна сессия Claude, не давать Cursor делать git-операции (коммиты/checkout) — общий рабочий каталог, чужие коммиты «прилипают» к веткам Claude.
+
+## 12. Git-протокол репозитория (СТРОГО — ветки не смешивать)
+
+Одна задача = одна ветка = один worktree. Никогда не смешивать несвязанные
+задачи в одной ветке.
+
+- НИКОГДА `git add -A` / `git add .`. Только точечно свои файлы: `git add <пути>`.
+  Перед каждым commit — `git status`; изменения не своей задачи НЕ добавлять.
+- Старт задачи: ветвиться от свежего origin/main —
+  `git fetch origin && git worktree add ../wt-<task> -b feature/<task> origin/main`
+  (worktree в ~/, НЕ в /tmp). В начале назвать вслух: "Ветка: feature/<task>, worktree: <path>".
+- main залочен и физически выгружен в worktree /Users/igor/igor-run-analysis.
+  Все операции с main (checkout/merge/pull) делать ТАМ, не в /Users/igor/igor-tp-reports-bot.
+- Если оказался на чужой ветке или коммиты смешались — СТОП, показать
+  `git log --oneline -10`, `git status`, `git branch --show-current`, спросить Игоря.
+  НЕ делать reset --hard / rebase / merge между несвязанными ветками без явного
+  подтверждения Игоря в текущем сообщении.
+- "Доделай / влей / смёржи" = Claude выполняет САМ: commit в feature-ветке →
+  checkout/merge в папке где main → нужные коммиты → и ОСТАНАВЛИВАЕТСЯ перед push.
+  Показывает branch/log/status. Push и деплой — ТОЛЬКО по явной команде Игоря "пушь".
