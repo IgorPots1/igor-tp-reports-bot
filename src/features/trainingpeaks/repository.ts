@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { createSupabaseServerClient } from "@/features/supabase/server";
+import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import {
   buildTelegramContextTextPreview,
   sha256TelegramContextText,
@@ -1541,11 +1541,11 @@ export async function getTrainingPeaksActionById(actionId: string): Promise<Trai
 
 async function getTrainingPeaksActionByIdInternal(actionId: string): Promise<TrainingPeaksAction | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_actions")
     .select("*")
     .eq("id", actionId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks action ${actionId}: ${error.message}`);
@@ -1969,9 +1969,9 @@ export async function upsertTrainingPeaksWorkoutCacheRows(
     updated_at: updatedAt,
   }));
 
-  const { error } = await supabase.from("trainingpeaks_workout_cache").upsert(payload, {
+  const { error } = await withSupabaseNetworkRetry(() => supabase.from("trainingpeaks_workout_cache").upsert(payload, {
     onConflict: "trainingpeaks_athlete_id,trainingpeaks_workout_id",
-  });
+  }));
 
   if (error) {
     throw new Error(`Failed to upsert TrainingPeaks workout cache rows: ${error.message}`);
@@ -2001,7 +2001,7 @@ export async function reconcileTrainingPeaksWorkoutCachePlannedRows(input: {
   runStartedAt: string;
 }): Promise<number> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase.rpc(
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase.rpc(
     "reconcile_trainingpeaks_workout_cache_planned_rows",
     {
       p_student_id: input.studentId,
@@ -2009,7 +2009,7 @@ export async function reconcileTrainingPeaksWorkoutCachePlannedRows(input: {
       p_to: input.to,
       p_run_started_at: input.runStartedAt,
     }
-  );
+  ));
 
   if (error) {
     throw new Error(
@@ -2034,9 +2034,9 @@ export async function upsertTrainingPeaksWorkoutCacheScanStatuses(
     updated_at: updatedAt,
   }));
 
-  const { error } = await supabase.from("trainingpeaks_workout_cache_scan_status").upsert(payload, {
+  const { error } = await withSupabaseNetworkRetry(() => supabase.from("trainingpeaks_workout_cache_scan_status").upsert(payload, {
     onConflict: "student_id,scan_from,scan_to",
-  });
+  }));
 
   if (error) {
     throw new Error(`Failed to upsert TrainingPeaks workout cache scan statuses: ${error.message}`);
@@ -2057,9 +2057,9 @@ export async function upsertTrainingPeaksStudentHealthMetricProfiles(
     updated_at: nowIso,
   }));
 
-  const { error } = await supabase
+  const { error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_health_metric_profiles")
-    .upsert(payload, { onConflict: "student_id" });
+    .upsert(payload, { onConflict: "student_id" }));
 
   if (error) {
     throw new Error(`Failed to upsert TrainingPeaks health metric profiles: ${error.message}`);
@@ -2080,9 +2080,9 @@ export async function upsertTrainingPeaksHealthMetricsCacheRows(
     updated_at: updatedAt,
   }));
 
-  const { error } = await supabase.from("trainingpeaks_health_metrics_cache").upsert(payload, {
+  const { error } = await withSupabaseNetworkRetry(() => supabase.from("trainingpeaks_health_metrics_cache").upsert(payload, {
     onConflict: "student_id,metric_timestamp,metric_type_id,metric_key",
-  });
+  }));
 
   if (error) {
     throw new Error(`Failed to upsert TrainingPeaks health metrics cache rows: ${error.message}`);
@@ -2103,9 +2103,9 @@ export async function upsertTrainingPeaksHealthMetricsScanStatuses(
     updated_at: updatedAt,
   }));
 
-  const { error } = await supabase.from("trainingpeaks_health_metrics_scan_status").upsert(payload, {
+  const { error } = await withSupabaseNetworkRetry(() => supabase.from("trainingpeaks_health_metrics_scan_status").upsert(payload, {
     onConflict: "student_id,scan_from,scan_to",
-  });
+  }));
 
   if (error) {
     throw new Error(`Failed to upsert TrainingPeaks health metrics scan statuses: ${error.message}`);
@@ -2116,12 +2116,12 @@ export async function listTrainingPeaksWorkoutCacheForDate(
   date: string
 ): Promise<TrainingPeaksWorkoutCacheRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_cache")
     .select("*")
     .eq("workout_date", date)
     .order("student_name", { ascending: true })
-    .order("trainingpeaks_workout_id", { ascending: true });
+    .order("trainingpeaks_workout_id", { ascending: true }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks workout cache for date ${date}: ${error.message}`);
@@ -2164,13 +2164,13 @@ export async function listTrainingPeaksWorkoutCacheScanStatusesForRange(input: {
   to: string;
 }): Promise<TrainingPeaksWorkoutCacheScanStatus[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_cache_scan_status")
     .select("*")
     .eq("scan_from", input.from)
     .eq("scan_to", input.to)
     .order("student_name", { ascending: true })
-    .order("scanned_at", { ascending: false });
+    .order("scanned_at", { ascending: false }));
 
   if (error) {
     throw new Error(
@@ -2187,13 +2187,13 @@ export async function listTrainingPeaksWorkoutCacheScanStatusesCoveringDate(
   date: string
 ): Promise<TrainingPeaksWorkoutCacheScanStatus[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_cache_scan_status")
     .select("*")
     .lte("scan_from", date)
     .gte("scan_to", date)
     .order("student_name", { ascending: true })
-    .order("scanned_at", { ascending: false });
+    .order("scanned_at", { ascending: false }));
 
   if (error) {
     throw new Error(
@@ -2211,7 +2211,7 @@ export async function getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCove
   date: string
 ): Promise<TrainingPeaksWorkoutCacheScanStatus | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_cache_scan_status")
     .select("*")
     .eq("student_id", studentId)
@@ -2219,7 +2219,7 @@ export async function getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCove
     .gte("scan_to", date)
     .order("scanned_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -2287,14 +2287,14 @@ export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
   to: string;
 }): Promise<TrainingPeaksWorkoutCacheRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_cache")
     .select("*")
     .eq("student_id", input.studentId)
     .gte("workout_date", input.from)
     .lte("workout_date", input.to)
     .order("workout_date", { ascending: true })
-    .order("trainingpeaks_workout_id", { ascending: true });
+    .order("trainingpeaks_workout_id", { ascending: true }));
 
   if (error) {
     throw new Error(
@@ -2323,12 +2323,12 @@ export async function listUpcomingTrainingPeaksRaceEvents(input: {
   toDate: string;
 }): Promise<TrainingPeaksRaceEventRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_race_events")
     .select("id, student_id, event_date, title, distance_raw, source")
     .gte("event_date", input.fromDate)
     .lte("event_date", input.toDate)
-    .order("event_date", { ascending: true });
+    .order("event_date", { ascending: true }));
   if (error) {
     throw new Error(
       `Failed to list TrainingPeaks race events for range ${input.fromDate}..${input.toDate}: ${error.message}`
@@ -2348,10 +2348,10 @@ export async function listUpcomingTrainingPeaksRaceEvents(input: {
   const studentIds = [...new Set(rows.map((row) => row.student_id).filter(Boolean))];
   const nameById = new Map<string, string | null>();
   if (studentIds.length > 0) {
-    const { data: students, error: studentsError } = await supabase
+    const { data: students, error: studentsError } = await withSupabaseNetworkRetry(() => supabase
       .from("trainingpeaks_students")
       .select("id, student_name")
-      .in("id", studentIds);
+      .in("id", studentIds));
     if (studentsError) {
       throw new Error(`Failed to load student names for race events: ${studentsError.message}`);
     }
@@ -2398,10 +2398,9 @@ export async function getTrainingPeaksWorkoutCacheFreshness(input?: {
         .eq("workout_date", input.date)
     : supabase.from("trainingpeaks_workout_cache").select("id", { count: "exact", head: true });
 
-  const [{ data: latestRow, error: latestError }, { count, error: countError }] = await Promise.all([
-    latestQuery,
-    countQuery,
-  ]);
+  const [{ data: latestRow, error: latestError }, { count, error: countError }] = await withSupabaseNetworkRetry(() =>
+    Promise.all([latestQuery, countQuery])
+  );
 
   if (latestError) {
     throw new Error(`Failed to get TrainingPeaks workout cache freshness: ${latestError.message}`);
@@ -2426,14 +2425,14 @@ export async function getTrainingPeaksAthleteObservedMaxHr(
   trainingPeaksAthleteId: number
 ): Promise<number | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_laps")
     .select("max_hr")
     .eq("trainingpeaks_athlete_id", trainingPeaksAthleteId)
     .not("max_hr", "is", null)
     .order("max_hr", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -2454,11 +2453,11 @@ export async function replaceTrainingPeaksWorkoutLaps(input: {
   rows: TrainingPeaksWorkoutLapUpsertRow[];
 }): Promise<number> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase.rpc("replace_trainingpeaks_workout_laps", {
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase.rpc("replace_trainingpeaks_workout_laps", {
     p_workout_cache_id: input.workoutCacheId,
     p_source: input.source,
     p_rows: input.rows,
-  });
+  }));
 
   if (error) {
     throw new Error(`Failed to replace TrainingPeaks workout laps: ${error.message}`);
@@ -2481,9 +2480,9 @@ export async function upsertTrainingPeaksWorkoutDerivedMetricsRows(
     updated_at: updatedAt,
   }));
 
-  const { error } = await supabase
+  const { error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_derived_metrics")
-    .upsert(payload, { onConflict: "workout_cache_id" });
+    .upsert(payload, { onConflict: "workout_cache_id" }));
 
   if (error) {
     throw new Error(`Failed to upsert TrainingPeaks workout derived metrics rows: ${error.message}`);
@@ -2578,10 +2577,9 @@ export async function getTrainingPeaksHealthMetricsFreshness(input?: {
       .select("id", { count: "exact", head: true });
   }
 
-  const [{ data: latestRow, error: latestError }, { count, error: countError }] = await Promise.all([
-    latestQuery,
-    countQuery,
-  ]);
+  const [{ data: latestRow, error: latestError }, { count, error: countError }] = await withSupabaseNetworkRetry(() =>
+    Promise.all([latestQuery, countQuery])
+  );
 
   if (latestError) {
     throw new Error(`Failed to get TrainingPeaks health metrics cache freshness: ${latestError.message}`);
@@ -2598,12 +2596,12 @@ export async function getTrainingPeaksHealthMetricsFreshness(input?: {
 
 export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("is_active", true)
     .order("student_name", { ascending: true })
-    .order("student_id", { ascending: true });
+    .order("student_id", { ascending: true }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks students: ${error.message}`);
@@ -2615,13 +2613,13 @@ export async function listTrainingPeaksStudents(): Promise<TrainingPeaksStudent[
 /** Active students included in all_enabled weekly report jobs. */
 export async function listTrainingPeaksWeeklyReportEligibleStudents(): Promise<TrainingPeaksStudent[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("is_active", true)
     .eq("weekly_report_enabled", true)
     .order("student_name", { ascending: true })
-    .order("student_id", { ascending: true });
+    .order("student_id", { ascending: true }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks weekly-report eligible students: ${error.message}`);
@@ -2633,13 +2631,13 @@ export async function listTrainingPeaksWeeklyReportEligibleStudents(): Promise<T
 /** Active, non-archived students for race/event discovery (ignores weekly_report_enabled). */
 export async function listTrainingPeaksActiveStudentsForEventScan(): Promise<TrainingPeaksStudent[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("is_active", true)
     .is("archived_at", null)
     .order("student_name", { ascending: true })
-    .order("student_id", { ascending: true });
+    .order("student_id", { ascending: true }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks students for event scan: ${error.message}`);
@@ -2650,12 +2648,12 @@ export async function listTrainingPeaksActiveStudentsForEventScan(): Promise<Tra
 
 export async function listTrainingPeaksStudentsIncludingArchived(): Promise<TrainingPeaksStudent[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .order("is_active", { ascending: false })
     .order("student_name", { ascending: true })
-    .order("student_id", { ascending: true });
+    .order("student_id", { ascending: true }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks students: ${error.message}`);
@@ -2669,11 +2667,11 @@ export async function getTrainingPeaksStudentById(
   client?: SupabaseServerClientLike
 ): Promise<TrainingPeaksStudent | null> {
   const supabase = client ?? createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks student ${id}: ${error.message}`);
@@ -2694,11 +2692,11 @@ export async function getTrainingPeaksStudentByStudentId(
   client?: SupabaseServerClientLike
 ): Promise<TrainingPeaksStudent | null> {
   const supabase = client ?? createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("student_id", studentId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks student by student_id ${studentId}: ${error.message}`);
@@ -2716,12 +2714,12 @@ export async function getTrainingPeaksStudentByTelegramUserId(
   client?: SupabaseServerClientLike
 ): Promise<TrainingPeaksStudent | null> {
   const supabase = client ?? createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("telegram_user_id", telegramUserId)
     .eq("is_active", true)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -2850,12 +2848,12 @@ export async function getTrainingPeaksStudentByTelegramChatId(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("telegram_chat_id", normalizedChatId)
     .eq("is_active", true)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -2880,12 +2878,12 @@ export async function listTrainingPeaksStudentsByTelegramChatId(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("telegram_chat_id", normalizedChatId)
     .eq("is_active", true)
-    .order("student_name", { ascending: true });
+    .order("student_name", { ascending: true }));
 
   if (error) {
     throw new Error(
@@ -2906,12 +2904,12 @@ export async function getTrainingPeaksStudentByTelegramUsername(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .ilike("telegram_username", normalizedUsername)
     .eq("is_active", true)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -2936,12 +2934,12 @@ export async function listTrainingPeaksStudentsByTelegramUsername(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .ilike("telegram_username", normalizedUsername)
     .eq("is_active", true)
-    .order("student_name", { ascending: true });
+    .order("student_name", { ascending: true }));
 
   if (error) {
     throw new Error(
@@ -2963,10 +2961,10 @@ export async function countTrainingPeaksStudentThreadsByStudentIds(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_threads")
     .select("student_id")
-    .in("student_id", normalizedIds);
+    .in("student_id", normalizedIds));
 
   if (error) {
     throw new Error(`Failed to count TrainingPeaks student threads: ${error.message}`);
@@ -2983,11 +2981,11 @@ export async function listTrainingPeaksStudentThreads(
   studentId: string
 ): Promise<TrainingPeaksStudentThread[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_threads")
     .select("*")
     .eq("student_id", studentId)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks student threads for ${studentId}: ${error.message}`);
@@ -3007,12 +3005,12 @@ export async function getTrainingPeaksStudentThreadByChatThread(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_threads")
     .select("*")
     .eq("telegram_chat_id", normalizedChatId)
     .eq("telegram_message_thread_id", telegramMessageThreadId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -3125,7 +3123,7 @@ export async function upsertTrainingPeaksBusinessChatFromMessage(
   input: UpsertTrainingPeaksBusinessChatInput
 ): Promise<TrainingPeaksBusinessChat> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .upsert(
       {
@@ -3142,7 +3140,7 @@ export async function upsertTrainingPeaksBusinessChatFromMessage(
       }
     )
     .select("*")
-    .single();
+    .single());
 
   if (error) {
     throw new Error(`Failed to upsert TrainingPeaks business chat: ${error.message}`);
@@ -3155,11 +3153,11 @@ export async function getTrainingPeaksBusinessChatById(
   id: string
 ): Promise<TrainingPeaksBusinessChat | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .select("*")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks business chat ${id}: ${error.message}`);
@@ -3177,12 +3175,12 @@ export async function getTrainingPeaksBusinessChatByConnectionAndChatId(
   chatId: string
 ): Promise<TrainingPeaksBusinessChat | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .select("*")
     .eq("business_connection_id", businessConnectionId)
     .eq("chat_id", chatId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -3202,12 +3200,12 @@ export async function listRecentTrainingPeaksBusinessChats(
 ): Promise<TrainingPeaksBusinessChat[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .select("*")
     .order("last_seen_at", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks business chats: ${error.message}`);
@@ -3226,14 +3224,14 @@ export async function getTrainingPeaksBusinessChatByChatId(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .select("*")
     .eq("chat_id", normalizedChatId)
     .order("last_seen_at", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks business chat by chat_id ${normalizedChatId}: ${error.message}`);
@@ -3260,10 +3258,10 @@ export async function getTrainingPeaksBusinessChatLastSeenByChatId(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .select("chat_id, last_seen_at")
-    .in("chat_id", normalized);
+    .in("chat_id", normalized));
 
   if (error) {
     throw new Error(`Failed to load business chat last_seen_at: ${error.message}`);
@@ -3285,12 +3283,12 @@ export async function listTrainingPeaksBusinessChatsForTelegramLinking(
 ): Promise<TrainingPeaksBusinessChat[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(limit, 1000));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .select("*")
     .order("last_seen_at", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks business chats for linking: ${error.message}`);
@@ -3311,13 +3309,13 @@ export async function listTrainingPeaksBusinessChatsByUsername(
 
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_business_chats")
     .select("*")
     .ilike("username", normalizedUsername)
     .order("last_seen_at", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(
@@ -3392,11 +3390,11 @@ export async function listTrainingPeaksStudentTelegramLinkCodesByCode(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_telegram_link_codes")
     .select("*")
     .in("code", normalizedCodes)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks Telegram link codes: ${error.message}`);
@@ -3618,13 +3616,13 @@ export async function enableTrainingPeaksStudentById(id: string): Promise<Traini
 
 export async function getLatestTrainingPeaksWeek(): Promise<TrainingPeaksWeek | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_weekly_reports")
     .select("week_from, week_to")
     .order("week_from", { ascending: false })
     .order("week_to", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get latest TrainingPeaks week: ${error.message}`);
@@ -3642,13 +3640,13 @@ export async function listTrainingPeaksReportsForWeek(
   weekTo: string
 ): Promise<TrainingPeaksWeeklyReport[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_weekly_reports")
     .select("*")
     .eq("week_from", weekFrom)
     .eq("week_to", weekTo)
     .order("student_name", { ascending: true })
-    .order("student_id", { ascending: true });
+    .order("student_id", { ascending: true }));
 
   if (error) {
     throw new Error(
@@ -3666,13 +3664,13 @@ export async function listAllTrainingPeaksReports(): Promise<TrainingPeaksWeekly
   let from = 0;
 
   while (true) {
-    const { data, error } = await supabase
+    const { data, error } = await withSupabaseNetworkRetry(() => supabase
       .from("trainingpeaks_weekly_reports")
       .select("*")
       .order("week_from", { ascending: false })
       .order("week_to", { ascending: false })
       .order("synced_at", { ascending: false })
-      .range(from, from + pageSize - 1);
+      .range(from, from + pageSize - 1));
 
     if (error) {
       throw new Error(`Failed to list TrainingPeaks reports: ${error.message}`);
@@ -3695,11 +3693,11 @@ export async function getTrainingPeaksWeeklyReportById(
   id: string
 ): Promise<TrainingPeaksWeeklyReport | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_weekly_reports")
     .select("*")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks weekly report ${id}: ${error.message}`);
@@ -3737,14 +3735,16 @@ export async function deleteTrainingPeaksOrphanReportsForWeek(
   weekTo: string
 ): Promise<number> {
   const supabase = createSupabaseServerClient();
-  const [{ data: reports, error: reportsError }, { data: students, error: studentsError }] = await Promise.all([
-    supabase
-      .from("trainingpeaks_weekly_reports")
-      .select("id, student_id")
-      .eq("week_from", weekFrom)
-      .eq("week_to", weekTo),
-    supabase.from("trainingpeaks_students").select("student_id"),
-  ]);
+  const [{ data: reports, error: reportsError }, { data: students, error: studentsError }] = await withSupabaseNetworkRetry(() =>
+    Promise.all([
+      supabase
+        .from("trainingpeaks_weekly_reports")
+        .select("id, student_id")
+        .eq("week_from", weekFrom)
+        .eq("week_to", weekTo),
+      supabase.from("trainingpeaks_students").select("student_id"),
+    ])
+  );
 
   if (reportsError) {
     throw new Error(
@@ -4053,12 +4053,12 @@ export async function createTrainingPeaksAction(
 export async function listRecentTrainingPeaksActions(limit = 15): Promise<TrainingPeaksActionWithStudent[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(limit, 30));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_actions")
     .select("*")
     .eq("action_type", "move_workout")
     .order("created_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(`Failed to list recent TrainingPeaks actions: ${error.message}`);
@@ -4069,10 +4069,10 @@ export async function listRecentTrainingPeaksActions(limit = 15): Promise<Traini
   const studentNamesById = new Map<string, string>();
 
   if (studentIds.length > 0) {
-    const { data: studentsData, error: studentsError } = await supabase
+    const { data: studentsData, error: studentsError } = await withSupabaseNetworkRetry(() => supabase
       .from("trainingpeaks_students")
       .select("id, student_name")
-      .in("id", studentIds);
+      .in("id", studentIds));
     if (studentsError) {
       throw new Error(`Failed to load TrainingPeaks students for actions list: ${studentsError.message}`);
     }
@@ -4091,7 +4091,7 @@ export async function listRecentTrainingPeaksActions(limit = 15): Promise<Traini
 export async function listActiveTrainingPeaksMoveActions(limit = 200): Promise<TrainingPeaksAction[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(limit, 500));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_actions")
     .select("*")
     .eq("action_type", "move_workout")
@@ -4099,7 +4099,7 @@ export async function listActiveTrainingPeaksMoveActions(limit = 200): Promise<T
       "status.eq.pending_coach,and(status.eq.approved,execution_status.in.(not_started,dry_run_running,dry_run_completed,execute_pending,running_local))"
     )
     .order("created_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(`Failed to list active TrainingPeaks move actions: ${error.message}`);
@@ -5061,11 +5061,11 @@ export async function listLatestTrainingPeaksActionRunsByActionIds(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_action_runs")
     .select("*")
     .in("action_id", normalizedActionIds)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false }));
 
   if (error) {
     throw new Error(`Failed to list latest TrainingPeaks action runs: ${error.message}`);
@@ -5086,14 +5086,14 @@ async function getLatestTrainingPeaksActionRunSummary(
   runType: TrainingPeaksActionRunType
 ): Promise<TrainingPeaksActionRunContextSummary | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_action_runs")
     .select("*")
     .eq("action_id", actionId)
     .eq("run_type", runType)
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
   if (error) {
     throw new Error(
       `Failed to load latest ${runType} TrainingPeaks action run for action ${actionId}: ${error.message}`
@@ -5133,7 +5133,7 @@ export async function listTrainingPeaksActionLatestRunContexts(
   }
 
   const supabase = createSupabaseServerClient();
-  const [actionsRows, runsRows] = await Promise.all([
+  const [actionsRows, runsRows] = await withSupabaseNetworkRetry(() => Promise.all([
     supabase
       .from("trainingpeaks_actions")
       .select("*")
@@ -5143,7 +5143,7 @@ export async function listTrainingPeaksActionLatestRunContexts(
       .select("*")
       .in("action_id", normalizedActionIds)
       .order("created_at", { ascending: false }),
-  ]);
+  ]));
 
   if (actionsRows.error) {
     throw new Error(`Failed to load TrainingPeaks actions for run contexts: ${actionsRows.error.message}`);
@@ -5265,11 +5265,11 @@ export async function failTrainingPeaksActionDryRun(
 
 export async function getTrainingPeaksJobById(jobId: string): Promise<TrainingPeaksJob | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_jobs")
     .select("*")
     .eq("id", jobId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks job ${jobId}: ${error.message}`);
@@ -5288,7 +5288,7 @@ export async function findActiveTrainingPeaksJobForWeek(
   weekTo: string
 ): Promise<TrainingPeaksJob | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_jobs")
     .select("*")
     .eq("job_type", jobType)
@@ -5298,7 +5298,7 @@ export async function findActiveTrainingPeaksJobForWeek(
     .in("status", ["queued", "running"])
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -5317,7 +5317,7 @@ export async function findActiveTrainingPeaksRaceResultsProbeJobForStudent(
   studentInternalId: string
 ): Promise<TrainingPeaksJob | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_jobs")
     .select("*")
     .eq("job_type", "race_results_probe")
@@ -5326,7 +5326,7 @@ export async function findActiveTrainingPeaksRaceResultsProbeJobForStudent(
     .in("status", ["queued", "running"])
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -5348,7 +5348,7 @@ export async function findActiveTrainingPeaksJobForStudentWeek(
   weekTo: string
 ): Promise<TrainingPeaksJob | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_jobs")
     .select("*")
     .eq("job_type", jobType)
@@ -5359,7 +5359,7 @@ export async function findActiveTrainingPeaksJobForStudentWeek(
     .in("status", ["queued", "running"])
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -5380,13 +5380,13 @@ export async function getTrainingPeaksWeeklyReportForStudentWeek(
   weekTo: string
 ): Promise<TrainingPeaksWeeklyReport | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_weekly_reports")
     .select("*")
     .eq("student_id", studentId)
     .eq("week_from", weekFrom)
     .eq("week_to", weekTo)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -5404,11 +5404,11 @@ export async function getTrainingPeaksWeeklyReportForStudentWeek(
 export async function listRecentTrainingPeaksJobs(limit = 10): Promise<TrainingPeaksJob[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_jobs")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks jobs: ${error.message}`);
@@ -5419,11 +5419,11 @@ export async function listRecentTrainingPeaksJobs(limit = 10): Promise<TrainingP
 
 export async function countRunningTrainingPeaksJobsUpdatedBefore(cutoffIso: string): Promise<number> {
   const supabase = createSupabaseServerClient();
-  const { count, error } = await supabase
+  const { count, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_jobs")
     .select("id", { count: "exact", head: true })
     .eq("status", "running")
-    .lt("updated_at", cutoffIso);
+    .lt("updated_at", cutoffIso));
 
   if (error) {
     throw new Error(`Failed to count stale running TrainingPeaks jobs: ${error.message}`);
@@ -5739,12 +5739,12 @@ export async function listTrainingPeaksCronRunLogs(input: {
 }): Promise<TrainingPeaksCronRunLog[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(input.limit ?? 5, 20));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_cron_run_logs")
     .select("*")
     .eq("job_name", input.jobName)
     .order("started_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks cron run logs for ${input.jobName}: ${error.message}`);
@@ -5945,12 +5945,12 @@ export async function getTrainingPeaksGroupWorkoutReportIntakeBySourceMessage(
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_group_workout_report_intake")
     .select("*")
     .eq("source_chat_id", normalizedChatId)
     .eq("source_message_id", normalizedMessageId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -6006,12 +6006,12 @@ export async function listTrainingPeaksTelegramContextObservationsForStudent(
   limit = 10
 ): Promise<TrainingPeaksTelegramContextObservation[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_context_observations")
     .select("*")
     .eq("student_id", studentId)
     .order("observed_at", { ascending: false })
-    .limit(limit);
+    .limit(limit));
 
   if (error) {
     throw new Error(
@@ -6028,11 +6028,11 @@ export async function getTrainingPeaksTelegramContextObservationById(
   observationId: string
 ): Promise<TrainingPeaksTelegramContextObservation | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_context_observations")
     .select("*")
     .eq("id", observationId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -6076,13 +6076,15 @@ export async function listRecentTrainingPeaksTelegramContextObservationsForChat(
   const sinceIso = new Date(Date.now() - sinceMinutes * 60_000).toISOString();
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_telegram_context_observations")
-    .select("message_id, text_preview, labels, observed_at")
-    .eq("chat_id", input.telegramChatId)
-    .gte("observed_at", sinceIso)
-    .order("observed_at", { ascending: false })
-    .limit(safeLimit);
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select("message_id, text_preview, labels, observed_at")
+      .eq("chat_id", input.telegramChatId)
+      .gte("observed_at", sinceIso)
+      .order("observed_at", { ascending: false })
+      .limit(safeLimit)
+  );
 
   if (error) {
     throw new Error(
@@ -6118,7 +6120,7 @@ export async function listRecentPendingTrainingPeaksMoveActionsForStudentChat(in
   const sinceIso = new Date(Date.now() - sinceMinutes * 60_000).toISOString();
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_actions")
     .select("*")
     .eq("action_type", "move_workout")
@@ -6127,7 +6129,7 @@ export async function listRecentPendingTrainingPeaksMoveActionsForStudentChat(in
     .eq("source_chat_id", input.sourceChatId)
     .gte("created_at", sinceIso)
     .order("created_at", { ascending: false })
-    .limit(5);
+    .limit(5));
 
   if (error) {
     throw new Error(
@@ -6146,7 +6148,7 @@ export async function findTrainingPeaksMoveActionBySourceMessageAndDates(input: 
   targetDate: string;
 }): Promise<TrainingPeaksAction | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_actions")
     .select("*")
     .eq("action_type", "move_workout")
@@ -6157,7 +6159,7 @@ export async function findTrainingPeaksMoveActionBySourceMessageAndDates(input: 
     .eq("parsed_payload->target->>value", input.targetDate)
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -6177,13 +6179,13 @@ export async function hasTrainingPeaksTelegramContextObservationForChatTextHash(
   textSha256: string
 ): Promise<boolean> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_telegram_context_observations")
     .select("id")
     .eq("chat_id", chatId)
     .eq("text_sha256", textSha256)
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -6199,14 +6201,16 @@ export async function getTrainingPeaksTelegramContextObservationByChatMessage(in
   messageId: string;
 }): Promise<{ id: string } | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_telegram_context_observations")
-    .select("id")
-    .eq("chat_id", input.chatId)
-    .eq("message_id", input.messageId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select("id")
+      .eq("chat_id", input.chatId)
+      .eq("message_id", input.messageId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  );
 
   if (error) {
     throw new Error(
@@ -7430,11 +7434,11 @@ export async function getTrainingPeaksStudentMemoryItemById(
   id: string
 ): Promise<TrainingPeaksStudentMemoryItem | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_memory_items")
     .select("*")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle());
   if (error) {
     throw new Error(`Failed to get TrainingPeaks student memory item ${id}: ${error.message}`);
   }
@@ -7714,15 +7718,17 @@ export async function getTrainingPeaksCoachCaseByTelegramMessageAndKind(input: {
   caseKind: TrainingPeaksCoachCaseKind;
 }): Promise<{ id: string; status: TrainingPeaksCoachCaseStatus } | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_coach_cases")
-    .select("id, status")
-    .eq("telegram_chat_id", input.telegramChatId)
-    .eq("telegram_message_id", input.telegramMessageId)
-    .eq("case_kind", input.caseKind)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_coach_cases")
+      .select("id, status")
+      .eq("telegram_chat_id", input.telegramChatId)
+      .eq("telegram_message_id", input.telegramMessageId)
+      .eq("case_kind", input.caseKind)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  );
 
   if (error) {
     throw new Error(
@@ -7745,11 +7751,11 @@ export async function getTrainingPeaksCoachCaseById(
   caseId: string
 ): Promise<TrainingPeaksCoachCaseSummary | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_coach_cases")
     .select("id, student_id, case_kind, status, created_at, updated_at")
     .eq("id", caseId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks coach case ${caseId}: ${error.message}`);
@@ -7766,11 +7772,11 @@ export async function getTrainingPeaksCoachCaseDetailsById(
   caseId: string
 ): Promise<TrainingPeaksCoachCase | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_coach_cases")
     .select("id, student_id, case_kind, status, created_at, updated_at, telegram_chat_id, telegram_message_id, action_id, coach_notes_json")
     .eq("id", caseId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks coach case details ${caseId}: ${error.message}`);
@@ -7836,13 +7842,13 @@ export async function getTrainingPeaksGroupWorkoutReportReplyDraftBySourceMessag
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_reply_drafts")
     .select("*")
     .eq("source", "group_workout_report")
     .eq("source_chat_id", normalizedChatId)
     .eq("source_message_id", normalizedMessageId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(
@@ -8074,13 +8080,13 @@ export async function getTrainingPeaksReplyDraftByIdPrefix(
   const maxUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "f"));
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_reply_drafts")
     .select("*")
     .gte("id", minUuid)
     .lte("id", maxUuid)
     .order("created_at", { ascending: false })
-    .limit(2);
+    .limit(2));
 
   if (error) {
     throw new Error(
@@ -8173,13 +8179,13 @@ export async function getTrainingPeaksCoachCaseByIdPrefix(
   const maxUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "f"));
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_coach_cases")
     .select("id, student_id, case_kind, status, created_at, updated_at")
     .gte("id", minUuid)
     .lte("id", maxUuid)
     .order("created_at", { ascending: false })
-    .limit(2);
+    .limit(2));
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks coach case by prefix ${normalizedPrefix}: ${error.message}`);
@@ -8292,13 +8298,15 @@ export async function listTrainingPeaksOperationalSignals(
 
   let studentIdFilter: string[] | null = null;
   if (normalizedStudentQuery.length > 0) {
-    const { data: matchedStudents, error: studentsError } = await supabase
-      .from("trainingpeaks_students")
-      .select("id")
-      .or(
-        `student_name.ilike.%${normalizedStudentQuery}%,student_id.ilike.%${normalizedStudentQuery}%`
-      )
-      .limit(200);
+    const { data: matchedStudents, error: studentsError } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_students")
+        .select("id")
+        .or(
+          `student_name.ilike.%${normalizedStudentQuery}%,student_id.ilike.%${normalizedStudentQuery}%`
+        )
+        .limit(200)
+    );
     if (studentsError) {
       throw new Error(
         `Failed to filter TrainingPeaks operational signals by student: ${studentsError.message}`
@@ -8340,7 +8348,7 @@ export async function listTrainingPeaksOperationalSignals(
     query = query.in("student_id", studentIdFilter);
   }
 
-  const { data, error, count } = await query;
+  const { data, error, count } = await withSupabaseNetworkRetry(() => query);
   if (error) {
     if (isTrainingPeaksMissingRelationError(error)) {
       return { items: [], total: 0 };
@@ -8653,11 +8661,11 @@ export async function getTrainingPeaksOperationalSignalById(
   signalId: string
 ): Promise<TrainingPeaksStudentOperationalSignal | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_operational_signals")
     .select("*")
     .eq("id", signalId)
-    .maybeSingle();
+    .maybeSingle());
   if (error) {
     if (isTrainingPeaksMissingRelationError(error)) {
       throw new Error(
@@ -8676,13 +8684,13 @@ export async function listActiveTrainingPeaksOperationalSignalsByStudent(
   studentId: string
 ): Promise<TrainingPeaksStudentOperationalSignal[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_operational_signals")
     .select("*")
     .eq("student_id", studentId)
     .eq("status", "active")
     .order("created_at", { ascending: false })
-    .limit(300);
+    .limit(300));
   if (error) {
     if (isTrainingPeaksMissingRelationError(error)) {
       throw new Error(
@@ -8770,13 +8778,13 @@ export async function getTrainingPeaksOperationalSignalByIdPrefix(
   const maxUuid = formatTrainingPeaksUuidFromHex32(normalizedPrefix.padEnd(32, "f"));
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_operational_signals")
     .select("*")
     .gte("id", minUuid)
     .lte("id", maxUuid)
     .order("created_at", { ascending: false })
-    .limit(2);
+    .limit(2));
 
   if (error) {
     if (isTrainingPeaksMissingRelationError(error)) {
@@ -8850,11 +8858,11 @@ export async function listLatestTrainingPeaksOperationalSignalReviewDecisionsByS
   }
 
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_operational_signal_review_decisions")
     .select("*")
     .in("signal_id", uniqueSignalIds)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false }));
 
   if (error) {
     if (isTrainingPeaksMissingRelationError(error)) {
@@ -9103,13 +9111,13 @@ export async function getLatestTrainingPeaksOperationalSignalLifecycleTransition
   signalId: string
 ): Promise<TrainingPeaksOperationalSignalLifecycleTransition | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_operational_signal_lifecycle_transitions")
     .select("*")
     .eq("signal_id", signalId)
     .order("created_at", { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
   if (error) {
     if (isTrainingPeaksMissingRelationError(error)) {
       throw new Error(
@@ -9806,12 +9814,12 @@ export async function getTrainingPeaksMessageIntentLogByTelegramMessage(
   telegramMessageId: string
 ): Promise<TrainingPeaksMessageIntentLog | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_message_intent_logs")
     .select("*")
     .eq("telegram_chat_id", telegramChatId)
     .eq("telegram_message_id", telegramMessageId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks message intent log: ${error.message}`);
@@ -9977,11 +9985,11 @@ export async function recordTrainingPeaksStudentContactEvent(
 
 export async function listTrainingPeaksStudentContactStatus(): Promise<TrainingPeaksStudentContactStatus[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_contact_status")
     .select("*")
     .order("silence_days", { ascending: false, nullsFirst: false })
-    .order("student_id", { ascending: true });
+    .order("student_id", { ascending: true }));
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks student contact status: ${error.message}`);
@@ -9996,11 +10004,11 @@ export async function getTrainingPeaksStudentContactStatus(
   studentId: string
 ): Promise<TrainingPeaksStudentContactStatus | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_contact_status")
     .select("*")
     .eq("student_id", studentId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) {
     throw new Error(`Failed to get TrainingPeaks student contact status for ${studentId}: ${error.message}`);
@@ -10019,12 +10027,12 @@ export async function listRecentTrainingPeaksStudentContactEvents(input: {
 }): Promise<TrainingPeaksStudentContactEvent[]> {
   const supabase = createSupabaseServerClient();
   const safeLimit = Math.max(1, Math.min(input.limit ?? 5, 20));
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_contact_events")
     .select("*")
     .eq("student_id", input.studentId)
     .order("occurred_at", { ascending: false })
-    .limit(safeLimit);
+    .limit(safeLimit));
 
   if (error) {
     throw new Error(
@@ -10042,10 +10050,10 @@ export async function countTrainingPeaksSilentStudents(input: {
 }): Promise<number> {
   const minimumSilenceDays = Math.max(0, Math.trunc(input.minimumSilenceDays));
   const supabase = createSupabaseServerClient();
-  const { count, error } = await supabase
+  const { count, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_student_contact_status")
     .select("student_id", { count: "exact", head: true })
-    .gte("silence_days", minimumSilenceDays);
+    .gte("silence_days", minimumSilenceDays));
 
   if (error) {
     throw new Error(`Failed to count TrainingPeaks silent students: ${error.message}`);
@@ -10058,11 +10066,11 @@ export async function listRecentTrainingPeaksMessageIntentLogs(
   limit = 20
 ): Promise<TrainingPeaksMessageIntentLog[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_message_intent_logs")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(limit);
+    .limit(limit));
 
   if (error) {
     throw new Error(`Failed to list recent TrainingPeaks message intent logs: ${error.message}`);
@@ -10088,15 +10096,17 @@ export async function listRecentTrainingPeaksCoachCasesForAttention(input: {
 > {
   const cutoffIso = new Date(Date.now() - input.sinceHours * 3_600_000).toISOString();
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_coach_cases")
-    .select("id, student_id, case_kind, status, created_at, coach_notes_json")
-    .gte("created_at", cutoffIso)
-    .in("case_kind", [...input.caseKinds])
-    .in("status", [...input.statuses])
-    .not("student_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(input.limit);
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_coach_cases")
+      .select("id, student_id, case_kind, status, created_at, coach_notes_json")
+      .gte("created_at", cutoffIso)
+      .in("case_kind", [...input.caseKinds])
+      .in("status", [...input.statuses])
+      .not("student_id", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(input.limit)
+  );
 
   if (error) {
     throw new Error(`Failed to list TrainingPeaks coach cases for attention: ${error.message}`);
@@ -10128,11 +10138,11 @@ export async function countActiveTrainingPeaksCoachCases(
   statuses: readonly TrainingPeaksCoachCaseStatus[]
 ): Promise<number> {
   const supabase = createSupabaseServerClient();
-  const { count, error } = await supabase
+  const { count, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_coach_cases")
     .select("id", { count: "exact", head: true })
     .in("status", [...statuses])
-    .not("student_id", "is", null);
+    .not("student_id", "is", null));
 
   if (error) {
     throw new Error(`Failed to count active TrainingPeaks coach cases: ${error.message}`);
@@ -10166,11 +10176,13 @@ export async function listTrainingPeaksCoachCases(input: {
 
   let studentIdFilter: string[] | null = null;
   if (normalizedStudentQuery.length > 0) {
-    const { data: matchedStudents, error: studentsError } = await supabase
-      .from("trainingpeaks_students")
-      .select("id")
-      .ilike("student_name", `%${normalizedStudentQuery}%`)
-      .limit(200);
+    const { data: matchedStudents, error: studentsError } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_students")
+        .select("id")
+        .ilike("student_name", `%${normalizedStudentQuery}%`)
+        .limit(200)
+    );
 
     if (studentsError) {
       throw new Error(`Failed to filter TrainingPeaks coach cases by student name: ${studentsError.message}`);
@@ -10206,7 +10218,7 @@ export async function listTrainingPeaksCoachCases(input: {
     query = query.in("student_id", studentIdFilter);
   }
 
-  const { data, error, count } = await query;
+  const { data, error, count } = await withSupabaseNetworkRetry(() => query);
   if (error) {
     throw new Error(`Failed to list TrainingPeaks coach cases: ${error.message}`);
   }

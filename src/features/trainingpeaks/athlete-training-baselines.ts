@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@/features/supabase/server";
+import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 
 export type AthleteTrainingBaselineRow = {
   id: string;
@@ -40,11 +40,13 @@ const BASELINE_SELECT =
 
 export async function listCurrentAthleteTrainingBaselines(): Promise<AthleteTrainingBaselineRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("athlete_training_baselines")
-    .select(BASELINE_SELECT)
-    .eq("is_current", true)
-    .order("student_id", { ascending: true });
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("athlete_training_baselines")
+      .select(BASELINE_SELECT)
+      .eq("is_current", true)
+      .order("student_id", { ascending: true })
+  );
 
   if (error) {
     throw new Error(`Failed to list current athlete training baselines: ${error.message}`);
@@ -55,12 +57,14 @@ export async function listCurrentAthleteTrainingBaselines(): Promise<AthleteTrai
 
 export async function getCurrentAthleteTrainingBaseline(studentId: string): Promise<AthleteTrainingBaselineRow | null> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("athlete_training_baselines")
-    .select(BASELINE_SELECT)
-    .eq("student_id", studentId)
-    .eq("is_current", true)
-    .maybeSingle();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("athlete_training_baselines")
+      .select(BASELINE_SELECT)
+      .eq("student_id", studentId)
+      .eq("is_current", true)
+      .maybeSingle()
+  );
 
   if (error) {
     throw new Error(`Failed to get current athlete training baseline for ${studentId}: ${error.message}`);
@@ -71,12 +75,14 @@ export async function getCurrentAthleteTrainingBaseline(studentId: string): Prom
 
 export async function listAthletesNeedingBaselineReview(): Promise<AthleteTrainingBaselineRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("athlete_training_baselines")
-    .select(BASELINE_SELECT)
-    .eq("is_current", true)
-    .eq("needs_review", true)
-    .order("student_id", { ascending: true });
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("athlete_training_baselines")
+      .select(BASELINE_SELECT)
+      .eq("is_current", true)
+      .eq("needs_review", true)
+      .order("student_id", { ascending: true })
+  );
 
   if (error) {
     throw new Error(`Failed to list athletes needing baseline review: ${error.message}`);
@@ -89,11 +95,13 @@ export async function listCurrentAthleteTrainingBaselinesWithStudentNames(): Pro
   AthleteTrainingBaselineWithStudentNameRow[]
 > {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("athlete_training_baselines")
-    .select(`${BASELINE_SELECT}, trainingpeaks_students(student_name)`)
-    .eq("is_current", true)
-    .order("student_id", { ascending: true });
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("athlete_training_baselines")
+      .select(`${BASELINE_SELECT}, trainingpeaks_students(student_name)`)
+      .eq("is_current", true)
+      .order("student_id", { ascending: true })
+  );
 
   if (error) {
     throw new Error(`Failed to list current athlete training baselines with student names: ${error.message}`);
@@ -121,12 +129,14 @@ export async function listAthletesNeedingBaselineReviewWithStudentNames(): Promi
   AthleteTrainingBaselineWithStudentNameRow[]
 > {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("athlete_training_baselines")
-    .select(`${BASELINE_SELECT}, trainingpeaks_students(student_name)`)
-    .eq("is_current", true)
-    .eq("needs_review", true)
-    .order("student_id", { ascending: true });
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("athlete_training_baselines")
+      .select(`${BASELINE_SELECT}, trainingpeaks_students(student_name)`)
+      .eq("is_current", true)
+      .eq("needs_review", true)
+      .order("student_id", { ascending: true })
+  );
 
   if (error) {
     throw new Error(`Failed to list athletes needing baseline review with student names: ${error.message}`);
