@@ -239,7 +239,7 @@ export async function captureSessionAuth(input: {
 
 export async function performApiJsonRequest(input: {
   page: Page;
-  method: "GET" | "PUT";
+  method: "GET" | "PUT" | "POST" | "DELETE";
   endpoint: string;
   headers: Record<string, string>;
   body?: unknown;
