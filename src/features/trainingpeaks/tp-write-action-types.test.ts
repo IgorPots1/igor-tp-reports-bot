@@ -55,13 +55,16 @@ describe("buildRollbackPlan", () => {
     assert.equal("distancePlanned" in (plan.payload as { fields: Record<string, unknown> }).fields, false);
   });
 
-  test("strength_workout -> delete_workout (mirrors create's rollback, proven to work in PR1)", () => {
+  test("strength_workout -> delete_workout on the STRENGTH host (mirrors create's rollback, proven to work in PR1)", () => {
     const preImage = { id: "22291958", calendarId: 3102415 };
     const plan = buildRollbackPlan("strength_workout", preImage, {});
     assert.equal("error" in plan, false);
     if ("error" in plan) return;
     assert.equal(plan.actionType, "delete_workout");
-    assert.deepEqual(plan.payload, { athleteId: 3102415, workoutId: 22291958 });
+    // PR4 finding: a strength workout lives on api.peakswaresb.com, not
+    // tpapi -- its rollback's delete must target that host explicitly, or
+    // the delete call 400s on a workoutId the tpapi host has never heard of.
+    assert.deepEqual(plan.payload, { athleteId: 3102415, workoutId: 22291958, host: "strength" });
   });
 
   test("delete_workout rollback is DELIBERATELY unsupported (cannot recreate the original id / recover completed data)", () => {

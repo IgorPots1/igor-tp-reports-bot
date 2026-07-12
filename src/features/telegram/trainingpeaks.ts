@@ -12,6 +12,13 @@ import {
 } from "@/features/trainingpeaks/move-source-policy";
 import { formatTrainingPeaksExecuteBlockedMessage, formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
+  buildWriteActionBlockedMessage,
+  buildWriteActionDetailCard,
+  buildWriteActionQueuedMessage,
+} from "@/features/trainingpeaks/action-write-telegram-copy";
+import { validateGenericDryRunLogReadiness } from "@/features/trainingpeaks/tp-write-action-types";
+import type { TrainingPeaksActionType } from "@/features/trainingpeaks/repository";
+import {
   buildCoachActionsListText,
   COACH_REPLY_BUTTON_SIGNALS,
   formatCoachActionReasonForDisplay,
@@ -6098,20 +6105,23 @@ function shouldShowActionDryRunRecheckButton(
 function shouldShowActionExecuteButton(
   action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>
 ): boolean {
-  if (action.actionType !== "move_workout" || action.status !== "approved") {
-    return false;
-  }
-  if (action.executionStatus !== "dry_run_completed") {
+  if (action.status !== "approved" || action.executionStatus !== "dry_run_completed") {
     return false;
   }
   const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
-  if (latestDryRun?.status !== "completed" || latestDryRun.dryRunResult !== "candidate_found") {
+  if (latestDryRun?.status !== "completed" || !latestDryRun.logJson) {
     return false;
   }
-  if (!latestDryRun.logJson) {
-    return false;
+  if (action.actionType === "move_workout") {
+    if (latestDryRun.dryRunResult !== "candidate_found") {
+      return false;
+    }
+    return validateDryRunLogReadiness(latestDryRun.logJson, action.parsedPayload).ok;
   }
-  return validateDryRunLogReadiness(latestDryRun.logJson, action.parsedPayload).ok;
+  // PR4: the 5 new action types validate readiness structurally instead of
+  // via a DOM candidate fingerprint -- same generic validator
+  // requestTrainingPeaksActionExecution itself uses at confirm time.
+  return validateGenericDryRunLogReadiness(latestDryRun.logJson, action.parsedPayload).ok;
 }
 
 function formatActionDetailFreshnessLabel(date = new Date()): string {
@@ -6300,6 +6310,39 @@ function getTpActionDetailText(
   action: NonNullable<Awaited<ReturnType<typeof getTrainingPeaksActionWithStudentAndLatestRunContextById>>>,
   options?: { includeFreshness?: boolean; freshnessLabel?: string }
 ): string {
+  // PR4: the 5 new action types have no source/target date pair -- built
+  // separately here rather than threading branches through move's detail
+  // layout below (source-date policy, planned-vs-completed hints, etc, none
+  // of which apply to these types).
+  if (action.actionType !== "move_workout") {
+    const latestDryRun = action.latestRunContext?.latestExecute ?? action.latestRunContext?.latestDryRun ?? null;
+    const lines = [
+      `📋 Действие #${shortenActionId(action.id)}`,
+      "",
+      buildWriteActionDetailCard(
+        action.actionType as Exclude<TrainingPeaksActionType, "move_workout">,
+        action.parsedPayload,
+        action.studentName ?? null,
+      ),
+      "",
+      ...formatTelegramLabeledBlock("Статус:", formatActionStatusLabel(action)),
+      ...formatTelegramLabeledBlock("Создано:", formatActionCompactDate(action.createdAt)),
+    ];
+    if (latestDryRun?.errorMessage) {
+      lines.push(...formatTelegramLabeledBlock("Ошибка:", latestDryRun.errorMessage));
+    }
+    if (action.approvedAt) {
+      lines.push(...formatTelegramLabeledBlock("Одобрено:", formatActionCompactDate(action.approvedAt)));
+    }
+    if (action.rejectedAt) {
+      lines.push(...formatTelegramLabeledBlock("Отклонено:", formatActionCompactDate(action.rejectedAt)));
+    }
+    if (options?.includeFreshness) {
+      lines.push("", options.freshnessLabel ?? formatActionDetailFreshnessLabel());
+    }
+    return lines.join("\n");
+  }
+
   const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
   const src = formatCompactDateShort(dates.sourceDate);
   const tgt = formatCompactDateShort(dates.targetDate);
@@ -7762,12 +7805,15 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   }
 
   if (result.kind === "queued") {
-    const queuedText = formatTrainingPeaksExecuteQueuedMessage({
-      studentName: result.queuedDisplay.studentName,
-      parsedPayload: result.action.parsedPayload,
-      trustedSourceDate: result.queuedDisplay.trustedSourceDate,
-      trustedTargetDate: result.queuedDisplay.trustedTargetDate,
-    });
+    const queuedText =
+      result.action.actionType === "move_workout"
+        ? formatTrainingPeaksExecuteQueuedMessage({
+            studentName: result.queuedDisplay.studentName,
+            parsedPayload: result.action.parsedPayload,
+            trustedSourceDate: result.queuedDisplay.trustedSourceDate,
+            trustedTargetDate: result.queuedDisplay.trustedTargetDate,
+          })
+        : buildWriteActionQueuedMessage(result.action.actionType as Exclude<TrainingPeaksActionType, "move_workout">);
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
@@ -7778,10 +7824,14 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   }
 
   if (result.kind === "already_queued") {
+    const alreadyQueuedText =
+      result.action.actionType === "move_workout"
+        ? "Перенос уже стоит в очереди. TrainingPeaks ещё не изменён."
+        : "Действие уже стоит в очереди. TrainingPeaks ещё не изменён.";
     await editTrainingPeaksMenuMessage(
       parsedMessage.chatId,
       parsedMessage.messageId,
-      "Перенос уже стоит в очереди. TrainingPeaks ещё не изменён.",
+      alreadyQueuedText,
       getTrainingPeaksActionResolvedMarkup()
     );
     return;
@@ -7798,30 +7848,32 @@ async function handleTrainingPeaksActionExecuteRequestCallback(
   }
 
   const blockedText =
-    result.kind === "blocked"
-      ? [
-          `⚠️ ${formatTrainingPeaksExecuteBlockedMessage({
-            reason: result.reason,
-            latestRunContext: result.latestRunContext,
-          })}`,
-          (() => {
-            const selectedSourceDate = result.latestRunContext?.latestDryRun?.selectedSourceDate ?? null;
-            const selectedSourcePolicy = result.latestRunContext?.latestDryRun?.selectedSourceDatePolicy ?? null;
-            if (!selectedSourceDate && !selectedSourcePolicy) {
-              return [];
-            }
-            return formatTelegramLabeledBlock(
-              "Источник:",
-              `${formatCompactDateShort(selectedSourceDate)} — ${formatSourcePolicyLabel(selectedSourcePolicy)}`
-            );
-          })(),
-          "Что дальше:",
-          "Проверьте заявку вручную в /tp_actions.",
-        ]
-          .flat()
-          .filter((line): line is string => Boolean(line))
-          .join("\n")
-      : `⚠️ ${INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU}`;
+    result.kind === "blocked" && result.action.actionType !== "move_workout"
+      ? `⚠️ ${buildWriteActionBlockedMessage(result.action.actionType as Exclude<TrainingPeaksActionType, "move_workout">, result.reason)}\n\nЧто дальше:\nПроверьте заявку вручную в /tp_actions.`
+      : result.kind === "blocked"
+        ? [
+            `⚠️ ${formatTrainingPeaksExecuteBlockedMessage({
+              reason: result.reason,
+              latestRunContext: result.latestRunContext,
+            })}`,
+            (() => {
+              const selectedSourceDate = result.latestRunContext?.latestDryRun?.selectedSourceDate ?? null;
+              const selectedSourcePolicy = result.latestRunContext?.latestDryRun?.selectedSourceDatePolicy ?? null;
+              if (!selectedSourceDate && !selectedSourcePolicy) {
+                return [];
+              }
+              return formatTelegramLabeledBlock(
+                "Источник:",
+                `${formatCompactDateShort(selectedSourceDate)} — ${formatSourcePolicyLabel(selectedSourcePolicy)}`
+              );
+            })(),
+            "Что дальше:",
+            "Проверьте заявку вручную в /tp_actions.",
+          ]
+            .flat()
+            .filter((line): line is string => Boolean(line))
+            .join("\n")
+        : `⚠️ ${INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU}`;
 
   await editTrainingPeaksMenuMessage(
     parsedMessage.chatId,

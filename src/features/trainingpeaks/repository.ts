@@ -759,8 +759,13 @@ export type ConfirmTrainingPeaksActionSourceWorkoutResult =
 
 export type TrainingPeaksActionExecutionQueuedDisplayContext = {
   studentName: string | null;
-  trustedSourceDate: string;
-  trustedTargetDate: string;
+  // PR4: null for every non-move action type -- there is no source/target
+  // date pair to resolve. Already-nullable on the Telegram formatting side
+  // (formatTrainingPeaksExecuteQueuedMessage), so this widening does not
+  // change move_workout's existing (still-required, still-throws-if-missing)
+  // behavior below.
+  trustedSourceDate: string | null;
+  trustedTargetDate: string | null;
 };
 
 export type TrainingPeaksActionRunContextSummary = {
@@ -2748,6 +2753,31 @@ export async function getTrainingPeaksStudentById(
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
+// PR4: batch preview needs to resolve each child action's athleteId (a plain
+// number in the write payload) back to the internal student row, to look up
+// race dates / workout cache / baselines / signals -- all of which are keyed
+// by studentId, not the TP-numeric athleteId.
+// There is no trainingpeaks_athlete_id column on trainingpeaks_students --
+// the numeric athlete id only exists embedded in trainingpeaks_athlete_url
+// (".../athletes/{id}"). This mirrors the exact parser already duplicated in
+// service.ts / group-workout-report-review-flow.ts / the completed-workout
+// probe (same regex), rather than inventing a new extraction rule.
+function parseTrainingPeaksAthleteIdFromStudentUrl(value: string): number | null {
+  const match = value.match(/\/athletes\/(\d+)/i);
+  if (!match) {
+    return null;
+  }
+  const parsed = Number(match[1]);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export async function getTrainingPeaksStudentByAthleteId(
+  trainingPeaksAthleteId: number
+): Promise<TrainingPeaksStudent | null> {
+  const students = await listTrainingPeaksStudentsIncludingArchived();
+  return students.find((student) => parseTrainingPeaksAthleteIdFromStudentUrl(student.trainingPeaksAthleteUrl) === trainingPeaksAthleteId) ?? null;
+}
+
 /** Supabase server client shape; the only seam we need to inject a fake for tests. */
 export type SupabaseServerClientLike = ReturnType<typeof createSupabaseServerClient>;
 
@@ -4195,11 +4225,15 @@ async function decideTrainingPeaksActionStatus(
     updatePayload.execution_status = "not_started";
   }
 
+  // PR4: dropped the old .eq("action_type", "move_workout") filter here --
+  // it was never a safety gate (approval is already scoped to this exact
+  // action id + pending_coach status), just a leftover from when move_workout
+  // was the only action_type that existed. Approve/reject has no
+  // type-specific logic, so it now works for every action_type.
   const { data, error } = await supabase
     .from("trainingpeaks_actions")
     .update(updatePayload)
     .eq("id", input.actionId)
-    .eq("action_type", "move_workout")
     .eq("status", "pending_coach")
     .select("*")
     .maybeSingle();
@@ -4253,17 +4287,26 @@ async function resolveActionExecutionQueuedDisplayContext(
   action: TrainingPeaksAction,
   dryRunLogJson: unknown
 ): Promise<TrainingPeaksActionExecutionQueuedDisplayContext> {
+  let studentName: string | null = null;
+  if (action.studentId) {
+    const student = await getTrainingPeaksStudentById(action.studentId);
+    studentName = student?.studentName ?? null;
+  }
+
+  // PR4: move_workout keeps its exact original behavior -- resolved
+  // source/target dates are REQUIRED, missing them throws (unchanged safety
+  // guarantee). Every other action type has no source/target date pair; there
+  // is nothing move-specific to resolve, so this is skipped for them rather
+  // than approximated.
+  if (action.actionType !== "move_workout") {
+    return { studentName, trustedSourceDate: null, trustedTargetDate: null };
+  }
+
   const dryRunContext = extractMoveSourceExecutionContextFromDryRunLog(dryRunLogJson);
   const trustedSourceDate = dryRunContext?.resolvedSourceDate ?? null;
   const trustedTargetDate = dryRunContext?.resolvedTargetDate ?? null;
   if (!trustedSourceDate || !trustedTargetDate) {
     throw new Error(`Trusted dry-run resolved dates missing for action ${action.id}`);
-  }
-
-  let studentName: string | null = null;
-  if (action.studentId) {
-    const student = await getTrainingPeaksStudentById(action.studentId);
-    studentName = student?.studentName ?? null;
   }
 
   return {

@@ -5,8 +5,10 @@ import {
 import type {
   TrainingPeaksActionExecutionStatus,
   TrainingPeaksActionStatus,
+  TrainingPeaksActionType,
 } from "@/features/trainingpeaks/repository";
 import { formatCompactCoachDateShort } from "@/features/trainingpeaks/action-execute-telegram-copy";
+import { buildWriteActionSummaryLine } from "@/features/trainingpeaks/action-write-telegram-copy";
 
 export const COACH_REPLY_BUTTON_SIGNALS = "📍 Сигналы";
 
@@ -268,18 +270,20 @@ function isCoachActionWaitingDryRunRecheck(action: CoachActionListItem): boolean
 }
 
 function isCoachActionReadyToExecute(action: CoachActionListItem): boolean {
-  if (action.actionType !== "move_workout" || action.status !== "approved") {
-    return false;
-  }
-  if (action.executionStatus !== "dry_run_completed") {
+  if (action.status !== "approved" || action.executionStatus !== "dry_run_completed") {
     return false;
   }
   const latestDryRun = action.latestRunContext?.latestDryRun ?? null;
-  return (
-    latestDryRun?.status === "completed" &&
-    latestDryRun.dryRunResult === "candidate_found" &&
-    latestDryRun.canExecute === true
-  );
+  if (latestDryRun?.status !== "completed") {
+    return false;
+  }
+  if (action.actionType === "move_workout") {
+    return latestDryRun.dryRunResult === "candidate_found" && latestDryRun.canExecute === true;
+  }
+  // PR4: the 5 new action types' dry-run either succeeds outright
+  // (payload_prepared) or fails -- there is no candidate-search ambiguity to
+  // review, unlike move's DOM-candidate matching.
+  return latestDryRun.dryRunResult === "payload_prepared";
 }
 
 function isCoachActionNeedsReview(action: CoachActionListItem): boolean {
@@ -435,13 +439,19 @@ function formatCoachActionListItemDetailLine(action: CoachActionListItem): strin
   return formatCoachActionCompactStatus(action);
 }
 
+function formatCoachActionSummaryLine(action: CoachActionListItem): string {
+  if (action.actionType === "move_workout") {
+    const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
+    return `перенос: ${formatCompactCoachDateShort(dates.sourceDate)} → ${formatCompactCoachDateShort(dates.targetDate)}`;
+  }
+  return buildWriteActionSummaryLine(action.actionType as Exclude<TrainingPeaksActionType, "move_workout">, action.parsedPayload);
+}
+
 function formatCoachActionCompactLine(action: CoachActionListItem, index: number): string {
-  const dates = extractMoveDateRangeFromParsedPayload(action.parsedPayload);
-  const route = `${formatCompactCoachDateShort(dates.sourceDate)} → ${formatCompactCoachDateShort(dates.targetDate)}`;
   const name = action.studentName?.trim() || "?";
   return [
     `${index + 1}. ${name}`,
-    `   перенос: ${route}`,
+    `   ${formatCoachActionSummaryLine(action)}`,
     `   ${formatCoachActionListItemDetailLine(action)}`,
   ].join("\n");
 }
@@ -483,7 +493,7 @@ function listCoachActionsForCompactDisplay(actions: CoachActionListItem[]): Coac
 
 export function buildCoachActionsListText(actions: CoachActionListItem[]): string {
   if (actions.length === 0) {
-    return "📋 Заявки на перенос\n\nПока заявок на перенос нет.";
+    return "📋 Заявки TrainingPeaks\n\nПока заявок нет.";
   }
 
   const grouped: Record<CoachActionListBucket, CoachActionListItem[]> = {
@@ -502,7 +512,7 @@ export function buildCoachActionsListText(actions: CoachActionListItem[]): strin
 
   const activeActions = listCoachActionsForCompactDisplay(actions);
 
-  const lines: string[] = ["📋 Заявки на перенос", ""];
+  const lines: string[] = ["📋 Заявки TrainingPeaks", ""];
 
   pushSection(
     lines,

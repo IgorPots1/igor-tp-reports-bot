@@ -1,4 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import {
   claimOneApprovedTrainingPeaksActionForDryRun,
@@ -9,9 +12,14 @@ import {
   failTrainingPeaksActionDryRun,
   failTrainingPeaksActionRealRun,
   getTrainingPeaksActionById,
+  getTrainingPeaksStudentById,
   type TrainingPeaksAction,
   type TrainingPeaksActionType,
 } from "../../../src/features/trainingpeaks/repository.ts";
+import { buildWriteActionDetailCard } from "../../../src/features/trainingpeaks/action-write-telegram-copy.ts";
+import { getTrainingPeaksCoachChatIds } from "../../../src/features/trainingpeaks/attention-telegram.ts";
+import { sendTelegramMessage } from "../../../src/features/telegram/telegram-client.ts";
+import type { TelegramInlineKeyboardMarkup } from "../../../src/features/telegram/types.ts";
 import {
   computePayloadFingerprint,
   validateGenericDryRunLogReadiness,
@@ -33,6 +41,7 @@ import {
   getWorkoutDetail,
   putWorkout,
   TpApiHttpError,
+  type CreateStrengthWorkoutRequestBody,
 } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { redactUnknown } from "./lib/trainingpeaks-api-move.ts";
 
@@ -84,6 +93,50 @@ import { redactUnknown } from "./lib/trainingpeaks-api-move.ts";
 
 const TP_ACTIONS_REAL_EXECUTION_ENV = "TP_ACTIONS_REAL_EXECUTION";
 const RUNNER_ID = "tp-write-executor-once";
+
+// ─── .env.local loading (mirrors tp-actions-once.ts's loader verbatim -- that
+// file is deliberately not touched by this PR, so this is duplicated rather
+// than extracted into a shared lib) ─────────────────────────────────────────────
+
+function readTextFileSyncSafe(filePath: string): string | null {
+  try {
+    return readFileSync(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function loadDotEnvFile(dotEnvPath: string): void {
+  if (!existsSync(dotEnvPath)) return;
+  const content = readTextFileSyncSafe(dotEnvPath);
+  if (content === null) return;
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex < 0) continue;
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    if (!key || process.env[key] !== undefined) continue;
+
+    let value = trimmed.slice(separatorIndex + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+function loadLocalEnv(): void {
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const toolRoot = path.resolve(scriptDir, "..");
+  const repoRoot = path.resolve(toolRoot, "..", "..");
+  for (const envPath of [path.join(repoRoot, ".env.local"), path.join(repoRoot, ".env"), path.join(toolRoot, ".env")]) {
+    loadDotEnvFile(envPath);
+  }
+}
 
 // move_workout is intentionally excluded -- owned exclusively by tp-actions-once.ts.
 const NEW_WRITE_ACTION_TYPES: TrainingPeaksActionType[] = [
@@ -140,7 +193,10 @@ async function buildDryRunPreview(action: TrainingPeaksAction): Promise<DryRunPr
     }
     case "delete_workout": {
       const payload = action.parsedPayload as DeleteWorkoutPayload;
-      const current = await getWorkoutDetail(payload.athleteId, payload.workoutId).catch(() => null);
+      const current =
+        payload.host === "strength"
+          ? await getStrengthWorkout(String(payload.workoutId)).catch(() => null)
+          : await getWorkoutDetail(payload.athleteId, payload.workoutId).catch(() => null);
       const title = current && typeof current.title === "string" ? current.title : null;
       return {
         proposedPayload: payload,
@@ -158,6 +214,56 @@ async function buildDryRunPreview(action: TrainingPeaksAction): Promise<DryRunPr
       throw new Error(`Unhandled action type in buildDryRunPreview: ${String(exhaustive)}`);
     }
   }
+}
+
+const TP_ACTIONS_NOTIFY_COACH_ENV = "TP_ACTIONS_NOTIFY_COACH";
+
+function buildActionExecuteMarkup(actionId: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "✅ Выполнить", callback_data: `tp:ta:x:${actionId}` }],
+      [{ text: "❌ Отмена", callback_data: `tp:ta:c:${actionId}` }],
+    ],
+  };
+}
+
+/**
+ * PR4 step 3: the equivalent, for the 5 new action types, of what
+ * tp-actions-once.ts's notifyCoachDryRunResult does for move -- send the
+ * "dry-run ready, here's what I'm about to do" card with the tp:ta:x:/
+ * tp:ta:c: buttons (the SAME single choke point move already uses). Lives
+ * here, duplicated rather than shared, because tp-actions-once.ts is off
+ * limits to edit.
+ *
+ * Gated behind TP_ACTIONS_NOTIFY_COACH=true (default OFF): the card text is
+ * ALWAYS logged to the console so it can be reviewed before the first real
+ * send is ever turned on.
+ */
+async function notifyCoachDryRunReady(action: TrainingPeaksAction): Promise<void> {
+  const student = action.studentId ? await getTrainingPeaksStudentById(action.studentId) : null;
+  const card = [
+    "✅ Dry-run завершён, готово к подтверждению.",
+    "",
+    buildWriteActionDetailCard(
+      action.actionType as Exclude<TrainingPeaksActionType, "move_workout">,
+      action.parsedPayload,
+      student?.studentName ?? null,
+    ),
+  ].join("\n");
+
+  console.log("─── coach card (dry-run ready) ───");
+  console.log(card);
+  console.log("───────────────────────────────────");
+
+  if (!isTruthyEnvFlag(process.env[TP_ACTIONS_NOTIFY_COACH_ENV])) {
+    console.log(`[dry-run] ${TP_ACTIONS_NOTIFY_COACH_ENV} is not set -- card logged above, NOT sent to Telegram.`);
+    return;
+  }
+
+  const markup = buildActionExecuteMarkup(action.id);
+  const coachChatIds = getTrainingPeaksCoachChatIds();
+  await Promise.allSettled(coachChatIds.map((chatId) => sendTelegramMessage(chatId, card, { replyMarkup: markup })));
+  console.log(`[dry-run] card sent to ${coachChatIds.length} coach chat(s).`);
 }
 
 async function runDryRunOnce(): Promise<boolean> {
@@ -179,6 +285,9 @@ async function runDryRunOnce(): Promise<boolean> {
       }),
     });
     console.log(`[dry-run] completed action ${action.id}: ${preview.humanPreview}`);
+    if (action.actionType !== "batch") {
+      await notifyCoachDryRunReady(action);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await failTrainingPeaksActionDryRun(action.id, { runId: run.id, errorMessage: message });
@@ -233,17 +342,26 @@ async function executeByType(action: TrainingPeaksAction): Promise<ExecuteOutcom
 
     case "delete_workout": {
       const payload = action.parsedPayload as DeleteWorkoutPayload;
-      const preImage = await getWorkoutDetail(payload.athleteId, payload.workoutId).catch(() => null);
+      const host = payload.host ?? "tpapi";
+      const preImage =
+        host === "strength"
+          ? await getStrengthWorkout(String(payload.workoutId)).catch(() => null)
+          : await getWorkoutDetail(payload.athleteId, payload.workoutId).catch(() => null);
       const priorWorkoutDay = preImage && typeof preImage.workoutDay === "string" ? preImage.workoutDay : null;
-      const deleteResponse = await deleteWorkout("tpapi", payload.athleteId, payload.workoutId);
+      const deleteResponse = await deleteWorkout(host, payload.athleteId, payload.workoutId);
 
-      // Verify via a fresh GET, interpreting its result with isWorkoutGone (a
-      // deleted workout returns HTTP 400 "Invalid workoutId", not 404 -- see
-      // tp-api-client.ts / plan §A).
+      // Verify via a fresh GET on the SAME host, interpreting its result with
+      // isWorkoutGone (tpapi returns HTTP 400 "Invalid workoutId" for a
+      // deleted workout, NOT 404; the strength host returns a plain 404 --
+      // isWorkoutGone already accounts for both signatures).
       let verifyStatus = deleteResponse.status;
       let verifyBody: unknown = deleteResponse.body;
       try {
-        await getWorkoutDetail(payload.athleteId, payload.workoutId);
+        if (host === "strength") {
+          await getStrengthWorkout(String(payload.workoutId));
+        } else {
+          await getWorkoutDetail(payload.athleteId, payload.workoutId);
+        }
         verifyStatus = 200;
         verifyBody = null;
       } catch (error) {
@@ -263,13 +381,16 @@ async function executeByType(action: TrainingPeaksAction): Promise<ExecuteOutcom
 
     case "strength_workout": {
       const payload = action.parsedPayload as StrengthWorkoutPayload;
+      // Forward every field verbatim (not just the 4 required ones) -- PR1's
+      // live-proven /save body carried more top-level fields (snapshot,
+      // compliancePercent, rpe, feel, instructions, etc.) than the minimum;
+      // this endpoint has never been proven to work with a stripped body.
+      const { athleteId, ...rest } = payload;
       const response = await createStrengthWorkout({
         workoutType: "StructuredStrength",
-        calendarId: payload.athleteId,
-        prescribedDate: payload.prescribedDate,
-        title: payload.title,
-        blocks: payload.blocks,
-      });
+        calendarId: athleteId,
+        ...rest,
+      } as CreateStrengthWorkoutRequestBody);
       const after = await getStrengthWorkout(String(response.id));
       const verification = verifyStrengthCreateOutcome(after);
       if (!verification.ok) {
@@ -391,6 +512,7 @@ function printHelp(): void {
 }
 
 async function main(): Promise<void> {
+  loadLocalEnv();
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
     printHelp();

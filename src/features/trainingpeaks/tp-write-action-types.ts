@@ -117,6 +117,15 @@ export type UpdateWorkoutPayload = {
 export type DeleteWorkoutPayload = {
   athleteId: number;
   workoutId: number;
+  /**
+   * Which host the workout lives on -- cardio workouts (tpapi.trainingpeaks.com)
+   * vs structured-strength workouts (api.peakswaresb.com, PR1). Defaults to
+   * "tpapi" when absent (every pre-PR4 caller only ever deleted cardio
+   * workouts). Strength rollback (buildRollbackPlan below) sets this
+   * explicitly -- deleting a strength workout via the tpapi host would 400
+   * on a workoutId that host has never heard of.
+   */
+  host?: "tpapi" | "strength";
 };
 
 export type StrengthWorkoutPayload = {
@@ -125,6 +134,14 @@ export type StrengthWorkoutPayload = {
   title: string;
   /** StructuredStrength blocks, shape confirmed live in PR1 (POST .../workouts/save). */
   blocks: unknown[];
+  /**
+   * PR1's live-proven /save body carried more top-level fields than just
+   * blocks/prescribedDate/title (snapshot, compliancePercent, rpe, feel,
+   * instructions, prescribedStartTime, etc.) -- forwarded verbatim rather
+   * than guessed at, since this endpoint has not been proven to work with a
+   * stripped-down body.
+   */
+  [key: string]: unknown;
 };
 
 export type BatchChildSpec = {
@@ -264,7 +281,7 @@ export function buildRollbackPlan(
       if (!workoutId || !Number.isFinite(workoutId) || !athleteId) {
         return { error: "Cannot build rollback: pre-image is missing calendarId/id." };
       }
-      const payload: DeleteWorkoutPayload = { athleteId, workoutId };
+      const payload: DeleteWorkoutPayload = { athleteId, workoutId, host: "strength" };
       return { actionType: "delete_workout", payload, description: `Delete strength workout ${workoutId} (undo create).` };
     }
 
