@@ -17,6 +17,13 @@ import {
   isEligibleForCoachSourceWorkoutConfirmation,
   resolvePlannedVsCompletedHintFromDryRunLog,
 } from "@/features/trainingpeaks/action-planned-completed-ambiguity";
+import {
+  buildRollbackPlan,
+  planBatchFanOut,
+  validateGenericDryRunLogReadiness,
+  type BatchChildSpec,
+  type BatchPayload,
+} from "@/features/trainingpeaks/tp-write-action-types";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
@@ -271,7 +278,18 @@ type TrainingPeaksWeekRow = {
 export type TrainingPeaksJobType = "weekly_reports" | "race_scan_events" | "race_results_probe";
 export type TrainingPeaksJobScope = "all_enabled" | "single_student";
 export type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
-export type TrainingPeaksActionType = "move_workout";
+// PR3: widened beyond move_workout (see supabase/migrations/20260712200000_generalize_trainingpeaks_actions_write_types.sql,
+// NOT yet applied -- Igor applies migrations by hand). Real names, matching the
+// existing DB naming convention (verified against the live CHECK constraint
+// before this PR, not guessed): "move" would have been wrong, "move_workout"
+// is what actually exists.
+export type TrainingPeaksActionType =
+  | "move_workout"
+  | "create_workout"
+  | "update_workout"
+  | "delete_workout"
+  | "strength_workout"
+  | "batch";
 export type TrainingPeaksActionStatus = "pending_coach" | "approved" | "rejected";
 export type TrainingPeaksActionExecutionStatus =
   | "not_started"
@@ -424,6 +442,10 @@ export type TrainingPeaksAction = {
   cancelledByChatId: string | null;
   cancelledByUserId: string | null;
   cancelMessageId: string | null;
+  /** PR3: set on a batch's CHILD rows; null on standalone actions and on the batch parent itself. */
+  parentBatchActionId: string | null;
+  /** PR3: set when this action is a rollback of a prior real run; references that run's id. */
+  rollbackOfRunId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -462,6 +484,8 @@ type TrainingPeaksActionRow = {
   cancelled_by_chat_id: string | null;
   cancelled_by_user_id: string | null;
   cancel_message_id: string | null;
+  parent_batch_action_id: string | null;
+  rollback_of_run_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -479,6 +503,13 @@ export type TrainingPeaksActionRun = {
   logJson: unknown;
   screenshotBeforePath: string | null;
   screenshotAfterPath: string | null;
+  /** PR3: full pre-mutation object (e.g. the workout as it was before a move/update/delete), promoted to a
+   * first-class column so rollback can read it directly instead of parsing it out of log_json. Null for dry runs
+   * and for action types with no meaningful pre-state (e.g. create). */
+  preImageJson: unknown | null;
+  /** PR3: convenience copy of the pre-image's workoutDay for move rollbacks, so a rollback-plan lookup doesn't
+   * need to parse the full pre_image_json just to find the date to move back to. */
+  priorWorkoutDay: string | null;
   createdAt: string;
 };
 
@@ -546,6 +577,8 @@ type TrainingPeaksActionRunRow = {
   log_json: unknown;
   screenshot_before_path: string | null;
   screenshot_after_path: string | null;
+  pre_image_json: unknown | null;
+  prior_workout_day: string | null;
   created_at: string;
 };
 
@@ -566,6 +599,29 @@ export type CompleteTrainingPeaksActionDryRunInput = {
   logJson?: unknown;
   screenshotBeforePath?: string | null;
   screenshotAfterPath?: string | null;
+};
+
+// PR3: real-run completion/failure. Move's real completion is still handled by
+// tp-actions-once.ts's own local finishRealRun/completeRealRun (duplicated,
+// pre-existing logic -- deliberately NOT touched by this PR, see the ops-log
+// note on that asymmetry). These are the NEW, centralized equivalents used by
+// tp-write-executor-once.ts for the new action types, including the
+// pre-image/prior-day columns this PR adds.
+export type CompleteTrainingPeaksActionRealRunInput = {
+  runId: string;
+  logJson?: unknown;
+  screenshotBeforePath?: string | null;
+  screenshotAfterPath?: string | null;
+  preImageJson?: unknown;
+  priorWorkoutDay?: string | null;
+};
+
+export type FailTrainingPeaksActionRealRunInput = {
+  runId: string;
+  errorMessage: string;
+  logJson?: unknown;
+  preImageJson?: unknown;
+  priorWorkoutDay?: string | null;
 };
 
 export type FailTrainingPeaksActionDryRunInput = {
@@ -612,6 +668,10 @@ export type CreateTrainingPeaksActionInput = {
   parsedPayload: unknown;
   confidence?: string | null;
   coachChatId?: string | null;
+  /** PR3: set to a batch parent's id when creating one of its children. */
+  parentBatchActionId?: string | null;
+  /** PR3: set when creating a rollback action -- references the run being rolled back. */
+  rollbackOfRunId?: string | null;
 };
 
 type DecideTrainingPeaksActionInput = {
@@ -1530,6 +1590,8 @@ function mapTrainingPeaksActionRow(row: TrainingPeaksActionRow): TrainingPeaksAc
     cancelledByChatId: row.cancelled_by_chat_id,
     cancelledByUserId: row.cancelled_by_user_id,
     cancelMessageId: row.cancel_message_id,
+    parentBatchActionId: row.parent_batch_action_id,
+    rollbackOfRunId: row.rollback_of_run_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1572,6 +1634,8 @@ function mapTrainingPeaksActionRunRow(row: TrainingPeaksActionRunRow): TrainingP
     logJson: row.log_json,
     screenshotBeforePath: row.screenshot_before_path,
     screenshotAfterPath: row.screenshot_after_path,
+    preImageJson: row.pre_image_json,
+    priorWorkoutDay: row.prior_workout_day,
     createdAt: row.created_at,
   };
 }
@@ -4039,6 +4103,8 @@ export async function createTrainingPeaksAction(
       parsed_payload: input.parsedPayload,
       confidence: input.confidence ?? null,
       coach_chat_id: input.coachChatId ?? null,
+      parent_batch_action_id: input.parentBatchActionId ?? null,
+      rollback_of_run_id: input.rollbackOfRunId ?? null,
     })
     .select("*")
     .single();
@@ -4281,10 +4347,15 @@ export async function requestTrainingPeaksActionExecution(
     };
   }
 
-  const dryRunValidation = validateDryRunLogReadiness(
-    (dryRunRun as { log_json?: unknown }).log_json,
-    action.parsedPayload
-  );
+  // PR3: move_workout keeps its existing DOM/candidate-fingerprint-based
+  // validator, untouched. Every other action type has no browser candidate to
+  // re-locate -- it validates via strict structural payload comparison
+  // instead (see tp-write-action-types.ts). Same choke point either way: this
+  // is the ONLY place execute_pending gets set, for every action type.
+  const dryRunValidation =
+    action.actionType === "move_workout"
+      ? validateDryRunLogReadiness((dryRunRun as { log_json?: unknown }).log_json, action.parsedPayload)
+      : validateGenericDryRunLogReadiness((dryRunRun as { log_json?: unknown }).log_json, action.parsedPayload);
   if (!dryRunValidation.ok) {
     return {
       kind: "blocked",
@@ -4964,19 +5035,25 @@ export async function cancelTrainingPeaksActionExecution(
 }
 
 export async function claimOneApprovedTrainingPeaksActionForDryRun(
-  claimedBy: string
+  claimedBy: string,
+  // PR3: widened, backward-compatible (default preserves the exact original
+  // move_workout-only behavior for the existing move caller in tp-actions-once.ts).
+  actionTypes: TrainingPeaksActionType[] = ["move_workout"],
 ): Promise<ClaimedTrainingPeaksDryRunAction | null> {
   const supabase = createSupabaseServerClient();
   const normalizedClaimedBy = claimedBy.trim();
   if (!normalizedClaimedBy) {
     throw new Error("Failed to claim dry-run TrainingPeaks action: claimedBy is empty");
   }
+  if (actionTypes.length === 0) {
+    throw new Error("Failed to claim dry-run TrainingPeaks action: actionTypes is empty");
+  }
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { data: candidate, error: candidateError } = await supabase
       .from("trainingpeaks_actions")
       .select("*")
-      .eq("action_type", "move_workout")
+      .in("action_type", actionTypes)
       .eq("status", "approved")
       .eq("execution_status", "not_started")
       .order("approved_at", { ascending: true, nullsFirst: false })
@@ -5261,6 +5338,380 @@ export async function failTrainingPeaksActionDryRun(
   if (actionError) {
     throw new Error(`Failed to mark TrainingPeaks action ${actionId} as failed: ${actionError.message}`);
   }
+}
+
+// PR3: the NON-move action types this PR adds. move_workout is excluded from
+// the default so this claim function never accidentally competes with
+// tp-actions-once.ts's own move-only real-execution claim (which is untouched
+// by this PR and keeps its own separate script-local claiming logic).
+const DEFAULT_NEW_WRITE_ACTION_TYPES: TrainingPeaksActionType[] = [
+  "create_workout",
+  "update_workout",
+  "delete_workout",
+  "strength_workout",
+  "batch",
+];
+
+/**
+ * Real-execution equivalent of claimOneApprovedTrainingPeaksActionForDryRun:
+ * atomically claims one action in (approved, execute_pending) among the given
+ * types, moving it to (running_local, execution_mode: real). Used by
+ * tp-write-executor-once.ts. tp-actions-once.ts's move path claims real
+ * execution itself, script-locally -- not through this function.
+ */
+export async function claimOneApprovedTrainingPeaksActionForRealExecution(
+  claimedBy: string,
+  actionTypes: TrainingPeaksActionType[] = DEFAULT_NEW_WRITE_ACTION_TYPES,
+): Promise<ClaimedTrainingPeaksDryRunAction | null> {
+  const supabase = createSupabaseServerClient();
+  const normalizedClaimedBy = claimedBy.trim();
+  if (!normalizedClaimedBy) {
+    throw new Error("Failed to claim TrainingPeaks action for real execution: claimedBy is empty");
+  }
+  if (actionTypes.length === 0) {
+    throw new Error("Failed to claim TrainingPeaks action for real execution: actionTypes is empty");
+  }
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data: candidate, error: candidateError } = await supabase
+      .from("trainingpeaks_actions")
+      .select("*")
+      .in("action_type", actionTypes)
+      .eq("status", "approved")
+      .eq("execution_status", "execute_pending")
+      .order("execution_requested_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (candidateError) {
+      throw new Error(
+        `Failed to select approved TrainingPeaks action candidate for real execution: ${candidateError.message}`,
+      );
+    }
+
+    if (!candidate) {
+      return null;
+    }
+
+    const claimedAt = new Date().toISOString();
+    const { data: claimedRow, error: claimError } = await supabase
+      .from("trainingpeaks_actions")
+      .update({
+        execution_status: "running_local",
+        execution_mode: "real",
+        claimed_by: normalizedClaimedBy,
+        claimed_at: claimedAt,
+      })
+      .eq("id", candidate.id)
+      .eq("status", "approved")
+      .eq("execution_status", "execute_pending")
+      .select("*")
+      .maybeSingle();
+
+    if (claimError) {
+      throw new Error(`Failed to claim TrainingPeaks action ${candidate.id} for real execution: ${claimError.message}`);
+    }
+
+    if (!claimedRow) {
+      continue;
+    }
+
+    const action = mapTrainingPeaksActionRow(claimedRow as TrainingPeaksActionRow);
+    let student: TrainingPeaksStudent | null = null;
+    if (action.studentId) {
+      student = await getTrainingPeaksStudentById(action.studentId);
+    }
+
+    return { action, student };
+  }
+
+  return null;
+}
+
+export async function completeTrainingPeaksActionRealRun(
+  actionId: string,
+  input: CompleteTrainingPeaksActionRealRunInput,
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const finishedAt = new Date().toISOString();
+
+  const { error: runError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .update({
+      status: "completed",
+      finished_at: finishedAt,
+      error_message: null,
+      log_json: input.logJson ?? {},
+      screenshot_before_path: input.screenshotBeforePath ?? null,
+      screenshot_after_path: input.screenshotAfterPath ?? null,
+      pre_image_json: input.preImageJson ?? null,
+      prior_workout_day: input.priorWorkoutDay ?? null,
+    })
+    .eq("id", input.runId)
+    .eq("action_id", actionId)
+    .eq("status", "running");
+
+  if (runError) {
+    throw new Error(`Failed to complete real action run ${input.runId}: ${runError.message}`);
+  }
+
+  const { error: actionError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "completed",
+      execution_mode: "real",
+      last_run_id: input.runId,
+    })
+    .eq("id", actionId);
+
+  if (actionError) {
+    throw new Error(`Failed to mark TrainingPeaks action ${actionId} as completed: ${actionError.message}`);
+  }
+}
+
+export async function failTrainingPeaksActionRealRun(
+  actionId: string,
+  input: FailTrainingPeaksActionRealRunInput,
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const finishedAt = new Date().toISOString();
+
+  const { error: runError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .update({
+      status: "failed",
+      finished_at: finishedAt,
+      error_message: input.errorMessage,
+      log_json: input.logJson ?? {},
+      pre_image_json: input.preImageJson ?? null,
+      prior_workout_day: input.priorWorkoutDay ?? null,
+    })
+    .eq("id", input.runId)
+    .eq("action_id", actionId)
+    .eq("status", "running");
+
+  if (runError) {
+    throw new Error(`Failed to mark real action run ${input.runId} as failed: ${runError.message}`);
+  }
+
+  // Deliberately NOT auto-rolling-back here. plan §C: "rollback is itself an
+  // assisted action (dry-run -> confirm -> execute)". A failed real run just
+  // stops -- creating a rollback proposal (createRollbackTrainingPeaksAction)
+  // is a separate, explicit step the coach/agent takes afterward, never automatic.
+  const { error: actionError } = await supabase
+    .from("trainingpeaks_actions")
+    .update({
+      execution_status: "failed",
+      execution_mode: "real",
+      last_run_id: input.runId,
+    })
+    .eq("id", actionId);
+
+  if (actionError) {
+    throw new Error(`Failed to mark TrainingPeaks action ${actionId} as failed: ${actionError.message}`);
+  }
+}
+
+// ─── batch (PR3): one parent action + N child actions, one coach confirmation ──
+
+export type CreateBatchTrainingPeaksActionInput = {
+  studentId?: string | null;
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceUserId?: string | null;
+  rawText: string;
+  coachChatId?: string | null;
+  children: BatchChildSpec[];
+};
+
+export type CreateBatchTrainingPeaksActionResult = {
+  parent: TrainingPeaksAction;
+  children: TrainingPeaksAction[];
+};
+
+/**
+ * Creates the batch parent row (action_type: "batch", carries the aggregate
+ * preview) plus one ordinary action row per child (parent_batch_action_id set
+ * to the parent's id). Each child goes through its OWN not_started ->
+ * dry_run_running -> dry_run_completed lifecycle independently (claimed the
+ * same way as any other action by tp-write-executor-once.ts) -- only the
+ * CONFIRM step is unified, via requestBatchTrainingPeaksActionExecution.
+ */
+export async function createBatchTrainingPeaksAction(
+  input: CreateBatchTrainingPeaksActionInput,
+): Promise<CreateBatchTrainingPeaksActionResult> {
+  const batchPayload: BatchPayload = { children: input.children };
+  const fanOut = planBatchFanOut(batchPayload);
+  if ("error" in fanOut) {
+    throw new Error(`Failed to create batch TrainingPeaks action: ${fanOut.error}`);
+  }
+
+  const parent = await createTrainingPeaksAction({
+    studentId: input.studentId ?? null,
+    actionType: "batch",
+    sourceChatId: input.sourceChatId,
+    sourceMessageId: input.sourceMessageId,
+    sourceUserId: input.sourceUserId ?? null,
+    rawText: input.rawText,
+    parsedPayload: batchPayload,
+    coachChatId: input.coachChatId ?? null,
+  });
+
+  const children: TrainingPeaksAction[] = [];
+  for (const child of fanOut.children) {
+    children.push(
+      await createTrainingPeaksAction({
+        studentId: input.studentId ?? null,
+        actionType: child.actionType,
+        sourceChatId: input.sourceChatId,
+        sourceMessageId: input.sourceMessageId,
+        sourceUserId: input.sourceUserId ?? null,
+        rawText: child.label,
+        parsedPayload: child.payload,
+        coachChatId: input.coachChatId ?? null,
+        parentBatchActionId: parent.id,
+      }),
+    );
+  }
+
+  return { parent, children };
+}
+
+export type RequestBatchTrainingPeaksActionExecutionResult =
+  | { kind: "queued"; parent: TrainingPeaksAction; children: TrainingPeaksAction[] }
+  | { kind: "not_found" }
+  | { kind: "blocked"; reason: string; notReadyChildren: TrainingPeaksAction[] };
+
+/**
+ * The single confirmation for a whole batch. Requires EVERY child to already
+ * be (approved, dry_run_completed) -- the coach sees one unified preview and
+ * either the whole batch is ready or it isn't; a partially-ready batch is
+ * surfaced as "blocked" with the specific not-ready children listed, not
+ * silently confirmed for the ready subset.
+ *
+ * Once all children are ready, this confirms the PARENT (through the exact
+ * same requestTrainingPeaksActionExecution choke point everything else uses)
+ * and then confirms each child the same way. If a child unexpectedly fails to
+ * queue (e.g. a race changed its state between the readiness check and now),
+ * it is simply absent from the returned `children` array -- callers diff
+ * against the original child list to see the partial-failure, rather than
+ * this function aborting the rest of an otherwise-successful batch queue.
+ */
+export async function requestBatchTrainingPeaksActionExecution(
+  input: RequestTrainingPeaksActionExecutionInput,
+): Promise<RequestBatchTrainingPeaksActionExecutionResult> {
+  const parent = await getTrainingPeaksActionByIdInternal(input.actionId);
+  if (!parent || parent.actionType !== "batch") {
+    return { kind: "not_found" };
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data: childRows, error: childError } = await supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("parent_batch_action_id", parent.id);
+  if (childError) {
+    throw new Error(`Failed to load batch children for ${parent.id}: ${childError.message}`);
+  }
+  const children = ((childRows as TrainingPeaksActionRow[] | null) ?? []).map(mapTrainingPeaksActionRow);
+
+  const notReady = children.filter((child) => !(child.status === "approved" && child.executionStatus === "dry_run_completed"));
+  if (notReady.length > 0) {
+    return {
+      kind: "blocked",
+      reason: `${notReady.length} of ${children.length} batch item(s) are not ready (approved + dry-run completed).`,
+      notReadyChildren: notReady,
+    };
+  }
+
+  const parentQueued = await requestTrainingPeaksActionExecution(input);
+  if (parentQueued.kind !== "queued") {
+    return { kind: "blocked", reason: `Parent batch action could not be queued (${parentQueued.kind}).`, notReadyChildren: [] };
+  }
+
+  const queuedChildren: TrainingPeaksAction[] = [];
+  for (const child of children) {
+    const childResult = await requestTrainingPeaksActionExecution({
+      actionId: child.id,
+      requestedByChatId: input.requestedByChatId,
+      requestedByUserId: input.requestedByUserId,
+      requestMessageId: input.requestMessageId,
+    });
+    if (childResult.kind === "queued") {
+      queuedChildren.push(childResult.action);
+    }
+  }
+
+  return { kind: "queued", parent: parentQueued.action, children: queuedChildren };
+}
+
+// ─── rollback (PR3): itself an ordinary assisted action, never automatic ─────
+
+export type CreateRollbackTrainingPeaksActionInput = {
+  originRunId: string;
+  sourceChatId: string;
+  sourceMessageId: string;
+  sourceUserId?: string | null;
+  coachChatId?: string | null;
+};
+
+export type CreateRollbackTrainingPeaksActionResult =
+  | { kind: "created"; action: TrainingPeaksAction }
+  | { kind: "error"; reason: string };
+
+/**
+ * Builds and creates a NEW action row (status: pending_coach, execution_status:
+ * not_started) whose type/payload undo a prior completed real run, per
+ * buildRollbackPlan (create->delete, move->move-back, update->restore
+ * pre-image, strength->delete; delete has no supported rollback). This is
+ * intentionally just another ordinary action: it goes through the exact same
+ * propose -> dry-run -> coach confirm -> execute pipeline as anything else.
+ * NOTHING here executes automatically.
+ */
+export async function createRollbackTrainingPeaksAction(
+  input: CreateRollbackTrainingPeaksActionInput,
+): Promise<CreateRollbackTrainingPeaksActionResult> {
+  const supabase = createSupabaseServerClient();
+  const { data: runRow, error: runError } = await supabase
+    .from("trainingpeaks_action_runs")
+    .select("*")
+    .eq("id", input.originRunId)
+    .maybeSingle();
+  if (runError) {
+    throw new Error(`Failed to load action run ${input.originRunId} for rollback: ${runError.message}`);
+  }
+  if (!runRow) {
+    return { kind: "error", reason: "Origin run not found." };
+  }
+  const run = mapTrainingPeaksActionRunRow(runRow as TrainingPeaksActionRunRow);
+  if (run.runType !== "real" || run.status !== "completed") {
+    return { kind: "error", reason: "Can only roll back a completed real run." };
+  }
+
+  const originAction = await getTrainingPeaksActionByIdInternal(run.actionId);
+  if (!originAction) {
+    return { kind: "error", reason: "Origin action not found." };
+  }
+
+  const plan = buildRollbackPlan(originAction.actionType, run.preImageJson, originAction.parsedPayload);
+  if ("error" in plan) {
+    return { kind: "error", reason: plan.error };
+  }
+
+  const action = await createTrainingPeaksAction({
+    studentId: originAction.studentId,
+    actionType: plan.actionType,
+    sourceChatId: input.sourceChatId,
+    sourceMessageId: input.sourceMessageId,
+    sourceUserId: input.sourceUserId ?? null,
+    rawText: `Rollback: ${plan.description}`,
+    parsedPayload: plan.payload,
+    coachChatId: input.coachChatId ?? originAction.coachChatId,
+    rollbackOfRunId: run.id,
+  });
+
+  return { kind: "created", action };
 }
 
 export async function getTrainingPeaksJobById(jobId: string): Promise<TrainingPeaksJob | null> {

@@ -21,7 +21,16 @@ import { isSnapshotCookieFresh, readSessionSnapshot } from "./tp-session-snapsho
  *    HTTP 400 "Invalid workoutId (<id>)", not 404/403 -- so PR3/PR4's write
  *    verification doesn't build on a false "still there" reading.
  *
- * READ ONLY. No POST/PUT/DELETE calls are made anywhere in this module.
+ * PR3 adds write functions (createWorkout, moveWorkout, updateWorkout,
+ * deleteWorkout, createStrengthWorkout) on the SAME auth/retry/redaction
+ * plumbing as the read functions -- "write through the client, not around
+ * it" (plan §C). These are plain capability functions: nothing in this file
+ * decides WHETHER a write should happen. That gate lives entirely in the
+ * caller (the executor script + the trainingpeaks_actions two-axis
+ * lifecycle + TP_ACTIONS_REAL_EXECUTION) -- exactly like the existing
+ * move-workout path's PUT call is just a capability, gated by everything
+ * around it. No write function in this file is invoked against real
+ * TrainingPeaks anywhere in PR3; they are unit-tested with mocked fetch only.
  */
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
@@ -261,16 +270,28 @@ async function runWithConcurrency<T, R>(items: T[], concurrency: number, worker:
  * the whole process lifetime. Still "one-time refresh before retry" per call,
  * matching the PR2 instruction; just correctly scoped for a long-lived client.
  */
-async function fetchJsonWithRetry(url: string): Promise<{ status: number; body: unknown }> {
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
+
+async function fetchJsonWithRetry(
+  url: string,
+  options: { method?: HttpMethod; jsonBody?: unknown } = {},
+): Promise<{ status: number; body: unknown }> {
+  const method = options.method ?? "GET";
   let authRefreshedThisCall = false;
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const bearer = await getBearer();
+      const headers: Record<string, string> = {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        authorization: `Bearer ${bearer}`,
+      };
+      if (options.jsonBody !== undefined) headers["content-type"] = "application/json";
       const response = await fetch(url, {
-        method: "GET",
-        headers: { accept: "application/json, text/javascript, */*; q=0.01", authorization: `Bearer ${bearer}` },
+        method,
+        headers,
+        body: options.jsonBody !== undefined ? JSON.stringify(options.jsonBody) : undefined,
       });
       const body = await safeReadBody(response);
 
@@ -300,6 +321,14 @@ async function getJsonOrThrow(url: string): Promise<unknown> {
   const { status, body } = await fetchJsonWithRetry(url);
   if (status < 200 || status >= 300) {
     throw new TpApiHttpError(`GET ${url} failed with HTTP ${status}.`, status, body);
+  }
+  return body;
+}
+
+async function writeJsonOrThrow(url: string, method: "POST" | "PUT", jsonBody: unknown): Promise<unknown> {
+  const { status, body } = await fetchJsonWithRetry(url, { method, jsonBody });
+  if (status < 200 || status >= 300) {
+    throw new TpApiHttpError(`${method} ${url} failed with HTTP ${status}.`, status, body);
   }
   return body;
 }
@@ -422,6 +451,91 @@ export async function getEvents(athleteId: number, startIso: string, endIso: str
 export async function getStrengthWorkout(strengthWorkoutId: number | string): Promise<Record<string, unknown>> {
   const endpoint = `/rx/activity/v1/workouts/${strengthWorkoutId}`;
   const body = await getJsonOrThrow(`${TP_STRENGTH_HOST}${endpoint}`);
+  const wrapper = assertRecord(body, endpoint);
+  const data = assertRecord(wrapper.data, endpoint);
+  assertString(data.id, "data.id", endpoint);
+  return data;
+}
+
+// ─── writes (PR3) ───────────────────────────────────────────────────────────────
+// Same auth/retry/redaction plumbing as the reads above. See the module-level
+// comment: these are plain capability functions -- the caller (executor +
+// action lifecycle) decides whether/when a write actually happens.
+
+export type CreateWorkoutRequestBody = {
+  athleteId: number;
+  workoutDay: string;
+  title: string;
+  workoutTypeValueId: number;
+  workoutSubTypeId: number | null;
+  description: string | null;
+  coachComments: string | null;
+  distancePlanned: number | null;
+  totalTimePlanned: number | null;
+  structure: unknown | null;
+};
+
+/**
+ * Create a cardio/interval workout. `workoutId: 0` in the request body signals
+ * "create" to tpapi (confirmed working end-to-end in this session's earlier
+ * probe work); the response contains the server-assigned numeric workoutId.
+ */
+export async function createWorkout(payload: CreateWorkoutRequestBody): Promise<{ workoutId: number; raw: Record<string, unknown> }> {
+  const endpoint = `/fitness/v6/athletes/${payload.athleteId}/workouts`;
+  const body = await writeJsonOrThrow(`${TP_API_HOST}${endpoint}`, "POST", { ...payload, workoutId: 0 });
+  const record = assertRecord(body, endpoint);
+  const workoutId = assertNumber(record.workoutId, "workoutId", endpoint);
+  return { workoutId, raw: record };
+}
+
+/**
+ * Full-object PUT to /workouts/{workoutId} -- the same underlying operation
+ * used for both "move" (only workoutDay changes) and "update" (arbitrary
+ * fields change). Callers are responsible for building `fullBody` (typically:
+ * prefetch GET the current object, then override the changed fields) -- this
+ * function is the raw write primitive, matching the existing
+ * buildWorkoutMovePayload + PUT pattern already proven in production for move.
+ */
+export async function putWorkout(athleteId: number, workoutId: number, fullBody: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const endpoint = `/fitness/v6/athletes/${athleteId}/workouts/${workoutId}`;
+  const body = await writeJsonOrThrow(`${TP_API_HOST}${endpoint}`, "PUT", { ...fullBody, athleteId, workoutId });
+  return assertRecord(body, endpoint);
+}
+
+/**
+ * DELETE a workout. Returns the raw status/body rather than throwing on a
+ * non-2xx, because interpreting the result correctly requires isWorkoutGone()
+ * (a "successful" delete followed by a readback GET returns HTTP 400 "Invalid
+ * workoutId", not 2xx/404 -- see PR1 finding above). The DELETE call itself is
+ * expected to return 200 on success (confirmed empirically for both the tpapi
+ * and peakswaresb hosts).
+ */
+export async function deleteWorkout(host: "tpapi" | "strength", athleteId: number, workoutId: number): Promise<{ status: number; body: unknown }> {
+  const base = host === "tpapi" ? TP_API_HOST : TP_STRENGTH_HOST;
+  const endpoint = `/fitness/v6/athletes/${athleteId}/workouts/${workoutId}`;
+  const strengthEndpoint = `/rx/activity/v1/workouts/${workoutId}`;
+  const path = host === "tpapi" ? endpoint : strengthEndpoint;
+  return fetchJsonWithRetry(`${base}${path}`, { method: "DELETE" });
+}
+
+export type CreateStrengthWorkoutRequestBody = {
+  workoutType: "StructuredStrength";
+  calendarId: number;
+  prescribedDate: string;
+  title: string;
+  blocks: unknown[];
+  [key: string]: unknown;
+};
+
+/**
+ * Create a structured strength workout via the single atomic call resolved in
+ * PR1: POST .../workouts/save with the FULL object in one shot (not the old
+ * multi-step create+add+add+PUT draft flow, which never persisted). Verified
+ * live end-to-end in PR1 (numeric id returned, GET persisted, DELETE worked).
+ */
+export async function createStrengthWorkout(payload: CreateStrengthWorkoutRequestBody): Promise<Record<string, unknown>> {
+  const endpoint = "/rx/activity/v1/workouts/save";
+  const body = await writeJsonOrThrow(`${TP_STRENGTH_HOST}${endpoint}`, "POST", payload);
   const wrapper = assertRecord(body, endpoint);
   const data = assertRecord(wrapper.data, endpoint);
   assertString(data.id, "data.id", endpoint);
