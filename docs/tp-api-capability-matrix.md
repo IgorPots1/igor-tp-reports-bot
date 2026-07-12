@@ -110,9 +110,14 @@ profile (`tools/trainingpeaks-export/.playwright-profile/trainingpeaks`, ~858MB,
 4. Direct SQLite (`Default/Cookies`) parsing was **not** attempted/recommended — Chromium encrypts values via
    macOS Keychain; decrypting outside Playwright's own API is more fragile and a bigger security surface, not less.
 
-**Design recommendation for PR2/§D:** keep the env-var (`TRAININGPEAKS_COOKIE`) path as documented in the plan for
-simplicity/portability, but add the profile-snapshot path as the **preferred local source** when the executor runs
-on Igor's machine — eliminates the weekly manual cookie copy without a new secret-storage mechanism.
+**Design recommendation for PR2/§D (updated after review):**
+- Authorization comes **ONLY** from the persistent Playwright profile (`context.cookies()`). ~30-day TTL,
+  confirmed empirically in PR1.
+- `TRAININGPEAKS_COOKIE` is **NOT built at all**. The raw-cookie-in-env model is **DROPPED**, not kept alongside
+  the profile source. No raw secret sits in an environment variable anywhere in this design.
+- Cookie auto-minting is a **CLOSED** question, not deferred — there is no separate auto-mint task.
+- The Telegram 401 alert stays as a **safety net**, not the primary refresh path.
+- **PR2 must solve the snapshot-export of the profile across worktrees/checkouts** (see caveat 1/2 above).
 
 ## Open question carried over (not investigated this pass)
 
