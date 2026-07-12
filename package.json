@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test:tp-api-client": "node --experimental-strip-types --test src/features/trainingpeaks/tp-api-client.test.ts",
     "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts",
     "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once",
     "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --",

@@ -28,6 +28,7 @@
     "capture-trainingpeaks-api-bearer": "tsx scripts/capture-trainingpeaks-api-bearer.ts",
     "tp-discover-custom-metrics-api": "tsx scripts/tp-discover-custom-metrics-api.ts",
     "tp-discover-athletes": "tsx scripts/tp-discover-athletes.ts",
+    "tp-refresh-session-snapshot": "tsx scripts/tp-refresh-session-snapshot.ts",
     "tp-capture-strength-builder": "tsx scripts/tp-capture-strength-builder-network.ts",
     "tp-capture-create-running-workout-network": "tsx scripts/tp-capture-create-workout-network.ts",
     "tp-api-create-running-workout-proof": "tsx scripts/tp-api-create-running-workout-proof.ts",
