@@ -9,6 +9,34 @@ import {
   shouldBypassConfidenceThresholdForCoachConfirmedRevalidation,
 } from "../tools/trainingpeaks-export/scripts/tp-actions-once";
 
+// REQUIRES the tools/trainingpeaks-export sub-package to be installed: evaluateDryRunOutcome
+// lives in the runner, which imports playwright. A bare root install makes this check die with
+// ERR_MODULE_NOT_FOUND ('playwright') BEFORE any assertion — which looks like a red check but
+// says nothing about the flow. In CI, install the sub-package or skip this one deliberately.
+//
+// Fixture dates are RELATIVE TO TODAY and must never be pinned to a calendar date.
+// The runner hard-rejects a source date in the past (past_source_date_rejected) — a
+// deliberate safety gate, and the right behaviour: a workout that already happened must
+// never be moved. A pinned date silently rots into the past, and the whole flow then
+// collapses into "source date could not be resolved safely", making this check fail for
+// a reason that has nothing to do with the flow it guards.
+//
+// That is exactly what happened: the fixture pinned 2026-05-31, went red weeks later,
+// and nobody noticed — the check was not registered in package.json and never ran.
+function isoDayFromToday(offsetDays: number): string {
+  const now = new Date();
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  day.setUTCDate(day.getUTCDate() + offsetDays);
+  return day.toISOString().slice(0, 10);
+}
+
+// Scenario 1 — source resolved by DATE (inferred, then coach-confirmed).
+const SOURCE_DATE = isoDayFromToday(3);
+const TARGET_DATE = isoDayFromToday(4);
+// Scenario 2 — source resolved by WORKOUT ID (coach-confirmed workout).
+const WORKOUT_SOURCE_DATE = isoDayFromToday(10);
+const WORKOUT_TARGET_DATE = isoDayFromToday(11);
+
 type ParsedPayload = {
   parsingDiagnostics?: {
     autoApprovedForDryRun?: boolean;
@@ -112,12 +140,12 @@ function run(): void {
 
   const inferredPayload = {
     actionType: "move_workout",
-    target: { kind: "date", value: "2026-06-01" },
+    target: { kind: "date", value: TARGET_DATE },
     workoutDescriptor: { raw: "Длительный бег по темпу", type: "run", confidence: 0.79 },
   };
   const coachConfirmedPayload = {
     ...inferredPayload,
-    coach_confirmed_source_date: "2026-05-31",
+    coach_confirmed_source_date: SOURCE_DATE,
     source_date_policy_override: "coach_confirmed_source_date",
   };
   const inferredEvaluation = evaluateDryRunOutcome({
@@ -151,11 +179,11 @@ function run(): void {
     },
     candidates: [
       buildCandidate({
-        dateIso: "2026-05-31",
+        dateIso: SOURCE_DATE,
         title: "Длительный бег по темпу",
         workoutId: 3764963076,
         rawScore: 0.79,
-        fingerprint: "student-1:2026-05-31:tempo-long-run",
+        fingerprint: `student-1:${SOURCE_DATE}:tempo-long-run`,
       }),
     ],
     extraction: {
@@ -234,11 +262,11 @@ function run(): void {
     },
     candidates: [
       buildCandidate({
-        dateIso: "2026-05-31",
+        dateIso: SOURCE_DATE,
         title: "Длительный бег по темпу",
         workoutId: 3764963076,
         rawScore: 0.79,
-        fingerprint: "student-1:2026-05-31:tempo-long-run",
+        fingerprint: `student-1:${SOURCE_DATE}:tempo-long-run`,
       }),
     ],
     extraction: {
@@ -308,7 +336,7 @@ function run(): void {
     canExecuteReasons: ["Карточки тренировок не найдены в календаре"],
     confidence: 0.2,
     candidate: null,
-    resolvedDates: { sourceDate: null, targetDate: "2026-06-01" },
+    resolvedDates: { sourceDate: null, targetDate: TARGET_DATE },
     identityCheck: buildIdentityCheck(),
     selectedSourceDatePolicy: "coach_confirmed_source_date",
     selectedSourceDate: null,
@@ -322,9 +350,9 @@ function run(): void {
 
   const coachConfirmedWorkoutPayload = {
     actionType: "move_workout",
-    source: { kind: "date", value: "2026-06-13" },
-    target: { kind: "date", value: "2026-06-14" },
-    sourceDate: "2026-06-13",
+    source: { kind: "date", value: WORKOUT_SOURCE_DATE },
+    target: { kind: "date", value: WORKOUT_TARGET_DATE },
+    sourceDate: WORKOUT_SOURCE_DATE,
     coach_confirmed_source_workout_id: 3777415862,
   };
   const coachConfirmedWorkoutLog = {
@@ -336,12 +364,12 @@ function run(): void {
       title: "5 х 7 мин (на улице)",
       type: "run",
       workoutId: 3777415862,
-      fingerprint: "student-1:2026-06-13:interval-outdoor",
+      fingerprint: `student-1:${WORKOUT_SOURCE_DATE}:interval-outdoor`,
     },
-    resolvedDates: { sourceDate: "2026-06-13", targetDate: "2026-06-14" },
+    resolvedDates: { sourceDate: WORKOUT_SOURCE_DATE, targetDate: WORKOUT_TARGET_DATE },
     identityCheck: buildIdentityCheck(),
     selectedSourceDatePolicy: "explicit_source_date",
-    selectedSourceDate: "2026-06-13",
+    selectedSourceDate: WORKOUT_SOURCE_DATE,
     candidateAlternativesCount: 0,
   };
   assert.equal(
@@ -358,10 +386,10 @@ function run(): void {
     parsedPayload: coachConfirmedPayload,
     trustedSelectedSourceDatePolicy: "coach_confirmed_source_date",
     currentSelectedSourceDatePolicy: "coach_confirmed_source_date",
-    trustedSourceDate: "2026-05-31",
-    trustedTargetDate: "2026-06-01",
-    currentSourceDate: "2026-05-31",
-    currentTargetDate: "2026-06-01",
+    trustedSourceDate: SOURCE_DATE,
+    trustedTargetDate: TARGET_DATE,
+    currentSourceDate: SOURCE_DATE,
+    currentTargetDate: TARGET_DATE,
     actionStatus: "approved",
     actionExecutionStatus: "running_local",
   });
@@ -375,10 +403,10 @@ function run(): void {
     parsedPayload: inferredPayload,
     trustedSelectedSourceDatePolicy: "nearest_prior_within_3_days",
     currentSelectedSourceDatePolicy: "nearest_prior_within_3_days",
-    trustedSourceDate: "2026-05-31",
-    trustedTargetDate: "2026-06-01",
-    currentSourceDate: "2026-05-31",
-    currentTargetDate: "2026-06-01",
+    trustedSourceDate: SOURCE_DATE,
+    trustedTargetDate: TARGET_DATE,
+    currentSourceDate: SOURCE_DATE,
+    currentTargetDate: TARGET_DATE,
     actionStatus: "approved",
     actionExecutionStatus: "running_local",
   });
