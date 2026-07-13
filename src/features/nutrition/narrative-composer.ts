@@ -1786,13 +1786,212 @@ export type NutritionWeeklySummaryDayFact = {
   specificWorkoutLabel?: string | null;
 };
 
+// ─── Пул формулировок недельного итога ────────────────────────────────────────────────────────
+// The summary is 100% deterministic code (no model), so every fixed sentence used to read
+// verbatim the same week after week — a student on a steady week got a literally identical итог
+// four weeks running. Each slot below carries several equivalent phrasings; variantIndex picks
+// one from a stable hash of (weekFrom + slot). Same week → same text forever (re-renders and the
+// check-* scripts stay reproducible — Math.random would break both); different weeks → different
+// wording. Within a slot the CLAIM and the numbers are identical across variants — only the
+// wording differs, so no variant can say something the data does not support. All phrasings are
+// impersonal (no ты/вы), which is what keeps the formality layer out of this function.
+
+const WEEKLY_PATTERN_FRAMES: ReadonlyArray<{ energyAndCarbs: string; energyOnly: string }> = [
+  {
+    energyAndCarbs: "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии и углеводам.",
+    energyOnly: "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии.",
+  },
+  {
+    energyAndCarbs: "Паттерн недели: дни с нагрузкой раз за разом выходили низкими по энергии и углеводам.",
+    energyOnly: "Паттерн недели: дни с нагрузкой раз за разом выходили низкими по энергии.",
+  },
+  {
+    energyAndCarbs: "Главное за неделю: дни с нагрузкой систематически недобирали по энергии и углеводам.",
+    energyOnly: "Главное за неделю: дни с нагрузкой систематически недобирали по энергии.",
+  },
+];
+
+const WEEKLY_FOCUS_FRAMES: ReadonlyArray<{ energyAndCarbs: string; carbsOnly: string; energyOnly: string }> = [
+  {
+    energyAndCarbs: "Главный фокус недели — поддержать дни с нагрузкой по энергии и углеводам.",
+    carbsOnly: "Главный фокус недели — поддержать дни с нагрузкой по углеводам.",
+    energyOnly: "Главный фокус недели — поддержать дни с нагрузкой по энергии.",
+  },
+  {
+    energyAndCarbs: "Главный фокус недели — добрать энергии и углеводов в дни с нагрузкой.",
+    carbsOnly: "Главный фокус недели — добрать углеводов в дни с нагрузкой.",
+    energyOnly: "Главный фокус недели — добрать энергии в дни с нагрузкой.",
+  },
+  {
+    energyAndCarbs: "Фокус на неделю — энергия и углеводы в дни с нагрузкой.",
+    carbsOnly: "Фокус на неделю — углеводы в дни с нагрузкой.",
+    energyOnly: "Фокус на неделю — энергия в дни с нагрузкой.",
+  },
+];
+
+// Single off-day. {day} = the key-workout label; the plain form is used when the day is not a key
+// session (there the label collapses to «бег» and reads thin). {gap} = the shortfall clause.
+const WEEKLY_SINGLE_DAY_FRAMES: ReadonlyArray<{ labelled: string; plain: string }> = [
+  {
+    labelled: "Неделя держалась ровно, кроме одного дня — {day}: {gap}.",
+    plain: "Неделя держалась ровно, кроме одного дня с нагрузкой: {gap}.",
+  },
+  {
+    labelled: "Неделя в целом собрана; выбился один день — {day}: {gap}.",
+    plain: "Неделя в целом собрана; выбился один день с нагрузкой: {gap}.",
+  },
+  {
+    labelled: "Почти вся неделя ровная, кроме одного дня ({day}): {gap}.",
+    plain: "Почти вся неделя ровная, кроме одного дня с нагрузкой: {gap}.",
+  },
+];
+
+// Clean week. The withBorderline form says «без провалов» rather than «закрыты», because a
+// borderline day is a near-miss — claiming carbs were «закрыты» would contradict the «на нижней
+// границе» line further down.
+const WEEKLY_CLEAN_FRAMES: ReadonlyArray<{ clean: string; withBorderline: string }> = [
+  {
+    clean: "Неделя вышла ровной: дни с нагрузкой закрыты и по энергии, и по углеводам.",
+    withBorderline: "Неделя вышла ровной: провалов по энергии и углеводам в дни с нагрузкой не было.",
+  },
+  {
+    clean: "Неделя собралась хорошо: под нагрузку хватило и энергии, и углеводов.",
+    withBorderline: "Неделя прошла без провалов — дни с нагрузкой по энергии и углеводам держались.",
+  },
+  {
+    clean: "Ровная неделя — дни с нагрузкой обеспечены и по энергии, и по углеводам.",
+    withBorderline: "Ровная неделя: просадок по энергии и углеводам под нагрузку не случилось.",
+  },
+];
+
+const WEEKLY_PROTEIN_OK_VARIANTS: readonly string[] = [
+  "Белок в среднем держится хорошо, это не главный вопрос недели.",
+  "По белку неделя ровная — здесь ничего подтягивать не нужно.",
+  "Белок держится уверенно, вопросов к нему на этой неделе нет.",
+  "С белком всё в порядке — на этой неделе он не ограничитель.",
+];
+
+const WEEKLY_FAT_LOW_VARIANTS: readonly string[] = [
+  "Жиры тоже несколько раз были на нижней границе.",
+  "Жиры несколько дней держались у нижнего края ориентира.",
+  "По жирам было несколько дней у нижней границы.",
+];
+
+const WEEKLY_CARBS_BOUND_VARIANTS: readonly string[] = [
+  "Самые тяжёлые дни вышли с углеводами на нижней границе.",
+  "В самых тяжёлых днях углеводы легли по нижнему краю ориентира.",
+  "Углеводы в самых тяжёлых днях держались у нижней границы.",
+];
+
+// Tail of the key-workouts sentence. Index-aligned with the singular list below, so one week never
+// mixes two different tail styles.
+const WEEKLY_KEY_TAIL_PLURAL: readonly string[] = [
+  "Вокруг них питание важнее всего.",
+  "Именно эти дни питание вытягивает в первую очередь.",
+  "Питание вокруг них решает больше всего.",
+];
+const WEEKLY_KEY_TAIL_SINGULAR: readonly string[] = [
+  "Вокруг неё питание важнее всего.",
+  "Именно этот день питание вытягивает в первую очередь.",
+  "Питание вокруг неё решает больше всего.",
+];
+
+// Week-over-week carbs movement — the one line whose CONTENT changes week to week, not just its
+// wording. Deliberately qualitative: the stored delta is the WHOLE-WEEK daily carbs average
+// (avg_carbs_g), NOT a load-day average, so the wording says «в среднем за неделю» and never
+// claims the shift happened in the load days. No figures are quoted — the summary is rendered
+// outside the prose number-validator, and an unvalidated number here would be a new failure mode.
+const WEEKLY_CARBS_TREND_UP: readonly string[] = [
+  "Углеводы в среднем за неделю подтянулись против прошлой.",
+  "По углеводам за неделю сдвиг вверх против прошлой недели.",
+  "Углеводы в среднем стали выше, чем неделей раньше.",
+];
+const WEEKLY_CARBS_TREND_DOWN: readonly string[] = [
+  "Углеводы в среднем за неделю просели против прошлой.",
+  "По углеводам за неделю сдвиг вниз против прошлой недели.",
+  "Углеводы в среднем стали ниже, чем неделей раньше.",
+];
+
+// A weekly average must move at least this much (g/day) before it is called a shift — below that
+// the difference is day-to-day logging noise, not a change in behaviour.
+const WEEKLY_CARBS_TREND_MIN_DELTA_G = 20;
+
+function fnv1a(key: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
+
+// Whole weeks since the epoch. Consecutive review weeks are exactly 7 days apart, so their
+// ordinals differ by exactly 1 — which is what turns the pick below into a real ROTATION.
+function weekOrdinal(weekFrom: string): number | null {
+  const ms = Date.parse(`${weekFrom}T00:00:00Z`);
+  return Number.isFinite(ms) ? Math.floor(ms / 604_800_000) : null;
+}
+
+/**
+ * Deterministic phrase rotation. Hashing the seed directly was the obvious move and it is WRONG
+ * here: consecutive weekFrom values are near-identical strings («2026-06-01» / «2026-06-08»), so a
+ * hash mod a 3-item pool clusters badly — on Ponomareva's six weeks it put all three fat lines on
+ * the same variant. Stepping by the week ordinal instead guarantees that two CONSECUTIVE weeks
+ * never draw the same phrase for a slot, which is exactly the complaint («ученица читает то же
+ * самое 3-4 недели подряд»). The slot's own hash only sets the starting offset, so the slots do
+ * not rotate in lockstep. Same week always renders the same text (re-renders and check-* scripts
+ * stay reproducible — Math.random would break both).
+ */
+function variantIndex(poolLength: number, seed: string | undefined, slot: string): number {
+  if (!seed || poolLength <= 1) {
+    return 0;
+  }
+  const ordinal = weekOrdinal(seed);
+  if (ordinal === null) {
+    return fnv1a(`${seed}:${slot}`) % poolLength;
+  }
+  return (((ordinal + fnv1a(slot)) % poolLength) + poolLength) % poolLength;
+}
+
+function pickVariant(pool: readonly string[], seed: string | undefined, slot: string): string {
+  return pool[variantIndex(pool.length, seed, slot)] ?? pool[0] ?? "";
+}
+
+/**
+ * Week-over-week carbs delta (g/day) out of a stored review's nutrition_summary. Computed BY CODE
+ * at generation (draft-generator) — never model-authored. null when the review predates the field
+ * or had no prior week. Deliberately the ONE reader for both surfaces: the amber≠hard bug came
+ * from two copies of a predicate drifting apart, and this must not repeat.
+ */
+export function readCarbsWeekOverWeekDeltaG(nutritionSummary: unknown): number | null {
+  const summary =
+    nutritionSummary && typeof nutritionSummary === "object"
+      ? (nutritionSummary as Record<string, unknown>)
+      : {};
+  const raw = summary.week_over_week;
+  const weekOverWeek = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const delta = weekOverWeek.delta_carbs_g;
+  return typeof delta === "number" && Number.isFinite(delta) ? delta : null;
+}
+
 export function buildNutritionWeeklySummary(input: {
   days: NutritionWeeklySummaryDayFact[];
   proteinSufficient?: boolean;
   weeklyProteinAvgGPerKg?: number | null;
   fatFeedbackPolicy?: NutritionFatFeedbackPolicy;
+  /**
+   * Rotation seed — the review's weekFrom. Same week always renders the same wording; different
+   * weeks get different phrasings of the same claim. Omitted → variant 0 (previous behaviour).
+   */
+  weekSeed?: string;
+  /**
+   * Code-computed week-over-week change of the WHOLE-WEEK daily carbs average, in grams
+   * (nutrition_summary.week_over_week.delta_carbs_g). Never model-authored.
+   */
+  carbsWeekOverWeekDeltaG?: number | null;
 }): string {
   const fatFeedbackPolicy = input.fatFeedbackPolicy ?? "coach_only";
+  const seed = input.weekSeed;
   let proteinOkDays = 0;
   let proteinLowOrBorderlineDays = 0;
   let fatLowOrBorderlineDays = 0;
@@ -1921,19 +2120,13 @@ export function buildNutritionWeeklySummary(input: {
   if (energyLowLoadDays >= 3 || (energyLowLoadDays >= 2 && carbsLowLoadDays >= 2)) {
     // Strongest claim, trigger unchanged. The condition can fire on energy alone
     // (energyLowLoadDays >= 3, carbs fine) — asserting «и углеводам» then would be false.
-    segments.push(
-      carbsLowLoadDays >= 2
-        ? "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии и углеводам."
-        : "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии."
-    );
+    const frame = WEEKLY_PATTERN_FRAMES[variantIndex(WEEKLY_PATTERN_FRAMES.length, seed, "headline")]!;
+    segments.push(carbsLowLoadDays >= 2 ? frame.energyAndCarbs : frame.energyOnly);
   } else if (problemLoadDays.length >= 2) {
     // Two or more days off — plural is honest, and the line stays a focus, not a verdict.
+    const frame = WEEKLY_FOCUS_FRAMES[variantIndex(WEEKLY_FOCUS_FRAMES.length, seed, "headline")]!;
     segments.push(
-      energyLow && carbsLow
-        ? "Главный фокус недели — поддержать дни с нагрузкой по энергии и углеводам."
-        : carbsLow
-          ? "Главный фокус недели — поддержать дни с нагрузкой по углеводам."
-          : "Главный фокус недели — поддержать дни с нагрузкой по энергии."
+      energyLow && carbsLow ? frame.energyAndCarbs : carbsLow ? frame.carbsOnly : frame.energyOnly
     );
   } else if (onlyProblemDay) {
     // ONE day off is not a weekly pattern and must never be worded as «дни». Name that day and
@@ -1945,27 +2138,34 @@ export function buildNutritionWeeklySummary(input: {
         : onlyProblemDay.carbs
           ? "углеводов под такую нагрузку не хватило"
           : "энергии под такую нагрузку вышло маловато";
+    const frame = WEEKLY_SINGLE_DAY_FRAMES[variantIndex(WEEKLY_SINGLE_DAY_FRAMES.length, seed, "headline")]!;
     segments.push(
-      onlyProblemDay.label
-        ? `Неделя держалась ровно, кроме одного дня — ${onlyProblemDay.label}: ${shortfall}.`
-        : `Неделя держалась ровно, кроме одного дня с нагрузкой: ${shortfall}.`
+      (onlyProblemDay.label ? frame.labelled.replace("{day}", onlyProblemDay.label) : frame.plain).replace(
+        "{gap}",
+        shortfall
+      )
     );
   } else if (loadDaysTotal > 0) {
     // Clean week — the summary states that plainly instead of hunting for something to fix.
-    // With borderline days present the credit is worded as «без просадок» (true: a near-miss is
-    // not a shortfall) so it cannot contradict the «на нижней границе» line further down.
-    segments.push(
-      carbsBorderlineLoadDays > 0
-        ? "Неделя вышла ровной: провалов по энергии и углеводам в дни с нагрузкой не было."
-        : "Неделя вышла ровной: дни с нагрузкой закрыты и по энергии, и по углеводам."
-    );
+    const frame = WEEKLY_CLEAN_FRAMES[variantIndex(WEEKLY_CLEAN_FRAMES.length, seed, "headline")]!;
+    segments.push(carbsBorderlineLoadDays > 0 ? frame.withBorderline : frame.clean);
   } else {
     segments.push("Неделя вышла спокойной, без тренировочной нагрузки.");
   }
 
+  // Week-over-week carbs shift — the only line whose CONTENT (not just wording) changes with the
+  // week, which is what actually breaks the «ученица читает то же самое» feeling. Skipped when
+  // there is no prior week or the move is inside the noise band.
+  const carbsDelta = input.carbsWeekOverWeekDeltaG;
+  if (typeof carbsDelta === "number" && Number.isFinite(carbsDelta) && Math.abs(carbsDelta) >= WEEKLY_CARBS_TREND_MIN_DELTA_G) {
+    segments.push(
+      pickVariant(carbsDelta > 0 ? WEEKLY_CARBS_TREND_UP : WEEKLY_CARBS_TREND_DOWN, seed, "carbs_trend")
+    );
+  }
+
   const proteinAvgOk = (input.weeklyProteinAvgGPerKg ?? 0) >= 1.5 || input.proteinSufficient;
   if (proteinAvgOk) {
-    segments.push("Белок в среднем держится хорошо, это не главный вопрос недели.");
+    segments.push(pickVariant(WEEKLY_PROTEIN_OK_VARIANTS, seed, "protein_ok"));
   } else if (proteinLowOrBorderlineDays >= 2) {
     segments.push("Белок в целом ближе к нижней границе.");
   } else if (proteinOkDays > proteinLowOrBorderlineDays) {
@@ -1979,7 +2179,7 @@ export function buildNutritionWeeklySummary(input: {
   }
 
   if (fatLowOrBorderlineDays >= 2) {
-    segments.push("Жиры тоже несколько раз были на нижней границе.");
+    segments.push(pickVariant(WEEKLY_FAT_LOW_VARIANTS, seed, "fat_low"));
   }
 
   if (
@@ -2015,7 +2215,7 @@ export function buildNutritionWeeklySummary(input: {
   // Stays on the combined counter: «на нижней границе» is precisely where a borderline day sits,
   // so this line — not the headline — is the right home for near-misses.
   if (carbsLowOrBorderlineLoadDays >= 2) {
-    segments.push("Самые тяжёлые дни вышли с углеводами на нижней границе.");
+    segments.push(pickVariant(WEEKLY_CARBS_BOUND_VARIANTS, seed, "carbs_bound"));
   }
 
   // Key-workouts sentence: name ALL key workouts of the week (a week can have a long run
@@ -2034,9 +2234,16 @@ export function buildNutritionWeeklySummary(input: {
     ),
   ];
   if (keyLabels.length >= 2) {
-    segments.push(`Ключевые тренировки недели — ${joinWithIRu(keyLabels)}. Вокруг них питание важнее всего.`);
+    // Same index in both tail pools → a week never mixes two tail styles.
+    const tailIndex = variantIndex(WEEKLY_KEY_TAIL_PLURAL.length, seed, "key_tail");
+    segments.push(
+      `Ключевые тренировки недели — ${joinWithIRu(keyLabels)}. ${WEEKLY_KEY_TAIL_PLURAL[tailIndex] ?? WEEKLY_KEY_TAIL_PLURAL[0]}`
+    );
   } else if (keyLabels.length === 1) {
-    segments.push(`Ключевая тренировка недели — ${keyLabels[0]}. Вокруг неё питание важнее всего.`);
+    const tailIndex = variantIndex(WEEKLY_KEY_TAIL_SINGULAR.length, seed, "key_tail");
+    segments.push(
+      `Ключевая тренировка недели — ${keyLabels[0]}. ${WEEKLY_KEY_TAIL_SINGULAR[tailIndex] ?? WEEKLY_KEY_TAIL_SINGULAR[0]}`
+    );
   }
 
   return segments.join(" ");

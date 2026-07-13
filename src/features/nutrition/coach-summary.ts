@@ -13,6 +13,7 @@ import {
   formatNutritionWorkoutLabelForCoach,
   isCombinedLoadLabel,
   pickNotableFoods,
+  readCarbsWeekOverWeekDeltaG,
   reconcileNarrativeRoleWithCarbLoadBasis,
   resolveNutritionNarrativeWorkoutRole,
   resolveWeekNarrativeDayRoles,
@@ -651,6 +652,8 @@ export function buildDerivedNutritionCoachSummary(input: {
         proteinSufficient,
         weeklyProteinAvgGPerKg,
         fatFeedbackPolicy: narrativePreferences.fatFeedbackPolicy,
+        weekSeed: input.review.weekFrom,
+        carbsWeekOverWeekDeltaG: readCarbsWeekOverWeekDeltaG(input.review.nutritionSummary),
       })
     );
     const highFatLine = buildHighFatCoachVisibilityLine({

@@ -97,6 +97,23 @@ export type GeneratedNutritionWeeklyAnalysis = {
     avg_protein_g: number | null;
     avg_fat_g: number | null;
     avg_carbs_g: number | null;
+    /**
+     * Code-computed week-over-week averages + deltas (never model-authored). Persisted so the
+     * derived weekly summary can name a real shift at render time without a second DB read.
+     * null when there is no prior week; absent on reviews generated before this field existed.
+     */
+    week_over_week?: {
+      previous_week_from: string;
+      previous_avg_kcal: number | null;
+      current_avg_kcal: number | null;
+      delta_kcal: number | null;
+      previous_avg_carbs_g: number | null;
+      current_avg_carbs_g: number | null;
+      delta_carbs_g: number | null;
+      previous_avg_protein_g: number | null;
+      current_avg_protein_g: number | null;
+      delta_protein_g: number | null;
+    } | null;
     data_quality_summary?: {
       parsed_days: number;
       low_confidence_days: number;
@@ -1973,6 +1990,10 @@ export async function generateNutritionWeeklyAnalysis(input: {
       avg_protein_g: avgProtein,
       avg_fat_g: avgFat,
       avg_carbs_g: avgCarbs,
+      // Persisted so the DERIVED weekly summary can name a week-over-week shift at render time
+      // without a second DB read. Deltas are code-computed above (never model-authored); null
+      // when there is no prior week. Reviews generated before this field simply have no trend.
+      week_over_week: weekOverWeek,
       data_quality_summary: {
         parsed_days: context.dataQuality.parsedDays,
         low_confidence_days: context.dataQuality.lowConfidenceDays,

@@ -224,6 +224,7 @@
     "check:nutrition-ai-review-quality": "npx tsx scripts/check-nutrition-ai-review-quality.ts",
     "check:nutrition-athlete-draft-plain-text": "npx tsx scripts/check-nutrition-athlete-draft-plain-text.ts",
     "check:nutrition-weekly-review-quality": "npx tsx scripts/check-nutrition-weekly-review-quality.ts",
+    "check:nutrition-weekly-summary-variety": "npx tsx scripts/check-nutrition-weekly-summary-variety.ts",
     "check:nutrition-safety-blocks": "npx tsx scripts/check-nutrition-safety-blocks.ts",
     "check:nutrition-no-autosend": "npx tsx scripts/check-nutrition-no-autosend.ts",
     "check:nutrition-admin-routes": "npx tsx scripts/check-nutrition-admin-routes.ts",
