@@ -31,8 +31,7 @@ import {
   detectNutritionAthleteReportSignalsFromTexts,
 } from "@/features/nutrition/athlete-signals";
 import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
-import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
-import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
+import { getNutritionDayProseRejections } from "@/features/nutrition/combined-message";
 import type { NutritionWeeklyAnalysis } from "@/features/nutrition/repository";
 import { intakeNutritionReportFiles, type IntakeNutritionReportFilesResult } from "@/features/nutrition/file-intake";
 import {
@@ -596,12 +595,15 @@ export async function generateNutritionWeeklyReview(input: {
 /**
  * Which of the days the coach just edited will NOT reach the athlete as written.
  *
- * The render-time prose validator polices a COACH edit exactly as it polices model prose:
- * a number that is not a fact of that day (or a leaked coach term, or a softened hard day)
- * drops the WHOLE day to the dry deterministic comment. That used to happen silently — the
- * editor kept showing the coach's text while the athlete got something else entirely. The
- * save action calls this right after writing, so the coach is told which days were refused
- * instead of losing the edit without a word.
+ * The render-time gate polices a COACH edit exactly as it polices model prose: a number that is
+ * not a fact of that day (or a leaked coach term, or a softened hard day) drops the WHOLE day to
+ * the dry deterministic comment. That used to happen silently — the editor kept showing the
+ * coach's text while the athlete got something else. The save action calls this right after
+ * writing, so the coach is told which days were refused instead of losing the edit without a word.
+ *
+ * The verdict comes from the RENDER (getNutritionDayProseRejections), never from re-running the
+ * validator on the raw day: the gate judges the CLEANED prose and also rejects markdown and tech
+ * tokens, so a second opinion here would both miss real swaps and invent ones that never happened.
  *
  * Returns human day labels (date_label, falling back to the ISO date).
  */
@@ -618,23 +620,16 @@ export function listRejectedNutritionReviewProseDays(
   const daily = Array.isArray(summary.daily_analysis)
     ? (summary.daily_analysis as Array<Record<string, unknown>>)
     : [];
-  const edited = new Set(editedDates);
-  const rejected: string[] = [];
-
+  const labelByDate = new Map<string, string>();
   for (const day of daily) {
     const date = typeof day.date === "string" ? day.date : null;
-    if (!date || !edited.has(date)) {
-      continue;
-    }
-    const prose = typeof day.athlete_prose === "string" ? day.athlete_prose.trim() : "";
-    if (!prose) {
-      continue;
-    }
-    const issues = validateNutritionDayProse({ prose, facts: buildNutritionDayProseFacts(day) });
-    if (issues.some((issue) => issue.severity === "error")) {
-      rejected.push(typeof day.date_label === "string" && day.date_label ? day.date_label : date);
+    if (date) {
+      labelByDate.set(date, typeof day.date_label === "string" && day.date_label ? day.date_label : date);
     }
   }
+  const edited = new Set(editedDates);
 
-  return rejected;
+  return getNutritionDayProseRejections(analysis)
+    .filter((rejection) => rejection.date != null && edited.has(rejection.date))
+    .map((rejection) => labelByDate.get(rejection.date as string) ?? (rejection.date as string));
 }

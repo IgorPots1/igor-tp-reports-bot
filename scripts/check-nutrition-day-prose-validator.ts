@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 
-import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
+import {
+  buildNutritionDayProseFacts,
+  getNutritionDayProseRejections,
+  getNutritionReviewDayCards,
+} from "@/features/nutrition/combined-message";
 import {
   validateNutritionDayProse,
   type NutritionDayProseFacts,
@@ -294,6 +298,118 @@ for (const prose of [
     facts: steadyFacts,
   });
   assert.equal(issues.length, 0, "clean steady-day prose must produce no issues");
+}
+
+// 5. CHECK-IN — HYBRID. The score is never policed against the MACRO allow-set (it is not a macro
+// claim), but it is not unchecked either: it is the athlete's own report of how she felt, and
+// quoting her a rating she never gave is worse than a wrong gram figure.
+{
+  const dayWithCheckin = {
+    date: "2026-07-12",
+    actual: { kcal: 2105, proteinG: 105, fatG: 60, carbsG: 286 },
+    nutrition_status: "adequate",
+    findings: [],
+    checkin_numbers: [9, 7], // energy 9, wellbeing 7
+  };
+  const facts = buildNutritionDayProseFacts(dayWithCheckin);
+  assert.deepEqual(facts.checkinNumbers, [9, 7], "checkin_numbers must reach the day facts");
+
+  // Her real rating passes — and NOT by coincidence: there is no allow-set to collide with here.
+  for (const prose of ["Чек-ин 9/10 по энергии - отлично.", "Самочувствие 7 из 10 - неплохо."]) {
+    assert.equal(
+      validateNutritionDayProse({ prose, facts }).filter((i) => i.severity === "error").length,
+      0,
+      `a real check-in rating must pass: "${prose}"`
+    );
+  }
+  // A rating she never gave is put in her mouth → error, day falls back.
+  assert.ok(
+    hasError(validateNutritionDayProse({ prose: "Чек-ин 4/10 по энергии - тяжёлая неделя.", facts }), "checkin_not_in_facts"),
+    "a check-in score the athlete never reported must be rejected"
+  );
+  // The macro guard is untouched by the check-in path.
+  assert.ok(
+    hasError(validateNutritionDayProse({ prose: "Чек-ин 9/10, а углеводов 999 г - отлично.", facts }), "number_not_in_facts"),
+    "an invented macro number is still blocked alongside a valid check-in"
+  );
+
+  // LEGACY: a stored review generated before checkin_numbers existed has no ratings in its facts.
+  // There is nothing to police against, so the score is scrubbed and the day renders as it does
+  // today. Breaking old reviews is not allowed.
+  const legacyFacts = buildNutritionDayProseFacts({
+    date: "2026-07-12",
+    actual: { kcal: 2105, proteinG: 105, fatG: 60, carbsG: 286 },
+    nutrition_status: "adequate",
+    findings: [],
+  });
+  assert.deepEqual(legacyFacts.checkinNumbers, [], "a pre-fix day carries no check-in ratings");
+  assert.equal(
+    validateNutritionDayProse({ prose: "Чек-ин 9/10 по энергии - отлично.", facts: legacyFacts }).filter(
+      (i) => i.severity === "error"
+    ).length,
+    0,
+    "without check-in facts the score is scrubbed, not policed — old reviews keep rendering"
+  );
+}
+
+// 6. REGRESSION, end-to-end through the REAL render. normalizeStoredDailyFactItem builds a NEW
+// object, so any field it forgets is dropped silently — and every field buildNutritionDayProseFacts
+// reads is load-bearing: lose one and the render judges the prose on narrower facts than the audit
+// that approved it, then swaps the day for dry text on the way to the athlete. It already happened
+// twice (previous_week_numbers, pre_workout). This guard fails if it happens again.
+{
+  const modelProse =
+    "Вторник - перед пробежкой было 48 г углеводов, хорошо зарядилась. На прошлой неделе в среднем 2142 ккал, на этой 2288 - движемся вверх. Чек-ин 9/10 по энергии - отлично.";
+  const day = {
+    date: "2026-07-07",
+    weekday_ru: "Вторник",
+    date_label: "07.07",
+    training_type: "run",
+    training_label: "Лёгкий бег",
+    actual: { kcal: 2288, proteinG: 105, fatG: 60, carbsG: 286, carbsGPerKg: 4.8 },
+    nutrition_status: "adequate",
+    findings: [],
+    target: { carbsGMin: 248, carbsGMax: 440 },
+    athlete_prose: modelProse,
+    // The three code-owned per-day fact sets draft-generator injects. Every one of them must
+    // survive normalization, or the prose below dies at render.
+    previous_week_numbers: [2142, 2288],
+    pre_workout: { carbs_g: 48 },
+    checkin_numbers: [9],
+  };
+  const reviewOf = (item: Record<string, unknown>) =>
+    ({
+      id: "check-review",
+      weekFrom: "2026-07-06",
+      weekTo: "2026-07-12",
+      nutritionSummary: { daily_analysis: [item] },
+    }) as unknown as Parameters<typeof getNutritionReviewDayCards>[0];
+
+  const card = getNutritionReviewDayCards(reviewOf(day))[0];
+  assert.ok(card, "the fixture day must render a card");
+  assert.match(
+    card.prose,
+    /Чек-ин 9\/10/,
+    "model prose must survive the RENDER — if this fails, the normalizer dropped a fact field again"
+  );
+  assert.equal(getNutritionDayProseRejections(reviewOf(day)).length, 0, "a day that passes is not reported as rejected");
+
+  // Negative control: drop the carried fact sets (what the old normalizer did) → the day falls to
+  // the dry comment AND the render reports the swap instead of hiding it.
+  const stripped = { ...day, previous_week_numbers: undefined, pre_workout: undefined, checkin_numbers: undefined };
+  assert.doesNotMatch(
+    getNutritionReviewDayCards(reviewOf(stripped))[0].prose,
+    /Чек-ин 9\/10/,
+    "without the carried fact sets the model prose is dropped — this is the bug being guarded"
+  );
+  const rejections = getNutritionDayProseRejections(reviewOf(stripped));
+  assert.equal(rejections.length, 1, "a render-time swap must be REPORTED, not silent");
+  assert.equal(rejections[0].date, "2026-07-07");
+  assert.deepEqual(rejections[0].rules, ["number_not_in_facts"]);
+  // The coach page renders these two verbatim, so the report must carry BOTH the reason in his
+  // language and the dry text the athlete gets instead — a bare rule code tells him nothing.
+  assert.match(rejections[0].messages.join(" "), /отсутствует в фактах/, "rejection must carry a coach-facing reason");
+  assert.ok(rejections[0].willSendProse.length > 0, "rejection must carry the text that WILL be sent instead");
 }
 
 console.log("PASS check-nutrition-day-prose-validator");

@@ -67,6 +67,12 @@ type CanonicalDailyFact = {
   previous_week_numbers?: unknown;
   /** Pre-workout carbs summed by code from the day's real diary items — also a citable fact. */
   pre_workout?: unknown;
+  /**
+   * The athlete's own weekly check-in ratings (1–10), injected onto every day by draft-generator.
+   * Read by buildNutritionDayProseFacts to police the scores the prose quotes back at her, so —
+   * per the RULE below — it must be carried by the normalizer like the two above.
+   */
+  checkin_numbers?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -291,17 +297,51 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
     // it here, or the two paths drift apart again.
     previous_week_numbers: item.previous_week_numbers ?? source.previous_week_numbers,
     pre_workout: source.pre_workout ?? item.pre_workout,
+    // Her check-in ratings: the render must judge a quoted «9/10» against the same scores the
+    // generation-time audit judged it against. Absent on reviews generated before this field
+    // existed — the validator then scrubs the score instead of policing it, so they keep rendering.
+    checkin_numbers: source.checkin_numbers ?? item.checkin_numbers,
   };
 }
+
+/** What the render-time gate decided for one day: the prose it kept, and why it dropped it. */
+type NutritionDayProseGateResult = {
+  /** Prose that passed the gate, or null when the day falls back to the deterministic comment. */
+  prose: string | null;
+  /**
+   * Why the gate dropped the prose. Empty when it passed — and also empty when there was no prose
+   * at all: a day with no athlete_prose is deterministic BY DESIGN and is not a rejection.
+   */
+  rejectedRules: string[];
+  /** The same reasons in the coach's language — the admin page shows these verbatim. */
+  rejectedMessages: string[];
+};
+
+/** Coach-facing wording for the gate's own rejections (the validator supplies its own messages). */
+const NUTRITION_GATE_REJECTION_MESSAGES: Record<string, string> = {
+  empty_prose: "После очистки от разметки и техтокенов от прозы ничего не осталось.",
+  markdown_in_prose: "В прозе markdown-разметка (**, __, ```) — ученице она уйдёт как мусор.",
+  tech_token_in_prose: "В прозе технический токен (TrainingPeaks, JSON, day_role и т.п.).",
+};
 
 /**
  * Hybrid path guard (task 1): basic gate before model day prose may replace the
  * deterministic comment. Rigorous per-day number/status validation is layered on
- * top in the validator task. Returns the prose to use, or null to fall back.
+ * top in the validator task. Returns the prose to use, or null to fall back — plus the reasons,
+ * so the swap can be REPORTED (getNutritionDayProseRejections) instead of happening in silence.
+ *
+ * This is the only place that knows what the athlete actually gets: it validates the prose AFTER
+ * cleanup (jargon strip, dash normalization) and rejects on markdown/tech tokens too, none of which
+ * a bare validateNutritionDayProse call on the raw day can see.
  */
-function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProseFacts): string | null {
+function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProseFacts): NutritionDayProseGateResult {
+  const reject = (rule: string): NutritionDayProseGateResult => ({
+    prose: null,
+    rejectedRules: [rule],
+    rejectedMessages: [NUTRITION_GATE_REJECTION_MESSAGES[rule] ?? rule],
+  });
   if (typeof value !== "string") {
-    return null;
+    return { prose: null, rejectedRules: [], rejectedMessages: [] };
   }
   // Normalize em/en dashes to a hyphen exactly like the whole-message cleanup
   // (cleanupPlainText) does — Igor's voice uses "—" constantly ("белок 133 г —
@@ -314,10 +354,10 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
     .replace(/ {2,}/g, " ")
     .trim();
   if (prose.length < 2) {
-    return null;
+    return reject("empty_prose");
   }
   if (/\*\*|__|```/.test(prose)) {
-    return null;
+    return reject("markdown_in_prose");
   }
   // Backstop (1b): if a raw key:value tech token still slipped through the strip,
   // reject the prose entirely → deterministic fallback.
@@ -325,15 +365,20 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
     /TrainingPeaks|FatSecret|OpenAI|\bJSON\b|hint_for_comment|source_quality/.test(prose) ||
     /\b(?:adequacy|day_role|loadBasis|load_basis|fat_policy|fatFeedbackPolicy|nutrition_status)\s*[:=]/i.test(prose)
   ) {
-    return null;
+    return reject("tech_token_in_prose");
   }
   // Backstop: numbers must be facts of this day and a hard status must not be
   // softened. On any error fall back to the deterministic comment.
   const issues = validateNutritionDayProse({ prose, facts });
-  if (issues.some((issue) => issue.severity === "error")) {
-    return null;
+  const errors = issues.filter((issue) => issue.severity === "error");
+  if (errors.length > 0) {
+    return {
+      prose: null,
+      rejectedRules: [...new Set(errors.map((issue) => issue.rule))],
+      rejectedMessages: [...new Set(errors.map((issue) => issue.message))],
+    };
   }
-  return prose;
+  return { prose, rejectedRules: [], rejectedMessages: [] };
 }
 
 /**
@@ -449,6 +494,18 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
       }
     }
   }
+  // The athlete's own check-in ratings (1–10), injected per day by draft-generator. They are NOT
+  // pushed into the macro allow-set: the validator polices the scores the prose quotes («9/10»)
+  // against these, so it can catch the model telling her she reported a 4 when she reported a 9.
+  const checkinNumbers: number[] = [];
+  if (Array.isArray(item.checkin_numbers)) {
+    for (const raw of item.checkin_numbers) {
+      const value = toFiniteNumber(raw);
+      if (value != null) {
+        checkinNumbers.push(value);
+      }
+    }
+  }
   return {
     kcal,
     proteinG: protein,
@@ -458,6 +515,7 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
     proteinGPerKg,
     planTargetNumbers,
     previousWeekNumbers,
+    checkinNumbers,
     nutritionStatus,
     findings,
     carbFastFoods,
@@ -689,11 +747,51 @@ type NutritionReviewDayEntry = {
   date: string | null;
   line: string;
   prose: string;
+  /** Non-empty when THIS render swapped the day's prose for the deterministic comment. */
+  proseRejectedRules: string[];
+  /** The same reasons, worded for the coach. */
+  proseRejectedMessages: string[];
   isRest: boolean;
   isRun: boolean;
   isKey: boolean;
   isRace: boolean;
 };
+
+/** A day whose prose the render-time gate replaced with the deterministic comment. */
+export type NutritionDayProseRejection = {
+  date: string | null;
+  rules: string[];
+  /** Coach-facing reasons, and the deterministic text the athlete gets in place of the prose. */
+  messages: string[];
+  willSendProse: string;
+};
+
+/**
+ * Which days the RENDER actually swapped for the dry comment — reported by the render itself,
+ * not re-derived by a second caller running the validator on the raw day.
+ *
+ * That distinction is the whole point. The gate judges the CLEANED prose and also rejects markdown
+ * and leaked tech tokens; a bare validateNutritionDayProse call on the raw day sees neither, so it
+ * can both miss a swap and invent one that never happened. Only the gate knows what the athlete got.
+ *
+ * Deliberately read-only: the render runs inside a server component AND inside the student-facing
+ * /api/m/r route, so it must never write to the DB. The rejections travel UP and the coach page
+ * shows them as warnings.
+ */
+export function getNutritionDayProseRejections(review: NutritionWeeklyAnalysis | null): NutritionDayProseRejection[] {
+  if (!review) {
+    return [];
+  }
+  return buildDailyFactsEntries(review)
+    .filter((entry) => entry.proseRejectedRules.length > 0)
+    .map((entry) => ({
+      date: entry.date,
+      rules: entry.proseRejectedRules,
+      messages: entry.proseRejectedMessages,
+      // entry.prose IS the deterministic comment here — the gate already swapped it.
+      willSendProse: entry.prose,
+    }));
+}
 
 /** Athlete-safe per-day review card data (date + validated prose + flags). */
 export type NutritionReviewDayCard = {
@@ -868,6 +966,8 @@ function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionRevie
           date,
           line: `${header}\n\n${paragraphizeForTelegram(comment)}`,
           prose: comment,
+          proseRejectedRules: [],
+          proseRejectedMessages: [],
           ...dayFlags,
         };
       }
@@ -878,7 +978,11 @@ function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionRevie
       // reads — otherwise this gate judges the prose on a narrower fact set than the audit that
       // approved it, and refuses it silently. That is exactly what happened until the normalizer
       // started carrying previous_week_numbers / pre_workout.
-      const dayComment = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item)) ?? comment;
+      //
+      // When the gate DOES drop a day, its reasons ride up with the entry — the swap is reported
+      // (getNutritionDayProseRejections → coach warnings), never silent.
+      const proseGate = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item));
+      const dayComment = proseGate.prose ?? comment;
       const numbersLine = `${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · Б ${formatNutritionAthleteMacro(protein)} · Ж ${formatNutritionAthleteMacro(fat)} · У ${formatNutritionAthleteMacro(carbs)}`;
       return {
         date,
@@ -892,6 +996,8 @@ function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionRevie
           paragraphizeForTelegram(dayComment),
         ].join("\n"),
         prose: dayComment,
+        proseRejectedRules: proseGate.rejectedRules,
+        proseRejectedMessages: proseGate.rejectedMessages,
         ...dayFlags,
       };
     })
@@ -1409,6 +1515,18 @@ export function buildDerivedNutritionCombinedMessage(input: {
     warnings.push("Даты daily_analysis не попадают в выбранную неделю обзора — проверьте отчёт/неделю и перегенерируйте обзор.");
   } else if (reviewDailyLines.length === 0) {
     warnings.push("В обзоре нет canonical daily_analysis — использован fallback из текста обзора.");
+  }
+  // Report the swap the render just made. Straight from the gate, so it says what the athlete will
+  // actually get — not what a second run of the validator on the raw day guesses she will get.
+  //
+  // A WARNING, deliberately, and not a coachReviewNote: notes flip the message to needs_review
+  // (see below), and a day on the dry deterministic comment is still correct, sendable text. The
+  // coach must be TOLD, not BLOCKED.
+  for (const rejection of getNutritionDayProseRejections(review)) {
+    const label = rejection.date ? formatDateRu(rejection.date) : "?";
+    warnings.push(
+      `День ${label}: проза отклонена при рендере (${rejection.rules.join(", ")}) — ученице уйдёт сухой комментарий, а не текст из редактора.`
+    );
   }
 
   if (blocked) {

@@ -39,10 +39,8 @@ import { buildDerivedNutritionCoachSummary } from "@/features/nutrition/coach-su
 import {
   buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
-  buildNutritionDayProseFacts,
-  getNutritionReviewDayCards,
+  getNutritionDayProseRejections,
 } from "@/features/nutrition/combined-message";
-import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
 import {
   buildNutritionStudentCardHref,
   formatNutritionAthleteReportSignalCategory,
@@ -474,14 +472,19 @@ export default async function CoachOsNutritionStudentCardPage({
   // Flow C v1-B: per-block prose for the inline review editor. The textarea stays bound to
   // the RAW canonical athlete_prose — that is the only editable source, and writing the
   // validated render back into it would overwrite the model prose with its own fallback.
-  // But raw != what the athlete gets: the render-time validator (same one for MODEL prose
-  // and for a COACH edit) drops a day to the dry deterministic comment when it carries a
-  // number that is not a fact of that day, a coach term, etc. So each day also carries
-  // what will ACTUALLY be sent + why it was refused, and the UI shows it (see below).
-  const reviewDayCardProseByDate = new Map(
-    (card.weeklyAnalysis ? getNutritionReviewDayCards(card.weeklyAnalysis) : [])
-      .filter((dayCard): dayCard is typeof dayCard & { date: string } => typeof dayCard.date === "string")
-      .map((dayCard) => [dayCard.date, dayCard.prose])
+  // But raw != what the athlete gets: the render-time gate drops a day to the dry
+  // deterministic comment when it carries a number that is not a fact of that day, markdown,
+  // a leaked tech token… — for MODEL prose and for a COACH edit alike.
+  //
+  // Which days were dropped comes from the RENDER ITSELF (getNutritionDayProseRejections), not
+  // from re-running the validator on the raw day. Re-running it here was wrong in both
+  // directions: the gate judges the CLEANED prose (so a day the raw check condemns can render
+  // fine) and it also rejects markdown/tech tokens (which the raw check never sees). Only the
+  // render knows what the athlete actually got.
+  const proseRejectionByDate = new Map(
+    getNutritionDayProseRejections(card.weeklyAnalysis)
+      .filter((rejection): rejection is typeof rejection & { date: string } => typeof rejection.date === "string")
+      .map((rejection) => [rejection.date, rejection])
   );
   type NutritionReviewProseBlock = {
     date: string;
@@ -500,18 +503,14 @@ export default async function CoachOsNutritionStudentCardPage({
       const weekday = typeof day.weekday_ru === "string" ? day.weekday_ru : null;
       const dateLabel = typeof day.date_label === "string" ? day.date_label : null;
       const rawProse = typeof day.athlete_prose === "string" ? day.athlete_prose : "";
-      const rejectionReasons = rawProse.trim()
-        ? validateNutritionDayProse({ prose: rawProse, facts: buildNutritionDayProseFacts(day) })
-            .filter((issue) => issue.severity === "error")
-            .map((issue) => issue.message)
-        : [];
+      const rejection = proseRejectionByDate.get(date);
       return {
         date,
         label: [weekday, dateLabel].filter(Boolean).join(" · ") || date,
         prose: coachShortDashes(rawProse),
-        isReplaced: rejectionReasons.length > 0,
-        rejectionReasons,
-        willSendProse: coachShortDashes(reviewDayCardProseByDate.get(date) ?? ""),
+        isReplaced: rejection != null,
+        rejectionReasons: rejection?.messages ?? [],
+        willSendProse: coachShortDashes(rejection?.willSendProse ?? ""),
       };
     })
     .filter((block): block is NutritionReviewProseBlock => block !== null);

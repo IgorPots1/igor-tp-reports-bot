@@ -1781,6 +1781,24 @@ export async function generateNutritionWeeklyAnalysis(input: {
       day.previous_week_numbers = dayAllowedNumbers;
     }
   }
+  // Her check-in ratings ride onto each day too — but in their OWN field, never in the number
+  // allow-set above. A 1–10 rating is not a macro figure: the validator polices the score the prose
+  // quotes back at her («чек-ин 9/10») against these exact values, so the model cannot tell her she
+  // reported a 4 when she reported a 9. Exact, no rounding — on a 1–10 scale a rounding tolerance
+  // would legitimize the neighbours and defeat the whole point.
+  //
+  // Reviews generated before this field existed simply have no checkin_numbers; the validator then
+  // scrubs the score instead of policing it, and they keep rendering exactly as they do today.
+  const checkinAllowedNumbers: number[] = [
+    context.weeklyCheckin?.energy,
+    context.weeklyCheckin?.wellbeing,
+    context.weeklyCheckin?.eatingComfort,
+  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (checkinAllowedNumbers.length > 0) {
+    for (const day of persistedDailyAnalysis) {
+      day.checkin_numbers = checkinAllowedNumbers;
+    }
+  }
 
   const fallbackDayByDay = buildFallbackDayByDay({
     context,

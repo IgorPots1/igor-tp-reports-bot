@@ -671,6 +671,13 @@ export type NutritionDayProseFacts = {
    * and allowed to appear in prose so the model can praise real progress.
    */
   previousWeekNumbers?: number[];
+  /**
+   * The athlete's own weekly check-in ratings (energy / wellbeing / eating comfort, 1–10),
+   * injected onto every day by draft-generator. NOT part of the macro allow-set: they are policed
+   * separately, against the scores the prose quotes (see NUTRITION_CHECKIN_SCORE_PATTERNS).
+   * Empty/absent for reviews generated before the field existed → scores are scrubbed, not policed.
+   */
+  checkinNumbers?: number[];
   nutritionStatus: string | null;
   findings: string[];
   /**
@@ -748,20 +755,29 @@ const NUTRITION_NON_MACRO_NUMBER_PATTERNS: RegExp[] = [
   /\d+\s*:\s*\d+/g, // time 1:40
   /\d{1,2}\s*(?:янв|фев|март|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)/giu, // 14 июня
   /[+\-–—]\s*\d+(?:[.,]\d+)?/g, // signed steps / range tails: +50, –60
-  // Weekly check-in scores: «9/10», «9 из 10» (energy / wellbeing / eating comfort, 1–10).
-  //
-  // A rating on a 1–10 scale is NOT a macro or energy claim — it is the athlete's own weekly
-  // self-report, which the model is given in the facts and is expected to reflect back. It belongs
-  // here, with the percentages and durations, exactly per this list's rule: police macro/energy
-  // claims, scrub everything else.
-  //
-  // Until now it was policed as if it were a macro number, and passed only by LUCK: on Ponomareva's
-  // 12.07 the «9» of «Чек-ин 9/10» happened to coincide with the week-over-week protein delta in
-  // that day's allow-set. Any prose citing a check-in was a coin-flip — and on the render path,
-  // where that allow-set was dropped entirely, the coin always came up tails and the whole day fell
-  // to the dry deterministic comment.
-  /\b\d{1,2}\s*\/\s*10\b/g,
-  /\b\d{1,2}\s+из\s+10\b/giu,
+];
+
+/**
+ * Weekly check-in scores: «9/10», «9 из 10» (energy / wellbeing / eating comfort, 1–10).
+ *
+ * A rating on a 1–10 scale is not a macro or energy claim, so it is never policed against the
+ * MACRO allow-set (where it once passed only by LUCK: on Ponomareva's 12.07 the «9» of «Чек-ин
+ * 9/10» happened to coincide with a week-over-week protein delta, and on the render path, where
+ * that allow-set was dropped, the whole day fell to the dry comment).
+ *
+ * But it is not free text either: it is the ATHLETE'S OWN WORDS about how she felt. Quoting her a
+ * rating she never gave («твой чек-ин 4/10 по энергии» when she said 9) is a worse betrayal than
+ * a wrong gram figure. So the scores are policed against the CHECK-IN facts when we have them:
+ *
+ *   facts.checkinNumbers non-empty  → every quoted score must be one of her actual ratings.
+ *   facts.checkinNumbers empty      → scrub, do not police (the pre-fix stored reviews carry no
+ *                                     checkin_numbers, and they must keep rendering as before).
+ *
+ * Capture group 1 = the score, so the same patterns both police and scrub.
+ */
+const NUTRITION_CHECKIN_SCORE_PATTERNS: RegExp[] = [
+  /\b(\d{1,2})\s*\/\s*10\b/g,
+  /\b(\d{1,2})\s+из\s+10\b/giu,
 ];
 
 function roundToNearestStep(value: number, step: number): number {
@@ -850,13 +866,40 @@ export function validateNutritionDayProse(input: {
     );
   }
   const allowed = buildAllowedNutritionProseNumbers(input.facts);
+  // The athlete's check-in scores are policed against HER OWN ratings, not against the macro
+  // allow-set — but only when we actually have them. A misquoted score ("4/10" when she reported 9)
+  // puts words in her mouth, so it drops the day to the deterministic comment like any other error.
+  // Without ratings in the facts (stored reviews from before checkin_numbers existed) we stay silent
+  // and simply scrub, exactly as before — old reviews must not start falling to dry text.
+  const checkinNumbers = input.facts.checkinNumbers ?? [];
+  if (checkinNumbers.length > 0) {
+    for (const re of NUTRITION_CHECKIN_SCORE_PATTERNS) {
+      for (const match of prose.matchAll(re)) {
+        const quoted = Number(match[1]);
+        if (!Number.isFinite(quoted)) {
+          continue;
+        }
+        if (!checkinNumbers.some((rating) => rating === quoted)) {
+          pushIssue(
+            issues,
+            "error",
+            "checkin_not_in_facts",
+            `Чек-ин ${match[0]} в прозе дня не совпадает с оценками ученицы (${checkinNumbers.join(", ")}).`
+          );
+          break;
+        }
+      }
+    }
+  }
   // Only police MACRO/ENERGY claims. Non-macro numbers are not facts to validate
   // and were the dominant cause of valid days falling to dry text (Task 4):
   // workout descriptors (12 км, 7×5 мин, 1:40), dates (14 июня), percentages, and
   // "+N" coaching steps. Scrub those spans first; a bare or г/ккал number that
   // remains must still be a fact of this day (invented macro numbers stay blocked).
+  // Check-in scores are scrubbed here in BOTH modes — they were judged just above (or
+  // deliberately not judged at all); they must never be re-judged as macro numbers.
   let scanText = prose;
-  for (const re of NUTRITION_NON_MACRO_NUMBER_PATTERNS) {
+  for (const re of [...NUTRITION_NON_MACRO_NUMBER_PATTERNS, ...NUTRITION_CHECKIN_SCORE_PATTERNS]) {
     scanText = scanText.replace(re, " ");
   }
   for (const match of scanText.matchAll(/(\d+(?:[.,]\d+)?)/g)) {
