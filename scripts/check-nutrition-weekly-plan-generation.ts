@@ -132,8 +132,8 @@ assert.equal(
     rest?: { target_kcal?: unknown };
     long_endurance?: { target_kcal?: unknown };
   })?.rest?.target_kcal,
-  1950,
-  "rest target kcal for 56kg must stay 1950 from deterministic formulas"
+  1800,
+  "rest target kcal for 56kg comes from the deterministic formulas — and equals its own macros"
 );
 assert.equal(
   typeof (((generated.planSummary.next_week_plan as { day_type_targets?: unknown }).day_type_targets as {

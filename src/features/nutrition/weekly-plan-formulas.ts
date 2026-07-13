@@ -560,6 +560,31 @@ function getTrainingLabel(dayType: NutritionPlanDayType, workoutTitle: string | 
   return "тип тренировки не определён";
 }
 
+/**
+ * The one rule that makes the plan's numbers add up: THE KCAL ARE THE MACROS.
+ *
+ * Everything the athlete reads on a plan line comes from one object —
+ * «🛌 День отдыха - ~2000 ккал · 90 Б · 60 Ж · 190 У» — so the kcal figure has to be what those
+ * grams actually contain. It wasn't: maintain fixed all four numbers from independent tables and
+ * they disagreed by 10–18% (rest 55 kg: 1950 shown, 1660 in the food). A student who adds it up
+ * finds a fifth of her calories unaccounted for.
+ *
+ * Applied at EVERY point a target is produced or lifted (day-type, goal, race, loading, recovery),
+ * so coherence is an invariant rather than a thing to remember: whoever adds the next macro rule
+ * gets a consistent kcal for free, and no floor or bump can silently reopen the gap.
+ *
+ * Direction is always safe: a floor that lifts a macro lifts the kcal to match — more food, never
+ * less. It never overrides a floor by cutting food to fit a number.
+ */
+function reconcileKcalWithMacros(target: NutritionDayTypeTarget, bodyweightKg: number): NutritionDayTypeTarget {
+  const kcal = roundToNearest(target.protein_g * 4 + target.fat_g * 9 + target.carbs_g * 4, 50);
+  return {
+    ...target,
+    target_kcal: kcal,
+    kcal_per_kg: Number((kcal / bodyweightKg).toFixed(1)),
+  };
+}
+
 export function calculateNutritionDayTypeTarget(params: {
   bodyweightKg: number | null;
   dayType: NutritionPlanDayType;
@@ -576,26 +601,42 @@ export function calculateNutritionDayTypeTarget(params: {
     return null;
   }
   const bw = params.bodyweightKg;
-  // SINGLE SOURCE for the carb target: the same coach-approved corridor that
-  // drives the review's ok/low status (resolveCarbRangeByLoadBasis). The plan
-  // number is the corridor's LOWER bound + 0.4 g/kg — a realistic "aim for this",
-  // not the old flat (and for long_run, duration-blind) per-type multiplier.
-  // kcal/protein/fat stay on the original fixed-coefficient table (unchanged).
+  // SINGLE SOURCE for the carb target: the same coach-approved corridor that drives the review's
+  // ok/low status (resolveCarbRangeByLoadBasis). The plan aims at the MIDDLE of that corridor.
+  //
+  // It used to aim at the corridor's LOWER bound + 0.4 — i.e. the plan told the athlete to eat at
+  // the floor of what the review would still accept. That is not a target, it is a minimum, and it
+  // is what collapsed the day's energy (rest 55 kg: 190 g of carbs, ~240 kcal below the day's own
+  // kcal figure). The midpoint is a real «aim for this», and it is inside the corridor by
+  // construction — so the review can never flag the plan's own target as low, which was the whole
+  // point of unifying them.
+  //
+  // kcal are NOT read from the table any more: they are the macros (reconcileKcalWithMacros).
+  // protein/fat stay on the fixed-coefficient table.
   const durationMinutes =
     params.dayType === "long_run" ? trainingPeaksDurationHoursToMinutes(params.durationHours ?? null) : null;
   const loadBasis: NutritionCarbLoadBasis = resolveCarbLoadBasis(params.dayType);
   const carbRange = resolveCarbRangeByLoadBasis(loadBasis, durationMinutes, params.isLightCross);
-  const carbsPerKg = carbRange.rangeMinGPerKg !== null ? Number((carbRange.rangeMinGPerKg + 0.4).toFixed(2)) : formulaBase.carbsPerKg;
-  return {
-    target_kcal: roundToNearest(formulaBase.kcalPerKg * bw, 50),
-    protein_g: roundToNearest(formulaBase.proteinPerKg * bw, 5),
-    fat_g: roundToNearest(formulaBase.fatPerKg * bw, 5),
-    carbs_g: roundToNearest(carbsPerKg * bw, 10),
-    kcal_per_kg: formulaBase.kcalPerKg,
-    protein_g_per_kg: formulaBase.proteinPerKg,
-    fat_g_per_kg: formulaBase.fatPerKg,
-    carbs_g_per_kg: carbsPerKg,
-  };
+  const carbsPerKg =
+    carbRange.rangeMinGPerKg !== null && carbRange.rangeMaxGPerKg !== null
+      ? Number(((carbRange.rangeMinGPerKg + carbRange.rangeMaxGPerKg) / 2).toFixed(2))
+      : formulaBase.carbsPerKg;
+  const proteinG = roundToNearest(formulaBase.proteinPerKg * bw, 5);
+  const fatG = roundToNearest(formulaBase.fatPerKg * bw, 5);
+  const carbsG = roundToNearest(carbsPerKg * bw, 10);
+  return reconcileKcalWithMacros(
+    {
+      target_kcal: 0, // set by reconcileKcalWithMacros — the macros ARE the kcal
+      protein_g: proteinG,
+      fat_g: fatG,
+      carbs_g: carbsG,
+      kcal_per_kg: 0,
+      protein_g_per_kg: formulaBase.proteinPerKg,
+      fat_g_per_kg: formulaBase.fatPerKg,
+      carbs_g_per_kg: carbsPerKg,
+    },
+    bw
+  );
 }
 
 /**
@@ -621,15 +662,17 @@ export function computeRaceDayTarget(params: {
   }
   const bw = params.bodyweightKg;
   const carbsPerKg = protocol.loading.g_per_kg_high;
-  const baseCarbsPerKg = base.carbs_g_per_kg ?? 6;
-  const kcalPerKg = (base.kcal_per_kg ?? 43) + Math.max(0, carbsPerKg - baseCarbsPerKg) * 4;
-  return {
-    ...base,
-    target_kcal: roundToNearest(kcalPerKg * bw, 50),
-    carbs_g: roundToNearest(carbsPerKg * bw, 10),
-    kcal_per_kg: kcalPerKg,
-    carbs_g_per_kg: carbsPerKg,
-  };
+  // The loading carbs are the only thing that moves; the kcal follow them (reconcile), so the
+  // race line adds up exactly like every other day instead of re-deriving kcal from a per-kg
+  // figure that rounds apart from the grams.
+  return reconcileKcalWithMacros(
+    {
+      ...base,
+      carbs_g: roundToNearest(carbsPerKg * bw, 10),
+      carbs_g_per_kg: carbsPerKg,
+    },
+    bw
+  );
 }
 
 // Carb-loading base: a logged day is only counted toward the loading base if it
@@ -643,6 +686,23 @@ export const CARB_LOADING_MIN_LOGGED_G = 50;
 // target lifts the base by this fraction, capped at the protocol corridor's upper
 // bound and never cut below the base.
 export const CARB_LOADING_STEP = 0.3;
+
+/**
+ * Absolute floor for the pre-race loading days and the start day, in g/kg — nobody toes a start
+ * below this, however modest their logged base.
+ *
+ * It is DELIBERATELY its own number and not the easy-day target. The floor used to be «the
+ * athlete's easy-run carbs», which silently coupled the start line to a training-day setting: when
+ * the easy target was re-tuned (corridor floor → corridor middle), the loading floor moved with it
+ * and a low-base athlete's start-day carbs slid from 290 g to 210 g at 55 kg without anyone
+ * choosing that. Filling a glycogen store before a race and fuelling an easy jog are different
+ * questions and must not share a number.
+ *
+ * 5.3 g/kg reproduces the historical floor at the reference athlete (5.3 × 55 = 291.5 → 290 g) and
+ * always sits well under the protocol ceiling (HM 8 / M 9 / ultra 10 g/kg), so it can only lift a
+ * modest base from below — it never caps a well-fuelled one from above.
+ */
+export const CARB_LOADING_FLOOR_G_PER_KG = 5.3;
 
 /**
  * Carb-loading BASE from the previous week's REAL per-day carbohydrate intake
@@ -677,9 +737,11 @@ export function computeCarbBaseFromReview(perDayCarbsG: number[]): number | null
  * - ramp: leadDays[i] = round(base + (target − base) × i/N) for i = 1..N, so the
  *   last lead day (the day before the start) reaches the full target.
  * - raceDay = round(target) (timing/gel/"2–3 h before" stay in the protocol).
- * - floorG: every loading day is floored at this (the athlete's EASY-run carbs) so
- *   a modest weekly-average base can't ramp BELOW an ordinary running day right
- *   before a start. The ceiling still caps the top. Default 0 = no floor.
+ * - floorG: every loading day AND the start day is floored at this (the dedicated
+ *   CARB_LOADING_FLOOR_G_PER_KG, NOT the easy-day target — see that constant), so a modest
+ *   weekly-average base cannot ramp a start day down to an ordinary training number. The floor
+ *   only lifts from below; the ceiling still caps the top, and the base-driven ramp is untouched
+ *   whenever it already clears the floor. Default 0 = no floor.
  */
 export function computeCarbLoadingTargets(params: {
   baseG: number;
@@ -945,7 +1007,37 @@ export function applyNutritionGoalToDayTarget(
     const carbsFloor = roundToNearest(2.0 * bw, 10);
     const carbsRemainder = (kcal - proteinG * 4 - fatG * 9) / 4;
     const carbsG = Math.max(roundToNearest(carbsRemainder, 10), carbsFloor);
-    return {
+    // Carbs are the remainder here, so kcal and macros already agree — EXCEPT when the 2 g/kg carb
+    // floor wins, and then the food on the plate exceeds the kcal line. Reconciling lifts the kcal
+    // to the food, never the other way round: the floor exists to stop a dangerous carb cut, and it
+    // must not be quietly undone to make a number look right.
+    return reconcileKcalWithMacros(
+      {
+        target_kcal: kcal,
+        protein_g: proteinG,
+        fat_g: fatG,
+        carbs_g: carbsG,
+        kcal_per_kg: Number((kcal / bw).toFixed(1)),
+        protein_g_per_kg: roundPerKg(proteinG, bw),
+        fat_g_per_kg: roundPerKg(fatG, bw),
+        carbs_g_per_kg: roundPerKg(carbsG, bw),
+      },
+      bw
+    );
+  }
+
+  // gain: surplus on the corrected maintenance.
+  const kcal = roundToNearest(maintenance * 1.11, 50);
+  const proteinG = roundToNearest(1.8 * bw, 5);
+  const fatG = roundToNearest(1.0 * bw, 5);
+  // The floor reads the MAINTAIN carb target (ideal.carbs_g) — a gaining athlete must never be fed
+  // fewer carbs than a maintaining one. That floor now bites: with the maintain target at the
+  // corridor's middle it beats the surplus remainder on the low-exercise days (pre_long, rest,
+  // cross, strength) and the macros outgrow the kcal — up to +410 kcal at 70 kg on pre_long.
+  // Reconciling below settles it the safe way: the kcal follow the food.
+  const carbsG = roundToNearest(Math.max((kcal - proteinG * 4 - fatG * 9) / 4, ideal.carbs_g), 10);
+  return reconcileKcalWithMacros(
+    {
       target_kcal: kcal,
       protein_g: proteinG,
       fat_g: fatG,
@@ -954,24 +1046,9 @@ export function applyNutritionGoalToDayTarget(
       protein_g_per_kg: roundPerKg(proteinG, bw),
       fat_g_per_kg: roundPerKg(fatG, bw),
       carbs_g_per_kg: roundPerKg(carbsG, bw),
-    };
-  }
-
-  // gain: surplus on the corrected maintenance.
-  const kcal = roundToNearest(maintenance * 1.11, 50);
-  const proteinG = roundToNearest(1.8 * bw, 5);
-  const fatG = roundToNearest(1.0 * bw, 5);
-  const carbsG = roundToNearest(Math.max((kcal - proteinG * 4 - fatG * 9) / 4, ideal.carbs_g), 10);
-  return {
-    target_kcal: kcal,
-    protein_g: proteinG,
-    fat_g: fatG,
-    carbs_g: carbsG,
-    kcal_per_kg: Number((kcal / bw).toFixed(1)),
-    protein_g_per_kg: roundPerKg(proteinG, bw),
-    fat_g_per_kg: roundPerKg(fatG, bw),
-    carbs_g_per_kg: roundPerKg(carbsG, bw),
-  };
+    },
+    bw
+  );
 }
 
 function average(values: Array<number | null>): number | null {
@@ -1586,11 +1663,21 @@ export function buildNutritionNextWeekPlan(params: {
   const carbLoadingBase = computeCarbBaseFromReview(
     extractPreviousWeekCarbsPerDay(params.previousWeekDailyAnalysis)
   );
-  // Floor loading days at the athlete's EASY-run carbs — a loading day must never
-  // sit below an ordinary running day right before a start (Дефект B).
+  // Recovery days are floored at the athlete's EASY-run carbs: the day after a start must not sit
+  // below an ordinary running day. This one stays tied to the easy target on purpose — a recovery
+  // day IS an ordinary day.
   const easyCarbFloorG =
     loadingBodyweight && loadingBodyweight > 0
       ? calculateNutritionDayTypeTarget({ bodyweightKg: loadingBodyweight, dayType: "easy" })?.carbs_g ?? 0
+      : 0;
+  // Pre-race LOADING gets its OWN floor — see CARB_LOADING_FLOOR_G_PER_KG. It used to reuse the
+  // easy-day floor, which quietly coupled the start line to a training-day setting: when the easy
+  // target moved (corridor floor → corridor middle), the loading floor moved with it. Loading a
+  // glycogen store before a race and fuelling an easy jog are different questions and must not
+  // share a number.
+  const carbLoadingFloorG =
+    loadingBodyweight && loadingBodyweight > 0
+      ? roundToNearest(CARB_LOADING_FLOOR_G_PER_KG * loadingBodyweight, 10)
       : 0;
   if (carbLoadingBase !== null && loadingBodyweight && loadingBodyweight > 0) {
     for (const workout of parsedWorkouts) {
@@ -1607,7 +1694,7 @@ export function buildNutritionNextWeekPlan(params: {
         weightKg: loadingBodyweight,
         corridorUpperGkg: protocol.loading.g_per_kg_high,
         leadDayCount: n,
-        floorG: easyCarbFloorG,
+        floorG: carbLoadingFloorG,
       });
       for (let offset = -n; offset <= 0; offset += 1) {
         const date = addDays(workout.date, offset);

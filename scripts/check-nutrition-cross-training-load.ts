@@ -141,7 +141,8 @@ const plan = buildNutritionNextWeekPlan({
 });
 const planPadelDay = plan.days.find((day) => day.date === "2026-06-09");
 assert.equal(planPadelDay?.training_type, "cross_training");
-assert.equal(planPadelDay?.target_kcal, 2350);
+// Padel = light intermittent cross → light-cross corridor 3.5–5, middle 4.25 g/kg; kcal = macros.
+assert.equal(planPadelDay?.target_kcal, 2050);
 assert.notEqual(planPadelDay?.target_kcal, null);
 
 const longBikePlan = buildNutritionNextWeekPlan({

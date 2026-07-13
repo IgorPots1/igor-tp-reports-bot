@@ -5,9 +5,12 @@ import { join } from "node:path";
 import {
   buildNutritionNextWeekPlan,
   calculateNutritionDayTypeTarget,
+  CARB_LOADING_FLOOR_G_PER_KG,
   computeCarbBaseFromReview,
   computeCarbLoadingTargets,
+  computeNutritionGoalDayTarget,
   computeRaceDayTarget,
+  estimatePlanDayExerciseKcal,
 } from "@/features/nutrition/weekly-plan-formulas";
 
 const root = process.cwd();
@@ -36,35 +39,66 @@ assert.ok(preLong);
 assert.ok(longRun);
 assert.ok(crossTraining);
 
-assert.equal(rest?.target_kcal, 1950);
+// Carbs = the MIDDLE of the review's carb corridor (not its floor); kcal = the macros.
+// These numbers moved when the plan stopped aiming at the bottom of the corridor and started
+// deriving the kcal from the food (rest 56 kg: 1950 shown / 1660 eaten → 1800 / 1800).
+assert.equal(rest?.target_kcal, 1800);
 assert.equal(rest?.protein_g, 90);
 assert.equal(rest?.fat_g, 60);
-assert.equal(rest?.carbs_g, 250);
+assert.equal(rest?.carbs_g, 220);
 
-assert.equal(easy?.target_kcal, 2200);
+assert.equal(easy?.target_kcal, 2050);
 assert.equal(easy?.protein_g, 90);
 assert.equal(easy?.fat_g, 65);
-assert.equal(easy?.carbs_g, 290);
+assert.equal(easy?.carbs_g, 270);
 
-assert.equal(hard?.target_kcal, 2400);
+assert.equal(hard?.target_kcal, 2350);
 assert.equal(hard?.protein_g, 95);
 assert.equal(hard?.fat_g, 65);
 assert.equal(hard?.carbs_g, 340);
 
-assert.equal(preLong?.target_kcal, 2200);
+assert.equal(preLong?.target_kcal, 2300);
 assert.equal(preLong?.protein_g, 90);
 assert.equal(preLong?.fat_g, 65);
-assert.equal(preLong?.carbs_g, 310);
+assert.equal(preLong?.carbs_g, 340);
 
-assert.equal(longRun?.target_kcal, 2500);
+assert.equal(longRun?.target_kcal, 2600);
 assert.equal(longRun?.protein_g, 95);
 assert.equal(longRun?.fat_g, 65);
-assert.equal(longRun?.carbs_g, 390);
+assert.equal(longRun?.carbs_g, 410);
 
 assert.equal(crossTraining?.target_kcal, 2200);
 assert.equal(crossTraining?.protein_g, 90);
 assert.equal(crossTraining?.fat_g, 65);
-assert.equal(crossTraining?.carbs_g, 290);
+assert.equal(crossTraining?.carbs_g, 310);
+
+// THE invariant, pinned for every goal and every day type: the kcal ARE the macros. The numbers
+// above can legitimately be re-tuned; this cannot. It is what the athlete sees on one line
+// («~1800 ккал · 90 Б · 60 Ж · 220 У»), and it silently drifted for two weeks because nothing
+// asserted it. Tolerance is the rounding grid only (kcal to 50, macros to 5/10).
+for (const bodyweightKg of [50, 55, 56, 60, 70, 74]) {
+  for (const dayType of ["rest", "easy", "hard", "pre_long", "long_run", "cross_training", "strength"] as const) {
+    const exerciseKcal = estimatePlanDayExerciseKcal({ dayType, bodyweightKg, durationHours: null, distanceKm: null });
+    for (const goalType of ["maintain", "lose", "gain"] as const) {
+      const target = computeNutritionGoalDayTarget({
+        goalType,
+        dayType,
+        bodyweightKg,
+        sex: "female",
+        heightCm: 168,
+        ageYears: 32,
+        exerciseKcal,
+      });
+      assert.ok(target, `${goalType}/${dayType}/${bodyweightKg}kg must produce a target`);
+      const fromMacros = target.protein_g * 4 + target.fat_g * 9 + target.carbs_g * 4;
+      const drift = Math.abs(fromMacros - target.target_kcal);
+      assert.ok(
+        drift <= 25,
+        `${goalType}/${dayType}/${bodyweightKg}kg: kcal ${target.target_kcal} but the food is ${fromMacros} (${drift} kcal apart)`
+      );
+    }
+  }
+}
 
 const nadezhdaLikeContext = {
   cacheStatus: "ok",
@@ -215,7 +249,8 @@ const padelPlan = buildNutritionNextWeekPlan({
 });
 const padelDay = padelPlan.days.find((day) => day.date === "2026-06-10");
 assert.equal(padelDay?.training_type, "cross_training");
-assert.equal(padelDay?.target_kcal, 2350);
+// Padel = light intermittent cross → light-cross corridor 3.5–5, middle 4.25 g/kg.
+assert.equal(padelDay?.target_kcal, 2050);
 assert.ok(padelDay?.target_kcal !== null, "Padel day with bodyweight must not render kcal n/d");
 
 // --- S2 fix: race-day target — мини-таблица больше не «н/д» ---
@@ -223,7 +258,7 @@ assert.ok(padelDay?.target_kcal !== null, "Padel day with bodyweight must not re
 const race10 = computeRaceDayTarget({ bodyweightKg: 60, distanceKm: 10, title: "Ночной забег" });
 assert.ok(race10 && race10.target_kcal != null, "race 10 км must have a target (not н/д)");
 assert.equal(race10?.carbs_g, 360, "race 10 км carbs at intense level (6 г/кг × 60)");
-assert.equal(race10?.target_kcal, 2600, "race 10 км kcal at hard level (43 × 60)");
+assert.equal(race10?.target_kcal, 2450, "race 10 км kcal = its macros (hard corridor middle, no loading)");
 // Half-marathon → carbs raised to loading high (8 г/кг), kcal bumped.
 const raceHM = computeRaceDayTarget({ bodyweightKg: 60, distanceKm: 21.1, title: "Полумарафон" });
 assert.equal(raceHM?.carbs_g, 480, "HM carbs at loading high (8 г/кг × 60)");
@@ -318,14 +353,36 @@ const loadingPlan = buildNutritionNextWeekPlan({
 const lead1 = loadingPlan.days.find((day) => day.date === "2026-06-26");
 const lead2 = loadingPlan.days.find((day) => day.date === "2026-06-27");
 const raceLoadDay = loadingPlan.days.find((day) => day.date === "2026-06-28");
-const easyFloorCarbs = calculateNutritionDayTypeTarget({ bodyweightKg: 55, dayType: "easy" })?.carbs_g ?? 0;
-assert.equal(lead1?.carbs_g, 290, "lead day -2 floored to easy-run carbs (290), not raw 288");
+// The loading floor is its OWN number (CARB_LOADING_FLOOR_G_PER_KG), not the easy-day target: a
+// start line must not move because a training-day setting was re-tuned. 5.3 × 55 = 290 g.
+const loadingFloorCarbs = Math.round((CARB_LOADING_FLOOR_G_PER_KG * 55) / 10) * 10;
+assert.equal(loadingFloorCarbs, 290, "loading floor at 55 kg is 290 g");
+assert.equal(lead1?.carbs_g, 290, "lead day -2 lifted from its raw 288 ramp to the 290 g loading floor");
 assert.equal(lead2?.carbs_g, 325, "lead day -1 carbs reach full target 325");
 assert.equal(raceLoadDay?.carbs_g, 325, "race day carbs = base-relative target 325 (not ceiling 440)");
 assert.equal(raceLoadDay?.training_type, "race", "race day type");
 for (const d of [lead1, lead2, raceLoadDay]) {
-  assert.ok((d?.carbs_g ?? 0) >= easyFloorCarbs, `loading day ${d?.date} carbs ≥ easy-run floor ${easyFloorCarbs}`);
+  assert.ok((d?.carbs_g ?? 0) >= loadingFloorCarbs, `loading day ${d?.date} carbs ≥ loading floor ${loadingFloorCarbs}`);
 }
+
+// The floor only LIFTS from below — it must never cut a well-fuelled athlete down, and it must
+// never override the base-driven ramp when that ramp already clears it.
+const lowBase = computeCarbLoadingTargets({ baseG: 180, weightKg: 55, corridorUpperGkg: 8, leadDayCount: 2, floorG: loadingFloorCarbs });
+assert.ok(
+  lowBase.leadDays.every((grams: number) => grams >= 290) && lowBase.raceDay >= 290,
+  `a low base (180 g) must still toe the start at the floor, got ${lowBase.leadDays.join("/")} → ${lowBase.raceDay}`
+);
+const highBase = computeCarbLoadingTargets({ baseG: 320, weightKg: 55, corridorUpperGkg: 8, leadDayCount: 2, floorG: loadingFloorCarbs });
+assert.equal(highBase.raceDay, 416, "a high base keeps its base-driven target (320 × 1.3), untouched by the floor");
+assert.deepEqual(highBase.leadDays, [368, 416], "the base-driven ramp is not flattened by the floor");
+const ceilingCapped = computeCarbLoadingTargets({ baseG: 400, weightKg: 55, corridorUpperGkg: 8, leadDayCount: 2, floorG: loadingFloorCarbs });
+assert.equal(ceilingCapped.raceDay, 440, "the corridor ceiling (8 × 55) still caps the top — the floor never raises above it");
+
+// Recovery is NOT loading: the day after a start stays on the easy-day target, which is exactly
+// the coupling this change breaks. Both numbers exist; they are different numbers.
+const easyFloorCarbs = calculateNutritionDayTypeTarget({ bodyweightKg: 55, dayType: "easy" })?.carbs_g ?? 0;
+assert.equal(easyFloorCarbs, 260, "recovery floor stays the easy-day target (260 g at 55 kg)");
+assert.notEqual(easyFloorCarbs, loadingFloorCarbs, "loading and recovery floors must be independent");
 assert.equal(lead1?.flags.carb_loading, true, "lead day -2 marked carb_loading");
 assert.equal(lead2?.flags.carb_loading, true, "lead day -1 marked carb_loading");
 assert.equal(raceLoadDay?.flags.carb_loading, true, "race day marked carb_loading");
