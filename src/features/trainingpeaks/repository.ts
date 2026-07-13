@@ -24,6 +24,7 @@ import {
   type BatchChildSpec,
   type BatchPayload,
 } from "@/features/trainingpeaks/tp-write-action-types";
+import type { MoveShadowComparisonRow } from "@/features/trainingpeaks/move-shadow-report";
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
@@ -2776,6 +2777,112 @@ export async function getTrainingPeaksStudentByAthleteId(
 ): Promise<TrainingPeaksStudent | null> {
   const students = await listTrainingPeaksStudentsIncludingArchived();
   return students.find((student) => parseTrainingPeaksAthleteIdFromStudentUrl(student.trainingPeaksAthleteUrl) === trainingPeaksAthleteId) ?? null;
+}
+
+// M2 (move-http-shadow plan): shadow comparator verdict vocabulary -- distinct
+// from move-workout-resolver.ts's own internal MoveWorkoutMatchKind
+// (fingerprint_exact/fields_unique/ambiguous/not_found, carried in
+// resolverMatchKind below). This is the COMPARATOR's judgement of the
+// resolver's answer against the old DOM path's ground-truth workoutId.
+export type MoveShadowComparisonMatchKind = "exact_id" | "id_mismatch" | "abstained_not_found" | "abstained_ambiguous" | "resolver_error";
+
+export type RecordMoveShadowComparisonInput = {
+  actionId: string;
+  runId: string;
+  athleteId: number;
+  studentId: string | null;
+  sourceDate: string;
+  targetDate: string;
+  domWorkoutId: number;
+  resolvedWorkoutId: number | null;
+  matchKind: MoveShadowComparisonMatchKind;
+  resolverMatchKind: string | null;
+  candidatesOnDate: number;
+  domFingerprint: string | null;
+  recomputedFingerprint: string | null;
+  fingerprintMatch: boolean | null;
+  sourcePolicy: string | null;
+  /** The original parsed request's source.kind ("date"/"weekday"/"relative_day") -- distinct from sourcePolicy, see migration comment. */
+  sourceKind: string | null;
+  diagnostics: unknown;
+  cacheCrossCheck: unknown;
+};
+
+/**
+ * Pure insert, no read-modify-write, no side effects beyond the one row.
+ * Never called directly by the executor -- always through
+ * move-shadow-comparator.ts's runMoveShadowComparisonSafely, which wraps
+ * every path (including this insert failing) so a shadow-recording problem
+ * can never affect the real move it was measuring.
+ */
+export async function recordMoveShadowComparison(input: RecordMoveShadowComparisonInput): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("trainingpeaks_move_shadow_comparisons").insert({
+    action_id: input.actionId,
+    run_id: input.runId,
+    athlete_id: input.athleteId,
+    student_id: input.studentId,
+    source_date: input.sourceDate,
+    target_date: input.targetDate,
+    dom_workout_id: input.domWorkoutId,
+    resolved_workout_id: input.resolvedWorkoutId,
+    match_kind: input.matchKind,
+    resolver_match_kind: input.resolverMatchKind,
+    candidates_on_date: input.candidatesOnDate,
+    dom_fingerprint: input.domFingerprint,
+    recomputed_fingerprint: input.recomputedFingerprint,
+    fingerprint_match: input.fingerprintMatch,
+    source_policy: input.sourcePolicy,
+    source_kind: input.sourceKind,
+    diagnostics: input.diagnostics ?? {},
+    cache_cross_check: input.cacheCrossCheck ?? {},
+  });
+
+  if (error) {
+    throw new Error(`Failed to record move shadow comparison: ${error.message}`);
+  }
+}
+
+/**
+ * M3: read-only fetch of all recorded shadow comparisons, for
+ * tp-move-shadow-report.ts. No filtering/pagination -- shadow-phase volume is
+ * expected to be small (tens to low hundreds of real moves over weeks), and
+ * the switch criterion needs the FULL history regardless (a single
+ * id_mismatch anywhere ever fails the gate, so partial reads would be
+ * actively misleading).
+ */
+export async function listMoveShadowComparisons(): Promise<MoveShadowComparisonRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_move_shadow_comparisons")
+    .select("*")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to list move shadow comparisons: ${error.message}`);
+  }
+
+  return ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+    id: row.id as string,
+    actionId: row.action_id as string,
+    athleteId: row.athlete_id as number,
+    studentId: (row.student_id as string | null) ?? null,
+    sourceDate: row.source_date as string,
+    targetDate: row.target_date as string,
+    domWorkoutId: row.dom_workout_id as number,
+    resolvedWorkoutId: (row.resolved_workout_id as number | null) ?? null,
+    matchKind: row.match_kind as MoveShadowComparisonRow["matchKind"],
+    resolverMatchKind: (row.resolver_match_kind as string | null) ?? null,
+    candidatesOnDate: (row.candidates_on_date as number) ?? 0,
+    domFingerprint: (row.dom_fingerprint as string | null) ?? null,
+    recomputedFingerprint: (row.recomputed_fingerprint as string | null) ?? null,
+    fingerprintMatch: (row.fingerprint_match as boolean | null) ?? null,
+    sourcePolicy: (row.source_policy as string | null) ?? null,
+    sourceKind: (row.source_kind as string | null) ?? null,
+    diagnostics: row.diagnostics,
+    cacheCrossCheck: row.cache_cross_check,
+    createdAt: row.created_at as string,
+  }));
 }
 
 /** Supabase server client shape; the only seam we need to inject a fake for tests. */

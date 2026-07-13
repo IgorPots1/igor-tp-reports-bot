@@ -33,6 +33,11 @@ import * as actionExecuteTelegramCopyModule from "../../../src/features/training
 import * as actionRunnerCommandsModule from "../../../src/features/trainingpeaks/action-runner-commands";
 import * as actionPlannedCompletedAmbiguityModule from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
 import type { PlannedCompletedAmbiguityHint } from "../../../src/features/trainingpeaks/action-planned-completed-ambiguity";
+// M2 (move-http-shadow plan): shadow comparator. Read-only against
+// TrainingPeaks, gated behind TP_MOVE_SHADOW_ENABLED, never allowed to affect
+// a real move -- see move-shadow-comparator.ts's safety contract.
+import * as moveShadowComparatorModule from "../../../src/features/trainingpeaks/move-shadow-comparator";
+import type { MoveWorkoutDomCandidate } from "../../../src/features/trainingpeaks/move-workout-resolver";
 
 type NamespaceWithOptionalDefault<T> = T & { default?: T };
 
@@ -66,6 +71,16 @@ const actionPlannedCompletedAmbiguityModuleCompat =
   actionPlannedCompletedAmbiguityModule as NamespaceWithOptionalDefault<
     typeof actionPlannedCompletedAmbiguityModule
   >;
+const moveShadowComparatorModuleCompat =
+  moveShadowComparatorModule as NamespaceWithOptionalDefault<typeof moveShadowComparatorModule>;
+
+const runMoveShadowComparisonSafely =
+  moveShadowComparatorModuleCompat.runMoveShadowComparisonSafely ??
+  moveShadowComparatorModuleCompat.default?.runMoveShadowComparisonSafely;
+
+if (typeof runMoveShadowComparisonSafely !== "function") {
+  throw new Error("TrainingPeaks move shadow comparator helper is unavailable.");
+}
 
 const buildCoachDryRunFailureNotificationLines =
   actionDryRunTelegramCopyModuleCompat.buildCoachDryRunFailureNotificationLines ??
@@ -1023,6 +1038,12 @@ const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
 const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
 const TP_ACTIONS_CONFIRM_SAVE_FLAG = "--confirm-save";
 const TP_ACTIONS_ALLOW_SAVE_ENV = "TP_ACTIONS_ALLOW_SAVE";
+// M2 (move-http-shadow plan): default OFF. When on, the real API-move path
+// also runs the new HTTP resolver (read-only) right after resolving its own
+// authoritative workoutId, and records whether they agree -- see
+// move-shadow-comparator.ts. Never affects the real move (see its safety
+// contract); simply not calling this at all is a no-op-equivalent fallback.
+const TP_MOVE_SHADOW_ENABLED_ENV = "TP_MOVE_SHADOW_ENABLED";
 const REAL_MOVE_NOT_IMPLEMENTED_ERROR = "Real move not implemented yet (Phase 3D.2)";
 const TRAININGPEAKS_NOT_CHANGED_NOTE = "TrainingPeaks не изменён";
 const TP_CALENDAR_ROOT_SELECTOR = "div.calendar.athleteCalendar";
@@ -4208,6 +4229,34 @@ async function executeApiMoveForApprovedAction(input: {
     const workoutId = (await extractWorkoutIdFromCard(cardMatch.locator)) ?? candidate.workoutId ?? null;
     if (!workoutId || !Number.isFinite(workoutId) || workoutId <= 0) {
       throw new Error("Could not resolve workoutId from the revalidated TrainingPeaks workout card.");
+    }
+
+    // M2 (move-http-shadow plan) shadow hook. Deliberately placed HERE: the
+    // old path's own authoritative workoutId is now known (ground truth) and
+    // the source-day calendar has not been touched by anything yet (the PUT
+    // is still several steps below). Off by default (TP_MOVE_SHADOW_ENABLED
+    // unset); this move's real execution is completely unaffected either way
+    // -- see move-shadow-comparator.ts's safety contract (try/catch +
+    // timeout inside runMoveShadowComparisonSafely, which never throws).
+    if (isTruthyEnvFlag(TP_MOVE_SHADOW_ENABLED_ENV)) {
+      await runMoveShadowComparisonSafely({
+        actionId: input.claimed.action.id,
+        runId: input.runId,
+        athleteId,
+        sourceDateIso: sourceDate,
+        targetDateIso: targetDate,
+        domWorkoutId: workoutId,
+        domCandidate: {
+          fingerprint: candidate.fingerprint,
+          title: candidate.title,
+          type: candidate.type,
+          startTimeLocal: candidate.startTimeLocal,
+          plannedDurationSec: candidate.plannedDurationSec,
+          plannedDistanceKm: candidate.plannedDistance,
+        } satisfies MoveWorkoutDomCandidate,
+        sourcePolicy: input.claimed.trustedDryRunLog.selectedSourceDatePolicy,
+        parsedPayload: input.claimed.action.parsed_payload,
+      });
     }
 
     await captureProbeScreenshot(page, beforeScreenshotPath, []);
