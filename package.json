@@ -292,6 +292,16 @@
     "audit:nutrition-interpretation-shadow": "npx tsx scripts/audit-nutrition-interpretation-shadow.ts",
     "diagnose:nutrition-interpretation-shadow-case": "npx tsx scripts/diagnose-nutrition-interpretation-shadow-case.ts",
     "check:nutrition-interpretation-shadow-audit": "npx tsx scripts/check-nutrition-interpretation-shadow-audit.ts",
+    "check:nutrition-krupa-rewriter": "npx tsx scripts/check-nutrition-krupa-rewriter.ts",
+    "check:billing-month": "npx tsx scripts/check-billing-month.ts",
+    "check:trainingpeaks-coach-case-feedback": "npx tsx scripts/check-trainingpeaks-coach-case-feedback.ts",
+    "check:trainingpeaks-contact-status": "npx tsx scripts/check-trainingpeaks-contact-status.ts",
+    "check:trainingpeaks-group-case-action-proposals": "npx tsx scripts/check-trainingpeaks-group-case-action-proposals.ts",
+    "check:trainingpeaks-group-move-intake": "npx tsx scripts/check-trainingpeaks-group-move-intake.ts",
+    "check:trainingpeaks-move-confirmation-flow": "npx tsx scripts/check-trainingpeaks-move-confirmation-flow.ts",
+    "check:trainingpeaks-move-source-policy": "npx tsx scripts/check-trainingpeaks-move-source-policy.ts",
+    "check:trainingpeaks-reply-draft-context": "npx tsx scripts/check-trainingpeaks-reply-draft-context.ts",
+    "check:trainingpeaks-reply-draft-feedback": "npx tsx scripts/check-trainingpeaks-reply-draft-feedback.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts"
   },
   "dependencies": {
