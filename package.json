@@ -211,6 +211,7 @@
     "check:nutrition-energy-availability": "npx tsx scripts/check-nutrition-energy-availability.ts",
     "check:nutrition-two-workouts-expenditure": "npx tsx scripts/check-nutrition-two-workouts-expenditure.ts",
     "check:nutrition-macro-guardrails": "npx tsx scripts/check-nutrition-macro-guardrails.ts",
+    "check:nutrition-hard-carb-corridor-duration": "npx tsx scripts/check-nutrition-hard-carb-corridor-duration.ts",
     "check:nutrition-review-comment-quality": "npx tsx scripts/check-nutrition-review-comment-quality.ts",
     "check:nutrition-review-narrative-quality": "npx tsx scripts/check-nutrition-review-narrative-quality.ts",
     "check:nutrition-practical-targets": "npx tsx scripts/check-nutrition-practical-targets.ts",
