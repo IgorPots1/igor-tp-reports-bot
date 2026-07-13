@@ -374,7 +374,19 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
   const carbsGMin = toFiniteNumber(targetObj.carbsGMin);
   const carbsGMax = toFiniteNumber(targetObj.carbsGMax);
   const planTargetNumbers: number[] = [];
-  for (const value of [carbsGMin, carbsGMax, toFiniteNumber(targetObj.kcalMin), toFiniteNumber(targetObj.proteinGMin)]) {
+  // kcalTarget — the day's ENERGY orientation, the same number the athlete reads on her plan line.
+  // The day used to carry carb bounds and an energy FLOOR (kcalMin) but never the target itself, so
+  // a prose citing it («ориентир около 2300») was scored as an invented number and the whole day
+  // fell to the dry comment. It is allowed here on exactly the same terms as the carb bounds —
+  // exact value plus the 5/10 roundings below, nothing looser — so an invented «4200 ккал» is still
+  // refused. The guard is against invented numbers, not against the category of energy.
+  for (const value of [
+    carbsGMin,
+    carbsGMax,
+    toFiniteNumber(targetObj.kcalTarget),
+    toFiniteNumber(targetObj.kcalMin),
+    toFiniteNumber(targetObj.proteinGMin),
+  ]) {
     if (value != null) {
       planTargetNumbers.push(value);
     }

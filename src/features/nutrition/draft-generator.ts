@@ -745,11 +745,8 @@ export function buildNutritionDailyFactsForNarrative(input: {
       // target the plan uses, anchored on BMR + this day's REAL TP expenditure.
       // The model evaluates the actual intake against THIS, not the maintenance
       // corridor (fixes "2750 in a rest day = calm" for a losing athlete).
-      const goalDayTarget = (() => {
+      const dayPlanTargets = (() => {
         const goalType = input.context.nutritionGoalType;
-        if (goalType === "maintain") {
-          return null;
-        }
         const planDayType: NutritionPlanDayType =
           trainingType === "intervals" || trainingType === "tempo"
             ? "hard"
@@ -790,7 +787,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
           raceWeekDeficitOff: raceWeekDeficitOffDates.has(date),
         });
         if (!target) {
-          return null;
+          return { goalDayTarget: null, energyTargetKcal: null };
         }
         const actualKcal =
           typeof day.kcal === "number"
@@ -799,16 +796,38 @@ export function buildNutritionDailyFactsForNarrative(input: {
               ? (canonicalActual.kcal as number)
               : null;
         return {
-          goal: goalType,
-          target_kcal: target.target_kcal,
-          protein_g: target.protein_g,
-          fat_g: target.fat_g,
-          carbs_g: target.carbs_g,
-          // lose: intake well above the deficit line on this day = more than the
-          // goal needs (gently note as surplus), NOT "ровно/спокойно".
-          over_goal_line: actualKcal !== null ? actualKcal > target.target_kcal + 150 : null,
+          // The lose/gain DEFICIT LINE keeps its exact meaning and stays null for maintain: the
+          // prompt tells the model to judge the day's intake AGAINST it, and that framing must not
+          // reach a maintaining athlete.
+          goalDayTarget:
+            goalType === "maintain"
+              ? null
+              : {
+                  goal: goalType,
+                  target_kcal: target.target_kcal,
+                  protein_g: target.protein_g,
+                  fat_g: target.fat_g,
+                  carbs_g: target.carbs_g,
+                  // lose: intake well above the deficit line on this day = more than the
+                  // goal needs (gently note as surplus), NOT "ровно/спокойно".
+                  over_goal_line: actualKcal !== null ? actualKcal > target.target_kcal + 150 : null,
+                },
+          // The day's ENERGY ORIENTATION — computed for EVERY goal, maintain included. For maintain
+          // computeNutritionGoalDayTarget returns the ideal day-type target, i.e. exactly the kcal
+          // the athlete reads on her own plan line («🔥 Тяжёлый день - ~2300 ккал · 95 Б · 65 Ж · 330 У»).
+          //
+          // It is carried purely as a FACT, so the prose may cite it. Without it the model wrote
+          // «Калорийность 2008 ккал — чуть ниже, чем хотелось бы под такую нагрузку (ориентир около
+          // 2300)» about a real, code-computed number — and the whole day's prose was thrown away as
+          // an invented one, because the review day's target carried carb bounds and nothing else.
+          // The number guard exists to stop INVENTED numbers, not to forbid a whole category of true
+          // ones; energy is a legitimate part of the conversation (the coach sets it in the plan and
+          // the athlete reads it there).
+          energyTargetKcal: target.target_kcal,
         };
       })();
+      const goalDayTarget = dayPlanTargets.goalDayTarget;
+      const dayEnergyTargetKcal = dayPlanTargets.energyTargetKcal;
       // Поток B: for lose/gain, the cited carb ORIENTATION must match the plan's
       // goal target, not the maintenance corridor (g/kg). Reuse the already-computed
       // goalDayTarget (same computeNutritionGoalDayTarget the plan uses — no formula
@@ -817,16 +836,25 @@ export function buildNutritionDailyFactsForNarrative(input: {
       // the corridor stays byte-identical.
       const goalAwareCanonicalTarget = (() => {
         const base = canonicalTarget ?? { formulaCode: "legacy_daily_v1" };
+        // The day's energy orientation rides along with the carb corridor, for EVERY goal. The
+        // canonical target from methodology carries carb bounds (and, for long days, an energy
+        // FLOOR) — it never carried the day's actual kcal target, which is why a prose citing it
+        // was treated as invented. kcalTarget is that number, and buildNutritionDayProseFacts
+        // allows it exactly like the carb bounds: exact value + 5/10 roundings, nothing looser.
+        const withEnergy =
+          typeof dayEnergyTargetKcal === "number" && Number.isFinite(dayEnergyTargetKcal)
+            ? { ...base, kcalTarget: dayEnergyTargetKcal }
+            : base;
         const carbs = goalDayTarget?.carbs_g;
         if (!goalDayTarget || typeof carbs !== "number" || !Number.isFinite(carbs)) {
-          return base;
+          return withEnergy;
         }
         const bw = typeof bodyweightKg === "number" && bodyweightKg > 0 ? bodyweightKg : null;
         const carbsMin = Math.round((carbs - 20) / 10) * 10;
         const carbsMax = Math.round((carbs + 20) / 10) * 10;
         const baseCode = typeof base.formulaCode === "string" ? base.formulaCode : "canonical_daily_v1";
         return {
-          ...base,
+          ...withEnergy,
           carbsGMin: carbsMin,
           carbsGMax: carbsMax,
           carbsGPerKgMin: bw ? Number((carbsMin / bw).toFixed(2)) : base.carbsGPerKgMin,

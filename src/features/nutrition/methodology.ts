@@ -123,8 +123,17 @@ export type NutritionCanonicalDailyAnalysis = {
     carbsGPerKg: number | null;
   };
   target: {
+    /** Energy FLOOR for the day (e.g. 35 kcal/kg on a long run) — a safety bound, not a target. */
     kcalMin?: number | null;
     kcalMax?: number | null;
+    /**
+     * The day's ENERGY TARGET — the kcal the athlete actually reads on her plan line, filled in by
+     * draft-generator for every goal (goal-aware for lose/gain, the ideal day-type target for
+     * maintain). Distinct from kcalMin, which is a floor: the prose may cite THIS as an orientation
+     * («ориентир около 2300»), and the number validator allows it on the same terms as the carb
+     * bounds.
+     */
+    kcalTarget?: number | null;
     carbsGMin?: number | null;
     carbsGMax?: number | null;
     carbsGPerKgMin?: number | null;
