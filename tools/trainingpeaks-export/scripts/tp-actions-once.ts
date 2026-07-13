@@ -38,6 +38,14 @@ import type { PlannedCompletedAmbiguityHint } from "../../../src/features/traini
 // a real move -- see move-shadow-comparator.ts's safety contract.
 import * as moveShadowComparatorModule from "../../../src/features/trainingpeaks/move-shadow-comparator";
 import type { MoveWorkoutDomCandidate } from "../../../src/features/trainingpeaks/move-workout-resolver";
+// M4 (move-http-shadow plan): the HTTP resolver + browserless write client,
+// used only when TP_MOVE_RESOLVER_MODE=live_primary. Same namespace+compat
+// import shape as every other src/ import in this file -- see the known
+// CJS/ESM named-export-loss risk flagged in tp-write-executor-once.ts's
+// header (this file's existing pattern is the established workaround; a
+// plain named import here would reintroduce that risk).
+import * as moveWorkoutResolverContextModule from "../../../src/features/trainingpeaks/move-workout-resolver-context";
+import * as tpApiClientModule from "../../../src/features/trainingpeaks/tp-api-client";
 
 type NamespaceWithOptionalDefault<T> = T & { default?: T };
 
@@ -73,13 +81,30 @@ const actionPlannedCompletedAmbiguityModuleCompat =
   >;
 const moveShadowComparatorModuleCompat =
   moveShadowComparatorModule as NamespaceWithOptionalDefault<typeof moveShadowComparatorModule>;
+const moveWorkoutResolverContextModuleCompat =
+  moveWorkoutResolverContextModule as NamespaceWithOptionalDefault<typeof moveWorkoutResolverContextModule>;
+const tpApiClientModuleCompat = tpApiClientModule as NamespaceWithOptionalDefault<typeof tpApiClientModule>;
 
 const runMoveShadowComparisonSafely =
   moveShadowComparatorModuleCompat.runMoveShadowComparisonSafely ??
   moveShadowComparatorModuleCompat.default?.runMoveShadowComparisonSafely;
+const resolveMoveWorkoutId =
+  moveWorkoutResolverContextModuleCompat.resolveMoveWorkoutId ??
+  moveWorkoutResolverContextModuleCompat.default?.resolveMoveWorkoutId;
+const getWorkoutDetail = tpApiClientModuleCompat.getWorkoutDetail ?? tpApiClientModuleCompat.default?.getWorkoutDetail;
+const putWorkout = tpApiClientModuleCompat.putWorkout ?? tpApiClientModuleCompat.default?.putWorkout;
 
 if (typeof runMoveShadowComparisonSafely !== "function") {
   throw new Error("TrainingPeaks move shadow comparator helper is unavailable.");
+}
+if (typeof resolveMoveWorkoutId !== "function") {
+  throw new Error("TrainingPeaks move workout HTTP resolver (resolveMoveWorkoutId) is unavailable.");
+}
+if (typeof getWorkoutDetail !== "function") {
+  throw new Error("TrainingPeaks tp-api-client.getWorkoutDetail is unavailable.");
+}
+if (typeof putWorkout !== "function") {
+  throw new Error("TrainingPeaks tp-api-client.putWorkout is unavailable.");
 }
 
 const buildCoachDryRunFailureNotificationLines =
@@ -1034,6 +1059,24 @@ const TP_ACTIONS_USE_API_MOVE_ENV =
   actionRunnerCommandsModuleCompat.TP_ACTIONS_USE_API_MOVE_ENV ??
   actionRunnerCommandsModuleCompat.default?.TP_ACTIONS_USE_API_MOVE_ENV ??
   "TP_ACTIONS_USE_API_MOVE";
+// M4 (move-http-shadow plan): switchover flag. Read at runtime, no deploy
+// needed to flip -- Igor flips this, this script never sets it.
+//   shadow (default, and default on ANY unrecognized value): old DOM/browser
+//     path executes, exactly as before this PR. Safe fallback for a typo.
+//   live_primary: try the HTTP resolver first (no browser); if it abstains
+//     or errors, fall back to the old DOM path automatically, per-move --
+//     see attemptLiveHttpMoveExecution()'s call site below.
+//   off: functionally identical to "shadow" for execution purposes (old path
+//     only) -- kept as a distinct value so Igor can express "explicitly
+//     disabled" in ops/logs rather than overloading "shadow" for both
+//     "measuring" and "off" intents. Does not touch TP_MOVE_SHADOW_ENABLED,
+//     which independently controls whether the read-only comparator runs.
+const TP_MOVE_RESOLVER_MODE_ENV = "TP_MOVE_RESOLVER_MODE";
+type MoveResolverMode = "shadow" | "live_primary" | "off";
+function readMoveResolverMode(): MoveResolverMode {
+  const raw = (process.env[TP_MOVE_RESOLVER_MODE_ENV] ?? "shadow").trim().toLowerCase();
+  return raw === "live_primary" || raw === "off" ? raw : "shadow";
+}
 const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
 const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
 const TP_ACTIONS_CONFIRM_SAVE_FLAG = "--confirm-save";
@@ -4143,6 +4186,207 @@ async function locateWorkoutCardForProbe(
     locator: null,
     selectorUsed: null,
     textSnippet: null,
+  };
+}
+
+type LiveHttpMoveAttempt =
+  | { outcome: "executed"; result: ApiMoveExecutionResult; matchKind: string; candidatesOnDate: number }
+  | { outcome: "fallback"; reason: string };
+
+/**
+ * M4 (move-http-shadow plan): the browserless execution path, used only when
+ * TP_MOVE_RESOLVER_MODE=live_primary. Resolves the workoutId via the M1 HTTP
+ * resolver (no browser) using the candidate that inspectActionCalendar's
+ * existing browser-based revalidation pass has ALREADY re-confirmed moments
+ * earlier in this same real run (comparison.currentCandidate ??
+ * comparison.trustedCandidate -- the identical source the M2 shadow hook
+ * already trusts) -- no new browser call for the candidate itself. If the
+ * resolver is confident, executes GET (pre-image) -> PUT -> GET (verify)
+ * entirely through tp-api-client.ts (session-snapshot auth, zero Playwright).
+ *
+ * FALLBACK BOUNDARY (naryad: abstain/error -> automatic per-move fallback to
+ * the old DOM path): applies ONLY up through resolving a candidate workoutId
+ * and pre-fetching it. Once putWorkout() has actually been called, this
+ * function no longer falls back on failure -- it fails the run instead,
+ * exactly like the DOM path already does when ITS PUT fails. Falling back to
+ * a second, different mutation mechanism after a possibly-already-applied
+ * PUT would risk a double-move; that risk is not worth taking, and nothing in
+ * the naryad asks for it (it asks for fallback on "voздержался/упал" during
+ * resolution, not for a retry-via-different-transport after a PUT attempt).
+ *
+ * Does NOT touch inspectActionCalendar's browser-based identity/candidate
+ * revalidation pass -- that still runs, unconditionally, for every move
+ * regardless of mode (see the M4 report note on what still requires a
+ * browser). This function only replaces the SECOND browser session that
+ * executeApiMoveForApprovedAction would otherwise open purely to re-scrape a
+ * workoutId and route the PUT through page.request.fetch.
+ */
+async function attemptLiveHttpMoveExecution(input: {
+  claimed: ClaimedRealAction;
+  runId: string;
+  comparison: RevalidationComparison;
+  artifactDir: string;
+}): Promise<LiveHttpMoveAttempt> {
+  const student = input.claimed.student;
+  if (!student?.trainingpeaks_athlete_url) {
+    return { outcome: "fallback", reason: "missing_athlete_url" };
+  }
+  const athleteIdRaw = parseTrainingPeaksAthleteId(student.trainingpeaks_athlete_url);
+  const athleteId = athleteIdRaw ? Number(athleteIdRaw) : Number.NaN;
+  if (!Number.isFinite(athleteId) || athleteId <= 0) {
+    return { outcome: "fallback", reason: "invalid_athlete_id" };
+  }
+
+  const sourceDate =
+    input.comparison.sourceDate.current ??
+    input.comparison.sourceDate.trusted ??
+    input.claimed.trustedDryRunLog.resolvedDates.sourceDate;
+  const targetDate =
+    input.comparison.targetDate.current ??
+    input.comparison.targetDate.trusted ??
+    input.claimed.trustedDryRunLog.resolvedDates.targetDate;
+  if (!sourceDate || !targetDate) {
+    return { outcome: "fallback", reason: "missing_dates" };
+  }
+
+  const candidate = input.comparison.currentCandidate ?? input.comparison.trustedCandidate;
+  const domCandidate: MoveWorkoutDomCandidate = {
+    fingerprint: candidate.fingerprint,
+    title: candidate.title,
+    type: candidate.type,
+    startTimeLocal: candidate.startTimeLocal,
+    plannedDurationSec: candidate.plannedDurationSec,
+    plannedDistanceKm: candidate.plannedDistance,
+  };
+
+  let resolution: Awaited<ReturnType<typeof resolveMoveWorkoutId>>;
+  try {
+    resolution = await resolveMoveWorkoutId({ athleteId, sourceDateIso: sourceDate, domCandidate });
+  } catch (error) {
+    return { outcome: "fallback", reason: `resolver_threw:${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (!resolution.ok) {
+    return { outcome: "fallback", reason: `resolver_error:${resolution.reason}` };
+  }
+  const resolvedWorkoutId = resolution.resolution.resolvedWorkoutId;
+  if (resolvedWorkoutId === null) {
+    return { outcome: "fallback", reason: `resolver_abstained:${resolution.resolution.matchKind}` };
+  }
+
+  // Confident resolution from here -- past this point, failures fail the run
+  // rather than falling back (see the function-level comment above).
+  const apiMoveArtifactDir = path.join(input.artifactDir, "api-move-http");
+  await mkdir(apiMoveArtifactDir, { recursive: true });
+  const requestArtifactPath = path.join(apiMoveArtifactDir, "request.redacted.json");
+  const responseArtifactPath = path.join(apiMoveArtifactDir, "response.redacted.json");
+  const verificationArtifactPath = path.join(apiMoveArtifactDir, "verification.redacted.json");
+
+  // M2 shadow hook, mirrored here so live_primary-executed moves also keep
+  // writing to trainingpeaks_move_shadow_comparisons ("shadow-запись не
+  // отключать"). Ground truth is now the resolver's own answer, since that
+  // IS what gets used for the mutation below -- the comparator's own
+  // independent, freshly-run resolve call is what gives this row its
+  // ongoing alerting value (a near-simultaneous second resolve disagreeing
+  // with the id already committed to would be exactly the early-warning
+  // signal Igor asked for).
+  if (isTruthyEnvFlag(TP_MOVE_SHADOW_ENABLED_ENV)) {
+    await runMoveShadowComparisonSafely({
+      actionId: input.claimed.action.id,
+      runId: input.runId,
+      athleteId,
+      sourceDateIso: sourceDate,
+      targetDateIso: targetDate,
+      domWorkoutId: resolvedWorkoutId,
+      domCandidate,
+      sourcePolicy: input.claimed.trustedDryRunLog.selectedSourceDatePolicy,
+      parsedPayload: input.claimed.action.parsed_payload,
+    });
+  }
+
+  const prefetchBody = await getWorkoutDetail(athleteId, resolvedWorkoutId);
+  const targetDateTime = parseDateArgToTpDateTime(targetDate);
+  const payload = buildWorkoutMovePayload({ athleteId, workoutId: resolvedWorkoutId, targetDateTime, sourceWorkout: prefetchBody });
+
+  console.log("[execute-real] mutation_context (live_primary/http)");
+  console.log(`actionId=${input.claimed.action.id}`);
+  console.log(`athleteId=${athleteId}`);
+  console.log(`workoutId=${resolvedWorkoutId} (resolved via HTTP, matchKind=${resolution.resolution.matchKind})`);
+  console.log(`sourceDate=${sourceDate}`);
+  console.log(`targetDate=${targetDate}`);
+
+  // putWorkout/getWorkoutDetail throw (TpApiHttpError) on any non-2xx
+  // response instead of returning a status code -- reaching the lines below
+  // without a throw means the call succeeded. Historical apiMove.putStatus
+  // values for real successful moves are consistently 200 (confirmed via
+  // M3.5 backfill data), so recording putStatus/verificationStatus as 200
+  // here on the no-throw path is accurate in practice, not a guess.
+  const putBody = await putWorkout(athleteId, resolvedWorkoutId, payload);
+  const verifyBody = await getWorkoutDetail(athleteId, resolvedWorkoutId);
+  const verifyWorkoutDay = typeof verifyBody.workoutDay === "string" ? verifyBody.workoutDay : null;
+  const verificationMatchesTargetDate = Boolean(verifyWorkoutDay && verifyWorkoutDay.startsWith(targetDate));
+
+  const requestSummary = {
+    mode: "execute",
+    transport: "http_live_primary",
+    endpoint: buildTpApiWorkoutUrl(athleteId, resolvedWorkoutId),
+    request: { method: "PUT", payload },
+    resolverMatchKind: resolution.resolution.matchKind,
+    candidatesOnDate: resolution.resolution.candidatesOnDate,
+    actionContext: {
+      actionId: input.claimed.action.id,
+      runId: input.runId,
+      athleteId,
+      workoutId: resolvedWorkoutId,
+      sourceDate,
+      targetDate,
+    },
+  };
+  const responseSummary = {
+    prefetchWorkout: { ok: true, body: prefetchBody },
+    executePut: { attempted: true, ok: true, body: putBody },
+  };
+  const verificationSummary = {
+    mode: "execute",
+    targetDate,
+    expectedWorkoutDay: targetDateTime,
+    verification: { ok: true, workoutDay: verifyWorkoutDay, matchesTargetDate: verificationMatchesTargetDate, body: verifyBody },
+    notes: verificationMatchesTargetDate
+      ? ["Execute mode complete (HTTP live_primary path): PUT ok and verification passed."]
+      : [],
+  };
+
+  await writeFile(requestArtifactPath, `${JSON.stringify(redactUnknown(requestSummary), null, 2)}\n`, "utf8");
+  await writeFile(responseArtifactPath, `${JSON.stringify(redactUnknown(responseSummary), null, 2)}\n`, "utf8");
+  await writeFile(verificationArtifactPath, `${JSON.stringify(redactUnknown(verificationSummary), null, 2)}\n`, "utf8");
+
+  const result: ApiMoveExecutionResult = {
+    apiMoveEnabled: true,
+    apiMoveExecuted: true,
+    athleteId,
+    workoutId: resolvedWorkoutId,
+    sourceDate,
+    targetDate,
+    targetDateTime,
+    putStatus: 200,
+    verificationStatus: 200,
+    verificationOk: true,
+    verificationWorkoutDay: verifyWorkoutDay,
+    verificationMatchesTargetDate,
+    authHeaderObserved: true,
+    sampleTpApiUrl: buildTpApiWorkoutUrl(athleteId, resolvedWorkoutId),
+    screenshotBeforePath: null,
+    screenshotAfterPath: null,
+    artifacts: { requestArtifactPath, responseArtifactPath, verificationArtifactPath },
+    requestSummary,
+    responseSummary,
+    verificationSummary,
+  };
+
+  return {
+    outcome: "executed",
+    result,
+    matchKind: resolution.resolution.matchKind,
+    candidatesOnDate: resolution.resolution.candidatesOnDate,
   };
 }
 
@@ -9728,12 +9972,36 @@ async function main(): Promise<void> {
 
     const artifactDir = path.join(ACTION_ARTIFACTS_ROOT, claimed.action.id, run.id);
     await mkdir(artifactDir, { recursive: true });
-    const apiExecution = await executeApiMoveForApprovedAction({
-      claimed,
-      runId: run.id,
-      comparison,
-      artifactDir,
-    });
+
+    // M4 (move-http-shadow plan): mode gates ONLY which mechanism resolves +
+    // executes the mutation. inspectActionCalendar's browser-based identity
+    // and candidate revalidation above is completely unaffected by this
+    // branch -- it already ran, unconditionally, regardless of mode.
+    const moveResolverMode = readMoveResolverMode();
+    let apiExecution: ApiMoveExecutionResult;
+    let executedVia: "http_live_primary" | "dom_playwright" = "dom_playwright";
+    let liveHttpFallbackReason: string | null = null;
+    let liveHttpMatchKind: string | null = null;
+    let liveHttpCandidatesOnDate: number | null = null;
+
+    if (moveResolverMode === "live_primary") {
+      const liveAttempt = await attemptLiveHttpMoveExecution({ claimed, runId: run.id, comparison, artifactDir });
+      if (liveAttempt.outcome === "executed") {
+        apiExecution = liveAttempt.result;
+        executedVia = "http_live_primary";
+        liveHttpMatchKind = liveAttempt.matchKind;
+        liveHttpCandidatesOnDate = liveAttempt.candidatesOnDate;
+        console.log(`[move-resolver-mode] live_primary: executed via HTTP for action ${claimed.action.id} (matchKind=${liveAttempt.matchKind}).`);
+      } else {
+        liveHttpFallbackReason = liveAttempt.reason;
+        console.log(
+          `[move-resolver-mode] live_primary: falling back to DOM path for action ${claimed.action.id} -- ${liveAttempt.reason}`
+        );
+        apiExecution = await executeApiMoveForApprovedAction({ claimed, runId: run.id, comparison, artifactDir });
+      }
+    } else {
+      apiExecution = await executeApiMoveForApprovedAction({ claimed, runId: run.id, comparison, artifactDir });
+    }
 
     const logJson = {
       ...baseLog,
@@ -9761,6 +10029,17 @@ async function main(): Promise<void> {
           : null,
       mutationOccurred: apiExecution.apiMoveExecuted,
       durableMutationOccurred: apiExecution.apiMoveExecuted,
+      // M4 (move-http-shadow plan): queryable per-move audit trail for the
+      // switchover -- "сколько переносов ушло на старый путь и почему".
+      // e.g. select count(*) from trainingpeaks_action_runs where
+      // log_json->>'moveResolverMode' = 'live_primary' and
+      // log_json->>'executedVia' = 'dom_playwright' group by
+      // log_json->>'liveHttpFallbackReason'.
+      moveResolverMode,
+      executedVia,
+      liveHttpFallbackReason,
+      liveHttpMatchKind,
+      liveHttpCandidatesOnDate,
       apiMove: {
         enabled: apiExecution.apiMoveEnabled,
         executed: apiExecution.apiMoveExecuted,
