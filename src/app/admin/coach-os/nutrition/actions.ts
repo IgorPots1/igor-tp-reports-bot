@@ -9,6 +9,7 @@ import {
   addNutritionWeightActionData,
   generateAndSaveNutritionWeeklyPlan,
   generateNutritionWeeklyReview,
+  listRejectedNutritionReviewProseDays,
   previewNutritionFileUpload,
   parseNutritionManualMacros,
   saveNutritionFileReport,
@@ -32,7 +33,7 @@ import {
 } from "@/features/nutrition/file-preview-cookie";
 import type { NutritionFileUploadPreviewSnapshot } from "@/features/nutrition/file-preview-cookie";
 import type { NutritionFileUploadPreviewActionState } from "@/app/admin/coach-os/nutrition/upload-action-state";
-import type { NutritionContextItemType } from "@/features/nutrition/repository";
+import type { NutritionContextItemType, NutritionWeeklyAnalysis } from "@/features/nutrition/repository";
 import {
   deleteNutritionManualRaceEvent,
   normalizeNutritionGoalType,
@@ -331,8 +332,9 @@ export async function updateNutritionReviewProseAction(formData: FormData): Prom
   const oneFocusStatementRu = getOptionalFormValue(formData, "oneFocusStatementRu");
   const athleteOpeningNoteRu = getOptionalFormValue(formData, "athleteOpeningNoteRu");
 
+  let updated: NutritionWeeklyAnalysis;
   try {
-    await updateNutritionReviewProse({
+    updated = await updateNutritionReviewProse({
       analysisId,
       dayProse,
       oneFocusStatementRu,
@@ -344,7 +346,20 @@ export async function updateNutritionReviewProseAction(formData: FormData): Prom
     redirect(withNotice(redirectTo, "error", message));
   }
 
+  // The edit IS saved, but the render-time validator may still refuse it and send the dry
+  // deterministic comment instead. Say so out loud — never lose a coach edit silently.
+  const rejectedDays = listRejectedNutritionReviewProseDays(updated, Object.keys(dayProse));
+
   revalidateNutritionPaths(studentId);
+  if (rejectedDays.length > 0) {
+    redirect(
+      withNotice(
+        redirectTo,
+        "error",
+        `Правки сохранены, но ${rejectedDays.length} дн. НЕ уйдут ученице как написано (${rejectedDays.join(", ")}): проза не проходит проверку чисел и будет заменена на сухой автотекст. Открой «Редактировать текст для ученицы» — там показано, что именно уйдёт и почему.`
+      )
+    );
+  }
   redirect(
     withNotice(redirectTo, "notice", "Правки разбора сохранены — попадут в карточки ученицы при открытии.")
   );

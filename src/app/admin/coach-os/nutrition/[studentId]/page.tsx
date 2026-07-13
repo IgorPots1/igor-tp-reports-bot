@@ -39,7 +39,10 @@ import { buildDerivedNutritionCoachSummary } from "@/features/nutrition/coach-su
 import {
   buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
+  buildNutritionDayProseFacts,
+  getNutritionReviewDayCards,
 } from "@/features/nutrition/combined-message";
+import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
 import {
   buildNutritionStudentCardHref,
   formatNutritionAthleteReportSignalCategory,
@@ -468,23 +471,51 @@ export default async function CoachOsNutritionStudentCardPage({
     ? (weeklyNutritionSummary.training_nutrition_links as string[])
     : [];
   const oneFocus = asObject(weeklyNutritionSummary.one_focus);
-  // Flow C v1-B: per-block prose for the inline review editor. Preloaded from the
-  // RAW canonical athlete_prose (the editable source), not the validated render.
+  // Flow C v1-B: per-block prose for the inline review editor. The textarea stays bound to
+  // the RAW canonical athlete_prose — that is the only editable source, and writing the
+  // validated render back into it would overwrite the model prose with its own fallback.
+  // But raw != what the athlete gets: the render-time validator (same one for MODEL prose
+  // and for a COACH edit) drops a day to the dry deterministic comment when it carries a
+  // number that is not a fact of that day, a coach term, etc. So each day also carries
+  // what will ACTUALLY be sent + why it was refused, and the UI shows it (see below).
+  const reviewDayCardProseByDate = new Map(
+    (card.weeklyAnalysis ? getNutritionReviewDayCards(card.weeklyAnalysis) : [])
+      .filter((dayCard): dayCard is typeof dayCard & { date: string } => typeof dayCard.date === "string")
+      .map((dayCard) => [dayCard.date, dayCard.prose])
+  );
+  type NutritionReviewProseBlock = {
+    date: string;
+    label: string;
+    prose: string;
+    isReplaced: boolean;
+    rejectionReasons: string[];
+    willSendProse: string;
+  };
   const reviewProseBlocks = dailyAnalysis
-    .map((day) => {
+    .map((day): NutritionReviewProseBlock | null => {
       const date = typeof day.date === "string" ? day.date : null;
       if (!date) {
         return null;
       }
       const weekday = typeof day.weekday_ru === "string" ? day.weekday_ru : null;
       const dateLabel = typeof day.date_label === "string" ? day.date_label : null;
+      const rawProse = typeof day.athlete_prose === "string" ? day.athlete_prose : "";
+      const rejectionReasons = rawProse.trim()
+        ? validateNutritionDayProse({ prose: rawProse, facts: buildNutritionDayProseFacts(day) })
+            .filter((issue) => issue.severity === "error")
+            .map((issue) => issue.message)
+        : [];
       return {
         date,
         label: [weekday, dateLabel].filter(Boolean).join(" · ") || date,
-        prose: coachShortDashes(typeof day.athlete_prose === "string" ? day.athlete_prose : ""),
+        prose: coachShortDashes(rawProse),
+        isReplaced: rejectionReasons.length > 0,
+        rejectionReasons,
+        willSendProse: coachShortDashes(reviewDayCardProseByDate.get(date) ?? ""),
       };
     })
-    .filter((block): block is { date: string; label: string; prose: string } => block !== null);
+    .filter((block): block is NutritionReviewProseBlock => block !== null);
+  const replacedProseBlocks = reviewProseBlocks.filter((block) => block.isReplaced);
   const reviewFocusStatement = coachShortDashes(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : "");
   const reviewOpeningNote = coachShortDashes(
     typeof weeklyNutritionSummary.athlete_opening_note_ru === "string"
@@ -1204,15 +1235,30 @@ export default async function CoachOsNutritionStudentCardPage({
         <article className="admin-card admin-card-compact admin-nutrition-card-wide">
           <h3>Черновик ученику — полный текст</h3>
           <p className="admin-muted">Основной текст для отправки ученику. Копируйте именно этот блок.</p>
+          {replacedProseBlocks.length > 0 ? (
+            <div className="admin-alert admin-alert-error">
+              <strong>
+                {replacedProseBlocks.length} из {reviewProseBlocks.length} дн. уйдут ученице НЕ тем текстом, что в
+                редакторе.
+              </strong>{" "}
+              Проза этих дней не проходит проверку чисел и молча заменяется на сухой автокомментарий:{" "}
+              {replacedProseBlocks.map((block) => block.label).join(", ")}. Открой «Редактировать текст для ученицы» —
+              там показано, что именно уйдёт и почему.
+            </div>
+          ) : null}
           {(card.weeklyAnalysis && reviewProseBlocks.length > 0) || displayPlan ? (
-            <details className="admin-nutrition-helper">
-              <summary>✏️ Редактировать текст для ученицы</summary>
+            <details className="admin-nutrition-helper" open={replacedProseBlocks.length > 0}>
+              <summary>
+                ✏️ Редактировать текст для ученицы
+                {replacedProseBlocks.length > 0 ? ` — ⚠️ ${replacedProseBlocks.length} дн. будет заменено` : ""}
+              </summary>
               {card.weeklyAnalysis && reviewProseBlocks.length > 0 ? (
                 <>
                   <p className="admin-muted admin-nutrition-helper">
                     Разбор по дням: правки ложатся в карточки ученицы по дням — вёрстка сохраняется, числа и таргеты
-                    не трогаются. ⚠️ Не вписывай конкретные числа/граммы в текст: они не пройдут валидацию, и день
-                    откатится на исходный текст.
+                    не трогаются. ⚠️ Не вписывай числа/граммы, которых нет в фактах дня: такой день не пройдёт
+                    проверку и уйдёт сухим автокомментарием — не твоим текстом и не исходным. Дни, которые сейчас
+                    заменяются, помечены ниже красным (видно и что именно уйдёт вместо них).
                   </p>
                   <form className="admin-form-stack" action={updateNutritionReviewProseAction}>
                     <input type="hidden" name="studentId" value={studentId} />
@@ -1237,15 +1283,38 @@ export default async function CoachOsNutritionStudentCardPage({
                       />
                     </label>
                     {reviewProseBlocks.map((block) => (
-                      <label className="admin-form-field" key={block.date}>
-                        <span>{block.label}</span>
-                        <textarea
-                          className="admin-textarea admin-textarea-compact"
-                          name={`prose__${block.date}`}
-                          rows={3}
-                          defaultValue={block.prose}
-                        />
-                      </label>
+                      <div key={block.date}>
+                        <label className="admin-form-field">
+                          <span>
+                            {block.label}
+                            {block.isReplaced ? " · ⚠️ уйдёт НЕ этот текст" : ""}
+                          </span>
+                          <textarea
+                            className="admin-textarea admin-textarea-compact"
+                            name={`prose__${block.date}`}
+                            rows={3}
+                            defaultValue={block.prose}
+                          />
+                        </label>
+                        {block.isReplaced ? (
+                          <div className="admin-alert admin-alert-error" style={{ marginTop: 6 }}>
+                            <strong>Этот текст ученице НЕ уйдёт.</strong> Проверка отклонила его:
+                            <ul className="admin-list">
+                              {block.rejectionReasons.map((reason, idx) => (
+                                <li key={`prose-reject-${block.date}-${idx}`}>{reason}</li>
+                              ))}
+                            </ul>
+                            <p className="admin-muted">Вместо него ученице уйдёт:</p>
+                            <p className="admin-nutrition-text-block">
+                              {block.willSendProse || "(за этот день ничего не уйдёт)"}
+                            </p>
+                            <p className="admin-muted">
+                              Убери из текста числа, которых нет в фактах этого дня (и клинические термины) — тогда
+                              уйдёт твой текст.
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
                     ))}
                     <FormActionButton className="admin-button admin-button-secondary" pendingText="Сохраняю…">
                       Сохранить правки разбора

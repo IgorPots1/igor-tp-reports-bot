@@ -31,6 +31,9 @@ import {
   detectNutritionAthleteReportSignalsFromTexts,
 } from "@/features/nutrition/athlete-signals";
 import { generateNutritionWeeklyAnalysis } from "@/features/nutrition/draft-generator";
+import { buildNutritionDayProseFacts } from "@/features/nutrition/combined-message";
+import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
+import type { NutritionWeeklyAnalysis } from "@/features/nutrition/repository";
 import { intakeNutritionReportFiles, type IntakeNutritionReportFilesResult } from "@/features/nutrition/file-intake";
 import {
   buildNutritionReportDateQualityMetadata,
@@ -588,4 +591,50 @@ export async function generateNutritionWeeklyReview(input: {
     effectiveWeekFrom,
     effectiveWeekTo,
   };
+}
+
+/**
+ * Which of the days the coach just edited will NOT reach the athlete as written.
+ *
+ * The render-time prose validator polices a COACH edit exactly as it polices model prose:
+ * a number that is not a fact of that day (or a leaked coach term, or a softened hard day)
+ * drops the WHOLE day to the dry deterministic comment. That used to happen silently — the
+ * editor kept showing the coach's text while the athlete got something else entirely. The
+ * save action calls this right after writing, so the coach is told which days were refused
+ * instead of losing the edit without a word.
+ *
+ * Returns human day labels (date_label, falling back to the ISO date).
+ */
+export function listRejectedNutritionReviewProseDays(
+  analysis: NutritionWeeklyAnalysis,
+  editedDates: string[]
+): string[] {
+  const summary =
+    analysis.nutritionSummary &&
+    typeof analysis.nutritionSummary === "object" &&
+    !Array.isArray(analysis.nutritionSummary)
+      ? (analysis.nutritionSummary as Record<string, unknown>)
+      : {};
+  const daily = Array.isArray(summary.daily_analysis)
+    ? (summary.daily_analysis as Array<Record<string, unknown>>)
+    : [];
+  const edited = new Set(editedDates);
+  const rejected: string[] = [];
+
+  for (const day of daily) {
+    const date = typeof day.date === "string" ? day.date : null;
+    if (!date || !edited.has(date)) {
+      continue;
+    }
+    const prose = typeof day.athlete_prose === "string" ? day.athlete_prose.trim() : "";
+    if (!prose) {
+      continue;
+    }
+    const issues = validateNutritionDayProse({ prose, facts: buildNutritionDayProseFacts(day) });
+    if (issues.some((issue) => issue.severity === "error")) {
+      rejected.push(typeof day.date_label === "string" && day.date_label ? day.date_label : date);
+    }
+  }
+
+  return rejected;
 }
