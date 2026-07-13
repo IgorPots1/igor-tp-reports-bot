@@ -1897,19 +1897,20 @@ const WEEKLY_KEY_TAIL_SINGULAR: readonly string[] = [
 ];
 
 // Week-over-week carbs movement — the one line whose CONTENT changes week to week, not just its
-// wording. Deliberately qualitative: the stored delta is the WHOLE-WEEK daily carbs average
-// (avg_carbs_g), NOT a load-day average, so the wording says «в среднем за неделю» and never
-// claims the shift happened in the load days. No figures are quoted — the summary is rendered
-// outside the prose number-validator, and an unvalidated number here would be a new failure mode.
+// wording. Built on the LOAD-DAY average (delta_carbs_g_load_days), never on the whole-week one:
+// avg_carbs_g averages rest days in, so it can rise purely because the rest days got bigger while
+// the training days did not move — and «углеводы подтянулись» would then point at exactly the days
+// where it does not matter. No figures are quoted: the summary renders outside the prose
+// number-validator, and an unvalidated number here would be a new failure mode.
 const WEEKLY_CARBS_TREND_UP: readonly string[] = [
-  "Углеводы в среднем за неделю подтянулись против прошлой.",
-  "По углеводам за неделю сдвиг вверх против прошлой недели.",
-  "Углеводы в среднем стали выше, чем неделей раньше.",
+  "Углеводы в дни с нагрузкой подтянулись против прошлой недели.",
+  "По углеводам в тренировочные дни сдвиг вверх против прошлой недели.",
+  "В дни с нагрузкой углеводов стало больше, чем неделей раньше.",
 ];
 const WEEKLY_CARBS_TREND_DOWN: readonly string[] = [
-  "Углеводы в среднем за неделю просели против прошлой.",
-  "По углеводам за неделю сдвиг вниз против прошлой недели.",
-  "Углеводы в среднем стали ниже, чем неделей раньше.",
+  "Углеводы в дни с нагрузкой просели против прошлой недели.",
+  "По углеводам в тренировочные дни сдвиг вниз против прошлой недели.",
+  "В дни с нагрузкой углеводов стало меньше, чем неделей раньше.",
 ];
 
 // A weekly average must move at least this much (g/day) before it is called a shift — below that
@@ -1958,19 +1959,25 @@ function pickVariant(pool: readonly string[], seed: string | undefined, slot: st
 }
 
 /**
- * Week-over-week carbs delta (g/day) out of a stored review's nutrition_summary. Computed BY CODE
- * at generation (draft-generator) — never model-authored. null when the review predates the field
- * or had no prior week. Deliberately the ONE reader for both surfaces: the amber≠hard bug came
- * from two copies of a predicate drifting apart, and this must not repeat.
+ * Week-over-week delta (g/day) of the LOAD-DAY carbs average, out of a stored review's
+ * nutrition_summary. Computed BY CODE at generation (draft-generator) — never model-authored.
+ * null when the review predates the field, had no prior week, or the week had no load days; the
+ * trend line then simply does not render.
+ *
+ * Reads delta_carbs_g_load_days and NOT delta_carbs_g on purpose: the whole-week average includes
+ * rest days, so it can move while the training days — the ones the methodology is about — did not.
+ *
+ * Deliberately the ONE reader for both surfaces: the amber≠hard bug came from two copies of a
+ * predicate drifting apart, and that must not repeat.
  */
-export function readCarbsWeekOverWeekDeltaG(nutritionSummary: unknown): number | null {
+export function readLoadDayCarbsDeltaG(nutritionSummary: unknown): number | null {
   const summary =
     nutritionSummary && typeof nutritionSummary === "object"
       ? (nutritionSummary as Record<string, unknown>)
       : {};
   const raw = summary.week_over_week;
   const weekOverWeek = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const delta = weekOverWeek.delta_carbs_g;
+  const delta = weekOverWeek.delta_carbs_g_load_days;
   return typeof delta === "number" && Number.isFinite(delta) ? delta : null;
 }
 
@@ -1985,10 +1992,11 @@ export function buildNutritionWeeklySummary(input: {
    */
   weekSeed?: string;
   /**
-   * Code-computed week-over-week change of the WHOLE-WEEK daily carbs average, in grams
-   * (nutrition_summary.week_over_week.delta_carbs_g). Never model-authored.
+   * Code-computed week-over-week change of the LOAD-DAY carbs average, in grams
+   * (nutrition_summary.week_over_week.delta_carbs_g_load_days). Never model-authored, and never
+   * the whole-week average — see readLoadDayCarbsDeltaG.
    */
-  carbsWeekOverWeekDeltaG?: number | null;
+  loadDayCarbsDeltaG?: number | null;
 }): string {
   const fatFeedbackPolicy = input.fatFeedbackPolicy ?? "coach_only";
   const seed = input.weekSeed;
@@ -2153,13 +2161,18 @@ export function buildNutritionWeeklySummary(input: {
     segments.push("Неделя вышла спокойной, без тренировочной нагрузки.");
   }
 
-  // Week-over-week carbs shift — the only line whose CONTENT (not just wording) changes with the
-  // week, which is what actually breaks the «ученица читает то же самое» feeling. Skipped when
-  // there is no prior week or the move is inside the noise band.
-  const carbsDelta = input.carbsWeekOverWeekDeltaG;
-  if (typeof carbsDelta === "number" && Number.isFinite(carbsDelta) && Math.abs(carbsDelta) >= WEEKLY_CARBS_TREND_MIN_DELTA_G) {
+  // Week-over-week shift of the LOAD-DAY carbs average — the only line whose CONTENT (not just
+  // wording) changes with the week, which is what actually breaks the «ученица читает то же самое»
+  // feeling. Silent when there is no prior week, when the week had no load days, or when the move
+  // is inside the noise band.
+  const loadDayCarbsDelta = input.loadDayCarbsDeltaG;
+  if (
+    typeof loadDayCarbsDelta === "number" &&
+    Number.isFinite(loadDayCarbsDelta) &&
+    Math.abs(loadDayCarbsDelta) >= WEEKLY_CARBS_TREND_MIN_DELTA_G
+  ) {
     segments.push(
-      pickVariant(carbsDelta > 0 ? WEEKLY_CARBS_TREND_UP : WEEKLY_CARBS_TREND_DOWN, seed, "carbs_trend")
+      pickVariant(loadDayCarbsDelta > 0 ? WEEKLY_CARBS_TREND_UP : WEEKLY_CARBS_TREND_DOWN, seed, "carbs_trend")
     );
   }
 

@@ -457,6 +457,14 @@ export type NutritionStudentContext = {
     avgKcal: number | null;
     avgCarbsG: number | null;
     avgProteinG: number | null;
+    /**
+     * Average carbs across the prior week's LOAD days only (role !== rest) — the number the
+     * methodology actually cares about. avgCarbsG (all days, rest included) can rise purely
+     * because rest days got bigger while the training days did not move, so it must not be what
+     * a «углеводы подтянулись» claim is built on. null on weeks with no load days, and absent on
+     * reviews generated before the field existed.
+     */
+    avgCarbsGLoadDays: number | null;
   } | null;
   /**
    * Weight-loss praise (lose only): sustained downward trend over the LAST TWO weeks,
@@ -1318,6 +1326,11 @@ export async function buildNutritionStudentContext(input: {
       avgKcal: toFiniteNumber(summary["avg_kcal"] as number | string | null | undefined),
       avgCarbsG: toFiniteNumber(summary["avg_carbs_g"] as number | string | null | undefined),
       avgProteinG: toFiniteNumber(summary["avg_protein_g"] as number | string | null | undefined),
+      // null on reviews generated before this field existed → the load-day trend simply stays
+      // silent for them, exactly as the week-over-week block already does.
+      avgCarbsGLoadDays: toFiniteNumber(
+        summary["avg_carbs_g_load_days"] as number | string | null | undefined
+      ),
     };
     // Guard: a broken prior week (e.g. a 17454-kcal item inflating the stored avg to ~7045)
     // must NOT poison the week-over-week comparison — drop it entirely so the model neither

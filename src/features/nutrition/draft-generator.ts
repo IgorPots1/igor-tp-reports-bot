@@ -25,6 +25,7 @@ import {
   EVENING_SECTIONS,
   pickNotableFoods,
   pickNotableCarbItemsWithGrams,
+  resolveWeekNarrativeDayRoles,
 } from "@/features/nutrition/narrative-composer";
 import { classifyCarbItem, classifyProteinItem, CARB_CONTRIBUTOR_MIN_G, type CarbClass } from "@/features/nutrition/carb-quality";
 import { validateNutritionDayProse } from "@/features/nutrition/telegram-renderer";
@@ -98,9 +99,15 @@ export type GeneratedNutritionWeeklyAnalysis = {
     avg_fat_g: number | null;
     avg_carbs_g: number | null;
     /**
+     * Carbs averaged over LOAD days only (role !== rest) — what the methodology is actually about,
+     * unlike avg_carbs_g, which averages rest days in. null on a week with no load days.
+     */
+    avg_carbs_g_load_days?: number | null;
+    /**
      * Code-computed week-over-week averages + deltas (never model-authored). Persisted so the
      * derived weekly summary can name a real shift at render time without a second DB read.
      * null when there is no prior week; absent on reviews generated before this field existed.
+     * The weekly summary's trend line reads delta_carbs_g_load_days — never delta_carbs_g.
      */
     week_over_week?: {
       previous_week_from: string;
@@ -113,6 +120,9 @@ export type GeneratedNutritionWeeklyAnalysis = {
       previous_avg_protein_g: number | null;
       current_avg_protein_g: number | null;
       delta_protein_g: number | null;
+      previous_avg_carbs_g_load_days?: number | null;
+      current_avg_carbs_g_load_days?: number | null;
+      delta_carbs_g_load_days?: number | null;
     } | null;
     data_quality_summary?: {
       parsed_days: number;
@@ -1698,6 +1708,41 @@ export async function generateNutritionWeeklyAnalysis(input: {
     context,
     dailyAnalysis: methodology.dailyAnalysis as Array<Record<string, unknown>>,
   });
+
+  // Carbs averaged over LOAD DAYS ONLY — the number the methodology is actually about. avg_carbs_g
+  // averages the rest days in too, so it can rise purely because the rest days got bigger while the
+  // training days did not move; «углеводы подтянулись» built on that would point at the wrong thing.
+  // The load-day set is resolved with the SAME role system the weekly summary uses (role !== rest),
+  // read off the very array that gets persisted — so the trend and the summary can never disagree
+  // about which days were load days. The grams come from the same manualMacroRows that feed
+  // avg_carbs_g, so the two averages differ ONLY by the filter and stay directly comparable.
+  const weekDayRoles = resolveWeekNarrativeDayRoles(
+    persistedDailyAnalysis.map((day) => ({
+      date: typeof day.date === "string" ? day.date : "",
+      trainingType: typeof day.training_type === "string" ? day.training_type : "unknown",
+      trainingLabel: typeof day.training_label === "string" ? day.training_label : "",
+      mode: "past_review" as const,
+      isCompleted: true,
+    }))
+  );
+  const loadDates = new Set(
+    [...weekDayRoles.entries()].filter(([, info]) => info.role !== "rest").map(([date]) => date)
+  );
+  // No load days (a full rest week) → nothing to compare, so no number and no trend line.
+  const avgCarbsLoadDays =
+    loadDates.size > 0
+      ? avg(context.manualMacroRows.filter((row) => loadDates.has(row.day)).map((row) => row.carbsG))
+      : null;
+  // Model facts keep the original weekOverWeek untouched; only the PERSISTED copy carries the
+  // load-day figures, which is all the derived weekly summary needs.
+  const weekOverWeekPersisted = weekOverWeek
+    ? {
+        ...weekOverWeek,
+        previous_avg_carbs_g_load_days: prevWeek?.avgCarbsGLoadDays ?? null,
+        current_avg_carbs_g_load_days: avgCarbsLoadDays,
+        delta_carbs_g_load_days: codeDelta(avgCarbsLoadDays, prevWeek?.avgCarbsGLoadDays ?? null),
+      }
+    : null;
   // Inject the week-over-week allow-set onto EACH day so the per-day prose validator
   // allows these code-computed numbers — both at gen-time (validate loop below) and
   // at render-time (persisted → buildNutritionDayProseFacts reads previous_week_numbers).
@@ -1990,10 +2035,12 @@ export async function generateNutritionWeeklyAnalysis(input: {
       avg_protein_g: avgProtein,
       avg_fat_g: avgFat,
       avg_carbs_g: avgCarbs,
+      // Load-day carbs average of THIS week — persisted so the NEXT week can compare against it.
+      avg_carbs_g_load_days: avgCarbsLoadDays,
       // Persisted so the DERIVED weekly summary can name a week-over-week shift at render time
       // without a second DB read. Deltas are code-computed above (never model-authored); null
       // when there is no prior week. Reviews generated before this field simply have no trend.
-      week_over_week: weekOverWeek,
+      week_over_week: weekOverWeekPersisted,
       data_quality_summary: {
         parsed_days: context.dataQuality.parsedDays,
         low_confidence_days: context.dataQuality.lowConfidenceDays,

@@ -100,15 +100,45 @@ for (const weekFrom of WEEKS) {
   assert.match(pattern, /Главный паттерн недели|Паттерн недели|Главное за неделю/, `3 off-days in ${weekFrom} must trigger the pattern headline`);
 }
 
-// 3c. Week-over-week trend: named outside the noise band, silent inside it.
-const TREND_UP = /подтянулись|сдвиг вверх|стали выше/;
-const TREND_DOWN = /просели|сдвиг вниз|стали ниже/;
-const TREND_ANY = /подтянулись|просели|сдвиг вверх|сдвиг вниз|стали выше|стали ниже/;
-assert.match(build("2026-07-06", { carbsWeekOverWeekDeltaG: 35 }), TREND_UP, "+35 g must be named as a rise");
-assert.match(build("2026-07-06", { carbsWeekOverWeekDeltaG: -35 }), TREND_DOWN, "-35 g must be named as a drop");
-assert.doesNotMatch(build("2026-07-06", { carbsWeekOverWeekDeltaG: 10 }), TREND_ANY, "+10 g is logging noise, not a shift");
-assert.doesNotMatch(build("2026-07-06", { carbsWeekOverWeekDeltaG: null }), TREND_ANY, "no prior week → no trend line");
+// 3c. Week-over-week trend: named outside the noise band, silent inside it. The delta is the
+// LOAD-DAY carbs average — a rise driven by rest days must never reach the athlete as «углеводы
+// подтянулись», which is why the summary is handed the load-day number and nothing else.
+const TREND_UP = /подтянулись|сдвиг вверх|стало больше/;
+const TREND_DOWN = /просели|сдвиг вниз|стало меньше/;
+const TREND_ANY = /подтянулись|просели|сдвиг вверх|сдвиг вниз|стало больше|стало меньше/;
+assert.match(build("2026-07-06", { loadDayCarbsDeltaG: 35 }), TREND_UP, "+35 g must be named as a rise");
+assert.match(build("2026-07-06", { loadDayCarbsDeltaG: -35 }), TREND_DOWN, "-35 g must be named as a drop");
+assert.doesNotMatch(build("2026-07-06", { loadDayCarbsDeltaG: 10 }), TREND_ANY, "+10 g is logging noise, not a shift");
+assert.doesNotMatch(build("2026-07-06", { loadDayCarbsDeltaG: null }), TREND_ANY, "no prior week → no trend line");
 assert.doesNotMatch(build("2026-07-06"), TREND_ANY, "absent delta → no trend line");
+
+// Every trend phrasing must say WHERE the shift happened — «в дни с нагрузкой» / «в тренировочные
+// дни». A variant that just says «углеводы подтянулись» would silently re-open the whole-week
+// ambiguity this change exists to remove.
+for (const weekFrom of WEEKS) {
+  for (const delta of [35, -35]) {
+    const text = build(weekFrom, { loadDayCarbsDeltaG: delta });
+    const trend = sentences(text).find((s) => TREND_ANY.test(s));
+    assert.ok(trend, `trend line missing for ${weekFrom} (${delta} g)`);
+    assert.match(trend, /с нагрузкой|тренировочные дни/, `trend line must name the load days: «${trend}»`);
+  }
+}
+
+// 3d. A week with NO load days has nothing to compare — no trend line, and no crash.
+const restOnly: Day[] = week("2026-07-06").map((day) => ({
+  ...(day as Record<string, unknown>),
+  trainingType: "rest",
+  trainingLabel: "отдых",
+  roleInfo: { role: "rest", isKey: false, reason: "check" },
+})) as unknown as Day[];
+const restWeek = buildNutritionWeeklySummary({
+  days: restOnly,
+  proteinSufficient: true,
+  weekSeed: "2026-07-06",
+  loadDayCarbsDeltaG: null,
+});
+assert.doesNotMatch(restWeek, TREND_ANY, "rest-only week must not get a trend line");
+assert.match(restWeek, /Неделя вышла спокойной, без тренировочной нагрузки\./);
 
 // 4. Without a seed the summary falls back to variant 0 — the pre-rotation wording.
 const unseeded = buildNutritionWeeklySummary({ days: week("2026-07-06"), proteinSufficient: true });

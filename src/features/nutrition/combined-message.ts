@@ -9,7 +9,7 @@ import {
   composeNutritionDayComment,
   formatNutritionWorkoutLabelForAthlete,
   NutritionNarrativeRepetitionState,
-  readCarbsWeekOverWeekDeltaG,
+  readLoadDayCarbsDeltaG,
   resolveNutritionNarrativeWorkoutRole,
   reconcileNarrativeRoleWithCarbLoadBasis,
   resolveWeekNarrativeDayRoles,
@@ -1013,7 +1013,7 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
       weeklyProteinAvgGPerKg,
       fatFeedbackPolicy: narrativePreferences.fatFeedbackPolicy,
       weekSeed: review.weekFrom,
-      carbsWeekOverWeekDeltaG: readCarbsWeekOverWeekDeltaG(review.nutritionSummary),
+      loadDayCarbsDeltaG: readLoadDayCarbsDeltaG(review.nutritionSummary),
     });
   }
   if (typeof methodologySignals.main_load_day_label === "string" && methodologySignals.main_load_day_label.trim()) {
