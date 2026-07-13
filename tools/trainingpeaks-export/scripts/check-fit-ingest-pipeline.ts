@@ -200,6 +200,82 @@ function lapWithPace(lapIndex: number, paceSecPerKm: number, extra: Partial<Norm
   return makeLap({ lapIndex, timerTimeS: durationS, distanceM, ...extra });
 }
 
+// Regression: the LIVE lap profile of Elena Titskaia's 7x5min session
+// (2026-07-08, tp workout 3827351035) — 19 laps, no wkt_step_index at all (the
+// watch recorded no structure), plus two junk fragment laps the watch emitted.
+//
+// Before the fragment filter this returned method='none' and classified ZERO
+// laps on perfectly bimodal data: the 8.2m fragment reported 225.7 s/km — faster
+// than every real rep — so largestGapBipartition split at 225.7->295.6 (+31%),
+// wider than the true work/recovery boundary 310.4->382.8 (+23%). The "fast"
+// cluster was that lone fragment, it failed MIN_CLUSTER_SIZE, and the tier bailed.
+//
+// Distances/paces below are the real values pulled from the FIT.
+function checkHeuristicTierOnLiveIntervalProfile(): void {
+  const lap = (lapIndex: number, distanceM: number, paceSecPerKm: number): NormalizedFitLap =>
+    makeLap({ lapIndex, distanceM, timerTimeS: (distanceM / 1000) * paceSecPerKm });
+
+  const laps: NormalizedFitLap[] = [
+    lap(0, 1000.0, 382.8), // warm-up
+    lap(1, 557.8, 389.3), // warm-up continuation
+    lap(2, 971.3, 308.9), // WORK 1
+    lap(3, 197.7, 455.3), // recovery
+    lap(4, 981.5, 305.6), // WORK 2
+    lap(5, 189.9, 474.0), // recovery
+    lap(6, 966.6, 310.4), // WORK 3
+    lap(7, 167.1, 538.6), // recovery
+    lap(8, 994.2, 301.8), // WORK 4
+    lap(9, 201.1, 447.5), // recovery
+    lap(10, 1000.0, 295.6), // WORK 5
+    lap(11, 12.2, 363.0), // JUNK fragment (12.2m)
+    lap(12, 207.3, 434.1), // recovery
+    lap(13, 992.3, 302.3), // WORK 6
+    lap(14, 141.8, 634.8), // recovery
+    lap(15, 971.3, 308.9), // WORK 7
+    lap(16, 205.5, 438.0), // trailing recovery (after last rep -> edge)
+    lap(17, 757.7, 395.9), // cool-down
+    lap(18, 8.2, 225.7), // JUNK fragment (8.2m) — the one that broke everything
+  ];
+
+  const detection = detectWorkLaps({ laps, structureSnapshot: null });
+  assert(detection.method === "heuristic", `Expected heuristic tier to fire, got method=${detection.method}.`);
+
+  const workLaps = [...detection.isWorkByLapIndex.entries()].filter(([, v]) => v === true).map(([i]) => i).sort((a, b) => a - b);
+  assert(
+    workLaps.length === 7,
+    `Expected exactly 7 work laps ("7x5 min"), got ${workLaps.length}: [${workLaps.join(",")}].`
+  );
+  assert(
+    workLaps.join(",") === "2,4,6,8,10,13,15",
+    `Expected work laps [2,4,6,8,10,13,15], got [${workLaps.join(",")}].`
+  );
+
+  // Junk fragments must never be forced into work or rest.
+  assert(detection.isWorkByLapIndex.get(11) === null, "Expected the 12.2m fragment lap 11 to be is_work=null.");
+  assert(detection.isWorkByLapIndex.get(18) === null, "Expected the 8.2m fragment lap 18 to be is_work=null.");
+
+  // Warm-up (1000m, 558m) and cool-down (758m) are far bigger than the ~194m
+  // median recovery -> undetermined, NOT silently labelled "rest".
+  assert(detection.isWorkByLapIndex.get(0) === null, "Expected warm-up lap 0 (1000m) to be is_work=null.");
+  assert(detection.isWorkByLapIndex.get(1) === null, "Expected warm-up lap 1 (558m) to be is_work=null.");
+  assert(detection.isWorkByLapIndex.get(17) === null, "Expected cool-down lap 17 (758m) to be is_work=null.");
+
+  // Genuine recoveries BETWEEN reps are rest...
+  for (const recoveryLap of [3, 5, 7, 9, 12, 14]) {
+    assert(
+      detection.isWorkByLapIndex.get(recoveryLap) === false,
+      `Expected between-rep recovery lap ${recoveryLap} to be is_work=false.`
+    );
+  }
+  // ...and so is lap 16 (205m), which trails the last rep but is recovery-sized.
+  assert(
+    detection.isWorkByLapIndex.get(16) === false,
+    "Expected lap 16 (205m, recovery-sized) to be is_work=false even though it trails the last rep."
+  );
+
+  console.log(`  live 7x5 profile: method=${detection.method}, work_laps=[${workLaps.join(",")}] (7), fragments+edges=null`);
+}
+
 function checkStructureTier(): void {
   const expected = extractExpectedWorkStepCount(INTERVAL_STRUCTURE_SNAPSHOT);
   assert(expected === 4, `Expected 4 active steps from the interval structure, got ${expected}.`);
@@ -450,6 +526,45 @@ function checkSteadyWorkoutDecouplingValid(): void {
   );
 }
 
+// Verification 2b: THE SIGN OF hr_decoupling_pct. This is the one that reports
+// to athletes read, and it was shipped INVERTED once already -- a fading
+// athlete scored negative and would have been told she improved. Both
+// directions are asserted so the sign can never silently flip again.
+//
+//   POSITIVE = HR drifted UP relative to pace = faded  (bad direction)
+//   NEGATIVE = efficiency improved in the 2nd half     (good direction)
+function checkDecouplingSignConvention(): void {
+  const totalDurationS = 2400;
+
+  // (a) FADE: pace held constant, HR climbs 138 -> 158 => efficiency falls.
+  //     Must be POSITIVE.
+  const fade = cleanFixtureRecords(
+    buildSegmentedFixture([{ durationS: totalDurationS, speedMps: 3.0, hrFrom: 138, hrTo: 158 }]).records
+  );
+  const fadeResult = computeSteadyDecoupling({ cleanedRecords: fade, isIntervalWorkout: false, hrQuality: "good" });
+  assert(fadeResult.hrDecouplingPct !== null, "Fade fixture: expected a computed hr_decoupling_pct.");
+  assert(
+    fadeResult.hrDecouplingPct! > 0,
+    `SIGN INVERTED: HR rose at constant pace (a fade) so hr_decoupling_pct must be POSITIVE, got ${fadeResult.hrDecouplingPct!.toFixed(3)}.`
+  );
+
+  // (b) IMPROVEMENT: pace held constant, HR falls 158 -> 138 => efficiency rises.
+  //     Must be NEGATIVE.
+  const improve = cleanFixtureRecords(
+    buildSegmentedFixture([{ durationS: totalDurationS, speedMps: 3.0, hrFrom: 158, hrTo: 138 }]).records
+  );
+  const improveResult = computeSteadyDecoupling({ cleanedRecords: improve, isIntervalWorkout: false, hrQuality: "good" });
+  assert(improveResult.hrDecouplingPct !== null, "Improvement fixture: expected a computed hr_decoupling_pct.");
+  assert(
+    improveResult.hrDecouplingPct! < 0,
+    `SIGN INVERTED: HR fell at constant pace (an improvement) so hr_decoupling_pct must be NEGATIVE, got ${improveResult.hrDecouplingPct!.toFixed(3)}.`
+  );
+
+  console.log(
+    `  decoupling sign: fade(HR up)=${fadeResult.hrDecouplingPct!.toFixed(2)}% (>0 ok), improvement(HR down)=${improveResult.hrDecouplingPct!.toFixed(2)}% (<0 ok)`
+  );
+}
+
 // Verification 3: steady effort but too short after trim -> reason='too_short'.
 function checkSteadyWorkoutTooShort(): void {
   const totalDurationS = 1500; // 25 min: trimmed window = 1500-600-300=600s < 1200s
@@ -551,6 +666,7 @@ function run(): void {
 
   console.log("[check-fit-ingest-pipeline] Lap work detection");
   checkStructureTier();
+  checkHeuristicTierOnLiveIntervalProfile();
   checkLapTriggerTier();
   checkHeuristicTier();
   checkNoneTier();
@@ -561,6 +677,7 @@ function run(): void {
   console.log("[check-fit-ingest-pipeline] Scalars (stage 4)");
   checkIntervalWorkoutScalars();
   checkSteadyWorkoutDecouplingValid();
+  checkDecouplingSignConvention();
   checkSteadyWorkoutTooShort();
   checkGoalVsActualWithPlan();
   checkGoalVsActualNoPlanNoZones();

@@ -90,9 +90,26 @@ export function computeSteadyDecoupling(input: {
   const speed2 = mean(second.map((r) => r.speedMps!));
   const hr1 = mean(first.map((r) => r.heartRateCleaned!));
   const hr2 = mean(second.map((r) => r.heartRateCleaned!));
+  // Aerobic efficiency: metres per heartbeat. HIGHER = better.
   const eff1 = hr1 > 0 ? speed1 / hr1 : null;
   const eff2 = hr2 > 0 ? speed2 / hr2 : null;
-  const hrDecouplingPct = eff1 !== null && eff2 !== null && eff1 > 0 ? ((eff2 / eff1) - 1) * 100 : null;
+
+  // SIGN CONVENTION (Friel/TrainingPeaks Pa:Hr, and the only one this codebase
+  // uses -- do not flip it):
+  //
+  //   POSITIVE = efficiency FELL in the second half = HR drifted UP relative to
+  //              pace = the athlete faded. This is the BAD direction, and it is
+  //              the normal outcome of a long steady run.
+  //   NEGATIVE = efficiency IMPROVED in the second half (negative split /
+  //              athlete warmed into it). The GOOD direction.
+  //
+  // This was previously computed as ((eff2/eff1) - 1) * 100, i.e. NEGATED --
+  // a fading athlete scored negative and would have been reported as
+  // "improved". Verified against live data (Elena Titskaia, 90min long run
+  // 2026-07-11): pace slowed 370.9 -> 380.9 s/km AND HR rose 142.1 -> 148.7,
+  // i.e. unambiguous fade, which must be POSITIVE. Sign is asserted by tests
+  // in check-fit-ingest-pipeline.ts -- keep them.
+  const hrDecouplingPct = eff1 !== null && eff2 !== null && eff1 > 0 ? ((eff1 - eff2) / eff1) * 100 : null;
 
   if (hrDecouplingPct === null) {
     return { decouplingValid: false, decouplingInvalidReason: "insufficient_valid_points", hrDecouplingPct: null, steadyDurationS };
