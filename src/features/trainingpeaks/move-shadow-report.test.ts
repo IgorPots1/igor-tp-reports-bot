@@ -25,6 +25,7 @@ function row(overrides: Partial<MoveShadowComparisonRow> = {}): MoveShadowCompar
     fingerprintMatch: true,
     sourcePolicy: "explicit_source_date",
     sourceKind: "date",
+    origin: "live",
     diagnostics: {},
     cacheCrossCheck: {},
     createdAt: `2026-01-0${(counter % 9) + 1}T00:00:00Z`,

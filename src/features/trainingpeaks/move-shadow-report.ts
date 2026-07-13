@@ -18,6 +18,9 @@
 
 export type MoveShadowComparisonMatchKind = "exact_id" | "id_mismatch" | "abstained_not_found" | "abstained_ambiguous" | "resolver_error";
 
+/** M3.5: 'live' = M2 hook, real move, ground truth observed at the exact moment. 'backfill' = M3.5 script, replaying a past move against the current (possibly drifted) calendar. Never mixed in the switch-criterion count. */
+export type MoveShadowComparisonOrigin = "live" | "backfill";
+
 export type MoveShadowComparisonRow = {
   id: string;
   actionId: string;
@@ -35,6 +38,7 @@ export type MoveShadowComparisonRow = {
   fingerprintMatch: boolean | null;
   sourcePolicy: string | null;
   sourceKind: string | null;
+  origin: MoveShadowComparisonOrigin;
   diagnostics: unknown;
   cacheCrossCheck: unknown;
   createdAt: string;

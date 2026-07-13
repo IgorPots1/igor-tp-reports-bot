@@ -2786,6 +2786,16 @@ export async function getTrainingPeaksStudentByAthleteId(
 // resolver's answer against the old DOM path's ground-truth workoutId.
 export type MoveShadowComparisonMatchKind = "exact_id" | "id_mismatch" | "abstained_not_found" | "abstained_ambiguous" | "resolver_error";
 
+/**
+ * M3.5: 'live' = written by the M2 hook during a real move (ground truth
+ * observed at the exact moment of execution). 'backfill' = written by the
+ * M3.5 backfill script, replaying a PAST completed move against the CURRENT
+ * live calendar (a weaker guarantee -- the calendar may have drifted since).
+ * The two are never mixed in the switch-criterion count -- see the
+ * 20260713120000 migration's comment.
+ */
+export type MoveShadowComparisonOrigin = "live" | "backfill";
+
 export type RecordMoveShadowComparisonInput = {
   actionId: string;
   runId: string;
@@ -2804,6 +2814,7 @@ export type RecordMoveShadowComparisonInput = {
   sourcePolicy: string | null;
   /** The original parsed request's source.kind ("date"/"weekday"/"relative_day") -- distinct from sourcePolicy, see migration comment. */
   sourceKind: string | null;
+  origin: MoveShadowComparisonOrigin;
   diagnostics: unknown;
   cacheCrossCheck: unknown;
 };
@@ -2834,6 +2845,7 @@ export async function recordMoveShadowComparison(input: RecordMoveShadowComparis
     fingerprint_match: input.fingerprintMatch,
     source_policy: input.sourcePolicy,
     source_kind: input.sourceKind,
+    origin: input.origin,
     diagnostics: input.diagnostics ?? {},
     cache_cross_check: input.cacheCrossCheck ?? {},
   });
@@ -2844,19 +2856,26 @@ export async function recordMoveShadowComparison(input: RecordMoveShadowComparis
 }
 
 /**
- * M3: read-only fetch of all recorded shadow comparisons, for
- * tp-move-shadow-report.ts. No filtering/pagination -- shadow-phase volume is
- * expected to be small (tens to low hundreds of real moves over weeks), and
- * the switch criterion needs the FULL history regardless (a single
- * id_mismatch anywhere ever fails the gate, so partial reads would be
- * actively misleading).
+ * M3 (+M3.5's origin filter): read-only fetch of recorded shadow
+ * comparisons, for tp-move-shadow-report.ts and tp-move-shadow-backfill.ts.
+ * No pagination -- shadow-phase volume is expected to be small (tens to low
+ * hundreds of rows), and the switch criterion needs the FULL live-origin
+ * history regardless (a single id_mismatch anywhere ever fails the gate, so
+ * partial reads would be actively misleading).
+ *
+ * origin filter: M3's official switch-criterion report passes {origin:
+ * "live"} to keep backfill rows (weaker guarantee, calendar may have
+ * drifted since the original move) out of the gate count -- see the
+ * 20260713120000 migration's comment. Omit the filter (or pass "backfill")
+ * to inspect the other bucket.
  */
-export async function listMoveShadowComparisons(): Promise<MoveShadowComparisonRow[]> {
+export async function listMoveShadowComparisons(filter?: { origin?: MoveShadowComparisonOrigin }): Promise<MoveShadowComparisonRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_move_shadow_comparisons")
-    .select("*")
-    .order("created_at", { ascending: true });
+  let query = supabase.from("trainingpeaks_move_shadow_comparisons").select("*").order("created_at", { ascending: true });
+  if (filter?.origin) {
+    query = query.eq("origin", filter.origin);
+  }
+  const { data, error } = await query;
 
   if (error) {
     throw new Error(`Failed to list move shadow comparisons: ${error.message}`);
@@ -2879,6 +2898,7 @@ export async function listMoveShadowComparisons(): Promise<MoveShadowComparisonR
     fingerprintMatch: (row.fingerprint_match as boolean | null) ?? null,
     sourcePolicy: (row.source_policy as string | null) ?? null,
     sourceKind: (row.source_kind as string | null) ?? null,
+    origin: (row.origin as MoveShadowComparisonOrigin) ?? "live",
     diagnostics: row.diagnostics,
     cacheCrossCheck: row.cache_cross_check,
     createdAt: row.created_at as string,

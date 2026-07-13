@@ -50,14 +50,23 @@ async function main(): Promise<void> {
   loadLocalEnv();
   const asJson = process.argv.slice(2).includes("--json");
 
+  // M3.5: this is the OFFICIAL switch-criterion report -- filtered to
+  // origin='live' only. Backfill rows (weaker guarantee, calendar may have
+  // drifted since the original move) never count toward the gate; see
+  // tp-move-shadow-backfill.ts for the separate backfill-only report.
   let rows;
   try {
-    rows = await listMoveShadowComparisons();
+    rows = await listMoveShadowComparisons({ origin: "live" });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (/could not find the table/i.test(message) || /schema cache/i.test(message)) {
       console.log("Таблица trainingpeaks_move_shadow_comparisons ещё не существует -- миграция 20260713000000 не применена.");
       console.log("Примени миграцию через Supabase SQL Editor, затем прогони этот отчёт снова.");
+      return;
+    }
+    if (/column .*origin.* does not exist/i.test(message)) {
+      console.log("Колонка origin ещё не существует -- миграция 20260713120000 не применена.");
+      console.log("Примени миграцию через Supabase SQL Editor (после 20260713000000), затем прогони этот отчёт снова.");
       return;
     }
     throw error;

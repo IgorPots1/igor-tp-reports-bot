@@ -50,7 +50,13 @@ function extractSourceKind(parsedPayload: unknown): string | null {
   return typeof kind === "string" ? kind : null;
 }
 
-function classifyMatchKind(resolvedWorkoutId: number | null, resolverMatchKind: string, domWorkoutId: number): MoveShadowComparisonMatchKind {
+/**
+ * Exported so the M3.5 backfill script (tp-move-shadow-backfill.ts) can
+ * classify its own resolver results with the EXACT same rule the live hook
+ * uses -- no drift between how a live comparison and a backfill comparison
+ * get judged.
+ */
+export function classifyMatchKind(resolvedWorkoutId: number | null, resolverMatchKind: string, domWorkoutId: number): MoveShadowComparisonMatchKind {
   if (resolvedWorkoutId === null) {
     return resolverMatchKind === "not_found" ? "abstained_not_found" : "abstained_ambiguous";
   }
@@ -106,6 +112,7 @@ async function runMoveShadowComparison(input: RunMoveShadowComparisonInput): Pro
       recomputedFingerprint: null,
       fingerprintMatch: null,
       sourcePolicy: input.sourcePolicy,
+      origin: "live",
       sourceKind,
       diagnostics: { reason: resolution.reason, error: resolution.reason === "live_read_failed" ? resolution.error : undefined },
       cacheCrossCheck: {},
@@ -134,6 +141,7 @@ async function runMoveShadowComparison(input: RunMoveShadowComparisonInput): Pro
     recomputedFingerprint: winningEvaluation?.recomputedFingerprint ?? null,
     fingerprintMatch: winningEvaluation?.fingerprintMatches ?? null,
     sourcePolicy: input.sourcePolicy,
+    origin: "live",
     sourceKind,
     diagnostics: { evaluations: r.evaluations, abstainReason: r.abstainReason },
     cacheCrossCheck,
@@ -173,6 +181,7 @@ export async function runMoveShadowComparisonSafely(input: RunMoveShadowComparis
         recomputedFingerprint: null,
         fingerprintMatch: null,
         sourcePolicy: input.sourcePolicy,
+        origin: "live",
         sourceKind: extractSourceKind(input.parsedPayload),
         diagnostics: { error: message },
         cacheCrossCheck: {},
