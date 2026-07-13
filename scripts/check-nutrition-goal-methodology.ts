@@ -160,7 +160,21 @@ assert.match(draftSrc, /ДЕФИЦИТНАЯ ЛИНИЯ[\s\S]*goal_day_target[\s
 assert.match(draftSrc, /рест-день в 2500–2800 ккал как «спокойный/i, "prompt must forbid calling a high rest day 'calm' for a losing athlete");
 // Part E: vegetables > fruits/dried fruit, and no time-anchored advice.
 assert.match(draftSrc, /приоритет ОВОЩИ[\s\S]*НЕ фрукты\/сухофрукты/i, "lose food rule: vegetables over fruit/dried fruit");
-assert.match(draftSrc, /Без тайминговых советов[\s\S]*времени тренировки в данных нет/i, "remove time-anchored advice (unknown training time)");
+// bdb141e turned the blanket ban on timing advice into a conditional one: the review may anchor to
+// the REAL start time when it is known (time_of_day, a fact), and must not invent one when it is
+// not. The old assertion still greps for the deleted blanket sentence; the invariant it guarded —
+// no timing advice without a known time — is alive and is what gets pinned here, on both halves:
+// the null case, and the plan side (planned workouts carry no time at all).
+assert.match(
+  draftSrc,
+  /Если time_of_day НЕ задано \(null\)[\s\S]{0,120}НЕ выдумывай время[\s\S]{0,160}без «когда именно»/i,
+  "unknown training time → day-level guidance only, never an invented «когда именно»"
+);
+assert.match(
+  draftSrc,
+  /Никогда не привязывай тайминг к ПЛАНОВОЙ тренировке/i,
+  "plan side must never anchor timing to a planned workout (no time exists there)"
+);
 // Structure is goal-independent: lose stays per-day, never collapses to a generic summary.
 assert.match(draftSrc, /ЕДИНЫЙ ФОРМАТ для ВСЕХ целей[\s\S]*ПОДНЕВНАЯ[\s\S]*НЕ структуру/i, "review structure must be per-day for all goals (lose included)");
 assert.match(draftSrc, /НЕ сворачивай разбор худеющего[\s\S]*что хорошо \/ что подтянуть/i, "must forbid collapsing a lose review into a generic 'good/improve' summary");

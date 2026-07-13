@@ -10,8 +10,8 @@ import {
 
 // Task 7: per-student review memory — repeating patterns proposed for coach
 // approval (draft->approve), approved history fed compactly into the prompt and
-// voiced kindly ("повторяется N-ю неделю"); improvements noted positively;
-// history numbers stay out of the per-day validator.
+// voiced kindly and collaboratively ("снова всплывает этот момент"), WITHOUT counting weeks aloud;
+// improvements noted positively; history numbers stay out of the per-day validator.
 
 const root = process.cwd();
 const draftSrc = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
@@ -80,7 +80,22 @@ assert.match(trend ?? "", /углеводы в нагрузочные дни: ~\
 // --- 5. Prompt: history fed + kind "N-я неделя" callout + numbers out of day_prose
 assert.match(draftSrc, /history:\s*\{[\s\S]*approved_patterns/, "facts payload must include compact student history");
 assert.match(draftSrc, /hasApprovedHistory/, "prompt must branch on whether approved history exists");
-assert.match(draftSrc, /повторяется N-ю неделю[\s\S]*давай разберёмся/i, "kind repeating-pattern callout must be present");
+// 5207eaa reversed this rule: counting the weeks aloud («повторяется N-ю неделю») is accumulated
+// pressure and demotivates, so the model gets a soft collaborative callout instead. The old
+// assertion grepped for the banned phrase — which now survives in the file only as a comment
+// listing what NOT to say, so the check was pinned to its own tombstone.
+assert.match(
+  draftSrc,
+  /снова всплывает этот момент[\s\S]{0,60}давай разберёмся/i,
+  "kind repeating-pattern callout must be present"
+);
+// The ban itself is the load-bearing half — without this the check guards nothing and a week
+// counter could quietly come back.
+assert.match(
+  draftSrc,
+  /НЕ\s+СЧИТАЙ\s+вслух\s+недели/i,
+  "callout must never count weeks aloud (accumulated pressure)"
+);
 assert.match(draftSrc, /НЕ\s+«опять не доела»/i, "callout must avoid moralizing phrasing");
 assert.match(draftSrc, /в этот раз[\s\S]*подтянулось/i, "improvement must be noted positively");
 assert.match(draftSrc, /key_trends[\s\S]*НЕ в подневную day_prose/i, "history numbers must be routed away from per-day validator");

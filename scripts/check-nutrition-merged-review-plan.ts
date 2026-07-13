@@ -193,7 +193,11 @@ const planWithClaudeProse: NutritionWeeklyPlan = {
   promptVersion: "nutrition-weekly-plan-v1-ai",
   aiModel: "claude-sonnet-4-6",
   coachSummary: "coach",
-  athleteMessageDraft: "ПЛАНОВЫЙ_АКЦЕНT_МАРКЕР: догрузись углеводами перед длительной.",
+  // KEEP THIS MARKER PURE CYRILLIC. It used to carry a Latin «T» (U+0054) inside «АКЦЕНТ», and the
+  // athlete-text homoglyph sanitizer (5843be1) correctly rewrote it to Cyrillic «Т» on the way out
+  // — so the regex below stopped matching and this check went red for two weeks. The sanitizer only
+  // touches MIXED-script tokens, so a pure-Cyrillic marker passes through untouched.
+  athleteMessageDraft: "ПЛАНОВЫЙ_АКЦЕНТ_МАРКЕР: догрузись углеводами перед длительной.",
   coachEditedDraft: null,
   approvedAt: null,
   planSummary: {
@@ -236,7 +240,7 @@ const combined = buildDerivedNutritionCombinedMessage({
 });
 assert.match(
   combined.renderResult.text ?? "",
-  /ПЛАНОВЫЙ_АКЦЕНT_МАРКЕР/,
+  /ПЛАНОВЫЙ_АКЦЕНТ_МАРКЕР/,
   "combined message must use the Claude plan prose for the focus section"
 );
 assert.doesNotMatch(
