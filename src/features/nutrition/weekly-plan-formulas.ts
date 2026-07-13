@@ -613,8 +613,9 @@ export function calculateNutritionDayTypeTarget(params: {
   //
   // kcal are NOT read from the table any more: they are the macros (reconcileKcalWithMacros).
   // protein/fat stay on the fixed-coefficient table.
-  const durationMinutes =
-    params.dayType === "long_run" ? trainingPeaksDurationHoursToMinutes(params.durationHours ?? null) : null;
+  // Duration feeds every duration-scaled corridor (long_run and hard), not long_run
+  // only — the plan target must land inside the corridor the review then judges by.
+  const durationMinutes = trainingPeaksDurationHoursToMinutes(params.durationHours ?? null);
   const loadBasis: NutritionCarbLoadBasis = resolveCarbLoadBasis(params.dayType);
   const carbRange = resolveCarbRangeByLoadBasis(loadBasis, durationMinutes, params.isLightCross);
   const carbsPerKg =

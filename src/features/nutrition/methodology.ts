@@ -1019,7 +1019,10 @@ function buildCanonicalTarget(input: {
   bodyweightKg: number | null;
   hasTrainingContext: boolean;
   crossTrainingIsLight?: boolean;
-  longRunDurationMinutes?: number | null;
+  // The day's primary session duration. Feeds every duration-scaled corridor
+  // (long_run and hard) — NOT long-run-only, or the displayed target would drift
+  // away from the ok/low status, which reads the same duration for every type.
+  workoutDurationMinutes?: number | null;
 }): NutritionCanonicalDailyAnalysis["target"] {
   if (!input.bodyweightKg || input.bodyweightKg <= 0) {
     return {
@@ -1049,9 +1052,11 @@ function buildCanonicalTarget(input: {
   // doesn't carry (kcal floor, protein floor, formulaCode) — the carb numbers
   // themselves come from one place.
   const loadBasis = resolveCarbLoadBasis(input.canonicalTrainingType);
-  const longRunMinutes =
-    input.canonicalTrainingType === "long_run" ? input.longRunDurationMinutes ?? null : null;
-  const range = resolveCarbRangeByLoadBasis(loadBasis, longRunMinutes, input.crossTrainingIsLight);
+  const range = resolveCarbRangeByLoadBasis(
+    loadBasis,
+    input.workoutDurationMinutes ?? null,
+    input.crossTrainingIsLight
+  );
   if (range.rangeMinGPerKg === null || range.rangeMaxGPerKg === null) {
     return {
       formulaCode: "limited_context",
@@ -1308,10 +1313,23 @@ export function resolveCarbRangeByLoadBasis(
     return { rangeMinGPerKg: 4, rangeMaxGPerKg: 6 };
   }
   if (loadBasis === "hard") {
-    // Lower bound kept at the pre-unify 5.0 (not 5.5) — verified on 227 real days
+    // Scale the floor by session duration, as long_run below already does — hard was
+    // the only load basis judging 40 min of intervals and 2 h of tempo by one number.
+    // Coach-approved grid (2026-07-13), measured on 27 real hard days:
+    //   < 45 min  → 4-7  (short quality work; floor lowered, removes 1 false "low")
+    //   >= 45 min → 5-7  (unchanged, and deliberately NOT raised for long sessions)
+    //
+    // The 5.0 floor above 45 min stays exactly as validated on 227 real days
     // (2026-07-08 Option B Layer 3): raising it to 5.5 would falsely flag 2 real
-    // hard-day cases at 4.71-4.92 g/kg as "low" that were correctly "ok" (near-miss
-    // against the old 5.0 floor). Upper bound stays 7 (unify's value, unchanged).
+    // hard days at 4.71-4.92 g/kg as "low" that were correctly "ok". Ceiling stays 7.
+    //
+    // Duration here is the day's PRIMARY (hardest) session, not the day's total time
+    // — see buildWorkoutContextByDate. Combined days (intervals + bike/pilates) must
+    // not be scaled on inflated total time, which overstates the quality work.
+    const minutes = workoutDurationMinutes ?? null;
+    if (minutes !== null && minutes < 45) {
+      return { rangeMinGPerKg: 4, rangeMaxGPerKg: 7 };
+    }
     return { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 };
   }
   if (loadBasis === "long_run") {
@@ -1706,10 +1724,7 @@ function analyzeDailyTrainingNutrition(input: {
       bodyweightKg: input.bodyweightKg,
       hasTrainingContext,
       crossTrainingIsLight,
-      longRunDurationMinutes:
-        canonicalTrainingType === "long_run"
-          ? trainingPeaksDurationHoursToMinutes(currentWorkout?.durationHours ?? null)
-          : null,
+      workoutDurationMinutes: trainingPeaksDurationHoursToMinutes(currentWorkout?.durationHours ?? null),
     });
     const exerciseEnergy = estimateExerciseEnergyKcal({
       workout: currentWorkout ?? null,
