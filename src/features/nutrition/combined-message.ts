@@ -57,6 +57,16 @@ type CanonicalDailyFact = {
   target?: unknown;
   goal_day_target?: unknown;
   items_notable?: unknown;
+  /**
+   * Extra numbers this day's prose is ALLOWED to cite — week-over-week averages/deltas and the
+   * weight-trend figures, all computed by code in draft-generator and injected onto every day.
+   * buildNutritionDayProseFacts reads them, so the normalizer MUST carry them: dropping them made
+   * the render-time validator stricter than the generation-time one, and days the model was told
+   * were fine silently fell to the dry comment on the way to the athlete.
+   */
+  previous_week_numbers?: unknown;
+  /** Pre-workout carbs summed by code from the day's real diary items — also a citable fact. */
+  pre_workout?: unknown;
 };
 
 export type NutritionCombinedMessageResult = {
@@ -267,6 +277,20 @@ function normalizeStoredDailyFactItem(raw: unknown): CanonicalDailyFact | null {
     // Часть А: carry items_notable (with per-item carb_class) so the render-time
     // carb_quality_mismatch guard can see which foods are fast/neutral.
     items_notable: source.items_notable ?? item.items_notable,
+    // These two are the allow-lists of code-computed numbers the prose may cite, injected onto every
+    // day by draft-generator. This normalizer builds a NEW object rather than spreading the stored
+    // one, so anything not listed here is DROPPED — and these two were. The consequence was not
+    // cosmetic: buildNutritionDayProseFacts reads both, so the render-time validator saw a narrower
+    // fact set than the generation-time audit and silently refused prose that generation had passed.
+    // Ponomareva 12.07 is the case in point — «Чек-ин 9/10» survived generation because the 9
+    // coincided with a week-over-week protein delta in previous_week_numbers, then died at render
+    // where that list no longer existed, and the athlete got the dry comment while the editor still
+    // showed the model's text.
+    //
+    // RULE: every field buildNutritionDayProseFacts reads must be carried here. Add one there → add
+    // it here, or the two paths drift apart again.
+    previous_week_numbers: item.previous_week_numbers ?? source.previous_week_numbers,
+    pre_workout: source.pre_workout ?? item.pre_workout,
   };
 }
 
@@ -313,10 +337,20 @@ function resolveUsableNutritionDayProse(value: unknown, facts: NutritionDayProse
 }
 
 /**
- * Build the per-day prose facts (actual macros + code-owned plan target numbers)
- * from a canonical daily_analysis item. Single source of truth so the render-time
- * gate (resolveUsableNutritionDayProse) and the generation-time audit in
- * draft-generator validate model prose against identical facts.
+ * Build the per-day prose facts (actual macros + code-owned plan target numbers) from a canonical
+ * daily_analysis item. One helper, so the render-time gate (resolveUsableNutritionDayProse), the
+ * generation-time audit (draft-generator) and the coach-facing rejection notice
+ * (listRejectedNutritionReviewProseDays) all judge prose by the same rules.
+ *
+ * Sharing the helper is NOT enough on its own, and the claim that it was cost real damage: the
+ * three callers feed it DIFFERENT objects — generation and the notice pass the raw stored day, the
+ * render passes a normalized one — and the normalizer used to drop previous_week_numbers and
+ * pre_workout, two fields read below. Same helper, narrower facts, stricter verdict: prose that
+ * generation had passed was silently refused on the way to the athlete, and the coach's own edits
+ * with it.
+ *
+ * The normalizer now carries them (normalizeStoredDailyFactItem). If a new field is read here, it
+ * must be carried there too — otherwise the paths drift apart again and the drift is invisible.
  */
 export function buildNutritionDayProseFacts(item: Record<string, unknown>): NutritionDayProseFacts {
   const actual = asObject(item.actual);
@@ -825,10 +859,13 @@ function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionRevie
           ...dayFlags,
         };
       }
-      // Hybrid: prefer validated model prose, otherwise the deterministic comment.
-      // The fact line above is always code-owned and never replaced.
-      // Facts come from the shared helper so this render-time gate and the
-      // generation-time audit (draft-generator) validate against identical facts.
+      // Hybrid: prefer validated model prose (or the coach's edit of it), otherwise the
+      // deterministic comment. The fact line above is always code-owned and never replaced.
+      //
+      // `item` here is the NORMALIZED fact, and it must carry every field buildNutritionDayProseFacts
+      // reads — otherwise this gate judges the prose on a narrower fact set than the audit that
+      // approved it, and refuses it silently. That is exactly what happened until the normalizer
+      // started carrying previous_week_numbers / pre_workout.
       const dayComment = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item)) ?? comment;
       const numbersLine = `${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · Б ${formatNutritionAthleteMacro(protein)} · Ж ${formatNutritionAthleteMacro(fat)} · У ${formatNutritionAthleteMacro(carbs)}`;
       return {

@@ -748,6 +748,20 @@ const NUTRITION_NON_MACRO_NUMBER_PATTERNS: RegExp[] = [
   /\d+\s*:\s*\d+/g, // time 1:40
   /\d{1,2}\s*(?:янв|фев|март|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)/giu, // 14 июня
   /[+\-–—]\s*\d+(?:[.,]\d+)?/g, // signed steps / range tails: +50, –60
+  // Weekly check-in scores: «9/10», «9 из 10» (energy / wellbeing / eating comfort, 1–10).
+  //
+  // A rating on a 1–10 scale is NOT a macro or energy claim — it is the athlete's own weekly
+  // self-report, which the model is given in the facts and is expected to reflect back. It belongs
+  // here, with the percentages and durations, exactly per this list's rule: police macro/energy
+  // claims, scrub everything else.
+  //
+  // Until now it was policed as if it were a macro number, and passed only by LUCK: on Ponomareva's
+  // 12.07 the «9» of «Чек-ин 9/10» happened to coincide with the week-over-week protein delta in
+  // that day's allow-set. Any prose citing a check-in was a coin-flip — and on the render path,
+  // where that allow-set was dropped entirely, the coin always came up tails and the whole day fell
+  // to the dry deterministic comment.
+  /\b\d{1,2}\s*\/\s*10\b/g,
+  /\b\d{1,2}\s+из\s+10\b/giu,
 ];
 
 function roundToNearestStep(value: number, step: number): number {
