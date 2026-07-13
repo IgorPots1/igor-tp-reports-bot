@@ -1,24 +1,31 @@
 // FIT-ingest pipeline (design doc stages 3+4: /Users/igor/dev-notes/20 Coach OS/
-// 2026-07-09 FIT Ingest & Derived Metrics Design.md, section 7 — architectural
-// boundary). LOCAL MAC RUNNER ONLY: uses a Playwright browser session + cookies
-// to call TrainingPeaks endpoints that require browser auth
-// (/details, /files/{id}). There is no cloud/cron path for FIT — background
-// jobs (signals/health/briefs) read trainingpeaks_workout_derived_metrics,
-// they never touch FIT directly. Do not port this script's HTTP calls to a
-// server route or cron job.
+// 2026-07-09 FIT Ingest & Derived Metrics Design.md).
+//
+// Talks to TrainingPeaks over the shared HTTP client (tp-api-client.ts): bearer
+// token from the session snapshot, NO Playwright. The design doc's original
+// claim that /details and the files export require a browser session was
+// disproved empirically (2026-07-13 probe: both return 200 under bearer), so
+// this script no longer launches a browser and no longer contends for the
+// persistent Chromium profile that tp-actions-once.ts holds. It is still run
+// on demand rather than by cron, but nothing about the HTTP path is local-only.
 //
 // For each completed workout in trainingpeaks_workout_cache within [from, to]:
-//   1. GET /details for workoutDeviceFileInfos[].fileId (mean-max curves are
+//   1. GET /details for workoutDeviceFileInfos[].fileName (mean-max curves are
 //      fetched here too but unused this stage — a later stage may use them
 //      for the details_only decoupling fallback). Multiple device files ->
 //      still use the first that parses, but flag it in the diagnostic
 //      warnings rather than silently picking one.
-//   2. If a fileId exists, download it directly via /files/{fileId}
-//      (v1 then v6) and parse with fit-file-parser@3. Because the fileId
-//      comes from THIS workout's own /details response (not a fuzzy
-//      date/duration match against a bulk ZIP export), match_confidence is
-//      always 1.0 when a file downloads and parses successfully — there is
-//      no ambiguity to score.
+//   2. Download the device files via the BULK range export
+//      (/fitness/v1/export/{athleteId}/files/{from}/{to} -> JSON carrying a
+//      base64 ZIP), fetched ONCE per student, then match each workout to its
+//      file by EXACT ZIP-entry name against workoutDeviceFileInfos[].fileName
+//      and parse with fit-file-parser@3. Exact-name matching is what keeps
+//      match_confidence at 1.0 — there is no fuzzy date/duration scoring, and
+//      an unmatched name degrades honestly to has_fit=false.
+//      Do NOT reintroduce /fitness/v{1,6}/files/{fileId}: that endpoint is dead
+//      (404, verified live) and TP serves fileId int32-overflowed (observed
+//      -1296859130), so the id is unusable anyway. Names are the only reliable
+//      key — file timestamps are UTC-shifted off the workout's calendar day.
 //   3. Clean records[].heart_rate BEFORE computing anything HR-derived
 //      (fit-hr-cleaning.ts) and classify laps as work/rest
 //      (fit-lap-work-detection.ts).
@@ -39,7 +46,6 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 
-import { chromium, type Page } from "playwright";
 import FitParser from "fit-file-parser";
 
 import type {
@@ -50,8 +56,11 @@ import type {
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
 import * as workoutActivityClassificationModule from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
-import { profileDir, toolRoot } from "./lib/paths.ts";
-import { captureSessionAuth, performApiJsonRequest } from "./lib/trainingpeaks-api-move.ts";
+import {
+  getWorkoutDetailsRecord,
+  getWorkoutFilesExport,
+} from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import { toolRoot } from "./lib/paths.ts";
 import {
   findWorkoutStartMs,
   lapPaceSecPerKm,
@@ -119,9 +128,6 @@ if (typeof classifyTrainingPeaksWorkoutActivity !== "function") {
   throw new Error("workout-activity-classification.classifyTrainingPeaksWorkoutActivity is unavailable.");
 }
 
-const TP_API_HOST = "https://tpapi.trainingpeaks.com";
-const APP_HOST = "https://app.trainingpeaks.com";
-
 // No FIT records at all -> decoupling (and every other FIT-derived scalar)
 // can never be computed for this row, period — distinct from the
 // interval/too_short/not_steady reasons below, which only apply once we
@@ -132,7 +138,6 @@ type CliArgs = {
   from: string;
   to: string;
   student: string | null;
-  headed: boolean;
 };
 
 type ResolvedTarget = {
@@ -224,7 +229,7 @@ function normalizeToken(value: string): string {
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const parsed: CliArgs = { from: "", to: "", student: null, headed: false };
+  const parsed: CliArgs = { from: "", to: "", student: null };
 
   for (const arg of argv) {
     if (arg.startsWith("--from=")) {
@@ -240,12 +245,10 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.student = student || null;
       continue;
     }
-    if (arg === "--headed") {
-      parsed.headed = true;
-      continue;
-    }
-    if (arg === "--headless") {
-      parsed.headed = false;
+    // --headed/--headless are accepted as no-ops: this script no longer drives
+    // a browser (it talks to the TP HTTP API), but the flags were in the
+    // documented invocation, so silently tolerate them instead of hard-failing.
+    if (arg === "--headed" || arg === "--headless") {
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
@@ -275,49 +278,72 @@ function createFitParser(): FitParser {
 
 type DownloadedFit = { records: unknown[]; laps: unknown[]; sourceFitFileId: string };
 
-// Tries /fitness/v1/files/{id} then /fitness/v6/files/{id} (mirrors the
-// fallback pattern in hr-drift-elevation-audit.ts, which observed both
-// endpoints serving files depending on account/file vintage).
-async function downloadAndParseFitFile(input: {
-  page: Page;
-  headers: Record<string, string>;
-  fileId: number;
-  fileName: string | null;
-}): Promise<DownloadedFit | null> {
-  for (const suffix of [`/fitness/v1/files/${input.fileId}`, `/fitness/v6/files/${input.fileId}`]) {
-    const fileEndpoint = `${TP_API_HOST}${suffix}`;
-    let fileBody: Buffer;
-    try {
-      const fileResponse = await input.page.request.get(fileEndpoint, {
-        headers: input.headers,
-        failOnStatusCode: false,
-      });
-      if (!fileResponse.ok()) continue;
-      fileBody = Buffer.from(await fileResponse.body());
-    } catch {
-      continue;
-    }
-    if (fileBody.length < 100) continue;
+/**
+ * Every device file for a student across the scanned range, keyed by EXACT
+ * ZIP-entry name. Fetched ONCE per student (the export endpoint is bulk, by
+ * date range), then matched per workout against
+ * workoutDeviceFileInfos[].fileName from /details.
+ *
+ * Exact-name matching is the whole point: it is what keeps match_confidence at
+ * 1.0 with no fuzzy date/duration guessing. Do not match on fileId (TP serves
+ * it int32-overflowed -- observed -1296859130) nor on the file's timestamp
+ * (it is UTC-shifted and can land on a different calendar day than the
+ * workout).
+ */
+type StudentFitArchive = Map<string, Buffer>;
 
-    const isGz = input.fileName?.toLowerCase().endsWith(".gz") ?? false;
-    try {
-      const fitBuffer = isGz ? gunzipSync(fileBody) : fileBody;
-      const parsed = (await createFitParser().parseAsync(fitBuffer)) as {
-        records?: unknown[];
-        laps?: unknown[];
-      };
-      const records = Array.isArray(parsed.records) ? parsed.records : [];
-      if (records.length === 0) continue;
-      return {
-        records,
-        laps: Array.isArray(parsed.laps) ? parsed.laps : [],
-        sourceFitFileId: input.fileName ?? String(input.fileId),
-      };
-    } catch {
-      continue;
+// unzipper ships no types; declare only the surface we actually use.
+type UnzipperEntry = { path: string; type: string; buffer: () => Promise<Buffer> };
+type UnzipperModule = { Open: { buffer: (zip: Buffer) => Promise<{ files: UnzipperEntry[] }> } };
+
+async function loadStudentFitArchive(input: {
+  athleteId: number;
+  from: string;
+  to: string;
+}): Promise<StudentFitArchive> {
+  const archive: StudentFitArchive = new Map();
+  const exports = await getWorkoutFilesExport(input.athleteId, input.from, input.to);
+
+  const unzipper = (await import("unzipper")) as unknown as UnzipperModule;
+  for (const one of exports) {
+    const directory = await unzipper.Open.buffer(one.zip);
+    for (const entry of directory.files) {
+      if (entry.type !== "File") continue;
+      archive.set(entry.path, await entry.buffer());
     }
   }
-  return null;
+  return archive;
+}
+
+/**
+ * Resolve ONE workout's FIT file out of the pre-fetched archive by exact name.
+ * Returns null when the name is absent (caller degrades to has_fit=false with
+ * an explicit reason) -- never falls back to guessing another file.
+ */
+async function parseFitFromArchive(input: {
+  archive: StudentFitArchive;
+  fileName: string;
+}): Promise<DownloadedFit | null> {
+  const raw = input.archive.get(input.fileName);
+  if (!raw || raw.length < 100) return null;
+
+  const isGz = input.fileName.toLowerCase().endsWith(".gz");
+  try {
+    const fitBuffer = isGz ? gunzipSync(raw) : raw;
+    const parsed = (await createFitParser().parseAsync(fitBuffer)) as {
+      records?: unknown[];
+      laps?: unknown[];
+    };
+    const records = Array.isArray(parsed.records) ? parsed.records : [];
+    if (records.length === 0) return null;
+    return {
+      records,
+      laps: Array.isArray(parsed.laps) ? parsed.laps : [],
+      sourceFitFileId: input.fileName,
+    };
+  } catch {
+    return null;
+  }
 }
 
 type IngestOneWorkoutResult = {
@@ -327,8 +353,7 @@ type IngestOneWorkoutResult = {
 };
 
 async function ingestOneWorkoutFit(input: {
-  page: Page;
-  headers: Record<string, string>;
+  archive: StudentFitArchive;
   athleteId: number;
   cacheRow: TrainingPeaksWorkoutCacheRow;
   observedMaxHr: number | null;
@@ -369,20 +394,9 @@ async function ingestOneWorkoutFit(input: {
     warnings,
   });
 
-  const detailsEndpoint = `${TP_API_HOST}/fitness/v6/athletes/${input.athleteId}/workouts/${input.cacheRow.trainingPeaksWorkoutId}/details`;
   let detailsBody: Record<string, unknown> | null = null;
   try {
-    const detailsResult = await performApiJsonRequest({
-      page: input.page,
-      method: "GET",
-      endpoint: detailsEndpoint,
-      headers: input.headers,
-    });
-    if (detailsResult.status === 200 && isRecord(detailsResult.body)) {
-      detailsBody = detailsResult.body;
-    } else {
-      warnings.push(`details request returned status=${detailsResult.status}`);
-    }
+    detailsBody = await getWorkoutDetailsRecord(input.athleteId, input.cacheRow.trainingPeaksWorkoutId);
   } catch (error) {
     warnings.push(`details request failed: ${toCompactErrorMessage(error)}`);
   }
@@ -392,7 +406,7 @@ async function ingestOneWorkoutFit(input: {
   }
 
   const fileInfos = Array.isArray(detailsBody.workoutDeviceFileInfos)
-    ? (detailsBody.workoutDeviceFileInfos as Array<{ fileId?: unknown; fileName?: unknown }>)
+    ? (detailsBody.workoutDeviceFileInfos as Array<{ fileName?: unknown }>)
     : [];
 
   if (fileInfos.length === 0) {
@@ -409,13 +423,27 @@ async function ingestOneWorkoutFit(input: {
     warnings.push(multiFileWarning);
   }
 
+  // Match a device file to its FIT by EXACT name against the range export.
+  // fileId is deliberately ignored: TP serves it int32-overflowed (observed
+  // -1296859130), and the per-file endpoint it addressed (/fitness/v{1,6}/
+  // files/{id}) is dead (404). No fuzzy date/duration fallback -- an unmatched
+  // name degrades honestly to has_fit=false.
   for (const info of fileInfos) {
-    const fileId = typeof info.fileId === "number" ? info.fileId : null;
-    if (!fileId) continue;
     const fileName = typeof info.fileName === "string" ? info.fileName : null;
+    if (!fileName) {
+      warnings.push("workoutDeviceFileInfos entry has no fileName");
+      continue;
+    }
+    if (!input.archive.has(fileName)) {
+      warnings.push(`device file ${fileName} not present in range export`);
+      continue;
+    }
 
-    const downloaded = await downloadAndParseFitFile({ page: input.page, headers: input.headers, fileId, fileName });
-    if (!downloaded) continue;
+    const downloaded = await parseFitFromArchive({ archive: input.archive, fileName });
+    if (!downloaded) {
+      warnings.push(`device file ${fileName} found in export but failed to gunzip/parse`);
+      continue;
+    }
 
     const normalizedRecords = normalizeFitRecords(downloaded.records);
     if (normalizedRecords.length === 0) {
@@ -557,37 +585,10 @@ async function main(): Promise<void> {
   }
 
   const scannedAt = new Date().toISOString();
-  const context = await chromium.launchPersistentContext(profileDir, {
-    headless: !args.headed,
-    viewport: null,
-  });
 
   const summaries: StudentSummary[] = [];
 
-  try {
-    const page = context.pages()[0] ?? (await context.newPage());
-    const firstTarget = withAthlete[0]!;
-    const auth = await captureSessionAuth({ context, page, athleteId: firstTarget.athleteId! });
-    if (!auth.sampleRequestUrl && !auth.authorizationHeader) {
-      throw new Error("Failed to capture TrainingPeaks auth/session (no API session context observed).");
-    }
-
-    const headers: Record<string, string> = {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "x-requested-with": "XMLHttpRequest",
-      referer:
-        typeof auth.sampleHeaders.referer === "string" && auth.sampleHeaders.referer.trim()
-          ? auth.sampleHeaders.referer
-          : `${APP_HOST}/#calendar/athletes/${firstTarget.athleteId}`,
-      origin:
-        typeof auth.sampleHeaders.origin === "string" && auth.sampleHeaders.origin.trim()
-          ? auth.sampleHeaders.origin
-          : APP_HOST,
-    };
-    if (auth.authorizationHeader) {
-      headers.authorization = auth.authorizationHeader;
-    }
-
+  {
     for (const target of targets) {
       if (!target.athleteId) {
         summaries.push({
@@ -616,6 +617,15 @@ async function main(): Promise<void> {
           target.athleteId
         );
 
+        // The device-file export is BULK (whole date range in one call), so it
+        // is fetched ONCE per student and reused across every workout below --
+        // not once per workout.
+        const archive = await loadStudentFitArchive({
+          athleteId: target.athleteId,
+          from: args.from,
+          to: args.to,
+        });
+
         let fitMatched = 0;
         let detailsOnly = 0;
         let summaryOnly = 0;
@@ -623,8 +633,7 @@ async function main(): Promise<void> {
 
         for (const cacheRow of cacheRows) {
           const result = await ingestOneWorkoutFit({
-            page,
-            headers,
+            archive,
             athleteId: target.athleteId,
             cacheRow,
             observedMaxHr,
@@ -675,8 +684,6 @@ async function main(): Promise<void> {
         });
       }
     }
-  } finally {
-    await context.close().catch(() => {});
   }
 
   const totalProcessed = summaries.reduce((sum, s) => sum + s.workoutsProcessed, 0);

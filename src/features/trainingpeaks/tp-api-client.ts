@@ -426,6 +426,62 @@ export async function getWorkoutDetail(athleteId: number, workoutId: number): Pr
   return record;
 }
 
+// ─── device files (FIT) ─────────────────────────────────────────────────────────
+//
+// NOTE: the /details endpoint is DISTINCT from getWorkoutDetail's
+// /workouts/{id} above -- only /details carries workoutDeviceFileInfos (the
+// device-file names we match FIT files by) plus the mean-max curves.
+//
+// Both /details and the files export below were empirically verified to work
+// under the bearer token (2026-07-13 probe). The FIT design doc previously
+// claimed they required browser (Playwright) auth -- that claim is WRONG.
+
+/** Raw /details record for a workout (carries workoutDeviceFileInfos[]). */
+export async function getWorkoutDetailsRecord(athleteId: number, workoutId: number): Promise<Record<string, unknown>> {
+  const endpoint = `/fitness/v6/athletes/${athleteId}/workouts/${workoutId}/details`;
+  const body = await getJsonOrThrow(`${TP_API_HOST}${endpoint}`);
+  return assertRecord(body, endpoint);
+}
+
+export type WorkoutFilesExport = { fileName: string; zip: Buffer };
+
+/**
+ * Bulk device-file export for a date range. This is the ONLY working download
+ * path: the per-file `/fitness/v{1,6}/files/{fileId}` endpoint returns 404
+ * (verified live) and must not be used. Response is JSON -- not binary --
+ * carrying a base64 ZIP, so it rides the normal JSON transport.
+ *
+ * Callers match a workout to its FIT file by EXACT ZIP-entry name against
+ * workoutDeviceFileInfos[].fileName. Never by date/duration: TP's own fileId
+ * is int32-overflowed (observed -1296859130) and file timestamps are UTC-
+ * shifted relative to the workout date, so only the name is trustworthy.
+ */
+export async function getWorkoutFilesExport(
+  athleteId: number,
+  startIso: string,
+  endIso: string
+): Promise<WorkoutFilesExport[]> {
+  const chunks = chunkDateRangeInclusive(startIso, endIso);
+  const exports: WorkoutFilesExport[] = [];
+
+  for (const chunk of chunks) {
+    const endpoint = `/fitness/v1/export/${athleteId}/files/${chunk.start}/${chunk.end}`;
+    const body = await getJsonOrThrow(`${TP_API_HOST}${endpoint}`);
+    if (!isPlainRecord(body)) {
+      throw new TpApiSchemaError("Files export response was not a JSON object.", endpoint);
+    }
+    const fileName = body.fileName;
+    const data = body.data;
+    // An empty range legitimately yields no archive -- not an error.
+    if (typeof fileName !== "string" || typeof data !== "string" || data.length === 0) {
+      continue;
+    }
+    exports.push({ fileName, zip: Buffer.from(data, "base64") });
+  }
+
+  return exports;
+}
+
 // ─── health metrics ─────────────────────────────────────────────────────────────
 
 export async function getHealthMetrics(athleteId: number, startIso: string, endIso: string): Promise<Record<string, unknown>[]> {
