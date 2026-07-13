@@ -363,7 +363,14 @@ const combined = buildDerivedNutritionCombinedMessage({
   studentName: "Fixture Athlete",
 });
 const athleteText = combined.athleteMessageDraft ?? "";
-assert.match(athleteText, /Главный паттерн недели|Главный фокус|Главный момент недели/);
+// The weekly summary now rotates its phrasing per week (buildNutritionWeeklySummary picks from a
+// pool seeded by weekFrom), so the opener is no longer a single literal. This still asserts what
+// it always meant to: the athlete message carries a weekly-summary headline. The full opener set
+// is covered by check-nutrition-weekly-summary-variety.
+assert.match(
+  athleteText,
+  /Главный паттерн недели|Паттерн недели|Главное за неделю|Главный фокус|Фокус на неделю|Неделя держалась ровно|Неделя в целом собрана|Почти вся неделя ровная|Неделя вышла|Неделя собралась хорошо|Ровная неделя/
+);
 assert.doesNotMatch(athleteText, /понедельник, вторник, среда, четверг, пятница, суббота, воскресенье/i);
 assert.match(athleteText, /6 х 5 мин/);
 assert.doesNotMatch(athleteText, /длительная/i, "focus must not mention long run when absent");
