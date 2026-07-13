@@ -34,14 +34,39 @@ assert.notDeepEqual(
   "long_run still scales by duration"
 );
 
-// ─── races ride the same corridor, and that is deliberate ───
-// resolveCarbLoadBasis collapses race into the "hard" basis, so the duration grid
-// applies to race days too. Coach decision (2026-07-13): keep it. A 20-min parkrun
-// does not warrant a 5 g/kg floor, and a real race (half/full) is >45 min anyway, so
-// it keeps 5-7. Carb LOADING is untouched — it lives in the plan, not this corridor.
-assert.equal(resolveCarbLoadBasis("race"), "hard", "race shares the hard load basis");
-assert.deepEqual(hard(25), { rangeMinGPerKg: 4, rangeMaxGPerKg: 7 }, "short race (parkrun) → 4-7, on purpose");
-assert.deepEqual(hard(90), { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 }, "half-marathon race → 5-7, unchanged");
+// ─── races are EXEMPT from the grid (coach decision, 2026-07-14) ───
+// race still rides the "hard" load basis for everything else (protein, fat, EA), but its carb
+// corridor ignores duration: floor 5 always. A race is maximal effort by definition and the short
+// ones are the sharpest — a 25-min 5k needs carbs in full. Trimming the floor before a race would
+// also fight the plan, which LOADS carbs into race day. Hence the isRaceDay flag on the corridor.
+const race = (minutes: number | null) => resolveCarbRangeByLoadBasis("hard", minutes, undefined, true);
+
+assert.equal(resolveCarbLoadBasis("race"), "hard", "race still shares the hard load basis");
+assert.deepEqual(race(25), { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 }, "short race (5k, 25 min) → 5-7, NOT the 4 floor");
+assert.deepEqual(race(42), { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 }, "42-min race → 5-7 (a hard day here would be 4-7)");
+assert.deepEqual(race(90), { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 }, "half-marathon → 5-7, unchanged");
+assert.deepEqual(race(210), { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 }, "marathon → 5-7, unchanged");
+assert.deepEqual(race(null), { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 }, "unknown-duration race → 5-7");
+// The exemption is what separates them: same duration, same basis, different floor.
+for (const minutes of [null, 20, 25, 42, 44, 60, 120]) {
+  assert.equal(race(minutes).rangeMinGPerKg, 5, `race floor is 5 at every duration (minutes=${minutes})`);
+  assert.equal(race(minutes).rangeMaxGPerKg, 7, `race ceiling is 7 at every duration (minutes=${minutes})`);
+}
+assert.notDeepEqual(race(25), hard(25), "a 25-min RACE and a 25-min hard session must NOT get the same corridor");
+
+// ─── the race exemption must survive the plumbing, not just the pure function ───
+const shortRace = calculateNutritionDayTypeTarget({ bodyweightKg: 60, dayType: "race", durationHours: 25 / 60 });
+const shortHardSameLength = calculateNutritionDayTypeTarget({
+  bodyweightKg: 60,
+  dayType: "hard",
+  durationHours: 25 / 60,
+});
+assert.equal(shortRace?.carbs_g, 360, "25-min race: 60 кг × 6.0 (midpoint of 5-7) = 360 г — the grid must not touch it");
+assert.equal(shortHardSameLength?.carbs_g, 330, "25-min hard: 60 кг × 5.5 (midpoint of 4-7) = 330 г");
+assert.ok(
+  (shortRace?.carbs_g ?? 0) > (shortHardSameLength?.carbs_g ?? 0),
+  "the plan asks MORE carbs for a race than for a hard session of the same length"
+);
 
 // ─── the plumbing: the duration must actually REACH the corridor ───
 // The bug this guards against: the corridor scales by duration, but a caller gates the

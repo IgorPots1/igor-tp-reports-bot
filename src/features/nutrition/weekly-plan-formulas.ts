@@ -637,7 +637,12 @@ export function calculateNutritionDayTypeTarget(params: {
   // only — the plan target must land inside the corridor the review then judges by.
   const durationMinutes = trainingPeaksDurationHoursToMinutes(params.durationHours ?? null);
   const loadBasis: NutritionCarbLoadBasis = resolveCarbLoadBasis(params.dayType);
-  const carbRange = resolveCarbRangeByLoadBasis(loadBasis, durationMinutes, params.isLightCross);
+  const carbRange = resolveCarbRangeByLoadBasis(
+    loadBasis,
+    durationMinutes,
+    params.isLightCross,
+    params.dayType === "race"
+  );
   const carbsPerKg =
     carbRange.rangeMinGPerKg !== null && carbRange.rangeMaxGPerKg !== null
       ? Number(((carbRange.rangeMinGPerKg + carbRange.rangeMaxGPerKg) / 2).toFixed(2))

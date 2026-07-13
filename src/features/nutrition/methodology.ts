@@ -1055,7 +1055,8 @@ function buildCanonicalTarget(input: {
   const range = resolveCarbRangeByLoadBasis(
     loadBasis,
     input.workoutDurationMinutes ?? null,
-    input.crossTrainingIsLight
+    input.crossTrainingIsLight,
+    input.canonicalTrainingType === "race"
   );
   if (range.rangeMinGPerKg === null || range.rangeMaxGPerKg === null) {
     return {
@@ -1285,7 +1286,14 @@ export function resolveCarbLoadBasis(trainingType: NutritionCanonicalTrainingTyp
 export function resolveCarbRangeByLoadBasis(
   loadBasis: NutritionCarbLoadBasis,
   workoutDurationMinutes?: number | null,
-  crossTrainingIsLight?: boolean
+  crossTrainingIsLight?: boolean,
+  // A race and a hard session share one load basis (resolveCarbLoadBasis collapses them), but they
+  // must NOT share one carb corridor: the duration grid below lowers the floor for short quality
+  // work, and a race is never "short quality work" — a 25-minute 5k is still a race, run at maximal
+  // effort, and the days around it LOAD carbs rather than trim them. Callers that know the day is a
+  // race say so; the corridor then ignores duration entirely. Everything else about the race day
+  // (protein, fat, EA) keeps riding the hard basis, which is why this is a flag and not a new basis.
+  isRaceDay?: boolean
 ): {
   rangeMinGPerKg: number | null;
   rangeMaxGPerKg: number | null;
@@ -1313,6 +1321,13 @@ export function resolveCarbRangeByLoadBasis(
     return { rangeMinGPerKg: 4, rangeMaxGPerKg: 6 };
   }
   if (loadBasis === "hard") {
+    // RACE: floor 5 ALWAYS, duration is irrelevant (coach decision, 2026-07-14). A race is maximal
+    // effort by definition, and the short ones are the sharpest — a 25-minute 5k needs carbs in
+    // full, not the lowered floor the grid gives short quality work. Trimming the floor before a
+    // race would also contradict the plan, which LOADS carbs into race day (its own 5.3 g/kg floor).
+    if (isRaceDay) {
+      return { rangeMinGPerKg: 5, rangeMaxGPerKg: 7 };
+    }
     // Scale the floor by session duration, as long_run below already does — hard was
     // the only load basis judging 40 min of intervals and 2 h of tempo by one number.
     // Coach-approved grid (2026-07-13), measured on 27 real hard days:
@@ -1446,7 +1461,12 @@ function buildMacroGuardrails(input: {
   }
 
   const loadBasis = resolveCarbLoadBasis(input.canonicalTrainingType);
-  const carbRange = resolveCarbRangeByLoadBasis(loadBasis, input.workoutDurationMinutes, input.crossTrainingIsLight);
+  const carbRange = resolveCarbRangeByLoadBasis(
+    loadBasis,
+    input.workoutDurationMinutes,
+    input.crossTrainingIsLight,
+    input.canonicalTrainingType === "race"
+  );
   let carbsStatus: NutritionMacroStatus = "unknown";
   let carbsFinding: string | null = null;
   if (
@@ -1480,7 +1500,12 @@ function buildMacroGuardrails(input: {
     isLoadDayForFat &&
     input.carbsGPerKg !== null
   ) {
-    const carbRangeForFat = resolveCarbRangeByLoadBasis(loadBasisForFat, input.workoutDurationMinutes, input.crossTrainingIsLight);
+    const carbRangeForFat = resolveCarbRangeByLoadBasis(
+      loadBasisForFat,
+      input.workoutDurationMinutes,
+      input.crossTrainingIsLight,
+      input.canonicalTrainingType === "race"
+    );
     if (
       carbRangeForFat.rangeMinGPerKg !== null &&
       (input.carbsGPerKg < carbRangeForFat.rangeMinGPerKg ||
