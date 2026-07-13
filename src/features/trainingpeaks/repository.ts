@@ -1042,6 +1042,16 @@ export type TrainingPeaksWorkoutDerivedMetricsUpsertRow = {
   hr_quality?: "good" | "degraded" | "unreliable" | null;
   pct_hr_cleaned?: number | null;
   avg_hr?: number | null;
+  // % of MOVING samples the HR cleaner found inside a cadence-lock window (the
+  // optical-strap failure mode where HR latches onto cadence). Persisted purely
+  // as diagnostics: without it there is no way to tell, after the fact, whether
+  // the cleaner actually caught anything on a dirty stream.
+  cadence_lock_coverage_pct?: number | null;
+  // FALSE = do not draw heart-rate conclusions from this workout. Set when the
+  // cleaner had to replace so much of the stream (hr_quality='unreliable') that
+  // avg_hr is diagnostic-only. avg_hr is still written; this flag is what the
+  // report-generation layer reads to know it must stay silent about HR.
+  hr_trusted?: boolean | null;
 
   // Goal-vs-actual (design doc section 2). target_source is 'plan' only when
   // the plan's per-step targets resolve to an absolute HR/pace corridor;

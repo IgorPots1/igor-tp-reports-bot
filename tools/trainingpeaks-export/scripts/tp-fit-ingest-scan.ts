@@ -66,6 +66,7 @@ import {
   lapPaceSecPerKm,
   normalizeFitLaps,
   normalizeFitRecords,
+  type NormalizedFitLap,
 } from "./lib/fit-workout-normalization.ts";
 import { cleanHeartRateSeries, computeCleanedMovingAverageHr } from "./lib/fit-hr-cleaning.ts";
 import { detectWorkLaps } from "./lib/fit-lap-work-detection.ts";
@@ -133,6 +134,16 @@ if (typeof classifyTrainingPeaksWorkoutActivity !== "function") {
 // interval/too_short/not_steady reasons below, which only apply once we
 // actually have cleaned records to gate.
 const DECOUPLING_NO_FIT_RECORDS_REASON = "no_fit_records";
+
+// Pace/speed-derived metrics are RUNNING metrics. On a walk/ride/swim/strength
+// session they are not merely inaccurate, they are meaningless -- so they are
+// nulled with this stated reason rather than computed and stored as noise.
+const NOT_A_RUN_REASON = "not_a_run";
+
+// Faster than the men's 1500m world-record pace: not a human running. A lap this
+// fast is a GPS glitch or a non-running segment sneaking in, and its pace must
+// never reach a metric.
+const MIN_PLAUSIBLE_RUN_PACE_SEC_PER_KM = 150;
 
 type CliArgs = {
   from: string;
@@ -459,30 +470,88 @@ async function ingestOneWorkoutFit(input: {
     const structureSnapshot = isRecord(input.cacheRow.sourceSnapshot)
       ? input.cacheRow.sourceSnapshot.structure
       : null;
-    const workDetection = detectWorkLaps({ laps: normalizedLaps, structureSnapshot });
-    warnings.push(...workDetection.notes);
+    // ── SPORT GATE ────────────────────────────────────────────────────────────
+    // Everything below that divides by SPEED (pace, rep scalars, decoupling,
+    // aerobic_ef) is a RUNNING metric and is meaningless off a run. HR is not:
+    // 150 bpm means the same thing on a bike as on a run, so the HR-side fields
+    // (avg_hr, hr_quality, pct_hr_cleaned) are kept for every sport.
+    //
+    // Without this gate the pipeline happily produced walking laps at 14 s/km
+    // (257 km/h) and a -34.78% "decoupling" on a walk. Half of what we ingest is
+    // not a run: of 383 workouts scanned, 194 were runs and 189 were walks,
+    // rides, swims, strength and the like.
+    const isRun = workoutType === "run";
+    if (!isRun) {
+      warnings.push(
+        `pace-based metrics null: workout_type=${workoutType} — rep scalars, decoupling and aerobic_ef are running metrics, not computed off a run (${NOT_A_RUN_REASON})`
+      );
+    }
 
-    const workLapCount = [...workDetection.isWorkByLapIndex.values()].filter((v) => v === true).length;
-    const isIntervalWorkout = workDetection.method !== "none" && workLapCount >= MIN_WORK_REPS_FOR_SCALARS;
+    const workDetection = isRun ? detectWorkLaps({ laps: normalizedLaps, structureSnapshot }) : null;
+    if (workDetection) warnings.push(...workDetection.notes);
 
-    const decoupling = computeSteadyDecoupling({
-      cleanedRecords: cleaning.records,
-      isIntervalWorkout,
-      hrQuality: cleaning.hrQuality,
-    });
-    const intervalScalars = computeIntervalScalars({
-      laps: normalizedLaps,
-      isWorkByLapIndex: workDetection.isWorkByLapIndex,
-      cleanedRecords: cleaning.records,
-    });
+    // reps = contiguous work BLOCKS, not work laps (see WorkDetectionResult).
+    const repsDetectedCount = workDetection ? workDetection.workBlocks.length : null;
+    const isIntervalWorkout =
+      workDetection !== null &&
+      workDetection.method !== "none" &&
+      workDetection.workBlocks.length >= MIN_WORK_REPS_FOR_SCALARS;
+
+    const decoupling = isRun
+      ? computeSteadyDecoupling({
+          cleanedRecords: cleaning.records,
+          isIntervalWorkout,
+          hrQuality: cleaning.hrQuality,
+        })
+      : {
+          decouplingValid: false,
+          decouplingInvalidReason: NOT_A_RUN_REASON,
+          hrDecouplingPct: null,
+          steadyDurationS: null,
+        };
+
+    const intervalScalars =
+      isRun && workDetection
+        ? computeIntervalScalars({
+            laps: normalizedLaps,
+            workBlocks: workDetection.workBlocks,
+            cleanedRecords: cleaning.records,
+          })
+        : { repPaces: null, repPeakHrs: null, repPaceFadePct: null, repPaceCv: null, repRecoveryDrops: null, warnings: [] };
+
     const goalVsActual = computeGoalVsActual({
       structureSnapshot,
       cleanedRecords: cleaning.records,
       hrQuality: cleaning.hrQuality,
       observedMaxHr: input.observedMaxHr,
     });
-    const aerobicEf = computeAerobicEf(cleaning.records, avgHr);
+    const aerobicEf = isRun ? computeAerobicEf(cleaning.records, avgHr) : null;
     warnings.push(...intervalScalars.warnings, ...goalVsActual.warnings);
+
+    // HR CONCLUSIONS are suppressed -- not the number -- when the cleaner had to
+    // replace too much of the stream. avg_hr stays in the row for diagnostics;
+    // hr_trusted is the flag the generation layer reads to know it must stay
+    // SILENT about this workout's heart rate.
+    const hrTrusted = cleaning.hrQuality === "good" || cleaning.hrQuality === "degraded";
+
+    // pace_sec_per_km is a RUNNING notion, so it is only published for runs:
+    //   - off a run it is at best meaningless and at worst a lie (a bike lap at
+    //     101 s/km is a perfectly normal 35 km/h, but the column NAME claims it
+    //     is a pace; a walk lap once came out at 14 s/km = 257 km/h). Nothing is
+    //     lost by withholding it -- avg_speed_mps / max_speed_mps still carry the
+    //     raw speed for every sport.
+    //   - on a run, anything faster than the world record is a GPS glitch and is
+    //     withheld too, with a stated reason. Never a number we know is wrong.
+    let impossiblePaceLaps = 0;
+    const storedLapPace = (lap: NormalizedFitLap): number | null => {
+      if (!isRun) return null;
+      const pace = lapPaceSecPerKm(lap);
+      if (pace !== null && pace < MIN_PLAUSIBLE_RUN_PACE_SEC_PER_KM) {
+        impossiblePaceLaps += 1;
+        return null;
+      }
+      return pace;
+    };
 
     const lapRows: TrainingPeaksWorkoutLapUpsertRow[] = normalizedLaps.map((lap) => ({
       student_id: input.cacheRow.studentId,
@@ -498,7 +567,7 @@ async function ingestOneWorkoutFit(input: {
       distance_m: lap.distanceM,
       avg_speed_mps: lap.avgSpeedMps,
       max_speed_mps: lap.maxSpeedMps,
-      pace_sec_per_km: lapPaceSecPerKm(lap),
+      pace_sec_per_km: storedLapPace(lap),
       avg_hr: lap.avgHr,
       max_hr: lap.maxHr,
       min_hr: lap.minHr,
@@ -510,12 +579,18 @@ async function ingestOneWorkoutFit(input: {
       lap_trigger: lap.lapTrigger,
       intensity: lap.intensity,
       wkt_step_index: lap.wktStepIndex,
-      is_work: workDetection.isWorkByLapIndex.get(lap.lapIndex) ?? null,
+      is_work: workDetection?.isWorkByLapIndex.get(lap.lapIndex) ?? null,
       planned_target: null,
       source_snapshot: {},
       normalization_warnings: [],
       scanned_at: input.scannedAt,
     }));
+
+    if (impossiblePaceLaps > 0) {
+      warnings.push(
+        `pace_sec_per_km null on ${impossiblePaceLaps} lap(s): faster than ${MIN_PLAUSIBLE_RUN_PACE_SEC_PER_KM}s/km — physically impossible for a run, not published`
+      );
+    }
 
     return {
       lapRows,
@@ -533,8 +608,10 @@ async function ingestOneWorkoutFit(input: {
         target_source: goalVsActual.targetSource,
         time_in_zones: goalVsActual.timeInZones,
         zone_basis: goalVsActual.zoneBasis,
-        reps_detected_count: workLapCount,
-        rep_detection_method: workDetection.method,
+        cadence_lock_coverage_pct: cleaning.cadenceLockCoveragePct,
+        hr_trusted: hrTrusted,
+        reps_detected_count: repsDetectedCount,
+        rep_detection_method: workDetection ? workDetection.method : null,
         rep_paces: intervalScalars.repPaces,
         rep_pace_fade_pct: intervalScalars.repPaceFadePct,
         rep_pace_cv: intervalScalars.repPaceCv,

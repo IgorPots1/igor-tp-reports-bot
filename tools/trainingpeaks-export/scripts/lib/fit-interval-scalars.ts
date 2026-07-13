@@ -9,7 +9,7 @@
 
 import { MOVING_SPEED_MIN_MPS } from "./fit-hr-cleaning-constants.ts";
 import type { CleanedFitRecord } from "./fit-hr-cleaning.ts";
-import { lapDurationSeconds, lapPaceSecPerKm, type NormalizedFitLap } from "./fit-workout-normalization.ts";
+import { lapDurationSeconds, type NormalizedFitLap } from "./fit-workout-normalization.ts";
 import {
   MIN_WORK_REPS_FOR_SCALARS,
   RECOVERY_CAP_S,
@@ -55,42 +55,80 @@ function minHrInWindowWithStopFlag(
   return { min, stoppedFraction: total > 0 ? stopped / total : 0 };
 }
 
+/**
+ * One rep, assembled from the contiguous work laps that make it up.
+ *
+ * A rep is NOT a lap: watches auto-lap every kilometre, so one 24-minute effort
+ * arrives as ~5 consecutive work laps. Pace is therefore computed from the
+ * block's TOTAL distance and TOTAL duration (a distance-weighted pace), never as
+ * an average of the constituent laps' paces.
+ */
+type RepBlock = { startS: number | null; endS: number | null; distanceM: number; durationS: number };
+
+function assembleRepBlock(laps: NormalizedFitLap[], blockLapIndices: number[]): RepBlock {
+  const blockLaps = blockLapIndices
+    .map((lapIndex) => laps.find((l) => l.lapIndex === lapIndex))
+    .filter((l): l is NormalizedFitLap => Boolean(l))
+    .sort((a, b) => (a.startOffsetS ?? a.lapIndex) - (b.startOffsetS ?? b.lapIndex));
+
+  let distanceM = 0;
+  let durationS = 0;
+  for (const lap of blockLaps) {
+    distanceM += lap.distanceM ?? 0;
+    durationS += lapDurationSeconds(lap) ?? 0;
+  }
+
+  const first = blockLaps[0];
+  const last = blockLaps[blockLaps.length - 1];
+  const startS = first?.startOffsetS ?? null;
+  const lastDuration = last ? lapDurationSeconds(last) : null;
+  const endS = last?.startOffsetS !== null && last?.startOffsetS !== undefined && lastDuration !== null
+    ? last.startOffsetS + lastDuration
+    : null;
+
+  return { startS, endS, distanceM, durationS };
+}
+
 export function computeIntervalScalars(input: {
   laps: NormalizedFitLap[];
-  isWorkByLapIndex: Map<number, boolean | null>;
+  // Contiguous work laps merged into rep blocks by detectWorkLaps. One block = one rep.
+  workBlocks: number[][];
   cleanedRecords: CleanedFitRecord[];
 }): IntervalScalarsResult {
   const warnings: string[] = [];
-  const workLaps = input.laps
-    .filter((l) => input.isWorkByLapIndex.get(l.lapIndex) === true)
-    .sort((a, b) => (a.startOffsetS ?? a.lapIndex) - (b.startOffsetS ?? b.lapIndex));
+  const reps = input.workBlocks.map((block) => assembleRepBlock(input.laps, block));
 
-  if (workLaps.length < MIN_WORK_REPS_FOR_SCALARS) {
+  if (reps.length < MIN_WORK_REPS_FOR_SCALARS) {
     warnings.push(
-      `rep scalars null: ${workLaps.length} work lap(s) detected, need >=${MIN_WORK_REPS_FOR_SCALARS} (not an interval workout, or work detection found no confident split)`
+      `rep scalars null: ${reps.length} rep block(s) detected, need >=${MIN_WORK_REPS_FOR_SCALARS} (not an interval workout, or work detection found no confident split)`
     );
     return { repPaces: null, repPeakHrs: null, repPaceFadePct: null, repPaceCv: null, repRecoveryDrops: null, warnings };
   }
 
-  const repPaces = workLaps.map((lap) => lapPaceSecPerKm(lap));
+  const repPaces = reps.map((rep) =>
+    rep.distanceM > 0 && rep.durationS > 0 ? rep.durationS / (rep.distanceM / 1000) : null
+  );
   const repPeakHrs: Array<number | null> = [];
   const repRecoveryDrops: Array<number | null> = [];
 
-  workLaps.forEach((lap, i) => {
-    const repStart = lap.startOffsetS;
-    const durationS = lapDurationSeconds(lap);
-    if (repStart === null || durationS === null) {
+  reps.forEach((rep, i) => {
+    const repStart = rep.startS;
+    const repEnd = rep.endS;
+    if (repStart === null || repEnd === null) {
       repPeakHrs.push(null);
       repRecoveryDrops.push(null);
       warnings.push(`rep ${i}: peak_hr/recovery_drop null — missing lap start offset or duration`);
       return;
     }
-    const repEnd = repStart + durationS;
 
     const peakHr = maxHrInWindow(input.cleanedRecords, repStart, repEnd + RECOVERY_LAG_S);
     repPeakHrs.push(peakHr);
 
-    const nextRepStartS = workLaps[i + 1]?.startOffsetS ?? null;
+    // Recovery runs from the end of THIS block to the start of the NEXT block --
+    // the gap between reps, which is exactly the rest interval. (Measuring
+    // lap-to-lap instead produced zero-length windows whenever a rep spanned
+    // several laps, which is why every recovery_drop came back null.)
+    const nextRepStartS = reps[i + 1]?.startS ?? null;
     const recoveryWindowStart = repEnd + RECOVERY_MIN_GAP_S;
     const recoveryWindowCappedEnd = repEnd + RECOVERY_CAP_S;
     const recoveryWindowEnd =

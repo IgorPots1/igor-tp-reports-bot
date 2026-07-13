@@ -276,6 +276,125 @@ function checkHeuristicTierOnLiveIntervalProfile(): void {
   console.log(`  live 7x5 profile: method=${detection.method}, work_laps=[${workLaps.join(",")}] (7), fragments+edges=null`);
 }
 
+// Regression: a SLOW outlier must not hijack the split. Live case (Tanya
+// Zheleznikova, "15 х 1,5 мин"): work ~325 s/km alternating with ~420 s/km jogs,
+// but two recoveries where she nearly stopped (639, 655 s/km) opened a +29.9%
+// gap -- WIDER than the real work/recovery boundary at +15.8%. The old
+// single-widest-gap split cut there, so work AND recovery both landed in the
+// "fast" cluster and the session reported 30 reps instead of 15.
+function checkSlowOutlierDoesNotHijackSplit(): void {
+  const lap = (lapIndex: number, distanceM: number, paceSecPerKm: number): NormalizedFitLap =>
+    makeLap({ lapIndex, distanceM, timerTimeS: (distanceM / 1000) * paceSecPerKm });
+
+  const laps: NormalizedFitLap[] = [lap(0, 1370, 438)]; // warm-up
+  let idx = 1;
+  for (let rep = 0; rep < 15; rep += 1) {
+    laps.push(lap(idx++, 270, 325)); // work
+    // two of the recoveries are near-walks -- the outliers that broke the old algo
+    const recoveryPace = rep === 7 ? 639 : rep === 11 ? 655 : 420;
+    laps.push(lap(idx++, 140, recoveryPace));
+  }
+  laps.push(lap(idx, 1480, 404)); // cool-down
+
+  const detection = detectWorkLaps({ laps, structureSnapshot: null });
+  assert(detection.method !== "none", `Expected a confident split, got method=${detection.method}.`);
+  assert(
+    detection.workBlocks.length === 15,
+    `Slow outliers hijacked the split: expected 15 reps, got ${detection.workBlocks.length}.`
+  );
+  const workLaps = [...detection.isWorkByLapIndex.values()].filter((v) => v === true).length;
+  assert(workLaps === 15, `Expected exactly the 15 work laps to be is_work=true, got ${workLaps}.`);
+  // the two near-stops are recoveries, NOT work
+  assert(detection.isWorkByLapIndex.get(16) === false, "Expected the 639 s/km near-stop to be is_work=false.");
+  assert(detection.isWorkByLapIndex.get(24) === false, "Expected the 655 s/km near-stop to be is_work=false.");
+
+  console.log(`  slow-outlier robustness: reps=${detection.workBlocks.length} (15 expected), near-stops classified as rest`);
+}
+
+// Regression: a rep is a BLOCK, not a lap. Live case (Viktoria Sergeeva,
+// "2 x 24 мин"): the watch auto-lapped every kilometre, so each 24-minute effort
+// arrived as ~5 consecutive work laps. Counting laps reported 10 reps; counting
+// contiguous blocks reports 2.
+function checkAutoLappedRepsMergeIntoBlocks(): void {
+  const lap = (lapIndex: number, distanceM: number, paceSecPerKm: number): NormalizedFitLap =>
+    makeLap({ lapIndex, distanceM, timerTimeS: (distanceM / 1000) * paceSecPerKm });
+
+  const laps: NormalizedFitLap[] = [
+    lap(0, 1000, 394), // warm-up
+    // rep 1 -- one 24min effort, auto-lapped into 5 km splits
+    lap(1, 1000, 316),
+    lap(2, 1000, 312),
+    lap(3, 1000, 310),
+    lap(4, 1000, 310),
+    lap(5, 613, 312),
+    lap(6, 247, 486), // recovery
+    // rep 2 -- same
+    lap(7, 1000, 311),
+    lap(8, 1000, 315),
+    lap(9, 1000, 316),
+    lap(10, 1000, 316),
+    lap(11, 569, 320),
+    lap(12, 247, 486), // recovery
+    lap(13, 696, 431), // cool-down
+  ];
+
+  const detection = detectWorkLaps({ laps, structureSnapshot: null });
+  assert(
+    detection.workBlocks.length === 2,
+    `Auto-lapped reps were not merged: expected 2 rep blocks, got ${detection.workBlocks.length}.`
+  );
+  const workLapCount = [...detection.isWorkByLapIndex.values()].filter((v) => v === true).length;
+  assert(workLapCount === 10, `Expected 10 work LAPS (which merge into 2 reps), got ${workLapCount}.`);
+
+  // ...and the recovery window between BLOCKS must exist, so recovery_drop is computable
+  // again (measuring lap-to-lap gave zero-length windows and nulled every drop).
+  const { records } = buildSegmentedFixture([{ durationS: 3000, speedMps: 3.2, hrFrom: 150, hrTo: 170 }]);
+  const scalars = computeIntervalScalars({
+    laps,
+    workBlocks: detection.workBlocks,
+    cleanedRecords: cleanFixtureRecords(records),
+  });
+  assert(scalars.repPaces !== null && scalars.repPaces.length === 2, "Expected exactly 2 rep_paces (one per block).");
+
+  console.log(
+    `  auto-lap block merge: 10 work laps -> ${detection.workBlocks.length} reps, rep_paces=[${scalars
+      .repPaces!.map((p) => p!.toFixed(0))
+      .join(",")}]`
+  );
+}
+
+// The plan cross-check reference itself was wrong: TrainingPeaks tags the
+// WARM-UP step intensityClass='active', so counting every active step returned
+// N+1 and the note fired MISMATCH on nearly every workout. Only steps inside a
+// block that actually REPEATS are reps.
+function checkExpectedWorkStepCountIgnoresWarmUp(): void {
+  const planWithActiveWarmUp = {
+    structure: [
+      // TP really does tag the warm-up "active" (observed on the live "15 х 1,5 мин" plan)
+      { type: "step", length: { value: 1, unit: "repetition" }, steps: [{ intensityClass: "active" }] },
+      {
+        type: "repetition",
+        length: { value: 15, unit: "repetition" },
+        steps: [{ intensityClass: "active" }, { intensityClass: "rest" }],
+      },
+      { type: "step", length: { value: 1, unit: "repetition" }, steps: [{ intensityClass: "coolDown" }] },
+    ],
+  };
+  const expected = extractExpectedWorkStepCount(planWithActiveWarmUp);
+  assert(expected === 15, `Warm-up leaked into the rep count: expected 15, got ${expected}.`);
+
+  // A plan with no repeating block has no reps to expect -> null (silent), not 0.
+  const steadyPlan = {
+    structure: [{ type: "step", length: { value: 1, unit: "repetition" }, steps: [{ intensityClass: "active" }] }],
+  };
+  assert(
+    extractExpectedWorkStepCount(steadyPlan) === null,
+    "A plan with no repeating block must yield null (cross-check silent), not 0."
+  );
+
+  console.log(`  expected-work-steps: active warm-up excluded -> 15 (was 16); no-repetition plan -> null`);
+}
+
 function checkStructureTier(): void {
   const expected = extractExpectedWorkStepCount(INTERVAL_STRUCTURE_SNAPSHOT);
   assert(expected === 4, `Expected 4 active steps from the interval structure, got ${expected}.`);
@@ -483,24 +602,24 @@ function checkIntervalWorkoutScalars(): void {
 
   const workDetection = detectWorkLaps({ laps, structureSnapshot: null });
   assert(workDetection.method !== "none", `Expected a confident work/rest split, got method=${workDetection.method}.`);
-  const workLapCount = [...workDetection.isWorkByLapIndex.values()].filter((v) => v === true).length;
-  assert(workLapCount === 4, `Expected 4 work laps detected, got ${workLapCount}.`);
+  const repCount = workDetection.workBlocks.length;
+  assert(repCount === 4, `Expected 4 rep blocks detected, got ${repCount}.`);
 
-  const intervalScalars = computeIntervalScalars({ laps, isWorkByLapIndex: workDetection.isWorkByLapIndex, cleanedRecords });
+  const intervalScalars = computeIntervalScalars({ laps, workBlocks: workDetection.workBlocks, cleanedRecords });
   assert(intervalScalars.repPaces !== null && intervalScalars.repPaces.length === 4, "Expected 4 rep_paces.");
   assert(intervalScalars.repPeakHrs !== null && intervalScalars.repPeakHrs.every((v) => v !== null && v > 160), "Expected all rep_peak_hrs computed and >160bpm.");
   assert(intervalScalars.repRecoveryDrops !== null && intervalScalars.repRecoveryDrops.every((v) => v !== null && v > 0), "Expected all rep_recovery_drops computed and positive.");
   assert(intervalScalars.repPaceFadePct !== null && intervalScalars.repPaceFadePct > 0, `Expected positive rep_pace_fade_pct (last rep slowest), got ${intervalScalars.repPaceFadePct}.`);
   assert(intervalScalars.repPaceCv !== null && intervalScalars.repPaceCv > 0, "Expected a non-null, non-zero rep_pace_cv.");
 
-  const isIntervalWorkout = workDetection.method !== "none" && workLapCount >= MIN_WORK_REPS_FOR_SCALARS;
+  const isIntervalWorkout = workDetection.method !== "none" && repCount >= MIN_WORK_REPS_FOR_SCALARS;
   const decoupling = computeSteadyDecoupling({ cleanedRecords, isIntervalWorkout, hrQuality: "good" });
   assert(decoupling.decouplingValid === false, "Expected decoupling_valid=false on an interval workout.");
   assert(decoupling.decouplingInvalidReason === "interval_workout", `Expected reason=interval_workout, got ${decoupling.decouplingInvalidReason}.`);
   assert(decoupling.hrDecouplingPct === null, "Expected hr_decoupling_pct=null on an interval workout.");
 
   console.log(
-    `  interval workout: work_laps=${workLapCount}, rep_pace_fade_pct=${intervalScalars.repPaceFadePct!.toFixed(1)}%, rep_pace_cv=${intervalScalars.repPaceCv!.toFixed(1)}%, ` +
+    `  interval workout: reps=${repCount}, rep_pace_fade_pct=${intervalScalars.repPaceFadePct!.toFixed(1)}%, rep_pace_cv=${intervalScalars.repPaceCv!.toFixed(1)}%, ` +
       `rep_recovery_drops=[${intervalScalars.repRecoveryDrops!.map((v) => v!.toFixed(0)).join(",")}], decoupling_valid=false reason=${decoupling.decouplingInvalidReason}`
   );
 }
@@ -628,10 +747,8 @@ function checkIntervalScalarsSuppressedBelowMinReps(): void {
     { durationS: 300, speedMps: 2.8, hrFrom: 138, hrTo: 142 },
   ]);
   const cleanedRecords = cleanFixtureRecords(records);
-  // No work laps at all — mirrors a steady run where detectWorkLaps found no split.
-  const isWorkByLapIndex = new Map<number, boolean | null>();
-
-  const result = computeIntervalScalars({ laps, isWorkByLapIndex, cleanedRecords });
+  // No rep blocks at all — mirrors a steady run where detectWorkLaps found no split.
+  const result = computeIntervalScalars({ laps, workBlocks: [], cleanedRecords });
   assert(result.repPaces === null, "Expected rep_paces=null (not an empty array) below the work-rep minimum.");
   assert(result.repPeakHrs === null, "Expected rep_peak_hrs=null below the work-rep minimum.");
   assert(result.repPaceFadePct === null, "Expected rep_pace_fade_pct=null (not 0) below the work-rep minimum.");
@@ -667,6 +784,9 @@ function run(): void {
   console.log("[check-fit-ingest-pipeline] Lap work detection");
   checkStructureTier();
   checkHeuristicTierOnLiveIntervalProfile();
+  checkSlowOutlierDoesNotHijackSplit();
+  checkAutoLappedRepsMergeIntoBlocks();
+  checkExpectedWorkStepCountIgnoresWarmUp();
   checkLapTriggerTier();
   checkHeuristicTier();
   checkNoneTier();
