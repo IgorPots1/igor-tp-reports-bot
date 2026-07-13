@@ -17,6 +17,19 @@ export type NutritionPlanSource =
   | "missing_bodyweight"
   | "unknown";
 
+/**
+ * Health of the workout-cache scan covering the PLAN week.
+ *
+ * "ok" = the scan ran and came back clean, so an EMPTY week is a REAL week without
+ * training (illness / recovery / not written in TP yet) — not a hole in the data.
+ * "failed" / "missing" (and absent) = we cannot vouch for the week; an empty week
+ * there is a data gap and must NOT be turned into confident rest days.
+ *
+ * Same discriminator the review already uses (inferCanonicalTrainingType in
+ * methodology.ts, via the week context's cacheStatus).
+ */
+export type NutritionPlanWeekScanState = "ok" | "failed" | "missing";
+
 import {
   hasNutritionIntervalWorkoutEvidence,
   hasNutritionTempoWorkEvidence,
@@ -143,6 +156,13 @@ export type NutritionNextWeekPlan = {
     long_run_confidence: NutritionLongRunConfidence;
     hard_dates: string[];
     missing_bodyweight: boolean;
+    /**
+     * The plan week has NO workouts and the scan covering it is healthy: a real
+     * training-free week, planned as maintenance (даже цели по дням, rest-формула).
+     * False when the week is empty because the scan failed / never ran — that stays
+     * a data gap with null targets.
+     */
+    no_training_week_maintenance: boolean;
   };
   warnings: string[];
 };
@@ -1381,6 +1401,13 @@ export function buildNutritionNextWeekPlan(params: {
   sex?: NutritionSex | null;
   heightCm?: number | null;
   ageYears?: number | null;
+  /**
+   * Health of the scan covering the plan week. Only "ok" lets a workout-less day
+   * become a CONFIDENT rest day (see NutritionPlanWeekScanState). Absent = no scan
+   * evidence = conservative: workout-less days stay "unknown" (null targets), so a
+   * caller that cannot vouch for the data never gets invented numbers.
+   */
+  planWeekScanState?: NutritionPlanWeekScanState | null;
 }): NutritionNextWeekPlan {
   const goalType: NutritionGoalType = params.goalType ?? "maintain";
   // Task 10++: for lose/gain the deficit/surplus is anchored on a corrected
@@ -1433,8 +1460,27 @@ export function buildNutritionNextWeekPlan(params: {
   const dates = buildWeekDates(params.planWeekFrom, params.planWeekTo);
   const parsedWorkouts = parseTrainingContextWorkouts(params.trainingContext);
   const hasTrainingContext = parsedWorkouts.length > 0;
+  // A week with NO workouts is ambiguous: a REAL training-free week (illness,
+  // recovery, week not written in TP yet) vs a scan that never brought the data.
+  // The review already resolves exactly this ambiguity — inferCanonicalTrainingType
+  // (methodology.ts): a day with no TP workout is a CONFIDENT rest day when the
+  // week's scan came back healthy, and only an unhealthy scan leaves it "unknown".
+  //
+  // The plan had no scan signal at all and substituted a proxy: "does the week have
+  // ANY workout". So a week with zero workouts made EVERY day "unknown" — a day type
+  // with no row in FORMULA_BY_DAY_TYPE — and calculateNutritionDayTypeTarget returned
+  // null for all eight days: a plan without a single number. Absurd by construction:
+  // ONE workout in the week would have given every other day a normal rest target,
+  // while NONE gave nothing. A sick athlete got strictly worse output than a training
+  // one. Now the plan uses the same discriminator as the review: healthy scan ⇒ a day
+  // without a workout is rest; unhealthy/absent scan ⇒ "unknown" (data gap, null).
+  const planWeekScanHealthy = params.planWeekScanState === "ok";
+  const noTrainingWeekMaintenance = !hasTrainingContext && planWeekScanHealthy;
   const warnings: string[] = [];
-  if (!hasTrainingContext) {
+  if (noTrainingWeekMaintenance) {
+    // Not a missing context — an UNDERSTOOD empty week, planned as maintenance.
+    warnings.push("no_training_week_maintenance");
+  } else if (!hasTrainingContext) {
     warnings.push("training_context_missing");
   }
   if (!params.bodyweightKg || params.bodyweightKg <= 0) {
@@ -1486,7 +1532,12 @@ export function buildNutritionNextWeekPlan(params: {
   const days: NutritionNextWeekPlanDay[] = dates.map((date) => {
     const dayWorkouts = workoutsByDate.get(date) ?? [];
     const primaryWorkout = pickPrimaryWorkout(dayWorkouts);
-    const baseType = primaryWorkout?.dayType ?? (hasTrainingContext ? "rest" : "unknown");
+    // No workout on this day ⇒ rest, provided we can trust the week: either the week
+    // does carry workouts (so the calendar is real and this day is simply empty), or
+    // the scan covering the week is healthy (so an empty WEEK is real too). Otherwise
+    // "unknown" — no formula, null targets, an honest data gap.
+    const baseType =
+      primaryWorkout?.dayType ?? (hasTrainingContext || planWeekScanHealthy ? "rest" : "unknown");
     const dayBeforeLongRun = longRunDates.has(addDays(date, 1));
     const harder =
       baseType === "race" || baseType === "long_run" || baseType === "long_endurance" || baseType === "hard";
@@ -1549,7 +1600,9 @@ export function buildNutritionNextWeekPlan(params: {
     let source: NutritionPlanSource = "unknown";
     if (!params.bodyweightKg || params.bodyweightKg <= 0) {
       source = "missing_bodyweight";
-    } else if (!hasTrainingContext) {
+    } else if (!hasTrainingContext && !planWeekScanHealthy) {
+      // Empty week we cannot vouch for → generic, as before. An empty week with a
+      // HEALTHY scan is not generic: its days are inferred rest (below).
       source = "generic_day_type";
     } else if (dayBeforeLongRun && !harder) {
       source = "inferred_from_week_structure";
@@ -1819,6 +1872,7 @@ export function buildNutritionNextWeekPlan(params: {
       long_run_confidence: longRunDay?.long_run_confidence ?? (longEnduranceDay ? "medium" : "low"),
       hard_dates: days.filter((day) => day.training_type === "hard").map((day) => day.date),
       missing_bodyweight: !params.bodyweightKg || params.bodyweightKg <= 0,
+      no_training_week_maintenance: noTrainingWeekMaintenance,
     },
     warnings,
   };

@@ -228,6 +228,9 @@ assert.ok(
   )
 );
 
+// No scan evidence passed at all → we cannot vouch for the empty week, so days stay
+// "unknown" (null targets). Conservative default: a caller that says nothing about the
+// scan never gets invented rest days.
 const noTpContext = buildNutritionNextWeekPlan({
   bodyweightKg: 56,
   planWeekFrom: "2026-06-08",
@@ -237,6 +240,94 @@ const noTpContext = buildNutritionNextWeekPlan({
 assert.ok(noTpContext.warnings.includes("training_context_missing"));
 assert.equal(noTpContext.days.length, 7);
 assert.ok(noTpContext.days.every((day) => day.training_type === "unknown"));
+assert.equal(noTpContext.summary.no_training_week_maintenance, false);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Week with ZERO workouts and a HEALTHY scan = a real training-free week (illness /
+// recovery / not written yet), NOT a data gap. Every day must be a confident rest day
+// with real targets. This is the Селезнёва case: she fell ill, the week ahead is empty,
+// the scan is fine — and the plan used to come out with target_kcal = null on all 8 days
+// because "no workouts in the week" made every day "unknown", a type with no formula.
+// Absurd by construction: ONE workout in the week would have given the other days a
+// normal rest target; zero gave nothing at all.
+const sickWeekPlan = buildNutritionNextWeekPlan({
+  bodyweightKg: 56,
+  planWeekFrom: "2026-07-13",
+  planWeekTo: "2026-07-20",
+  trainingContext: { cacheStatus: "empty", workouts: [] },
+  planWeekScanState: "ok",
+});
+assert.equal(sickWeekPlan.days.length, 8, "Mon→next Mon plan week = 8 days (bridge Monday)");
+assert.ok(
+  sickWeekPlan.days.every((day) => day.training_type === "rest"),
+  "empty week + healthy scan: every day is a confident rest day"
+);
+assert.ok(
+  sickWeekPlan.days.every((day) => day.target_kcal !== null && day.target_kcal > 0),
+  "empty week + healthy scan: NO day may come out with target_kcal null"
+);
+assert.ok(
+  sickWeekPlan.days.every(
+    (day) => day.protein_g !== null && day.fat_g !== null && day.carbs_g !== null
+  ),
+  "empty week + healthy scan: macros must be present on every day"
+);
+// Even week: a maintenance plan must not swing day to day.
+const sickWeekKcal = new Set(sickWeekPlan.days.map((day) => day.target_kcal));
+assert.equal(sickWeekKcal.size, 1, "no-training week: the calorie target is flat across days");
+assert.ok(sickWeekPlan.days.every((day) => day.flags.rest === true));
+assert.ok(sickWeekPlan.days.every((day) => day.flags.key_workout === false));
+assert.ok(
+  sickWeekPlan.days.every((day) => day.source === "inferred_from_week_structure"),
+  "a confident rest day is inferred from the week, not a generic fallback"
+);
+assert.equal(sickWeekPlan.summary.no_training_week_maintenance, true);
+assert.ok(sickWeekPlan.warnings.includes("no_training_week_maintenance"));
+assert.ok(
+  !sickWeekPlan.warnings.includes("training_context_missing"),
+  "an understood empty week is not a missing-context warning"
+);
+
+// The other half of the same rule: an empty week whose scan FAILED or never ran is a
+// data gap. It must NOT be dressed up as a rest week — days stay unknown, targets null,
+// so the coach-facing gate keeps flagging a hole in the data instead of inventing food.
+for (const scanState of ["failed", "missing"] as const) {
+  const brokenScanPlan = buildNutritionNextWeekPlan({
+    bodyweightKg: 56,
+    planWeekFrom: "2026-07-13",
+    planWeekTo: "2026-07-20",
+    trainingContext: { cacheStatus: "empty", workouts: [] },
+    planWeekScanState: scanState,
+  });
+  assert.ok(
+    brokenScanPlan.days.every((day) => day.training_type === "unknown"),
+    `scan ${scanState}: an empty week is a data gap, not rest`
+  );
+  assert.ok(
+    brokenScanPlan.days.every((day) => day.target_kcal === null),
+    `scan ${scanState}: no invented targets`
+  );
+  assert.equal(brokenScanPlan.summary.no_training_week_maintenance, false);
+  assert.ok(brokenScanPlan.warnings.includes("training_context_missing"));
+}
+
+// A week that HAS workouts is unaffected by scan state (the calendar speaks for itself):
+// days without a workout were already rest, and still are.
+const scanFailedButWorkoutsPresent = buildNutritionNextWeekPlan({
+  bodyweightKg: 56,
+  planWeekFrom: "2026-06-08",
+  planWeekTo: "2026-06-14",
+  trainingContext: {
+    cacheStatus: "ok",
+    workouts: [{ date: "2026-06-10", title: "Run 10 km easy", type: "run" }],
+  },
+  planWeekScanState: "failed",
+});
+assert.equal(
+  scanFailedButWorkoutsPresent.days.find((day) => day.date === "2026-06-09")?.training_type,
+  "rest"
+);
+assert.equal(scanFailedButWorkoutsPresent.summary.no_training_week_maintenance, false);
 
 const padelPlan = buildNutritionNextWeekPlan({
   bodyweightKg: 60,

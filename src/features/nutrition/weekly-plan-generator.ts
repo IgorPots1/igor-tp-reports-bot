@@ -13,6 +13,7 @@ import {
 } from "@/features/nutrition/weekly-plan-formulas";
 import {
   createNutritionWeeklyPlan,
+  getNutritionReportWithMacros,
   getNutritionStudentEssentials,
   getNutritionWeeklyAnalysisById,
   markNutritionWeeklyPlansSuperseded,
@@ -70,6 +71,16 @@ export type NutritionWeeklyPlanFacts = {
     athleteMessageDraft: string | null;
     nutritionSummary: Record<string, unknown>;
     safetyFlags: Record<string, unknown>;
+    /**
+     * The coach's note on the source report (nutrition_reports.coach_notes_ru) — e.g.
+     * "болеет, тренировок не будет". The REVIEW prompt already receives it (context
+     * .coachReportNoteRu → facts.coach_report_note), and in the merged flow the plan
+     * prose comes out of that same call, so it inherits the note. The standalone plan
+     * path (no review prose → own model call) saw NOTHING of it: the very note that
+     * explains an empty week never reached the plan that had to interpret one.
+     * Context for tone only — never a source of numbers.
+     */
+    coachReportNoteRu: string | null;
   };
   planWeek: {
     from: string;
@@ -460,6 +471,8 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
    */
   nextWeekScanState?: "ok" | "failed" | "missing";
   nextWeekScanError?: string | null;
+  /** Coach note on the source report — tone context for the plan model (never numbers). */
+  coachReportNoteRu?: string | null;
 }): NutritionWeeklyPlanFacts {
   const nutritionSummary = input.sourceAnalysis.nutritionSummary;
   const safetyFlags = input.sourceAnalysis.safetyFlags;
@@ -493,6 +506,10 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
     sex: input.sex ?? null,
     heightCm: input.heightCm ?? null,
     ageYears: input.ageYears ?? null,
+    // The scan status the gate below already reads, now also given to the formulas:
+    // it is what separates "no training this week" (rest targets) from "the data never
+    // arrived" (unknown, null targets). Without it an empty week had no numbers at all.
+    planWeekScanState: input.nextWeekScanState ?? null,
   });
 
   return {
@@ -514,6 +531,7 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
       athleteMessageDraft: input.sourceAnalysis.athleteMessageDraft,
       nutritionSummary,
       safetyFlags,
+      coachReportNoteRu: compactText(input.coachReportNoteRu),
     },
     planWeek,
     planWeekMode: targetPlanWeek.mode,
@@ -551,7 +569,15 @@ export function buildNutritionWeeklyPlanFactsFromSources(input: {
  * Resolve the state of the latest workout-cache scan covering the plan week, so
  * the coach-facing gate can distinguish "TP access failure" from "week not
  * planned in TP yet". Never throws — a status-read failure must not block plan
- * generation, so it degrades to "ok" (the generic "not visible in TP" hint).
+ * generation.
+ *
+ * A read failure degrades to "missing", NOT "ok". "ok" no longer means merely "say the
+ * generic hint": it now positively vouches that an EMPTY week is a REAL week without
+ * training, and a vouched-for empty week gets confident rest targets (see
+ * planWeekScanState in weekly-plan-formulas). Turning a failed read into that vouch
+ * would invent a week of food out of a transient outage. "missing" keeps the honest
+ * data-gap behaviour — which is also exactly what an empty week produced before this
+ * signal existed, so nothing regresses on the error path.
  */
 async function resolvePlanWeekScanState(
   studentId: string,
@@ -570,7 +596,23 @@ async function resolvePlanWeekScanState(
     }
     return { state: "ok", error: null };
   } catch {
-    return { state: "ok", error: null };
+    return { state: "missing", error: null };
+  }
+}
+
+/**
+ * Coach note on the report the review was built from. Never throws: the note is tone
+ * context, so losing it must degrade the prose, not break plan generation.
+ */
+async function resolvePlanSourceCoachNote(reportId: string | null): Promise<string | null> {
+  if (!reportId) {
+    return null;
+  }
+  try {
+    const report = await getNutritionReportWithMacros(reportId);
+    return report?.report.coachNotesRu ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -614,6 +656,12 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
   const targetPlanWeek = resolveFactsTargetPlanWeek({ todayLocalDate: input.todayLocalDate });
   const planWeek = { from: targetPlanWeek.from, to: targetPlanWeek.to };
   const nextWeekScan = await resolvePlanWeekScanState(input.studentId, planWeek.from);
+  // The coach note on the source report ("болеет", "неделя разгрузочная", …). The review
+  // already gets it; the standalone plan model call did not. Best-effort: a failed read
+  // must not block plan generation — the plan just loses tone context, not numbers.
+  const coachReportNoteRu = await resolvePlanSourceCoachNote(
+    input.sourceAnalysis.reportId ?? input.sourceReportId ?? null
+  );
   const sourceReviewContext = toObject(input.sourceAnalysis.tpNextWeekContext);
   let freshContext: Record<string, unknown> | null = null;
   let tpNextWeekContextOverride = sourceReviewContext;
@@ -645,6 +693,7 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
       ageYears: essentials.profile?.ageYears ?? null,
       nextWeekScanState: nextWeekScan.state,
       nextWeekScanError: nextWeekScan.error,
+      coachReportNoteRu,
     });
     return {
       facts,
@@ -710,9 +759,20 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
     ageYears: essentials.profile?.ageYears ?? null,
     nextWeekScanState: nextWeekScan.state,
     nextWeekScanError: nextWeekScan.error,
+    coachReportNoteRu,
   });
 
   return { facts, tpContextRefresh };
+}
+
+/**
+ * The plan week has NO workouts and the scan covering it came back healthy — a real
+ * week without training (illness / recovery / not written in TP yet), not a data gap.
+ * Mirrors the day formulas' discriminator (planWeekScanState in weekly-plan-formulas),
+ * so the framing and the numbers always agree about whether the week has load in it.
+ */
+function isNoTrainingMaintenancePlanWeek(facts: NutritionWeeklyPlanFacts): boolean {
+  return facts.nextWeekTraining.workouts.length === 0 && facts.nextWeekTraining.scanState === "ok";
 }
 
 function buildFallbackPlanFocus(facts: NutritionWeeklyPlanFacts): NutritionWeeklyPlanAiOutput["plan_focus"] {
@@ -723,6 +783,17 @@ function buildFallbackPlanFocus(facts: NutritionWeeklyPlanFacts): NutritionWeekl
       title: "Не просаживать углеводы и энергию вокруг ключевых тренировок",
       explanation:
         "На следующей неделе в TrainingPeaks есть ключевые работы — держим питание в дни нагрузки и восстановления ровным, без резких ограничений.",
+    };
+  }
+  // No training at all next week (scan healthy). The old text below talked about "дни
+  // нагрузки" — on a week that has none. For an athlete who is ill that is both wrong
+  // and tone-deaf: the week is about recovery, not about fuelling work.
+  if (isNoTrainingMaintenancePlanWeek(facts)) {
+    return {
+      category: "maintenance_no_training",
+      title: "Ровное поддерживающее питание на неделе без тренировок",
+      explanation:
+        "Тренировок на этой неделе нет — это неделя восстановления и поддержания. Калораж ровный по всем дням: держим регулярность, белок и восстановление, ориентируемся на самочувствие.",
     };
   }
   return {
@@ -776,6 +847,7 @@ function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: N
       typeof day.carbs_g_per_kg === "number" ? ` (~${formatDecimalRu(day.carbs_g_per_kg)} г/кг)` : "";
     return `🔹 ${day.weekday_ru} (${formatDateRu(day.date)}) — ${day.training_label}: ${kcal} · ${protein} · ${fat} · ${carbs}${carbsPerKg}.`;
   });
+  const maintenanceWeek = isNoTrainingMaintenancePlanWeek(facts);
   const lines = [
     address.greeting,
     "",
@@ -784,11 +856,16 @@ function buildFallbackAthleteDraft(facts: NutritionWeeklyPlanFacts, planFocus: N
     "",
     "Ориентиры по дням из согласованного плана:",
     "Цифры ниже - ориентиры, не обязательство. Не нужно резко прыгать к ним за один день.",
-    "Главный шаг на этой неделе - поднять энергию и углеводы в дни нагрузки, особенно перед ключевой тренировкой.",
+    // На неделе без тренировок «дни нагрузки» и «ключевая тренировка» — выдумка.
+    maintenanceWeek
+      ? "Главный шаг на этой неделе - держать питание ровным и не урезать его из-за того, что тренировок нет: восстановлению энергия нужна."
+      : "Главный шаг на этой неделе - поднять энергию и углеводы в дни нагрузки, особенно перед ключевой тренировкой.",
     ...nextWeekPlanLines,
   ];
   if (keyDays.length > 0) {
     lines.push("", "Ключевые дни:", ...keyDays.map((day) => day.nutrition_guidance));
+  } else if (maintenanceWeek) {
+    lines.push("", "Тренировок на неделе нет - это неделя восстановления. Держи питание ровным и слушай самочувствие; когда вернёшься к тренировкам, вернём и топливо под них.");
   } else {
     lines.push("", "Без привязки к конкретным дням: держи регулярность и не занижай питание в дни, когда чувствуешь нагрузку.");
   }
@@ -812,6 +889,17 @@ function resolveNextWeekPlanTrainingGate(
     return { needsReview: false, reason: null };
   }
   const weekLabel = facts.planWeekMode === "current_week" ? "текущей недели" : "следующей недели";
+  // Scan is healthy and the week is EMPTY: the week really has no training (болезнь /
+  // восстановление / неделя ещё не расписана). Do not claim a cache problem — the scan
+  // came back clean, the plan's numbers are real maintenance targets, and telling the
+  // coach of a sick athlete "расписана ли неделя? кэш обновляется каждые 3 часа" is
+  // simply false. No do_not_send reason: there is nothing wrong with this plan. It stays
+  // needs_review because only the COACH knows which empty week this is — a recovery week
+  // to send as-is, or a week they have not written yet. The maintenance framing itself
+  // lands in plan_focus / simple_actions / coach_summary (see the fallback builders).
+  if (isNoTrainingMaintenancePlanWeek(facts)) {
+    return { needsReview: true, reason: null };
+  }
   if (facts.nextWeekTraining.scanState === "failed") {
     const detail = facts.nextWeekTraining.scanError ? `: ${facts.nextWeekTraining.scanError}` : "";
     return {
@@ -851,6 +939,7 @@ export function generateNutritionWeeklyPlanFallback(
   ];
   const planFocus = buildFallbackPlanFocus(facts);
   const keyTrainingDays = buildFallbackKeyTrainingDays(facts);
+  const maintenanceWeek = isNoTrainingMaintenancePlanWeek(facts);
   const simpleActions =
     facts.nextWeekTraining.status === "available" && keyTrainingDays.length > 0
       ? [
@@ -858,18 +947,28 @@ export function generateNutritionWeeklyPlanFallback(
           "Не оставлять день ключевой тренировки слишком лёгким по энергии.",
           "После тяжёлой работы закрыть восстановление едой, а не пропуском приёмов пищи.",
         ]
-      : [
-          "Держать регулярность питания в дни нагрузки.",
-          "Не копить слишком лёгкие дни подряд без причины.",
-          "Смотреть на энергию и восстановление, а не на жёсткие цифры.",
-        ];
+      : maintenanceWeek
+        ? // Тренировок на неделе нет: ни одного «дня нагрузки» здесь быть не может.
+          [
+            "Держать ровный калораж каждый день — не урезать питание из-за того, что тренировок нет.",
+            "Белок в каждый приём: восстановлению он нужен и без нагрузки.",
+            "Ориентироваться на самочувствие и аппетит, а не на жёсткие цифры.",
+          ]
+        : [
+            "Держать регулярность питания в дни нагрузки.",
+            "Не копить слишком лёгкие дни подряд без причины.",
+            "Смотреть на энергию и восстановление, а не на жёсткие цифры.",
+          ];
 
   const planWeekLabel =
     facts.planWeekMode === "current_week"
       ? `Фокус питания на текущую неделю (${facts.planWeek.from}..${facts.planWeek.to}).`
       : `Фокус питания на следующую неделю (${facts.planWeek.from}..${facts.planWeek.to}).`;
-  const tpContextLabel =
-    facts.planWeekMode === "current_week"
+  const tpContextLabel = maintenanceWeek
+    ? // Скан живой, тренировок нет — это НЕ «cache ограничен». Говорим тренеру правду:
+      // неделя без нагрузки, план поддерживающий, цели по дням ровные.
+      "Тренировок на эту неделю в TrainingPeaks нет, скан живой — план сделан ПОДДЕРЖИВАЮЩИМ: цели по дням ровные (rest). Если неделя будет расписана — перегенерировать план."
+    : facts.planWeekMode === "current_week"
       ? "План тренировок на целевую неделю в TrainingPeaks не виден или cache ограничен."
       : "План тренировок на следующую неделю в TrainingPeaks не виден или cache ограничен.";
   const coachLines = [
@@ -981,6 +1080,16 @@ async function generateNutritionWeeklyPlanWithAiInternal(
     "If no TP next-week workouts, no day-specific recommendations.",
     "Copy-only draft for manual coach review before sending.",
     "No medical advice.",
+    "Заметка тренера к отчёту (sourceReview.coachReportNoteRu, если не null) — КОНТЕКСТ для тона и акцентов, НЕ источник чисел. Если в ней сказано, что ученица болеет / на паузе — пиши бережно, без давления и без подгона к возвращению в тренировки.",
+    ...(isNoTrainingMaintenancePlanWeek(facts)
+      ? [
+          // Тренировок на неделе НЕТ, и скан это подтверждает. Без этого правила модель
+          // пишет про «дни нагрузки» и «ключевые работы», которых на неделе не существует.
+          "НА ЭТОЙ НЕДЕЛЕ ТРЕНИРОВОК НЕТ (в TrainingPeaks пусто, скан живой — это не дыра в данных, а неделя без нагрузки: болезнь / восстановление / пауза). План поддерживающий: калораж ровный по всем дням (у всех дней в next_week_plan тип rest).",
+          "ЗАПРЕЩЕНО: «дни нагрузки», «энергия под нагрузку», «перед ключевой тренировкой», «ключевые работы», советы разгонять углеводы под работу — НИЧЕГО ЭТОГО НА НЕДЕЛЕ НЕТ. key_training_days = пустой массив. Не выдумывай тренировок.",
+          "Тон: спокойный, заботливый. Уместно — ровное питание, белок, восстановление, «слушай самочувствие». Диагнозов и медицинских советов не давать.",
+        ]
+      : []),
     allowAthleteDraft
       ? "athlete_message_draft is required — short Telegram-ready Russian text."
       : "Safety blocked: athlete_message_draft must be null.",

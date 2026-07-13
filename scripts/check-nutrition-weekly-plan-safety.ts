@@ -151,4 +151,101 @@ assert.doesNotMatch(
   "athlete weekly-plan draft must avoid diagnostic language"
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Week without training (athlete is ill) + HEALTHY scan. The plan must be a real
+// maintenance plan, and the coach-facing gate must not lie about the cache.
+function buildEmptyWeekFacts(scanState: "ok" | "failed") {
+  return buildNutritionWeeklyPlanFactsFromSources({
+    studentId: "student-uuid-3",
+    studentName: "Тест",
+    formality: "ty",
+    weightKg: 56,
+    planWeekOverride: { from: "2026-07-13", to: "2026-07-20", mode: "next_week" },
+    nextWeekScanState: scanState,
+    nextWeekScanError: scanState === "failed" ? "403 from TrainingPeaks" : null,
+    coachReportNoteRu: "Заболела, тренировок на неделе не будет.",
+    sourceAnalysis: {
+      id: "analysis-sick",
+      studentId: "student-uuid-3",
+      reportId: "report-sick",
+      weekFrom: "2026-07-06",
+      weekTo: "2026-07-12",
+      status: "needs_review",
+      internalSummary: {},
+      tpPastWeekContext: {},
+      // The plan week is empty in TP: she is ill and nothing is scheduled.
+      tpNextWeekContext: { cacheStatus: "empty", workouts: [], keyWorkouts: [], longRun: null },
+      nutritionSummary: {
+        data_quality_summary: { parsed_days: 7 },
+        do_not_send_reasons: [],
+      },
+      safetyFlags: { hard_flags: [], soft_flags: [], blocked: false },
+      contextSnapshot: {},
+      promptHash: null,
+      contextHash: null,
+      aiModel: null,
+      athleteMessageDraft: null,
+      coachEdits: null,
+      createdAt: "2026-07-13T10:00:00.000Z",
+      updatedAt: "2026-07-13T10:00:00.000Z",
+    } satisfies NutritionWeeklyAnalysis,
+  });
+}
+
+const sickFacts = buildEmptyWeekFacts("ok");
+const sickPlan = generateNutritionWeeklyPlanFallback(sickFacts);
+const sickReasons = sickPlan.planSummary.do_not_send_reasons as string[];
+
+// The lie: telling the coach of a sick athlete that the week may just be unwritten and
+// "кэш обновляется каждые 3 часа". The scan is healthy; the week is empty because she
+// is ill. No cache story may appear.
+for (const lie of [/кэш/i, /расписана ли неделя/i, /запусти скан/i, /не подтянулись/i]) {
+  assert.ok(
+    !sickReasons.some((reason) => lie.test(reason)),
+    `no-training week with a healthy scan must not blame the cache: ${lie}`
+  );
+}
+assert.deepEqual(sickReasons, [], "a maintenance plan has nothing that blocks sending");
+
+// Numbers exist (this is the whole point: target_kcal was null on every day).
+assert.ok(
+  sickFacts.nextWeekPlan.days.every((day) => day.target_kcal !== null),
+  "no-training week: every day must carry a real target"
+);
+assert.equal(sickFacts.nextWeekPlan.summary.no_training_week_maintenance, true);
+
+// Framing: no talk of load days on a week that has none.
+const loadTalk = /дни нагрузки|дней нагрузки|под нагрузку|ключевой тренировк|ключевые работ/i;
+const planFocus = sickPlan.planSummary.plan_focus;
+assert.ok(!loadTalk.test(planFocus.title), "plan focus title must not invent load days");
+assert.ok(!loadTalk.test(planFocus.explanation), "plan focus explanation must not invent load days");
+for (const action of sickPlan.planSummary.simple_actions) {
+  assert.ok(!loadTalk.test(action), `simple action must not invent load days: ${action}`);
+}
+assert.ok(!loadTalk.test(sickPlan.athleteMessageDraft ?? ""), "athlete draft must not invent load days");
+assert.match(sickPlan.coachSummary, /поддерживающ/i, "coach summary must frame the week as maintenance");
+assert.equal(sickPlan.planSummary.key_training_days.length, 0);
+// Still surfaced to the coach: only he knows if this is a recovery week or one he has
+// simply not written yet.
+assert.equal(sickPlan.status, "needs_review");
+
+// The other branch is untouched: a FAILED scan is still an honest data gap, and it must
+// keep saying so (and must not be dressed up as a recovery week).
+const brokenFacts = buildEmptyWeekFacts("failed");
+const brokenPlan = generateNutritionWeeklyPlanFallback(brokenFacts);
+const brokenReasons = brokenPlan.planSummary.do_not_send_reasons as string[];
+assert.ok(
+  brokenReasons.some((reason) => /сбой доступа|403/i.test(reason)),
+  "a failed scan must still be reported as a TP access failure"
+);
+assert.ok(
+  brokenFacts.nextWeekPlan.days.every((day) => day.target_kcal === null),
+  "a failed scan must not produce invented targets"
+);
+assert.equal(brokenPlan.status, "needs_review");
+assert.equal(brokenFacts.nextWeekPlan.summary.no_training_week_maintenance, false);
+
+// The coach note must reach the plan facts (the model reads it for tone).
+assert.match(sickFacts.sourceReview.coachReportNoteRu ?? "", /Заболела/);
+
 console.log("PASS check-nutrition-weekly-plan-safety");

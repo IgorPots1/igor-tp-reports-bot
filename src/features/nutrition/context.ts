@@ -5,10 +5,12 @@ import {
 } from "@/features/trainingpeaks/communication-profile";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
+import { getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCoveringDate } from "@/features/trainingpeaks/repository";
 import type {
   TrainingPeaksStudentMemoryItem,
   TrainingPeaksWorkoutCacheRow,
 } from "@/features/trainingpeaks/repository";
+import type { NutritionPlanWeekScanState } from "@/features/nutrition/weekly-plan-formulas";
 import {
   isNutritionLongRunWorkout,
   resolveNutritionLongRunConfidence,
@@ -495,7 +497,28 @@ export type NutritionStudentContext = {
    * Drives maintenance-mode review generation (Task 5b). Optional: absent === false.
    */
   noTrainingWeek?: boolean;
+  /**
+   * Health of the workout-cache scan covering the NEXT (plan) week. "ok" = the scan
+   * ran clean, so an empty plan week is a real training-free week (illness / recovery
+   * / not written yet) and its days are planned as rest. Anything else = we cannot
+   * vouch for the week; days stay "unknown" (null targets, honest data gap).
+   * Same signal the plan gate reads (resolvePlanWeekScanState, weekly-plan-generator).
+   */
+  nextWeekScanState?: NutritionPlanWeekScanState;
 };
+
+/**
+ * The PLAN week is genuinely without training: no TP workouts AND a healthy scan
+ * covering it. Single source for the plan's maintenance framing (day targets,
+ * coach note, and the model's next_week_plan_text tone) — so the numbers and the
+ * prose can never disagree about whether the week has load in it.
+ *
+ * Deliberately NOT the review's ±28-day neighbour heuristic (noTrainingWeek): the
+ * review has no scan signal and must guess, the plan reads the real scan status.
+ */
+export function isNutritionNoTrainingNextWeek(context: NutritionStudentContext): boolean {
+  return context.tpNextWeek.workouts.length === 0 && context.nextWeekScanState === "ok";
+}
 
 const WEEKDAY_RU_TO_INDEX: Record<string, number> = {
   пн: 0,
@@ -906,6 +929,34 @@ export function computeWeightLossTrend(input: {
   };
 }
 
+/**
+ * Scan health for the week containing `date`, read from the scan-status table (the
+ * same source the plan gate uses). Never throws.
+ *
+ * A read failure degrades to "missing", NOT "ok": "ok" now positively means "the scan
+ * vouches that this week is really empty", and an empty week that is vouched for gets
+ * confident rest targets. Turning a failed read into that vouch would invent numbers
+ * out of an outage — exactly the class of bug this signal exists to prevent. "missing"
+ * keeps the conservative status quo (unknown days, null targets, coach review).
+ */
+async function resolveNutritionWeekScanState(
+  studentId: string,
+  weekDate: string
+): Promise<NutritionPlanWeekScanState> {
+  try {
+    const latest = await getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCoveringDate(
+      studentId,
+      weekDate
+    );
+    if (!latest) {
+      return "missing";
+    }
+    return latest.status === "failed" ? "failed" : "ok";
+  } catch {
+    return "missing";
+  }
+}
+
 function resolveCacheStatus(rows: TrainingPeaksWorkoutCacheRow[]): {
   kind: "ok" | "empty" | "stale";
   note: string;
@@ -1308,6 +1359,15 @@ export async function buildNutritionStudentContext(input: {
     noTrainingWeek = neighborRows.length > 0;
   }
 
+  // Scan health for the PLAN week (the week after the reviewed one). Read only when
+  // that week is empty — that is the only case where it changes anything: it tells an
+  // athlete who simply has no training (illness / recovery) apart from a scan that
+  // failed to deliver. A week WITH workouts needs no vouching.
+  const nextWeekScanState: NutritionPlanWeekScanState =
+    tpNextWeek.workouts.length === 0
+      ? await resolveNutritionWeekScanState(input.studentId, tpNextWeek.periodFrom)
+      : "ok";
+
   // Week-over-week: load the most recent PRIOR week's persisted averages so the
   // generator can praise REAL progress (delta is computed by code, not the model).
   const priorAnalyses = await listRecentNutritionWeeklyAnalysesForStudent(input.studentId, {
@@ -1410,6 +1470,7 @@ export async function buildNutritionStudentContext(input: {
     tpPastWeek,
     tpNextWeek,
     noTrainingWeek,
+    nextWeekScanState,
   };
 }
 

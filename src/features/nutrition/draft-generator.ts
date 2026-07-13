@@ -4,6 +4,7 @@ import {
 } from "@/features/nutrition/athlete-signals";
 import {
   buildNutritionSafetyFlags,
+  isNutritionNoTrainingNextWeek,
   nutritionContextNarrativePreferences,
   type NutritionFatFeedbackPolicy,
   type NutritionFoodItem,
@@ -1345,6 +1346,13 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     ...NUTRITION_VOICE_FEWSHOT_STABLE_LINES,
   ].join("\n");
   const noTrainingWeek = input.context.noTrainingWeek === true;
+  // The PLAN week (next week) has no training and the scan vouches for it. The review
+  // week is a different question: an athlete can have trained all last week and fall
+  // ill on Sunday — exactly the Селезнёва case, where noTrainingWeek is false (3 TP
+  // workouts) while the week ahead is empty. The plan prose (next_week_plan_text) is
+  // written in THIS call, so the model has to be told, or it keeps writing about
+  // "дни нагрузки" and "энергию под ключевую работу" for a week that has neither.
+  const noTrainingNextWeek = isNutritionNoTrainingNextWeek(input.context);
   const hasApprovedHistory = (input.context.studentMemory?.approved_patterns ?? []).length > 0;
   const systemDynamic = [
     allowAthleteDraft
@@ -1365,6 +1373,14 @@ async function generateNutritionWeeklyReviewNarrative(input: {
       ? [
           "На этой неделе тренировок не было — считай дни как поддержание (база от веса + восстановление), спокойно и ровно. НЕ пиши про «энергию мало под нагрузку», «недобор под работу» и т.п. — нагрузки не было. Фокус мягкий: ровное питание, белок, восстановление.",
           "В coach_summary_text добавь короткую оговорку для тренера: по тренировкам данных в TrainingPeaks за эту неделю нет, разбор сделан как поддерживающий; если тренировки были — синхронизировать TP и перегенерировать. В athlete_message_draft эту оговорку НЕ выноси (не пугать «нет данных»).",
+        ]
+      : []),
+    ...(noTrainingNextWeek
+      ? [
+          "НА СЛЕДУЮЩЕЙ НЕДЕЛЕ ТРЕНИРОВОК НЕТ (в TrainingPeaks пусто, скан живой — это не дыра в данных, а неделя БЕЗ НАГРУЗКИ: болезнь / восстановление / пауза). next_week_plan_text пиши как ПОДДЕРЖИВАЮЩУЮ неделю: калораж ровный по всем дням (в фактах next_week_plan у всех дней тип rest), опора на восстановление и самочувствие.",
+          "ЗАПРЕЩЕНО в next_week_plan_text при неделе без тренировок: «дни нагрузки», «энергия под нагрузку», «перед ключевой тренировкой», «ключевые работы», «углеводы под работу», планы разгона питания под тренировки — НИЧЕГО ЭТОГО НА НЕДЕЛЕ НЕТ. Не выдумывай тренировок и не привязывай питание к несуществующим дням.",
+          "Тон плана на неделю без тренировок: спокойный и заботливый. Уместно: ровное питание, белок и восстановление, «слушай самочувствие», «когда вернёшься к тренировкам — вернём и топливо». Если из заметки тренера или комментария ученицы видно, что она болеет — не давить, не требовать цифр, не подгонять с возвращением к нагрузкам. Диагнозов и медицинских советов не давать.",
+          "В coach_summary_text добавь короткую оговорку для тренера: на следующую неделю тренировок в TrainingPeaks нет, план сделан ПОДДЕРЖИВАЮЩИМ (ровные цели по дням); если неделя будет расписана — перегенерировать план. Ученику эту оговорку НЕ выноси.",
         ]
       : []),
     ...(allowAthleteDraft ? buildNutritionVoiceFewShotDynamic({ hasMissingDay }) : []),
@@ -1429,6 +1445,9 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     },
     data_quality: input.context.dataQuality,
     week_training_context: noTrainingWeek ? "maintenance_no_training" : "training_week",
+    // The week the PLAN covers, judged separately from the reviewed week: an athlete
+    // can have trained last week and be ill for the next one.
+    next_week_training_context: noTrainingNextWeek ? "maintenance_no_training" : "training_week",
     next_week_plan: input.nextWeekPlan,
     daily_analysis: dailyFactsForPrompt,
     training_nutrition_links: input.trainingNutritionLinks,
@@ -1708,6 +1727,11 @@ export async function generateNutritionWeeklyAnalysis(input: {
     // notes so the coach sees it even if the model omits it. Not shown to the athlete.
     notes.push("no_training_week:maintenance_assumed_sync_tp_if_wrong");
   }
+  if (isNutritionNoTrainingNextWeek(context)) {
+    // Same caveat for the week the PLAN covers: no training there, scan healthy → the
+    // plan is a maintenance plan. Guaranteed in notes even if the model omits it.
+    notes.push("no_training_next_week:maintenance_plan_regenerate_if_week_gets_planned");
+  }
   const resolvedMacroDays = context.manualMacroRows.filter((row) => !row.day.startsWith("unresolved:")).length;
   // A genuine no-training week (empty past week, but workouts in nearby weeks) is
   // usable context: days are treated as maintenance and the review generates
@@ -1836,6 +1860,10 @@ export async function generateNutritionWeeklyAnalysis(input: {
     sex: context.sex,
     heightCm: context.heightCm,
     ageYears: context.ageYears,
+    // Without this the formulas cannot tell an athlete who has NO training next week
+    // (illness / recovery) from a scan that failed to deliver it — and every day of an
+    // empty week came out "unknown", i.e. target_kcal null across the whole plan.
+    planWeekScanState: context.nextWeekScanState ?? null,
   });
 
   let narrative: {
