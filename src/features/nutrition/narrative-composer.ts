@@ -1797,8 +1797,18 @@ export function buildNutritionWeeklySummary(input: {
   let proteinLowOrBorderlineDays = 0;
   let fatLowOrBorderlineDays = 0;
   let fatHighDays = 0;
+  // Carbs: a HARD low is a headline-worthy shortfall; a borderline is a near-miss that must
+  // not headline the week (a 30 g miss is not «дни пустые по углеводам»). Counted apart —
+  // the headline reads the strict counter, the older downstream sentences keep the combined
+  // one (carbsLowOrBorderlineLoadDays) so their behaviour is unchanged.
   let carbsLowLoadDays = 0;
+  let carbsBorderlineLoadDays = 0;
   let energyLowLoadDays = 0;
+  let loadDaysTotal = 0;
+  // DISTINCT load days carrying any problem (low energy or hard-low carbs). A day that is low
+  // on both counts ONCE: the headline tier is picked by how many DAYS were off, not by how many
+  // signals fired, so one bad day can never be worded as «дни».
+  const problemLoadDays: Array<{ label: string; energy: boolean; carbs: boolean }> = [];
   // Every key workout of the week with its specific label — the длительная/интервалы/
   // темпо/гонка days marked isKey, plus a combined brick day. Listed together in the
   // key-workouts sentence (ordered below); a week with none gets no sentence.
@@ -1819,11 +1829,39 @@ export function buildNutritionWeeklySummary(input: {
     if (day.macro.fatStatus === "high" || day.macro.fatPercentStatus === "high") {
       fatHighDays += 1;
     }
-    if (loadDay && (day.macro.carbsStatus === "low" || day.macro.carbsStatus === "borderline")) {
-      carbsLowLoadDays += 1;
+    if (loadDay) {
+      loadDaysTotal += 1;
+      if (day.macro.carbsStatus === "low") {
+        carbsLowLoadDays += 1;
+      } else if (day.macro.carbsStatus === "borderline") {
+        carbsBorderlineLoadDays += 1;
+      }
     }
-    if (day.hasEnergyIssue && loadDay) {
+    // The weekly counter must see the SAME energy verdict the day prose renders. Day prose
+    // downgrades a pre_long_low day with no actual floor breach (resolvePreLongActualEnergyIssue,
+    // used in buildDayNarrativeParts); counting the RAW flag here let the summary demand «сделать
+    // дни не такими "пустыми" по энергии» about a day whose own prose said «день точно не был
+    // "пустым" по энергии». Same predicate on both surfaces now.
+    const dayEnergyIssue = resolvePreLongActualEnergyIssue({
+      nutritionStatus: day.nutritionStatus,
+      findings: day.findings,
+      hasEnergyIssue: day.hasEnergyIssue,
+    });
+    if (dayEnergyIssue && loadDay) {
       energyLowLoadDays += 1;
+    }
+    if (loadDay && (dayEnergyIssue || day.macro.carbsStatus === "low")) {
+      // Name the day ONLY when it is a key session — there the label is worth saying out loud
+      // («длительная 18 км», «интервалы 6×5 мин»). For an ordinary load day the label collapses
+      // to «бег», and «кроме одного дня — бег» reads thin, so that day stays unnamed.
+      const keyLabel = day.roleInfo.isKey
+        ? day.specificWorkoutLabel?.trim() || formatNutritionWorkoutLabelForAthlete(day)
+        : "";
+      problemLoadDays.push({
+        label: keyLabel,
+        energy: dayEnergyIssue,
+        carbs: day.macro.carbsStatus === "low",
+      });
     }
     // A combined_load day counts as a key workout ONLY when it actually contains a key
     // session: a race / long run (pickCombinedKeySession found it → specificWorkoutLabel
@@ -1869,30 +1907,60 @@ export function buildNutritionWeeklySummary(input: {
 
   const segments: string[] = [];
 
+  // Carbs counter for the OLDER downstream sentences below — kept on the combined
+  // low+borderline definition so their behaviour is unchanged by the headline's stricter one.
+  const carbsLowOrBorderlineLoadDays = carbsLowLoadDays + carbsBorderlineLoadDays;
+  const carbsLow = carbsLowLoadDays > 0;
+  const energyLow = energyLowLoadDays > 0;
+  const onlyProblemDay = problemLoadDays.length === 1 ? problemLoadDays[0] : undefined;
+
+  // The headline is graded by HOW MANY load days were actually off, so the strength of the
+  // wording tracks the strength of the signal: a week-long pattern gets a verdict, two days get
+  // a focus, one day gets a named mention, a clean week gets credit. Only what actually fired is
+  // named (a low-energy week is never told its carbs were low, and vice versa).
   if (energyLowLoadDays >= 3 || (energyLowLoadDays >= 2 && carbsLowLoadDays >= 2)) {
-    // Word the pattern to match what actually triggered it. The condition can fire
-    // on energy alone (energyLowLoadDays >= 3, carbs fine) — asserting "и углеводам"
-    // then would be false. Only claim carbs when the carb pattern is real
-    // (carbsLowLoadDays >= 2, the same signal the second disjunct requires).
+    // Strongest claim, trigger unchanged. The condition can fire on energy alone
+    // (energyLowLoadDays >= 3, carbs fine) — asserting «и углеводам» then would be false.
     segments.push(
       carbsLowLoadDays >= 2
         ? "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии и углеводам."
         : "Главный паттерн недели: дни с нагрузкой часто получались низкими по энергии."
     );
-  } else if (energyLowLoadDays > 0 || carbsLowLoadDays > 0) {
-    // Same discipline as the pattern line above: name only what was actually low,
-    // so a purely low-energy (or purely low-carb) week is not told it was both.
-    const energyLow = energyLowLoadDays > 0;
-    const carbsLow = carbsLowLoadDays > 0;
+  } else if (problemLoadDays.length >= 2) {
+    // Two or more days off — plural is honest, and the line stays a focus, not a verdict.
     segments.push(
       energyLow && carbsLow
-        ? "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по энергии и углеводам."
+        ? "Главный фокус недели — поддержать дни с нагрузкой по энергии и углеводам."
         : carbsLow
-          ? "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по углеводам."
-          : "Главный фокус: сделать дни с нагрузкой не такими «пустыми» по энергии."
+          ? "Главный фокус недели — поддержать дни с нагрузкой по углеводам."
+          : "Главный фокус недели — поддержать дни с нагрузкой по энергии."
+    );
+  } else if (onlyProblemDay) {
+    // ONE day off is not a weekly pattern and must never be worded as «дни». Name that day and
+    // leave the week's verdict intact — this is the line that used to generalise a single day
+    // into «сделать дни с нагрузкой не такими "пустыми"» while the day's own prose was mild.
+    const shortfall =
+      onlyProblemDay.energy && onlyProblemDay.carbs
+        ? "и энергии, и углеводов под такую нагрузку вышло маловато"
+        : onlyProblemDay.carbs
+          ? "углеводов под такую нагрузку не хватило"
+          : "энергии под такую нагрузку вышло маловато";
+    segments.push(
+      onlyProblemDay.label
+        ? `Неделя держалась ровно, кроме одного дня — ${onlyProblemDay.label}: ${shortfall}.`
+        : `Неделя держалась ровно, кроме одного дня с нагрузкой: ${shortfall}.`
+    );
+  } else if (loadDaysTotal > 0) {
+    // Clean week — the summary states that plainly instead of hunting for something to fix.
+    // With borderline days present the credit is worded as «без просадок» (true: a near-miss is
+    // not a shortfall) so it cannot contradict the «на нижней границе» line further down.
+    segments.push(
+      carbsBorderlineLoadDays > 0
+        ? "Неделя вышла ровной: провалов по энергии и углеводам в дни с нагрузкой не было."
+        : "Неделя вышла ровной: дни с нагрузкой закрыты и по энергии, и по углеводам."
     );
   } else {
-    segments.push("Главный момент недели — держать энергию ровнее вокруг ключевых тренировок.");
+    segments.push("Неделя вышла спокойной, без тренировочной нагрузки.");
   }
 
   const proteinAvgOk = (input.weeklyProteinAvgGPerKg ?? 0) >= 1.5 || input.proteinSufficient;
@@ -1901,7 +1969,13 @@ export function buildNutritionWeeklySummary(input: {
   } else if (proteinLowOrBorderlineDays >= 2) {
     segments.push("Белок в целом ближе к нижней границе.");
   } else if (proteinOkDays > proteinLowOrBorderlineDays) {
-    segments.push("Белок в целом ближе к норме, но он не компенсирует просадки по общей энергии и углеводам.");
+    // Only claim protein «не компенсирует просадки» when there IS a shortfall to compensate —
+    // on a clean week that clause invented a problem and contradicted the headline.
+    segments.push(
+      problemLoadDays.length > 0
+        ? "Белок в целом ближе к норме, но он не компенсирует просадки по общей энергии и углеводам."
+        : "Белок в целом ближе к норме."
+    );
   }
 
   if (fatLowOrBorderlineDays >= 2) {
@@ -1911,7 +1985,7 @@ export function buildNutritionWeeklySummary(input: {
   if (
     shouldShowHighFatAthleteFeedback(fatFeedbackPolicy) &&
     fatHighDays >= 1 &&
-    carbsLowLoadDays >= 1
+    carbsLowOrBorderlineLoadDays >= 1
   ) {
     segments.push(
       "В несколько дней с нагрузкой жиры были высоковаты, а углеводов не хватало — имеет смысл сместить часть энергии в углеводы вокруг тяжёлых дней."
@@ -1938,7 +2012,9 @@ export function buildNutritionWeeklySummary(input: {
       segments.push("Лучшие по углеводам дни пришлись не на самые тяжёлые тренировки.");
     }
   }
-  if (carbsLowLoadDays >= 2) {
+  // Stays on the combined counter: «на нижней границе» is precisely where a borderline day sits,
+  // so this line — not the headline — is the right home for near-misses.
+  if (carbsLowOrBorderlineLoadDays >= 2) {
     segments.push("Самые тяжёлые дни вышли с углеводами на нижней границе.");
   }
 
