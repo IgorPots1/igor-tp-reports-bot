@@ -1,7 +1,27 @@
 import { chromium } from "playwright";
 
 import { profileDir } from "./lib/paths.ts";
-import { TP_SESSION_SNAPSHOT_PATH, writeSessionSnapshotAtomic } from "../../../src/features/trainingpeaks/tp-session-snapshot.ts";
+import * as tpSessionSnapshotModule from "../../../src/features/trainingpeaks/tp-session-snapshot.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const tpSessionSnapshotModuleCompat =
+  tpSessionSnapshotModule as NamespaceWithOptionalDefault<typeof tpSessionSnapshotModule>;
+
+const TP_SESSION_SNAPSHOT_PATH =
+  tpSessionSnapshotModuleCompat.TP_SESSION_SNAPSHOT_PATH ?? tpSessionSnapshotModuleCompat.default?.TP_SESSION_SNAPSHOT_PATH;
+const writeSessionSnapshotAtomic =
+  tpSessionSnapshotModuleCompat.writeSessionSnapshotAtomic ?? tpSessionSnapshotModuleCompat.default?.writeSessionSnapshotAtomic;
+
+if (!TP_SESSION_SNAPSHOT_PATH) {
+  throw new Error("tp-session-snapshot.TP_SESSION_SNAPSHOT_PATH is unavailable.");
+}
+if (typeof writeSessionSnapshotAtomic !== "function") {
+  throw new Error("tp-session-snapshot.writeSessionSnapshotAtomic is unavailable.");
+}
 
 /**
  * PR2 — cross-worktree session snapshot writer.

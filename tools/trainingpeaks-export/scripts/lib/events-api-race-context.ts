@@ -1,5 +1,20 @@
 import type { TrainingPeaksWorkoutCacheRow } from "../../../../src/features/trainingpeaks/repository.ts";
-import { classifyTrainingPeaksWorkoutActivity } from "../../../../src/features/trainingpeaks/workout-activity-classification.ts";
+import * as workoutActivityClassificationModule from "../../../../src/features/trainingpeaks/workout-activity-classification.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const workoutActivityClassificationModuleCompat =
+  workoutActivityClassificationModule as NamespaceWithOptionalDefault<typeof workoutActivityClassificationModule>;
+const classifyTrainingPeaksWorkoutActivity =
+  workoutActivityClassificationModuleCompat.classifyTrainingPeaksWorkoutActivity ??
+  workoutActivityClassificationModuleCompat.default?.classifyTrainingPeaksWorkoutActivity;
+
+if (typeof classifyTrainingPeaksWorkoutActivity !== "function") {
+  throw new Error("workout-activity-classification.classifyTrainingPeaksWorkoutActivity is unavailable.");
+}
 
 export type EventsApiEntry = {
   athleteId: number;

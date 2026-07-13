@@ -49,7 +49,7 @@ import type {
   TrainingPeaksWorkoutLapUpsertRow,
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
-import { classifyTrainingPeaksWorkoutActivity } from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
+import * as workoutActivityClassificationModule from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
 import { profileDir, toolRoot } from "./lib/paths.ts";
 import { captureSessionAuth, performApiJsonRequest } from "./lib/trainingpeaks-api-move.ts";
 import {
@@ -69,6 +69,55 @@ import { computeGoalVsActual } from "./lib/fit-goal-vs-actual.ts";
 import { computeIntervalScalars } from "./lib/fit-interval-scalars.ts";
 import { computeAerobicEf, computeSteadyDecoupling } from "./lib/fit-steady-decoupling.ts";
 import { MIN_WORK_REPS_FOR_SCALARS } from "./lib/fit-scalar-constants.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+
+const trainingPeaksRepositoryCompat =
+  trainingPeaksRepository as NamespaceWithOptionalDefault<typeof trainingPeaksRepository>;
+const workoutActivityClassificationModuleCompat =
+  workoutActivityClassificationModule as NamespaceWithOptionalDefault<typeof workoutActivityClassificationModule>;
+
+const listTrainingPeaksStudents =
+  trainingPeaksRepositoryCompat.listTrainingPeaksStudents ??
+  trainingPeaksRepositoryCompat.default?.listTrainingPeaksStudents;
+const listTrainingPeaksWorkoutCacheForStudentDateRange =
+  trainingPeaksRepositoryCompat.listTrainingPeaksWorkoutCacheForStudentDateRange ??
+  trainingPeaksRepositoryCompat.default?.listTrainingPeaksWorkoutCacheForStudentDateRange;
+const getTrainingPeaksAthleteObservedMaxHr =
+  trainingPeaksRepositoryCompat.getTrainingPeaksAthleteObservedMaxHr ??
+  trainingPeaksRepositoryCompat.default?.getTrainingPeaksAthleteObservedMaxHr;
+const replaceTrainingPeaksWorkoutLaps =
+  trainingPeaksRepositoryCompat.replaceTrainingPeaksWorkoutLaps ??
+  trainingPeaksRepositoryCompat.default?.replaceTrainingPeaksWorkoutLaps;
+const upsertTrainingPeaksWorkoutDerivedMetricsRows =
+  trainingPeaksRepositoryCompat.upsertTrainingPeaksWorkoutDerivedMetricsRows ??
+  trainingPeaksRepositoryCompat.default?.upsertTrainingPeaksWorkoutDerivedMetricsRows;
+const classifyTrainingPeaksWorkoutActivity =
+  workoutActivityClassificationModuleCompat.classifyTrainingPeaksWorkoutActivity ??
+  workoutActivityClassificationModuleCompat.default?.classifyTrainingPeaksWorkoutActivity;
+
+if (typeof listTrainingPeaksStudents !== "function") {
+  throw new Error("TrainingPeaks repository.listTrainingPeaksStudents is unavailable.");
+}
+if (typeof listTrainingPeaksWorkoutCacheForStudentDateRange !== "function") {
+  throw new Error("TrainingPeaks repository.listTrainingPeaksWorkoutCacheForStudentDateRange is unavailable.");
+}
+if (typeof getTrainingPeaksAthleteObservedMaxHr !== "function") {
+  throw new Error("TrainingPeaks repository.getTrainingPeaksAthleteObservedMaxHr is unavailable.");
+}
+if (typeof replaceTrainingPeaksWorkoutLaps !== "function") {
+  throw new Error("TrainingPeaks repository.replaceTrainingPeaksWorkoutLaps is unavailable.");
+}
+if (typeof upsertTrainingPeaksWorkoutDerivedMetricsRows !== "function") {
+  throw new Error("TrainingPeaks repository.upsertTrainingPeaksWorkoutDerivedMetricsRows is unavailable.");
+}
+if (typeof classifyTrainingPeaksWorkoutActivity !== "function") {
+  throw new Error("workout-activity-classification.classifyTrainingPeaksWorkoutActivity is unavailable.");
+}
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
@@ -482,7 +531,7 @@ async function main(): Promise<void> {
   loadLocalEnv();
   const args = parseArgs(process.argv.slice(2));
 
-  const allStudents = await trainingPeaksRepository.listTrainingPeaksStudents();
+  const allStudents = await listTrainingPeaksStudents();
   let targets: ResolvedTarget[] = allStudents.map((student) => ({
     student,
     athleteId: parseAthleteIdFromUrl(student.trainingPeaksAthleteUrl),
@@ -556,14 +605,14 @@ async function main(): Promise<void> {
 
       try {
         const cacheRows = (
-          await trainingPeaksRepository.listTrainingPeaksWorkoutCacheForStudentDateRange({
+          await listTrainingPeaksWorkoutCacheForStudentDateRange({
             studentId: target.student.id,
             from: args.from,
             to: args.to,
           })
         ).filter((row) => row.isCompleted);
 
-        const observedMaxHr = await trainingPeaksRepository.getTrainingPeaksAthleteObservedMaxHr(
+        const observedMaxHr = await getTrainingPeaksAthleteObservedMaxHr(
           target.athleteId
         );
 
@@ -586,13 +635,13 @@ async function main(): Promise<void> {
           // a transient download/parse failure on a re-ingest must never wipe
           // laps a previous successful run wrote.
           if (result.lapRows.length > 0) {
-            await trainingPeaksRepository.replaceTrainingPeaksWorkoutLaps({
+            await replaceTrainingPeaksWorkoutLaps({
               workoutCacheId: cacheRow.id,
               source: "fit",
               rows: result.lapRows,
             });
           }
-          await trainingPeaksRepository.upsertTrainingPeaksWorkoutDerivedMetricsRows([result.derivedRow]);
+          await upsertTrainingPeaksWorkoutDerivedMetricsRows([result.derivedRow]);
 
           if (result.derivedRow.fallback_level === "fit_full") fitMatched += 1;
           else if (result.derivedRow.fallback_level === "details_only") detailsOnly += 1;

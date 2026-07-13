@@ -3,22 +3,105 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { createSupabaseServerClient } from "../../../src/features/supabase/server.ts";
-import {
-  listMoveShadowComparisons,
-  recordMoveShadowComparison,
-  type MoveShadowComparisonMatchKind,
-} from "../../../src/features/trainingpeaks/repository.ts";
-import { classifyMatchKind } from "../../../src/features/trainingpeaks/move-shadow-comparator.ts";
-import { resolveMoveWorkoutId } from "../../../src/features/trainingpeaks/move-workout-resolver-context.ts";
-import {
-  buildDomCompatibleFingerprint,
-  type LiveWorkoutCandidate,
-  type MoveWorkoutDomCandidate,
-} from "../../../src/features/trainingpeaks/move-workout-resolver.ts";
-import { computeMoveShadowReport, formatMoveShadowReportText } from "../../../src/features/trainingpeaks/move-shadow-report.ts";
-import { getWorkoutDetail, getWorkoutsByDateRange, isWorkoutGone, TpApiHttpError } from "../../../src/features/trainingpeaks/tp-api-client.ts";
-import { classifyTrainingPeaksWorkoutActivity } from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
+import * as supabaseServerModule from "../../../src/features/supabase/server.ts";
+import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository.ts";
+import type { MoveShadowComparisonMatchKind } from "../../../src/features/trainingpeaks/repository.ts";
+import * as moveShadowComparatorModule from "../../../src/features/trainingpeaks/move-shadow-comparator.ts";
+import * as moveWorkoutResolverContextModule from "../../../src/features/trainingpeaks/move-workout-resolver-context.ts";
+import * as moveWorkoutResolverModule from "../../../src/features/trainingpeaks/move-workout-resolver.ts";
+import type { LiveWorkoutCandidate, MoveWorkoutDomCandidate } from "../../../src/features/trainingpeaks/move-workout-resolver.ts";
+import * as moveShadowReportModule from "../../../src/features/trainingpeaks/move-shadow-report.ts";
+import * as tpApiClientModule from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import * as workoutActivityClassificationModule from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const supabaseServerModuleCompat = supabaseServerModule as NamespaceWithOptionalDefault<typeof supabaseServerModule>;
+const trainingPeaksRepositoryModuleCompat =
+  trainingPeaksRepositoryModule as NamespaceWithOptionalDefault<typeof trainingPeaksRepositoryModule>;
+const moveShadowComparatorModuleCompat =
+  moveShadowComparatorModule as NamespaceWithOptionalDefault<typeof moveShadowComparatorModule>;
+const moveWorkoutResolverContextModuleCompat =
+  moveWorkoutResolverContextModule as NamespaceWithOptionalDefault<typeof moveWorkoutResolverContextModule>;
+const moveWorkoutResolverModuleCompat =
+  moveWorkoutResolverModule as NamespaceWithOptionalDefault<typeof moveWorkoutResolverModule>;
+const moveShadowReportModuleCompat =
+  moveShadowReportModule as NamespaceWithOptionalDefault<typeof moveShadowReportModule>;
+const tpApiClientModuleCompat = tpApiClientModule as NamespaceWithOptionalDefault<typeof tpApiClientModule>;
+const workoutActivityClassificationModuleCompat =
+  workoutActivityClassificationModule as NamespaceWithOptionalDefault<typeof workoutActivityClassificationModule>;
+
+const createSupabaseServerClient =
+  supabaseServerModuleCompat.createSupabaseServerClient ?? supabaseServerModuleCompat.default?.createSupabaseServerClient;
+const listMoveShadowComparisons =
+  trainingPeaksRepositoryModuleCompat.listMoveShadowComparisons ??
+  trainingPeaksRepositoryModuleCompat.default?.listMoveShadowComparisons;
+const recordMoveShadowComparison =
+  trainingPeaksRepositoryModuleCompat.recordMoveShadowComparison ??
+  trainingPeaksRepositoryModuleCompat.default?.recordMoveShadowComparison;
+const classifyMatchKind =
+  moveShadowComparatorModuleCompat.classifyMatchKind ?? moveShadowComparatorModuleCompat.default?.classifyMatchKind;
+const resolveMoveWorkoutId =
+  moveWorkoutResolverContextModuleCompat.resolveMoveWorkoutId ??
+  moveWorkoutResolverContextModuleCompat.default?.resolveMoveWorkoutId;
+const buildDomCompatibleFingerprint =
+  moveWorkoutResolverModuleCompat.buildDomCompatibleFingerprint ??
+  moveWorkoutResolverModuleCompat.default?.buildDomCompatibleFingerprint;
+const computeMoveShadowReport =
+  moveShadowReportModuleCompat.computeMoveShadowReport ?? moveShadowReportModuleCompat.default?.computeMoveShadowReport;
+const formatMoveShadowReportText =
+  moveShadowReportModuleCompat.formatMoveShadowReportText ?? moveShadowReportModuleCompat.default?.formatMoveShadowReportText;
+const getWorkoutDetail = tpApiClientModuleCompat.getWorkoutDetail ?? tpApiClientModuleCompat.default?.getWorkoutDetail;
+const getWorkoutsByDateRange =
+  tpApiClientModuleCompat.getWorkoutsByDateRange ?? tpApiClientModuleCompat.default?.getWorkoutsByDateRange;
+const isWorkoutGone = tpApiClientModuleCompat.isWorkoutGone ?? tpApiClientModuleCompat.default?.isWorkoutGone;
+const TpApiHttpError = tpApiClientModuleCompat.TpApiHttpError ?? tpApiClientModuleCompat.default?.TpApiHttpError;
+const classifyTrainingPeaksWorkoutActivity =
+  workoutActivityClassificationModuleCompat.classifyTrainingPeaksWorkoutActivity ??
+  workoutActivityClassificationModuleCompat.default?.classifyTrainingPeaksWorkoutActivity;
+
+if (typeof createSupabaseServerClient !== "function") {
+  throw new Error("supabase/server.createSupabaseServerClient is unavailable.");
+}
+if (typeof listMoveShadowComparisons !== "function") {
+  throw new Error("repository.listMoveShadowComparisons is unavailable.");
+}
+if (typeof recordMoveShadowComparison !== "function") {
+  throw new Error("repository.recordMoveShadowComparison is unavailable.");
+}
+if (typeof classifyMatchKind !== "function") {
+  throw new Error("move-shadow-comparator.classifyMatchKind is unavailable.");
+}
+if (typeof resolveMoveWorkoutId !== "function") {
+  throw new Error("move-workout-resolver-context.resolveMoveWorkoutId is unavailable.");
+}
+if (typeof buildDomCompatibleFingerprint !== "function") {
+  throw new Error("move-workout-resolver.buildDomCompatibleFingerprint is unavailable.");
+}
+if (typeof computeMoveShadowReport !== "function") {
+  throw new Error("move-shadow-report.computeMoveShadowReport is unavailable.");
+}
+if (typeof formatMoveShadowReportText !== "function") {
+  throw new Error("move-shadow-report.formatMoveShadowReportText is unavailable.");
+}
+if (typeof getWorkoutDetail !== "function") {
+  throw new Error("tp-api-client.getWorkoutDetail is unavailable.");
+}
+if (typeof getWorkoutsByDateRange !== "function") {
+  throw new Error("tp-api-client.getWorkoutsByDateRange is unavailable.");
+}
+if (typeof isWorkoutGone !== "function") {
+  throw new Error("tp-api-client.isWorkoutGone is unavailable.");
+}
+if (typeof TpApiHttpError !== "function") {
+  throw new Error("tp-api-client.TpApiHttpError is unavailable.");
+}
+if (typeof classifyTrainingPeaksWorkoutActivity !== "function") {
+  throw new Error("workout-activity-classification.classifyTrainingPeaksWorkoutActivity is unavailable.");
+}
 
 /**
  * M3.5 (move-http-shadow plan) -- backfill runs the M1 resolver against

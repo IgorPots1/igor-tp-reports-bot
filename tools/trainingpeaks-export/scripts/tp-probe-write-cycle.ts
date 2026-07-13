@@ -3,7 +3,74 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import {
+import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository.ts";
+import type { TrainingPeaksActionType } from "../../../src/features/trainingpeaks/repository.ts";
+import * as tpApiClientModule from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import * as supabaseServerModule from "../../../src/features/supabase/server.ts";
+import * as batchPreviewModule from "../../../src/features/trainingpeaks/batch-preview.ts";
+import * as batchPreviewContextModule from "../../../src/features/trainingpeaks/batch-preview-context.ts";
+import * as actionWriteTelegramCopyModule from "../../../src/features/trainingpeaks/action-write-telegram-copy.ts";
+import type { BatchChildSpec } from "../../../src/features/trainingpeaks/tp-write-action-types.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const trainingPeaksRepositoryModuleCompat =
+  trainingPeaksRepositoryModule as NamespaceWithOptionalDefault<typeof trainingPeaksRepositoryModule>;
+const tpApiClientModuleCompat = tpApiClientModule as NamespaceWithOptionalDefault<typeof tpApiClientModule>;
+const supabaseServerModuleCompat = supabaseServerModule as NamespaceWithOptionalDefault<typeof supabaseServerModule>;
+const batchPreviewModuleCompat = batchPreviewModule as NamespaceWithOptionalDefault<typeof batchPreviewModule>;
+const batchPreviewContextModuleCompat =
+  batchPreviewContextModule as NamespaceWithOptionalDefault<typeof batchPreviewContextModule>;
+const actionWriteTelegramCopyModuleCompat =
+  actionWriteTelegramCopyModule as NamespaceWithOptionalDefault<typeof actionWriteTelegramCopyModule>;
+
+const approveTrainingPeaksAction =
+  trainingPeaksRepositoryModuleCompat.approveTrainingPeaksAction ??
+  trainingPeaksRepositoryModuleCompat.default?.approveTrainingPeaksAction;
+const cancelTrainingPeaksActionExecution =
+  trainingPeaksRepositoryModuleCompat.cancelTrainingPeaksActionExecution ??
+  trainingPeaksRepositoryModuleCompat.default?.cancelTrainingPeaksActionExecution;
+const createBatchTrainingPeaksAction =
+  trainingPeaksRepositoryModuleCompat.createBatchTrainingPeaksAction ??
+  trainingPeaksRepositoryModuleCompat.default?.createBatchTrainingPeaksAction;
+const createRollbackTrainingPeaksAction =
+  trainingPeaksRepositoryModuleCompat.createRollbackTrainingPeaksAction ??
+  trainingPeaksRepositoryModuleCompat.default?.createRollbackTrainingPeaksAction;
+const createTrainingPeaksAction =
+  trainingPeaksRepositoryModuleCompat.createTrainingPeaksAction ??
+  trainingPeaksRepositoryModuleCompat.default?.createTrainingPeaksAction;
+const getTrainingPeaksActionById =
+  trainingPeaksRepositoryModuleCompat.getTrainingPeaksActionById ??
+  trainingPeaksRepositoryModuleCompat.default?.getTrainingPeaksActionById;
+const getTrainingPeaksActionLatestRunContext =
+  trainingPeaksRepositoryModuleCompat.getTrainingPeaksActionLatestRunContext ??
+  trainingPeaksRepositoryModuleCompat.default?.getTrainingPeaksActionLatestRunContext;
+const requestBatchTrainingPeaksActionExecution =
+  trainingPeaksRepositoryModuleCompat.requestBatchTrainingPeaksActionExecution ??
+  trainingPeaksRepositoryModuleCompat.default?.requestBatchTrainingPeaksActionExecution;
+const requestTrainingPeaksActionExecution =
+  trainingPeaksRepositoryModuleCompat.requestTrainingPeaksActionExecution ??
+  trainingPeaksRepositoryModuleCompat.default?.requestTrainingPeaksActionExecution;
+const getWorkoutDetail = tpApiClientModuleCompat.getWorkoutDetail ?? tpApiClientModuleCompat.default?.getWorkoutDetail;
+const getStrengthWorkout =
+  tpApiClientModuleCompat.getStrengthWorkout ?? tpApiClientModuleCompat.default?.getStrengthWorkout;
+const TpApiHttpError = tpApiClientModuleCompat.TpApiHttpError ?? tpApiClientModuleCompat.default?.TpApiHttpError;
+const createSupabaseServerClient =
+  supabaseServerModuleCompat.createSupabaseServerClient ?? supabaseServerModuleCompat.default?.createSupabaseServerClient;
+const computeBatchAggregate =
+  batchPreviewModuleCompat.computeBatchAggregate ?? batchPreviewModuleCompat.default?.computeBatchAggregate;
+const detectBatchAnomalies =
+  batchPreviewModuleCompat.detectBatchAnomalies ?? batchPreviewModuleCompat.default?.detectBatchAnomalies;
+const gatherBatchAnomalyContext =
+  batchPreviewContextModuleCompat.gatherBatchAnomalyContext ??
+  batchPreviewContextModuleCompat.default?.gatherBatchAnomalyContext;
+const buildBatchPreviewCard =
+  actionWriteTelegramCopyModuleCompat.buildBatchPreviewCard ?? actionWriteTelegramCopyModuleCompat.default?.buildBatchPreviewCard;
+
+for (const [name, fn] of Object.entries({
   approveTrainingPeaksAction,
   cancelTrainingPeaksActionExecution,
   createBatchTrainingPeaksAction,
@@ -13,14 +80,19 @@ import {
   getTrainingPeaksActionLatestRunContext,
   requestBatchTrainingPeaksActionExecution,
   requestTrainingPeaksActionExecution,
-  type TrainingPeaksActionType,
-} from "../../../src/features/trainingpeaks/repository.ts";
-import { getWorkoutDetail, getStrengthWorkout, TpApiHttpError } from "../../../src/features/trainingpeaks/tp-api-client.ts";
-import { createSupabaseServerClient } from "../../../src/features/supabase/server.ts";
-import { computeBatchAggregate, detectBatchAnomalies } from "../../../src/features/trainingpeaks/batch-preview.ts";
-import { gatherBatchAnomalyContext } from "../../../src/features/trainingpeaks/batch-preview-context.ts";
-import { buildBatchPreviewCard } from "../../../src/features/trainingpeaks/action-write-telegram-copy.ts";
-import type { BatchChildSpec } from "../../../src/features/trainingpeaks/tp-write-action-types.ts";
+  getWorkoutDetail,
+  getStrengthWorkout,
+  TpApiHttpError,
+  createSupabaseServerClient,
+  computeBatchAggregate,
+  detectBatchAnomalies,
+  gatherBatchAnomalyContext,
+  buildBatchPreviewCard,
+})) {
+  if (typeof fn !== "function") {
+    throw new Error(`TrainingPeaks write-cycle probe dependency "${name}" is unavailable.`);
+  }
+}
 
 /**
  * PR4 step 2 -- manual, one-stage-at-a-time driver for the propose/approve/

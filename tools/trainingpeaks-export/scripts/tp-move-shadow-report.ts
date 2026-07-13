@@ -3,8 +3,36 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { listMoveShadowComparisons } from "../../../src/features/trainingpeaks/repository.ts";
-import { computeMoveShadowReport, formatMoveShadowReportText } from "../../../src/features/trainingpeaks/move-shadow-report.ts";
+import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository.ts";
+import * as moveShadowReportModule from "../../../src/features/trainingpeaks/move-shadow-report.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const trainingPeaksRepositoryModuleCompat =
+  trainingPeaksRepositoryModule as NamespaceWithOptionalDefault<typeof trainingPeaksRepositoryModule>;
+const moveShadowReportModuleCompat =
+  moveShadowReportModule as NamespaceWithOptionalDefault<typeof moveShadowReportModule>;
+
+const listMoveShadowComparisons =
+  trainingPeaksRepositoryModuleCompat.listMoveShadowComparisons ??
+  trainingPeaksRepositoryModuleCompat.default?.listMoveShadowComparisons;
+const computeMoveShadowReport =
+  moveShadowReportModuleCompat.computeMoveShadowReport ?? moveShadowReportModuleCompat.default?.computeMoveShadowReport;
+const formatMoveShadowReportText =
+  moveShadowReportModuleCompat.formatMoveShadowReportText ?? moveShadowReportModuleCompat.default?.formatMoveShadowReportText;
+
+if (typeof listMoveShadowComparisons !== "function") {
+  throw new Error("repository.listMoveShadowComparisons is unavailable.");
+}
+if (typeof computeMoveShadowReport !== "function") {
+  throw new Error("move-shadow-report.computeMoveShadowReport is unavailable.");
+}
+if (typeof formatMoveShadowReportText !== "function") {
+  throw new Error("move-shadow-report.formatMoveShadowReportText is unavailable.");
+}
 
 /**
  * M3 (move-http-shadow plan) -- read-only shadow-report CLI. Fetches every

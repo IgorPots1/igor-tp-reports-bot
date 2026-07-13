@@ -1,4 +1,18 @@
-import { createSupabaseServerClient } from "@/features/supabase/server";
+import * as supabaseServerModule from "@/features/supabase/server";
+
+// CJS/ESM boundary workaround: a plain named import of this file can
+// intermittently lose named exports when first reached via a named import
+// from Node's native TS stripping (order-dependent — see
+// tools/trainingpeaks-export/scripts/tp-actions-once.ts for the established
+// namespace + .default fallback pattern this mirrors).
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const supabaseServerModuleCompat = supabaseServerModule as NamespaceWithOptionalDefault<typeof supabaseServerModule>;
+const createSupabaseServerClient =
+  supabaseServerModuleCompat.createSupabaseServerClient ?? supabaseServerModuleCompat.default?.createSupabaseServerClient;
+
+if (typeof createSupabaseServerClient !== "function") {
+  throw new Error("supabase/server.createSupabaseServerClient is unavailable.");
+}
 
 export type AiCallSite = "memory" | "intent" | "parser";
 

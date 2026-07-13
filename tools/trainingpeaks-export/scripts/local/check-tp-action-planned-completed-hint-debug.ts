@@ -8,7 +8,51 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
-import {
+import * as actionPlannedCompletedAmbiguityModule from "../../../../src/features/trainingpeaks/action-planned-completed-ambiguity.ts";
+import type { MoveCandidateStatusInput } from "../../../../src/features/trainingpeaks/action-planned-completed-ambiguity.ts";
+import * as moveSourcePolicyModule from "../../../../src/features/trainingpeaks/move-source-policy.ts";
+import * as actionRunnerCommandsModule from "../../../../src/features/trainingpeaks/action-runner-commands.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const actionPlannedCompletedAmbiguityModuleCompat =
+  actionPlannedCompletedAmbiguityModule as NamespaceWithOptionalDefault<typeof actionPlannedCompletedAmbiguityModule>;
+const moveSourcePolicyModuleCompat =
+  moveSourcePolicyModule as NamespaceWithOptionalDefault<typeof moveSourcePolicyModule>;
+const actionRunnerCommandsModuleCompat =
+  actionRunnerCommandsModule as NamespaceWithOptionalDefault<typeof actionRunnerCommandsModule>;
+
+const buildPlannedCompletedAmbiguityCandidate =
+  actionPlannedCompletedAmbiguityModuleCompat.buildPlannedCompletedAmbiguityCandidate ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.buildPlannedCompletedAmbiguityCandidate;
+const extractPlannedVsCompletedHintFromLogJson =
+  actionPlannedCompletedAmbiguityModuleCompat.extractPlannedVsCompletedHintFromLogJson ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.extractPlannedVsCompletedHintFromLogJson;
+const inferMoveCandidateWorkoutStatus =
+  actionPlannedCompletedAmbiguityModuleCompat.inferMoveCandidateWorkoutStatus ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.inferMoveCandidateWorkoutStatus;
+const isEligibleForCoachSourceWorkoutConfirmation =
+  actionPlannedCompletedAmbiguityModuleCompat.isEligibleForCoachSourceWorkoutConfirmation ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.isEligibleForCoachSourceWorkoutConfirmation;
+const isNormalWorkoutTitle =
+  actionPlannedCompletedAmbiguityModuleCompat.isNormalWorkoutTitle ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.isNormalWorkoutTitle;
+const resolvePlannedVsCompletedHintFromDryRunLog =
+  actionPlannedCompletedAmbiguityModuleCompat.resolvePlannedVsCompletedHintFromDryRunLog ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.resolvePlannedVsCompletedHintFromDryRunLog;
+const truncateWorkoutTitleForButton =
+  actionPlannedCompletedAmbiguityModuleCompat.truncateWorkoutTitleForButton ??
+  actionPlannedCompletedAmbiguityModuleCompat.default?.truncateWorkoutTitleForButton;
+const validateDryRunLogReadiness =
+  moveSourcePolicyModuleCompat.validateDryRunLogReadiness ?? moveSourcePolicyModuleCompat.default?.validateDryRunLogReadiness;
+const formatTpActionsExecuteOnceCommand =
+  actionRunnerCommandsModuleCompat.formatTpActionsExecuteOnceCommand ??
+  actionRunnerCommandsModuleCompat.default?.formatTpActionsExecuteOnceCommand;
+
+for (const [name, fn] of Object.entries({
   buildPlannedCompletedAmbiguityCandidate,
   extractPlannedVsCompletedHintFromLogJson,
   inferMoveCandidateWorkoutStatus,
@@ -16,10 +60,13 @@ import {
   isNormalWorkoutTitle,
   resolvePlannedVsCompletedHintFromDryRunLog,
   truncateWorkoutTitleForButton,
-  type MoveCandidateStatusInput,
-} from "../../../../src/features/trainingpeaks/action-planned-completed-ambiguity.ts";
-import { validateDryRunLogReadiness } from "../../../../src/features/trainingpeaks/move-source-policy.ts";
-import { formatTpActionsExecuteOnceCommand } from "../../../../src/features/trainingpeaks/action-runner-commands.ts";
+  validateDryRunLogReadiness,
+  formatTpActionsExecuteOnceCommand,
+})) {
+  if (typeof fn !== "function") {
+    throw new Error(`Debug script dependency "${name}" is unavailable.`);
+  }
+}
 
 const LOG_PREFIX = "[check-tp-action-planned-completed-hint-debug]";
 const TP_CALLBACK_ACTION_SELECT_WORKOUT_PREFIX = "tp:ta:sw:";

@@ -3,7 +3,99 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import {
+import * as trainingPeaksRepositoryModule from "../../../src/features/trainingpeaks/repository.ts";
+import type { TrainingPeaksAction, TrainingPeaksActionType } from "../../../src/features/trainingpeaks/repository.ts";
+import * as actionWriteTelegramCopyModule from "../../../src/features/trainingpeaks/action-write-telegram-copy.ts";
+import * as trainingPeaksAttentionTelegramModule from "../../../src/features/trainingpeaks/attention-telegram.ts";
+import * as telegramClientModule from "../../../src/features/telegram/telegram-client.ts";
+import type { TelegramInlineKeyboardMarkup } from "../../../src/features/telegram/types.ts";
+import * as tpWriteActionTypesModule from "../../../src/features/trainingpeaks/tp-write-action-types.ts";
+import type {
+  BatchPayload,
+  CreateWorkoutPayload,
+  DeleteWorkoutPayload,
+  StrengthWorkoutPayload,
+  UpdateWorkoutPayload,
+} from "../../../src/features/trainingpeaks/tp-write-action-types.ts";
+import * as tpApiClientModule from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import type { CreateStrengthWorkoutRequestBody } from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import { redactUnknown } from "./lib/trainingpeaks-api-move.ts";
+
+// CJS/ESM boundary workaround (this package is "type":"module", src/ is CJS-default):
+// a plain named import of a src/ file intermittently loses named exports across this
+// boundary under Node's native TS stripping. Namespace import + .default fallback is
+// the established pattern — see tp-actions-once.ts.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const trainingPeaksRepositoryModuleCompat =
+  trainingPeaksRepositoryModule as NamespaceWithOptionalDefault<typeof trainingPeaksRepositoryModule>;
+const actionWriteTelegramCopyModuleCompat =
+  actionWriteTelegramCopyModule as NamespaceWithOptionalDefault<typeof actionWriteTelegramCopyModule>;
+const trainingPeaksAttentionTelegramModuleCompat =
+  trainingPeaksAttentionTelegramModule as NamespaceWithOptionalDefault<typeof trainingPeaksAttentionTelegramModule>;
+const telegramClientModuleCompat = telegramClientModule as NamespaceWithOptionalDefault<typeof telegramClientModule>;
+const tpWriteActionTypesModuleCompat =
+  tpWriteActionTypesModule as NamespaceWithOptionalDefault<typeof tpWriteActionTypesModule>;
+const tpApiClientModuleCompat = tpApiClientModule as NamespaceWithOptionalDefault<typeof tpApiClientModule>;
+
+const claimOneApprovedTrainingPeaksActionForDryRun =
+  trainingPeaksRepositoryModuleCompat.claimOneApprovedTrainingPeaksActionForDryRun ??
+  trainingPeaksRepositoryModuleCompat.default?.claimOneApprovedTrainingPeaksActionForDryRun;
+const claimOneApprovedTrainingPeaksActionForRealExecution =
+  trainingPeaksRepositoryModuleCompat.claimOneApprovedTrainingPeaksActionForRealExecution ??
+  trainingPeaksRepositoryModuleCompat.default?.claimOneApprovedTrainingPeaksActionForRealExecution;
+const completeTrainingPeaksActionDryRun =
+  trainingPeaksRepositoryModuleCompat.completeTrainingPeaksActionDryRun ??
+  trainingPeaksRepositoryModuleCompat.default?.completeTrainingPeaksActionDryRun;
+const completeTrainingPeaksActionRealRun =
+  trainingPeaksRepositoryModuleCompat.completeTrainingPeaksActionRealRun ??
+  trainingPeaksRepositoryModuleCompat.default?.completeTrainingPeaksActionRealRun;
+const createTrainingPeaksActionRun =
+  trainingPeaksRepositoryModuleCompat.createTrainingPeaksActionRun ??
+  trainingPeaksRepositoryModuleCompat.default?.createTrainingPeaksActionRun;
+const failTrainingPeaksActionDryRun =
+  trainingPeaksRepositoryModuleCompat.failTrainingPeaksActionDryRun ??
+  trainingPeaksRepositoryModuleCompat.default?.failTrainingPeaksActionDryRun;
+const failTrainingPeaksActionRealRun =
+  trainingPeaksRepositoryModuleCompat.failTrainingPeaksActionRealRun ??
+  trainingPeaksRepositoryModuleCompat.default?.failTrainingPeaksActionRealRun;
+const getTrainingPeaksActionById =
+  trainingPeaksRepositoryModuleCompat.getTrainingPeaksActionById ??
+  trainingPeaksRepositoryModuleCompat.default?.getTrainingPeaksActionById;
+const getTrainingPeaksStudentById =
+  trainingPeaksRepositoryModuleCompat.getTrainingPeaksStudentById ??
+  trainingPeaksRepositoryModuleCompat.default?.getTrainingPeaksStudentById;
+const buildWriteActionDetailCard =
+  actionWriteTelegramCopyModuleCompat.buildWriteActionDetailCard ??
+  actionWriteTelegramCopyModuleCompat.default?.buildWriteActionDetailCard;
+const getTrainingPeaksCoachChatIds =
+  trainingPeaksAttentionTelegramModuleCompat.getTrainingPeaksCoachChatIds ??
+  trainingPeaksAttentionTelegramModuleCompat.default?.getTrainingPeaksCoachChatIds;
+const sendTelegramMessage =
+  telegramClientModuleCompat.sendTelegramMessage ?? telegramClientModuleCompat.default?.sendTelegramMessage;
+const computePayloadFingerprint =
+  tpWriteActionTypesModuleCompat.computePayloadFingerprint ?? tpWriteActionTypesModuleCompat.default?.computePayloadFingerprint;
+const validateGenericDryRunLogReadiness =
+  tpWriteActionTypesModuleCompat.validateGenericDryRunLogReadiness ??
+  tpWriteActionTypesModuleCompat.default?.validateGenericDryRunLogReadiness;
+const verifyCreateOutcome =
+  tpWriteActionTypesModuleCompat.verifyCreateOutcome ?? tpWriteActionTypesModuleCompat.default?.verifyCreateOutcome;
+const verifyDeleteOutcome =
+  tpWriteActionTypesModuleCompat.verifyDeleteOutcome ?? tpWriteActionTypesModuleCompat.default?.verifyDeleteOutcome;
+const verifyStrengthCreateOutcome =
+  tpWriteActionTypesModuleCompat.verifyStrengthCreateOutcome ?? tpWriteActionTypesModuleCompat.default?.verifyStrengthCreateOutcome;
+const verifyUpdateOutcome =
+  tpWriteActionTypesModuleCompat.verifyUpdateOutcome ?? tpWriteActionTypesModuleCompat.default?.verifyUpdateOutcome;
+const createStrengthWorkout =
+  tpApiClientModuleCompat.createStrengthWorkout ?? tpApiClientModuleCompat.default?.createStrengthWorkout;
+const createWorkout = tpApiClientModuleCompat.createWorkout ?? tpApiClientModuleCompat.default?.createWorkout;
+const deleteWorkout = tpApiClientModuleCompat.deleteWorkout ?? tpApiClientModuleCompat.default?.deleteWorkout;
+const getStrengthWorkout =
+  tpApiClientModuleCompat.getStrengthWorkout ?? tpApiClientModuleCompat.default?.getStrengthWorkout;
+const getWorkoutDetail = tpApiClientModuleCompat.getWorkoutDetail ?? tpApiClientModuleCompat.default?.getWorkoutDetail;
+const putWorkout = tpApiClientModuleCompat.putWorkout ?? tpApiClientModuleCompat.default?.putWorkout;
+const TpApiHttpError = tpApiClientModuleCompat.TpApiHttpError ?? tpApiClientModuleCompat.default?.TpApiHttpError;
+
+for (const [name, fn] of Object.entries({
   claimOneApprovedTrainingPeaksActionForDryRun,
   claimOneApprovedTrainingPeaksActionForRealExecution,
   completeTrainingPeaksActionDryRun,
@@ -13,27 +105,15 @@ import {
   failTrainingPeaksActionRealRun,
   getTrainingPeaksActionById,
   getTrainingPeaksStudentById,
-  type TrainingPeaksAction,
-  type TrainingPeaksActionType,
-} from "../../../src/features/trainingpeaks/repository.ts";
-import { buildWriteActionDetailCard } from "../../../src/features/trainingpeaks/action-write-telegram-copy.ts";
-import { getTrainingPeaksCoachChatIds } from "../../../src/features/trainingpeaks/attention-telegram.ts";
-import { sendTelegramMessage } from "../../../src/features/telegram/telegram-client.ts";
-import type { TelegramInlineKeyboardMarkup } from "../../../src/features/telegram/types.ts";
-import {
+  buildWriteActionDetailCard,
+  getTrainingPeaksCoachChatIds,
+  sendTelegramMessage,
   computePayloadFingerprint,
   validateGenericDryRunLogReadiness,
   verifyCreateOutcome,
   verifyDeleteOutcome,
   verifyStrengthCreateOutcome,
   verifyUpdateOutcome,
-  type BatchPayload,
-  type CreateWorkoutPayload,
-  type DeleteWorkoutPayload,
-  type StrengthWorkoutPayload,
-  type UpdateWorkoutPayload,
-} from "../../../src/features/trainingpeaks/tp-write-action-types.ts";
-import {
   createStrengthWorkout,
   createWorkout,
   deleteWorkout,
@@ -41,9 +121,11 @@ import {
   getWorkoutDetail,
   putWorkout,
   TpApiHttpError,
-  type CreateStrengthWorkoutRequestBody,
-} from "../../../src/features/trainingpeaks/tp-api-client.ts";
-import { redactUnknown } from "./lib/trainingpeaks-api-move.ts";
+})) {
+  if (typeof fn !== "function") {
+    throw new Error(`TrainingPeaks write-executor dependency "${name}" is unavailable.`);
+  }
+}
 
 /**
  * PR3 — the generalized assisted-write executor for the NEW action types

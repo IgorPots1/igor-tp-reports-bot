@@ -3,7 +3,20 @@ import type {
   TrainingPeaksMoveWorkoutDescriptor,
   TrainingPeaksMoveWorkoutTimeRef,
 } from "@/features/trainingpeaks/service";
-import { logAiCall } from "@/features/trainingpeaks/ai-call-log";
+import * as aiCallLogModule from "@/features/trainingpeaks/ai-call-log";
+
+// CJS/ESM boundary workaround: a plain named import of this file can
+// intermittently lose named exports when first reached via a named import
+// from Node's native TS stripping (order-dependent — see
+// tools/trainingpeaks-export/scripts/tp-actions-once.ts for the established
+// namespace + .default fallback pattern this mirrors).
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+const aiCallLogModuleCompat = aiCallLogModule as NamespaceWithOptionalDefault<typeof aiCallLogModule>;
+const logAiCall = aiCallLogModuleCompat.logAiCall ?? aiCallLogModuleCompat.default?.logAiCall;
+
+if (typeof logAiCall !== "function") {
+  throw new Error("ai-call-log.logAiCall is unavailable.");
+}
 
 type AiFallbackPayload = Omit<ParsedTrainingPeaksMoveWorkoutPayload, "actionType" | "parser">;
 
