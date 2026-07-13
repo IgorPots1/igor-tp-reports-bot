@@ -7,6 +7,7 @@ import {
   reviewHasModernMethodology,
 } from "../src/features/nutrition/page-consistency";
 import type { NutritionWeeklyAnalysis, NutritionWeeklyPlan } from "../src/features/nutrition/repository";
+import { SEND_CALL_IN_RENDER, TELEGRAM_BOT_API_HOST } from "./lib/render-safety-guards";
 
 const root = process.cwd();
 const studentPage = readFileSync(join(root, "src/app/admin/coach-os/nutrition/[studentId]/page.tsx"), "utf8");
@@ -372,7 +373,37 @@ assert.match(pageConsistencySource, /formatNutritionReportDateMismatchCardNotice
 assert.match(packageJson, /diagnose:nutrition-report-date-coverage/, "package.json must include report date coverage diagnostic");
 assert.match(packageJson, /check:nutrition-report-date-source/, "package.json must include report date source check");
 
-assert.doesNotMatch(mainUi, /telegram|sendMessage|sendTelegram/i, "nutrition page must not auto-send Telegram");
+// Guards + rationale live in scripts/lib/render-safety-guards.ts (shared with
+// check-nutrition-weekly-plan-ui, which carried an identical copy of the old word-level guard).
+assert.doesNotMatch(studentPage, SEND_CALL_IN_RENDER, "nutrition page must not call a sender while rendering (bind it to a form action instead)");
+assert.doesNotMatch(studentPage, TELEGRAM_BOT_API_HOST, "nutrition page must not hit the Telegram Bot API directly");
+
+// Positive controls — prove the narrowed guard STILL catches a real regression. Without these,
+// someone could loosen the pattern later and the check would stay green while the invariant died.
+assert.match(
+  `${studentPage}\n  await sendNutritionFormButtonToStudent(card.student.id);\n`,
+  SEND_CALL_IN_RENDER,
+  "guard must still catch a real sender call added to the render path"
+);
+assert.match(
+  `${studentPage}\n  await sendTelegramMessage(card.student.telegramChatId, draft);\n`,
+  SEND_CALL_IN_RENDER,
+  "guard must still catch a raw Telegram send added to the render path"
+);
+assert.match(
+  `${studentPage}\n  await fetch("https://api.telegram.org/bot123/sendMessage");\n`,
+  TELEGRAM_BOT_API_HOST,
+  "guard must still catch a direct Bot API fetch"
+);
+
+// Negative controls — the exact shapes that made the old guard cry wolf must stay green, and the
+// coach-triggered send path must remain allowed.
+assert.doesNotMatch("if (card.student.telegramChatId) {", SEND_CALL_IN_RENDER, "reading telegramChatId is data, not a send");
+assert.doesNotMatch("<dt>Telegram</dt>", SEND_CALL_IN_RENDER, "a UI label is not a send");
+assert.doesNotMatch("<form action={sendNutritionFormAction}>", SEND_CALL_IN_RENDER, "binding a sender to a form action is the ALLOWED coach-triggered path");
+
+// page-consistency.ts is a PURE helper: it has no business even naming Telegram, so the broad
+// word-level ban is correct there and stays.
 assert.doesNotMatch(pageConsistencySource, /telegram|sendMessage|sendTelegram/i, "page consistency helper must not send Telegram");
 assert.doesNotMatch(pageConsistencySource, /moveWorkout|mutateTrainingPeaks|updateWorkout/i, "page consistency helper must not mutate TrainingPeaks");
 

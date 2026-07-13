@@ -8,6 +8,7 @@ import {
   formatNutritionStatus,
   NUTRITION_WEEKLY_PLAN_STATUS_LABELS,
 } from "../src/features/nutrition/admin-labels";
+import { SEND_CALL_IN_RENDER, TELEGRAM_BOT_API_HOST } from "./lib/render-safety-guards";
 
 const root = process.cwd();
 const studentPage = readFileSync(join(root, "src/app/admin/coach-os/nutrition/[studentId]/page.tsx"), "utf8");
@@ -101,7 +102,12 @@ assert.match(studentPage, /summary>Все сохранённые фокусы п
 assert.match(studentPage, /summary>Technical JSON — nutrition weekly plan</, "advanced must include collapsed plan technical JSON");
 
 assert.doesNotMatch(mainUi, /generateAndSaveNutritionWeeklyPlan/, "page must not call generator directly");
-assert.doesNotMatch(mainUi, /telegram|sendMessage|sendTelegram/i, "main UI must not reference Telegram send");
+// Was /telegram|sendMessage|sendTelegram/i — the same word-level guard as in
+// check-nutrition-page-consistency, red on main for the same reason: the page READS
+// student.telegramChatId and renders a <dt>Telegram</dt> label. Rationale + patterns:
+// scripts/lib/render-safety-guards.ts.
+assert.doesNotMatch(mainUi, SEND_CALL_IN_RENDER, "main UI must not call a sender while rendering (bind it to a form action instead)");
+assert.doesNotMatch(mainUi, TELEGRAM_BOT_API_HOST, "main UI must not hit the Telegram Bot API directly");
 assert.doesNotMatch(mainUi, /mutateTrainingPeaks|updateWorkout|moveWorkout/i, "main UI must not reference TP mutation");
 assert.doesNotMatch(studentPage, /generateNutritionWeeklyPlanAction\(\)/, "page must not auto-generate on load");
 
