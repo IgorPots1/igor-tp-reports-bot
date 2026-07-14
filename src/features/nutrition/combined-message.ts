@@ -448,6 +448,35 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
         planTargetNumbers.push(target - carbs);
       }
     }
+    // The model subtracts from the ROUNDED orientation it just quoted, not from the raw bound:
+    // «при ориентире около 300 г — недобор примерно 125 г» is 300 − 175, not 295 − 175 = 120.
+    // The raw difference's own 5/10 roundings do not reach 125 (120 is already a multiple of
+    // both), so the day died for arithmetic that is correct. Allow the difference from the
+    // rounded targets too — still anchored to a REAL bound, so an invented gap stays out.
+    for (const target of [carbsGMin, carbsGMax, mid]) {
+      if (target == null) continue;
+      for (const step of [5, 10]) {
+        const rounded = Math.round(target / step) * step;
+        if (rounded > carbs) {
+          planTargetNumbers.push(rounded - carbs);
+        }
+      }
+    }
+  }
+  // The same gap, for the other macros the model is asked to comment on. Carbs had it; protein,
+  // fat and energy did not, so «белка не хватило примерно 20 г» was an invented number.
+  const kcalTargetValue = toFiniteNumber(targetObj.kcalTarget);
+  const proteinMinValue = toFiniteNumber(targetObj.proteinGMin);
+  for (const [actual, target] of [
+    [kcal, kcalTargetValue],
+    [kcal, toFiniteNumber(targetObj.kcalMin)],
+    [protein, proteinMinValue],
+  ] as Array<[number | null, number | null]>) {
+    if (actual == null || target == null) continue;
+    planTargetNumbers.push(Math.abs(target - actual));
+    for (const step of [5, 10, 50]) {
+      planTargetNumbers.push(Math.abs(Math.round(target / step) * step - actual));
+    }
   }
   // Task 10d (Bug 1): the goal-aware "deficit line" (goal_day_target) is also a
   // code-owned orientation. Without this, a losing athlete's prose citing the
@@ -516,10 +545,72 @@ export function buildNutritionDayProseFacts(item: Record<string, unknown>): Nutr
     planTargetNumbers,
     previousWeekNumbers,
     checkinNumbers,
+    workoutNumbers: collectWorkoutNumbers(item),
+    itemNumbers: collectItemNumbers(item.items_notable),
     nutritionStatus,
     findings,
     carbFastFoods,
   };
+}
+
+/**
+ * Numbers the code knows about this day's session, read off the CODE-OWNED training label
+ * («8 х 4 мин» → 8 and 4; «длительная 16 км» → 16). The label is built by the methodology from
+ * the TrainingPeaks calendar, so every number in it is a fact by construction.
+ *
+ * This exists because the model describes the session it is writing about — «под 8 интервалов по
+ * 4 минуты углеводов маловато» — and the day used to die for it. The minutes were scrubbed as a
+ * non-macro span, but the COUNT has no unit after it, so it was policed as an invented macro.
+ *
+ * Reading the label rather than free-scrubbing «N интервалов» keeps the claim HONEST: the model
+ * still cannot say «12 интервалов» when she ran 8.
+ */
+function collectWorkoutNumbers(item: Record<string, unknown>): number[] {
+  const source = asObject(item.canonicalDailyAnalysis ?? item.canonical_daily_analysis);
+  const label = [item.training_label, source.trainingLabel, item.workoutTitle]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ");
+  const numbers: number[] = [];
+  for (const match of label.matchAll(/\d+(?:[.,]\d+)?/g)) {
+    const value = Number(match[0].replace(",", "."));
+    if (Number.isFinite(value)) {
+      numbers.push(value);
+    }
+  }
+  const duration = toFiniteNumber(source.workoutDurationMinutes);
+  if (duration != null) {
+    numbers.push(duration);
+  }
+  return numbers;
+}
+
+/**
+ * Per-item macros from her own diary: «картофель дал 64 г углеводов», «семечки — 40 г жира».
+ *
+ * The code has ALWAYS known these numbers — it reads each item's carbsG/fatG/proteinG to decide
+ * whether the item is a carb or fat contributor — but it kept only the verdict and threw the
+ * numbers away, passing bare names to the model. So a prose quoting a real product's real macro
+ * was scored as invented, and the whole day fell to the dry comment.
+ */
+function collectItemNumbers(itemsNotable: unknown): number[] {
+  const notable = asObject(itemsNotable);
+  const bySection = asObject(notable.by_section);
+  const numbers: number[] = [];
+  for (const list of Object.values(bySection)) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    for (const raw of list) {
+      const entry = asObject(raw);
+      for (const key of ["carbs_g", "fat_g", "protein_g", "kcal"]) {
+        const value = toFiniteNumber(entry[key]);
+        if (value != null && value > 0) {
+          numbers.push(value);
+        }
+      }
+    }
+  }
+  return numbers;
 }
 
 function collectCarbFastFoods(itemsNotable: unknown): string[] {

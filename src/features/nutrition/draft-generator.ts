@@ -635,6 +635,14 @@ function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): 
       .slice(0, 4)
       .map((item) => ({
         name: item.name.trim().slice(0, 120),
+        // The macros themselves, not just the verdict. The code already read them to decide the
+        // flags below; dropping the numbers meant the model could name the product but never its
+        // real macro — «картофель дал 64 г углеводов» was scored as an invented number and the
+        // whole day fell to the dry comment. Rounded: the athlete reads grams, not decimals.
+        carbs_g: typeof item.carbsG === "number" ? Math.round(item.carbsG) : null,
+        fat_g: typeof item.fatG === "number" ? Math.round(item.fatG) : null,
+        protein_g: typeof item.proteinG === "number" ? Math.round(item.proteinG) : null,
+        kcal: typeof item.kcal === "number" ? Math.round(item.kcal) : null,
         fat_contributor: typeof item.fatG === "number" && item.fatG >= 10,
         carb_contributor: typeof item.carbsG === "number" && item.carbsG >= CARB_CONTRIBUTOR_MIN_G,
         carb_class: classifyCarbItem(item.name, item.carbsG),

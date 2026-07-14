@@ -700,6 +700,25 @@ export type NutritionDayProseFacts = {
    * Empty/absent for reviews generated before the field existed → scores are scrubbed, not policed.
    */
   checkinNumbers?: number[];
+  /**
+   * Numbers the CODE knows about this day's session, taken from the code-owned training label
+   * («8 х 4 мин» → 8, 4). The model legitimately describes the workout it is writing about
+   * («под 8 интервалов по 4 минуты углеводов маловато»), and the day used to die for it: the
+   * minutes were scrubbed as a non-macro span, but the COUNT has no unit after it, so it was
+   * policed as an invented macro number.
+   *
+   * Allowed EXACTLY (plus the integer form) — deliberately NOT with 5/10 roundings. A count is
+   * not an orientation: «12 интервалов» when she ran 8 is a lie about her own training, and the
+   * loose rounding that suits a carb target would let it through.
+   */
+  workoutNumbers?: number[];
+  /**
+   * Per-item macros from her own FatSecret diary («картофель дал 64 г углеводов», «семечки —
+   * 40 г жира»). The code has always known them — it read them to classify each item as a
+   * carb/fat contributor — but threw the numbers away and passed only the names, so quoting a
+   * real product's real macro killed the day.
+   */
+  itemNumbers?: number[];
   nutritionStatus: string | null;
   findings: string[];
   /**
@@ -773,7 +792,11 @@ const NUTRITION_NON_MACRO_NUMBER_PATTERNS: RegExp[] = [
   // «90-минутного», «30-секундные» (separator allows hyphen / non-breaking hyphen,
   // unit covers Cyrillic stems). Units stay distance/time only — macro numbers
   // (число+г/ккал/Б/Ж/У) are a different pattern and are NOT scrubbed here.
-  /\d+(?:[.,]\d+)?[\s -]*(?:км|мин(?:ут[а-яё]*)?|сек[а-яё]*|час[а-яё]*|ч|м)/giu,
+  // «километр…» is spelled out, and it does NOT start with «км» — it starts with «ки»
+  // (К-И-Л-О-метровый). The abbreviation and the full word share no prefix, so «12 км» was
+  // scrubbed while «13-километровый бег» was not, and the day died for correctly naming the
+  // athlete's own run.
+  /\d+(?:[.,]\d+)?[\s -]*(?:км|километр[а-яё]*|метр[а-яё]*|мин(?:ут[а-яё]*)?|сек[а-яё]*|час[а-яё]*|ч|м)/giu,
   /\d+\s*:\s*\d+/g, // time 1:40
   /\d{1,2}\s*(?:янв|фев|март|мар|апр|ма[йя]|июн|июл|авг|сен|окт|ноя|дек)/giu, // 14 июня
   /[+\-–—]\s*\d+(?:[.,]\d+)?/g, // signed steps / range tails: +50, –60
@@ -839,6 +862,16 @@ function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): numbe
   // not the nearest 320) and "недобор ~120" for a 114–125 gap. No 25/50 so a distant
   // invented number still can't slip in (every accepted value stays within 10 of a
   // real target). Actual diary macros above remain strict (nearest only).
+  // The session's own numbers: exact + integer only. See the type — a count is a fact, not an
+  // orientation, so it gets none of the 5/10 slack that a carb target gets.
+  for (const w of facts.workoutNumbers ?? []) {
+    add(w, [1]);
+  }
+  // Diary item macros: the model writes «около 40 г жира» for a 41.3 g item, so allow the same
+  // display roundings the day's own macros get — no looser.
+  for (const it of facts.itemNumbers ?? []) {
+    add(it, [1, 5]);
+  }
   for (const target of facts.planTargetNumbers ?? []) {
     if (typeof target === "number" && Number.isFinite(target)) {
       allowed.push(target);
@@ -852,6 +885,32 @@ function buildAllowedNutritionProseNumbers(facts: NutritionDayProseFacts): numbe
     }
   }
   return allowed;
+}
+
+/**
+ * A diary macro quoted with a ±1 g rounding slip is still HER number, not an invented one.
+ *
+ * The model read 106.42 g of protein and wrote «белок 107 г» — it rounded the wrong way, by 0.58
+ * of a gram. Strictly that is not a fact of the day, so the whole day fell to the dry
+ * deterministic comment: the athlete lost a live, specific text over half a gram. The cost is
+ * absurdly out of proportion to the «damage».
+ *
+ * THIS IS A ROUNDING TOLERANCE, NOT A LICENCE TO INVENT. It is anchored to the day's OWN actual
+ * kcal/protein/fat/carbs, so «белок 190 г» against a real 106 is still refused — it is 84 g away
+ * from any real number of that day, not one. And it applies ONLY to the four diary macros: the
+ * per-kg values are decimals, where ±1 would be a chasm, and the plan targets keep their own
+ * (tighter, anchored) rounding rules above.
+ */
+const NUTRITION_MACRO_ROUNDING_SLACK_G = 1;
+
+function nutritionActualMacros(facts: NutritionDayProseFacts): number[] {
+  return [facts.kcal, facts.proteinG, facts.fatG, facts.carbsG].filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value)
+  );
+}
+
+function withinNutritionMacroRoundingSlack(actualMacros: number[], value: number): boolean {
+  return actualMacros.some((macro) => Math.abs(macro - value) <= NUTRITION_MACRO_ROUNDING_SLACK_G);
 }
 
 function allowedNutritionProseNumberMatches(allowed: number[], value: number): boolean {
@@ -888,6 +947,7 @@ export function validateNutritionDayProse(input: {
     );
   }
   const allowed = buildAllowedNutritionProseNumbers(input.facts);
+  const actualMacros = nutritionActualMacros(input.facts);
   // The athlete's check-in scores are policed against HER OWN ratings, not against the macro
   // allow-set — but only when we actually have them. A misquoted score ("4/10" when she reported 9)
   // puts words in her mouth, so it drops the day to the deterministic comment like any other error.
@@ -929,7 +989,10 @@ export function validateNutritionDayProse(input: {
     if (!Number.isFinite(value)) {
       continue;
     }
-    if (!allowedNutritionProseNumberMatches(allowed, value)) {
+    if (
+      !allowedNutritionProseNumberMatches(allowed, value) &&
+      !withinNutritionMacroRoundingSlack(actualMacros, value)
+    ) {
       pushIssue(
         issues,
         "error",
