@@ -24,6 +24,7 @@ import {
 import type { NutritionPlanTargetWeekMode } from "@/features/nutrition/plan-week-policy";
 import {
   EVENING_SECTIONS,
+  normalizeFoodName,
   pickNotableFoods,
   pickNotableCarbItemsWithGrams,
   resolveWeekNarrativeDayRoles,
@@ -442,6 +443,14 @@ function resolveNutritionNarrativeDayRole(input: {
 
 type NutritionNarrativeNotableItem = {
   name: string;
+  // The item's OWN macros, rounded. Sent to the model so a protein tip can be built on what she
+  // actually ate («куриное филе было — 32 г белка, возьми порцию побольше») instead of an
+  // abstract product she does not buy. Also what lets the prose quote a real item's real macro
+  // without the validator scoring it as invented.
+  carbs_g: number | null;
+  fat_g: number | null;
+  protein_g: number | null;
+  kcal: number | null;
   fat_contributor: boolean;
   carb_contributor: boolean;
   // Deterministic carb-speed class (code-owned, from the PDF item carbs). The
@@ -619,10 +628,50 @@ export function computePreWorkoutCarbsFromDiary(
  * exposed — never per-item gram numbers — so the model cannot quote item-level
  * numbers that are not in the day-total facts whitelist (see validator task).
  */
+/**
+ * Real protein sources from HER OWN diary, ranked by protein grams — the answer to "what
+ * should the protein tip name", computed by CODE so the model does not have to guess it.
+ *
+ * Before this, the prompt only TOLD the model to prefer her own food; it still reached for the
+ * abstract reserve list (курица/рыба/яйца) even when her diary held a real one (Selezneva,
+ * 2026-07-11: 23 g of protein in "Блинчики с Курицей и Сыром" sat in items_notable, and the
+ * advice was "яйцо к завтраку, протеиновый йогурт" — a product she never ate). An instruction
+ * is a request; a named list is an answer. "Код считает, модель пишет": code decides WHAT to
+ * suggest, the model only decides HOW to phrase it.
+ *
+ * Selected from ALL items, not from the section-capped `by_section` (top-4-by-kcal per meal) —
+ * a lean, low-kcal protein source could rank outside that cap in its own section while still
+ * being the single best thing to suggest more of.
+ */
+export function pickProteinAdviceSources(
+  items: NutritionFoodItem[]
+): Array<{ name: string; protein_g: number; section: NutritionMealSection | null }> {
+  const seen = new Set<string>();
+  const picked: Array<{ name: string; protein_g: number; section: NutritionMealSection | null }> = [];
+  const candidates = items
+    .filter((item) => typeof item.name === "string" && item.name.trim().length >= 2)
+    .filter((item) => classifyProteinItem(item.name, item.proteinG))
+    .sort((a, b) => (b.proteinG ?? 0) - (a.proteinG ?? 0));
+  for (const item of candidates) {
+    const name = normalizeFoodName(item.name.trim().slice(0, 120));
+    const key = name.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    picked.push({ name, protein_g: Math.round(item.proteinG ?? 0), section: item.section });
+    if (picked.length >= 4) {
+      break;
+    }
+  }
+  return picked;
+}
+
 function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): {
   by_section: Partial<Record<NutritionMealSection, NutritionNarrativeNotableItem[]>>;
   carb_foods: Array<{ name: string; carb_class: CarbClass }>;
   evening_fat_foods: string[];
+  protein_advice_sources: Array<{ name: string; protein_g: number; section: NutritionMealSection | null }>;
 } {
   const safeItems = Array.isArray(items) ? items : [];
   const sections: NutritionMealSection[] = ["breakfast", "lunch", "dinner", "snack"];
@@ -661,6 +710,7 @@ function buildNotableItemsForNarrative(items: NutritionFoodItem[] | undefined): 
       carb_class: classifyCarbItem(food.name, food.carbsG),
     })),
     evening_fat_foods: pickNotableFoods(safeItems, "fatG", { sections: EVENING_SECTIONS, limit: 3 }),
+    protein_advice_sources: pickProteinAdviceSources(safeItems),
   };
 }
 
@@ -1325,7 +1375,7 @@ async function generateNutritionWeeklyReviewNarrative(input: {
     "КАЧЕСТВО ИСТОЧНИКА УГЛЕВОДОВ — это принцип про ПОХВАЛУ, а НЕ про классификацию скорости (скорость — ТОЛЬКО из carb_class, см. правило выше; НЕ угадывай её по принципу). ХВАЛИ / называй удачными только ЦЕЛЬНЫЕ источники: крупы, рис, гречка, картофель, паста, хлеб, бобовые, фрукты, овощи. НЕ называй «хорошим/правильным продуктом» кондитерку, сладости, мороженое, конфеты, печенье, халву, выпечку с сахаром, круассаны, газировку, фастфуд, алкоголь/пиво (в т.ч. безалкогольное) — ДАЖЕ если они дали много углеводов: углеводы засчитываются в числа дня, но источник хвалить нельзя. Тон ПОДДЕРЖИВАЮЩИЙ, НЕ стыдящий: за сладкое/выпечку/фастфуд НЕ упрекай и не морализируй — просто не хвали; максимум один раз мягко «в следующий раз эти углеводы лучше взять из крупы/риса/фрукта». Никакой вины и «ай-ай».",
     "СОВЕТ ОТ РЕАЛЬНОЙ ЕДЫ (не шаблон): прежде чем советовать «добавь X», посмотри items_notable дня. Если углеводов не хватило, но подходящий ЦЕЛЬНЫЙ источник в этот день УЖЕ был (есть в items_notable — гречка/рис/паста/картофель/хлеб) — советуй УВЕЛИЧИТЬ ПОРЦИЮ того, что уже ел («та же гречка, но порцию побольше»), а НЕ «добавь кашу», когда каша уже есть, и не предлагай кашу к блюду, где уже есть макароны. Новый продукт предлагай ТОЛЬКО если подходящего цельного источника в дне не было. Не советуй добавлять то, чего и так в достатке.",
     "НЕ ВЫДУМЫВАЙ ГРАММ-ВЕС варимых продуктов (макароны, паста, рис, гречка, крупа, картофель и любой готовящийся гарнир): их вес НЕ парсится из отчёта (в данных есть калории/углеводы, но не граммы продукта), поэтому ЛЮБАЯ цифра граммов будет выдумкой и вдобавок двусмысленной (сухой/готовый вес непонятен). НЕ пиши «58 г макарон», «100 г риса», «добавь 50 г гречки» и т.п. Говори через ОБЪЁМ порции («порцию макарон побольше», «добавь риса к обеду», «гарнира положи больше») или через углеводы. Точный грамм-вес называй ТОЛЬКО для продуктов, чей вес реально есть в данных. Это усиливает правило «порцию побольше»: не подменяй объём выдуманным граммом.",
-    "ИСТОЧНИК БЕЛКА БЕРИ ИЗ ФАКТОВ, НЕ ПО НАИТИЮ: у каждого продукта в items_notable код проставил поле protein_contributor — это источник правды. Источником белка («добавил белок», «закрыл белок», «белковая основа») называй ТОЛЬКО продукт с protein_contributor=true. Продукт с protein_contributor=false источником белка НЕ называй НИКОГДА, даже если кажется — грибы, овощи, фрукты, ягоды, хлеб, крупы белок не дают («грибы добавили белок» неверно). Не придумывай белковую роль для продукта, которого нет в items_notable. Жир тоже не атрибутируй на глаз: насыщенный/тяжёлый жир (выпечка, пломбир, фритюр, жирное мясо) не называй полезным. Это страховка от выдуманных ролей, она НЕ режет конкретику: реальную еду, цифры и связки «съел X → эффект Y» сохраняй. Если СОВЕТУЕШЬ добавить белок — называй РАЗНЫЕ по категории источники (творог, яйца, рыба, птица), НЕ перечисляй частный случай рядом с его же категорией («творог или кисломолочка» — это одно и то же, творог И ЕСТЬ кисломолочный продукт; «творог или йогурт» — оба молочные, лучше дать разнотипное: творог + рыба/яйца).",
+    "ИСТОЧНИК БЕЛКА БЕРИ ИЗ ФАКТОВ, НЕ ПО НАИТИЮ: у каждого продукта в items_notable код проставил поле protein_contributor — это источник правды. Источником белка («добавил белок», «закрыл белок», «белковая основа») называй ТОЛЬКО продукт с protein_contributor=true. Продукт с protein_contributor=false источником белка НЕ называй НИКОГДА, даже если кажется — грибы, овощи, фрукты, ягоды, хлеб, крупы белок не дают («грибы добавили белок» неверно). Не придумывай белковую роль для продукта, которого нет в items_notable. Жир тоже не атрибутируй на глаз: насыщенный/тяжёлый жир (выпечка, пломбир, фритюр, жирное мясо) не называй полезным. Это страховка от выдуманных ролей, она НЕ режет конкретику: реальную еду, цифры и связки «съел X → эффект Y» сохраняй. СОВЕТ ПО БЕЛКУ — КОД УЖЕ РЕШИЛ, ЧТО ПРЕДЛОЖИТЬ, ТЫ ТОЛЬКО ФОРМУЛИРУЕШЬ. У дня в items_notable есть поле protein_advice_sources — код заранее отобрал РЕАЛЬНЫЕ белковые продукты из её дневника (name, protein_g, section), отсортировал по белку. Если МОЖНО СОВЕТОВАТЬ ДОБАВИТЬ БЕЛОК (белок ниже ориентира) и protein_advice_sources НЕ ПУСТ — называй ТОЛЬКО продукт(ы) ИЗ ЭТОГО СПИСКА, предложи увеличить его порцию («блинчики с курицей были — возьми порцию побольше», а не абстрактное «добавь курицу»). Не выбирай продукт из своей головы, если в protein_advice_sources есть хоть один вариант — код проверяет, что совет ссылается на её список, и если нет ни одного совпадения при непустом protein_advice_sources — это дефект. РЕЗЕРВНЫЙ СПИСОК — используй ТОЛЬКО когда protein_advice_sources ПУСТ (белковых продуктов в дне действительно нет или не хватило контекста): творог (в т.ч. зерновой), яйца, рыба, курица (грудка/филе), индейка, говядина, телятина, йогурт (греческий/натуральный), сыр (творожный/твёрдый), морепродукты (креветки, кальмары). Из него называй РАЗНЫЕ по категории источники, не перечисляй частный случай рядом с его же категорией («творог или кисломолочка» — это одно и то же, творог И ЕСТЬ кисломолочный продукт; «творог или йогурт» — оба молочные, лучше разнотипное: творог + рыба/яйца). ПОДБИРАЙ ПО СИТУАЦИИ ДНЯ (и для её продукта, и для резервного): сразу после тренировки — готовое и быстрое (творог, йогурт, яйца вкрутую — их можно сварить заранее); основной приём — курица, рыба, говядина; перекус — творог, йогурт, сыр.",
     "coach_summary_text и day_by_day_analysis_text — ОБЯЗАТЕЛЬНЫЕ непустые поля, заполняй их всегда (даже если основной фокус ушёл в day_prose). coach_summary_text: 2-4 предложения для тренера. day_by_day_analysis_text: по строке-две на каждый день из daily_analysis. Пустые строки в этих полях недопустимы.",
     "day_by_day_analysis_text: дневные блоки строго по canonical daily_analysis; используй weekday_ru, date_label, training_label, actual, hint_for_comment/findings; комментируй только дневные totals, без intraday (до/во время/после, граммы по таймингу, гели).",
     "Если source_quality.confidence=low или suspect=true, формулируй осторожно как ограничение данных.",

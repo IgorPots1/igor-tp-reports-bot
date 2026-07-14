@@ -35,7 +35,7 @@ export type NarrativePatternId =
 
 export const EVENING_SECTIONS = ["dinner", "snack"] as const;
 
-function normalizeFoodName(name: string): string {
+export function normalizeFoodName(name: string): string {
   return name
     .replace(/[.…]{2,}/g, " ")
     .replace(/\s+/g, " ")

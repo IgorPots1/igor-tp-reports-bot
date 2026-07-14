@@ -613,6 +613,66 @@ function collectItemNumbers(itemsNotable: unknown): number[] {
   return numbers;
 }
 
+/** Names of protein sources the code picked from her diary — see pickProteinAdviceSources. */
+function collectProteinAdviceSourceNames(itemsNotable: unknown): string[] {
+  const notable = asObject(itemsNotable);
+  const names: string[] = [];
+  if (Array.isArray(notable.protein_advice_sources)) {
+    for (const source of notable.protein_advice_sources) {
+      const obj = asObject(source);
+      if (typeof obj.name === "string" && obj.name.trim().length >= 2) {
+        names.push(obj.name.trim());
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * A prose that advises adding/increasing protein while her diary held a real, code-picked
+ * source (protein_advice_sources) and named NONE of them — the exact failure a named-field
+ * prompt was supposed to prevent, but a prompt is a request, not a guarantee (Selezneva,
+ * 2026-07-11: protein_advice_sources held her own «Блинчики с Курицей», the prose still said
+ * «яйцо к завтраку, протеиновый йогурт»).
+ *
+ * NOT a rejection — the text can be perfectly good coaching, it just did not reference what it
+ * could have. Surfaced to the coach as a warning (like the prose-rejection banner), never
+ * silently swaps the text for a fallback: a false positive here must cost nothing to the athlete.
+ */
+function detectNutritionProteinAdviceMismatch(prose: string, adviceSourceNames: string[]): boolean {
+  if (adviceSourceNames.length === 0) {
+    return false;
+  }
+  // TWO INDEPENDENT checks, not one adjacency-anchored regex — the real Selezneva sentence
+  // was «Белок 61 г - это очень мало. Даже небольшие добавки работают: яйцо к завтраку,
+  // протеиновый йогурт к ужину» and an earlier adjacency-anchored version of this regex
+  // (requiring "белок" and "добав" to sit next to each other) MISSED it: a full sentence
+  // about kcal sits between the two words in ordinary coaching prose. Mentioning protein
+  // AND suggesting an addition ANYWHERE in the same day's text is advice enough to check.
+  // "белк" alone MISSES the nominative singular "белок" (there is a vowel between "л" and
+  // "к" only in that one form — белОК vs genitive белКа, plural белКи, adjective белКовый).
+  const mentionsProtein = /белок|белк/iu.test(prose);
+  const suggestsAddingSomething =
+    /добав|можно\s+добав|стоит\s+добав|не\s+помешает|хорошо\s+бы|подтян|увелич|порци\p{L}*\s+побольше/iu.test(prose);
+  const advisesMoreProtein = mentionsProtein && suggestsAddingSomething;
+  if (!advisesMoreProtein) {
+    return false;
+  }
+  const proseLower = prose.toLowerCase();
+  const referencesHerSource = adviceSourceNames.some((name) => {
+    // A significant word from the name is enough — the model paraphrases freely
+    // («блинчики с курицей» → «куриное», «куриного»). A 4-char prefix, not 6: the noun
+    // «курицей» and the adjective «куриного» (real case) diverge at the 5th letter
+    // (курИЦей vs курИНого) — a 6-char prefix missed the real paraphrase entirely.
+    const words = name
+      .toLowerCase()
+      .split(/[\s,()]+/)
+      .filter((word) => word.length >= 5);
+    return words.some((word) => proseLower.includes(word.slice(0, 4)));
+  });
+  return !referencesHerSource;
+}
+
 function collectCarbFastFoods(itemsNotable: unknown): string[] {
   const notable = asObject(itemsNotable);
   if (!notable) {
@@ -842,6 +902,12 @@ type NutritionReviewDayEntry = {
   proseRejectedRules: string[];
   /** The same reasons, worded for the coach. */
   proseRejectedMessages: string[];
+  /**
+   * True when the prose advises adding protein but named none of her code-picked real sources
+   * (protein_advice_sources), even though the day had some. NOT a rejection — the text still
+   * ships to the athlete; this only flags the day to the coach for a look.
+   */
+  proteinAdviceMismatch: boolean;
   isRest: boolean;
   isRun: boolean;
   isKey: boolean;
@@ -882,6 +948,34 @@ export function getNutritionDayProseRejections(review: NutritionWeeklyAnalysis |
       // entry.prose IS the deterministic comment here — the gate already swapped it.
       willSendProse: entry.prose,
     }));
+}
+
+/** A day whose protein advice did not reference any of her code-picked real sources. */
+export type NutritionDayProteinAdviceMismatch = {
+  date: string | null;
+  /** The prose exactly as it ships — this is a WARNING, the text is not swapped. */
+  prose: string;
+};
+
+/**
+ * Days where the shipping prose advises adding protein but named none of the athlete's own
+ * code-picked sources (protein_advice_sources), even though the day had some to name.
+ *
+ * NOT a rejection: the text still reaches the athlete unchanged. This exists purely to put the
+ * day in front of the coach — «совет по белку не опирается на её продукты — проверьте» — the
+ * same reporting shape as getNutritionDayProseRejections, for the same reason: a prompt is a
+ * request, not a guarantee, and a silent miss here is a worse coaching experience than a
+ * generic-sounding tip that a human never gets to catch.
+ */
+export function getNutritionDayProteinAdviceMismatches(
+  review: NutritionWeeklyAnalysis | null
+): NutritionDayProteinAdviceMismatch[] {
+  if (!review) {
+    return [];
+  }
+  return buildDailyFactsEntries(review)
+    .filter((entry) => entry.proteinAdviceMismatch)
+    .map((entry) => ({ date: entry.date, prose: entry.prose }));
 }
 
 /** Athlete-safe per-day review card data (date + validated prose + flags). */
@@ -1122,6 +1216,7 @@ function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionRevie
           prose: comment,
           proseRejectedRules: [],
           proseRejectedMessages: [],
+          proteinAdviceMismatch: false,
           ...dayFlags,
         };
       }
@@ -1138,6 +1233,12 @@ function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionRevie
       const proseGate = resolveUsableNutritionDayProse(item.athlete_prose, buildNutritionDayProseFacts(item));
       const dayComment = proseGate.prose ?? comment;
       const numbersLine = `${formatNutritionAthleteKcal(kcal, { mode: "actual" })} · Б ${formatNutritionAthleteMacro(protein)} · Ж ${formatNutritionAthleteMacro(fat)} · У ${formatNutritionAthleteMacro(carbs)}`;
+      // A WARNING, not a rejection: checked against the text that actually ships (dayComment),
+      // so a fallback comment (which never advises anything) never trips it by construction.
+      const proteinAdviceMismatch = detectNutritionProteinAdviceMismatch(
+        dayComment,
+        collectProteinAdviceSourceNames(item.items_notable)
+      );
       return {
         date,
         line: [
@@ -1152,6 +1253,7 @@ function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionRevie
         prose: dayComment,
         proseRejectedRules: proseGate.rejectedRules,
         proseRejectedMessages: proseGate.rejectedMessages,
+        proteinAdviceMismatch,
         ...dayFlags,
       };
     })

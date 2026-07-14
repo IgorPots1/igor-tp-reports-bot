@@ -41,6 +41,7 @@ import {
   buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
   getNutritionDayProseRejections,
+  getNutritionDayProteinAdviceMismatches,
 } from "@/features/nutrition/combined-message";
 import {
   buildNutritionStudentCardHref,
@@ -491,6 +492,13 @@ export default async function CoachOsNutritionStudentCardPage({
       .filter((rejection): rejection is typeof rejection & { date: string } => typeof rejection.date === "string")
       .map((rejection) => [rejection.date, rejection])
   );
+  // A WARNING, not a rejection: the text still ships unchanged. Same reporting shape as
+  // proseRejectionByDate, for the coach to notice a generic-sounding protein tip.
+  const proteinAdviceMismatchDates = new Set(
+    getNutritionDayProteinAdviceMismatches(effectiveWeeklyAnalysis)
+      .filter((mismatch): mismatch is typeof mismatch & { date: string } => typeof mismatch.date === "string")
+      .map((mismatch) => mismatch.date)
+  );
   type NutritionReviewProseBlock = {
     date: string;
     label: string;
@@ -498,6 +506,7 @@ export default async function CoachOsNutritionStudentCardPage({
     isReplaced: boolean;
     rejectionReasons: string[];
     willSendProse: string;
+    hasProteinAdviceMismatch: boolean;
   };
   const reviewProseBlocks = dailyAnalysis
     .map((day): NutritionReviewProseBlock | null => {
@@ -516,10 +525,12 @@ export default async function CoachOsNutritionStudentCardPage({
         isReplaced: rejection != null,
         rejectionReasons: rejection?.messages ?? [],
         willSendProse: coachShortDashes(rejection?.willSendProse ?? ""),
+        hasProteinAdviceMismatch: proteinAdviceMismatchDates.has(date),
       };
     })
     .filter((block): block is NutritionReviewProseBlock => block !== null);
   const replacedProseBlocks = reviewProseBlocks.filter((block) => block.isReplaced);
+  const proteinAdviceMismatchBlocks = reviewProseBlocks.filter((block) => block.hasProteinAdviceMismatch);
   const reviewFocusStatement = coachShortDashes(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : "");
   const reviewOpeningNote = coachShortDashes(
     typeof weeklyNutritionSummary.athlete_opening_note_ru === "string"
@@ -1248,6 +1259,15 @@ export default async function CoachOsNutritionStudentCardPage({
               Проза этих дней не проходит проверку чисел и молча заменяется на сухой автокомментарий:{" "}
               {replacedProseBlocks.map((block) => block.label).join(", ")}. Открой «Редактировать текст для ученицы» —
               там показано, что именно уйдёт и почему.
+            </div>
+          ) : null}
+          {proteinAdviceMismatchBlocks.length > 0 ? (
+            <div className="admin-alert admin-alert-warning">
+              <strong>
+                {proteinAdviceMismatchBlocks.length} дн. советуют белок не из её дневника — проверьте:
+              </strong>{" "}
+              {proteinAdviceMismatchBlocks.map((block) => block.label).join(", ")}. Текст УЙДЁТ как есть (это не
+              ошибка, а звонок посмотреть) — в её дневнике в этот день были белковые продукты, а совет назвал не их.
             </div>
           ) : null}
           {(card.weeklyAnalysis && reviewProseBlocks.length > 0) || displayPlan ? (
