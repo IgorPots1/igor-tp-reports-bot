@@ -394,12 +394,18 @@ function isRunningWorkout(typeRaw: string | null, titleRaw: string | null): bool
 }
 
 // Mirror of methodology.isLightIntermittentCrossTrainingTitle — kept local to avoid an
-// import cycle (methodology → activity-energy → weekly-plan-formulas). Light intermittent
-// play / walking (padel, tennis, walk, hike) is fuelled below endurance; bike/swim are
-// intentionally NOT matched here so they keep the full cross-training carb level.
+// import cycle (methodology → activity-energy → weekly-plan-formulas). MUST stay identical
+// to that copy, or the plan and the review disagree on which cross-training counts as
+// "light" and land on different carb corridors for the same day (the exact desync class
+// fixed repeatedly today). Light intermittent play / walking (padel, tennis, walk, hike)
+// and (coach's call, 2026-07-14) yoga/pilates are fuelled below endurance; bike/swim/jump
+// rope/ice skating/volleyball are intentionally NOT matched here so they keep the full
+// cross-training carb level.
 function isLightIntermittentCrossTrainingTitle(title: string): boolean {
   const t = title.toLowerCase();
-  return /\bpadel\b|падел|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(t);
+  return /\bpadel\b|падел|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис|\byoga\b|йога|\bpilates\b|пилатес/.test(
+    t
+  );
 }
 
 function normalizeDayType(typeRaw: string | null, titleRaw: string | null): NutritionPlanDayType {
@@ -423,6 +429,15 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
   if (type === "strength" || /силов/.test(haystack)) {
     return "strength";
   }
+  // Mirror of the review-side bypass in methodology.normalizeTrainingType (coach's call,
+  // 2026-07-14): elliptical/cardio are light-tempo effort, checked ahead of cross_training
+  // so the plan and the review never disagree on these two. MISSED here on the first pass
+  // (only the review side was fixed) — this exact gap is why this mirror function exists
+  // as a documented risk in the first place; caught it while extending to the other
+  // unclassified activities and fixed retroactively.
+  if (/\belliptical\b|эллипс|\bcardio\b|кардио/u.test(haystack)) {
+    return "easy";
+  }
   if (
     type === "crosstrain" ||
     type === "cross_training" ||
@@ -430,7 +445,12 @@ function normalizeDayType(typeRaw: string | null, titleRaw: string | null): Nutr
     type === "swim" ||
     type === "walk" ||
     type === "hike" ||
-    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(haystack)
+    // Coach's call (2026-07-14): yoga/pilates/jump rope/ice skating/volleyball — same
+    // "Other"/unrecognised-title root cause as elliptical, folded into the existing
+    // cross_training bucket (mirrors methodology.normalizeTrainingType exactly).
+    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис|\byoga\b|йога|\bpilates\b|пилатес|jump\s*rope|скакалк|ice\s*skating|коньк|volleyball|волейбол/.test(
+      haystack
+    )
   ) {
     // Non-run activities (incl. walk/hike/tennis) → cross-training family.
     return "cross_training";

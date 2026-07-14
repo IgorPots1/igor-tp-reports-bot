@@ -590,6 +590,23 @@ export function normalizeTrainingType(rawType: string | null | undefined, title:
   if (raw === "strength") {
     return "strength";
   }
+  // Coach's call (2026-07-14): elliptical is light-tempo effort, not a cross-training
+  // machine (bike/swim/walk carry a lower coefficient and a different corridor) and not
+  // "unknown" (TP has no dedicated type id for it — arrives as workoutTypeValueId=100,
+  // "Other" — so it fell all the way through to unknown: priority 10 instead of 50, a
+  // day with only elliptical would have been read as no-training-evidence). Checked on
+  // the TITLE, ahead of the cross_training block below, so the general TP classifier's
+  // family assignment (crosstrain, for OTHER general-purpose consumers of that
+  // classifier) can never downgrade this specific nutrition decision.
+  if (/\belliptical\b|эллипс/iu.test(titleLc)) {
+    return "easy";
+  }
+  // Coach's call (2026-07-14): unqualified "Cardio" (no further detail — TP's generic
+  // cardio-machine bucket) is the same light-tempo effort as elliptical, same reasoning,
+  // same bypass ahead of cross_training.
+  if (/\bcardio\b|кардио/iu.test(titleLc)) {
+    return "easy";
+  }
   if (
     raw === "crosstrain" ||
     raw === "cross_training" ||
@@ -597,7 +614,15 @@ export function normalizeTrainingType(rawType: string | null | undefined, title:
     raw === "swim" ||
     raw === "walk" ||
     raw === "hike" ||
-    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(titleLc)
+    // Coach's call (2026-07-14): yoga/pilates/jump rope/ice skating/volleyball had NO
+    // classification anywhere (same "Other"/workoutTypeValueId=100 root cause as
+    // elliptical) and fell to unknown. Folded into the EXISTING cross_training bucket
+    // rather than inventing a parallel mechanism — yoga/pilates additionally qualify as
+    // "light" below (low glycogen depletion, same reasoning as padel/tennis/walk); jump
+    // rope/ice skating/volleyball get the regular (non-light) cross_training corridor.
+    /\bpadel\b|падел|cross.?train|crosstrain|bike|cycling|swim|плав|вело|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис|\byoga\b|йога|\bpilates\b|пилатес|jump\s*rope|скакалк|ice\s*skating|коньк|volleyball|волейбол/.test(
+      titleLc
+    )
   ) {
     // Non-run activities (incl. walk/hike/tennis) → cross-training family, so they
     // are not mislabeled as "лёгкий бег" or evaluated against run carb targets.
@@ -1067,13 +1092,19 @@ function inferCanonicalTrainingType(input: {
   return "unknown";
 }
 
-// Light, intermittent cross-training — racket games with pauses (padel, tennis) and
-// walking/hiking. These do NOT deplete glycogen like continuous endurance, so they are
-// fuelled at easy-day carb level, not the 5-7 г/кг endurance band. Continuous endurance
-// cross-training (bike, swim, cycling) is intentionally NOT matched here — it stays high.
+// Light, intermittent cross-training — racket games with pauses (padel, tennis),
+// walking/hiking, and (coach's call, 2026-07-14) yoga/pilates — flexibility/core work with
+// the same low glycogen depletion as an intermittent racket game, not continuous endurance.
+// These do NOT deplete glycogen like continuous endurance, so they are fuelled at easy-day
+// carb level, not the 5-7 г/кг endurance band. Continuous endurance cross-training (bike,
+// swim, cycling) is intentionally NOT matched here — it stays high, and neither is jump
+// rope/ice skating/volleyball, which are real calorie-burning cardio/game activity, not
+// low-intensity flexibility work — they get the regular (non-light) cross_training corridor.
 function isLightIntermittentCrossTrainingTitle(title: string): boolean {
   const t = title.toLowerCase();
-  return /\bpadel\b|падел|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис/.test(t);
+  return /\bpadel\b|падел|\b(?:walk|walking|hike|hiking|trek|tennis)\b|ходьб|прогулк|поход|хайк|теннис|\byoga\b|йога|\bpilates\b|пилатес/.test(
+    t
+  );
 }
 
 function buildCanonicalTarget(input: {

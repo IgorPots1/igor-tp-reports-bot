@@ -17,6 +17,25 @@ const NUTRITION_ACTIVITY_COEF_BY_TITLE: Array<{ key: string; pattern: RegExp; pe
   // Strength duration varies widely (20–50 min) and we don't read intensity yet —
   // keep it conservative (better to under- than over-credit) until HR is wired in.
   { key: "strength", pattern: /\b(?:strength|gym)\b|силов|тренажёрн|тренажерн/iu, perKgPerHour: 5 },
+  // Coach's call: light-tempo effort — same coefficient as "easy" (8), not the
+  // unknown-type default (9) it fell back to with no keyword match at all.
+  { key: "elliptical", pattern: /\belliptical\b|эллипс/iu, perKgPerHour: 8 },
+  // Coach's call (2026-07-14) — unqualified "Cardio" is the same light-tempo effort
+  // as elliptical (no further detail to go on).
+  { key: "cardio", pattern: /\bcardio\b|кардио/iu, perKgPerHour: 8 },
+  // Coach's call (2026-07-14, draft — see checkpoint): flexibility/core work, very low
+  // glycogen depletion — same tier as walk, matches the cross_training_light corridor
+  // these two are also classified into (isLightIntermittentCrossTrainingTitle).
+  { key: "yoga", pattern: /\byoga\b|йога/iu, perKgPerHour: 3.5 },
+  { key: "pilates", pattern: /\bpilates\b|пилатес/iu, perKgPerHour: 3.5 },
+  // Coach's call (2026-07-14, draft — see checkpoint): intense per-minute, real
+  // calorie-burning cardio — priced above bike/swim, below run intensities.
+  { key: "jump-rope", pattern: /jump\s*rope|скакалк/iu, perKgPerHour: 10 },
+  // Coach's call (2026-07-14, draft — see checkpoint): moderate continuous cardio.
+  { key: "ice-skating", pattern: /ice\s*skating|коньк/iu, perKgPerHour: 6 },
+  // Coach's call (2026-07-14, draft — see checkpoint): intermittent team sport, real
+  // effort but with pauses — same tier as ice skating, below continuous endurance.
+  { key: "volleyball", pattern: /volleyball|волейбол/iu, perKgPerHour: 6 },
 ];
 
 /** Title-based expenditure coefficient (kcal/kg/h), or null when no activity matches. */

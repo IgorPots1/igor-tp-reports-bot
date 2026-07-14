@@ -109,6 +109,48 @@ function classifyByTitle(title: string): TrainingPeaksWorkoutActivityClassificat
     };
   }
 
+  // TP has no dedicated type id for the elliptical machine — it arrives as
+  // workoutTypeValueId=100 ("Other"), same bucket as a literal "Other" title, so it fell
+  // through every classifier all the way to "unknown" (confirmed empirically: Denisova,
+  // 2026-04-03). Cross-training equipment, not run/bike/swim/strength.
+  const ellipticalMatch = includesAny(title, ["elliptical", "эллипс"]);
+  if (ellipticalMatch) {
+    return {
+      family: "crosstrain",
+      isRunning: false,
+      confidence: "high",
+      reason: `title matched elliptical keyword "${ellipticalMatch}"`,
+    };
+  }
+
+  // Same root cause as elliptical, same fix: TP sends these as workoutTypeValueId=100
+  // ("Other") with no dedicated type id, so nothing recognised them and they fell to
+  // "unknown" — confirmed empirically across the full workout cache (Task: unknown-
+  // activity sweep, 2026-07-14). "other" is deliberately NOT one of these keywords: a
+  // literal "Other"/"Track Me" title carries no real activity signal to classify from.
+  const namedActivityMatch = includesAny(title, [
+    "yoga",
+    "йога",
+    "pilates",
+    "пилатес",
+    "cardio",
+    "кардио",
+    "jump rope",
+    "скакалк",
+    "ice skating",
+    "коньк",
+    "volleyball",
+    "волейбол",
+  ]);
+  if (namedActivityMatch) {
+    return {
+      family: "crosstrain",
+      isRunning: false,
+      confidence: "high",
+      reason: `title matched named-activity keyword "${namedActivityMatch}"`,
+    };
+  }
+
   return null;
 }
 

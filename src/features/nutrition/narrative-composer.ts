@@ -196,7 +196,14 @@ export function isCombinedLoadLabel(label: string): boolean {
   }
   const hasStrength = /силов/.test(haystack);
   const hasRun = /бег|run|пробеж/.test(haystack);
-  const hasCross = /\bpadel\b|падел|вело|cycling|bike|кросс/.test(haystack);
+  // Fallback only — a merged label always carries "+" (caught above); this only matters
+  // for a label built some other way. Kept in sync with the cross_training keyword set in
+  // methodology.normalizeTrainingType (coach's call, 2026-07-14: elliptical/cardio/yoga/
+  // pilates/jump rope/ice skating/volleyball).
+  const hasCross =
+    /\bpadel\b|падел|вело|cycling|bike|кросс|эллипс|elliptical|кардио|\bcardio\b|йога|\byoga\b|пилатес|\bpilates\b|скакалк|jump\s*rope|коньк|ice\s*skating|волейбол|volleyball/.test(
+      haystack
+    );
   return (hasStrength && hasRun) || (hasCross && hasRun);
 }
 
@@ -257,9 +264,14 @@ export function resolvePreLongActualEnergyIssue(input: {
 
 function isCrossTrainingType(trainingType: string, label: string): boolean {
   const haystack = `${trainingType} ${label}`.toLocaleLowerCase("ru");
+  // The trainingType check is authoritative (methodology.normalizeTrainingType already
+  // resolved it); the regex is a defensive fallback for stale/unresolved input. Kept in
+  // sync with the same keyword set (coach's call, 2026-07-14).
   return (
     trainingType === "cross_training" ||
-    /\bpadel\b|падел|cycling|bike|вело|кросс.?train|crosstrain/.test(haystack)
+    /\bpadel\b|падел|cycling|bike|вело|кросс.?train|crosstrain|эллипс|elliptical|кардио|\bcardio\b|йога|\byoga\b|пилатес|\bpilates\b|скакалк|jump\s*rope|коньк|ice\s*skating|волейбол|volleyball/.test(
+      haystack
+    )
   );
 }
 
