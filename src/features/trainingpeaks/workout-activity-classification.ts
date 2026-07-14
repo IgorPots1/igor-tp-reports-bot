@@ -154,6 +154,60 @@ function classifyByTitle(title: string): TrainingPeaksWorkoutActivityClassificat
   return null;
 }
 
+/**
+ * TrainingPeaks' own workoutTypeValueId -> sport. This is the AUTHORITATIVE
+ * signal and it beats every title heuristic: TP knows what sport the athlete
+ * logged, a Russian workout title is just prose.
+ *
+ * Mapping read off the real cache (1199 completed workouts, 105 athletes), not
+ * guessed:
+ *   1  -> swim       "Lap Swimming", "Open Water Swimming", "1800 м", "2 x 1000"
+ *   2  -> bike       "Cycling", "Indoor/Road Cycling", "Вел по мощности",
+ *                    "Длительный вел", and bike intervals like "2 х 18 / 3 мин"
+ *   3  -> run        every running title
+ *   9  -> strength   "Strength", "Силовая"
+ *   13 -> walk_hike  "Walking", "Indoor Walking", "Hiking"
+ *
+ * 100 is DELIBERATELY ABSENT: it is TP's catch-all "Other" bucket and holds a
+ * grab-bag of unrelated activities (Yoga, Pilates, Tennis, Soccer, Padel, Stand
+ * Up Paddleboarding, Elliptical, Jump Rope, Hiit, Cardio). Mapping it to any one
+ * family would be a lie, so it falls through to the title heuristics, which
+ * resolve those correctly.
+ *
+ * WHY the ordering matters: previously only 3 and 9 were mapped, so a ride
+ * (type 2) fell through to the title heuristics -- where "длительный" is a
+ * RUNNING keyword. "Длительный вел" (a long BIKE ride) was therefore classified
+ * as a run, sailed through the sport gate, and polluted aerobic_ef with cycling
+ * speeds (0.042-0.067 against a genuine-run ceiling of 0.025). 11 of 33 rides
+ * were mislabelled. The type id is not a hint to be overridden -- it is the
+ * answer.
+ */
+const AUTHORITATIVE_TYPE_ID_TO_FAMILY: Record<number, TrainingPeaksWorkoutActivityFamily> = {
+  1: "swim",
+  2: "bike",
+  3: "run",
+  9: "strength",
+  13: "walk_hike",
+};
+
+function classifyByAuthoritativeTypeId(
+  workoutTypeValueId: number | null
+): TrainingPeaksWorkoutActivityClassificationResult | null {
+  if (workoutTypeValueId === null) {
+    return null;
+  }
+  const family = AUTHORITATIVE_TYPE_ID_TO_FAMILY[workoutTypeValueId];
+  if (!family) {
+    return null;
+  }
+  return {
+    family,
+    isRunning: family === "run",
+    confidence: "high",
+    reason: `workoutTypeValueId=${workoutTypeValueId} (authoritative TrainingPeaks sport)`,
+  };
+}
+
 function classifyByOfficialType(input: {
   sportOrTypeCode: string;
   workoutTypeValueId: number | null;
@@ -162,22 +216,9 @@ function classifyByOfficialType(input: {
 }): TrainingPeaksWorkoutActivityClassificationResult | null {
   const { sportOrTypeCode, workoutTypeValueId, workoutSubTypeId, sourceSnapshot } = input;
 
-  // Confirmed from local cached samples: 3=Run, 9=Strength.
-  if (workoutTypeValueId === 3) {
-    return {
-      family: "run",
-      isRunning: true,
-      confidence: "high",
-      reason: "workoutTypeValueId=3 (confirmed run mapping)",
-    };
-  }
-  if (workoutTypeValueId === 9) {
-    return {
-      family: "strength",
-      isRunning: false,
-      confidence: "high",
-      reason: "workoutTypeValueId=9 (confirmed strength mapping)",
-    };
+  const authoritative = classifyByAuthoritativeTypeId(workoutTypeValueId);
+  if (authoritative) {
+    return authoritative;
   }
 
   const codeMatchers: Array<{ family: TrainingPeaksWorkoutActivityFamily; tokens: string[] }> = [
@@ -292,6 +333,16 @@ export function classifyTrainingPeaksWorkoutActivity(
   const sportOrTypeCode = normalizeText(input.sportOrTypeCode);
   const workoutTypeValueId = input.workoutTypeValueId ?? null;
   const workoutSubTypeId = input.workoutSubTypeId ?? null;
+
+  // The authoritative TP sport id comes FIRST -- ahead of every title heuristic,
+  // including the padel/paddle/strength overrides below. A title can only decide
+  // the sport when TP itself did not say (type 100 "Other", or no type at all).
+  // Letting prose outrank the type id is exactly how "Длительный вел" became a
+  // run.
+  const authoritative = classifyByAuthoritativeTypeId(workoutTypeValueId);
+  if (authoritative) {
+    return authoritative;
+  }
 
   const titleOverride = classifyByTitle(title);
   if (titleOverride) {
