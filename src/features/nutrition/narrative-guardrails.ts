@@ -33,7 +33,6 @@ export const NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS = [
   "energyAvailability",
   "энергодефицит",
   "дефицит калорий",
-  "на границе нормы",
 ] as const;
 
 /**
@@ -42,8 +41,16 @@ export const NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS = [
  * fragment never appears in Russian prose, and no food/brand is the standalone
  * token "EA", so \bEA\b case-sensitive has effectively zero food false positives
  * (word boundary also protects SEA / IKEA / EAA). Cyrillic terms match case-
- * insensitively. "на границе нормы" targets ТОЛЬКО «границ… нормы» — the allowed
- * athlete wording «нижняя граница» (без «нормы») is deliberately NOT matched.
+ * insensitively.
+ *
+ * "граница нормы" is deliberately NOT in this list (coach decision, 2026-07-14):
+ * the original leak this list was built for was the bare abbreviation "EA" in
+ * «EA на границе нормы» (see history), which \bEA\b alone already blocks — a
+ * separate «границ…нормы» pattern was redundant for that case and, on real data
+ * (357 athlete-days scanned), its ONLY effect was killing 6 ordinary sentences
+ * like «нижняя граница нормы для бега» that have nothing clinical about them.
+ * «граница нормы» describing where a number sits in its normal range is normal
+ * coach language, not RED-S/EA screening jargon — do not re-add it here.
  */
 export const NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_PATTERNS: readonly RegExp[] = [
   /\bEA\b/, // case-sensitive on purpose (coach abbrev, not food)
@@ -59,7 +66,6 @@ export const NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_PATTERNS: readonly RegExp[] 
   /костн\p{L}*\s+плотност/iu,
   /расстройств\p{L}*\s+пищев/iu,
   /медицинск/i,
-  /границ\p{L}*\s+нормы/iu,
 ] as const;
 
 /**
@@ -91,7 +97,7 @@ export const NUTRITION_PRACTICAL_TARGET_REQUIRED_WORDING = [
 export const NUTRITION_REVIEW_NARRATIVE_PROMPT_LINES = [
   "coach_context_ru — high-priority coach interpretation context. Не цитируй coach_context_ru дословно ученику.",
   "athlete_report_signals — только coach summary / review caution. Не пиши медицинские выводы ученику по сигналам illness/cycle/injury.",
-  `EA/energyAvailability — только coach screening. НИ В КАКОМ ВИДЕ не пиши ученику эти coach/медицинские термины и аббревиатуры (включая «EA»): ${NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS.join(", ")}. И не пиши методический оборот «на границе нормы»/«граница нормы» — вместо этого мягко словами («энергии для такого дня маловато»).`,
+  `EA/energyAvailability — только coach screening. НИ В КАКОМ ВИДЕ не пиши ученику эти coach/медицинские термины и аббревиатуры (включая «EA»): ${NUTRITION_ATHLETE_FORBIDDEN_COACH_TERM_WORDS.join(", ")}.`,
   "Допустимо ученику: «энергии для такого дня маловато», «для дня с нагрузкой это нижняя граница», «лучше поддержать питание вокруг нагрузки».",
   "macroGuardrails детерминированы в facts: не пересчитывай г/кг и не переопределяй protein ok как оправдание низкой энергии/углеводов.",
   "Если weekly protein avg >= 1.5, summary может сказать, что белок в целом ближе к норме; borderline days — мягко.",
