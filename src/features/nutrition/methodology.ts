@@ -353,10 +353,33 @@ const WORKOUT_LOAD_PRIORITY: Record<NutritionTrainingType, number> = {
   unknown: 10,
 };
 
-function formatAthleteWorkoutTitleRu(title: string): string {
+/**
+ * TrainingPeaks activity names arrive in English — «Pilates», «Lap Swimming», «Hiit»,
+ * «Walking» — and used to reach the athlete verbatim: the fallback below is `return
+ * normalized`, and only three names were covered, so everything else went out in English.
+ * 39 real days across 20 athletes carried an English workout name; combined days read
+ * «бег + Pilates», «Lap Swimming + Pilates».
+ *
+ * The list is taken from the DATA — every Latin title actually present in the athletes'
+ * TrainingPeaks calendars — not invented. An unknown name still falls through unchanged:
+ * a raw name is better than a wrong translation.
+ *
+ * THIS IS THE LABEL ONLY, AND IT CANNOT MOVE A DAY BETWEEN TYPES. normalizeTrainingType
+ * runs on the RAW session title, before the day's titles are merged through here (see
+ * buildWorkoutContextByDate), so classification never sees the translation. The one
+ * consumer that reads the merged title and cares about words — isLightIntermittentCross-
+ * TrainingTitle — matches «ходьб» as well as «walk», so «Walking» → «ходьба» stays a light
+ * cross day and its carb corridor does not move.
+ */
+export function formatAthleteWorkoutTitleRu(title: string): string {
   const normalized = title.trim();
   if (!normalized) {
     return "";
+  }
+  // HIIT is a strength session — there is no HIIT mode on a running watch (coach's call), and
+  // normalizeTrainingType already classifies it as strength. The label follows the classification.
+  if (/\bhiit\b|хиит/iu.test(normalized)) {
+    return "силовая";
   }
   if (/\bpadel\b/i.test(normalized)) {
     return "падел";
@@ -367,7 +390,37 @@ function formatAthleteWorkoutTitleRu(title: string): string {
   if (/^running$/i.test(normalized) || /^run$/i.test(normalized) || /бег/i.test(normalized)) {
     return "бег";
   }
-  return normalized;
+  // Open water BEFORE the generic swim rule, or it would collapse into plain «плавание».
+  if (/open\s*water\s*swim/i.test(normalized)) {
+    return "плавание на открытой воде";
+  }
+  if (/\bswim(?:ming)?\b/i.test(normalized)) {
+    return "плавание";
+  }
+  if (/\bwalk(?:ing)?\b/i.test(normalized)) {
+    return "ходьба";
+  }
+  if (/\bpilates\b/i.test(normalized)) {
+    return "пилатес";
+  }
+  if (/\byoga\b/i.test(normalized)) {
+    return "йога";
+  }
+  if (/\bcycling\b|\bbik(?:e|ing)\b/i.test(normalized)) {
+    return "велотренировка";
+  }
+  if (/\bkayak(?:ing)?\b/i.test(normalized)) {
+    return "каякинг";
+  }
+  if (/\belliptical\b/i.test(normalized)) {
+    return "эллипс";
+  }
+  // «8 x 4 мин» — a Latin x standing in for the multiplication sign. The words are already
+  // Russian; only the glyph is foreign, and after the names above it is the last Latin left in
+  // the athlete's labels. Swapped ONLY between digits, so nothing else can be caught by it.
+  // Classification is untouched: normalizeTrainingType reads the RAW title, and its interval
+  // regex accepts «x» and «х» alike.
+  return normalized.replace(/(\d\s*)x(\s*\d)/gi, "$1х$2");
 }
 
 function mergeWorkoutTitlesForDay(titles: string[]): string {
@@ -1172,7 +1225,8 @@ function buildCanonicalTrainingLabel(input: {
     return "день отдыха";
   }
   if (!input.workout) {
-    return "день без тренировки в TrainingPeaks";
+    // Бренд в тексте ученице ни к чему — она читает про свой день, а не про наш инструмент.
+    return "день без тренировки по плану";
   }
   const title = input.workout.title.trim();
   if (input.canonicalTrainingType === "strength") {

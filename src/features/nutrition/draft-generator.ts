@@ -44,6 +44,7 @@ import {
 } from "@/features/nutrition/nutrition-ai-provider";
 import {
   buildNutritionMethodologyContext,
+  formatAthleteWorkoutTitleRu,
   NUTRITION_REVIEW_METHODOLOGY_VERSION,
   selectNutritionWeeklyFocus,
   type CarbProgressionStrategy,
@@ -325,7 +326,11 @@ function buildWorkoutTitleMap(context: NutritionStudentContext): Map<string, str
     }
     const current = map.get(workout.date);
     if (!current || /длитель|long run|интерв|tempo|темп|race|гонк/i.test(title)) {
-      map.set(workout.date, title);
+      // ПЕРЕВОДИМ ЗДЕСЬ. Этот титул уезжает в факты дня для модели (workoutTitle) и в
+      // training_label как фолбэк. Раньше уезжал СЫРЫМ, и модель цитировала «Hiit» в тексте
+      // ученице — англицизм писала не она, его подсовывали мы. Приоритет выше считается по
+      // СЫРОМУ названию, так что выбор тренировки дня не меняется.
+      map.set(workout.date, formatAthleteWorkoutTitleRu(title));
     }
   }
   return map;

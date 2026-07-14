@@ -308,6 +308,22 @@ const NUTRITION_ATHLETE_WORDING_REPLACEMENTS: Array<[RegExp, string]> = [
   [/(?<![а-яё])карбов(?![а-яё])/gi, "углеводов"],
   // Jargon construction «с жировой точки зрения» → plain «по жирам».
   [/с\s+жиров[а-яё]*\s+точки\s+зрения/gi, "по жирам"],
+  // «HIIT» — an anglicism the model used to pick up from the RAW TrainingPeaks activity name
+  // («Hiit») that we handed it ourselves. The title is now translated before it ever reaches
+  // the prompt (buildWorkoutTitleMap → formatAthleteWorkoutTitleRu), so the model should not
+  // see it at all; this is the net for when it writes one from memory. HIIT is a strength
+  // session — no HIIT mode exists on a running watch (coach's call) — and normalizeTrainingType
+  // already classifies it as strength, so the wording follows the classification.
+  //
+  // ORDER MATTERS, and so does the ABSENCE of spaces. Kill the GLUED pairings first, or
+  // «силовая/HIIT» becomes «силовая/силовая». A glued separator is a compound word; a dash
+  // WITH spaces is punctuation — «Среда - HIIT с утра» must become «Среда - силовая с утра»
+  // and must NEVER lose its dash, or the sentence loses its predicate.
+  [/(?<=[а-яё])\/hiit\b/gi, ""],
+  [/(?<=[а-яё])-hiit\b/gi, ""],
+  [/\bhiit[/-](?=[а-яё])/gi, ""],
+  [/(?<![а-яёa-z-])hiit(?![а-яёa-z-])/gi, "силовая"],
+  [/(?<![а-яё])хиит(?![а-яё])/gi, "силовая"],
 ];
 
 /** Rewrite florid/bookish phrasings to Igor's plain voice (see replacements above). */
@@ -359,13 +375,19 @@ const LATIN_TO_CYRILLIC_HOMOGLYPH: Record<string, string> = {
 };
 
 // Fix isolated Latin homoglyphs ONLY inside a token that ALSO contains Cyrillic
-// (a mixed-script word is always a glitch). Pure-Latin tokens — brands, VO2, HIIT,
-// km, PR — contain no Cyrillic, so they are left completely untouched. Non-homoglyph
-// Latin letters (g, w, z, …) are kept as-is even inside a mixed token.
+// (a mixed-script word is always a glitch). Pure-Latin tokens — brands, VO2, km, PR —
+// contain no Cyrillic, so they are left completely untouched. Non-homoglyph Latin
+// letters (g, w, z, …) are kept as-is even inside a mixed token.
+//
+// This function is about GLITCHES, not about language, and it is NOT the place to translate
+// an anglicism. An English word that has a Russian equivalent is rewritten by
+// simplifyAthleteWording (HIIT → «силовая»), and an English WORKOUT NAME never reaches the
+// athlete at all because formatAthleteWorkoutTitleRu translates it first. Widening the rule
+// here would corrupt the very brands and units it exists to protect.
 export function normalizeMixedScriptHomoglyphs(input: string): string {
   return input.replace(/[A-Za-zА-Яа-яЁё]+/gu, (token) => {
     if (!/[А-Яа-яЁё]/u.test(token) || !/[A-Za-z]/.test(token)) {
-      return token; // pure-Latin (leave VO2/HIIT/km/brands) or pure-Cyrillic
+      return token; // pure-Latin (leave VO2/km/brands) or pure-Cyrillic
     }
     return token.replace(/[A-Za-z]/g, (ch) => LATIN_TO_CYRILLIC_HOMOGLYPH[ch] ?? ch);
   });
