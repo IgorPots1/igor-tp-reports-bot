@@ -1134,6 +1134,7 @@ function buildCanonicalTarget(input: {
       carbsGPerKgMax: 5,
       carbsGMin: Number((3 * bodyweight).toFixed(0)),
       carbsGMax: Number((5 * bodyweight).toFixed(0)),
+      proteinGMin: Number((1.6 * bodyweight).toFixed(0)),
       formulaCode: "limited_context",
     };
   }
@@ -1161,6 +1162,15 @@ function buildCanonicalTarget(input: {
   const carbsGMin = Number((carbsGPerKgMin * bodyweight).toFixed(0));
   const carbsGMax = Number((carbsGPerKgMax * bodyweight).toFixed(0));
 
+  // proteinGMin: SAME 1.6 g/kg the plan side already uses for every day type
+  // (weekly-plan-formulas.ts DAY_TYPE_FORMULAS) - protein need does not depend on
+  // today's training type the way carbs do. Previously only "strength" carried this
+  // field, so the model had to invent its own protein orientation for every other
+  // day type (it lands on the same 1.6 g/kg by general nutrition knowledge, but the
+  // number validator rejects it as "not in facts" since it was never in target) -
+  // the whole day's prose then fell to the dry deterministic comment for a real,
+  // formula-matching number the code just never wrote down.
+  const proteinGMin = Number((1.6 * bodyweight).toFixed(0));
   if (input.canonicalTrainingType === "long_run") {
     return {
       carbsGPerKgMin,
@@ -1168,6 +1178,7 @@ function buildCanonicalTarget(input: {
       carbsGMin,
       carbsGMax,
       kcalMin: Number((35 * bodyweight).toFixed(0)),
+      proteinGMin,
       formulaCode: "canonical_daily_v1_long_run",
     };
   }
@@ -1178,6 +1189,7 @@ function buildCanonicalTarget(input: {
       carbsGMin,
       carbsGMax,
       kcalMin: Number((35 * bodyweight).toFixed(0)),
+      proteinGMin,
       formulaCode: "canonical_daily_v1_long_endurance",
     };
   }
@@ -1187,6 +1199,7 @@ function buildCanonicalTarget(input: {
       carbsGPerKgMax,
       carbsGMin,
       carbsGMax,
+      proteinGMin,
       formulaCode: "canonical_daily_v1_pre_long",
     };
   }
@@ -1196,6 +1209,7 @@ function buildCanonicalTarget(input: {
       carbsGPerKgMax,
       carbsGMin,
       carbsGMax,
+      proteinGMin,
       formulaCode: "canonical_daily_v1_hard",
     };
   }
@@ -1205,6 +1219,7 @@ function buildCanonicalTarget(input: {
       carbsGPerKgMax,
       carbsGMin,
       carbsGMax,
+      proteinGMin,
       formulaCode: "canonical_daily_v1_easy",
     };
   }
@@ -1215,6 +1230,7 @@ function buildCanonicalTarget(input: {
       carbsGMin,
       carbsGMax,
       kcalMin: Number((30 * bodyweight).toFixed(0)),
+      proteinGMin,
       formulaCode: input.crossTrainingIsLight
         ? "canonical_daily_v1_cross_training_light"
         : "canonical_daily_v1_cross_training",
@@ -1227,7 +1243,7 @@ function buildCanonicalTarget(input: {
       carbsGMin,
       carbsGMax,
       kcalMin: Number((30 * bodyweight).toFixed(0)),
-      proteinGMin: Number((1.6 * bodyweight).toFixed(0)),
+      proteinGMin,
       formulaCode: "canonical_daily_v1_strength",
     };
   }
@@ -1237,6 +1253,7 @@ function buildCanonicalTarget(input: {
       carbsGPerKgMax,
       carbsGMin,
       carbsGMax,
+      proteinGMin,
       formulaCode: "canonical_daily_v1_rest",
     };
   }

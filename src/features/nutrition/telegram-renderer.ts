@@ -946,6 +946,20 @@ export function validateNutritionDayProse(input: {
       `Coach/методический термин «${forbiddenCoachTerm}» в прозе дня — заменяем на детерминированный комментарий.`
     );
   }
+  // Internal facts-JSON field name leaked into athlete text (real case, Хофман
+  // 10.07: «Protein_advice_sources в этот день пустой...»). Any snake_case Latin
+  // token is machinery, never legitimate athlete-facing prose — Russian text here
+  // is Cyrillic, and English diary product names use spaces, not underscores, so
+  // this has effectively zero false positives against real food names.
+  const technicalFieldLeak = /\b[a-zA-Z]+(?:_[a-zA-Z]+)+\b/.exec(prose);
+  if (technicalFieldLeak) {
+    pushIssue(
+      issues,
+      "error",
+      "technical_field_name_leak",
+      `Техническое имя поля «${technicalFieldLeak[0]}» в прозе дня — заменяем на детерминированный комментарий.`
+    );
+  }
   const allowed = buildAllowedNutritionProseNumbers(input.facts);
   const actualMacros = nutritionActualMacros(input.facts);
   // The athlete's check-in scores are policed against HER OWN ratings, not against the macro
@@ -1089,6 +1103,14 @@ export function validateTelegramReadyNutritionMessage(input: {
   }
   if (/TrainingPeaks|FatSecret|OpenAI|\bJSON\b|\bAI\b/.test(text)) {
     pushIssue(issues, "error", "internal_terms", "В тексте есть внутренние или технические термины.");
+  }
+  // Last-guard backstop for a facts-JSON field name leaking anywhere in the
+  // assembled message (real case: «Protein_advice_sources» reached Хофман via
+  // day_prose — validateNutritionDayProse now also catches this per-day, but this
+  // is the single last check before anything reaches the athlete regardless of
+  // which field it came from).
+  if (/\b[a-zA-Z]+(?:_[a-zA-Z]+)+\b/.test(text)) {
+    pushIssue(issues, "error", "technical_field_name_leak", "В тексте есть техническое имя поля (snake_case).");
   }
   if (!input.hasPreviousWeeksContext && /прошл[а-я]+\s+недел|по сравнению с прошл/i.test(text)) {
     pushIssue(issues, "error", "phantom_previous_comparison", "Сравнение с прошлой неделей запрещено без сохранённого контекста.");
