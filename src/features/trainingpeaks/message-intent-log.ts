@@ -90,6 +90,23 @@ export function hasTrainingPeaksMessageIntentLoggingRelevance(
   return workout.kind !== "unknown" && workout.confidence !== "low";
 }
 
+/**
+ * Rows written only so that a rejection leaves a trace ("Спасибо", "Хорошо", emoji). They exist for
+ * debugging recall, and they must NEVER raise a coach case — the triage queue is read by a human.
+ *
+ * Load-bearing: the business handler falls back to the intent-log row's status when it cannot derive
+ * one locally, so without this guard every piece of chatter would open an `unrecognized_intent` case.
+ */
+export function isLowRelevanceTrainingPeaksIntentLog(
+  log: { metadata?: unknown } | null | undefined
+): boolean {
+  const metadata = log?.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return false;
+  }
+  return (metadata as Record<string, unknown>).lowRelevance === true;
+}
+
 function mapMoveActionFailureReasonToLogReason(reason: string): string {
   if (reason === "not_explicit_move_request") {
     return "no_move_intent";
@@ -158,11 +175,22 @@ export function shouldRunTrainingPeaksIntentAiLogOnly(input: {
   hasRelevance: boolean;
   moveActionOk: boolean;
 }): boolean {
-  if (!isTrainingPeaksIntentAiLogOnlyEnabled()) {
+  const logOnly = isTrainingPeaksIntentAiLogOnlyEnabled();
+  const active = isTrainingPeaksIntentAiActive();
+  if (!logOnly && !active) {
     return false;
   }
 
+  // A SUCCESSFUL parse is the case most worth measuring. The rule engine can only ever emit ONE
+  // move, so "rule saw 1, AI saw 2" is exactly the silent-halving signal (Nadezhda, 2026-07-14).
+  // Successes used to be skipped here, which is why that case was invisible. Nothing else runs the
+  // classifier on success — the recall path only fires on failures — so this adds no double call.
   if (input.moveActionOk) {
+    return true;
+  }
+
+  // Failures: log_only only. In active mode the recall path has already classified this message.
+  if (!logOnly) {
     return false;
   }
 
@@ -218,7 +246,10 @@ export async function logTrainingPeaksMessageIntentDecision(
       telegramMessageId: input.telegramMessageId ?? null,
       businessConnectionId: input.businessConnectionId ?? null,
       messageThreadId: input.messageThreadId ?? null,
-      rawText: null,
+      // Full message text, on purpose (Igor's call, 2026-07-14). It used to be dropped and only a
+      // 120-char preview kept, which made every recognition failure impossible to debug after the
+      // fact — you could see THAT a message was rejected but not WHAT the student actually wrote.
+      rawText: input.rawText ?? null,
       textPreview: textFields.textPreview,
       textSha256: textFields.textSha256,
       normalizedText: input.normalizedText ?? textFields.normalizedText,
@@ -266,47 +297,57 @@ export async function logTrainingPeaksBusinessMessageIntentDecision(input: {
     },
   };
 
+  const textFields = buildIntentLogTextFields(input.messageText);
+  const hasRelevance = hasTrainingPeaksMessageIntentLoggingRelevance(
+    input.messageText,
+    input.contextLabels
+  );
+
+  let logEntry: TrainingPeaksMessageIntentLog | null = null;
+  let status: TrainingPeaksMessageIntentLogStatus;
+
   if (input.moveActionResult.ok) {
     const confidence = Number(input.moveActionResult.action.confidence);
-    await logTrainingPeaksMessageIntentDecision({
+    status = "action_created";
+    logEntry = await logTrainingPeaksMessageIntentDecision({
       ...baseFields,
       studentId: input.moveActionResult.student.id,
-      status: "action_created",
+      status,
       actionId: input.moveActionResult.action.id,
       ruleIntent: input.moveActionResult.parsed,
       ruleConfidence: Number.isFinite(confidence) ? confidence : null,
       finalIntent: input.moveActionResult.parsed,
       reason: null,
     });
+  } else if (input.moveActionResult.reason === "empty_text") {
+    // Nothing was said. Nothing to log.
     return;
+  } else {
+    const resolved = resolveTrainingPeaksMessageIntentLogStatus({
+      reason: input.moveActionResult.reason,
+      hasRelevance,
+    });
+    // A null status used to mean "drop the row entirely" — an entire class of rejections left no
+    // trace at all, so a missed move request phrased outside the labels was invisible forever.
+    // Log it anyway; `lowRelevance` keeps triage able to filter the chatter back out.
+    status = resolved ?? "unrecognized";
+    logEntry = await logTrainingPeaksMessageIntentDecision({
+      ...baseFields,
+      studentId: input.moveActionResult.student?.id ?? null,
+      status,
+      reason: mapMoveActionFailureReasonToLogReason(input.moveActionResult.reason),
+      metadata: {
+        ...baseFields.metadata,
+        ...(resolved ? {} : { lowRelevance: true }),
+      },
+    });
   }
-
-  const hasRelevance = hasTrainingPeaksMessageIntentLoggingRelevance(
-    input.messageText,
-    input.contextLabels
-  );
-  const status = resolveTrainingPeaksMessageIntentLogStatus({
-    reason: input.moveActionResult.reason,
-    hasRelevance,
-  });
-
-  if (!status) {
-    return;
-  }
-
-  const textFields = buildIntentLogTextFields(input.messageText);
-  const logEntry = await logTrainingPeaksMessageIntentDecision({
-    ...baseFields,
-    studentId: input.moveActionResult.student?.id ?? null,
-    status,
-    reason: mapMoveActionFailureReasonToLogReason(input.moveActionResult.reason),
-  });
 
   if (
     !shouldRunTrainingPeaksIntentAiLogOnly({
       status,
       hasRelevance,
-      moveActionOk: false,
+      moveActionOk: input.moveActionResult.ok,
     })
   ) {
     return;

@@ -29,11 +29,25 @@ export type TrainingPeaksAiDateReference = {
   confidence: number;
 };
 
+/** One requested move. A message can carry several; the rule engine can only ever hold one. */
+export type TrainingPeaksAiMoveInstruction = {
+  workout_reference: TrainingPeaksAiWorkoutReference;
+  target_date: TrainingPeaksAiDateReference;
+  source_date: TrainingPeaksAiDateReference | null;
+};
+
 export type TrainingPeaksAiIntentClassification = {
   intent: TrainingPeaksAiIntentKind;
   workout_reference: TrainingPeaksAiWorkoutReference;
   target_date: TrainingPeaksAiDateReference;
   source_date: TrainingPeaksAiDateReference | null;
+  /**
+   * EVERY move the message asks for, first one repeated in the flat fields above for back-compat.
+   * Log-only: nothing consumes this to create actions. It exists to measure how often a message
+   * carries more moves than the single-move parser can hold, before we redesign the payload type.
+   */
+  moves: TrainingPeaksAiMoveInstruction[];
+  move_count: number;
   confidence: number;
   needs_clarification: boolean;
   clarification_reason: string | null;
@@ -144,6 +158,33 @@ function extractJsonOnly(content: string): string {
   return trimmed;
 }
 
+function sanitizeMoveInstructions(value: unknown): TrainingPeaksAiMoveInstruction[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const moves: TrainingPeaksAiMoveInstruction[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    const raw = entry as { workout_reference?: unknown; target_date?: unknown; source_date?: unknown };
+    const workoutReference = sanitizeWorkoutReference(raw.workout_reference);
+    const targetDate = sanitizeDateReference(raw.target_date);
+    // A move without a target is not a move — drop it rather than inflate the count.
+    if (!workoutReference || !targetDate) {
+      continue;
+    }
+    moves.push({
+      workout_reference: workoutReference,
+      target_date: targetDate,
+      source_date: sanitizeDateReference(raw.source_date),
+    });
+  }
+
+  return moves;
+}
+
 export function parseTrainingPeaksAiIntentClassification(
   rawJson: unknown
 ): { ok: true; classification: TrainingPeaksAiIntentClassification } | { ok: false; error: string } {
@@ -156,6 +197,7 @@ export function parseTrainingPeaksAiIntentClassification(
     workout_reference?: unknown;
     target_date?: unknown;
     source_date?: unknown;
+    moves?: unknown;
     confidence?: unknown;
     needs_clarification?: unknown;
     clarification_reason?: unknown;
@@ -190,6 +232,16 @@ export function parseTrainingPeaksAiIntentClassification(
     return { ok: false, error: "missing_reasoning_summary" };
   }
 
+  // `moves` is optional: older/dumber responses only fill the flat fields. Fall back to treating the
+  // flat move as the single move, so move_count is never 0 for a real move_workout.
+  const parsedMoves = sanitizeMoveInstructions(raw.moves);
+  const moves =
+    parsedMoves.length > 0
+      ? parsedMoves
+      : raw.intent === "move_workout"
+        ? [{ workout_reference: workoutReference, target_date: targetDate, source_date: sourceDate }]
+        : [];
+
   return {
     ok: true,
     classification: {
@@ -197,6 +249,8 @@ export function parseTrainingPeaksAiIntentClassification(
       workout_reference: workoutReference,
       target_date: targetDate,
       source_date: sourceDate,
+      moves,
+      move_count: moves.length,
       confidence,
       needs_clarification: raw.needs_clarification === true,
       clarification_reason: sanitizeNullableString(raw.clarification_reason),
@@ -226,6 +280,10 @@ export function buildTrainingPeaksAiIntentLogFields(input: {
   }
 
   metadata.ai_model = input.result.model;
+  // Surfaced as a top-level metadata key on purpose: "how many moves did the AI see in a message the
+  // rule engine turned into ONE action" is the question the shadow run exists to answer, and it
+  // should be answerable with a plain SQL filter, not by digging through ai_intent jsonb.
+  metadata.ai_move_count = input.result.classification.move_count;
 
   return {
     aiIntent: input.result.classification as unknown as Record<string, unknown>,
@@ -267,6 +325,13 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
       text: "string|null",
       confidence: 0.0,
     },
+    moves: [
+      {
+        workout_reference: { kind: "intervals|...", text: "string|null", confidence: 0.0 },
+        target_date: { kind: "date|relative|unknown", value: "string|null", text: "string|null", confidence: 0.0 },
+        source_date: { kind: "date|relative|unknown", value: "string|null", text: "string|null", confidence: 0.0 },
+      },
+    ],
     confidence: 0.0,
     needs_clarification: false,
     clarification_reason: "string|null",
@@ -280,6 +345,11 @@ export async function classifyTrainingPeaksMoveIntentWithAi(
     "Если это отчет, эмоция, casual chat или просто упоминание тренировки без просьбы перенести — intent=none.",
     "Если сообщение не про расписание/тренировки — intent=none.",
     "Если intent неясен — intent=unknown или needs_clarification=true.",
+    // The whole point of the shadow run: measure how often ONE message carries SEVERAL moves.
+    // Do not collapse them and do not give up — enumerate every one.
+    "ВАЖНО: в одном сообщении может быть НЕСКОЛЬКО переносов («перенеси лёгкую на завтра, а интервальную на четверг» = 2).",
+    "Перечисли в moves КАЖДЫЙ запрошенный перенос отдельным элементом. Не объединяй их и не отбрасывай второй.",
+    "Поля workout_reference/target_date/source_date верхнего уровня продублируй из ПЕРВОГО элемента moves.",
     "Не выдумывай даты. value для date — ISO YYYY-MM-DD, для relative — tomorrow|today|monday|...",
     `Текущая дата: ${todayInTz}; timezone: ${timezone}.`,
     `Ученик привязан к TrainingPeaks: ${input.studentLinked ? "yes" : "no"}.`,

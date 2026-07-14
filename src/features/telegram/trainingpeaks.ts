@@ -100,6 +100,7 @@ import {
   updateTrainingPeaksStudentTelegramContact,
   upsertTrainingPeaksBusinessChatFromMessage,
   formatTrainingPeaksMoveWorkoutActionSummary,
+  formatTrainingPeaksPartialMoveRequestWarning,
   listRecentTrainingPeaksActionsWithLatestRunContext,
   getTrainingPeaksActionWithStudentById,
   getTrainingPeaksActionWithStudentAndLatestRunContextById,
@@ -156,6 +157,7 @@ import {
 import { matchStudentByIdentity } from "@/features/trainingpeaks/student-identity-match";
 import {
   hasTrainingPeaksMessageIntentLoggingRelevance,
+  isLowRelevanceTrainingPeaksIntentLog,
   logTrainingPeaksBusinessMessageIntentDecision,
   resolveTrainingPeaksMessageIntentLogStatus,
 } from "@/features/trainingpeaks/message-intent-log";
@@ -5956,6 +5958,7 @@ function formatTrainingPeaksMoveActionProcessingMessage(input: {
     `Ученик: ${input.studentName}`,
     `Запрос: «${truncateActionMessage(input.rawText, 160)}»`,
     previewLine,
+    formatTrainingPeaksPartialMoveRequestWarning(input.parsedPayload),
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -7430,7 +7433,9 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
         String(message.message_id)
       );
       intentLogId = intentLog?.id ?? null;
-      if (!intentStatus) {
+      // Low-relevance rows are logged for recall debugging only. They must not be promoted into an
+      // intent status here, or every "Спасибо" would open an unrecognized_intent coach case.
+      if (!intentStatus && !isLowRelevanceTrainingPeaksIntentLog(intentLog)) {
         intentStatus = intentLog?.status ?? null;
       }
     } catch (error) {
@@ -7449,6 +7454,8 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
       telegramMessageId: message.message_id,
       intentStatus,
       labels: contextLabels,
+      partialRequestSuspected:
+        moveActionResult.ok && moveActionResult.parsed.partialRequestSuspected === true,
     } as const;
 
     if (!moveActionResult.ok) {

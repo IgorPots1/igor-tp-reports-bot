@@ -37,6 +37,38 @@ const WORKOUT_ALIAS_RULES: WorkoutAliasRule[] = [
   { kind: "workout", alias: "бег", confidence: "low" },
 ];
 
+/**
+ * Verb forms of "to run", accepted as a workout object.
+ *
+ * Students who DICTATE speak in verbs, not nouns: «сегодня не ПОБЕГУ, переставьте на завтра» names
+ * no workout noun at all, so the strict gate (verb AND object AND date) rejected it outright, while
+ * the same student's «перенесите на завтра ТРЕНИРОВКУ» a month earlier went through. The difference
+ * between working and not working was one noun.
+ *
+ * FUTURE AND INFINITIVE ONLY. Past tense — «пробежал», «побегал», «бегал» — is deliberately absent:
+ * those are reports, not requests ("Пробежал Игорь 45 минут"), and accepting them as a move object
+ * would manufacture false positives out of every training report.
+ *
+ * Deliberately NOT part of WORKOUT_ALIAS_RULES: these must not leak into the alias list handed to
+ * the AI prompt, and they are a last-resort fallback — any real workout noun wins first.
+ */
+const WORKOUT_VERB_FORMS = [
+  "побегу",
+  "побегаю",
+  "побегать",
+  "побегаем",
+  "побежать",
+  "побежим",
+  "пробегу",
+  "пробегусь",
+  "пробежать",
+  "пробежаться",
+  "бегать",
+  "бежать",
+  "бегу",
+  "сбегаю",
+];
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -97,6 +129,15 @@ export function normalizeWorkoutReference(text: string): NormalizeWorkoutReferen
 
   if (/(?:^|[\s,.])(?:легкий\s+|легк\w*\s+)?бег(?:[\s,.]|$)/u.test(normalized) || normalized.includes("легк")) {
     return { kind: "workout", matchedAlias: "бег", confidence: "medium" };
+  }
+
+  // Last resort: the student named the workout with a verb instead of a noun. `low` confidence is
+  // load-bearing — hasStrictWorkoutObject only asks `kind !== "unknown"` (so the gate opens), while
+  // message-intent-log's relevance check demands `confidence !== "low"` (so log triage is unchanged).
+  for (const form of WORKOUT_VERB_FORMS) {
+    if (aliasBoundaryPattern(form).test(normalized)) {
+      return { kind: "workout", matchedAlias: form, confidence: "low" };
+    }
   }
 
   return { kind: "unknown", matchedAlias: null, confidence: "low" };

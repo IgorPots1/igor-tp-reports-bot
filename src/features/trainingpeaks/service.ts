@@ -192,6 +192,10 @@ import {
   hasRecognizedWorkoutReference,
   normalizeWorkoutReference,
 } from "@/features/trainingpeaks/workout-reference";
+import {
+  detectUnparsedMoveRemainder,
+  TP_STRICT_MOVE_VERBS,
+} from "@/features/trainingpeaks/move-multi-intent";
 import { TRAININGPEAKS_TIME_ZONE, resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 import {
   DEFAULT_COACH_TIMEZONE,
@@ -431,6 +435,12 @@ export type ParsedTrainingPeaksMoveWorkoutPayload = {
     reasoning: string;
     model: string;
   };
+  // Set when the message asks for MORE than the single move we parsed (source/target hold exactly
+  // one). The action still ships — but the coach card and the coach case say so out loud, instead of
+  // a half-executed request looking like a clean success.
+  partialRequestSuspected?: boolean;
+  partialRequestReason?: string | null;
+  unparsedRemainder?: string | null;
   parsingDiagnostics?: {
     parserBaseDateSource: "message_timestamp" | "env_override" | "server_now";
     parserBaseDateIso: string;
@@ -838,6 +848,8 @@ export type RecordTrainingPeaksCoachCaseAndSnapshotInput = {
   telegramMessageId?: number | null;
   intentStatus?: string | null;
   labels?: readonly string[] | null;
+  /** Message asked for more moves than the one we parsed — force it into the coach review queue. */
+  partialRequestSuspected?: boolean;
   cacheStatus?: TrainingPeaksStudentContextCacheStatus;
   silenceDays?: number | null;
   lastCoachTouchAt?: string | null;
@@ -1126,6 +1138,7 @@ function deriveTrainingPeaksCoachCaseKinds(input: {
   intentStatus?: string | null;
   actionId?: string | null;
   labels?: readonly string[] | null;
+  partialRequestSuspected?: boolean;
 }): TrainingPeaksCoachCaseKind[] {
   const kinds = new Set<TrainingPeaksCoachCaseKind>();
   const labels = input.labels ?? [];
@@ -1134,6 +1147,11 @@ function deriveTrainingPeaksCoachCaseKinds(input: {
     kinds.add("move_workout_requested");
   }
   if (input.intentStatus === "needs_review") {
+    kinds.add("move_workout_needs_review");
+  }
+  // A half-parsed request creates a perfectly ordinary-looking action. Also file it as needs_review
+  // so it surfaces in the coach queue instead of passing for a clean success.
+  if (input.partialRequestSuspected) {
     kinds.add("move_workout_needs_review");
   }
   if (input.intentStatus === "unrecognized") {
@@ -1174,6 +1192,7 @@ export async function recordTrainingPeaksCoachCaseAndSnapshot(
       intentStatus: input.intentStatus,
       actionId: input.actionId ?? null,
       labels: input.labels ?? null,
+      partialRequestSuspected: input.partialRequestSuspected ?? false,
     });
 
     for (const caseKind of caseKinds) {
@@ -1589,25 +1608,8 @@ const TP_RUN_WEEK_COMMAND_PATTERN = /^\/tp_run_week(?:@\w+)?(?:\s+|$)/;
 const TP_TELEGRAM_LINK_CODE_PATTERN = /\b[A-Z0-9]{2,12}-\d{3,6}\b/gi;
 const TP_TELEGRAM_LINK_CODE_DEFAULT_TTL_HOURS = 24;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-/** Explicit reschedule verbs — substring match on normalizeRussianText output. */
-const TP_STRICT_MOVE_VERBS = [
-  "перенеси",
-  "перенести",
-  "переставь",
-  "переставить",
-  "передвинь",
-  "сдвинь",
-  "перенесем",
-  "сместим",
-  "можно перенести",
-  "перенесите",
-  "поставьте",
-  "поставить",
-  "поставим",
-  "сделаю",
-  "отработаю",
-  "поставь на",
-];
+// TP_STRICT_MOVE_VERBS now lives in move-multi-intent.ts (imported above): the multi-move detector
+// needs the same lexicon, and two copies would drift.
 
 /** Reschedule intent without an explicit verb — requires workout + date elsewhere in the gate. */
 const TP_SOFT_MOVE_INTENT_PATTERNS: RegExp[] = [
@@ -10541,6 +10543,34 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
     return { ok: false, reason: "no_such_workout_not_a_move", student };
   }
 
+  // The parser holds exactly ONE move. When the message asks for a second one ("...лёгкую на завтра,
+  // а интервальную на четверг"), the extra instruction is dropped on the floor and the action reads
+  // like a complete success. Flag it instead of shipping a half-done request quietly.
+  const remainder = detectUnparsedMoveRemainder({
+    rawText: trimmedText,
+    parsed: enrichedParsed,
+  });
+  if (remainder.suspected) {
+    console.info("TrainingPeaks move: message looks like it asks for more than one move", {
+      studentId: student.id,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      reason: remainder.reason,
+    });
+    enrichedParsed = {
+      ...enrichedParsed,
+      partialRequestSuspected: true,
+      partialRequestReason: remainder.reason,
+      unparsedRemainder: remainder.remainderPreview,
+      warnings: [
+        ...(enrichedParsed.warnings ?? []),
+        remainder.remainderPreview
+          ? `Похоже, в сообщении больше одного переноса. Разобран только один. Не разобрано: «${remainder.remainderPreview}». Проверь вручную.`
+          : "Похоже, в сообщении больше одного переноса. Разобран только один. Проверь вручную.",
+      ],
+    };
+  }
+
   const action = await createTrainingPeaksActionInRepository({
     studentId: student.id,
     actionType: "move_workout",
@@ -10583,7 +10613,29 @@ export function formatTrainingPeaksMoveWorkoutActionSummary(
     payload.parsingDiagnostics?.assemblyKind === "multi_message"
       ? "⚠️ Собрано из нескольких сообщений — проверь источник и день."
       : null;
-  return [base, previewLine, assemblyLine].filter(Boolean).join("\n");
+  const partialLine = formatTrainingPeaksPartialMoveRequestWarning(payload);
+  return [base, previewLine, assemblyLine, partialLine].filter(Boolean).join("\n");
+}
+
+/**
+ * The loud half of the silent-partial fix: whenever the parser kept one move out of several, every
+ * coach-facing surface must say so. Returns null when the whole request was parsed.
+ */
+export function formatTrainingPeaksPartialMoveRequestWarning(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const parsed = payload as {
+    partialRequestSuspected?: unknown;
+    unparsedRemainder?: unknown;
+  };
+  if (parsed.partialRequestSuspected !== true) {
+    return null;
+  }
+  const remainder = typeof parsed.unparsedRemainder === "string" ? parsed.unparsedRemainder.trim() : "";
+  return remainder
+    ? `⚠️ Распознал только ЧАСТЬ запроса — создан ОДИН перенос. Не разобрано: «${remainder}». Проверь вручную.`
+    : "⚠️ Распознал только ЧАСТЬ запроса — создан ОДИН перенос. Проверь вручную.";
 }
 
 export async function approveTrainingPeaksAction(

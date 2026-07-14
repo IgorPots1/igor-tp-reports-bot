@@ -21,6 +21,10 @@ import {
   isTrainingPeaksGroupWorkoutReportIntakeEnabled,
 } from "@/features/trainingpeaks/group-workout-report-intake";
 import { processGroupWorkoutReportReviewPipeline } from "@/features/trainingpeaks/group-workout-report-review-flow";
+import {
+  detectGroupMoveMultiMove,
+  normalizeMoveDetectText,
+} from "@/features/trainingpeaks/move-multi-intent";
 
 const PREVIEW_MAX_LENGTH = 120;
 const TP_CALLBACK_CASES_RECENT = "tp:cases:recent";
@@ -147,133 +151,6 @@ async function notifyCoachGroupProbe(text: string): Promise<void> {
       await sendTelegramMessage(chatId, text);
     })
   );
-}
-
-function normalizeMoveDetectText(value: string): string {
-  return value
-    .toLocaleLowerCase("ru")
-    .replace(/ё/g, "е")
-    .replace(/[.,!?;:()"']/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const MOVE_PAIR_SIDE_TOKEN_PATTERN = /^[а-яa-z0-9_-]{2,}$/iu;
-const MOVE_PAIR_SIDE_BLOCKED_WORDS = new Set([
-  "можешь",
-  "можно",
-  "сдвинуть",
-  "сдвинь",
-  "перенести",
-  "перенеси",
-  "перенесите",
-  "поставить",
-  "поставь",
-  "поставьте",
-  "переставить",
-  "переставь",
-  "сместить",
-  "тренировку",
-  "тренировки",
-]);
-
-function isCompactMovePairSide(raw: string): boolean {
-  const tokens = raw
-    .trim()
-    .split(/\s+/)
-    .filter((token) => token.length > 0);
-  if (tokens.length < 1 || tokens.length > 2) {
-    return false;
-  }
-  return tokens.every(
-    (token) => MOVE_PAIR_SIDE_TOKEN_PATTERN.test(token) && !MOVE_PAIR_SIDE_BLOCKED_WORDS.has(token)
-  );
-}
-
-function detectMovePairsPreview(rawText: string): Array<{ source: string; target: string }> {
-  const normalized = normalizeMoveDetectText(rawText);
-  if (!normalized) {
-    return [];
-  }
-
-  const tokens = normalized.split(" ").filter((token) => token.length > 0);
-  const pairs: Array<{ source: string; target: string }> = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    if (tokens[index] !== "на") {
-      continue;
-    }
-
-    let extracted: { source: string; target: string } | null = null;
-    for (const sourceLength of [1, 2]) {
-      const sourceStart = index - sourceLength;
-      if (sourceStart < 0) {
-        continue;
-      }
-      const source = tokens.slice(sourceStart, index).join(" ").trim();
-      if (!isCompactMovePairSide(source)) {
-        continue;
-      }
-
-      for (const targetLength of [1, 2]) {
-        const targetEnd = index + 1 + targetLength;
-        if (targetEnd > tokens.length) {
-          continue;
-        }
-        const target = tokens.slice(index + 1, targetEnd).join(" ").trim();
-        if (!isCompactMovePairSide(target)) {
-          continue;
-        }
-        extracted = { source, target };
-        break;
-      }
-
-      if (extracted) {
-        break;
-      }
-    }
-
-    if (extracted) {
-      pairs.push(extracted);
-    }
-  }
-
-  return pairs.slice(0, 3);
-}
-
-function detectGroupMoveMultiMove(rawText: string): {
-  detected: boolean;
-  possible: boolean;
-  reason: string | null;
-  movePairsPreview: Array<{ source: string; target: string }>;
-} {
-  const pairs = detectMovePairsPreview(rawText);
-  if (pairs.length >= 2) {
-    return {
-      detected: true,
-      possible: true,
-      reason: "multiple source-target phrases",
-      movePairsPreview: pairs,
-    };
-  }
-
-  const normalized = normalizeMoveDetectText(rawText);
-  const hasConjunctionSplit = /\b(а|и)\b/.test(normalized);
-  const naMatches = normalized.match(/\bна\b/g)?.length ?? 0;
-  if (hasConjunctionSplit && naMatches >= 2) {
-    return {
-      detected: false,
-      possible: true,
-      reason: "multiple source-target phrases",
-      movePairsPreview: pairs,
-    };
-  }
-
-  return {
-    detected: false,
-    possible: false,
-    reason: null,
-    movePairsPreview: pairs,
-  };
 }
 
 function isCoachTelegramId(value: number | undefined): boolean {
