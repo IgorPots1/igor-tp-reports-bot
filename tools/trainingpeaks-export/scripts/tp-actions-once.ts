@@ -46,6 +46,7 @@ import type { MoveWorkoutDomCandidate } from "../../../src/features/trainingpeak
 // plain named import here would reintroduce that risk).
 import * as moveWorkoutResolverContextModule from "../../../src/features/trainingpeaks/move-workout-resolver-context";
 import * as tpApiClientModule from "../../../src/features/trainingpeaks/tp-api-client";
+import * as moveResolverModeModule from "../../../src/features/trainingpeaks/move-resolver-mode";
 
 type NamespaceWithOptionalDefault<T> = T & { default?: T };
 
@@ -84,6 +85,22 @@ const moveShadowComparatorModuleCompat =
 const moveWorkoutResolverContextModuleCompat =
   moveWorkoutResolverContextModule as NamespaceWithOptionalDefault<typeof moveWorkoutResolverContextModule>;
 const tpApiClientModuleCompat = tpApiClientModule as NamespaceWithOptionalDefault<typeof tpApiClientModule>;
+const moveResolverModeModuleCompat =
+  moveResolverModeModule as NamespaceWithOptionalDefault<typeof moveResolverModeModule>;
+
+const classifyMoveResolverMode =
+  moveResolverModeModuleCompat.classifyMoveResolverMode ??
+  moveResolverModeModuleCompat.default?.classifyMoveResolverMode;
+const formatMoveResolverModeWarning =
+  moveResolverModeModuleCompat.formatMoveResolverModeWarning ??
+  moveResolverModeModuleCompat.default?.formatMoveResolverModeWarning;
+
+if (typeof classifyMoveResolverMode !== "function") {
+  throw new Error("TrainingPeaks move resolver mode helper is unavailable.");
+}
+if (typeof formatMoveResolverModeWarning !== "function") {
+  throw new Error("TrainingPeaks move resolver mode warning helper is unavailable.");
+}
 
 const runMoveShadowComparisonSafely =
   moveShadowComparatorModuleCompat.runMoveShadowComparisonSafely ??
@@ -1073,9 +1090,23 @@ const TP_ACTIONS_USE_API_MOVE_ENV =
 //     which independently controls whether the read-only comparator runs.
 const TP_MOVE_RESOLVER_MODE_ENV = "TP_MOVE_RESOLVER_MODE";
 type MoveResolverMode = "shadow" | "live_primary" | "off";
+
+/**
+ * The fallback to "shadow" is unchanged — a bad config string must never crash a move. What IS new
+ * is that it no longer happens in silence: an unset or misspelled value used to degrade production
+ * onto the slow browser path with not one line of output, which is a regression you only notice
+ * weeks later. Now every degraded resolve says so, right where the move is about to run.
+ *
+ * The loop announces this once at service start too (tp-actions-loop.ts) and alerts Telegram; here
+ * we only log, because this script is re-spawned every 30s and an alert per spawn would be spam.
+ */
 function readMoveResolverMode(): MoveResolverMode {
-  const raw = (process.env[TP_MOVE_RESOLVER_MODE_ENV] ?? "shadow").trim().toLowerCase();
-  return raw === "live_primary" || raw === "off" ? raw : "shadow";
+  const resolution = classifyMoveResolverMode(process.env[TP_MOVE_RESOLVER_MODE_ENV]);
+  const warning = formatMoveResolverModeWarning(resolution);
+  if (warning) {
+    console.warn(`[move-resolver-mode] ${warning.replace(/\n/g, " ")}`);
+  }
+  return resolution.mode;
 }
 const TP_ACTIONS_ACTION_ID_PREFIX = "--action-id=";
 const TP_ACTIONS_PREPARE_ONLY_FLAG = "--prepare-only";
@@ -4281,26 +4312,41 @@ async function attemptLiveHttpMoveExecution(input: {
   const responseArtifactPath = path.join(apiMoveArtifactDir, "response.redacted.json");
   const verificationArtifactPath = path.join(apiMoveArtifactDir, "verification.redacted.json");
 
-  // M2 shadow hook, mirrored here so live_primary-executed moves also keep
-  // writing to trainingpeaks_move_shadow_comparisons ("shadow-запись не
-  // отключать"). Ground truth is now the resolver's own answer, since that
-  // IS what gets used for the mutation below -- the comparator's own
-  // independent, freshly-run resolve call is what gives this row its
-  // ongoing alerting value (a near-simultaneous second resolve disagreeing
-  // with the id already committed to would be exactly the early-warning
-  // signal Igor asked for).
+  // M2 shadow hook, mirrored here so live_primary-executed moves also keep writing to
+  // trainingpeaks_move_shadow_comparisons ("shadow-запись не отключать").
+  //
+  // GROUND TRUTH MUST BE INDEPENDENT OF THE RESOLVER. This hook used to pass
+  // `domWorkoutId: resolvedWorkoutId` -- the resolver's own answer -- which made the comparison
+  // resolver-vs-itself: `id_mismatch` could not arise even in principle, and every row would have
+  // read as agreement. That is worse than an empty table, because this instrument exists precisely
+  // to decide whether the browser safeguard can be removed. A measurement that cannot fail is not
+  // evidence; it is false confidence, arriving exactly where the stakes are highest.
+  //
+  // The independent ground truth is already in hand and costs nothing extra: inspectActionCalendar
+  // runs unconditionally on every real move and scrapes the workout id straight off the DOM card
+  // (extractWorkoutIdFromCard -> DryRunCandidate.workoutId). That is what the HTTP resolver must be
+  // measured AGAINST.
+  const domScrapedWorkoutId = candidate.workoutId;
   if (isTruthyEnvFlag(TP_MOVE_SHADOW_ENABLED_ENV)) {
-    await runMoveShadowComparisonSafely({
-      actionId: input.claimed.action.id,
-      runId: input.runId,
-      athleteId,
-      sourceDateIso: sourceDate,
-      targetDateIso: targetDate,
-      domWorkoutId: resolvedWorkoutId,
-      domCandidate,
-      sourcePolicy: input.claimed.trustedDryRunLog.selectedSourceDatePolicy,
-      parsedPayload: input.claimed.action.parsed_payload,
-    });
+    if (domScrapedWorkoutId && Number.isFinite(domScrapedWorkoutId) && domScrapedWorkoutId > 0) {
+      await runMoveShadowComparisonSafely({
+        actionId: input.claimed.action.id,
+        runId: input.runId,
+        athleteId,
+        sourceDateIso: sourceDate,
+        targetDateIso: targetDate,
+        domWorkoutId: domScrapedWorkoutId,
+        domCandidate,
+        sourcePolicy: input.claimed.trustedDryRunLog.selectedSourceDatePolicy,
+        parsedPayload: input.claimed.action.parsed_payload,
+      });
+    } else {
+      // No independent ground truth for this move. Skip the row rather than fabricate agreement:
+      // a self-comparison would silently dilute the id_mismatch statistic the M3 gate reads.
+      console.warn(
+        `[move-shadow] skipped comparison for action ${input.claimed.action.id}: DOM did not yield a workoutId, so there is no independent ground truth to compare the HTTP resolver against.`
+      );
+    }
   }
 
   const prefetchBody = await getWorkoutDetail(athleteId, resolvedWorkoutId);

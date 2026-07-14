@@ -2850,6 +2850,44 @@ async function handleTrainingPeaksCoachCaseCreateProposalsCallback(
     return;
   }
 
+  // The three group-specific refusals. Each one says WHY out loud: a silent no-op here would read as
+  // a broken button, and Igor would press it again instead of doing the thing it is asking him to do.
+  if (result.kind === "chat_not_allowlisted") {
+    const text = [
+      "🚫 Не создаю переносы из этого группового чата — он не в allowlist.",
+      `Чат: ${result.chatId ?? "неизвестен"}`,
+      "Чтобы разрешить: добавь id чата в TRAININGPEAKS_GROUP_MOVE_CHAT_ALLOWLIST и передеплой.",
+    ].join("\n");
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Группа не в allowlist.");
+    await sendTrainingPeaksMessage(parsedMessage.chatId, text);
+    return;
+  }
+
+  if (result.kind === "untrusted_sender_identity") {
+    const text = [
+      "🚫 Не создаю перенос: отправитель опознан НЕНАДЁЖНО.",
+      `Способ опознания: ${result.matchMethod ?? "неизвестен"} (надёжен только telegram_chat_id).`,
+      "Username можно сменить — по нему я не берусь двигать тренировку. Перенеси вручную или попроси ученика написать в личку.",
+    ].join("\n");
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Отправитель опознан ненадёжно.");
+    await sendTrainingPeaksMessage(parsedMessage.chatId, text);
+    return;
+  }
+
+  if (result.kind === "third_party_subject") {
+    const text = [
+      "🚫 В группе просят перенос, но я НЕ ПОНЯЛ ЧЬЮ ТРЕНИРОВКУ.",
+      "Похоже, речь не об отправителе, а о ком-то другом.",
+      result.evidence ? `Зацепка: «${result.evidence}»` : null,
+      "Перенеси вручную — гадать, чью тренировку двигать, я не буду.",
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+    await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Не понял, чья это тренировка.");
+    await sendTrainingPeaksMessage(parsedMessage.chatId, text);
+    return;
+  }
+
   if (result.kind === "not_found") {
     await sendTrainingPeaksMessage(parsedMessage.chatId, `Кейс ${shortId} не найден.`);
     return;

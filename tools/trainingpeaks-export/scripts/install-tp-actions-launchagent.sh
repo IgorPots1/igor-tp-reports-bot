@@ -38,6 +38,21 @@ else
   echo "No cutoff configured"
 fi
 
+# Which mechanism executes a move, and whether the read-only shadow comparator records it.
+#
+# These are pinned HERE, in the service definition, and not left to .env.local. Two reasons:
+#   1. The plist WINS over .env.local (the dotenv loader never overwrites an existing process env
+#      var), so this is the single source of truth — no ambiguity about what production is doing.
+#   2. TP_MOVE_RESOLVER_MODE used to live only in .env.local, where its absence was indistinguishable
+#      from "shadow" — losing that file silently reverted every move to the slow browser path.
+#
+# Consequence, stated plainly: to change the mode you edit THIS script and reinstall the agent.
+# Editing .env.local will no longer have any effect on it.
+TP_MOVE_RESOLVER_MODE_VALUE="${TP_MOVE_RESOLVER_MODE:-live_primary}"
+TP_MOVE_SHADOW_ENABLED_VALUE="${TP_MOVE_SHADOW_ENABLED:-true}"
+echo "Move resolver mode: ${TP_MOVE_RESOLVER_MODE_VALUE}"
+echo "Move shadow comparator: ${TP_MOVE_SHADOW_ENABLED_VALUE}"
+
 cat > "${PLIST_PATH}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -63,6 +78,10 @@ ${SINCE_PROGRAM_ARGUMENT}
     <string>true</string>
     <key>TP_ACTIONS_USE_API_MOVE</key>
     <string>true</string>
+    <key>TP_MOVE_RESOLVER_MODE</key>
+    <string>${TP_MOVE_RESOLVER_MODE_VALUE}</string>
+    <key>TP_MOVE_SHADOW_ENABLED</key>
+    <string>${TP_MOVE_SHADOW_ENABLED_VALUE}</string>
     <key>PATH</key>
     <string>${NODE_DIR}:${NPM_DIR}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>

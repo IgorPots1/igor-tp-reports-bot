@@ -4,8 +4,80 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import * as moveSourcePolicyNamespace from "../../../src/features/trainingpeaks/move-source-policy.ts";
+import * as moveResolverModeNamespace from "../../../src/features/trainingpeaks/move-resolver-mode.ts";
+import * as attentionTelegramNamespace from "../../../src/features/trainingpeaks/attention-telegram.ts";
 
-const moveSourcePolicy = moveSourcePolicyNamespace.default ?? moveSourcePolicyNamespace;
+// The `.default ?? namespace` shape is the established workaround for CJS/ESM named-export loss
+// (see tp-actions-once.ts's header). It needs this cast to be type-valid — without it TypeScript
+// rightly says `.default` does not exist on a namespace. tp-actions-once.ts already does exactly
+// this; tp-actions-loop.ts never did, which is why nothing here typechecked.
+type NamespaceWithOptionalDefault<T> = T & { default?: T };
+
+const moveSourcePolicy =
+  (moveSourcePolicyNamespace as NamespaceWithOptionalDefault<typeof moveSourcePolicyNamespace>).default ??
+  moveSourcePolicyNamespace;
+const moveResolverMode =
+  (moveResolverModeNamespace as NamespaceWithOptionalDefault<typeof moveResolverModeNamespace>).default ??
+  moveResolverModeNamespace;
+const attentionTelegram =
+  (attentionTelegramNamespace as NamespaceWithOptionalDefault<typeof attentionTelegramNamespace>).default ??
+  attentionTelegramNamespace;
+
+const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
+
+/**
+ * Announce the move resolver mode once per service start, and alert Telegram when it is NOT what we
+ * think it is.
+ *
+ * This exists because the setting used to degrade in silence: unset or misspelled
+ * (`live-primary` instead of `live_primary`) both fell back to the slow browser path with no output
+ * whatsoever. Igor's words: "молчаливый откат на медленный путь — это то, что я замечу через недели."
+ *
+ * The alert lives HERE, in the long-lived loop, and not in tp-actions-once — that script is
+ * re-spawned every 30 seconds, so alerting there would mean a Telegram message every 30 seconds.
+ *
+ * Never throws: a broken alert must not take down the runner.
+ */
+async function announceMoveResolverModeOnStartup(): Promise<void> {
+  const resolution = moveResolverMode.classifyMoveResolverMode(
+    process.env[moveResolverMode.MOVE_RESOLVER_MODE_ENV]
+  );
+
+  console.log(
+    `[tp-actions-loop] move resolver mode: ${resolution.mode} (${resolution.status}${resolution.raw ? `, raw="${resolution.raw}"` : ""})`
+  );
+
+  const warning = moveResolverMode.formatMoveResolverModeWarning(resolution);
+  if (!warning) {
+    return;
+  }
+
+  console.warn(`[tp-actions-loop] ${warning.replace(/\n/g, " ")}`);
+
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+    const coachChatIds = attentionTelegram.getTrainingPeaksCoachChatIds();
+    if (!token || coachChatIds.length === 0) {
+      console.warn(
+        "[tp-actions-loop] resolver-mode warning not delivered to Telegram (no bot token or no coach chat ids)."
+      );
+      return;
+    }
+
+    await Promise.allSettled(
+      coachChatIds.map(async (chatId: string) => {
+        await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text: warning }),
+        });
+      })
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[tp-actions-loop] failed to deliver resolver-mode warning to Telegram: ${message}`);
+  }
+}
 
 type LoopOptions = {
   intervalSeconds: number;
@@ -714,6 +786,7 @@ async function main(): Promise<void> {
   console.log(
     `[tp-actions-loop] started interval=${options.intervalSeconds}s once=${options.once ? "yes" : "no"} executeReal=${options.executeReal ? "yes" : "no"} autoQueueTrusted=${isAutoQueueTrustedEnabled() ? "yes" : "no"} since=${options.since ?? "none"}`
   );
+  await announceMoveResolverModeOnStartup();
 
   let tickNo = 0;
   let isRunningTick = false;

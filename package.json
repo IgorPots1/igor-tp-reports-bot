@@ -63,6 +63,8 @@
     "check-trainingpeaks-multi-move-detector": "npx tsx scripts/check-trainingpeaks-multi-move-detector.ts",
     "check-trainingpeaks-ai-intent-moves": "npx tsx scripts/check-trainingpeaks-ai-intent-moves.ts",
     "check-trainingpeaks-move-object-verbs": "npx tsx scripts/check-trainingpeaks-move-object-verbs.ts",
+    "check-trainingpeaks-move-resolver-mode": "npx tsx scripts/check-trainingpeaks-move-resolver-mode.ts",
+    "check-trainingpeaks-group-move-safety": "npx tsx scripts/check-trainingpeaks-group-move-safety.ts",
     "check-trainingpeaks-group-probe-gating": "npx tsx scripts/check-trainingpeaks-group-probe-gating.ts",
     "check-trainingpeaks-student-identity-match": "npx tsx scripts/check-trainingpeaks-student-identity-match.ts",
     "check-trainingpeaks-student-identity-sources": "npx tsx scripts/check-trainingpeaks-student-identity-sources.ts",

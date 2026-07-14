@@ -196,6 +196,14 @@ import {
   detectUnparsedMoveRemainder,
   TP_STRICT_MOVE_VERBS,
 } from "@/features/trainingpeaks/move-multi-intent";
+import {
+  detectThirdPartySubjectMention,
+  getTrainingPeaksGroupMoveChatAllowlist,
+  isTelegramGroupChatId,
+  isTrainingPeaksGroupMoveChatAllowed,
+  isTrustedGroupSenderMatchMethod,
+} from "@/features/trainingpeaks/group-move-safety";
+import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { TRAININGPEAKS_TIME_ZONE, resolveTrainingPeaksWeekKeyword } from "@/features/trainingpeaks/week";
 import {
   DEFAULT_COACH_TIMEZONE,
@@ -1022,6 +1030,16 @@ export async function createTrainingPeaksGroupMoveRequestCase(
   const textPreview = buildTrainingPeaksGroupMoveCaseNoteTextPreview(rawText || null);
   const normalizedMovePairs = normalizeMovePairsForCaseStorage(input.multiMove.movePairsPreview);
 
+  // Decided once, HERE, while we still have the message in hand, and frozen into the case metadata.
+  // The coach's "create proposals" button later reads these verdicts instead of re-deriving them —
+  // by then the message is gone and only the case remains.
+  const thirdPartySubject = detectThirdPartySubjectMention({
+    rawText,
+    message: input.message,
+    coachUserIds: getTrainingPeaksCoachChatIds(),
+  });
+  const senderIdentityTrusted = isTrustedGroupSenderMatchMethod(input.senderMatchMethod);
+
   try {
     const existingCase = await getTrainingPeaksCoachCaseByTelegramMessageAndKind({
       telegramChatId: chatId,
@@ -1087,6 +1105,13 @@ export async function createTrainingPeaksGroupMoveRequestCase(
         message_thread_id: input.message.message_thread_id ?? null,
         sender_user_id: input.message.from?.id ?? null,
         sender_username: input.message.from?.username?.trim() || null,
+        // Whose workout is this, and are we sure? Both questions must be answerable from the case
+        // alone — creating an action from a group message hinges on them.
+        sender_match_method: input.senderMatchMethod,
+        sender_identity_trusted: senderIdentityTrusted,
+        third_party_subject_suspected: thirdPartySubject.suspected,
+        third_party_subject_reason: thirdPartySubject.reason,
+        third_party_subject_evidence: thirdPartySubject.evidence,
         text_preview: textPreview,
         parse_gate: input.parseGateResult,
         multi_move_detected: input.multiMove.detected,
@@ -2642,6 +2667,10 @@ export type CreateTrainingPeaksActionsFromGroupMoveCaseResult =
       actionIds: string[];
       caseStatus: TrainingPeaksCoachCaseStatus;
     }
+  // Three ways a group move request is refused, all answering "whose workout is this?" with "unsure".
+  | { kind: "chat_not_allowlisted"; chatId: string | null }
+  | { kind: "untrusted_sender_identity"; matchMethod: string | null }
+  | { kind: "third_party_subject"; reason: string | null; evidence: string | null }
   | { kind: "not_found" }
   | { kind: "ambiguous_case_id" }
   | { kind: "invalid_case_id" }
@@ -2896,6 +2925,39 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
     }
 
     const metadata = isRecordLike(groupCase.coachNotesJson) ? groupCase.coachNotesJson : {};
+
+    // ── Three refusals, all of them about ONE question: whose workout is this? ────────────────────
+    // In a DM the answer is free — one chat, one person. In a group it has to be earned, and when it
+    // cannot be, we stop. A refusal costs Igor a manual look; a wrong guess moves a real athlete's
+    // real training. These run before ANY action is built.
+
+    // 1. Is this group even allowed to produce actions? Fail-closed: an unset allowlist allows none.
+    //    (Coach cases still flow from every group — a case is an observation, not a mutation.)
+    if (!isTrainingPeaksGroupMoveChatAllowed(groupCase.telegramChatId, getTrainingPeaksGroupMoveChatAllowlist())) {
+      return { kind: "chat_not_allowlisted", chatId: groupCase.telegramChatId ?? null };
+    }
+
+    // 2. Do we actually know who sent it? Only telegram_chat_id is strong enough. A username match
+    //    is not: usernames are mutable, and this repo's own auto-link policy already refuses to bind
+    //    on one. Fine for a case a human reads; not fine for an action.
+    if (metadata.sender_identity_trusted !== true) {
+      return {
+        kind: "untrusted_sender_identity",
+        matchMethod: typeof metadata.sender_match_method === "string" ? metadata.sender_match_method : null,
+      };
+    }
+
+    // 3. Is the sender even the subject? "@Игорь, а Тане перенеси субботнюю" resolves the SENDER
+    //    while asking about Tanya. Creating the action here would move the wrong person's workout.
+    if (metadata.third_party_subject_suspected === true) {
+      return {
+        kind: "third_party_subject",
+        reason: typeof metadata.third_party_subject_reason === "string" ? metadata.third_party_subject_reason : null,
+        evidence:
+          typeof metadata.third_party_subject_evidence === "string" ? metadata.third_party_subject_evidence : null,
+      };
+    }
+
     const existingActionIds = toStringArray(metadata.created_action_ids);
     const existingActionProposalsCreated = metadata.action_proposals_created === true;
     if (existingActionProposalsCreated && existingActionIds.length > 0) {
@@ -10239,6 +10301,25 @@ async function tryAssembleMultiMessageMoveIntent(input: {
   triggerMessageId: string;
   messageDateUnix?: number | null;
 }): Promise<AssembledMoveIntentParseResult | null> {
+  // HARD INVARIANT: never assemble across messages in a GROUP chat.
+  //
+  // The context query below is scoped by chat_id ALONE — no student, no sender. In a Business DM that
+  // is exactly right: one chat, one person. In a group it would splice up to five OTHER people's
+  // messages from the last three minutes into one move intent and attribute the result to whoever
+  // happened to trigger it. That is the "moved the wrong student's workout" incident, and it would
+  // happen silently.
+  //
+  // Telegram group and supergroup ids are negative; private chat ids are positive. Guarding on the id
+  // itself (rather than on a caller-supplied flag) means no future caller can wire a group in by
+  // forgetting to pass something.
+  if (isTelegramGroupChatId(input.chatId)) {
+    console.warn("Refusing multi-message move intent assembly for a group chat (chat-scoped context would splice other people's messages)", {
+      chatId: input.chatId,
+      messageId: input.triggerMessageId,
+    });
+    return null;
+  }
+
   if (!triggerHasStrictMoveVerb(input.triggerText)) {
     return null;
   }
