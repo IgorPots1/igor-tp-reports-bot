@@ -774,9 +774,16 @@ export function buildNutritionDailyFactsForNarrative(input: {
             ? (canonical.energyAvailability as Record<string, unknown>)
             : null;
         const exerciseFromTp = ea && typeof ea.exerciseEnergyKcal === "number" ? (ea.exerciseEnergyKcal as number) : null;
+        // The day's carb corridor scales by the session's duration, so this target must scale
+        // by the SAME duration the plan uses — otherwise the review quotes an energy target
+        // computed from one corridor while the plan for that very day asks for another
+        // (80-min long run: 350 г vs 290 г). Read from the canonical day, never re-derived.
+        const canonicalDurationMinutes =
+          typeof canonical?.workoutDurationMinutes === "number" ? (canonical.workoutDurationMinutes as number) : null;
+        const durationHours = canonicalDurationMinutes !== null ? canonicalDurationMinutes / 60 : null;
         const exerciseKcal =
           exerciseFromTp ??
-          (bw ? estimatePlanDayExerciseKcal({ dayType: planDayType, bodyweightKg: bw, durationHours: null, distanceKm: null }) : 0);
+          (bw ? estimatePlanDayExerciseKcal({ dayType: planDayType, bodyweightKg: bw, durationHours, distanceKm: null }) : 0);
         const target = computeNutritionGoalDayTarget({
           goalType,
           dayType: planDayType,
@@ -785,6 +792,7 @@ export function buildNutritionDailyFactsForNarrative(input: {
           heightCm: input.context.heightCm,
           ageYears: input.context.ageYears,
           exerciseKcal,
+          durationHours,
           raceWeekDeficitOff: raceWeekDeficitOffDates.has(date),
         });
         if (!target) {

@@ -39,9 +39,20 @@ assert.ok(preLong);
 assert.ok(longRun);
 assert.ok(crossTraining);
 
-// Carbs = the MIDDLE of the review's carb corridor (not its floor); kcal = the macros.
-// These numbers moved when the plan stopped aiming at the bottom of the corridor and started
-// deriving the kcal from the food (rest 56 kg: 1950 shown / 1660 eaten → 1800 / 1800).
+// kcal = the macros (4Б + 9Ж + 4У). Carbs come from the review's corridor by TWO rules:
+//
+//   LOAD days (hard / long_run / long_endurance) → corridor LOW END + 0.4 г/кг.
+//   Everything else (rest / easy / strength / cross / pre_long / race) → corridor MIDDLE.
+//
+// Why two rules: a load corridor's top is sized for the extreme case of its type (8-10 г/кг
+// is marathon volume), so its midpoint over-asks — an 80-minute long run told a 59-kg runner
+// to eat 370 г. Two athletes said it plainly: «дофига углеводов на длительные и интервальные».
+// On the other types the top is merely «ate well» and the midpoint never over-asked; applying
+// low+0.4 there would drop a rest day to 29 kcal/kg for no reason.
+//
+// So the numbers below split: rest / easy / cross / pre_long are UNCHANGED (still the middle),
+// hard and long_run dropped (now the low end + 0.4). That split is the point of the rule — if
+// a non-load number moves here, the rule leaked.
 assert.equal(rest?.target_kcal, 1800);
 assert.equal(rest?.protein_g, 90);
 assert.equal(rest?.fat_g, 60);
@@ -52,20 +63,24 @@ assert.equal(easy?.protein_g, 90);
 assert.equal(easy?.fat_g, 65);
 assert.equal(easy?.carbs_g, 270);
 
-assert.equal(hard?.target_kcal, 2350);
+// hard: 5-7 corridor, low+0.4 = 5.4 г/кг × 56 (was the 6.0 midpoint → 340 г / 2350 ккал).
+assert.equal(hard?.target_kcal, 2150);
 assert.equal(hard?.protein_g, 95);
 assert.equal(hard?.fat_g, 65);
-assert.equal(hard?.carbs_g, 340);
+assert.equal(hard?.carbs_g, 300);
 
+// pre_long keeps the MIDDLE on purpose — it IS the loading day before the long run.
 assert.equal(preLong?.target_kcal, 2300);
 assert.equal(preLong?.protein_g, 90);
 assert.equal(preLong?.fat_g, 65);
 assert.equal(preLong?.carbs_g, 340);
 
-assert.equal(longRun?.target_kcal, 2600);
+// long_run without a duration → the "unknown" corridor 5.5-9, low+0.4 = 5.9 г/кг × 56
+// (was the 7.25 midpoint → 410 г / 2600 ккал).
+assert.equal(longRun?.target_kcal, 2300);
 assert.equal(longRun?.protein_g, 95);
 assert.equal(longRun?.fat_g, 65);
-assert.equal(longRun?.carbs_g, 410);
+assert.equal(longRun?.carbs_g, 330);
 
 assert.equal(crossTraining?.target_kcal, 2200);
 assert.equal(crossTraining?.protein_g, 90);
@@ -150,7 +165,7 @@ assert.ok(
 );
 assert.equal(plan.summary.long_run_source, "explicit_title");
 assert.equal(plan.summary.long_run_confidence, "high");
-assert.ok(plan.day_type_ideal_targets.hard?.carbs_g === 340);
+assert.ok(plan.day_type_ideal_targets.hard?.carbs_g === 300);
 
 // Regression: an interval run whose title mentions a recovery jog ("отдых бегом")
 // must be a hard day, not easy/rest (family "run" must not swallow it).

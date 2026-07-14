@@ -231,6 +231,23 @@ const FORMULA_BY_DAY_TYPE: Partial<Record<NutritionPlanDayType, FormulaCoefficie
   race: { kcalPerKg: 43, proteinPerKg: 1.7, fatPerKg: 1.15, carbsPerKg: 6.0 },
 };
 
+/**
+ * Load days: the plan asks for the corridor's LOW END + 0.4 г/кг here, and for the MIDDLE
+ * everywhere else (see calculateNutritionDayTypeTarget for the full reasoning).
+ *
+ * These are the types whose corridor TOP is sized for the extreme case — a 2h+ long run, a
+ * brutal interval session — which is exactly what made the midpoint over-ask. On the other
+ * types the top is merely «ate well», and the midpoint was never wrong.
+ *
+ * pre_long and race are deliberately NOT here: pre_long IS the loading day, and a start is
+ * not the place to under-fuel.
+ */
+const PLAN_LOW_END_DAY_TYPES: ReadonlySet<NutritionPlanDayType> = new Set<NutritionPlanDayType>([
+  "hard",
+  "long_run",
+  "long_endurance",
+]);
+
 const GUIDANCE_BY_DAY_TYPE: Record<NutritionPlanDayType, string | null> = {
   rest: null,
   easy: "Лёгкая пробежка: можно налегке или после небольшого перекуса, как удобнее.",
@@ -643,10 +660,42 @@ export function calculateNutritionDayTypeTarget(params: {
     params.isLightCross,
     params.dayType === "race"
   );
-  const carbsPerKg =
-    carbRange.rangeMinGPerKg !== null && carbRange.rangeMaxGPerKg !== null
-      ? Number(((carbRange.rangeMinGPerKg + carbRange.rangeMaxGPerKg) / 2).toFixed(2))
-      : formulaBase.carbsPerKg;
+  // On a LOAD day the plan asks for the corridor's LOW END + 0.4 г/кг. On every other day
+  // it asks for the MIDDLE. Two rules, on purpose — see below.
+  //
+  // A load corridor's TOP is sized for the extreme case of its type: 8-10 г/кг is
+  // marathon-prep volume, not an 80-minute long run. Its midpoint therefore over-asks —
+  // it told a 59-kg runner to eat 370 г of carbs after 80 minutes. Two athletes said it
+  // plainly: «дофига углеводов на длительные и интервальные». The low end is the
+  // methodological floor (below it the review flags «мало углеводов»), so low + 0.4 lands
+  // just inside the safe band instead of in the middle of a range built for a marathon.
+  //
+  // On rest / easy / strength / cross the top is merely «ate well», not an extreme demand,
+  // and the midpoint never over-asked. Applying low + 0.4 there would drop a rest day to
+  // 1750 kcal (29 kcal/kg) — below the methodological reference — for no reason at all.
+  // pre_long keeps the midpoint on purpose (it IS the loading day), and so does race
+  // (a start is not the place to under-fuel).
+  //
+  // CORRIDOR WIDTH DOES NOT WORK as the discriminator, and the numbers say so: «лёгкий» is
+  // 2.5 г/кг wide while «интервалы 60 мин» is 2.0, so a ≥2.5 threshold would hit easy (not
+  // wanted) and MISS intervals (the very complaint); and a ≥3.0 threshold would split the
+  // hard type against itself — a 40-min session (4-7, width 3.0) taking the low end while a
+  // 60-min one (5-7, width 2.0) takes the middle. Width is an accident of how the corridors
+  // were drawn. LOAD is the real distinction, so the rule names the load day types outright.
+  //
+  // kcal are NOT touched here: reconcileKcalWithMacros derives them from the macros
+  // (kcal = 4Б + 9Ж + 4У), so lowering carbs lowers the day's calories by exactly 4 kcal
+  // per gram and the coherence invariant holds by construction.
+  const carbsPerKg = (() => {
+    const low = carbRange.rangeMinGPerKg;
+    const high = carbRange.rangeMaxGPerKg;
+    if (low === null || high === null) {
+      return formulaBase.carbsPerKg;
+    }
+    return PLAN_LOW_END_DAY_TYPES.has(params.dayType)
+      ? Number((low + 0.4).toFixed(2))
+      : Number(((low + high) / 2).toFixed(2));
+  })();
   const proteinG = roundToNearest(formulaBase.proteinPerKg * bw, 5);
   const fatG = roundToNearest(formulaBase.fatPerKg * bw, 5);
   const carbsG = roundToNearest(carbsPerKg * bw, 10);
@@ -890,12 +939,26 @@ export function computeNutritionGoalDayTarget(params: {
   ageYears: number | null;
   exerciseKcal: number;
   ideal?: NutritionDayTypeTarget | null;
+  /**
+   * The day's session duration. Feeds the SAME duration-scaled corridor the plan uses.
+   *
+   * Without it this function fell back to the "unknown duration" corridor (long_run 5.5-9
+   * instead of 4.5-8), so the review's energy target for an 80-minute long run was computed
+   * from 350 г of carbs while the plan for the very same day asked for 290 г. Two numbers,
+   * one day. Callers that already hold a duration-aware target should pass `ideal` instead;
+   * callers that only know the duration pass it here.
+   */
+  durationHours?: number | null;
   /** Наряд 3: race-week → lose deficit OFF (don't toe a start on a deficit). */
   raceWeekDeficitOff?: boolean;
 }): NutritionDayTypeTarget | null {
   const ideal =
     params.ideal ??
-    calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: params.dayType });
+    calculateNutritionDayTypeTarget({
+      bodyweightKg: params.bodyweightKg,
+      dayType: params.dayType,
+      durationHours: params.durationHours ?? null,
+    });
   if (params.goalType === "maintain" || !params.bodyweightKg || params.bodyweightKg <= 0) {
     return ideal;
   }

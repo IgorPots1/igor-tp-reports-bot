@@ -114,6 +114,15 @@ export type NutritionCanonicalDailyAnalysis = {
   // Factual part of day of the session (from start_time). null when unknown —
   // consumers must not invent a time. Review-only; never set from planned time.
   timeOfDay: NutritionWorkoutTimeOfDay | null;
+  /**
+   * Duration of the day's PRIMARY (hardest) session, in minutes. Exposed because the carb
+   * corridor scales by it, and every consumer must scale by the SAME number: without this
+   * the review's energy target for an 80-minute long run was computed from the "unknown
+   * duration" corridor (5.5-9 → 350 г) while the plan for that very day asked 290 г.
+   * Read it from here — do NOT re-derive it from the workout list, or the third copy of
+   * "which session is the primary one" will drift away from the other two.
+   */
+  workoutDurationMinutes: number | null;
   actual: {
     kcal: number | null;
     proteinG: number | null;
@@ -2016,6 +2025,9 @@ function analyzeDailyTrainingNutrition(input: {
         canonicalTrainingType,
         workout: currentWorkout ?? null,
       }),
+      // Same expression the corridor and the ok/low status already use — one duration, one
+      // primary-session pick, no third copy to drift.
+      workoutDurationMinutes: trainingPeaksDurationHoursToMinutes(currentWorkout?.durationHours ?? null),
       // FACT only: part of day from start_time of the completed session.
       timeOfDay: currentWorkout?.timeOfDay ?? null,
       actual: {

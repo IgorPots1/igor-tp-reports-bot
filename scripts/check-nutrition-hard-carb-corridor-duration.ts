@@ -61,8 +61,11 @@ const shortHardSameLength = calculateNutritionDayTypeTarget({
   dayType: "hard",
   durationHours: 25 / 60,
 });
+// A RACE stays on the corridor MIDPOINT (a start is not the place to under-fuel); a HARD day
+// takes the LOW END + 0.4 (see PLAN_LOW_END_DAY_TYPES). So the two differ twice over — by
+// corridor AND by rule — and the race must still be the better-fuelled of the two.
 assert.equal(shortRace?.carbs_g, 360, "25-min race: 60 кг × 6.0 (midpoint of 5-7) = 360 г — the grid must not touch it");
-assert.equal(shortHardSameLength?.carbs_g, 330, "25-min hard: 60 кг × 5.5 (midpoint of 4-7) = 330 г");
+assert.equal(shortHardSameLength?.carbs_g, 260, "25-min hard: 60 кг × 4.4 (low+0.4 of 4-7) = 260 г");
 assert.ok(
   (shortRace?.carbs_g ?? 0) > (shortHardSameLength?.carbs_g ?? 0),
   "the plan asks MORE carbs for a race than for a hard session of the same length"
@@ -71,13 +74,13 @@ assert.ok(
 // ─── the plumbing: the duration must actually REACH the corridor ───
 // The bug this guards against: the corridor scales by duration, but a caller gates the
 // duration to long_run only. Then the displayed target says 5-7 while the ok/low status
-// judges by 4-7 — the exact displayed-vs-status desync class. A 40-min hard day must
-// land on the 4-7 midpoint (5.5 г/кг), not the 5-7 midpoint (6.0).
+// judges by 4-7 — the exact displayed-vs-status desync class. A 40-min hard day must land on
+// the 4-7 corridor (low+0.4 = 4.4 г/кг), not on the 5-7 one (5.4).
 const shortHard = calculateNutritionDayTypeTarget({ bodyweightKg: 60, dayType: "hard", durationHours: 40 / 60 });
 const hourHard = calculateNutritionDayTypeTarget({ bodyweightKg: 60, dayType: "hard", durationHours: 60 / 60 });
 
-assert.equal(shortHard?.carbs_g, 330, "40-min hard day: 60 кг × 5.5 (midpoint of 4-7) = 330 г");
-assert.equal(hourHard?.carbs_g, 360, "60-min hard day: 60 кг × 6.0 (midpoint of 5-7) = 360 г — unchanged");
+assert.equal(shortHard?.carbs_g, 260, "40-min hard day: 60 кг × 4.4 (low+0.4 of 4-7) = 260 г");
+assert.equal(hourHard?.carbs_g, 320, "60-min hard day: 60 кг × 5.4 (low+0.4 of 5-7) = 320 г");
 assert.ok(
   (shortHard?.carbs_g ?? 0) < (hourHard?.carbs_g ?? 0),
   "the plan asks LESS for a shorter hard session — the anomaly this fixes"
