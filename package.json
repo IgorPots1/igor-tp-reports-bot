@@ -296,6 +296,7 @@
     "check:nutrition-workout-titles-ru": "npx tsx scripts/check-nutrition-workout-titles-ru.ts",
     "check:nutrition-derived-numbers": "npx tsx scripts/check-nutrition-derived-numbers.ts",
     "check:nutrition-elliptical-classification": "npx tsx scripts/check-nutrition-elliptical-classification.ts",
+    "check:nutrition-lap-swimming-transcription": "npx tsx scripts/check-nutrition-lap-swimming-transcription.ts",
     "check:nutrition-krupa-rewriter": "npx tsx scripts/check-nutrition-krupa-rewriter.ts",
     "check:billing-month": "npx tsx scripts/check-billing-month.ts",
     "check:trainingpeaks-coach-case-feedback": "npx tsx scripts/check-trainingpeaks-coach-case-feedback.ts",

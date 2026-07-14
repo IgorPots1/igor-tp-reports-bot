@@ -418,8 +418,12 @@ const TRAININGPEAKS_ACTIVITY_RU_MAP: Array<[RegExp, string]> = [
   [/\bGym\b/gi, "зал"],
   // Multi-word "Open Water [Swim(ming)]" MUST come before the bare \bSwim(ming)\b
   // rules — otherwise "Swimming" matches first and leaves the "Open Water" prefix
-  // stranded in Latin ("Open Water плавание").
+  // stranded in Latin ("Open Water плавание"). Same reasoning for "Lap [Swim(ming)]"
+  // (pool laps, TP's other common swim qualifier) — real case: Hoffman's "Lap Swimming"
+  // came out "Lap плавание", the athlete-facing weekly-focus text (formatNutritionWork-
+  // outLabelForAthlete), because only "Swimming" was replaced and "Lap" had no rule.
   [/\bOpen\s*Water(?:\s*Swim(?:ming)?)?\b/gi, "плавание (открытая вода)"],
+  [/\bLap(?:\s*Swim(?:ming)?)?\b/gi, "плавание"],
   [/\bSwimming\b/gi, "плавание"],
   [/\bSwim\b/gi, "плавание"],
   [/\bPilates\b/gi, "пилатес"],
