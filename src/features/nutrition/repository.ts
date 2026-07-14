@@ -175,6 +175,73 @@ export type NutritionWeeklyAnalysisStatus =
   | "approved_for_copy"
   | "archived";
 
+/**
+ * Coach prose OVERLAY. Lives in its own jsonb column, deliberately OUTSIDE
+ * nutrition_summary — because a regeneration upserts nutrition_summary wholesale and
+ * would destroy anything stored inside it. The model writes nutrition_summary; the coach
+ * writes here; the render prefers the coach (applyNutritionCoachEdits).
+ *
+ * Absence of a key means "the coach did not touch this" — the model text is used. That is
+ * why no edited_by_coach flag exists: the overlay IS the flag. Deleting a key is an undo:
+ * the model text comes back (before this, clearing the box wrote athlete_prose = null and
+ * the model text was destroyed for good).
+ */
+export type NutritionCoachEdits = {
+  /** Per-day athlete prose, keyed by the day's ISO date, exactly as in daily_analysis[].date. */
+  day_prose?: Record<string, string>;
+  one_focus_statement_ru?: string;
+  athlete_opening_note_ru?: string;
+};
+
+/**
+ * Reads the overlay column defensively. It is jsonb after 20260714040000, but the code may
+ * ship before the migration is applied — then the column is still `text` and arrives as a
+ * string. Both are accepted; anything unparseable degrades to "no overlay" (the model text),
+ * never to a crash on the athlete-facing path.
+ */
+export function parseNutritionCoachEdits(raw: unknown): NutritionCoachEdits | null {
+  if (raw == null) {
+    return null;
+  }
+  let value: unknown = raw;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const source = value as Record<string, unknown>;
+  const overlay: NutritionCoachEdits = {};
+
+  const rawDayProse = source.day_prose;
+  if (rawDayProse && typeof rawDayProse === "object" && !Array.isArray(rawDayProse)) {
+    const dayProse: Record<string, string> = {};
+    for (const [date, prose] of Object.entries(rawDayProse as Record<string, unknown>)) {
+      if (typeof prose === "string" && prose.trim().length > 0) {
+        dayProse[date] = prose;
+      }
+    }
+    if (Object.keys(dayProse).length > 0) {
+      overlay.day_prose = dayProse;
+    }
+  }
+  if (typeof source.one_focus_statement_ru === "string" && source.one_focus_statement_ru.trim().length > 0) {
+    overlay.one_focus_statement_ru = source.one_focus_statement_ru;
+  }
+  if (typeof source.athlete_opening_note_ru === "string" && source.athlete_opening_note_ru.trim().length > 0) {
+    overlay.athlete_opening_note_ru = source.athlete_opening_note_ru;
+  }
+  return Object.keys(overlay).length > 0 ? overlay : null;
+}
+
 export type NutritionWeeklyAnalysis = {
   id: string;
   studentId: string;
@@ -192,7 +259,7 @@ export type NutritionWeeklyAnalysis = {
   contextHash: string | null;
   aiModel: string | null;
   athleteMessageDraft: string | null;
-  coachEdits: string | null;
+  coachEdits: NutritionCoachEdits | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -329,7 +396,8 @@ type NutritionWeeklyAnalysisRow = {
   context_hash: string | null;
   ai_model: string | null;
   athlete_message_draft: string | null;
-  coach_edits: string | null;
+  // jsonb after 20260714040000; tolerant parser below still accepts the old text column.
+  coach_edits: unknown;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -441,7 +509,6 @@ export type CreateNutritionWeeklyAnalysisInput = {
   contextHash?: string | null;
   aiModel?: string | null;
   athleteMessageDraft?: string | null;
-  coachEdits?: string | null;
 };
 
 export type CreateNutritionWeeklyPlanInput = {
@@ -643,7 +710,7 @@ function mapNutritionWeeklyAnalysisRow(row: NutritionWeeklyAnalysisRow): Nutriti
     contextHash: row.context_hash,
     aiModel: row.ai_model,
     athleteMessageDraft: row.athlete_message_draft,
-    coachEdits: row.coach_edits,
+    coachEdits: parseNutritionCoachEdits(row.coach_edits),
     archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1409,16 +1476,24 @@ export async function removeNutritionAnalysisPatternCandidate(input: {
 }
 
 /**
- * Coach edit of the athlete-facing PROSE on a generated review (Flow C v1-B).
- * Writes back ONLY free-text fields the athlete sees in the cards:
- *   - daily_analysis[].athlete_prose (per day, matched by date)
- *   - one_focus.statement_ru (the focus line)
- *   - athlete_opening_note_ru (the warm opening; render still digit-guards it)
- * Numbers, targets, flags and the canonical day data are left untouched: the whole
- * nutrition_summary is deep-cloned and only these string fields are replaced.
- * stripControlCharsForDb keeps newlines (paragraphs) but drops NUL/control chars.
- * The render-time prose validator (resolveUsableNutritionDayProse) still applies,
- * so an edit that introduces forbidden numbers falls back to deterministic text.
+ * Coach edit of the athlete-facing PROSE on a generated review.
+ *
+ * Writes into the coach_edits OVERLAY, and NEVER into nutrition_summary. That is the whole
+ * point: a regeneration upserts nutrition_summary wholesale, so an edit stored inside it was
+ * destroyed silently and without a trace (Ponomareva, 2026-07-10 — an agent's generation run
+ * overwrote the coach's edit minutes after he saved it). The overlay lives in its own column,
+ * outside the blob regeneration rewrites, so it survives.
+ *
+ * Fields: per-day prose (keyed by the day's ISO date), the focus line, the warm opening.
+ * Numbers, targets, flags and the canonical day data were never editable and still are not.
+ *
+ * CLEARING A FIELD IS AN UNDO, NOT A DELETION. An empty value removes the key from the
+ * overlay, so the model's text comes back. (Before this, clearing wrote athlete_prose = null
+ * straight into the summary and the model text was gone for good.)
+ *
+ * The render-time prose validator still applies to the coach's text exactly as it does to the
+ * model's: an edit that quotes a number which is not a fact of that day falls back to the
+ * deterministic comment, and the coach is told which days and why.
  */
 export async function updateNutritionReviewProse(input: {
   analysisId: string;
@@ -1430,8 +1505,6 @@ export async function updateNutritionReviewProse(input: {
   if (!analysis) {
     throw new Error(`Nutrition weekly analysis not found: ${input.analysisId}`);
   }
-  // Deep clone the jsonb so nested mutation never touches the cached object.
-  const summary = JSON.parse(JSON.stringify(toObject(analysis.nutritionSummary))) as Record<string, unknown>;
 
   const cleanProse = (value: string | null | undefined): string | null => {
     if (value == null) return null;
@@ -1439,35 +1512,43 @@ export async function updateNutritionReviewProse(input: {
     return cleaned.length > 0 ? cleaned : null;
   };
 
-  if (input.dayProse) {
-    const daily = Array.isArray(summary.daily_analysis) ? summary.daily_analysis : [];
-    for (const raw of daily) {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const item = raw as Record<string, unknown>;
-      const date = typeof item.date === "string" ? item.date : null;
-      if (date && Object.prototype.hasOwnProperty.call(input.dayProse, date)) {
-        item.athlete_prose = cleanProse(input.dayProse[date]);
-      }
+  const current = analysis.coachEdits ?? {};
+  const dayProse: Record<string, string> = { ...(current.day_prose ?? {}) };
+  for (const [date, value] of Object.entries(input.dayProse ?? {})) {
+    const cleaned = cleanProse(value);
+    if (cleaned === null) {
+      delete dayProse[date];
+    } else {
+      dayProse[date] = cleaned;
     }
   }
 
-  if (input.oneFocusStatementRu !== undefined) {
-    const oneFocus =
-      summary.one_focus && typeof summary.one_focus === "object" && !Array.isArray(summary.one_focus)
-        ? (summary.one_focus as Record<string, unknown>)
-        : {};
-    oneFocus.statement_ru = cleanProse(input.oneFocusStatementRu);
-    summary.one_focus = oneFocus;
+  const next: NutritionCoachEdits = {};
+  if (Object.keys(dayProse).length > 0) {
+    next.day_prose = dayProse;
+  }
+  // undefined = the field was not submitted at all → keep whatever the overlay already holds.
+  const focus =
+    input.oneFocusStatementRu === undefined ? current.one_focus_statement_ru ?? null : cleanProse(input.oneFocusStatementRu);
+  if (focus !== null) {
+    next.one_focus_statement_ru = focus;
+  }
+  const opening =
+    input.athleteOpeningNoteRu === undefined
+      ? current.athlete_opening_note_ru ?? null
+      : cleanProse(input.athleteOpeningNoteRu);
+  if (opening !== null) {
+    next.athlete_opening_note_ru = opening;
   }
 
-  if (input.athleteOpeningNoteRu !== undefined) {
-    summary.athlete_opening_note_ru = cleanProse(input.athleteOpeningNoteRu);
-  }
+  // An overlay with nothing in it is stored as NULL, not as {} — "the coach never edited this"
+  // and "the coach edited it back to the model text" must look the same to every reader.
+  const payload = Object.keys(next).length > 0 ? next : null;
 
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_weekly_analyses")
-    .update({ nutrition_summary: summary })
+    .update({ coach_edits: payload })
     .eq("id", input.analysisId)
     .select("*")
     .single();
@@ -1816,7 +1897,6 @@ export async function createNutritionWeeklyAnalysis(
         context_hash: input.contextHash ?? null,
         ai_model: input.aiModel ?? null,
         athlete_message_draft: input.athleteMessageDraft ?? null,
-        coach_edits: input.coachEdits ?? null,
         // A freshly (re)generated review is active again, even if the prior row
         // for this week had been archived.
         archived_at: null,

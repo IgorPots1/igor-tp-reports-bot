@@ -564,7 +564,6 @@ export async function generateNutritionWeeklyReview(input: {
     contextHash: generated.context_hash,
     aiModel: generated.ai_model,
     athleteMessageDraft: generated.athlete_message_draft,
-    coachEdits: null,
   });
 
   // Task 7: roll the review-memory signals forward (last focus + carbs trend) so

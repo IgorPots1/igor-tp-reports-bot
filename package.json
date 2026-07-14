@@ -292,6 +292,7 @@
     "audit:nutrition-interpretation-shadow": "npx tsx scripts/audit-nutrition-interpretation-shadow.ts",
     "diagnose:nutrition-interpretation-shadow-case": "npx tsx scripts/diagnose-nutrition-interpretation-shadow-case.ts",
     "check:nutrition-interpretation-shadow-audit": "npx tsx scripts/check-nutrition-interpretation-shadow-audit.ts",
+    "check:nutrition-coach-edits-overlay": "npx tsx scripts/check-nutrition-coach-edits-overlay.ts",
     "check:nutrition-krupa-rewriter": "npx tsx scripts/check-nutrition-krupa-rewriter.ts",
     "check:billing-month": "npx tsx scripts/check-billing-month.ts",
     "check:trainingpeaks-coach-case-feedback": "npx tsx scripts/check-trainingpeaks-coach-case-feedback.ts",

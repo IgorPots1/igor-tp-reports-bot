@@ -820,7 +820,70 @@ function getDailyFactsLines(review: NutritionWeeklyAnalysis): string[] {
   return buildDailyFactsEntries(review).map((entry) => entry.line);
 }
 
+/**
+ * Merges the coach's overlay (coach_edits) onto the model's review and returns the review the
+ * athlete actually gets. The overlay is stored OUTSIDE nutrition_summary precisely so that a
+ * regeneration — which upserts nutrition_summary wholesale — cannot destroy it; this is where
+ * the two halves are put back together.
+ *
+ * A missing key means the coach did not touch that field, so the model's text is used. There is
+ * no edited_by_coach flag anywhere: the overlay IS the flag.
+ *
+ * Idempotent — applying it to an already-merged review changes nothing, so entry points may
+ * apply it defensively without coordinating.
+ */
+export function applyNutritionCoachEdits(review: NutritionWeeklyAnalysis): NutritionWeeklyAnalysis {
+  const overlay = review.coachEdits;
+  if (!overlay) {
+    return review;
+  }
+  const summary = JSON.parse(JSON.stringify(asObject(review.nutritionSummary))) as Record<string, unknown>;
+
+  const dayProse = overlay.day_prose ?? {};
+  if (Object.keys(dayProse).length > 0 && Array.isArray(summary.daily_analysis)) {
+    for (const raw of summary.daily_analysis) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        continue;
+      }
+      const item = raw as Record<string, unknown>;
+      const date = typeof item.date === "string" ? item.date : null;
+      if (!date || !Object.prototype.hasOwnProperty.call(dayProse, date)) {
+        continue;
+      }
+      item.athlete_prose = dayProse[date];
+      // The stored day also carries an embedded canonical copy, and normalizeStoredDailyFactItem
+      // reads `source.athlete_prose ?? item.athlete_prose` — the embed WINS when it has the field.
+      // Today it does not, but writing both keeps the coach's text authoritative whatever the
+      // embed grows into, instead of being silently shadowed by a stale model line.
+      for (const key of ["canonicalDailyAnalysis", "canonical_daily_analysis"]) {
+        const embedded = item[key];
+        if (embedded && typeof embedded === "object" && !Array.isArray(embedded)) {
+          (embedded as Record<string, unknown>).athlete_prose = dayProse[date];
+        }
+      }
+    }
+  }
+
+  if (overlay.one_focus_statement_ru != null) {
+    const oneFocus =
+      summary.one_focus && typeof summary.one_focus === "object" && !Array.isArray(summary.one_focus)
+        ? (summary.one_focus as Record<string, unknown>)
+        : {};
+    oneFocus.statement_ru = overlay.one_focus_statement_ru;
+    summary.one_focus = oneFocus;
+  }
+  if (overlay.athlete_opening_note_ru != null) {
+    summary.athlete_opening_note_ru = overlay.athlete_opening_note_ru;
+  }
+
+  return { ...review, nutritionSummary: summary };
+}
+
 function buildDailyFactsEntries(review: NutritionWeeklyAnalysis): NutritionReviewDayEntry[] {
+  // THE chokepoint. Every day-based reader — the athlete's cards, the day-by-day text, the
+  // rejection banner — comes through here, so the coach's overlay is applied once, in one
+  // place, and cannot be forgotten by the next reader that needs day prose.
+  review = applyNutritionCoachEdits(review);
   const facts = getCanonicalDailyFacts(review);
   const reviewWeekFacts = filterFactsToReviewWeek(review, facts);
   if (reviewWeekFacts.length === 0) {
@@ -1498,7 +1561,10 @@ export function buildDerivedNutritionCombinedMessage(input: {
     };
   }
 
-  const review = input.review;
+  // Second chokepoint: the week-summary line and the warm opening are read straight off the
+  // summary below, not through buildDailyFactsEntries — so the coach overlay is applied to the
+  // WHOLE message, not only the day cards. Idempotent: the nested day builder re-applies it.
+  const review = applyNutritionCoachEdits(input.review);
   const plan = input.plan;
   const planWeekMode = input.planWeekMode ?? "next_week";
   const blocked = isReviewBlockedSafety(review) || isPlanBlockedSafety(plan);

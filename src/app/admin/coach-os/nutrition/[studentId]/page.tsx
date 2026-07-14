@@ -37,6 +37,7 @@ import {
 } from "@/features/nutrition/admin";
 import { buildDerivedNutritionCoachSummary } from "@/features/nutrition/coach-summary";
 import {
+  applyNutritionCoachEdits,
   buildDerivedNutritionCoachDayByDayText,
   buildDerivedNutritionCombinedMessage,
   getNutritionDayProseRejections,
@@ -457,7 +458,11 @@ export default async function CoachOsNutritionStudentCardPage({
     fileUploadPreview.weekTo === weekTo
       ? fileUploadPreview
       : null;
-  const weeklyNutritionSummary = asObject(card.weeklyAnalysis?.nutritionSummary);
+  // The coach must see HIS OWN text in the editor, not the model line he replaced. The overlay
+  // is merged once, here, so every derived thing below — the textareas, the focus and opening
+  // defaults, the rejection banner — speaks about the text that will actually be sent.
+  const effectiveWeeklyAnalysis = card.weeklyAnalysis ? applyNutritionCoachEdits(card.weeklyAnalysis) : null;
+  const weeklyNutritionSummary = asObject(effectiveWeeklyAnalysis?.nutritionSummary);
   const dailyAnalysis = Array.isArray(weeklyNutritionSummary.daily_analysis)
     ? (weeklyNutritionSummary.daily_analysis as Array<Record<string, unknown>>)
     : [];
@@ -482,7 +487,7 @@ export default async function CoachOsNutritionStudentCardPage({
   // fine) and it also rejects markdown/tech tokens (which the raw check never sees). Only the
   // render knows what the athlete actually got.
   const proseRejectionByDate = new Map(
-    getNutritionDayProseRejections(card.weeklyAnalysis)
+    getNutritionDayProseRejections(effectiveWeeklyAnalysis)
       .filter((rejection): rejection is typeof rejection & { date: string } => typeof rejection.date === "string")
       .map((rejection) => [rejection.date, rejection])
   );
