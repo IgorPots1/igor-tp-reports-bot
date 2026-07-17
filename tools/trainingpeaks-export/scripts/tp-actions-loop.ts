@@ -79,6 +79,75 @@ async function announceMoveResolverModeOnStartup(): Promise<void> {
   }
 }
 
+const TP_MOVE_SHADOW_ENABLED_ENV = "TP_MOVE_SHADOW_ENABLED";
+/** Same truthy grammar as tp-actions-once.ts's private isTruthyEnvFlag — trivial enough (one regex)
+ * that duplicating it beats adding a shared module for it. */
+const SHADOW_ENABLED_TRUTHY_PATTERN = /^(1|true|yes|on)$/i;
+
+/**
+ * Announce the shadow comparator's on/off state once per service start, and alert Telegram when it
+ * is OFF (unexpected — the plist is supposed to keep this on permanently now).
+ *
+ * This exists for the same reason as the resolver-mode announcer above, and Igor asked for it right
+ * after that one shipped: "shadow" is used as a WORD in two unrelated places in this codebase —
+ * TP_MOVE_RESOLVER_MODE can literally hold the STRING "shadow" (meaning "execute moves via the old
+ * DOM/browser path"), while TP_MOVE_SHADOW_ENABLED is a completely separate on/off switch for the
+ * read-only comparator that measures the HTTP resolver against an independent DOM scrape. The two
+ * have caused confusion before, so this log line prints BOTH together, and spells out that the
+ * comparison DIRECTION (DOM scrape = ground truth, HTTP resolver = what's being measured) is NOT a
+ * config value at all — it's fixed in code (tp-actions-once.ts's shadow hook), so there is no
+ * "TP_MOVE_SHADOW_MODE" to set.
+ */
+async function announceMoveShadowEnabledOnStartup(): Promise<void> {
+  const raw = process.env[TP_MOVE_SHADOW_ENABLED_ENV]?.trim() ?? null;
+  const enabled = raw !== null && SHADOW_ENABLED_TRUTHY_PATTERN.test(raw);
+  const resolverMode = moveResolverMode.classifyMoveResolverMode(
+    process.env[moveResolverMode.MOVE_RESOLVER_MODE_ENV]
+  ).mode;
+
+  if (enabled) {
+    console.log(
+      `[tp-actions-loop] move shadow comparator: ENABLED (ground truth: independent DOM scrape from inspectActionCalendar, fixed in code — not configurable; measures HTTP resolver; resolver mode: ${resolverMode})`
+    );
+    return;
+  }
+
+  console.log(
+    `[tp-actions-loop] move shadow comparator: DISABLED (${TP_MOVE_SHADOW_ENABLED_ENV}${raw === null ? " not set" : ` = "${raw}", not truthy`}; resolver mode: ${resolverMode})`
+  );
+
+  const warning = [
+    `⚠️ TrainingPeaks: shadow-компаратор ВЫКЛЮЧЕН (${TP_MOVE_SHADOW_ENABLED_ENV}${raw === null ? " не задан" : ` = "${raw}"`}).`,
+    "Прибор НЕ пишет сравнения — данные для решения по браузеру-предохранителю не копятся.",
+    `Задаётся в launchd-плисте (EnvironmentVariables → ${TP_MOVE_SHADOW_ENABLED_ENV}).`,
+  ].join("\n");
+  console.warn(`[tp-actions-loop] ${warning.replace(/\n/g, " ")}`);
+
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+    const coachChatIds = attentionTelegram.getTrainingPeaksCoachChatIds();
+    if (!token || coachChatIds.length === 0) {
+      console.warn(
+        "[tp-actions-loop] shadow-disabled warning not delivered to Telegram (no bot token or no coach chat ids)."
+      );
+      return;
+    }
+
+    await Promise.allSettled(
+      coachChatIds.map(async (chatId: string) => {
+        await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text: warning }),
+        });
+      })
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[tp-actions-loop] failed to deliver shadow-disabled warning to Telegram: ${message}`);
+  }
+}
+
 type LoopOptions = {
   intervalSeconds: number;
   once: boolean;
@@ -787,6 +856,7 @@ async function main(): Promise<void> {
     `[tp-actions-loop] started interval=${options.intervalSeconds}s once=${options.once ? "yes" : "no"} executeReal=${options.executeReal ? "yes" : "no"} autoQueueTrusted=${isAutoQueueTrustedEnabled() ? "yes" : "no"} since=${options.since ?? "none"}`
   );
   await announceMoveResolverModeOnStartup();
+  await announceMoveShadowEnabledOnStartup();
 
   let tickNo = 0;
   let isRunningTick = false;
