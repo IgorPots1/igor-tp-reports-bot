@@ -28,6 +28,8 @@ type CliArgs = {
   student: string | null;
   allActiveFullRescan: boolean;
   headed: boolean;
+  limit: number | null;
+  delayMs: number;
 };
 
 type ResolvedTarget = {
@@ -151,6 +153,8 @@ function parseArgs(argv: string[]): CliArgs {
     student: null,
     allActiveFullRescan: false,
     headed: false,
+    limit: null,
+    delayMs: 500,
   };
 
   for (const arg of argv) {
@@ -183,6 +187,24 @@ function parseArgs(argv: string[]): CliArgs {
       parsed.headed = false;
       continue;
     }
+    if (arg.startsWith("--limit=")) {
+      const raw = arg.slice("--limit=".length).trim();
+      const value = Number.parseInt(raw, 10);
+      if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`Invalid --limit: "${raw}". Expected a positive integer.`);
+      }
+      parsed.limit = value;
+      continue;
+    }
+    if (arg.startsWith("--delay-ms=")) {
+      const raw = arg.slice("--delay-ms=".length).trim();
+      const value = Number.parseInt(raw, 10);
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`Invalid --delay-ms: "${raw}". Expected a non-negative integer.`);
+      }
+      parsed.delayMs = value;
+      continue;
+    }
     throw new Error(`Unknown argument: ${arg}`);
   }
 
@@ -203,6 +225,10 @@ function parseArgs(argv: string[]): CliArgs {
   }
 
   return parsed;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function toCompactErrorMessage(error: unknown): string {
@@ -275,9 +301,16 @@ async function main(): Promise<void> {
       });
     }
   } else {
-    throw new Error(
-      "Flag --all-active-full-rescan is reserved for future use. Use --eligible-only (and optionally --student=...) for safe mode."
-    );
+    // --all-active-full-rescan: scan every active student. This is read-only against
+    // TrainingPeaks (GET consolidated timed metrics per athlete); students without
+    // wearable/health data simply return zero rows and are recorded as scanned.
+    // Throttle a first cautious run with --limit and --delay-ms.
+    for (const student of allStudents) {
+      selected.push({
+        student,
+        athleteId: parseAthleteIdFromUrl(student.trainingPeaksAthleteUrl),
+      });
+    }
   }
 
   if (args.student) {
@@ -294,6 +327,10 @@ async function main(): Promise<void> {
     }
     selected.length = 0;
     selected.push(...filtered);
+  }
+
+  if (args.limit !== null && selected.length > args.limit) {
+    selected.length = args.limit;
   }
 
   if (selected.length === 0) {
@@ -412,6 +449,12 @@ async function main(): Promise<void> {
           warnings: 1,
           reason: toCompactErrorMessage(error),
         });
+      }
+
+      // Polite throttle between athletes so a full-roster rescan does not hammer
+      // the TrainingPeaks API. Configurable via --delay-ms (default 500).
+      if (args.delayMs > 0) {
+        await sleep(args.delayMs);
       }
     }
 
