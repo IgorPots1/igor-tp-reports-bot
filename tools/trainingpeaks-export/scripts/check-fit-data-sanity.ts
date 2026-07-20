@@ -87,9 +87,16 @@ assert(rejectFitSentinel(null, U32_INVALID) === null, "null passes through");
   assert(s.aerobicEfSane === false && s.paceTrusted === true, "ef out of range nulled, pace still fine");
 }
 {
-  // broken max HR (255 sentinel that slipped through as an avg, or a bad max)
-  const s = assessWorkoutDataSanity({ overallPaceSecPerKm: 330, aerobicEf: 0.018, repPeakHrs: [150, 240] });
-  assert(s.maxHrSane === false, "max rep HR 240 → not sane");
+  // max rep HR range is [130, 205] (наряд fix-maxhr-threshold: floor was 165,
+  // which mislabelled genuine low-intensity peaks). Boundary tests:
+  const sane = (peaks: number[]) => assessWorkoutDataSanity({ overallPaceSecPerKm: 330, aerobicEf: 0.018, repPeakHrs: peaks }).maxHrSane;
+  assert(sane([120, 129]) === false, "max 129 → below floor, not sane");
+  assert(sane([120, 130]) === true, "max 130 → at floor, sane");
+  assert(sane([150, 162]) === true, "max 162 → real low-intensity peak, sane (was wrongly flagged at floor 165)");
+  assert(sane([150, 205]) === true, "max 205 → at ceiling, sane");
+  assert(sane([150, 206]) === false, "max 206 → above ceiling, not sane");
+  assert(sane([150, 240]) === false, "max 240 → glitch, not sane");
+  assert(sane([95, 110]) === false, "max 110 → strap under-read, not sane");
 }
 {
   // no FIT distance/time → not computable, not "untrusted"

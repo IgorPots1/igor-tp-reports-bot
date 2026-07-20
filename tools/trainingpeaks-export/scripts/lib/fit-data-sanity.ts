@@ -19,7 +19,11 @@ export const PACE_MIN_SEC_PER_KM = 180; // 3:00/km
 export const PACE_MAX_SEC_PER_KM = 570; // 9:30/km
 export const AEROBIC_EF_MIN = 0.008;
 export const AEROBIC_EF_MAX = 0.05;
-export const MAX_REP_HR_MIN = 165;
+// Real work-effort peak floor 130 (below → the strap under-read), ceiling 205
+// (above → a glitch). The floor was 165, which mislabelled easy/low-intensity
+// intervals whose genuine peak sits at 160–162 as broken. A smarter future
+// layer would compare against the athlete's OWN observed max, not an absolute.
+export const MAX_REP_HR_MIN = 130;
 export const MAX_REP_HR_MAX = 205;
 
 export type WorkoutDataSanity = {
