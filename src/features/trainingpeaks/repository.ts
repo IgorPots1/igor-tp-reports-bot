@@ -1088,6 +1088,11 @@ export type TrainingPeaksWorkoutDerivedMetricsUpsertRow = {
   // not set here, the default already satisfies it).
   aerobic_ef?: number | null;
 
+  // Interval STRUCTURE key ('7x[300second]' | ...) or null for non-interval /
+  // unkeyable plans. The comparison base groups on this; computed on ingest from
+  // the plan structure by computeComparisonKey (comparison/comparison-key.ts).
+  comparison_key?: string | null;
+
   source_snapshot?: unknown;
   normalization_warnings?: string[];
   scanned_at?: string;

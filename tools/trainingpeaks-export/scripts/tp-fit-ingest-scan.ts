@@ -56,6 +56,7 @@ import type {
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
 import * as workoutActivityClassificationModule from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
+import * as comparisonKeyModule from "../../../src/features/trainingpeaks/comparison/comparison-key.ts";
 import {
   getWorkoutDetailsRecord,
   getWorkoutFilesExport,
@@ -109,6 +110,10 @@ const upsertTrainingPeaksWorkoutDerivedMetricsRows =
 const classifyTrainingPeaksWorkoutActivity =
   workoutActivityClassificationModuleCompat.classifyTrainingPeaksWorkoutActivity ??
   workoutActivityClassificationModuleCompat.default?.classifyTrainingPeaksWorkoutActivity;
+const comparisonKeyModuleCompat =
+  comparisonKeyModule as NamespaceWithOptionalDefault<typeof comparisonKeyModule>;
+const computeComparisonKey =
+  comparisonKeyModuleCompat.computeComparisonKey ?? comparisonKeyModuleCompat.default?.computeComparisonKey;
 
 if (typeof listTrainingPeaksStudents !== "function") {
   throw new Error("TrainingPeaks repository.listTrainingPeaksStudents is unavailable.");
@@ -127,6 +132,9 @@ if (typeof upsertTrainingPeaksWorkoutDerivedMetricsRows !== "function") {
 }
 if (typeof classifyTrainingPeaksWorkoutActivity !== "function") {
   throw new Error("workout-activity-classification.classifyTrainingPeaksWorkoutActivity is unavailable.");
+}
+if (typeof computeComparisonKey !== "function") {
+  throw new Error("comparison.computeComparisonKey is unavailable.");
 }
 
 // No FIT records at all -> decoupling (and every other FIT-derived scalar)
@@ -379,6 +387,13 @@ async function ingestOneWorkoutFit(input: {
     sourceSnapshot: input.cacheRow.sourceSnapshot,
   }).family;
 
+  // Interval structure key from the plan snapshot — computed once here so BOTH
+  // the FIT-parsed and the degraded (no-FIT) rows carry it. null for
+  // non-interval / unkeyable plans. Cheap: the structure is already in hand.
+  const comparisonKey = computeComparisonKey(
+    isRecord(input.cacheRow.sourceSnapshot) ? input.cacheRow.sourceSnapshot.structure : null
+  );
+
   const base = {
     student_id: input.cacheRow.studentId,
     student_name: input.cacheRow.studentName,
@@ -387,6 +402,7 @@ async function ingestOneWorkoutFit(input: {
     workout_cache_id: input.cacheRow.id,
     workout_date: input.cacheRow.workoutDate,
     workout_type: workoutType,
+    comparison_key: comparisonKey,
     scanned_at: input.scannedAt,
     // Default for the no-FIT-data branches (required by the DB check
     // constraint); the fit_parsed branch below overrides these with the
