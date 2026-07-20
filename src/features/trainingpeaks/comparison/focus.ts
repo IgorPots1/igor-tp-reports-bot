@@ -1,97 +1,136 @@
-// Focus selection (design doc "5. D. Выбор фокуса — одно сообщение").
+// Focus selection + pause + coach flags (наряд 2). Exactly ONE student-facing
+// observation goes out, or none.
 //
-// Several comparisons can fire. Exactly ONE goes out (the nutrition rule). The
-// priority:
-//   1. Pulse anomaly, hard tier — a question about the DATA beats any statement
-//      about the training. If we don't trust the pulse, pulse conclusions are
-//      suppressed and we talk about the watch, not the form.
-//   2. ДАВНЕЕ (old, "рост") — rare and the most valuable. Encouragement.
-//   3. СВЕЖЕЕ (recent, "состояние") — pace → HR → the rest.
-// Within a mode the winner is the metric with the largest |Δ| / MAD, not the
-// largest raw delta (12 s/km at MAD 2 is an event; at MAD 15 it's a Tuesday).
+// Priority: 1. hard pulse anomaly (a DATA question beats any praise) → talk about
+// the watch. 2. composite (weight 3, "больше и быстрее" — most convincing).
+// 3. mechanism A (weight 2, strong single). 4. mechanism B (weight 1, picture).
+// Within a weight: old (рост) before recent (состояние), then strongest.
 //
-// Everything else is silence. Two comparisons in one message never happen.
+// The praise pause (pause.ts) gates the winner; a suppressed praise is still
+// reported (for the proof). Coach flags — mid-band pulse suspicion and an
+// "unusually large shift" — are DATA signals to Igor and bypass the pause.
 
-import type { IntervalMatchResult, MetricEval, NormMode } from "./interval-matcher.ts";
+import { shouldEmitPraise } from "./pause.ts";
+import type { MatchResult } from "./match-result.ts";
 import type { PulseAnomalyResult } from "./pulse-anomaly.ts";
-import type { CoachFlag, ComparisonContextItem, ComparisonObservation } from "./types.ts";
+import type {
+  CoachFlag,
+  ComparisonContextItem,
+  ComparisonObservation,
+  LastPraise,
+  PraiseCandidate,
+} from "./types.ts";
 
-function score(e: MetricEval): number {
-  const denom = e.mad !== null && e.mad > 0 ? e.mad : e.flatThreshold;
-  return Math.abs(e.delta) / denom;
-}
+export const UNUSUAL_PACE_DELTA_SEC = 30;
+export const UNUSUAL_HR_DELTA_BPM = 15;
 
-function bestInMode(evals: MetricEval[], mode: NormMode): MetricEval | null {
-  const fired = evals.filter((e) => e.mode === mode && e.fired && !e.suppressed);
-  if (fired.length === 0) return null;
-  return fired.reduce((best, e) => (score(e) > score(best) ? e : best));
-}
+const PACE_METRICS = new Set(["rep_pace", "steady_pace"]);
+const HR_METRICS = new Set(["rep_hr", "avg_hr"]);
 
 export type FocusResult = {
   observation: ComparisonObservation | null;
-  coachFlag: CoachFlag | null;
+  coachFlags: CoachFlag[];
+  winningCandidate: PraiseCandidate | null; // pre-pause, for the proof
+  suppressedByPause: PraiseCandidate | null;
 };
 
+function modeRank(mode: "recent" | "old"): number {
+  return mode === "old" ? 1 : 0; // old (рост) preferred
+}
+
+/** Highest weight, then old before recent, then strongest. */
+function pickBest(candidates: PraiseCandidate[]): PraiseCandidate | null {
+  if (candidates.length === 0) return null;
+  return [...candidates].sort((a, b) => {
+    if (b.weight !== a.weight) return b.weight - a.weight;
+    if (modeRank(b.mode) !== modeRank(a.mode)) return modeRank(b.mode) - modeRank(a.mode);
+    return b.primaryStrength - a.primaryStrength;
+  })[0]!;
+}
+
+function toObservation(c: PraiseCandidate, context: ComparisonContextItem[]): ComparisonObservation {
+  return {
+    kind: c.kind,
+    weight: c.weight,
+    tier: c.tier,
+    key: c.key,
+    mode: c.mode,
+    metrics: c.metrics.map((m) => ({ metric: m.metric, before: m.before, after: m.after, delta: m.delta, baseN: m.baseN, spread: m.spread })),
+    composite: c.composite,
+    context,
+  };
+}
+
+function unusualShiftFlag(c: PraiseCandidate, workoutDate: string): CoachFlag | null {
+  const isPace = PACE_METRICS.has(c.primaryMetric);
+  const isHr = HR_METRICS.has(c.primaryMetric);
+  const big = (isPace && Math.abs(c.primaryDelta) > UNUSUAL_PACE_DELTA_SEC) || (isHr && Math.abs(c.primaryDelta) > UNUSUAL_HR_DELTA_BPM);
+  if (!big) return null;
+  const line = c.metrics[0];
+  return {
+    kind: "unusual_shift",
+    metric: c.primaryMetric,
+    before: line?.before ?? null,
+    after: line?.after ?? null,
+    delta: c.primaryDelta,
+    workoutDate,
+  };
+}
+
 export function selectFocus(input: {
-  match: IntervalMatchResult;
+  match: MatchResult;
   pulse: PulseAnomalyResult;
   context: ComparisonContextItem[];
   workoutDate: string;
+  lastPraise: LastPraise | null;
 }): FocusResult {
-  const { match, pulse, context } = input;
-  const cls =
-    match.tier !== null && match.key !== null ? { key: match.key, tier: match.tier } : null;
+  const { match, pulse, context, workoutDate, lastPraise } = input;
+  const coachFlags: CoachFlag[] = [];
 
-  // 1. Hard pulse anomaly wins outright, and suppresses any pulse-based finding.
-  if (pulse.grade === "suppress_and_ask" && cls !== null) {
+  // 1. Hard pulse anomaly — a data question, not praise; never paused.
+  if (pulse.grade === "suppress_and_ask" && (match.tier !== null || match.key !== null)) {
     return {
       observation: {
-        class: cls,
-        metric: "hr_sensor",
+        kind: "hr_sensor",
+        weight: null,
+        tier: (match.tier as 1 | 2 | 3 | null) ?? 1,
+        key: match.key,
         mode: "sensor",
-        before: pulse.normHr,
-        after: pulse.currentHr,
-        delta: pulse.currentHr !== null && pulse.normHr !== null ? pulse.currentHr - pulse.normHr : null,
-        baseN: pulse.baseN,
-        spread: null,
+        metrics: [
+          {
+            metric: "hr_sensor",
+            before: pulse.normHr,
+            after: pulse.currentHr,
+            delta: pulse.currentHr !== null && pulse.normHr !== null ? pulse.currentHr - pulse.normHr : null,
+            baseN: pulse.baseN,
+            spread: null,
+          },
+        ],
         context,
       },
-      coachFlag: null,
+      coachFlags,
+      winningCandidate: null,
+      suppressedByPause: null,
     };
   }
 
-  // A mid-band suspicion is a coach-only flag; it does not become the student
-  // observation, but it must not be lost — it rides alongside whatever fires.
-  const coachFlag: CoachFlag | null =
-    pulse.grade === "flag_coach" && pulse.currentHr !== null && pulse.normHr !== null && pulse.shortfallBpm !== null
-      ? {
-          kind: "pulse_sensor_suspect",
-          shortfallBpm: pulse.shortfallBpm,
-          currentHr: pulse.currentHr,
-          normHr: pulse.normHr,
-          baseN: pulse.baseN,
-          workoutDate: input.workoutDate,
-        }
-      : null;
+  if (pulse.grade === "flag_coach" && pulse.currentHr !== null && pulse.normHr !== null && pulse.shortfallBpm !== null) {
+    coachFlags.push({ kind: "pulse_sensor_suspect", shortfallBpm: pulse.shortfallBpm, currentHr: pulse.currentHr, normHr: pulse.normHr, baseN: pulse.baseN, workoutDate });
+  }
 
-  if (cls === null) return { observation: null, coachFlag };
+  const winner = pickBest(match.candidates);
+  if (winner === null) return { observation: null, coachFlags, winningCandidate: null, suppressedByPause: null };
 
-  // 2. then 3.: old (рост) before recent (состояние).
-  const winner = bestInMode(match.metricEvals, "old") ?? bestInMode(match.metricEvals, "recent");
-  if (winner === null) return { observation: null, coachFlag };
+  // Artifact safeguard: an unusually large shift is flagged to Igor (never
+  // silenced), regardless of whether the pause later suppresses the praise.
+  const unusual = unusualShiftFlag(winner, workoutDate);
+  if (unusual) coachFlags.push(unusual);
 
+  const emit = shouldEmitPraise({ candidateWeight: winner.weight, last: lastPraise, workoutDate });
   return {
-    observation: {
-      class: cls,
-      metric: winner.metric,
-      mode: winner.mode,
-      before: winner.before,
-      after: winner.after,
-      delta: winner.delta,
-      baseN: winner.baseN,
-      spread: winner.mad,
-      context,
-    },
-    coachFlag,
+    observation: emit ? toObservation(winner, context) : null,
+    coachFlags,
+    winningCandidate: winner,
+    suppressedByPause: emit ? null : winner,
   };
 }

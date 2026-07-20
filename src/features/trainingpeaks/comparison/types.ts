@@ -1,13 +1,15 @@
-// Shared types for the comparison base (интервалы, ярусы 1–2).
+// Shared types for the comparison base (intervals ярусы 1–2 + ровный бег ярус 3).
 //
-// The layer's contract (design doc п.10 "ПРИЧИННОСТЬ МЯГКАЯ"): it emits a
-// STRUCTURE — {класс, метрика, было, стало, дельта, n_базы, разброс, контекст} —
-// and NEVER a verdict. "Форма упала" is never produced here; the word is chosen
-// by the generation layer. A null observation means SILENCE (not "no change").
+// Reframed (наряд 2): the layer surfaces PROGRESS — "показать, что прогресс есть,
+// когда он реально есть" — never a verdict, and never a regression nag. A null
+// observation means SILENCE. Three praise mechanisms, by weight:
+//   composite (3) > mechanism A / strong single (2) > mechanism B / picture (1).
+// Non-praise signals (pulse anomaly, "unusual shift") are about the DATA and are
+// NOT gated by the praise pause.
 
-/** One run's derived metrics, in the shape the matcher consumes. Built by the
+/** One run's derived metrics, in the shape the matchers consume. Built by the
  *  caller from a trainingpeaks_workout_derived_metrics row (+ its comparison_key,
- *  computed on ingest or, in the proof harness, on the fly from the plan). */
+ *  and — for ровный бег — pace/duration aggregated from the laps table). */
 export type DerivedRowForComparison = {
   workoutId: number;
   workoutDate: string; // 'YYYY-MM-DD'
@@ -21,19 +23,65 @@ export type DerivedRowForComparison = {
   avgHr: number | null; // cleaned
   hrTrusted: boolean | null;
   hrQuality: string | null; // 'good' | 'degraded' | 'unreliable' | null
+  // Steady-run (ярус 3) fields. avgPaceSecPerKm/durationS are NOT stored on the
+  // derived row — the caller aggregates them from laps (sum distance / sum time).
+  avgPaceSecPerKm: number | null;
+  durationS: number | null;
+  hrDecouplingPct: number | null;
+  aerobicEf: number | null; // normalizer only — never shown to the student
 };
 
-export type ComparisonMetric = "rep_pace" | "rep_hr" | "fade" | "recovery" | "hr_sensor";
-export type ComparisonMode = "recent" | "old" | "sensor";
+export type ComparisonMetric =
+  // interval metrics
+  | "rep_pace"
+  | "rep_hr"
+  | "fade"
+  | "recovery"
+  | "rep_count"
+  // steady metrics
+  | "steady_pace"
+  | "avg_hr"
+  | "decoupling"
+  // data signal
+  | "hr_sensor";
+
+export type NormMode = "recent" | "old";
+export type ObservationMode = NormMode | "sensor";
+
+export type PraiseKind = "composite" | "mechanism_a" | "mechanism_b";
+export type PraiseWeight = 1 | 2 | 3; // B=1, A=2, composite=3
+
+/** A single metric's shift vs its personal norm, classified for improvement. */
+export type MetricShift = {
+  metric: ComparisonMetric;
+  before: number; // norm value
+  after: number; // current value
+  delta: number; // after - before
+  baseN: number; // points in the norm
+  spread: number | null; // MAD, only when n>=3 (else null → flat threshold)
+  status: "improved" | "worsened" | "neutral"; // vs the SOFT threshold
+};
+
+/** A would-be praise, before the pause is applied. Both matchers emit these. */
+export type PraiseCandidate = {
+  kind: PraiseKind;
+  weight: PraiseWeight;
+  tier: 1 | 2 | 3;
+  key: string | null; // structure key (intervals); null for steady
+  mode: NormMode;
+  metrics: MetricShift[]; // A: the fired metric; B: the improved list; composite: pace
+  composite?: { countBefore: number; countAfter: number };
+  primaryMetric: ComparisonMetric;
+  primaryDelta: number;
+  primaryStrength: number; // |improvement| / threshold — intra-kind ranking
+};
 
 export type ComparisonContextItem = {
   type: string; // memory item type, e.g. 'health_status'
   text: string;
-  date: string | null; // the memory item's valid_from / observation date
+  date: string | null;
 };
 
-/** A memory item as the caller supplies it (subset of
- *  TrainingPeaksStudentMemoryItem needed for context-beside-numbers). */
 export type MemoryContextInput = {
   type: string;
   text: string;
@@ -41,26 +89,46 @@ export type MemoryContextInput = {
   validUntil: string | null;
 };
 
-/** The single outward observation, or null for silence. */
-export type ComparisonObservation = {
-  class: { key: string; tier: 1 | 2 };
+export type ObservationMetricLine = {
   metric: ComparisonMetric;
-  mode: ComparisonMode;
   before: number | null;
   after: number | null;
   delta: number | null;
   baseN: number;
-  spread: number | null; // MAD of the class norm
+  spread: number | null;
+};
+
+/** The single outward observation, or null for silence. `metrics` carries every
+ *  converged metric (mechanism B tells the whole picture, not one number). */
+export type ComparisonObservation = {
+  kind: PraiseKind | "hr_sensor";
+  weight: PraiseWeight | null; // null for hr_sensor (a data signal, not praise)
+  tier: 1 | 2 | 3;
+  key: string | null;
+  mode: ObservationMode;
+  metrics: ObservationMetricLine[];
+  composite?: { countBefore: number; countAfter: number };
   context: ComparisonContextItem[];
 };
 
-/** A coach-only flag (never shown to the student). Currently only the mid-band
- *  pulse-sensor suspicion (design doc §E: 8–15 bpm below норма → флаг Игорю). */
-export type CoachFlag = {
-  kind: "pulse_sensor_suspect";
-  shortfallBpm: number;
-  currentHr: number;
-  normHr: number;
-  baseN: number;
-  workoutDate: string;
-};
+/** Coach-only flags (never shown to the student), NOT gated by the praise pause. */
+export type CoachFlag =
+  | {
+      kind: "pulse_sensor_suspect";
+      shortfallBpm: number;
+      currentHr: number;
+      normHr: number;
+      baseN: number;
+      workoutDate: string;
+    }
+  | {
+      kind: "unusual_shift";
+      metric: ComparisonMetric;
+      before: number | null;
+      after: number | null;
+      delta: number;
+      workoutDate: string;
+    };
+
+/** The last praise emitted for a student — the pause's cross-workout state. */
+export type LastPraise = { weight: PraiseWeight; date: string };
