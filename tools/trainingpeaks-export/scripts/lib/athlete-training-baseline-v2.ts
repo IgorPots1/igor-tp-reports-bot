@@ -558,7 +558,7 @@ function distanceKmFromRaw(raw: unknown): number | null {
   return Number(value.toFixed(2));
 }
 
-function durationMinutesForRow(row: TrainingPeaksWorkoutCacheRow, mode: "planned" | "completed" | "best"): number | null {
+export function durationMinutesForRow(row: TrainingPeaksWorkoutCacheRow, mode: "planned" | "completed" | "best"): number | null {
   const snapshot = isRecord(row.sourceSnapshot) ? row.sourceSnapshot : null;
   if (mode === "planned") {
     const snapshotPlanned = durationMinutesFromRaw(snapshot?.totalTimePlanned);
@@ -573,7 +573,7 @@ function durationMinutesForRow(row: TrainingPeaksWorkoutCacheRow, mode: "planned
   return durationMinutesForRow(row, "planned") ?? durationMinutesForRow(row, "completed");
 }
 
-function distanceKmForRow(row: TrainingPeaksWorkoutCacheRow): number | null {
+export function distanceKmForRow(row: TrainingPeaksWorkoutCacheRow): number | null {
   const snapshot = isRecord(row.sourceSnapshot) ? row.sourceSnapshot : null;
   return (
     distanceKmFromRaw(row.completedDistanceRaw) ??
@@ -584,7 +584,7 @@ function distanceKmForRow(row: TrainingPeaksWorkoutCacheRow): number | null {
   );
 }
 
-function completedDistanceKmForRow(row: TrainingPeaksWorkoutCacheRow): number | null {
+export function completedDistanceKmForRow(row: TrainingPeaksWorkoutCacheRow): number | null {
   const snapshot = isRecord(row.sourceSnapshot) ? row.sourceSnapshot : null;
   return distanceKmFromRaw(row.completedDistanceRaw) ?? distanceKmFromRaw(snapshot?.rawDistance);
 }

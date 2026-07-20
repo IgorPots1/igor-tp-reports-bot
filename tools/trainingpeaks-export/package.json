@@ -40,6 +40,7 @@
     "tp-generate-strength-template-review": "tsx scripts/tp-generate-strength-template-review.ts",
     "tp-generate-strength-exercise-catalog": "tsx scripts/tp-generate-strength-exercise-catalog.ts",
     "tp-create-test-strength-workout": "tsx scripts/tp-create-test-strength-workout.ts",
+    "check:monthly-report-context": "node --experimental-strip-types scripts/check-monthly-report-context.ts",
     "check:strength-template-matcher": "tsx scripts/check-strength-template-matcher.ts",
     "check:strength-exercise-catalog": "tsx scripts/check-strength-exercise-catalog.ts",
     "check:strength-exercise-db-capture": "tsx scripts/check-strength-exercise-db-capture.ts",
