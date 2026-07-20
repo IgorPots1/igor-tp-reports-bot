@@ -4,6 +4,21 @@
 // against tools/trainingpeaks-export/scripts/local/hr-drift-elevation-audit.ts
 // and tp-race-prediction-probe.ts, which already read a subset of these same
 // fields from real FIT files.
+//
+// FIT "unset" markers (uint8/16/32 max, scaled) are rejected per field — see
+// fit-sentinel.ts. Without this a lap's total_timer_time = 4294967.295 s or
+// total_distance = 42949672.95 m survives and poisons every aggregate.
+
+import {
+  rejectFitSentinel,
+  U8_INVALID,
+  U16_INVALID,
+  U16_SPEED_MPS,
+  U32_DIST_M,
+  U32_INVALID,
+  U32_SPEED_MPS,
+  U32_TIME_S,
+} from "./fit-sentinel.ts";
 
 export type NormalizedFitRecord = {
   timeS: number; // seconds elapsed since the first record (monotonic)
@@ -111,12 +126,16 @@ export function normalizeFitRecords(rawRecords: unknown[]): NormalizedFitRecord[
 
   return withTimestamp.map(({ record, tsMs }) => ({
     timeS: (tsMs - startMs) / 1000,
-    heartRate: toPositiveFiniteNumber(record.heart_rate),
-    cadenceRpm: toPositiveFiniteNumber(record.cadence),
-    speedMps: toPositiveFiniteNumber(record.enhanced_speed) ?? toPositiveFiniteNumber(record.speed),
-    distanceM: toFiniteNumber(record.distance),
-    altitudeM: toFiniteNumber(record.enhanced_altitude) ?? toFiniteNumber(record.altitude),
-    power: toPositiveFiniteNumber(record.power),
+    heartRate: rejectFitSentinel(toPositiveFiniteNumber(record.heart_rate), U8_INVALID),
+    cadenceRpm: rejectFitSentinel(toPositiveFiniteNumber(record.cadence), U8_INVALID),
+    speedMps:
+      rejectFitSentinel(toPositiveFiniteNumber(record.enhanced_speed), U32_INVALID, U32_SPEED_MPS) ??
+      rejectFitSentinel(toPositiveFiniteNumber(record.speed), U16_INVALID, U16_SPEED_MPS),
+    distanceM: rejectFitSentinel(toFiniteNumber(record.distance), U32_INVALID, U32_DIST_M),
+    altitudeM:
+      rejectFitSentinel(toFiniteNumber(record.enhanced_altitude), U32_INVALID) ??
+      rejectFitSentinel(toFiniteNumber(record.altitude), U16_INVALID),
+    power: rejectFitSentinel(toPositiveFiniteNumber(record.power), U16_INVALID),
   }));
 }
 
@@ -129,19 +148,23 @@ export function normalizeFitLaps(rawLaps: unknown[], workoutStartMs: number | nu
         lapIndex,
         startOffsetS:
           startMs !== null && workoutStartMs !== null ? (startMs - workoutStartMs) / 1000 : null,
-        timerTimeS: toPositiveFiniteNumber(lap.total_timer_time),
-        elapsedTimeS: toPositiveFiniteNumber(lap.total_elapsed_time),
-        distanceM: toPositiveFiniteNumber(lap.total_distance),
-        avgSpeedMps: toPositiveFiniteNumber(lap.enhanced_avg_speed) ?? toPositiveFiniteNumber(lap.avg_speed),
-        maxSpeedMps: toPositiveFiniteNumber(lap.enhanced_max_speed) ?? toPositiveFiniteNumber(lap.max_speed),
-        avgHr: toPositiveFiniteNumber(lap.avg_heart_rate),
-        maxHr: toPositiveFiniteNumber(lap.max_heart_rate),
-        minHr: toPositiveFiniteNumber(lap.min_heart_rate),
-        avgCadenceRpm: toPositiveFiniteNumber(lap.avg_cadence),
-        maxCadenceRpm: toPositiveFiniteNumber(lap.max_cadence),
-        avgPower: toPositiveFiniteNumber(lap.avg_power),
-        totalAscentM: toFiniteNumber(lap.total_ascent),
-        totalDescentM: toFiniteNumber(lap.total_descent),
+        timerTimeS: rejectFitSentinel(toPositiveFiniteNumber(lap.total_timer_time), U32_INVALID, U32_TIME_S),
+        elapsedTimeS: rejectFitSentinel(toPositiveFiniteNumber(lap.total_elapsed_time), U32_INVALID, U32_TIME_S),
+        distanceM: rejectFitSentinel(toPositiveFiniteNumber(lap.total_distance), U32_INVALID, U32_DIST_M),
+        avgSpeedMps:
+          rejectFitSentinel(toPositiveFiniteNumber(lap.enhanced_avg_speed), U32_INVALID, U32_SPEED_MPS) ??
+          rejectFitSentinel(toPositiveFiniteNumber(lap.avg_speed), U16_INVALID, U16_SPEED_MPS),
+        maxSpeedMps:
+          rejectFitSentinel(toPositiveFiniteNumber(lap.enhanced_max_speed), U32_INVALID, U32_SPEED_MPS) ??
+          rejectFitSentinel(toPositiveFiniteNumber(lap.max_speed), U16_INVALID, U16_SPEED_MPS),
+        avgHr: rejectFitSentinel(toPositiveFiniteNumber(lap.avg_heart_rate), U8_INVALID),
+        maxHr: rejectFitSentinel(toPositiveFiniteNumber(lap.max_heart_rate), U8_INVALID),
+        minHr: rejectFitSentinel(toPositiveFiniteNumber(lap.min_heart_rate), U8_INVALID),
+        avgCadenceRpm: rejectFitSentinel(toPositiveFiniteNumber(lap.avg_cadence), U8_INVALID),
+        maxCadenceRpm: rejectFitSentinel(toPositiveFiniteNumber(lap.max_cadence), U8_INVALID),
+        avgPower: rejectFitSentinel(toPositiveFiniteNumber(lap.avg_power), U16_INVALID),
+        totalAscentM: rejectFitSentinel(toFiniteNumber(lap.total_ascent), U16_INVALID),
+        totalDescentM: rejectFitSentinel(toFiniteNumber(lap.total_descent), U16_INVALID),
         lapTrigger: typeof lap.lap_trigger === "string" ? lap.lap_trigger : null,
         intensity: typeof lap.intensity === "string" ? lap.intensity : null,
         wktStepIndex: Number.isInteger(lap.wkt_step_index) ? (lap.wkt_step_index as number) : null,

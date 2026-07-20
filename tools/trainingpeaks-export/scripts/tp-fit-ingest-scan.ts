@@ -64,11 +64,13 @@ import {
 import { toolRoot } from "./lib/paths.ts";
 import {
   findWorkoutStartMs,
+  lapDurationSeconds,
   lapPaceSecPerKm,
   normalizeFitLaps,
   normalizeFitRecords,
   type NormalizedFitLap,
 } from "./lib/fit-workout-normalization.ts";
+import { assessWorkoutDataSanity } from "./lib/fit-data-sanity.ts";
 import { cleanHeartRateSeries, computeCleanedMovingAverageHr } from "./lib/fit-hr-cleaning.ts";
 import { detectWorkLaps } from "./lib/fit-lap-work-detection.ts";
 import {
@@ -550,6 +552,19 @@ async function ingestOneWorkoutFit(input: {
     // SILENT about this workout's heart rate.
     const hrTrusted = cleaning.hrQuality === "good" || cleaning.hrQuality === "degraded";
 
+    // Data-sanity gate (runs AFTER the FIT sentinel rejection): the whole-workout
+    // pace from the cleaned laps, plus aerobic_ef and max rep HR, are checked
+    // against Igor's plausibility ranges. Out-of-range → the metric goes NULL
+    // with a reason and a trust flag, so the garbage that survives the sentinel
+    // fix (GPS speed spikes, GPS-lost fragments) can't poison consumers.
+    const totalDistanceM = isRun ? normalizedLaps.reduce((sum, lap) => sum + (lap.distanceM ?? 0), 0) : 0;
+    const totalDurationS = isRun ? normalizedLaps.reduce((sum, lap) => sum + (lapDurationSeconds(lap) ?? 0), 0) : 0;
+    const overallPaceSecPerKm = isRun && totalDistanceM > 0 && totalDurationS > 0 ? totalDurationS / (totalDistanceM / 1000) : null;
+    const sanity = assessWorkoutDataSanity({ overallPaceSecPerKm, aerobicEf, repPeakHrs: intervalScalars.repPeakHrs });
+    warnings.push(...sanity.warnings);
+    const aerobicEfSanitized = sanity.aerobicEfSane ? aerobicEf : null;
+    const hrTrustedSanitized = hrTrusted && sanity.maxHrSane;
+
     // pace_sec_per_km is a RUNNING notion, so it is only published for runs:
     //   - off a run it is at best meaningless and at worst a lie (a bike lap at
     //     101 s/km is a perfectly normal 35 km/h, but the column NAME claims it
@@ -625,7 +640,9 @@ async function ingestOneWorkoutFit(input: {
         time_in_zones: goalVsActual.timeInZones,
         zone_basis: goalVsActual.zoneBasis,
         cadence_lock_coverage_pct: cleaning.cadenceLockCoveragePct,
-        hr_trusted: hrTrusted,
+        hr_trusted: hrTrustedSanitized,
+        pace_trusted: sanity.paceTrusted,
+        distance_trusted: sanity.distanceTrusted,
         reps_detected_count: repsDetectedCount,
         rep_detection_method: workDetection ? workDetection.method : null,
         rep_paces: intervalScalars.repPaces,
@@ -637,7 +654,7 @@ async function ingestOneWorkoutFit(input: {
         hr_decoupling_pct: decoupling.hrDecouplingPct,
         decoupling_valid: decoupling.decouplingValid,
         decoupling_invalid_reason: decoupling.decouplingInvalidReason,
-        aerobic_ef: aerobicEf,
+        aerobic_ef: aerobicEfSanitized,
         normalization_warnings: warnings,
       },
       warnings,

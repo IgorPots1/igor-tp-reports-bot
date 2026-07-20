@@ -1053,6 +1053,12 @@ export type TrainingPeaksWorkoutDerivedMetricsUpsertRow = {
   // report-generation layer reads to know it must stay silent about HR.
   hr_trusted?: boolean | null;
 
+  // FIT data-sanity flags (наряд fit-data-sanity), like hr_trusted: false when
+  // the whole-workout pace is physically implausible (device GPS spike / fragment)
+  // so consumers must not believe the aggregated pace/distance; null = not computable.
+  pace_trusted?: boolean | null;
+  distance_trusted?: boolean | null;
+
   // Goal-vs-actual (design doc section 2). target_source is 'plan' only when
   // the plan's per-step targets resolve to an absolute HR/pace corridor;
   // 'athlete_zones' is a schema-only placeholder (no zones data source
