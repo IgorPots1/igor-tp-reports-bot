@@ -28,6 +28,12 @@ import type { MoveShadowComparisonRow } from "@/features/trainingpeaks/move-shad
 
 export type TrainingPeaksTelegramFormality = "ty" | "vy" | "unknown";
 
+// 'sex'/'is_service_account' added by migration 20260721170000 (feature/students-sex,
+// applied 2026-07-21). Russian grammatical-gender agreement in generated text reads sex;
+// is_service_account excludes test/coach accounts (e.g. Igor's own) from student-facing
+// generation (feedback, weekly reports, digests).
+export type TrainingPeaksStudentSex = "female" | "male";
+
 export type TrainingPeaksStudent = {
   id: string;
   studentId: string;
@@ -45,6 +51,8 @@ export type TrainingPeaksStudent = {
   telegramContextNotes: string | null;
   dataQualityStatus: string | null;
   notes: string | null;
+  sex: TrainingPeaksStudentSex | null;
+  isServiceAccount: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -110,6 +118,8 @@ type TrainingPeaksStudentRow = {
   telegram_context_notes: string | null;
   data_quality_status: string | null;
   notes: string | null;
+  sex: string | null;
+  is_service_account: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -1421,6 +1431,8 @@ function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaks
     telegramContextNotes: row.telegram_context_notes,
     dataQualityStatus: row.data_quality_status,
     notes: row.notes,
+    sex: row.sex === "female" || row.sex === "male" ? row.sex : null,
+    isServiceAccount: row.is_service_account,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
