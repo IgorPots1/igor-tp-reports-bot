@@ -17,12 +17,19 @@ export type PlannerDerivedMetrics = DerivedRowForComparison & {
   pctTimePaceTarget: number | null;
   paceTrusted: boolean | null;
   distanceTrusted: boolean | null;
+  // FIT availability — the feedback bridge blocks (coach signal, no student draft)
+  // when there is no usable FIT data. Optional: the planner itself ignores them.
+  hasFit?: boolean | null;
+  fallbackLevel?: "fit_full" | "details_only" | "summary_only" | null;
 };
 
 export type PlannerLap = {
   lapIndex: number;
   distanceM: number | null;
   timerTimeS: number | null;
+  // elapsed − timer per lap sums to the paused time — the feedback arc uses it to
+  // ask "много остановок — почему?"; optional (older callers omit it).
+  elapsedTimeS?: number | null;
   paceSecPerKm: number | null;
   avgHr: number | null;
   isWork: boolean | null;
