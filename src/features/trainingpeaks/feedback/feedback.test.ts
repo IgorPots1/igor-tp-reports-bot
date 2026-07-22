@@ -89,6 +89,32 @@ describe("session-type", () => {
     const result = classifySessionType({ current: baseCurrent({ durationS: 1800 }), title: null });
     assert.equal(result.sessionType, "easy");
   });
+  test("reps>=3 without comparison_key -> interval fallback (legacy summaryOnly)", () => {
+    const result = classifySessionType({ current: baseCurrent({ comparisonKey: null, repsDetectedCount: 24 }), title: "24×1 мин" });
+    assert.equal(result.sessionType, "interval");
+    assert.equal(result.confidence, "medium");
+    assert.match(result.reason, /without comparison_key/);
+  });
+  test("reps=2 without key stays NOT interval (tempo 2-block, not a series)", () => {
+    const result = classifySessionType({ current: baseCurrent({ comparisonKey: null, repsDetectedCount: 2, durationS: 2100 }), title: "35 мин темп" });
+    assert.equal(result.sessionType, "long_tempo");
+  });
+  test("keyed path still wins and reads high confidence", () => {
+    const result = classifySessionType({ current: baseCurrent({ comparisonKey: "5x[400meter]", repsDetectedCount: 5 }), title: null });
+    assert.equal(result.confidence, "high");
+  });
+  test("easy run (reps<2, no key) stays easy — no regression", () => {
+    const result = classifySessionType({ current: baseCurrent({ comparisonKey: null, repsDetectedCount: 0, durationS: 2400 }), title: "Лёгкий бег" });
+    assert.equal(result.sessionType, "easy");
+  });
+  test("easy title + phantom heuristic reps (no N×M) is VETOED → not interval", () => {
+    const result = classifySessionType({ current: baseCurrent({ comparisonKey: null, repsDetectedCount: 5, durationS: 2400 }), title: "Легкий бег" });
+    assert.notEqual(result.sessionType, "interval");
+  });
+  test("interval title keeps its N×M despite recovery word → interval", () => {
+    const result = classifySessionType({ current: baseCurrent({ comparisonKey: null, repsDetectedCount: 20 }), title: "20 x 1 мин (восстановление бегом)" });
+    assert.equal(result.sessionType, "interval");
+  });
 });
 
 describe("split-half + negative-split", () => {
