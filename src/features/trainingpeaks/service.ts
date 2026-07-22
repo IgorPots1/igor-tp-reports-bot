@@ -36,6 +36,7 @@ import {
   recoverStaleTrainingPeaksRunningJobs,
   recoverStaleTrainingPeaksRunningRaceScanJobs,
   insertTrainingPeaksStudent,
+  listTrainingPeaksStudentsForRosterImport,
   insertTrainingPeaksReplyDraft as insertTrainingPeaksReplyDraftInRepository,
   insertTrainingPeaksCoachActionTaken,
   insertTrainingPeaksCoachCase,
@@ -156,6 +157,12 @@ import {
   updateTrainingPeaksWeeklyReportReviewState as updateTrainingPeaksWeeklyReportReviewStateInRepository,
   updateTrainingPeaksWeeklyReportStateById,
 } from "@/features/trainingpeaks/repository";
+import { getCoachedAthletesRoster } from "@/features/trainingpeaks/tp-api-client";
+import {
+  buildImportPlan,
+  type ImportPlan,
+  type WouldInsertRow,
+} from "@/features/trainingpeaks/athlete-roster-import";
 import { evaluateTrainingPeaksRecoveryAlert } from "@/features/trainingpeaks/recovery-alerts";
 import {
   evaluateHealthSignalMemoryDoubt,
@@ -328,6 +335,8 @@ export type CreateTrainingPeaksStudentInput = {
   trainingPeaksAthleteUrl: string;
   notes?: string | null;
   dataQualityStatus?: string | null;
+  /** Defaults to true (manual add-student form). Roster sync passes false so a batch of freshly imported students does not auto-start weekly reports. */
+  weeklyReportEnabled?: boolean;
 };
 
 export type CreateTrainingPeaksStudentResult =
@@ -4014,7 +4023,7 @@ export async function createTrainingPeaksStudent(
       studentName,
       trainingPeaksAthleteUrl,
       isActive: true,
-      weeklyReportEnabled: true,
+      weeklyReportEnabled: input.weeklyReportEnabled ?? true,
       telegramDeliveryEnabled: false,
       dataQualityStatus,
       notes,
@@ -4054,6 +4063,78 @@ export async function createTrainingPeaksStudent(
       message: "Не удалось создать ученика. Попробуй ещё раз.",
     };
   }
+}
+
+/**
+ * Live "Sync from TrainingPeaks" step 1: fetch the coach's TP roster and diff it
+ * against existing Supabase students. Read-only -- no writes here. TP errors
+ * (missing/stale session snapshot, HTTP, schema) propagate to the caller (the
+ * admin action classifies them into a friendly message). The bearer comes from
+ * the local session snapshot, so this only succeeds when run on the coach's Mac.
+ */
+export async function computeTrainingPeaksRosterImportPlan(): Promise<ImportPlan> {
+  const [roster, existing] = await Promise.all([
+    getCoachedAthletesRoster(),
+    listTrainingPeaksStudentsForRosterImport(),
+  ]);
+  return buildImportPlan(roster, existing);
+}
+
+export type ApplyTrainingPeaksRosterImportResult = {
+  inserted: number;
+  skipped: number;
+  failed: number;
+  results: Array<{
+    student_id: string;
+    student_name: string;
+    outcome: "inserted" | "skipped" | "failed";
+    message?: string;
+  }>;
+};
+
+/**
+ * Live "Sync from TrainingPeaks" step 2: insert exactly the selected would_insert
+ * rows. Insert-only -- routes through createTrainingPeaksStudent (full validation +
+ * duplicate detection); never updates or archives existing students, never touches
+ * TrainingPeaks. Imported students get weekly_report_enabled=false and
+ * telegram_delivery_enabled=false (safe batch defaults). A row that already exists
+ * (duplicate_url/duplicate_student) is reported as skipped, not failed -- this makes
+ * the whole operation idempotent (re-running inserts nothing new).
+ */
+export async function applyTrainingPeaksRosterImportSelection(
+  rows: WouldInsertRow[]
+): Promise<ApplyTrainingPeaksRosterImportResult> {
+  const results: ApplyTrainingPeaksRosterImportResult["results"] = [];
+
+  for (const row of rows) {
+    const created = await createTrainingPeaksStudent({
+      studentId: row.student_id,
+      studentName: row.student_name,
+      trainingPeaksAthleteUrl: row.trainingpeaks_athlete_url,
+      weeklyReportEnabled: false,
+      dataQualityStatus: "ok",
+    });
+
+    if (created.ok) {
+      results.push({ student_id: row.student_id, student_name: row.student_name, outcome: "inserted" });
+      continue;
+    }
+
+    const isDuplicate = created.reason === "duplicate_url" || created.reason === "duplicate_student";
+    results.push({
+      student_id: row.student_id,
+      student_name: row.student_name,
+      outcome: isDuplicate ? "skipped" : "failed",
+      message: created.message,
+    });
+  }
+
+  return {
+    inserted: results.filter((r) => r.outcome === "inserted").length,
+    skipped: results.filter((r) => r.outcome === "skipped").length,
+    failed: results.filter((r) => r.outcome === "failed").length,
+    results,
+  };
 }
 
 export async function setTrainingPeaksStudentWeeklyReportsEnabled(

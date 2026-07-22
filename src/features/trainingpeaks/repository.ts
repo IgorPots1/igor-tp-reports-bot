@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
+import type { ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
 import {
   buildTelegramContextTextPreview,
   sha256TelegramContextText,
@@ -2029,6 +2030,25 @@ export async function insertTrainingPeaksStudent(
   }
 
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+}
+
+/**
+ * Read-only list of ALL students (including archived) with just the fields the
+ * roster-import diff engine reads. Archived rows must be included so the engine
+ * can classify them as archived_existing and never re-insert an archived athlete.
+ */
+export async function listTrainingPeaksStudentsForRosterImport(): Promise<ExistingStudentRowForImport[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
+    .from("trainingpeaks_students")
+    .select("id, student_id, student_name, trainingpeaks_athlete_url, archived_at")
+    .order("student_name", { ascending: true }));
+
+  if (error) {
+    throw new Error(`Failed to list TrainingPeaks students for roster import: ${error.message}`);
+  }
+
+  return (data as ExistingStudentRowForImport[]) ?? [];
 }
 
 export async function setTrainingPeaksStudentWeeklyReportsEnabledById(

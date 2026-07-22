@@ -1,3 +1,4 @@
+import { extractRosterFromUsersV3Body, type DiscoveredAthlete } from "./athlete-roster-import.ts";
 import { isSnapshotCookieFresh, readSessionSnapshot } from "./tp-session-snapshot.ts";
 
 /**
@@ -331,6 +332,33 @@ async function writeJsonOrThrow(url: string, method: "POST" | "PUT", jsonBody: u
     throw new TpApiHttpError(`${method} ${url} failed with HTTP ${status}.`, status, body);
   }
   return body;
+}
+
+// ─── coached athletes roster (read-only) ─────────────────────────────────────
+
+/**
+ * Fetches the coach's full athlete roster from GET /users/v3/user and returns the
+ * normalized `user.athletes[]` list. Read-only -- no mutation, no write. Uses the
+ * same bearer/retry plumbing as every other endpoint here.
+ *
+ * The bearer is derived from the local session snapshot, so this only works where
+ * that snapshot exists (the coach's Mac); on a deployed host readSessionSnapshot()
+ * throws TpSessionSnapshotMissingError, which the caller surfaces as "run locally"
+ * rather than crashing. extractRosterFromUsersV3Body() throws on a structurally
+ * wrong body (missing `user` / `user.athletes`); we rethrow as TpApiSchemaError so
+ * a silent TP contract change is loud. A legitimately empty roster returns [].
+ */
+export async function getCoachedAthletesRoster(): Promise<DiscoveredAthlete[]> {
+  const endpoint = "/users/v3/user";
+  const body = await getJsonOrThrow(`${TP_API_HOST}${endpoint}`);
+  try {
+    return extractRosterFromUsersV3Body(body);
+  } catch (error) {
+    throw new TpApiSchemaError(
+      error instanceof Error ? error.message : "Failed to parse users/v3/user roster.",
+      endpoint,
+    );
+  }
 }
 
 // ─── response validation (loud on the fields this client depends on) ─────────

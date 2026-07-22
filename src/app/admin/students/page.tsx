@@ -101,6 +101,9 @@ export default async function AdminStudentsPage({ searchParams }: StudentsPagePr
           <Link className="admin-button admin-button-secondary" href="/admin/students/weekly-reports">
             Недельные отчёты
           </Link>
+          <Link className="admin-button admin-button-secondary" href="/admin/students/sync">
+            Синхронизировать из TrainingPeaks
+          </Link>
           <Link className="admin-button" href="/admin/students/new">
             Добавить ученика
           </Link>

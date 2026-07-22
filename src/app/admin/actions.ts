@@ -10,6 +10,9 @@ import {
   createTrainingPeaksAdminStudentTelegramLinkCode,
   sendTrainingPeaksAdminStudentTelegramTestMessage,
   createTrainingPeaksStudent,
+  computeTrainingPeaksRosterImportPlan,
+  applyTrainingPeaksRosterImportSelection,
+  type ApplyTrainingPeaksRosterImportResult,
   deleteTrainingPeaksAdminOrphanReport,
   deleteTrainingPeaksOrphanReportsForWeek,
   parseTrainingPeaksAdminTelegramContextNotes,
@@ -25,6 +28,9 @@ import {
   enableTrainingPeaksStudentByInternalId,
   requestTrainingPeaksWeeklyRunForStudentByInternalId,
 } from "@/features/trainingpeaks/service";
+import type { WouldInsertRow } from "@/features/trainingpeaks/athlete-roster-import";
+import { TpApiAuthError, TpApiHttpError, TpApiSchemaError } from "@/features/trainingpeaks/tp-api-client";
+import { TpSessionSnapshotMissingError } from "@/features/trainingpeaks/tp-session-snapshot";
 import { createBillingClient } from "@/features/billing/service";
 import type { BillingCurrency } from "@/features/billing/types";
 import {
@@ -33,6 +39,7 @@ import {
   isAdminAccessBypassedForLocalDev,
   normalizeAdminRedirectPath,
 } from "@/lib/admin-auth";
+import type { TrainingPeaksRosterSyncPreviewResult } from "@/app/admin/students/sync/types";
 
 function getRequiredFormValue(formData: FormData, key: string): string {
   const value = formData.get(key);
@@ -293,6 +300,112 @@ export async function createTrainingPeaksStudentAction(formData: FormData): Prom
   }
 
   redirect(withNotice(`/admin/students/${result.student.id}`, "notice", successNotice));
+}
+
+const ROSTER_SYNC_REDIRECT_TARGET = "/admin/students/sync";
+const MAX_ROSTER_SYNC_SELECTION = 500;
+
+function classifyRosterSyncPreviewError(error: unknown): Extract<TrainingPeaksRosterSyncPreviewResult, { ok: false }> {
+  if (error instanceof TpSessionSnapshotMissingError) {
+    return {
+      ok: false,
+      kind: "snapshot_missing",
+      message:
+        "Сессия TrainingPeaks не найдена. Синхронизация работает только локально: запусти админку на своём Маке (npm run dev) и обнови сессию командой tp-refresh-session-snapshot.",
+    };
+  }
+  if (
+    error instanceof TpApiAuthError ||
+    (error instanceof TpApiHttpError && (error.status === 401 || error.status === 403))
+  ) {
+    return {
+      ok: false,
+      kind: "auth_stale",
+      message:
+        "Сессия TrainingPeaks устарела. Обнови её локально командой tp-refresh-session-snapshot и повтори синхронизацию.",
+    };
+  }
+  if (error instanceof TpApiHttpError) {
+    return {
+      ok: false,
+      kind: "tp_http",
+      message: `TrainingPeaks вернул ошибку HTTP ${error.status}. Попробуй позже.`,
+    };
+  }
+  if (error instanceof TpApiSchemaError) {
+    return {
+      ok: false,
+      kind: "tp_schema",
+      message: "TrainingPeaks вернул неожиданный формат ответа. Проверь список учеников вручную и сообщи разработчику.",
+    };
+  }
+  console.error("TrainingPeaks roster sync preview failed", {
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message : String(error),
+  });
+  return {
+    ok: false,
+    kind: "unknown",
+    message: "Не удалось загрузить ростер из TrainingPeaks. Попробуй ещё раз.",
+  };
+}
+
+export async function previewTrainingPeaksRosterSyncAction(): Promise<TrainingPeaksRosterSyncPreviewResult> {
+  await ensureAdminAccess(ROSTER_SYNC_REDIRECT_TARGET);
+
+  try {
+    const plan = await computeTrainingPeaksRosterImportPlan();
+    return { ok: true, plan };
+  } catch (error) {
+    return classifyRosterSyncPreviewError(error);
+  }
+}
+
+function sanitizeRosterSyncSelection(selected: unknown): WouldInsertRow[] {
+  if (!Array.isArray(selected)) {
+    throw new Error("Некорректный список выбранных учеников.");
+  }
+  if (selected.length > MAX_ROSTER_SYNC_SELECTION) {
+    throw new Error(`Слишком много учеников за один раз (>${MAX_ROSTER_SYNC_SELECTION}).`);
+  }
+
+  const rows: WouldInsertRow[] = [];
+  for (const raw of selected) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const record = raw as Record<string, unknown>;
+    const studentId = typeof record.student_id === "string" ? record.student_id.trim() : "";
+    const studentName = typeof record.student_name === "string" ? record.student_name.trim() : "";
+    const athleteUrl =
+      typeof record.trainingpeaks_athlete_url === "string" ? record.trainingpeaks_athlete_url.trim() : "";
+    if (!studentId || !studentName || !athleteUrl) continue;
+
+    const athleteId =
+      typeof record.athlete_id === "number" && Number.isInteger(record.athlete_id) ? record.athlete_id : 0;
+    const baseSlug = typeof record.base_slug === "string" && record.base_slug ? record.base_slug : studentId;
+    const slugSuffix = typeof record.slug_suffix === "number" ? record.slug_suffix : null;
+
+    rows.push({
+      student_id: studentId,
+      student_name: studentName,
+      trainingpeaks_athlete_url: athleteUrl,
+      athlete_id: athleteId,
+      base_slug: baseSlug,
+      slug_suffix: slugSuffix,
+    });
+  }
+
+  return rows;
+}
+
+export async function applyTrainingPeaksRosterSyncAction(
+  selected: WouldInsertRow[]
+): Promise<ApplyTrainingPeaksRosterImportResult> {
+  await ensureAdminAccess(ROSTER_SYNC_REDIRECT_TARGET);
+
+  const rows = sanitizeRosterSyncSelection(selected);
+  const result = await applyTrainingPeaksRosterImportSelection(rows);
+  revalidateTrainingPeaksAdminPaths();
+  return result;
 }
 
 export async function setTrainingPeaksStudentWeeklyReportsEnabledAction(

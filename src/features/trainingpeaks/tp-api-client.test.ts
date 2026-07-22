@@ -9,6 +9,7 @@ import {
   createStrengthWorkout,
   createWorkout,
   deleteWorkout,
+  getCoachedAthletesRoster,
   getHealthMetrics,
   getWorkoutsByDateRange,
   isWorkoutGone,
@@ -375,5 +376,105 @@ describe("write functions (mocked network)", () => {
         }),
       (error: unknown) => error instanceof TpApiHttpError && error.status === 500,
     );
+  });
+});
+
+// ─── getCoachedAthletesRoster (read-only roster fetch, mocked network) ─────────
+
+describe("getCoachedAthletesRoster (mocked network)", () => {
+  let tmpDir: string;
+  let originalFetch: typeof fetch;
+
+  before(async () => {
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), "tp-api-client-roster-test-"));
+    const snapshotPath = path.join(tmpDir, "session-snapshot.json");
+    await writeFile(
+      snapshotPath,
+      JSON.stringify({
+        version: 1,
+        cookieValue: "test-cookie-value",
+        cookieExpiresAtMs: Date.now() + 30 * 24 * 60 * 60 * 1000,
+        capturedAtMs: Date.now(),
+        source: "playwright-profile",
+      }),
+    );
+    __setSessionSnapshotPathForTests(snapshotPath);
+  });
+
+  after(async () => {
+    __setSessionSnapshotPathForTests(undefined);
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    resetTpApiClientAuthCacheForTests();
+  });
+
+  function mockFetchSequence(responder: (url: string) => { status: number; body: unknown }) {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const { status, body } = responder(url);
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+  }
+
+  test("GETs /users/v3/user and maps user.athletes[] into normalized rows", async () => {
+    let rosterCalls = 0;
+    mockFetchSequence((url) => {
+      if (url.includes("/users/v3/token")) {
+        return { status: 200, body: { success: true, token: { access_token: "abc", expires_in: 3600 } } };
+      }
+      assert.ok(url.includes("/users/v3/user"), "roster fetch must hit /users/v3/user");
+      rosterCalls += 1;
+      return {
+        status: 200,
+        body: {
+          user: {
+            athletes: [
+              { athleteId: 222, firstName: "Boris", lastName: "Petrov" },
+              { athleteId: 111, fullName: "Anna Ivanova" },
+              { athleteId: 333 }, // no name -> fallback
+            ],
+          },
+        },
+      };
+    });
+
+    const roster = await getCoachedAthletesRoster();
+    assert.equal(rosterCalls, 1);
+    // sorted by display name: "Anna Ivanova", "Athlete 333", "Boris Petrov"
+    assert.deepEqual(
+      roster.map((r) => [r.athleteId, r.displayName]),
+      [
+        [111, "Anna Ivanova"],
+        [333, "Athlete 333"],
+        [222, "Boris Petrov"],
+      ],
+    );
+    assert.equal(roster[0].trainingpeaksAthleteUrl, "https://app.trainingpeaks.com/#calendar/athletes/111");
+  });
+
+  test("a legitimately empty roster returns []", async () => {
+    mockFetchSequence((url) => {
+      if (url.includes("/users/v3/token")) {
+        return { status: 200, body: { success: true, token: { access_token: "abc", expires_in: 3600 } } };
+      }
+      return { status: 200, body: { user: { athletes: [] } } };
+    });
+
+    assert.deepEqual(await getCoachedAthletesRoster(), []);
+  });
+
+  test("a structurally wrong body (missing user.athletes) throws TpApiSchemaError", async () => {
+    mockFetchSequence((url) => {
+      if (url.includes("/users/v3/token")) {
+        return { status: 200, body: { success: true, token: { access_token: "abc", expires_in: 3600 } } };
+      }
+      return { status: 200, body: { user: { profile: {} } } };
+    });
+
+    await assert.rejects(() => getCoachedAthletesRoster(), TpApiSchemaError);
   });
 });

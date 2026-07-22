@@ -5,23 +5,20 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
-import { normalizeTrainingPeaksStudentId } from "./lib/trainingpeaks-student-id.ts";
 import { toolRoot } from "./lib/paths.ts";
+import {
+  buildImportPlan,
+  type DiscoveredAthlete,
+  type ImportPlan,
+  type WouldInsertRow,
+} from "../../../src/features/trainingpeaks/athlete-roster-import";
 
 const ROSTER_BASENAME = "athletes.users-v3.normalized.json";
 const ARTIFACTS_ROOT = path.join(toolRoot, "debug", "athletes-import");
-const SAMPLE_WOULD_INSERT_LIMIT = 15;
 
 type CliArgs = {
   fromDiscovery: string;
   apply: boolean;
-};
-
-type DiscoveredAthlete = {
-  athleteId: number;
-  displayName: string;
-  trainingpeaksAthleteUrl: string;
-  source: string;
 };
 
 type DiscoveryFile = {
@@ -44,74 +41,10 @@ type ExistingStudentRow = {
   notes: string | null;
 };
 
-type WouldInsertRow = {
-  student_id: string;
-  student_name: string;
-  trainingpeaks_athlete_url: string;
-  athlete_id: number;
-  base_slug: string;
-  slug_suffix: number | null;
-};
-
-type AlreadyExistsRow = {
-  athlete_id: number;
-  display_name: string;
-  trainingpeaks_athlete_url: string;
-  existing_student_id: string;
-  existing_student_name: string;
-  match_by: "athlete_id" | "trainingpeaks_athlete_url" | "student_id";
-  archived: boolean;
-};
-
-type ArchivedExistingRow = AlreadyExistsRow;
-
-type SlugCollisionRow = {
-  athlete_id: number;
-  display_name: string;
-  base_slug: string;
-  resolved_student_id: string;
-  conflicting_existing_student_id: string;
-};
-
-type NameWarningRow = {
-  athlete_id: number;
-  display_name: string;
-  existing_student_id: string;
-  existing_student_name: string;
-  existing_athlete_id: number | null;
-};
-
-type SupabaseNotInTpRow = {
-  student_id: string;
-  student_name: string;
-  trainingpeaks_athlete_url: string;
-  athlete_id: number | null;
-  archived: boolean;
-};
-
-type ImportReport = {
+type ImportReport = ImportPlan & {
   run_at: string;
   mode: "dry-run" | "apply";
   discovery_file: string;
-  summary: {
-    discovered_total: number;
-    existing_total: number;
-    already_exists: number;
-    would_insert: number;
-    slug_collisions: number;
-    name_warnings: number;
-    archived_existing: number;
-    supabase_not_in_tp: number;
-    inserted?: number;
-    insert_errors?: number;
-  };
-  already_exists: AlreadyExistsRow[];
-  archived_existing: ArchivedExistingRow[];
-  would_insert: WouldInsertRow[];
-  slug_collisions: SlugCollisionRow[];
-  name_warnings: NameWarningRow[];
-  supabase_not_in_tp: SupabaseNotInTpRow[];
-  would_insert_sample: WouldInsertRow[];
   apply_results?: Array<{ student_id: string; ok: boolean; error?: string }>;
   output_paths: {
     report_json: string;
@@ -238,94 +171,6 @@ function timestampForPath(date: Date): string {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 
-function parseAthleteIdFromUrl(value: string): number | null {
-  const match = value.match(/\/athletes\/(\d+)/i);
-  if (!match) return null;
-  const parsed = Number(match[1]);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function normalizeUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "").toLowerCase();
-}
-
-function normalizeDisplayName(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function buildBaseSlug(displayName: string, athleteId: number): string {
-  const slug = normalizeTrainingPeaksStudentId(displayName);
-  if (slug) return slug;
-  return `athlete-${athleteId}`;
-}
-
-type SlugOwner = {
-  athleteId: number;
-  studentId: string;
-  source: "existing" | "planned";
-};
-
-function resolveUniqueSlug(
-  baseSlug: string,
-  athleteId: number,
-  displayName: string,
-  takenSlugs: Map<string, SlugOwner>,
-): { studentId: string; suffix: number | null; collision: SlugCollisionRow | null } {
-  const owner = takenSlugs.get(baseSlug);
-  if (!owner || owner.athleteId === athleteId) {
-    return { studentId: baseSlug, suffix: null, collision: null };
-  }
-
-  let suffix = 2;
-  while (suffix < 10_000) {
-    const candidate = `${baseSlug}-${suffix}`;
-    const candidateOwner = takenSlugs.get(candidate);
-    if (!candidateOwner || candidateOwner.athleteId === athleteId) {
-      return {
-        studentId: candidate,
-        suffix,
-        collision: {
-          athlete_id: athleteId,
-          display_name: displayName,
-          base_slug: baseSlug,
-          resolved_student_id: candidate,
-          conflicting_existing_student_id: owner.studentId,
-        },
-      };
-    }
-    suffix += 1;
-  }
-
-  throw new Error(`Could not resolve unique slug for athlete ${athleteId} (base: ${baseSlug})`);
-}
-
-function findExistingMatch(
-  athlete: DiscoveredAthlete,
-  indexes: {
-    byAthleteId: Map<number, ExistingStudentRow>;
-    byUrl: Map<string, ExistingStudentRow>;
-    byStudentId: Map<string, ExistingStudentRow>;
-  },
-): { row: ExistingStudentRow; matchBy: AlreadyExistsRow["match_by"] } | null {
-  const byId = indexes.byAthleteId.get(athlete.athleteId);
-  if (byId) {
-    return { row: byId, matchBy: "athlete_id" };
-  }
-
-  const byUrl = indexes.byUrl.get(normalizeUrl(athlete.trainingpeaksAthleteUrl));
-  if (byUrl) {
-    return { row: byUrl, matchBy: "trainingpeaks_athlete_url" };
-  }
-
-  const baseSlug = buildBaseSlug(athlete.displayName, athlete.athleteId);
-  const bySlug = indexes.byStudentId.get(baseSlug);
-  if (bySlug) {
-    return { row: bySlug, matchBy: "student_id" };
-  }
-
-  return null;
-}
-
 function loadDiscoveryFile(filePath: string): DiscoveredAthlete[] {
   const resolved = path.resolve(filePath);
   if (path.basename(resolved) !== ROSTER_BASENAME) {
@@ -351,153 +196,6 @@ function loadDiscoveryFile(filePath: string): DiscoveredAthlete[] {
         typeof row.trainingpeaksAthleteUrl === "string",
     )
     .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.athleteId - b.athleteId);
-}
-
-function buildExistingIndexes(rows: ExistingStudentRow[]): {
-  byAthleteId: Map<number, ExistingStudentRow>;
-  byUrl: Map<string, ExistingStudentRow>;
-  byStudentId: Map<string, ExistingStudentRow>;
-  byNormalizedName: Map<string, ExistingStudentRow[]>;
-} {
-  const byAthleteId = new Map<number, ExistingStudentRow>();
-  const byUrl = new Map<string, ExistingStudentRow>();
-  const byStudentId = new Map<string, ExistingStudentRow>();
-  const byNormalizedName = new Map<string, ExistingStudentRow[]>();
-
-  for (const row of rows) {
-    const athleteId = parseAthleteIdFromUrl(row.trainingpeaks_athlete_url);
-    if (athleteId) {
-      byAthleteId.set(athleteId, row);
-    }
-    byUrl.set(normalizeUrl(row.trainingpeaks_athlete_url), row);
-    byStudentId.set(row.student_id, row);
-
-    const normalizedName = normalizeDisplayName(row.student_name);
-    const bucket = byNormalizedName.get(normalizedName) ?? [];
-    bucket.push(row);
-    byNormalizedName.set(normalizedName, bucket);
-  }
-
-  return { byAthleteId, byUrl, byStudentId, byNormalizedName };
-}
-
-function buildImportPlan(
-  discovered: DiscoveredAthlete[],
-  existing: ExistingStudentRow[],
-): Omit<ImportReport, "run_at" | "mode" | "discovery_file" | "output_paths" | "apply_results"> {
-  const indexes = buildExistingIndexes(existing);
-  const matchedExistingIds = new Set<string>();
-
-  const alreadyExists: AlreadyExistsRow[] = [];
-  const archivedExisting: ArchivedExistingRow[] = [];
-  const wouldInsert: WouldInsertRow[] = [];
-  const slugCollisions: SlugCollisionRow[] = [];
-  const nameWarnings: NameWarningRow[] = [];
-
-  const takenSlugs = new Map<string, SlugOwner>();
-  for (const row of existing) {
-    const athleteId = parseAthleteIdFromUrl(row.trainingpeaks_athlete_url);
-    if (!athleteId) continue;
-    takenSlugs.set(row.student_id, { athleteId, studentId: row.student_id, source: "existing" });
-  }
-
-  for (const athlete of discovered) {
-    const match = findExistingMatch(athlete, indexes);
-    if (match) {
-      matchedExistingIds.add(match.row.id);
-      const entry: AlreadyExistsRow = {
-        athlete_id: athlete.athleteId,
-        display_name: athlete.displayName,
-        trainingpeaks_athlete_url: athlete.trainingpeaksAthleteUrl,
-        existing_student_id: match.row.student_id,
-        existing_student_name: match.row.student_name,
-        match_by: match.matchBy,
-        archived: Boolean(match.row.archived_at),
-      };
-
-      if (match.row.archived_at) {
-        archivedExisting.push(entry);
-      } else {
-        alreadyExists.push(entry);
-      }
-      continue;
-    }
-
-    const baseSlug = buildBaseSlug(athlete.displayName, athlete.athleteId);
-    const resolved = resolveUniqueSlug(baseSlug, athlete.athleteId, athlete.displayName, takenSlugs);
-    if (resolved.collision) {
-      slugCollisions.push(resolved.collision);
-    }
-
-    const normalizedName = normalizeDisplayName(athlete.displayName);
-    const sameNameRows = indexes.byNormalizedName.get(normalizedName) ?? [];
-    for (const row of sameNameRows) {
-      const existingAthleteId = parseAthleteIdFromUrl(row.trainingpeaks_athlete_url);
-      if (existingAthleteId === athlete.athleteId) continue;
-      nameWarnings.push({
-        athlete_id: athlete.athleteId,
-        display_name: athlete.displayName,
-        existing_student_id: row.student_id,
-        existing_student_name: row.student_name,
-        existing_athlete_id: existingAthleteId,
-      });
-    }
-
-    takenSlugs.set(resolved.studentId, {
-      athleteId: athlete.athleteId,
-      studentId: resolved.studentId,
-      source: "planned",
-    });
-    wouldInsert.push({
-      student_id: resolved.studentId,
-      student_name: athlete.displayName,
-      trainingpeaks_athlete_url: athlete.trainingpeaksAthleteUrl,
-      athlete_id: athlete.athleteId,
-      base_slug: baseSlug,
-      slug_suffix: resolved.suffix,
-    });
-  }
-
-  const discoveredAthleteIds = new Set(discovered.map((row) => row.athleteId));
-  const supabaseNotInTp: SupabaseNotInTpRow[] = [];
-
-  for (const row of existing) {
-    if (matchedExistingIds.has(row.id)) continue;
-
-    const athleteId = parseAthleteIdFromUrl(row.trainingpeaks_athlete_url);
-    if (athleteId && discoveredAthleteIds.has(athleteId)) {
-      matchedExistingIds.add(row.id);
-      continue;
-    }
-
-    supabaseNotInTp.push({
-      student_id: row.student_id,
-      student_name: row.student_name,
-      trainingpeaks_athlete_url: row.trainingpeaks_athlete_url,
-      athlete_id: athleteId,
-      archived: Boolean(row.archived_at),
-    });
-  }
-
-  return {
-    summary: {
-      discovered_total: discovered.length,
-      existing_total: existing.length,
-      already_exists: alreadyExists.length,
-      would_insert: wouldInsert.length,
-      slug_collisions: slugCollisions.length,
-      name_warnings: nameWarnings.length,
-      archived_existing: archivedExisting.length,
-      supabase_not_in_tp: supabaseNotInTp.length,
-    },
-    already_exists: alreadyExists,
-    archived_existing: archivedExisting,
-    would_insert: wouldInsert,
-    slug_collisions: slugCollisions,
-    name_warnings: nameWarnings,
-    supabase_not_in_tp: supabaseNotInTp,
-    would_insert_sample: wouldInsert.slice(0, SAMPLE_WOULD_INSERT_LIMIT),
-  };
 }
 
 function buildMarkdownReport(report: ImportReport): string {

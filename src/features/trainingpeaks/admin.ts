@@ -1,6 +1,9 @@
 import {
   listTrainingPeaksStudentContactStatus as listTrainingPeaksStudentContactStatusInService,
   createTrainingPeaksStudent as createTrainingPeaksStudentInService,
+  computeTrainingPeaksRosterImportPlan as computeTrainingPeaksRosterImportPlanInService,
+  applyTrainingPeaksRosterImportSelection as applyTrainingPeaksRosterImportSelectionInService,
+  type ApplyTrainingPeaksRosterImportResult,
   deleteTrainingPeaksOrphanReportByInternalId,
   deleteTrainingPeaksOrphanReportsForWeek as deleteTrainingPeaksOrphanReportsForWeekInService,
   getTrainingPeaksStudentsRegistryWithLatestReportStatus,
@@ -98,10 +101,13 @@ export type TrainingPeaksAdminReportsResult = {
 
 export {
   createTrainingPeaksStudentInService as createTrainingPeaksStudent,
+  computeTrainingPeaksRosterImportPlanInService as computeTrainingPeaksRosterImportPlan,
+  applyTrainingPeaksRosterImportSelectionInService as applyTrainingPeaksRosterImportSelection,
   deleteTrainingPeaksOrphanReportsForWeekInService as deleteTrainingPeaksOrphanReportsForWeek,
   setTrainingPeaksStudentWeeklyReportsEnabledInService as setTrainingPeaksStudentWeeklyReportsEnabled,
   unlinkTrainingPeaksStudentTelegramInService as unlinkTrainingPeaksStudentTelegram,
 };
+export type { ApplyTrainingPeaksRosterImportResult };
 
 export {
   bindTrainingPeaksAdminStudentTelegramByBusinessChat,
