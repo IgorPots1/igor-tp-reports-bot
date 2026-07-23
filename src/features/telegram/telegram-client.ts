@@ -2,6 +2,7 @@ import type {
   TelegramInlineKeyboardMarkup,
   TelegramReplyMarkup,
 } from "@/features/telegram/types";
+import { assertNotPreviewEnvironment } from "@/lib/environment-guard";
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 const TELEGRAM_DOCUMENT_BOUNDARY = "----cursor-telegram-document";
@@ -67,6 +68,7 @@ function getTelegramBotToken(): string {
 }
 
 async function postTelegramApi(method: string, body: Record<string, unknown>): Promise<void> {
+  assertNotPreviewEnvironment(`Telegram ${method}`);
   const token = getTelegramBotToken();
 
   const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/${method}`, {
@@ -108,6 +110,7 @@ async function postTelegramMultipartApi(
   body: ArrayBuffer,
   contentType: string
 ): Promise<void> {
+  assertNotPreviewEnvironment(`Telegram ${method}`);
   const token = getTelegramBotToken();
 
   const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/${method}`, {

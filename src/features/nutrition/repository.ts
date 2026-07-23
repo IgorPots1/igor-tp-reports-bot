@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { assertNotPreviewEnvironment } from "@/lib/environment-guard";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import type {
   TrainingPeaksStudent,
@@ -817,6 +818,7 @@ export async function getNutritionStudentProfile(studentId: string): Promise<Nut
 export async function upsertNutritionStudentProfile(
   input: UpsertNutritionStudentProfileInput
 ): Promise<NutritionStudentProfile> {
+  assertNotPreviewEnvironment("upsertNutritionStudentProfile");
   const supabase = createSupabaseServerClient();
   const payload = {
     student_id: input.studentId,
@@ -918,6 +920,7 @@ export async function appendNutritionPersistentNote(input: {
 }
 
 export async function addNutritionWeightLog(input: AddNutritionWeightLogInput): Promise<NutritionWeightLog> {
+  assertNotPreviewEnvironment("addNutritionWeightLog");
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_weight_logs")
@@ -1013,6 +1016,7 @@ export type UpsertNutritionCheckinInput = {
  * null). The free-text note is NOT stored here — it goes to nutrition_reports.raw_text.
  */
 export async function upsertNutritionCheckin(input: UpsertNutritionCheckinInput): Promise<void> {
+  assertNotPreviewEnvironment("upsertNutritionCheckin");
   const supabase = createSupabaseServerClient();
   const payload: Record<string, unknown> = {
     student_id: input.studentId,
@@ -1035,6 +1039,7 @@ export async function upsertNutritionCheckin(input: UpsertNutritionCheckinInput)
 }
 
 export async function addNutritionContextItem(input: AddNutritionContextItemInput): Promise<NutritionContextItem> {
+  assertNotPreviewEnvironment("addNutritionContextItem");
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_context_items")
@@ -1074,6 +1079,7 @@ export async function getActiveNutritionContextItems(studentId: string): Promise
 }
 
 export async function createNutritionReport(input: CreateNutritionReportInput): Promise<NutritionReport> {
+  assertNotPreviewEnvironment("createNutritionReport");
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_reports")
@@ -1110,6 +1116,7 @@ export async function updateNutritionReportNotes(input: {
   rawText: string | null;
   coachNotesRu: string | null;
 }): Promise<NutritionReport> {
+  assertNotPreviewEnvironment("updateNutritionReportNotes");
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_reports")
@@ -1133,6 +1140,7 @@ export async function insertNutritionDailyMacros(
   if (input.length === 0) {
     return [];
   }
+  assertNotPreviewEnvironment("insertNutritionDailyMacros");
 
   const supabase = createSupabaseServerClient();
   const payload = input.map((item) => ({
@@ -1253,6 +1261,7 @@ export async function listNutritionWeeklyAnalysesForStudentHistory(
 
 /** Soft-archive / restore a report (reversible; data is never deleted). */
 export async function setNutritionReportArchived(reportId: string, archived: boolean): Promise<void> {
+  assertNotPreviewEnvironment("setNutritionReportArchived");
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
     .from("nutrition_reports")
@@ -1265,6 +1274,7 @@ export async function setNutritionReportArchived(reportId: string, archived: boo
 
 /** Soft-archive / restore a weekly analysis (reversible; approved patterns are untouched). */
 export async function setNutritionWeeklyAnalysisArchived(analysisId: string, archived: boolean): Promise<void> {
+  assertNotPreviewEnvironment("setNutritionWeeklyAnalysisArchived");
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
     .from("nutrition_weekly_analyses")
@@ -1283,6 +1293,7 @@ export async function setNutritionWeeklyAnalysisArchived(analysisId: string, arc
  * Returns false if nothing was updated (not in an approvable state).
  */
 export async function approveNutritionWeeklyAnalysis(analysisId: string): Promise<boolean> {
+  assertNotPreviewEnvironment("approveNutritionWeeklyAnalysis");
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_weekly_analyses")
@@ -1456,6 +1467,7 @@ export async function removeNutritionAnalysisPatternCandidate(input: {
   analysisId: string;
   code: string;
 }): Promise<void> {
+  assertNotPreviewEnvironment("removeNutritionAnalysisPatternCandidate");
   const analysis = await getNutritionWeeklyAnalysisById(input.analysisId);
   if (!analysis) {
     return;
@@ -1501,6 +1513,7 @@ export async function updateNutritionReviewProse(input: {
   oneFocusStatementRu?: string | null;
   athleteOpeningNoteRu?: string | null;
 }): Promise<NutritionWeeklyAnalysis> {
+  assertNotPreviewEnvironment("updateNutritionReviewProse");
   const analysis = await getNutritionWeeklyAnalysisById(input.analysisId);
   if (!analysis) {
     throw new Error(`Nutrition weekly analysis not found: ${input.analysisId}`);
@@ -1614,6 +1627,7 @@ export async function getNutritionReportWithMacros(reportId: string): Promise<Nu
 export async function createNutritionWeeklyPlan(
   input: CreateNutritionWeeklyPlanInput
 ): Promise<NutritionWeeklyPlan> {
+  assertNotPreviewEnvironment("createNutritionWeeklyPlan");
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_weekly_plans")
@@ -1671,6 +1685,7 @@ export async function updateNutritionPlanProse(input: {
   planId: string;
   coachEditedDraft: string | null;
 }): Promise<NutritionWeeklyPlan> {
+  assertNotPreviewEnvironment("updateNutritionPlanProse");
   const cleaned =
     input.coachEditedDraft == null
       ? null
@@ -1850,6 +1865,7 @@ export async function markNutritionWeeklyPlansSuperseded(params: {
   supersededByPlanId: string;
   excludePlanId?: string;
 }): Promise<void> {
+  assertNotPreviewEnvironment("markNutritionWeeklyPlansSuperseded");
   const supabase = createSupabaseServerClient();
   let query = supabase
     .from("nutrition_weekly_plans")
@@ -1877,6 +1893,7 @@ export async function markNutritionWeeklyPlansSuperseded(params: {
 export async function createNutritionWeeklyAnalysis(
   input: CreateNutritionWeeklyAnalysisInput
 ): Promise<NutritionWeeklyAnalysis> {
+  assertNotPreviewEnvironment("createNutritionWeeklyAnalysis");
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("nutrition_weekly_analyses")
@@ -2265,6 +2282,7 @@ export async function upsertNutritionManualRaceEvent(input: {
   title?: string | null;
   distanceKm?: number | null;
 }): Promise<void> {
+  assertNotPreviewEnvironment("upsertNutritionManualRaceEvent");
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
     .from("trainingpeaks_race_events")
@@ -2287,6 +2305,7 @@ export async function deleteNutritionManualRaceEvent(input: {
   studentId: string;
   eventDate: string;
 }): Promise<void> {
+  assertNotPreviewEnvironment("deleteNutritionManualRaceEvent");
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
     .from("trainingpeaks_race_events")
