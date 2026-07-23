@@ -742,11 +742,16 @@ function buildWorkoutContextByDate(week: NutritionTrainingPeaksWeekContext): Map
     if (!primary) {
       continue;
     }
-    const hasStrength = sessions.some((session) => session.type === "strength");
-    const hasEasy = sessions.some((session) => session.type === "easy");
     const hasRunSession = sessions.some((session) => session.type === "easy" || session.type === "long_run");
     const hasLongEnduranceSession = sessions.some((session) => session.type === "long_endurance");
-    const effectiveType = hasStrength && hasEasy ? "easy" : primary.type;
+    // Coach's call (2026-07-23): a day with BOTH strength and an easy/light session used to be
+    // forced to "easy" here regardless of priority (removed override, see git history) — an
+    // unvalidated day-one design choice with no documented real-data basis. It silently demoted
+    // ~324 real days (measured: 318 run+strength, 6 elliptical+strength) to "easy", losing the
+    // strength-day protein emphasis and the strength carb corridor (4-6 vs easy's 3.5-6 g/kg) even
+    // though strength (priority 70) legitimately outranks easy (50). The plan side never had this
+    // override and picks the priority winner cleanly (pickPrimaryWorkout) — review now matches.
+    const effectiveType = primary.type;
     const longRunSource =
       effectiveType === "long_run"
         ? resolveNutritionLongRunSource({
