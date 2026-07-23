@@ -199,22 +199,35 @@ export async function assemblePlannerInputsForWorkouts(
   return result;
 }
 
+// Feedback on a workout older than this is pointless (the coach has already replied
+// by hand) and, after an outage, a bulk recompute of the backlog would flood the
+// review queue. The sweep skips run workouts whose date is older than this.
+const DEFAULT_MAX_WORKOUT_AGE_DAYS = 3;
+
 export type FeedbackEnqueueSummary = { scanned: number; enqueued: number; blocked: number; skipped: number };
 
 /**
- * Poll derived_metrics.updated_at > sinceUpdatedAt (run workouts), assemble the
- * packet, and enqueue each (pending or blocked). Idempotent via the queue's
- * active-workout partial-unique index (duplicates → skipped). Writes to the queue
- * table — needs migration 20260722180000 applied.
+ * Poll derived_metrics.updated_at > sinceUpdatedAt (run workouts NEWER than the age
+ * floor), assemble the packet, and enqueue each (pending or blocked). Idempotent via
+ * the queue's active-workout partial-unique index (duplicates → skipped). Writes to
+ * the queue table — needs migration 20260722180000 applied.
+ *
+ * The workout-date floor (maxWorkoutAgeDays, default 3) is the key guard against a
+ * post-outage flood: when metrics for an 11-day backlog get recomputed at once, their
+ * updated_at is fresh, so without this floor every stale workout would enqueue.
  */
-export async function sweepAndEnqueueFeedbackJobs(input: { sinceUpdatedAt: string; limit?: number }): Promise<FeedbackEnqueueSummary> {
+export async function sweepAndEnqueueFeedbackJobs(input: { sinceUpdatedAt: string; limit?: number; maxWorkoutAgeDays?: number }): Promise<FeedbackEnqueueSummary> {
   const supabase = createSupabaseServerClient();
+  const maxAgeDays = input.maxWorkoutAgeDays ?? DEFAULT_MAX_WORKOUT_AGE_DAYS;
+  // 'YYYY-MM-DD' floor; workout_date is a date column, compared lexically.
+  const workoutDateFloor = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString().slice(0, 10);
   const { data: rows, error } = await withSupabaseNetworkRetry(() =>
     supabase
       .from("trainingpeaks_workout_derived_metrics")
       .select(DERIVED_SELECT)
       .eq("workout_type", "run")
       .gt("updated_at", input.sinceUpdatedAt)
+      .gte("workout_date", workoutDateFloor)
       .order("updated_at", { ascending: true })
       .limit(input.limit ?? 200)
   );
