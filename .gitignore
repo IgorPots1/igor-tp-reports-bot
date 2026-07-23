@@ -16,3 +16,9 @@ pnpm-debug.log*
 tools/trainingpeaks-export/logs/
 .env.vercel.production
 reports/strength-builder-create-test-workout/
+
+# graphify (knowledge graph) — locally rebuilt per-worktree, never committed.
+# Covers GRAPH_REPORT.md, graph.json, .graphify_analysis.json, manifest.json, cache/.
+graphify-out/
+.graphify/
+.graphifyignore
