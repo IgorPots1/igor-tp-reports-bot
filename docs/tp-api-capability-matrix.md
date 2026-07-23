@@ -74,8 +74,32 @@ mechanism), but were not exercised live in this PR1 pass — either for time, or
 | Library → schedule to calendar | `POST /fitness/v6/athletes/{id}/commands/addworkoutfromlibraryitem` | POST | Reversible in principle (result is a normal workout, deletable via the now-verified workout-delete endpoint). Not tested — needs a valid `exerciseLibraryItemId` first (read-only lookup via `/exerciselibrary/v2/...`, already available). |
 | Equipment (bikes/shoes) | `PUT /fitness/v1/athletes/{id}/equipment` (whole-array replace) | PUT | Genuinely reversible by design (GET full array → append/remove → PUT the array back) — nagelflorian's `addEquipmentItem`/`deleteEquipmentItem` do exactly this. **Not live-tested this pass** (deliberately deferred to a dedicated, careful pass rather than rushed at the end of a long session — this is Igor's real gear list). |
 | Workout library CRUD | `/exerciselibrary/v1/libraries[/{id}][/items[/{id}]]` (+ `/name`) | POST/PUT/DELETE | Not tested. Note: `/exerciselibrary/v2` (read) vs `/v1` (write) — different versions for read vs write on this entity. |
-| Zones write (power/HR/speed) | `PUT /fitness/v2/athletes/{id}/{power|heartrate|speed}zones` | PUT | **🔴 Policy-excluded** — endpoint identified but deliberately never attempted (high blast radius, recalculates training zones). Manual only, per plan §A. |
-| FTP write | via settings/zones update | PUT | **🔴 Policy-excluded**, same reasoning. |
+| Zones write (power/HR/speed) | `PUT /fitness/v2/athletes/{id}/{power|heartrate|speed}zones` | PUT | **🔴 No direct write** — gated propose/apply only. See **Zone-write policy** below. |
+| FTP write | via settings/zones update | PUT | **🔴 No direct write** — same policy (FTP recalculates zones). |
+
+### Zone-write policy (power/HR/speed zones + FTP/LTHR/threshold pace)
+
+**Direct writes to zones/thresholds are forbidden.** No code path may `PUT`
+`/fitness/v2/athletes/{id}/{power|heartrate|speed}zones` (or write FTP via settings)
+directly. High blast radius: a zone/FTP change silently recalculates the athlete's
+training zones. The **only** permitted mutation path is **assisted propose → apply**,
+and only when **all four** of the following hold:
+
+- **proposal_id** — every apply carries the id of an Igor-approved proposal (confirmed
+  via the existing `tp:ta:x:` "✅ Выполнить" gate). No apply without one.
+- **payload_before (mandatory)** — the exact pre-image (current zones/thresholds read
+  back immediately before apply) is captured and stored on the run. Apply aborts if the
+  pre-image can't be read. This is what makes rollback to the exact prior state possible.
+- **snapshot precondition** — a zone snapshot for that athlete must already exist in
+  `tp_zone_snapshots` (captured read-only). No zone write against an athlete we have
+  never snapshotted.
+- **batched** — zone changes go through the batch action path (one confirmation + full
+  per-item preview + per-item verify + per-item rollback token), never as ad-hoc
+  singletons.
+
+Execution stays with the local runner under `TP_ACTIONS_REAL_EXECUTION`; the agent/
+connector only **proposes**, never writes. Until an apply path meeting all four gates is
+built and reviewed, zones/FTP remain **manual only**.
 
 ## D. Cookie / secrets — Playwright-profile auth (plan §D task)
 
