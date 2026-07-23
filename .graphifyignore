@@ -1,0 +1,33 @@
+# graphify PII guard — directories confirmed to hold real student data or
+# derivatives (names, athlete IDs, parsed FIT/workout data, TP session
+# artifacts). Authoritative regardless of `graphify extract --no-gitignore`;
+# .gitignore already covers some of these too, this file is the single
+# auditable control. See ops-log 2026-07-23-*-graphify-pii-guard*.md for how
+# this list was derived.
+
+# per-student report/export/analysis dumps (names, UUIDs)
+/reports/
+/outputs-analysis/
+tools/trainingpeaks-export/exports/
+tools/trainingpeaks-export/parsed/
+tools/trainingpeaks-export/reports/
+tools/trainingpeaks-export/action-artifacts/
+
+# roster + backups (real names/emails, current + historical)
+tools/trainingpeaks-export/config/
+
+# raw TP API debug captures (real athletes: health metrics, race predictions)
+tools/trainingpeaks-export/debug/
+
+# operational logs (may reference student identifiers)
+tools/trainingpeaks-export/logs/
+
+# browser profile with real TrainingPeaks session cookies/tokens
+tools/trainingpeaks-export/.playwright-profile/
+
+# Playwright MCP browser-automation captures (console/page snapshots of TP pages)
+/.playwright-mcp/
+
+# network-truth API captures — contain a real captured athleteId field;
+# no known student names found, but treated as sensitive by default
+tools/trainingpeaks-export/scripts/fixtures/

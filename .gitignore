@@ -21,7 +21,10 @@ reports/strength-builder-create-test-workout/
 # Covers GRAPH_REPORT.md, graph.json, .graphify_analysis.json, manifest.json, cache/.
 graphify-out/
 .graphify/
-.graphifyignore
+
+# .graphifyignore is NOT listed here — it's a security control (excludes
+# student-data directories from the graph) and must be tracked + carried
+# across every worktree, not left to be recreated by hand each time.
 .playwright-mcp/
 
 # accidental-add guard: root-level student working materials and stray backups
