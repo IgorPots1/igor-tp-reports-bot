@@ -14,7 +14,9 @@ import type { FeedbackGeneratorBackend } from "@/features/trainingpeaks/feedback
 
 const TABLE = "trainingpeaks_workout_feedback_jobs";
 
-export type FeedbackJobStatus = "pending" | "generating" | "done" | "failed" | "blocked";
+// pending/generating/done/failed/blocked come from the bridge (part 1). sent/dismissed
+// are the review terminal states the Mini App writes (draft sent to student / skipped).
+export type FeedbackJobStatus = "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "dismissed";
 
 export type TrainingPeaksFeedbackJob = {
   id: string;
@@ -27,6 +29,12 @@ export type TrainingPeaksFeedbackJob = {
   attempts: number;
   errorReason: string | null;
   blockedReason: string | null;
+  // Review fields (Mini App «Отчёты», migration 20260723120000).
+  coachEditedText: string | null;
+  sentText: string | null;
+  sentAt: string | null;
+  dismissedAt: string | null;
+  reviewedByChatId: string | null;
   createdAt: string;
   claimedAt: string | null;
   generatedAt: string | null;
@@ -44,6 +52,11 @@ type FeedbackJobRow = {
   attempts: number;
   error_reason: string | null;
   blocked_reason: string | null;
+  coach_edited_text: string | null;
+  sent_text: string | null;
+  sent_at: string | null;
+  dismissed_at: string | null;
+  reviewed_by_chat_id: string | null;
   created_at: string;
   claimed_at: string | null;
   generated_at: string | null;
@@ -62,6 +75,13 @@ function mapRow(row: FeedbackJobRow): TrainingPeaksFeedbackJob {
     attempts: row.attempts,
     errorReason: row.error_reason,
     blockedReason: row.blocked_reason,
+    // The columns are absent until migration 20260723120000 is applied — coalesce so a
+    // pre-migration read still maps cleanly (proof runs against would-be rows).
+    coachEditedText: row.coach_edited_text ?? null,
+    sentText: row.sent_text ?? null,
+    sentAt: row.sent_at ?? null,
+    dismissedAt: row.dismissed_at ?? null,
+    reviewedByChatId: row.reviewed_by_chat_id ?? null,
     createdAt: row.created_at,
     claimedAt: row.claimed_at,
     generatedAt: row.generated_at,
@@ -162,11 +182,106 @@ export async function submitFeedbackDraft(input: {
   return check.ok ? { status: "done" } : { status: "failed", reason: check.reason };
 }
 
-export async function listTrainingPeaksFeedbackJobs(options?: { status?: FeedbackJobStatus; limit?: number }): Promise<TrainingPeaksFeedbackJob[]> {
+export async function listTrainingPeaksFeedbackJobs(options?: { status?: FeedbackJobStatus | FeedbackJobStatus[]; limit?: number }): Promise<TrainingPeaksFeedbackJob[]> {
   const supabase = createSupabaseServerClient();
   let query = supabase.from(TABLE).select("*").order("created_at", { ascending: false }).limit(options?.limit ?? 50);
-  if (options?.status) query = query.eq("status", options.status);
+  if (Array.isArray(options?.status)) query = query.in("status", options.status);
+  else if (options?.status) query = query.eq("status", options.status);
   const { data, error } = await withSupabaseNetworkRetry(() => query);
   if (error) throw new Error(`list feedback jobs failed: ${error.message}`);
   return ((data as FeedbackJobRow[]) ?? []).map(mapRow);
+}
+
+export async function getTrainingPeaksFeedbackJobById(jobId: string): Promise<TrainingPeaksFeedbackJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase.from(TABLE).select("*").eq("id", jobId).maybeSingle()
+  );
+  if (error) throw new Error(`get feedback job failed: ${error.message}`);
+  return data ? mapRow(data as FeedbackJobRow) : null;
+}
+
+/**
+ * Save Igor's edit of a draft. Only a 'done' job is editable (a sent/dismissed one
+ * is terminal). Stored separately from draft_text so the pair survives as few-shot
+ * signal. Returns the updated job, or null if the job was not in an editable state.
+ */
+export async function saveFeedbackDraftCoachEdit(input: {
+  jobId: string;
+  coachEditedText: string;
+  actorChatId: string;
+}): Promise<TrainingPeaksFeedbackJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ coach_edited_text: input.coachEditedText, reviewed_by_chat_id: input.actorChatId })
+      .eq("id", input.jobId)
+      .eq("status", "done")
+      .select("*")
+      .maybeSingle()
+  );
+  if (error) throw new Error(`save coach edit failed: ${error.message}`);
+  return data ? mapRow(data as FeedbackJobRow) : null;
+}
+
+/**
+ * Skip a draft (coach chose not to send). Allowed from any non-sent terminal state
+ * (done / blocked / failed) — a blocked "разберись" signal is dismissible too. CAS
+ * on those statuses so a race with a send is rejected. Returns null if not dismissible.
+ */
+export async function markFeedbackJobDismissed(input: {
+  jobId: string;
+  actorChatId: string;
+}): Promise<TrainingPeaksFeedbackJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "dismissed", dismissed_at: new Date().toISOString(), reviewed_by_chat_id: input.actorChatId })
+      .eq("id", input.jobId)
+      .in("status", ["done", "blocked", "failed"])
+      .select("*")
+      .maybeSingle()
+  );
+  if (error) throw new Error(`dismiss feedback job failed: ${error.message}`);
+  return data ? mapRow(data as FeedbackJobRow) : null;
+}
+
+/**
+ * Claim a 'done' job for sending (CAS done→sent, freezing sent_text). Claim-BEFORE-send
+ * so a second concurrent tap can never deliver the same draft twice — the loser sees
+ * status≠done and is refused. If delivery then fails, rollbackFeedbackJobSend puts it
+ * back to 'done'. Returns the claimed job, or null if it was not in 'done'.
+ */
+export async function claimFeedbackJobForSend(input: {
+  jobId: string;
+  sentText: string;
+  actorChatId: string;
+}): Promise<TrainingPeaksFeedbackJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "sent", sent_text: input.sentText, sent_at: new Date().toISOString(), reviewed_by_chat_id: input.actorChatId })
+      .eq("id", input.jobId)
+      .eq("status", "done")
+      .select("*")
+      .maybeSingle()
+  );
+  if (error) throw new Error(`claim feedback job for send failed: ${error.message}`);
+  return data ? mapRow(data as FeedbackJobRow) : null;
+}
+
+/** Roll a claimed send back to 'done' after a delivery failure, recording the reason. */
+export async function rollbackFeedbackJobSend(input: { jobId: string; errorReason: string }): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "done", sent_text: null, sent_at: null, error_reason: input.errorReason })
+      .eq("id", input.jobId)
+      .eq("status", "sent")
+  );
+  if (error) throw new Error(`rollback feedback job send failed: ${error.message}`);
 }

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 
+import { ReportsTab, type ReportCardModel, type ReportsView } from "./reports-tab";
+
 type TelegramWebApp = {
   initData: string;
   ready: () => void;
@@ -275,7 +277,7 @@ const TABS: Array<{ key: Tab; icon: string; label: string; ready: boolean }> = [
   { key: "moves", icon: "🔁", label: "Переносы", ready: false },
   { key: "starts", icon: "🏁", label: "Старты", ready: true },
   { key: "students", icon: "👥", label: "Ученики", ready: false },
-  { key: "reports", icon: "📊", label: "Отчёты", ready: false },
+  { key: "reports", icon: "📊", label: "Отчёты", ready: true },
 ];
 
 function daysLabel(days: number | null): string {
@@ -308,6 +310,13 @@ export default function CoachDeskPage() {
   const [startsStatus, setStartsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [startsView, setStartsView] = useState<StartsView | null>(null);
   const [openEvents, setOpenEvents] = useState<Set<string>>(new Set());
+  // Reports tab (feedback drafts — lazy-loaded on first open).
+  const [reportsStatus, setReportsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [reportsView, setReportsView] = useState<ReportsView | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [reportBusy, setReportBusy] = useState<{ id: string; op: "send" | "dismiss" | "save" } | null>(null);
+  const [reportToast, setReportToast] = useState<Record<string, { ok: boolean; text: string }>>({});
 
   const loadToday = useCallback(async (id: string) => {
     setStatus("loading");
@@ -497,6 +506,147 @@ export default function CoachDeskPage() {
     }
   }, [tab, startsStatus, initData, loadStarts]);
 
+  const loadReports = useCallback(async (id: string) => {
+    setReportsStatus("loading");
+    try {
+      const res = await fetch("/api/m/desk/reports/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData: id }),
+      });
+      const json = (await res.json()) as { ok: boolean; view?: ReportsView };
+      if (!json.ok || !json.view) {
+        setReportsStatus("error");
+        return;
+      }
+      setReportsView(json.view);
+      setReportsStatus("ready");
+    } catch {
+      setReportsStatus("error");
+    }
+  }, []);
+
+  // Lazy-load the Reports tab the first time it's opened.
+  useEffect(() => {
+    if (tab === "reports" && reportsStatus === "idle") {
+      void loadReports(initData);
+    }
+  }, [tab, reportsStatus, initData, loadReports]);
+
+  const startEditReport = useCallback((card: ReportCardModel) => {
+    setEditingId(card.id);
+    setEditValue(card.draftText ?? "");
+  }, []);
+
+  const cancelEditReport = useCallback(() => {
+    setEditingId(null);
+    setEditValue("");
+  }, []);
+
+  const saveEditReport = useCallback(
+    async (card: ReportCardModel) => {
+      const text = editValue.trim();
+      if (!text) return;
+      setReportBusy({ id: card.id, op: "save" });
+      try {
+        const res = await fetch("/api/m/desk/reports/edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData, jobId: card.id, text }),
+        });
+        const json = (await res.json()) as { ok: boolean; text?: string; error?: string };
+        if (json.ok) {
+          setReportsView((prev) =>
+            prev
+              ? { ...prev, review: prev.review.map((c) => (c.id === card.id ? { ...c, draftText: json.text ?? text, coachEdited: true } : c)) }
+              : prev
+          );
+          setEditingId(null);
+          setEditValue("");
+        } else {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось сохранить." } }));
+        }
+      } catch {
+        setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: "Ошибка сети." } }));
+      } finally {
+        setReportBusy(null);
+      }
+    },
+    [editValue, initData]
+  );
+
+  const sendReport = useCallback(
+    async (card: ReportCardModel) => {
+      setReportBusy({ id: card.id, op: "send" });
+      try {
+        const res = await fetch("/api/m/desk/reports/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData, jobId: card.id }),
+        });
+        const json = (await res.json()) as { ok: boolean; outcome?: string; note?: string; error?: string };
+        if (json.ok && json.outcome === "sent") {
+          // Delivered — drop from review into history.
+          setReportsView((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  review: prev.review.filter((c) => c.id !== card.id),
+                  history: [{ ...card, status: "sent" }, ...prev.history],
+                  counts: { ...prev.counts, review: prev.counts.review - 1, history: prev.counts.history + 1 },
+                }
+              : prev
+          );
+        } else if (json.ok && json.outcome === "prepared") {
+          // Prepare-only: nothing sent. Keep the card; tell Igor plainly.
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.note ?? "Подготовлено — не отправлено (prepare-only)." } }));
+        } else {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось отправить." } }));
+        }
+      } catch {
+        setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: "Ошибка сети." } }));
+      } finally {
+        setReportBusy(null);
+      }
+    },
+    [initData]
+  );
+
+  const dismissReport = useCallback(
+    async (card: ReportCardModel, from: "review" | "attention") => {
+      setReportBusy({ id: card.id, op: "dismiss" });
+      try {
+        const res = await fetch("/api/m/desk/reports/dismiss", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData, jobId: card.id }),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string };
+        if (json.ok) {
+          setReportsView((prev) => {
+            if (!prev) return prev;
+            if (from === "attention") {
+              return { ...prev, attention: prev.attention.filter((c) => c.id !== card.id), counts: { ...prev.counts, attention: prev.counts.attention - 1 } };
+            }
+            return {
+              ...prev,
+              review: prev.review.filter((c) => c.id !== card.id),
+              history: [{ ...card, status: "dismissed" }, ...prev.history],
+              counts: { ...prev.counts, review: prev.counts.review - 1, history: prev.counts.history + 1 },
+            };
+          });
+        } else {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось пропустить." } }));
+        }
+      } catch {
+        setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: "Ошибка сети." } }));
+      } finally {
+        setReportBusy(null);
+      }
+    },
+    [initData]
+  );
+
   const toggleEvent = useCallback((key: string) => {
     setOpenEvents((prev) => {
       const next = new Set(prev);
@@ -518,9 +668,11 @@ export default function CoachDeskPage() {
   return (
     <main style={S.shell}>
       <header style={S.header}>
-        <h1 style={S.h1}>{tab === "starts" ? "Старты" : "Сегодня"}</h1>
+        <h1 style={S.h1}>{tab === "starts" ? "Старты" : tab === "reports" ? "Отчёты" : "Сегодня"}</h1>
         {tab === "starts" ? (
           <p style={S.date}>ближайшие 30 дней{startsView ? ` · ${startsView.counts.events}` : ""}</p>
+        ) : tab === "reports" ? (
+          <p style={S.date}>черновики ответов ученикам{reportsView ? ` · ${reportsView.counts.review} к отправке` : ""}</p>
         ) : date ? (
           <p style={S.date}>{date}</p>
         ) : null}
@@ -545,6 +697,21 @@ export default function CoachDeskPage() {
           view={startsView}
           openEvents={openEvents}
           onToggleEvent={toggleEvent}
+        />
+      ) : tab === "reports" ? (
+        <ReportsTab
+          status={reportsStatus}
+          view={reportsView}
+          editingId={editingId}
+          editValue={editValue}
+          busy={reportBusy}
+          toast={reportToast}
+          onStartEdit={startEditReport}
+          onChangeEdit={setEditValue}
+          onSaveEdit={saveEditReport}
+          onCancelEdit={cancelEditReport}
+          onSend={sendReport}
+          onDismiss={dismissReport}
         />
       ) : tab !== "today" ? (
         <div style={S.bigEmpty}>
