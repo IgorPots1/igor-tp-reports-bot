@@ -148,6 +148,29 @@ export async function claimNextPendingFeedbackJob(): Promise<TrainingPeaksFeedba
 }
 
 /**
+ * Return jobs stuck in 'generating' back to 'pending' (crash recovery): the worker
+ * claims pending→generating, then submits generating→done/failed. If the worker dies
+ * between the two, the job sits in 'generating' and no claim would ever pick it up
+ * again. This resets any such job whose claim is older than the cutoff so the next
+ * run re-generates it — nothing is lost. Called at the start of a worker batch.
+ * claimed_at is null for a freshly reset job, so a NULL claim never blocks reclaim.
+ */
+export async function reclaimStaleGeneratingFeedbackJobs(cutoffIso: string): Promise<{ reclaimed: number; ids: string[] }> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "pending", claimed_at: null })
+      .eq("status", "generating")
+      .lt("claimed_at", cutoffIso)
+      .select("id")
+  );
+  if (error) throw new Error(`reclaim stale generating failed: ${error.message}`);
+  const ids = ((data as Array<{ id: string }>) ?? []).map((r) => r.id);
+  return { reclaimed: ids.length, ids };
+}
+
+/**
  * The SHARED seam: a backend hands its generated text here, and the fact-check
  * decides done vs failed. A number not in the packet or wrong gender → failed
  * (with error_reason, NOT done). draft_text is stored either way for inspection.
