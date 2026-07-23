@@ -5,7 +5,11 @@ Does ONLY the queue I/O over two HTTP endpoints — the model (Cowork, on the
 subscription) does the generation in between. Writes go through /submit, which runs
 the server-side fact-check; this script never touches the database directly.
 
-Env (set once, see the skill's setup doc):
+Config (URL + secret) lives OUTSIDE this skill folder, in a LOCAL file:
+  ~/.tp-reports-bot/feedback-worker.env   (KEY=VALUE lines, next to the TP session snapshot)
+This is deliberate: the skill is registered to the cloud, so nothing secret may sit
+inside it. The local file is never synced. Environment variables override the file.
+
   FEEDBACK_WORKER_URL     base URL, e.g. https://your-app.vercel.app/api/feedback/worker
   FEEDBACK_WORKER_SECRET  the shared bearer secret (same value as in Vercel)
 
@@ -21,6 +25,18 @@ import sys
 import urllib.error
 import urllib.request
 
+# Local-only config file — OUTSIDE the skill folder so it never rides along when the
+# skill is registered/synced to the cloud. Same directory as the TP session snapshot.
+LOCAL_ENV_PATH = os.path.expanduser("~/.tp-reports-bot/feedback-worker.env")
+
+_SETUP_HINT = (
+    "Создай локальный файл ~/.tp-reports-bot/feedback-worker.env с двумя строками:\n"
+    "  FEEDBACK_WORKER_URL=https://<твой-домен>/api/feedback/worker\n"
+    "  FEEDBACK_WORKER_SECRET=<секрет из Vercel>\n"
+    "Секрет держим ТОЛЬКО тут (локально), внутрь скилла его класть нельзя — "
+    "скилл уезжает в облако при регистрации."
+)
+
 
 def die(msg: str) -> None:
     print(f"ERROR: {msg}", file=sys.stderr)
@@ -28,14 +44,14 @@ def die(msg: str) -> None:
 
 
 def _config(key: str) -> str:
-    """Read a setting from the environment, falling back to a `worker.env` file
-    (KEY=VALUE lines) next to this script — so Igor only has to fill one file."""
+    """Read a setting from the environment, falling back to the LOCAL file
+    ~/.tp-reports-bot/feedback-worker.env (KEY=VALUE lines). Kept out of the skill
+    folder so the secret never syncs to the cloud."""
     val = os.environ.get(key, "").strip()
     if val:
         return val
-    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "worker.env")
     try:
-        with open(env_path, encoding="utf-8") as f:
+        with open(LOCAL_ENV_PATH, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -44,21 +60,21 @@ def _config(key: str) -> str:
                 if k.strip() == key:
                     return v.strip().strip('"').strip("'")
     except FileNotFoundError:
-        pass
+        return ""
     return ""
 
 
 def _base_url() -> str:
     url = _config("FEEDBACK_WORKER_URL").rstrip("/")
     if not url:
-        die("FEEDBACK_WORKER_URL is not set — fill it in worker.env (see references/setup.md)")
+        die(f"FEEDBACK_WORKER_URL не задан.\n{_SETUP_HINT}")
     return url
 
 
 def _secret() -> str:
     s = _config("FEEDBACK_WORKER_SECRET")
     if not s:
-        die("FEEDBACK_WORKER_SECRET is not set — fill it in worker.env (see references/setup.md)")
+        die(f"FEEDBACK_WORKER_SECRET не задан.\n{_SETUP_HINT}")
     return s
 
 

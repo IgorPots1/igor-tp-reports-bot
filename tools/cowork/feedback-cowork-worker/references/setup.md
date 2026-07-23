@@ -9,13 +9,20 @@ Add an environment variable to the app on Vercel:
 - **Value:** a long random string (e.g. `openssl rand -hex 32`)
 Redeploy so it takes effect.
 
-## 2. `worker.env` next to the skill
-Copy `worker.env.example` → `worker.env` and fill both lines:
+## 2. LOCAL config file (NOT inside the skill)
+The secret must stay local — this skill is registered to the cloud, so nothing secret
+may live inside it. Put URL + secret in `~/.tp-reports-bot/feedback-worker.env`:
 ```
+mkdir -p ~/.tp-reports-bot
+cat > ~/.tp-reports-bot/feedback-worker.env <<'EOF'
 FEEDBACK_WORKER_URL=https://YOUR-APP.vercel.app/api/feedback/worker
 FEEDBACK_WORKER_SECRET=<the same value you put in Vercel>
+EOF
+chmod 600 ~/.tp-reports-bot/feedback-worker.env
 ```
 `FEEDBACK_WORKER_URL` = your app's address (where the admin panel lives) + `/api/feedback/worker`.
+**Never** create a `worker.env` inside the skill folder — it would sync to the cloud on
+registration. The CLI reads only the local file above (env vars override it).
 
 ## Run
 ```

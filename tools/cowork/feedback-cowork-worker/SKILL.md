@@ -53,10 +53,18 @@ Two hard boundaries make this safe:
 6. **End with a coach note for Igor** (not just silence): how many done, how many
    failed, and the reason for each failure.
 
+## Config lives OUTSIDE this skill (secret must stay local)
+
+The CLI reads its URL and secret from a **local file, NOT from this skill folder**:
+`~/.tp-reports-bot/feedback-worker.env` (same place as the TP session snapshot).
+This is deliberate — **this skill is registered to the cloud, so nothing secret may
+sit inside it.** Never create a `worker.env` (or paste the secret) inside the skill:
+it would sync to claude.ai on registration. See `references/setup.md`. If the file is
+missing, the CLI stops with a clear "create ~/.tp-reports-bot/feedback-worker.env" error.
+
 ## The run (exact steps)
 
-The CLI lives at `scripts/feedback_worker.py`. It needs two env vars set once
-(`FEEDBACK_WORKER_URL`, `FEEDBACK_WORKER_SECRET` — see `references/setup.md`).
+The CLI lives at `scripts/feedback_worker.py`.
 
 1. **Claim a batch:**
    ```

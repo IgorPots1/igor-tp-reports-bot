@@ -43,45 +43,39 @@
 
 ---
 
-## Блок 2. Скопировать скилл в Cowork + вписать 2 строки (один раз, ~3 минуты)
+## Блок 2. Зарегистрировать скилл в Cowork + локальный файл с секретом (один раз)
 
-Скилл — это папка с инструкцией, которую понимает Cowork. Лежит в репозитории:
-`tools/cowork/feedback-cowork-worker/`.
+⚠️ **Скилл нельзя просто скопировать в папку** — папка скиллов Cowork это лишь
+локальное зеркало ОБЛАЧНОГО реестра (claude.ai). Ручная копия при следующем синке
+стирается. Скилл надо **зарегистрировать** (как зарегистрирован твой nutrition-weekly-report).
 
-**Самый простой способ (пусть Cowork сам скопирует):**
-открой Cowork и напиши ему:
-> Установи скилл из папки `/Users/igor/igor-tp-reports-bot/tools/cowork/feedback-cowork-worker`
-> — скопируй её в мою папку скиллов, рядом с nutrition-weekly-report.
+**Шаг 1 — зарегистрируй скилл.** Открой Cowork и напиши встроенному `skill-creator`:
+> Заведи пользовательский скилл **feedback-cowork-worker** из готовых файлов в
+> `/Users/igor/igor-tp-reports-bot/tools/cowork/feedback-cowork-worker`
+> (SKILL.md, scripts/feedback_worker.py, references/). Зарегистрируй как user-скилл,
+> мой SKILL.md не переписывай — только оформи и зарегистрируй.
 
-Cowork найдёт папку скиллов (ту же, где лежит `nutrition-weekly-report`) и скопирует туда.
+Он упакует и зарегистрирует скилл в облаке → тот синкнётся вниз и переживёт сессии.
+Проверить: спроси Cowork «какие скиллы у тебя есть?» — в списке должен появиться
+`feedback-cowork-worker`.
 
-**Если хочешь вручную** — в Терминале (замени путь-назначение на ту папку, где у тебя
-лежит `nutrition-weekly-report`):
+**Шаг 2 — положи секрет в ЛОКАЛЬНЫЙ файл (вне скилла).** Раз скилл уезжает в облако,
+секрет внутрь него класть нельзя — держим его отдельно, рядом с TP-снапшотом. В Терминале:
 ```
-cp -R "/Users/igor/igor-tp-reports-bot/tools/cowork/feedback-cowork-worker" \
-  "/Users/igor/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/<...>/skills/"
+mkdir -p ~/.tp-reports-bot
+cat > ~/.tp-reports-bot/feedback-worker.env <<'EOF'
+FEEDBACK_WORKER_URL=https://ТВОЙ-АДРЕС/api/feedback/worker
+FEEDBACK_WORKER_SECRET=та-самая-длинная-строка-из-Блока-1
+EOF
+chmod 600 ~/.tp-reports-bot/feedback-worker.env
 ```
+- `FEEDBACK_WORKER_URL` — **адрес твоего приложения** (где админка/мини-апп) + `/api/feedback/worker`.
+- `FEEDBACK_WORKER_SECRET` — **ровно тот же** секрет, что в Vercel.
 
-**Затем впиши секрет и адрес** (это то, чем скилл соединяется с сервером):
+Скрипт скилла читает URL и секрет ТОЛЬКО из этого файла. Внутрь скилла `worker.env`
+не создавай — уедет в облако при регистрации.
 
-1. В скопированной папке скилла найди файл **`worker.env.example`**, сделай его копию и
-   переименуй копию в **`worker.env`** (без `.example`). Или попроси Cowork: «скопируй
-   worker.env.example в worker.env».
-
-2. Открой `worker.env` (обычный текстовый файл) и заполни две строки:
-   ```
-   FEEDBACK_WORKER_URL=https://ТВОЙ-АДРЕС/api/feedback/worker
-   FEEDBACK_WORKER_SECRET=та-самая-длинная-строка-из-Блока-1
-   ```
-   - `FEEDBACK_WORKER_URL` — это **адрес твоего приложения** (тот, по которому ты
-     открываешь админку/мини-апп), к которому в конце дописано `/api/feedback/worker`.
-     Пример: если админка на `https://coach.example.com`, то впиши
-     `https://coach.example.com/api/feedback/worker`.
-   - `FEEDBACK_WORKER_SECRET` — вставь **ровно тот же** секрет, что сохранил в Vercel.
-
-3. Сохрани файл.
-
-Готово. Cowork теперь умеет ходить в очередь.
+Готово. Cowork теперь умеет ходить в очередь, а секрет остаётся у тебя на маке.
 
 ---
 
