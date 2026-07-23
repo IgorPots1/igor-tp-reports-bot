@@ -23,3 +23,10 @@ graphify-out/
 .graphify/
 .graphifyignore
 .playwright-mcp/
+
+# accidental-add guard: root-level student working materials and stray backups
+.DS_Store
+*.bak
+reports/
+outputs-analysis/
+ЧЕКПОЙНТ_*
