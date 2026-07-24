@@ -56,6 +56,16 @@ type CapturedRequest = {
   failedText?: string;
 };
 
+// GET/HEAD/OPTIONS: URL + status only (no headers, no bodies) — context, low noise.
+type ContextRequest = {
+  id: number;
+  phase: Phase;
+  method: string;
+  url: string;
+  status: number | null;
+  failedText?: string;
+};
+
 // ── redaction (same markers as tp-capture-move-network.ts) ────────────────────
 
 function normalizeKey(value: string): string {
@@ -148,9 +158,7 @@ async function buildCaptured(id: number, phase: Phase, request: Request, respons
   };
 }
 
-function isMutation(r: CapturedRequest): boolean {
-  return ["POST", "PUT", "PATCH", "DELETE"].includes(r.method.toUpperCase());
-}
+const MUTATION_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 
 async function main(): Promise<void> {
   const athleteUrl = process.argv.slice(2).find((a) => a.startsWith("--athlete-url="))?.slice("--athlete-url=".length).trim() || DEFAULT_ATHLETE_URL;
@@ -171,7 +179,8 @@ async function main(): Promise<void> {
   const context = await chromium.launchPersistentContext(profileDir, { headless: false, viewport: null });
 
   let phase: Phase = "login";
-  const captured: CapturedRequest[] = [];
+  const mutations: CapturedRequest[] = [];       // POST/PUT/PATCH/DELETE — full redacted bodies
+  const contextRequests: ContextRequest[] = [];  // GET/HEAD/OPTIONS — URL + status only, no bodies
   const ids = new Map<Request, number>();
   let nextId = 1;
   const idOf = (r: Request): number => {
@@ -182,7 +191,13 @@ async function main(): Promise<void> {
 
   const record = async (request: Request, response: Response | null, failedText?: string) => {
     if (!API_HOSTS.includes(hostOf(request.url()))) return; // only the two API hosts
-    captured.push(await buildCaptured(idOf(request), phase, request, response, failedText));
+    const id = idOf(request);
+    if (MUTATION_METHODS.includes(request.method().toUpperCase())) {
+      mutations.push(await buildCaptured(id, phase, request, response, failedText)); // full redacted body
+    } else {
+      // GET/HEAD/OPTIONS: URL + status only — no headers, no bodies (noise + redaction risk).
+      contextRequests.push({ id, phase, method: request.method(), url: request.url(), status: response?.status() ?? null, failedText });
+    }
   };
   context.on("requestfinished", async (r) => { await record(r, await r.response()); });
   context.on("requestfailed", async (r) => { await record(r, null, r.failure()?.errorText ?? "failed"); });
@@ -207,24 +222,40 @@ async function main(): Promise<void> {
     await context.close().catch(() => {});
   }
 
-  captured.sort((a, b) => a.id - b.id);
-  const mutationsByPhase = (p: Phase) => captured.filter((r) => r.phase === p && isMutation(r)).map((r) => ({ id: r.id, method: r.method, url: r.url, status: r.responseStatus }));
+  mutations.sort((a, b) => a.id - b.id);
+  contextRequests.sort((a, b) => a.id - b.id);
+
+  // Explicit per-phase split: which mutations + which context URLs fired in B (zone) vs C (event).
+  const phaseView = (p: Phase) => ({
+    mutations: mutations.filter((r) => r.phase === p).map((r) => ({ id: r.id, method: r.method, url: r.url, status: r.responseStatus })),
+    contextUrls: contextRequests
+      .filter((r) => r.phase === p)
+      .map((r) => `${r.method} ${r.url}${r.status != null ? ` -> ${r.status}` : r.failedText ? ` -> ${r.failedText}` : ""}`),
+  });
 
   const summary = {
     athleteUrl,
-    totalApiRequests: captured.length,
-    zoneWriteMutations: mutationsByPhase("zone-write"),
-    eventCreateMutations: mutationsByPhase("event-create"),
-    note: "Full redacted request/response bodies are in requests.redacted.json. Tokens/cookies are [REDACTED].",
+    phases: {
+      "A-login": phaseView("login"),
+      "B-zone-write": phaseView("zone-write"),
+      "C-event-create": phaseView("event-create"),
+    },
+    totals: { mutations: mutations.length, contextRequests: contextRequests.length },
+    note:
+      "requests.redacted.json holds the FULL redacted bodies of MUTATIONS ONLY (POST/PUT/PATCH/DELETE). " +
+      "GET/HEAD/OPTIONS appear here as URL+status only (no bodies). Tokens/cookies/iCal -> [REDACTED].",
   };
-  await writeFile(requestsPath, `${JSON.stringify(captured, null, 2)}\n`, "utf8");
+  await writeFile(requestsPath, `${JSON.stringify(mutations, null, 2)}\n`, "utf8");
   await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
 
   console.log("\nCapture complete (redacted).");
-  console.log(`Requests: ${requestsPath}`);
-  console.log(`Summary:  ${summaryPath}`);
-  console.log(`API requests captured: ${captured.length}`);
-  console.log(`Zone-write mutations: ${summary.zoneWriteMutations.length}; Event-create mutations: ${summary.eventCreateMutations.length}`);
+  console.log(`Mutations (full, redacted): ${requestsPath}`);
+  console.log(`Phase-split summary:        ${summaryPath}`);
+  console.log(
+    `Mutations — B/zone-write: ${summary.phases["B-zone-write"].mutations.length}, ` +
+      `C/event-create: ${summary.phases["C-event-create"].mutations.length} (A/login: ${summary.phases["A-login"].mutations.length})`,
+  );
+  console.log(`Context (GET/other) requests: ${contextRequests.length} — URL+status only`);
   console.log("No token/cookie values are written or printed.");
 }
 
