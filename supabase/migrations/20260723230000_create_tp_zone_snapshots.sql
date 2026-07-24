@@ -9,6 +9,11 @@
 -- (trainingpeaks_workout_cache, trainingpeaks_students), NOT the plainer athlete_id from
 -- the task brief — kept consistent with the rest of the schema on purpose.
 --
+-- zones stores ONLY the WHITELISTED zone/threshold projection of GET /settings
+-- (see tools/trainingpeaks-export/scripts/lib/tp-settings-whitelist.ts). The raw settings
+-- body carries PII + a working iCalendarKeys access key and is NEVER stored. There is no
+-- raw_settings column; the drop below is a defensive no-op for DBs that had an earlier one.
+--
 -- FILE ONLY — apply manually, not auto-run.
 
 create table if not exists public.tp_zone_snapshots (
@@ -18,16 +23,17 @@ create table if not exists public.tp_zone_snapshots (
   -- trainingpeaks_students row, and a removed student must not drop the snapshot.
   student_id uuid references public.trainingpeaks_students(id) on delete set null,
   captured_at timestamptz not null default now(),
-  -- WHITELISTED zone/threshold projection of GET /fitness/v1/athletes/{id}/settings
-  -- (see tools/trainingpeaks-export/scripts/lib/tp-settings-whitelist.ts). The raw
-  -- settings body carries PII + a working iCalendarKeys access key and is NEVER
-  -- stored — only whitelisted keys reach this column. null when the athlete has none.
+  -- whitelisted zone/threshold projection only — never the raw settings body.
   zones jsonb,
   -- provenance of this snapshot (endpoint + shape version), e.g. 'settings_v1'.
   source text not null default 'settings_v1',
   created_at timestamptz not null default now(),
   constraint tp_zone_snapshots_trainingpeaks_athlete_id_check check (trainingpeaks_athlete_id > 0)
 );
+
+-- Defensive: if this DB applied an earlier version that had raw_settings, drop it.
+-- No-op on a fresh table created above. The column only ever held '{}' (never written).
+alter table public.tp_zone_snapshots drop column if exists raw_settings;
 
 -- "latest snapshot per athlete" and per-athlete history.
 create index if not exists tp_zone_snapshots_athlete_captured_idx
