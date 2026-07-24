@@ -2,10 +2,10 @@
 // planner input (ContextPacket) into the frozen "what to say" packet stored in
 // the queue's context_packet jsonb: rendered prompt sections (observations arc,
 // comparison delta, few-shots, register/sex) PLUS the fact-check inputs
-// (allowedNumbers, sex, hrTrusted). Deterministic — the generator only voices it.
+// (allowedNumbers, sex, hrTrusted). Deterministic, the generator only voices it.
 //
 // Ported from the ЭТАП 3a debugging assembler (arc thresholds, comparison-delta
-// rendering, few-shot selection — all approved by Igor across v1→v3). No absolute
+// rendering, few-shot selection, all approved by Igor across v1→v3). No absolute
 // workout numbers are surfaced; the only allowed digits are comparison deltas.
 
 import { computeSplitHalf } from "./split-half.ts";
@@ -32,7 +32,7 @@ export type FeedbackContextPacket = {
   // COACH-ONLY raw comparison baseline (n похожих, было/стало, период) so Igor can verify
   // the delta in the «почему так» panel. NEVER shown to the student. null when no comparison.
   comparisonBaseline: string | null;
-  // Transparency for the coach panel (next part) — never shown to the student.
+  // Transparency for the coach panel (next part), never shown to the student.
   observations: Array<{ type: string; adviceKey: string; focused: boolean; reason: string }>;
 };
 
@@ -42,9 +42,9 @@ export type BuildFeedbackContextPacketResult =
 
 // ── data-integrity block gate (C7): untrusted data → coach signal, no draft ──
 function resolveBlock(current: PlannerDerivedMetrics): string | null {
-  if (current.hasFit === false) return "нет FIT-файла — метрик для разбора нет";
-  if (current.fallbackLevel && current.fallbackLevel !== "fit_full") return `неполные данные (${current.fallbackLevel}) — разбор недостоверен`;
-  if (current.paceTrusted === false || current.distanceTrusted === false) return "темп/дистанция физически неправдоподобны (сбой датчика/фрагмент) — форму тренировки не разобрать";
+  if (current.hasFit === false) return "нет FIT-файла, метрик для разбора нет";
+  if (current.fallbackLevel && current.fallbackLevel !== "fit_full") return `неполные данные (${current.fallbackLevel}), разбор недостоверен`;
+  if (current.paceTrusted === false || current.distanceTrusted === false) return "темп/дистанция физически неправдоподобны (сбой датчика/фрагмент), форму тренировки не разобрать";
   return null;
 }
 
@@ -87,8 +87,8 @@ function buildLongArc(current: PlannerDerivedMetrics, laps: PlannerLap[], observ
 
   if (!hrOk) {
     if (fastStart) {
-      notes.push("[дуга-начало] старт бодроватый — первая половина быстрее");
-      notes.push("[дуга-конец] к концу темп просел — из-за бодрого старта");
+      notes.push("[дуга-начало] старт бодроватый, первая половина быстрее");
+      notes.push("[дуга-конец] к концу темп просел, из-за бодрого старта");
       notes.push("[совет] стартовать поспокойнее, разложит ровнее");
     } else if (paceDropped) {
       notes.push("[дуга] первую половину держал ровно, к концу темп просел");
@@ -97,45 +97,45 @@ function buildLongArc(current: PlannerDerivedMetrics, laps: PlannerLap[], observ
       notes.push("[дуга] длительную прошёл ровно по темпу, чисто");
       return { notes, rich: false };
     }
-    if (manyStops(laps)) notes.push("[вопрос] было довольно много остановок — спросить почему");
+    if (manyStops(laps)) notes.push("[вопрос] было довольно много остановок, спросить почему");
     return { notes, rich: true };
   }
 
   if (D !== null && D < 5 && !paceDropped) {
-    notes.push("[дуга] пульс держался ровно почти всю дистанцию, к концу не пополз — хорошая выносливость");
+    notes.push("[дуга] пульс держался ровно почти всю дистанцию, к концу не пополз, хорошая выносливость");
     if (fastStart) notes.push("[нюанс] начало чуть бодрее второй половины, но в пределах нормы");
     return { notes, rich: false };
   }
   if (D !== null && D >= 5 && D <= 10 && !paceDropped) {
-    notes.push("[дуга-начало] первая половина — ровно");
+    notes.push("[дуга-начало] первая половина, ровно");
     notes.push("[дуга-перелом] к концу пульс подрос, НО темп остался тот же (не просел)");
-    notes.push("[вывод] нагрузка была на грани, но тренировка вытянута — для длительной это нормально, похвали");
+    notes.push("[вывод] нагрузка была на грани, но тренировка вытянута, для длительной это нормально, похвали");
     return { notes, rich: true };
   }
   const hasSurge = observations.some((o) => o.adviceKey === "correction_second_half_surge_tempo" || o.adviceKey === "correction_second_half_surge_easy");
   if (hasSurge && split !== null && split.secondHalfPaceSecPerKm < split.firstHalfPaceSecPerKm - 6) {
-    notes.push("[дуга-начало] первая половина — ровно");
+    notes.push("[дуга-начало] первая половина, ровно");
     notes.push("[дуга-перелом] во второй половине прибавил темп (разогнался), пульс на это отреагировал ростом");
     notes.push("[совет] на длительной/темповой держи ровнее, к концу не разгоняйся");
-    if (manyStops(laps)) notes.push("[вопрос] было много остановок — спросить почему");
+    if (manyStops(laps)) notes.push("[вопрос] было много остановок, спросить почему");
     return { notes, rich: true };
   }
-  notes.push(fastStart ? "[дуга-начало] старт бодроватый — первая половина быстрее" : "[дуга-начало] первая половина более-менее ровно");
+  notes.push(fastStart ? "[дуга-начало] старт бодроватый, первая половина быстрее" : "[дуга-начало] первая половина более-менее ровно");
   if (endDrift) {
     notes.push("[дуга-перелом] пульс подрос ТОЛЬКО к концу (последняя треть), середину держал ровно");
-    notes.push("[утешение+прогноз] ничего страшного — тело адаптируется, с регулярными длинными в следующий раз будет легче");
+    notes.push("[утешение+прогноз] ничего страшного, тело адаптируется, с регулярными длинными в следующий раз будет легче");
   } else if (heatContext(workoutDate, memoryItems)) {
     notes.push("[дуга-перелом] во второй половине пульс заметно пополз вверх");
     notes.push("[причина] жара: в жару пульс лезет от обезвоживания (это не про форму)");
     notes.push("[вопрос] спросить, достаточно ли жидкости было по ходу");
   } else if (fastStart) {
-    notes.push("[дуга-перелом] к концу просадка — из-за бодрого старта");
+    notes.push("[дуга-перелом] к концу просадка, из-за бодрого старта");
     notes.push("[совет] стартовать поспокойнее, тогда разложит ровнее до конца");
   } else {
     notes.push("[дуга-перелом] во второй половине пульс заметно пополз и/или темп просел");
     notes.push("[совет] бежать поспокойнее, чтобы удержать до конца");
   }
-  if (manyStops(laps)) notes.push("[вопрос] было довольно много остановок — спросить почему, всё ли нормально");
+  if (manyStops(laps)) notes.push("[вопрос] было довольно много остановок, спросить почему, всё ли нормально");
   return { notes, rich: true };
 }
 
@@ -159,11 +159,11 @@ function buildIntervalArc(current: PlannerDerivedMetrics): { notes: string[]; ri
   }
   const hrClimb = hrOk && hrs.length >= 3 && hrs[hrs.length - 1]! > hrs[0]! + 6;
   if (breakAt === -1) {
-    notes.push("[дуга] вся серия ровно — от первого до последнего отрезка темп держался");
-    if (hrClimb) notes.push("[нюанс] пульс по ходу ровно рос по работе, без провалов — нормально");
+    notes.push("[дуга] вся серия ровно, от первого до последнего отрезка темп держался");
+    if (hrClimb) notes.push("[нюанс] пульс по ходу ровно рос по работе, без провалов, нормально");
     return { notes, rich: hrClimb };
   }
-  notes.push("[дуга-начало] первые отрезки — ровно");
+  notes.push("[дуга-начало] первые отрезки, ровно");
   notes.push(`[дуга-перелом] примерно с ${ordinalWord(breakAt + 1)} отрезка темп начал проседать${hrOk ? " / пульс частить" : ""}`);
   notes.push(hrOk ? "[дуга-конец] восстановление там уже не так успевало, к концу тяжелее" : "[дуга-конец] к концу отрезки шли тяжелее");
   notes.push("[совет] первые отрезки не гнать, тогда конец легче");
@@ -186,7 +186,7 @@ function comparisonPeriodPhrase(n: Record<string, number>): string {
 }
 
 // Coach-only raw baseline for the «почему так» panel: how many similar workouts, what the
-// norm was, what it is now — so Igor can eyeball the delta. Never reaches the student.
+// norm was, what it is now, so Igor can eyeball the delta. Never reaches the student.
 function comparisonBaselineNote(metric: string, n: Record<string, number>): string | null {
   const baseN = n[`${metric}BaseN`];
   if (baseN === undefined) return null;
@@ -203,7 +203,7 @@ function comparisonBaselineNote(metric: string, n: Record<string, number>): stri
 
 function buildComparison(observations: Observation[]): { block: string; allowedInts: number[]; baseline: string | null } {
   const comp = observations.find((o) => o.adviceKey === "praise_comparison_progress");
-  if (!comp) return { block: "Сравнения с прошлым нет — пиши только качественные наблюдения, без цифр.", allowedInts: [], baseline: null };
+  if (!comp) return { block: "Сравнения с прошлым нет, пиши только качественные наблюдения, без цифр.", allowedInts: [], baseline: null };
   const n = comp.numbers;
   const deltaKey = Object.keys(n).find((k) => k.endsWith("Delta"));
   if (!deltaKey) return { block: "Есть прогресс относительно прошлых таких же тренировок (общо, без конкретной цифры).", allowedInts: [], baseline: null };
@@ -221,12 +221,12 @@ function buildComparison(observations: Observation[]): { block: string; allowedI
   if (metric === "rep_count") {
     return { block: `Отрезков на ${abs} больше, ${period}. (Эту цифру назвать МОЖНО.)`, allowedInts: [abs], baseline };
   }
-  return { block: `Прогресс относительно прошлых таких же тренировок (${metric === "decoupling" ? "аэробно чище/ровнее" : "лучше"}, ${period}) — назови словами, без цифры.`, allowedInts: [], baseline };
+  return { block: `Прогресс относительно прошлых таких же тренировок (${metric === "decoupling" ? "аэробно чище/ровнее" : "лучше"}, ${period}), назови словами, без цифры.`, allowedInts: [], baseline };
 }
 
 function workoutHeader(sessionType: SessionType | null): string {
   const t = sessionType === "interval" ? "интервалы" : sessionType === "long_tempo" ? "длительная / темповая" : "лёгкая";
-  return `Тип: ${t}. (Числа этой тренировки НЕ называй — только словами.)`;
+  return `Тип: ${t}. (Числа этой тренировки НЕ называй, только словами.)`;
 }
 
 function pickFewshots(observations: Observation[]): { text: string; used: string[] } {
@@ -262,7 +262,7 @@ function renderObservations(observations: Observation[], arc: { notes: string[];
     const extras = studentFacing.filter((o) => !ARC_OWNED_KEYS.has(o.adviceKey));
     const out: string[] = ["Разбери ДУГОЙ тренировки (2-3 живые фразы голосом Игоря, СГРУППИРУЙ, не список цифр). Точки дуги:", ...arc.notes.map((s) => `- ${s}`)];
     if (extras.length) {
-      out.push("", "Если ложится — можно добавить (по желанию, не обязательно):");
+      out.push("", "Если ложится, можно добавить (по желанию, не обязательно):");
       for (const o of extras) out.push(`- ${o.type === "question" ? "[ВОПРОС]" : o.type === "praise" ? "[ПОХВАЛА]" : "[ЗАМЕТКА]"} ${GLOSS[o.adviceKey as keyof typeof GLOSS] ?? o.adviceKey}`);
     }
     return out.join("\n");
@@ -274,7 +274,7 @@ function renderObservations(observations: Observation[], arc: { notes: string[];
     return `- [${label}] ${GLOSS[o.adviceKey as keyof typeof GLOSS] ?? o.adviceKey}`;
   };
   const arcOpener = arc && !arc.rich ? [`- [ПОХВАЛА] ${arc.notes[0]!.replace(/^\[[^\]]+\]\s*/, "")}`] : [];
-  const out: string[] = ["Тут не богато — скажи коротко (1-2 фразы, не надувай):", ...arcOpener, ...focused.map(line)];
+  const out: string[] = ["Тут не богато, скажи коротко (1-2 фразы, не надувай):", ...arcOpener, ...focused.map(line)];
   if (other.length) out.push("", "Можно упомянуть, если ложится:", ...other.map(line));
   return out.join("\n");
 }
@@ -283,7 +283,7 @@ void median; // reserved for future recovery-drop phrasing; keeps the ported hel
 
 // ── sensor-glitch / no-reliable-metrics draft (Игорь: молчание тренера хуже) ──
 // When the data can't be trusted (treadmill/no-GPS, sensor fragment, no FIT) we still
-// draft — WITHOUT numbers — leaning on what the student SAID. The person likely ran and
+// draft, WITHOUT numbers, leaning on what the student SAID. The person likely ran and
 // wrote; a warm "how did it go?" beats silence. The fact-check still forbids any digit
 // (allowedNumbers empty) and any pulse talk (hrTrusted=false), so the draft stays honest.
 function daysApart(a: string, b: string): number {
@@ -304,14 +304,14 @@ function relevantMemoryText(input: ContextPacket): string[] {
 function buildSensorGlitchPacket(input: ContextPacket, reason: string): FeedbackContextPacket {
   const words = relevantMemoryText(input);
   const wordsBlock = words.length
-    ? `Слова ученика (недавняя память — мог упомянуть эту тренировку):\n${words.map((w) => `- ${w}`).join("\n")}`
+    ? `Слова ученика (недавняя память, мог упомянуть эту тренировку):\n${words.map((w) => `- ${w}`).join("\n")}`
     : "Ученик ничего недавно не писал про тренировки.";
   const observationsBlock = [
     `Данные датчика по этой тренировке НЕДОСТОВЕРНЫ: ${reason}.`,
-    "Цифр нет — ни темпа, ни пульса, ни дистанции. Разбирать метрики НЕЛЬЗЯ.",
-    "Но молчать не надо — человек мог пробежать и написать. Напиши тёплый КОРОТКИЙ черновик БЕЗ единой цифры:",
-    "- если в словах ученика ниже видно, как далась тренировка — мягко обыграй это и спроси самочувствие;",
-    "- если слов нет — просто короткий тёплый вопрос: как прошла пробежка, что по ощущениям?",
+    "Цифр нет, ни темпа, ни пульса, ни дистанции. Разбирать метрики НЕЛЬЗЯ.",
+    "Но молчать не надо, человек мог пробежать и написать. Напиши тёплый КОРОТКИЙ черновик БЕЗ единой цифры:",
+    "- если в словах ученика ниже видно, как далась тренировка, мягко обыграй это и спроси самочувствие;",
+    "- если слов нет, просто короткий тёплый вопрос: как прошла пробежка, что по ощущениям?",
     "Не выдумывай метрики и не делай вид, что разобрал тренировку.",
     "",
     wordsBlock,
@@ -323,16 +323,16 @@ function buildSensorGlitchPacket(input: ContextPacket, reason: string): Feedback
     sessionType: null,
     sex: input.sex,
     register: input.telegramFormality,
-    hrTrusted: false, // no pulse talk — data untrusted
-    workoutHeader: "Тип: не разобрать — данные датчика сломаны (дорожка / сбой часов). Числа НЕ называй.",
+    hrTrusted: false, // no pulse talk, data untrusted
+    workoutHeader: "Тип: не разобрать, данные датчика сломаны (дорожка / сбой часов). Числа НЕ называй.",
     observationsBlock,
-    comparisonBlock: "Сравнения с прошлым нет — цифр нет вообще.",
+    comparisonBlock: "Сравнения с прошлым нет, цифр нет вообще.",
     fewshotsText: [...FEWSHOTS.A.slice(0, 4), ...FEWSHOTS.C.slice(0, 2)].map((p) => `- ${p}`).join("\n"),
     fewshotsUsed: ["A×4", "C×2"],
     allowedNumbers: [],
     comparisonBaseline: null,
     observations: [
-      { type: "question", adviceKey: "sensor_glitch_ask", focused: true, reason: `данные датчика недостоверны (${reason}) — черновик по словам/ощущениям, без цифр` },
+      { type: "question", adviceKey: "sensor_glitch_ask", focused: true, reason: `данные датчика недостоверны (${reason}), черновик по словам/ощущениям, без цифр` },
     ],
   };
 }
@@ -340,7 +340,7 @@ function buildSensorGlitchPacket(input: ContextPacket, reason: string): Feedback
 export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackContextPacketResult {
   const blockReason = resolveBlock(input.current);
   if (blockReason !== null) {
-    // Данные недостоверны — НЕ молчим: словесный черновик по словам ученика (правка 2).
+    // Данные недостоверны, НЕ молчим: словесный черновик по словам ученика (правка 2).
     return { blocked: false, packet: buildSensorGlitchPacket(input, blockReason) };
   }
 

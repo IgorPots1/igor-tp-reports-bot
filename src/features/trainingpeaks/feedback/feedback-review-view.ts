@@ -92,7 +92,7 @@ function sessionTypeLabel(sessionType: FeedbackContextPacket["sessionType"] | un
 function cleanComparison(block: string): string {
   return block
     .replace(/\s*\([^)]*\)\s*$/u, "")
-    .replace(/\s*—\s*назови[^.]*\.?\s*$/iu, "")
+    .replace(/\s*[—,]\s*назови[^.]*\.?\s*$/iu, "")
     .trim();
 }
 
