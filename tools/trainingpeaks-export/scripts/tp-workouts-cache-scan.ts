@@ -2,21 +2,18 @@ import process from "node:process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { chromium } from "playwright";
-
 import type {
   TrainingPeaksStudent,
   TrainingPeaksWorkoutCacheScanStatusUpsertRow,
   TrainingPeaksWorkoutCacheUpsertRow,
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
-import { profileDir, toolRoot } from "./lib/paths.ts";
-import {
-  captureSessionAuth,
-  performApiJsonRequest,
-  type ApiJsonResponse,
-  type CapturedAuth,
-} from "./lib/trainingpeaks-api-move.ts";
+// Fetch-client path (наряд ЭТАП 2): session-snapshot → cookie → bearer over plain HTTP,
+// NO Playwright, NO persistent-profile lock — so this scan no longer collides with the
+// move/races loops that share that browser profile. Same client fit-ingest already uses.
+import { getTpApiJsonRaw, TpApiAuthError, TpApiHttpError } from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import { toolRoot } from "./lib/paths.ts";
+import type { ApiJsonResponse } from "./lib/trainingpeaks-api-move.ts";
 import {
   normalizeTrainingPeaksWorkoutItems,
   type TrainingPeaksWorkoutRaw,
@@ -34,10 +31,6 @@ class AuthDeadError extends Error {
     super(message);
     this.name = "AuthDeadError";
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Coach chat ids for operational alerts. Read inline (same env var as
@@ -83,22 +76,6 @@ async function sendSessionDeadAlert(): Promise<void> {
   }
 }
 
-function buildAuthHeaders(auth: CapturedAuth): Record<string, string> {
-  const headers: Record<string, string> = {
-    accept: "application/json, text/javascript, */*; q=0.01",
-    "x-requested-with": "XMLHttpRequest",
-  };
-  if (auth.authorizationHeader) {
-    headers.authorization = auth.authorizationHeader;
-  }
-  if (typeof auth.sampleHeaders.referer === "string" && auth.sampleHeaders.referer.trim()) {
-    headers.referer = auth.sampleHeaders.referer;
-  }
-  if (typeof auth.sampleHeaders.origin === "string" && auth.sampleHeaders.origin.trim()) {
-    headers.origin = auth.sampleHeaders.origin;
-  }
-  return headers;
-}
 
 type CliArgs = {
   from: string;
@@ -756,114 +733,45 @@ async function main(): Promise<void> {
 
   const scannedAt = new Date().toISOString();
 
-  const context = await chromium.launchPersistentContext(profileDir, {
-    headless: !args.headed,
-    viewport: null,
-  });
-
   let writeSucceeded = false;
   try {
-    const page = context.pages()[0] ?? (await context.newPage());
-
-    let auth;
-    try {
-      const authAthlete = targets[0]?.athleteId;
-      if (!authAthlete) {
-        throw new Error("No eligible target athlete found for auth capture.");
+    // Fetch one workouts endpoint via the shared HTTP client (tp-api-client). The client
+    // OWNS auth: session-snapshot cookie → bearer (cached), a one-time forced refresh on
+    // 401/403, transient 408/429/5xx backoff — no Playwright, no persistent-profile lock.
+    // This wrapper only maps the client's result/errors into the ApiJsonResponse the scan
+    // already expects:
+    //  - success → {status, ok, body};
+    //  - TpApiAuthError (snapshot cookie itself dead) → AuthDeadError → run abort + alert;
+    //  - TpApiHttpError (e.g. a permanently-403 athlete) → {status, ok:false} so ONLY that
+    //    student is marked failed and the loop continues (never aborts the run).
+    async function fetchViaApiClient(endpoint: string): Promise<ApiJsonResponse> {
+      const apiPath = endpoint.startsWith(TP_API_HOST) ? endpoint.slice(TP_API_HOST.length) : endpoint;
+      try {
+        const { status, body } = await getTpApiJsonRaw("tpapi", apiPath);
+        return { status, ok: status === 200, body } as ApiJsonResponse;
+      } catch (error) {
+        if (error instanceof TpApiAuthError) throw new AuthDeadError(error.message);
+        if (error instanceof TpApiHttpError) return { status: error.status, ok: false, body: error.body } as ApiJsonResponse;
+        throw error;
       }
-      auth = await captureSessionAuth({
-        context,
-        page,
-        athleteId: authAthlete,
-      });
-    } catch (error) {
-      throw new Error(`Failed to capture TrainingPeaks auth/session: ${(error as Error).message}`);
     }
 
-    if (!auth.sampleRequestUrl && !auth.authorizationHeader) {
-      throw new Error("Failed to capture TrainingPeaks auth/session (no API session context observed).");
-    }
-
-    // Mutable auth state: the token is rotated for the rest of the run when a
-    // 401/403 forces a re-capture, so one expired token no longer kills the
-    // whole run.
-    const authState = { headers: buildAuthHeaders(auth) };
-    const warmupAthleteId = targets[0]!.athleteId;
-
-    // Re-capture the session token in place. Returns false if the session is
-    // dead (no authorization header recoverable).
-    async function reCapture(): Promise<boolean> {
-      const fresh = await captureSessionAuth({ context, page, athleteId: warmupAthleteId });
-      if (!fresh.authorizationHeader) {
-        return false;
-      }
-      authState.headers = buildAuthHeaders(fresh);
-      return true;
-    }
-
-    // Request wrapper with auth resilience:
-    //  - 200 → return.
-    //  - 401 (token expired, session-wide) → re-capture + rotate token for the
-    //    rest of the run, then retry. Throws AuthDeadError if unrecoverable.
-    //  - 403 (forbidden for THIS athlete — not a session problem; some athletes
-    //    are permanently 403) → throw immediately so the caller marks just that
-    //    student failed and continues. Never re-capture or abort on 403.
-    //  - network / 5xx → up to 3 backoff retries.
-    async function fetchWithAuth(endpoint: string): Promise<ApiJsonResponse> {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const res = await performApiJsonRequest({
-          page,
-          method: "GET",
-          endpoint,
-          headers: authState.headers,
-        });
-        if (res.status === 200) {
-          return res;
-        }
-        if (res.status === 403) {
-          throw new Error(`TrainingPeaks workouts GET forbidden (403) for ${endpoint}`);
-        }
-        if (res.status === 401) {
-          const recovered = await reCapture();
-          if (!recovered) {
-            throw new AuthDeadError();
-          }
-          continue; // retry the same request with the rotated token
-        }
-        // network / 5xx — back off and retry
-        await sleep(500 * (attempt + 1));
-      }
-      throw new Error(`TrainingPeaks request failed after retries: ${endpoint}`);
-    }
-
-    // Probe once before the loop: a session-wide 401 means the token is dead —
-    // abort the whole run and alert instead of hammering every student. Only 401
-    // counts as session death; a 403 here would be athlete-specific, so we let
-    // the per-student loop handle it rather than aborting.
+    // Probe once before the loop: a dead session-snapshot cookie → alert + abort instead
+    // of hammering all ~110. Only TpApiAuthError (the cookie itself is dead) counts as
+    // session death; a per-athlete 403 on the first student is athlete-specific, so we
+    // swallow non-auth probe errors and let the per-student loop handle them.
     {
-      const probeEndpoint = `${TP_API_HOST}/fitness/v6/athletes/${warmupAthleteId}/workouts/${args.from}/${args.from}`;
-      let probe = await performApiJsonRequest({
-        page,
-        method: "GET",
-        endpoint: probeEndpoint,
-        headers: authState.headers,
-      });
-      if (probe.status === 401) {
-        const recovered = await reCapture();
-        if (recovered) {
-          probe = await performApiJsonRequest({
-            page,
-            method: "GET",
-            endpoint: probeEndpoint,
-            headers: authState.headers,
-          });
-        }
-        if (!recovered || probe.status === 401) {
+      const warmupAthleteId = targets[0]!.athleteId;
+      try {
+        await getTpApiJsonRaw("tpapi", `/fitness/v6/athletes/${warmupAthleteId}/workouts/${args.from}/${args.from}`);
+      } catch (error) {
+        if (error instanceof TpApiAuthError) {
           await sendSessionDeadAlert();
           throw new Error(
-            "TrainingPeaks session dead: aborting scan run (manual re-login needed in persistent profile).",
+            "TrainingPeaks session dead: aborting scan run (run tp-refresh-session-snapshot / tp-login).",
           );
         }
+        // non-auth probe error (first athlete 403 / transient) — ignore; loop handles per-student.
       }
     }
 
@@ -872,7 +780,7 @@ async function main(): Promise<void> {
         const studentSummary = await scanOneStudent({
           upsertCacheFn,
           reconcileFn,
-          fetchFn: fetchWithAuth,
+          fetchFn: fetchViaApiClient,
           target,
           from: args.from,
           to: args.to,
@@ -964,7 +872,7 @@ async function main(): Promise<void> {
       throw new Error("Single-student scan failed.");
     }
   } finally {
-    await context.close().catch(() => {});
+    // fetch-client path holds no browser / persistent profile to release.
   }
 }
 
