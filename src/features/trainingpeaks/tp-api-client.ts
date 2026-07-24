@@ -530,6 +530,35 @@ export async function getEvents(athleteId: number, startIso: string, endIso: str
   return assertRecordArray(body, endpoint);
 }
 
+// ─── athlete settings (zones + thresholds live here) ─────────────────────────────
+
+/**
+ * Full athlete settings object from GET /fitness/v1/athletes/{id}/settings. Read-only.
+ * This is where zones and thresholds (FTP / LTHR / threshold pace) live; the zone
+ * snapshot pass and any future zone tooling read from here. Throws TpApiHttpError on
+ * non-2xx and TpApiSchemaError if the body is not a JSON object.
+ */
+export async function getAthleteSettings(athleteId: number): Promise<Record<string, unknown>> {
+  const endpoint = `/fitness/v1/athletes/${athleteId}/settings`;
+  const body = await getJsonOrThrow(`${TP_API_HOST}${endpoint}`);
+  return assertRecord(body, endpoint);
+}
+
+/**
+ * Read-only raw GET for a tpapi/peakswaresb path that isn't (yet) worth a typed
+ * wrapper — exploration/verification only. Returns { status, body } WITHOUT throwing
+ * on non-2xx, so a caller can report a 404/405 as a finding rather than crash. GET
+ * only: there is no method parameter, so this can never mutate. Rides the same
+ * snapshot-cookie → bearer → retry plumbing as every typed read above.
+ */
+export async function getTpApiJsonRaw(
+  host: "tpapi" | "strength",
+  apiPath: string,
+): Promise<{ status: number; body: unknown }> {
+  const base = host === "tpapi" ? TP_API_HOST : TP_STRENGTH_HOST;
+  return fetchJsonWithRetry(`${base}${apiPath}`, { method: "GET" });
+}
+
 // ─── strength (peakswaresb host, same bearer) ──────────────────────────────────
 
 export async function getStrengthWorkout(strengthWorkoutId: number | string): Promise<Record<string, unknown>> {

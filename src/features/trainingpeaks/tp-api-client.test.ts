@@ -9,6 +9,7 @@ import {
   createStrengthWorkout,
   createWorkout,
   deleteWorkout,
+  getAthleteSettings,
   getCoachedAthletesRoster,
   getHealthMetrics,
   getWorkoutsByDateRange,
@@ -476,5 +477,85 @@ describe("getCoachedAthletesRoster (mocked network)", () => {
     });
 
     await assert.rejects(() => getCoachedAthletesRoster(), TpApiSchemaError);
+  });
+});
+
+// ─── getAthleteSettings ─────────────────────────────────────────────────────
+
+describe("getAthleteSettings (mocked network)", () => {
+  let tmpDir: string;
+  let snapshotPath: string;
+  let originalFetch: typeof fetch;
+
+  before(async () => {
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), "tp-api-client-settings-test-"));
+    snapshotPath = path.join(tmpDir, "session-snapshot.json");
+    await writeFile(
+      snapshotPath,
+      JSON.stringify({
+        version: 1,
+        cookieValue: "test-cookie-value",
+        cookieExpiresAtMs: Date.now() + 30 * 24 * 60 * 60 * 1000,
+        capturedAtMs: Date.now(),
+        source: "playwright-profile",
+      }),
+    );
+    __setSessionSnapshotPathForTests(snapshotPath);
+  });
+
+  after(async () => {
+    __setSessionSnapshotPathForTests(undefined);
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    resetTpApiClientAuthCacheForTests();
+  });
+
+  function mockFetchSequence(responder: (url: string) => { status: number; body: unknown }) {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const { status, body } = responder(url);
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+  }
+
+  test("hits /fitness/v1/athletes/{id}/settings and returns the settings object", async () => {
+    let settingsUrl = "";
+    mockFetchSequence((url) => {
+      if (url.includes("/users/v3/token")) {
+        return { status: 200, body: { success: true, token: { access_token: "abc", expires_in: 3600 } } };
+      }
+      settingsUrl = url;
+      return { status: 200, body: { athleteId: 42, heartRateZones: [], powerZones: [] } };
+    });
+
+    const settings = await getAthleteSettings(42);
+    assert.ok(settingsUrl.endsWith("/fitness/v1/athletes/42/settings"));
+    assert.equal(settings.athleteId, 42);
+  });
+
+  test("non-2xx throws TpApiHttpError", async () => {
+    mockFetchSequence((url) => {
+      if (url.includes("/users/v3/token")) {
+        return { status: 200, body: { success: true, token: { access_token: "abc", expires_in: 3600 } } };
+      }
+      return { status: 404, body: "not found" };
+    });
+
+    await assert.rejects(() => getAthleteSettings(42), TpApiHttpError);
+  });
+
+  test("a non-object body throws TpApiSchemaError", async () => {
+    mockFetchSequence((url) => {
+      if (url.includes("/users/v3/token")) {
+        return { status: 200, body: { success: true, token: { access_token: "abc", expires_in: 3600 } } };
+      }
+      return { status: 200, body: [1, 2, 3] };
+    });
+
+    await assert.rejects(() => getAthleteSettings(42), TpApiSchemaError);
   });
 });
