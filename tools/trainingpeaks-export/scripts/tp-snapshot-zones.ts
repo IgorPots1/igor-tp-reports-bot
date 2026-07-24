@@ -34,6 +34,7 @@ import process from "node:process";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { parseAthleteIdFromUrl } from "../../../src/features/trainingpeaks/athlete-roster-import.ts";
 import {
   getAthleteSettings,
   getCoachedAthletesRoster,
@@ -151,15 +152,18 @@ async function main(): Promise<void> {
   }
 
   // athlete_id → student uuid (optional linkage; never used to print names).
+  // trainingpeaks_students has NO numeric athlete_id column — the id lives inside
+  // trainingpeaks_athlete_url, parsed via the canonical parseAthleteIdFromUrl().
   const studentIdByAthlete = new Map<number, string>();
   {
     const { data, error } = await supabase
       .from("trainingpeaks_students")
-      .select("id, trainingpeaks_athlete_id");
+      .select("id, trainingpeaks_athlete_url");
     if (error) throw new Error(`Failed to read roster mapping: ${error.message}`);
     for (const row of data ?? []) {
-      const aid = Number(row.trainingpeaks_athlete_id);
-      if (Number.isInteger(aid) && aid > 0 && typeof row.id === "string") studentIdByAthlete.set(aid, row.id);
+      const url = typeof row.trainingpeaks_athlete_url === "string" ? row.trainingpeaks_athlete_url : null;
+      const aid = url ? parseAthleteIdFromUrl(url) : null;
+      if (aid !== null && aid > 0 && typeof row.id === "string") studentIdByAthlete.set(aid, row.id);
     }
   }
 
