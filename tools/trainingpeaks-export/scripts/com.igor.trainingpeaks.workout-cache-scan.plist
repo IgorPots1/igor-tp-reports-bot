@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Быстрый скан каждые 3 часа, окно [-10 … +10]. Кладётся в ~/Library/LaunchAgents/ -->
+<!-- Быстрый скан КАЖДЫЙ ЧАС (на :00), окно [-10 … +10]. Кладётся в ~/Library/LaunchAgents/.
+     Учащение безопасно: скан ушёл с браузерного профиля на fetch-клиент (ЭТАП 2), лока
+     профиля больше нет, с move/races-лупами не дерётся. fit-ingest идёт следом на :05. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -17,17 +19,10 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- каждые 3 часа: 07,10,13,16,19,22 локального времени.
-       Пропущенные во время сна прогоны launchd докручивает при пробуждении. -->
+  <!-- КАЖДЫЙ ЧАС на :00 (Minute без Hour = каждый час). Полный обход ~26с на новом
+       fetch-пути. Пропущенные во сне прогоны launchd докручивает при пробуждении. -->
   <key>StartCalendarInterval</key>
-  <array>
-    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
-    <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>0</integer></dict>
-  </array>
+  <dict><key>Minute</key><integer>0</integer></dict>
 
   <key>StandardOutPath</key>
   <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/workout-cache-scan.launchd.out.log</string>

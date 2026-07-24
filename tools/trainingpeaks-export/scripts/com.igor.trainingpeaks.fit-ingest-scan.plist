@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- FIT-ingest scan + feedback-enqueue — считает derived_metrics ИЗ скачанного кэша
      и СРАЗУ САМ кладёт новые тренировки в «Новые» (enqueue на маке, ноль кронов Vercel).
-     Идёт СЛЕДОМ за workout-cache-scan (те же часы, но на :40, чтобы cache-scan успел
-     скачать). Окно последних 5 дней. Кладётся в ~/Library/LaunchAgents/. Ставит Игорь:
+     Идёт СЛЕДОМ за workout-cache-scan (КАЖДЫЙ ЧАС на :05, cache-scan на :00 — новому
+     fetch-пути хватает ~26с). Окно последних 5 дней. Кладётся в ~/Library/LaunchAgents/. Ставит Игорь:
        cp .../com.igor.trainingpeaks.fit-ingest-scan.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.fit-ingest-scan.plist -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -22,18 +22,11 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- каждые 3 часа на :40 — на 40 мин ПОЗЖЕ cache-scan (07:00,10:00,…), чтобы
-       тренировки уже были в кэше, когда считаем из них метрики.
+  <!-- КАЖДЫЙ ЧАС на :05 — на 5 мин ПОЗЖЕ cache-scan (:00), чтобы тренировки уже были в
+       кэше, когда считаем из них метрики (Minute без Hour = каждый час).
        Пропущенные во сне прогоны launchd докручивает при пробуждении. -->
   <key>StartCalendarInterval</key>
-  <array>
-    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>40</integer></dict>
-    <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>40</integer></dict>
-    <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>40</integer></dict>
-    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>40</integer></dict>
-    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>40</integer></dict>
-    <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>40</integer></dict>
-  </array>
+  <dict><key>Minute</key><integer>5</integer></dict>
 
   <key>StandardOutPath</key>
   <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/fit-ingest-scan.launchd.out.log</string>
