@@ -1,10 +1,11 @@
 import type { NextRequest } from "next/server";
 
 import { resolveMiniAppCoach } from "@/features/telegram/miniapp-coach-resolver";
-import { listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
+import { countTrainingPeaksStudentThreadsByStudentIds, listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
 import { listTrainingPeaksFeedbackJobs } from "@/features/trainingpeaks/feedback/feedback-queue";
 import { isFeedbackSendEnabled } from "@/features/trainingpeaks/feedback/feedback-send";
 import { buildReportsView } from "@/features/trainingpeaks/feedback/feedback-review-view";
+import { getActiveFeedbackGeneratorBackend } from "@/features/trainingpeaks/feedback/feedback-backend-mode";
 
 export const runtime = "nodejs";
 
@@ -35,15 +36,35 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    // Both plain Supabase reads — no TrainingPeaks/Mac call. Jobs arrive newest-first;
-    // student rows give each card a name + chat-tap username.
-    const [jobs, students] = await Promise.all([
-      listTrainingPeaksFeedbackJobs({ status: ["done", "blocked", "failed", "sent", "dismissed"], limit: 100 }),
+    // Plain Supabase reads — no TrainingPeaks/Mac call. «Новые» (pending/generating) now
+    // surface too, so Igor sees the list before generating; shared is a history state.
+    const [jobs, students, backend] = await Promise.all([
+      listTrainingPeaksFeedbackJobs({
+        status: ["pending", "generating", "done", "blocked", "failed", "sent", "shared", "dismissed"],
+        limit: 200,
+      }),
       listTrainingPeaksStudents(),
+      getActiveFeedbackGeneratorBackend(),
     ]);
-    const byId = new Map(students.map((s) => [s.id, { name: s.studentName, telegramUsername: s.telegramUsername ?? null }]));
+    // Which students have a linked group/topic → share-only channel (Business API can't
+    // post to groups). Only the students who actually appear in the jobs are counted.
+    const jobStudentIds = Array.from(new Set(jobs.map((j) => j.studentId)));
+    const threadCounts = await countTrainingPeaksStudentThreadsByStudentIds(jobStudentIds);
+    const byId = new Map(
+      students.map((s) => [
+        s.id,
+        {
+          name: s.studentName,
+          telegramUsername: s.telegramUsername ?? null,
+          // DM-reachable = chat linked AND delivery enabled (mirrors the send gates).
+          dmCapable: Boolean(s.telegramChatId) && s.telegramDeliveryEnabled,
+          hasGroupThread: (threadCounts.get(s.id) ?? 0) > 0,
+        },
+      ])
+    );
     const view = buildReportsView(jobs, (id) => byId.get(id), isFeedbackSendEnabled());
-    return jsonResponse(200, { ok: true, view });
+    // Merge the active backend into the view so the client's toggle reflects it.
+    return jsonResponse(200, { ok: true, view: { ...view, backend } });
   } catch (error) {
     console.error("[miniapp.desk.reports.list] failed", {
       error: error instanceof Error ? error.message : String(error),

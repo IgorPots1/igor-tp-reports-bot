@@ -20,22 +20,31 @@ export type ReportCardModel = {
   workoutDate: string | null;
   dateLabel: string;
   sessionTypeLabel: string;
-  status: "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "dismissed";
+  status: "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "shared" | "dismissed";
   draftText: string | null;
   coachEdited: boolean;
   transparency: ReportTransparencyItem[];
   attentionReason: string | null;
+  significanceBadge: "разбор" | "прогресс" | "чисто" | null;
+  channel: "dm" | "group" | "none";
+  mention: string | null;
 };
 export type ReportsView = {
+  queue: ReportCardModel[];
   review: ReportCardModel[];
   attention: ReportCardModel[];
   history: ReportCardModel[];
   sendEnabled: boolean;
-  counts: { review: number; attention: number; history: number };
+  backend: "api" | "cowork";
+  counts: { queue: number; review: number; attention: number; history: number };
 };
 
-export type ReportBusy = { id: string; op: "send" | "dismiss" | "save" } | null;
+export type ReportBusy = { id: string; op: "send" | "dismiss" | "save" | "generate" } | null;
 export type ReportToasts = Record<string, { ok: boolean; text: string }>;
+
+// UI mirror of the server's MAX_BATCH (feedback-generate.ts). Kept local so this client
+// component doesn't import the server generation module (and its Supabase deps).
+const MAX_BATCH_UI = 10;
 
 // Force-light palette (self-contained; a dark phone must not wash out the desk).
 const C = {
@@ -79,6 +88,22 @@ const R = {
   attnNote: { margin: "8px 0 0", fontSize: 12.5, fontWeight: 600, color: C.faint, lineHeight: 1.4 } as CSSProperties,
   histRow: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "10px 16px", margin: "0 14px", borderBottom: `1px solid ${C.line}` } as CSSProperties,
   histName: { fontSize: 14, fontWeight: 600, color: C.sub } as CSSProperties,
+  // «Новые» (queue) — a card WITHOUT draft text: name/date/type + "суть" + generate/skip.
+  essence: { margin: "9px 0 2px", fontSize: 13.5, fontWeight: 500, color: C.sub, lineHeight: 1.45 } as CSSProperties,
+  queueActions: { display: "flex", gap: 9, marginTop: 12 } as CSSProperties,
+  gen: { flex: 1, padding: "12px 0", borderRadius: 12, border: "none", background: C.teal, color: "#fff", fontFamily: "inherit", fontSize: 14.5, fontWeight: 800, cursor: "pointer" } as CSSProperties,
+  genGhost: { flex: "0 0 auto", padding: "12px 16px", borderRadius: 12, border: `1px solid ${C.line}`, background: "#fff", color: C.faint, fontFamily: "inherit", fontSize: 14.5, fontWeight: 700, cursor: "pointer" } as CSSProperties,
+  controlBar: { display: "flex", flexWrap: "wrap", gap: 8, padding: "4px 14px 10px" } as CSSProperties,
+  controlBtn: { flex: "1 1 auto", padding: "10px 12px", borderRadius: 11, border: `1px solid ${C.line}`, background: "#fff", color: C.sub, fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" } as CSSProperties,
+  modeRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 18px 6px" } as CSSProperties,
+  modeLabel: { fontSize: 12, fontWeight: 700, color: C.faint } as CSSProperties,
+  modeChip: (api: boolean): CSSProperties => ({ padding: "5px 11px", borderRadius: 999, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, background: api ? "#e7f5ee" : "#f0efec", color: api ? "#1D7A54" : "#8a8577" }),
+};
+
+const SIG_BADGE: Record<NonNullable<ReportCardModel["significanceBadge"]>, { bg: string; fg: string }> = {
+  "разбор": { bg: "#fbf0dd", fg: "#8a6a2f" },
+  "прогресс": { bg: "#e9f6e6", fg: "#3f7a2f" },
+  "чисто": { bg: "#eef3f1", fg: "#5b6f69" },
 };
 
 function sendButtonStyle(on: boolean): CSSProperties {
@@ -147,6 +172,55 @@ function Transparency(props: { items: ReportTransparencyItem[] }) {
   );
 }
 
+// Compact "суть" for a card WITHOUT a draft: the first couple of transparency lines
+// (skip the coach-only signal), so Igor sees what there is to discuss before generating.
+function essenceOf(items: ReportTransparencyItem[]): string {
+  const texts = items.filter((i) => i.kind !== "signal").map((i) => i.text);
+  return texts.slice(0, 2).join(" · ");
+}
+
+function SigBadge(props: { badge: ReportCardModel["significanceBadge"] }) {
+  if (!props.badge) return null;
+  const c = SIG_BADGE[props.badge];
+  return <span style={tagStyle(c.bg, c.fg)}>{props.badge}</span>;
+}
+
+// «Новые» card: no draft text yet. Igor decides per workout — «Сгенерить» (spend a paid
+// API draft) or «Убрать» (he'll answer by hand). A signal-only coach note stays for context.
+export function ReportQueueCard(props: {
+  card: ReportCardModel;
+  busy: ReportBusy;
+  toast: { ok: boolean; text: string } | undefined;
+  onGenerate: (card: ReportCardModel) => void;
+  onDismiss: (card: ReportCardModel, from: "queue") => void;
+}) {
+  const c = props.card;
+  const busyHere = props.busy?.id === c.id ? props.busy.op : null;
+  const generating = c.status === "generating" || busyHere === "generate";
+  const essence = essenceOf(c.transparency);
+  return (
+    <div style={R.card}>
+      <div style={R.top}>
+        <span style={R.nameRow}>
+          <span style={R.name}>{c.studentName}</span>
+          <SigBadge badge={c.significanceBadge} />
+        </span>
+        <span style={R.meta}>{[c.dateLabel, c.sessionTypeLabel].filter(Boolean).join(" · ")}</span>
+      </div>
+      {essence ? <p style={R.essence}>{essence}</p> : null}
+      <div style={R.queueActions}>
+        <button type="button" style={R.gen} disabled={generating} onClick={() => props.onGenerate(c)}>
+          {generating ? "Генерирую…" : "Сгенерить"}
+        </button>
+        <button type="button" style={R.genGhost} disabled={busyHere === "dismiss" || generating} onClick={() => props.onDismiss(c, "queue")}>
+          Убрать
+        </button>
+      </div>
+      {props.toast ? <p style={toastStyle(props.toast.ok)}>{props.toast.text}</p> : null}
+    </div>
+  );
+}
+
 export function ReportReviewCard(props: {
   card: ReportCardModel;
   sendEnabled: boolean;
@@ -159,6 +233,7 @@ export function ReportReviewCard(props: {
   onSaveEdit: (card: ReportCardModel) => void;
   onCancelEdit: () => void;
   onSend: (card: ReportCardModel) => void;
+  onShare: (card: ReportCardModel) => void;
   onDismiss: (card: ReportCardModel, from: "review" | "attention") => void;
 }) {
   const c = props.card;
@@ -190,14 +265,30 @@ export function ReportReviewCard(props: {
           <p style={R.draft}>{c.draftText}</p>
           <Transparency items={c.transparency} />
           <div style={R.actions}>
-            <button
-              type="button"
-              style={sendButtonStyle(props.sendEnabled)}
-              disabled={busyHere === "send"}
-              onClick={() => props.onSend(c)}
-            >
-              {busyHere === "send" ? "…" : "Отправить"}
-            </button>
+            {c.channel === "group" ? (
+              // Group: Business API can't post there — Igor shares from his own account.
+              <button
+                type="button"
+                style={sendButtonStyle(props.sendEnabled)}
+                disabled={busyHere === "send"}
+                onClick={() => props.onShare(c)}
+              >
+                {busyHere === "send" ? "…" : "Отправить в чат"}
+              </button>
+            ) : c.channel === "dm" ? (
+              <button
+                type="button"
+                style={sendButtonStyle(props.sendEnabled)}
+                disabled={busyHere === "send"}
+                onClick={() => props.onSend(c)}
+              >
+                {busyHere === "send" ? "…" : "Отправить"}
+              </button>
+            ) : (
+              <button type="button" style={{ ...sendButtonStyle(false), cursor: "default", opacity: 0.6 }} disabled>
+                Нет канала
+              </button>
+            )}
             <button type="button" style={R.edit} onClick={() => props.onStartEdit(c)}>
               Править
             </button>
@@ -210,7 +301,16 @@ export function ReportReviewCard(props: {
               Пропустить
             </button>
           </div>
-          {!props.sendEnabled ? <p style={R.prepHint}>отправка выключена — кнопка готовит, но не шлёт (prepare-only)</p> : null}
+          {c.channel === "group" ? (
+            <p style={R.prepHint}>
+              группа — уйдёт с твоего аккаунта через шаринг{c.mention ? `, с упоминанием ${c.mention}` : ""}
+              {props.sendEnabled ? "" : " · пока prepare-only, статус не меняется"}
+            </p>
+          ) : c.channel === "none" ? (
+            <p style={R.prepHint}>у ученика нет привязанного чата — отправить нельзя</p>
+          ) : !props.sendEnabled ? (
+            <p style={R.prepHint}>отправка выключена — кнопка готовит, но не шлёт (prepare-only)</p>
+          ) : null}
         </>
       )}
 
@@ -259,7 +359,12 @@ export function ReportsTab(props: {
   onSaveEdit: (card: ReportCardModel) => void;
   onCancelEdit: () => void;
   onSend: (card: ReportCardModel) => void;
-  onDismiss: (card: ReportCardModel, from: "review" | "attention") => void;
+  onShare: (card: ReportCardModel) => void;
+  onGenerate: (card: ReportCardModel) => void;
+  onGenerateBatch: () => void;
+  onBulkDismissOld: () => void;
+  onToggleMode: () => void;
+  onDismiss: (card: ReportCardModel, from: "review" | "attention" | "queue") => void;
 }) {
   if (props.status === "loading" || props.status === "idle") {
     return <div style={R.bigEmpty}>Загружаю…</div>;
@@ -268,12 +373,45 @@ export function ReportsTab(props: {
     return <div style={R.bigEmpty}>Не удалось загрузить отчёты.</div>;
   }
   const v = props.view;
-  if (v.review.length === 0 && v.attention.length === 0 && v.history.length === 0) {
-    return <div style={R.bigEmpty}>Черновиков пока нет.<br />Появятся, когда движок разберёт свежие тренировки.</div>;
+  const batchBusy = props.busy?.op === "generate";
+  if (v.queue.length === 0 && v.review.length === 0 && v.attention.length === 0 && v.history.length === 0) {
+    return <div style={R.bigEmpty}>Тренировок пока нет.<br />Появятся здесь после ночного разбора — по каждой решишь, генерить ответ или ответить самому.</div>;
   }
 
   return (
     <>
+      {/* Backend toggle (coach-only): who writes the draft — paid API or Cowork subscription. */}
+      <div style={R.modeRow}>
+        <span style={R.modeLabel}>Генератор</span>
+        <button type="button" style={R.modeChip(v.backend === "api")} onClick={props.onToggleMode}>
+          {v.backend === "api" ? "API" : "Cowork"} · сменить
+        </button>
+      </div>
+
+      {v.queue.length > 0 ? (
+        <>
+          <p style={R.groupLabel}>Новые · {v.queue.length}</p>
+          <div style={R.controlBar}>
+            <button type="button" style={R.controlBtn} disabled={batchBusy} onClick={props.onGenerateBatch}>
+              {batchBusy ? "Генерирую…" : `Сгенерить свежие (до ${MAX_BATCH_UI})`}
+            </button>
+            <button type="button" style={R.controlBtn} onClick={props.onBulkDismissOld}>
+              Убрать старше 3 дней
+            </button>
+          </div>
+          {v.queue.map((card) => (
+            <ReportQueueCard
+              key={card.id}
+              card={card}
+              busy={props.busy}
+              toast={props.toast[card.id]}
+              onGenerate={props.onGenerate}
+              onDismiss={props.onDismiss}
+            />
+          ))}
+        </>
+      ) : null}
+
       {v.review.length > 0 ? (
         <>
           <p style={R.groupLabel}>Готовы к отправке · {v.review.length}</p>
@@ -291,6 +429,7 @@ export function ReportsTab(props: {
               onSaveEdit={props.onSaveEdit}
               onCancelEdit={props.onCancelEdit}
               onSend={props.onSend}
+              onShare={props.onShare}
               onDismiss={props.onDismiss}
             />
           ))}
@@ -312,8 +451,8 @@ export function ReportsTab(props: {
           {v.history.map((card) => (
             <div key={card.id} style={R.histRow}>
               <span style={R.histName}>{card.studentName}</span>
-              <span style={{ flex: "0 0 auto", fontSize: 12, fontWeight: 700, color: card.status === "sent" ? C.teal : C.faint }}>
-                {card.status === "sent" ? "отправлено ✓" : "пропущено"}
+              <span style={{ flex: "0 0 auto", fontSize: 12, fontWeight: 700, color: card.status === "sent" ? C.teal : card.status === "shared" ? C.warn : C.faint }}>
+                {card.status === "sent" ? "отправлено ✓" : card.status === "shared" ? "передано в чат" : "пропущено"}
               </span>
             </div>
           ))}

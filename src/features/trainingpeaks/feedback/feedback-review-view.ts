@@ -5,9 +5,17 @@
 // glossed into human words. Never invents; only maps stored fields.
 
 import { GLOSS } from "./feedback-corpus.ts";
+import { scoreFeedbackSignificance, type FeedbackSignificanceBadge } from "./feedback-significance.ts";
 import type { AdviceKey } from "./advice-keys.ts";
 import type { FeedbackContextPacket } from "./context-packet.ts";
 import type { FeedbackJobStatus, TrainingPeaksFeedbackJob } from "./feedback-queue.ts";
+
+// How Igor can reach this student, decided from their Telegram wiring:
+//   dm    → 1:1 Business DM — the bot can deliver server-side (auto-send path).
+//   group → only a linked group/topic — Business API can't post there; Igor shares
+//           it from his own account via the client, so it's marked 'shared' not 'sent'.
+//   none  → no reachable channel — nothing to send.
+export type ReportChannel = "dm" | "group" | "none";
 
 // A line in the "почему так" panel. `kind` drives the coloured tag in the UI.
 export type ReportTransparencyItem = {
@@ -29,17 +37,35 @@ export type ReportCardView = {
   transparency: ReportTransparencyItem[];
   // blocked/failed only — the coach-facing "разберись" reason; no student text.
   attentionReason: string | null;
+  // «Новые» (pending/generating) only — how much there is to discuss, for sorting +
+  // a card badge. null for already-generated cards.
+  significanceBadge: FeedbackSignificanceBadge | null;
+  // How Igor sends this one (drives which button shows on a 'done' card).
+  channel: ReportChannel;
+  // Group share prefix so the student gets a mention notification ('@username' when
+  // known, else the plain name). null for dm/none.
+  mention: string | null;
 };
 
 export type ReportsView = {
+  queue: ReportCardView[]; // 'pending' + 'generating' — cards WITHOUT text, awaiting Igor's «Сгенерить»
   review: ReportCardView[]; // status 'done' — actionable (send / edit / skip)
   attention: ReportCardView[]; // 'blocked' + 'failed' — coach signal, no student draft
-  history: ReportCardView[]; // 'sent' + 'dismissed' — badge only
+  history: ReportCardView[]; // 'sent' + 'shared' + 'dismissed' — badge only
   sendEnabled: boolean; // FEEDBACK_SEND_ENABLED — false ⇒ Send is prepare-only
-  counts: { review: number; attention: number; history: number };
+  counts: { queue: number; review: number; attention: number; history: number };
 };
 
-export type StudentLookup = (studentId: string) => { name: string; telegramUsername: string | null } | undefined;
+export type StudentChannelInfo = {
+  name: string;
+  telegramUsername: string | null;
+  // 1:1 Business DM reachable (chat linked + delivery on) — server can auto-send.
+  dmCapable?: boolean;
+  // A linked group/topic exists — share-only channel.
+  hasGroupThread?: boolean;
+};
+
+export type StudentLookup = (studentId: string) => StudentChannelInfo | undefined;
 
 const RU_MONTHS = [
   "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -115,10 +141,36 @@ function buildTransparency(packet: FeedbackContextPacket | undefined): ReportTra
   return items;
 }
 
-export function buildReportCardView(job: TrainingPeaksFeedbackJob, studentName: string, telegramUsername: string | null): ReportCardView {
+// Decide the send channel + mention from the student's Telegram wiring. DM wins when
+// available (server can deliver); otherwise a group thread means share-only.
+function resolveChannel(opts: { dmCapable?: boolean; hasGroupThread?: boolean; telegramUsername: string | null; studentName: string }): {
+  channel: ReportChannel;
+  mention: string | null;
+} {
+  if (opts.dmCapable) return { channel: "dm", mention: null };
+  if (opts.hasGroupThread) {
+    const mention = opts.telegramUsername ? `@${opts.telegramUsername.replace(/^@/u, "")}` : opts.studentName;
+    return { channel: "group", mention };
+  }
+  return { channel: "none", mention: null };
+}
+
+export function buildReportCardView(
+  job: TrainingPeaksFeedbackJob,
+  studentName: string,
+  telegramUsername: string | null,
+  opts?: { dmCapable?: boolean; hasGroupThread?: boolean }
+): ReportCardView {
   const packet = job.contextPacket as FeedbackContextPacket | undefined;
   const workoutDate = packet?.workoutDate ?? null;
   const isAttention = job.status === "blocked" || job.status === "failed";
+  const isQueue = job.status === "pending" || job.status === "generating";
+  const { channel, mention } = resolveChannel({
+    dmCapable: opts?.dmCapable,
+    hasGroupThread: opts?.hasGroupThread,
+    telegramUsername,
+    studentName,
+  });
   return {
     id: job.id,
     studentName,
@@ -129,13 +181,19 @@ export function buildReportCardView(job: TrainingPeaksFeedbackJob, studentName: 
     status: job.status,
     draftText: job.coachEditedText ?? job.draftText,
     coachEdited: job.coachEditedText !== null,
+    // Queue cards show the "суть" (transparency) too — it's the only thing on a
+    // card without a draft; attention cards stay text-free (coach signal only).
     transparency: isAttention ? [] : buildTransparency(packet),
     attentionReason: isAttention ? (job.blockedReason ?? job.errorReason ?? "нужно разобраться") : null,
+    significanceBadge: isQueue ? scoreFeedbackSignificance(packet).badge : null,
+    channel,
+    mention,
   };
 }
 
+const QUEUE_STATUSES = new Set<FeedbackJobStatus>(["pending", "generating"]);
 const ATTENTION_STATUSES = new Set<FeedbackJobStatus>(["blocked", "failed"]);
-const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "dismissed"]);
+const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "shared", "dismissed"]);
 
 /**
  * Group jobs into the three tab sections. `jobs` should arrive newest-first (the
@@ -144,24 +202,36 @@ const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "dismissed"]);
  * being dropped — the coach still sees the signal.
  */
 export function buildReportsView(jobs: TrainingPeaksFeedbackJob[], lookup: StudentLookup, sendEnabled: boolean): ReportsView {
+  const queue: Array<{ card: ReportCardView; score: number; date: string }> = [];
   const review: ReportCardView[] = [];
   const attention: ReportCardView[] = [];
   const history: ReportCardView[] = [];
 
   for (const job of jobs) {
     const student = lookup(job.studentId);
-    const card = buildReportCardView(job, student?.name ?? "Ученик", student?.telegramUsername ?? null);
-    if (job.status === "done") review.push(card);
+    const card = buildReportCardView(job, student?.name ?? "Ученик", student?.telegramUsername ?? null, {
+      dmCapable: student?.dmCapable,
+      hasGroupThread: student?.hasGroupThread,
+    });
+    if (QUEUE_STATUSES.has(job.status)) {
+      const packet = job.contextPacket as FeedbackContextPacket | undefined;
+      queue.push({ card, score: scoreFeedbackSignificance(packet).score, date: packet?.workoutDate ?? "" });
+    } else if (job.status === "done") review.push(card);
     else if (ATTENTION_STATUSES.has(job.status)) attention.push(card);
     else if (HISTORY_STATUSES.has(job.status)) history.push(card);
-    // pending/generating are in-flight — not shown in the review surface.
   }
 
+  // «Новые»: most to discuss on top; ties broken by freshest workout — so the eye
+  // lands on the workouts that actually need a reply, not merely the newest.
+  queue.sort((a, b) => b.score - a.score || b.date.localeCompare(a.date));
+  const queueCards = queue.map((q) => q.card);
+
   return {
+    queue: queueCards,
     review,
     attention,
     history,
     sendEnabled,
-    counts: { review: review.length, attention: attention.length, history: history.length },
+    counts: { queue: queueCards.length, review: review.length, attention: attention.length, history: history.length },
   };
 }

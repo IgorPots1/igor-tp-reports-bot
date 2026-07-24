@@ -14,9 +14,14 @@ import type { FeedbackGeneratorBackend } from "@/features/trainingpeaks/feedback
 
 const TABLE = "trainingpeaks_workout_feedback_jobs";
 
-// pending/generating/done/failed/blocked come from the bridge (part 1). sent/dismissed
-// are the review terminal states the Mini App writes (draft sent to student / skipped).
-export type FeedbackJobStatus = "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "dismissed";
+// pending/generating/done/failed/blocked come from the bridge (part 1). sent/shared/
+// dismissed are the review terminal states the Mini App writes:
+//   sent    — delivered to a 1:1 Business DM by the server (confirmed).
+//   shared  — handed to Telegram's share sheet for a GROUP from Igor's own account;
+//             delivery is NOT confirmable (no API round-trip), so it's a distinct state
+//             from 'sent' — the history must not claim a group message as verified.
+//   dismissed — coach chose not to send / cleared from the queue.
+export type FeedbackJobStatus = "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "shared" | "dismissed";
 
 export type TrainingPeaksFeedbackJob = {
   id: string;
@@ -148,6 +153,46 @@ export async function claimNextPendingFeedbackJob(): Promise<TrainingPeaksFeedba
 }
 
 /**
+ * Claim ONE specific pending job (compare-and-swap pending→generating) for on-demand
+ * generation — Igor tapped «Сгенерить» on that card. Unlike claimNextPendingFeedbackJob
+ * (oldest-first), this targets the exact job. Returns the claimed job, or null if it
+ * was not 'pending' (already generating/done/dismissed, or a double-tap lost the race).
+ */
+export async function claimSpecificPendingFeedbackJob(jobId: string): Promise<TrainingPeaksFeedbackJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "generating", claimed_at: new Date().toISOString() })
+      .eq("id", jobId)
+      .eq("status", "pending")
+      .select("*")
+      .maybeSingle()
+  );
+  if (error) throw new Error(`claim specific feedback job failed: ${error.message}`);
+  return data ? mapRow(data as FeedbackJobRow) : null;
+}
+
+/**
+ * Return a job from 'generating' back to 'pending' after a GENERATION error (API
+ * transport/quota, empty response) — the draft was never produced, so the card should
+ * stay in «Новые» and be retriable. Distinct from submitFeedbackDraft's failed state,
+ * which is a produced-but-rejected draft. Records the error for visibility. CAS on
+ * 'generating' so it can't stomp a job that meanwhile reached done/failed.
+ */
+export async function resetFeedbackJobToPending(input: { jobId: string; errorReason: string }): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "pending", claimed_at: null, error_reason: input.errorReason })
+      .eq("id", input.jobId)
+      .eq("status", "generating")
+  );
+  if (error) throw new Error(`reset feedback job to pending failed: ${error.message}`);
+}
+
+/**
  * Return jobs stuck in 'generating' back to 'pending' (crash recovery): the worker
  * claims pending→generating, then submits generating→done/failed. If the worker dies
  * between the two, the job sits in 'generating' and no claim would ever pick it up
@@ -249,9 +294,10 @@ export async function saveFeedbackDraftCoachEdit(input: {
 }
 
 /**
- * Skip a draft (coach chose not to send). Allowed from any non-sent terminal state
- * (done / blocked / failed) — a blocked "разберись" signal is dismissible too. CAS
- * on those statuses so a race with a send is rejected. Returns null if not dismissible.
+ * Skip a draft (coach chose not to send). Allowed from any non-sent state where a
+ * decision is Igor's to make: 'pending' (a «Новые» card he'll answer himself), 'done',
+ * 'blocked', 'failed'. NOT from 'generating' (mid-flight) or a terminal sent/shared.
+ * CAS on those statuses so a race with a send/generate is rejected. Null if not dismissible.
  */
 export async function markFeedbackJobDismissed(input: {
   jobId: string;
@@ -263,11 +309,61 @@ export async function markFeedbackJobDismissed(input: {
       .from(TABLE)
       .update({ status: "dismissed", dismissed_at: new Date().toISOString(), reviewed_by_chat_id: input.actorChatId })
       .eq("id", input.jobId)
-      .in("status", ["done", "blocked", "failed"])
+      .in("status", ["pending", "done", "blocked", "failed"])
       .select("*")
       .maybeSingle()
   );
   if (error) throw new Error(`dismiss feedback job failed: ${error.message}`);
+  return data ? mapRow(data as FeedbackJobRow) : null;
+}
+
+/**
+ * Bulk-clear stale «Новые» cards: dismiss every PENDING job whose workout is older than
+ * the cutoff (by workout DATE, from context_packet.workoutDate — not created_at), so Igor
+ * can wipe a backlog he's already answered by hand in one tap. Only 'pending' is touched;
+ * generated/sent/blocked rows are left alone. Nothing is deleted — status change only.
+ * Returns how many were dismissed.
+ */
+export async function markPendingFeedbackJobsDismissedOlderThan(input: {
+  workoutDateCutoff: string; // 'YYYY-MM-DD' exclusive — dismiss workouts strictly before this
+  actorChatId: string;
+}): Promise<{ dismissed: number }> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "dismissed", dismissed_at: new Date().toISOString(), reviewed_by_chat_id: input.actorChatId })
+      .eq("status", "pending")
+      .lt("context_packet->>workoutDate", input.workoutDateCutoff)
+      .select("id")
+  );
+  if (error) throw new Error(`bulk dismiss old pending failed: ${error.message}`);
+  return { dismissed: ((data as Array<{ id: string }>) ?? []).length };
+}
+
+/**
+ * Mark a reviewed draft as SHARED to a group (done→shared): Igor tapped «Отправить в
+ * чат», which opens Telegram's share sheet from his own account. There is no delivery
+ * confirmation for a share, so this is deliberately NOT 'sent' — the history shows it as
+ * "передано в чат" (unverified). Freezes the shared text. CAS on 'done' so it can't
+ * double-fire or race a DM send. Returns the updated job, or null if it wasn't 'done'.
+ */
+export async function markFeedbackJobShared(input: {
+  jobId: string;
+  sharedText: string;
+  actorChatId: string;
+}): Promise<TrainingPeaksFeedbackJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "shared", sent_text: input.sharedText, sent_at: new Date().toISOString(), reviewed_by_chat_id: input.actorChatId })
+      .eq("id", input.jobId)
+      .eq("status", "done")
+      .select("*")
+      .maybeSingle()
+  );
+  if (error) throw new Error(`mark feedback job shared failed: ${error.message}`);
   return data ? mapRow(data as FeedbackJobRow) : null;
 }
 

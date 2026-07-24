@@ -3,9 +3,11 @@
 // job per new/recomputed workout. Auth + cron-run-log mirror
 // trainingpeaks-stale-job-sweeper.
 //
-// AUTO-START IS NOT WIRED: this route is intentionally ABSENT from vercel.json.
-// Igor runs it manually first (curl with CRON_SECRET) and reviews the queue
-// before any schedule is added. It also needs migration 20260722180000 applied.
+// ENQUEUE-ONLY, scheduled in vercel.json (daily). It fills the «Новые» list SO IGOR
+// SEES IT — it does NOT generate any drafts. In the on-demand model generation is a
+// deliberate coach tap in the Mini App (paid API), never a cron. Vercel injects
+// CRON_SECRET as the Bearer, so the auth below covers scheduled runs too. Needs
+// migration 20260722180000 applied.
 
 import { timingSafeEqual } from "node:crypto";
 

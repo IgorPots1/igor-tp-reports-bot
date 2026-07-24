@@ -21,7 +21,10 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const DEFAULT_FEEDBACK_MODEL = "claude-sonnet-4-6";
 const MAX_OUTPUT_TOKENS = 400; // one short Telegram message — never a wall of text
 
-/** Selected backend. Default is Cowork (Igor's debug path); set FEEDBACK_GENERATOR=api to fall back. */
+/**
+ * Env-level backend (the fallback default). Pure — no DB, no network — so it stays unit-
+ * testable. The DB-backed override lives in feedback-backend-mode.ts (getActiveFeedbackGeneratorBackend).
+ */
 export function resolveFeedbackGeneratorBackend(): FeedbackGeneratorBackend {
   return process.env.FEEDBACK_GENERATOR?.trim().toLowerCase() === "api" ? "api" : "cowork";
 }

@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 
 import { decideFeedbackSend } from "./feedback-send-decision.ts";
 import { buildReportCardView, buildReportsView } from "./feedback-review-view.ts";
+import { scoreFeedbackSignificance } from "./feedback-significance.ts";
 import type { FeedbackContextPacket } from "./context-packet.ts";
 import type { FeedbackJobStatus, TrainingPeaksFeedbackJob } from "./feedback-queue.ts";
 
@@ -181,7 +182,7 @@ describe("buildReportsView — grouping", () => {
     assert.deepEqual(v.attention.map((c) => c.status).sort(), ["blocked", "failed"]);
     assert.deepEqual(v.history.map((c) => c.status).sort(), ["dismissed", "sent"]);
     assert.equal(v.sendEnabled, false);
-    assert.deepEqual(v.counts, { review: 1, attention: 2, history: 2 });
+    assert.deepEqual(v.counts, { queue: 0, review: 1, attention: 2, history: 2 });
   });
 
   test("sendEnabled flag is carried through", () => {
@@ -192,5 +193,71 @@ describe("buildReportsView — grouping", () => {
     const v = buildReportsView([makeJob()], () => undefined, false);
     assert.equal(v.review.length, 1);
     assert.equal(v.review[0].studentName, "Ученик");
+  });
+
+  test("shared job lands in history (not review)", () => {
+    const v = buildReportsView([makeJob({ status: "shared", id: "sh" })], lookup, false);
+    assert.deepEqual(v.history.map((c) => c.status), ["shared"]);
+    assert.equal(v.review.length, 0);
+  });
+});
+
+// ── significance (drives «Новые» order + badge) ──
+describe("scoreFeedbackSignificance", () => {
+  const correctionPacket = packet({ observations: [{ type: "correction", adviceKey: "pace_control", focused: true, reason: "fast start" }] });
+  const cleanPacket = packet({ observations: [{ type: "praise", adviceKey: "praise_even_pace", focused: true, reason: "cv" }] });
+
+  test("correction → 'разбор', outscores plain praise", () => {
+    const c = scoreFeedbackSignificance(correctionPacket);
+    const p = scoreFeedbackSignificance(cleanPacket);
+    assert.equal(c.badge, "разбор");
+    assert.equal(p.badge, "чисто");
+    assert.ok(c.score > p.score);
+  });
+
+  test("comparison-progress praise → 'прогресс'", () => {
+    // packet() default carries a praise_comparison_progress observation.
+    assert.equal(scoreFeedbackSignificance(packet()).badge, "прогресс");
+  });
+
+  test("empty observations → 'чисто', score 0", () => {
+    const s = scoreFeedbackSignificance(packet({ observations: [] }));
+    assert.equal(s.badge, "чисто");
+    assert.equal(s.score, 0);
+  });
+});
+
+describe("buildReportsView — «Новые» queue", () => {
+  const correction = makeJob({ id: "j-corr", status: "pending", studentId: "s-corr", contextPacket: packet({ observations: [{ type: "correction", adviceKey: "pace_control", focused: true, reason: "x" }] }) });
+  const clean = makeJob({ id: "j-clean", status: "pending", studentId: "s-clean", contextPacket: packet({ observations: [{ type: "praise", adviceKey: "praise_even_pace", focused: true, reason: "y" }] }) });
+  const lookup = (id: string) => ({ name: `Ученик ${id}`, telegramUsername: null });
+
+  test("pending jobs go to queue, most significant first, with a badge", () => {
+    const v = buildReportsView([clean, correction], lookup, false);
+    assert.deepEqual(v.queue.map((c) => c.id), ["j-corr", "j-clean"]); // разбор before чисто
+    assert.equal(v.queue[0].significanceBadge, "разбор");
+    assert.equal(v.queue[1].significanceBadge, "чисто");
+    assert.equal(v.counts.queue, 2);
+  });
+});
+
+describe("buildReportCardView — channel", () => {
+  test("dm-capable → channel 'dm', no mention", () => {
+    const card = buildReportCardView(makeJob(), "Мария", "masha", { dmCapable: true, hasGroupThread: false });
+    assert.equal(card.channel, "dm");
+    assert.equal(card.mention, null);
+  });
+  test("group thread only → channel 'group', @username mention", () => {
+    const card = buildReportCardView(makeJob(), "Мария", "masha", { dmCapable: false, hasGroupThread: true });
+    assert.equal(card.channel, "group");
+    assert.equal(card.mention, "@masha");
+  });
+  test("group thread, no username → mention falls back to name", () => {
+    const card = buildReportCardView(makeJob(), "Мария", null, { dmCapable: false, hasGroupThread: true });
+    assert.equal(card.mention, "Мария");
+  });
+  test("no channel → 'none'", () => {
+    const card = buildReportCardView(makeJob(), "Мария", null, {});
+    assert.equal(card.channel, "none");
   });
 });

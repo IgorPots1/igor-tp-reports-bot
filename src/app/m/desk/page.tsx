@@ -315,7 +315,7 @@ export default function CoachDeskPage() {
   const [reportsView, setReportsView] = useState<ReportsView | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [reportBusy, setReportBusy] = useState<{ id: string; op: "send" | "dismiss" | "save" } | null>(null);
+  const [reportBusy, setReportBusy] = useState<{ id: string; op: "send" | "dismiss" | "save" | "generate" } | null>(null);
   const [reportToast, setReportToast] = useState<Record<string, { ok: boolean; text: string }>>({});
 
   const loadToday = useCallback(async (id: string) => {
@@ -613,7 +613,7 @@ export default function CoachDeskPage() {
   );
 
   const dismissReport = useCallback(
-    async (card: ReportCardModel, from: "review" | "attention") => {
+    async (card: ReportCardModel, from: "review" | "attention" | "queue") => {
       setReportBusy({ id: card.id, op: "dismiss" });
       try {
         const res = await fetch("/api/m/desk/reports/dismiss", {
@@ -627,6 +627,14 @@ export default function CoachDeskPage() {
             if (!prev) return prev;
             if (from === "attention") {
               return { ...prev, attention: prev.attention.filter((c) => c.id !== card.id), counts: { ...prev.counts, attention: prev.counts.attention - 1 } };
+            }
+            if (from === "queue") {
+              return {
+                ...prev,
+                queue: prev.queue.filter((c) => c.id !== card.id),
+                history: [{ ...card, status: "dismissed" }, ...prev.history],
+                counts: { ...prev.counts, queue: prev.counts.queue - 1, history: prev.counts.history + 1 },
+              };
             }
             return {
               ...prev,
@@ -646,6 +654,163 @@ export default function CoachDeskPage() {
     },
     [initData]
   );
+
+  // «Сгенерить» on a queue card: one paid API draft. On success the card becomes a normal
+  // review card (text + send/edit/skip); a fact-check failure moves it to «Внимание».
+  const generateReport = useCallback(
+    async (card: ReportCardModel) => {
+      setReportBusy({ id: card.id, op: "generate" });
+      try {
+        const res = await fetch("/api/m/desk/reports/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData, jobId: card.id }),
+        });
+        const json = (await res.json()) as { ok: boolean; outcome?: string; draftText?: string; reason?: string; error?: string };
+        if (json.ok && json.outcome === "done") {
+          setReportsView((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  queue: prev.queue.filter((c) => c.id !== card.id),
+                  review: [{ ...card, status: "done", draftText: json.draftText ?? "" }, ...prev.review],
+                  counts: { ...prev.counts, queue: prev.counts.queue - 1, review: prev.counts.review + 1 },
+                }
+              : prev
+          );
+        } else if (json.ok && json.outcome === "failed") {
+          // Draft produced but fact-check rejected it → attention (coach signal, no student text).
+          setReportsView((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  queue: prev.queue.filter((c) => c.id !== card.id),
+                  attention: [{ ...card, status: "failed", draftText: null, attentionReason: json.reason ?? "факт-чек отклонил" }, ...prev.attention],
+                  counts: { ...prev.counts, queue: prev.counts.queue - 1, attention: prev.counts.attention + 1 },
+                }
+              : prev
+          );
+        } else {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось сгенерировать." } }));
+        }
+      } catch {
+        setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: "Ошибка сети." } }));
+      } finally {
+        setReportBusy(null);
+      }
+    },
+    [initData]
+  );
+
+  // «Сгенерить свежие (до 10)» — top-N by significance. Deliberate two-step: confirm with
+  // the count + a cost estimate before spending on a batch, then reload the tab.
+  const generateBatch = useCallback(async () => {
+    const limit = 10;
+    if (typeof window !== "undefined" && !window.confirm(`Сгенерить до ${limit} самых значимых черновиков? Это платный API, ≈ $${(limit * 0.013).toFixed(2)}.`)) {
+      return;
+    }
+    setReportBusy({ id: "__batch__", op: "generate" });
+    try {
+      const res = await fetch("/api/m/desk/reports/generate-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, limit }),
+      });
+      const json = (await res.json()) as { ok: boolean; done?: number; failed?: number; error?: string };
+      setReportBusy(null);
+      if (json.ok) {
+        await loadReports(initData);
+      } else {
+        setReportToast((t) => ({ ...t, __batch__: { ok: false, text: json.error ?? "Не удалось сгенерировать пакет." } }));
+      }
+    } catch {
+      setReportBusy(null);
+      setReportToast((t) => ({ ...t, __batch__: { ok: false, text: "Ошибка сети." } }));
+    }
+  }, [initData, loadReports]);
+
+  // «Убрать старше 3 дней» — clear the «Новые» backlog Igor has already answered by hand.
+  const bulkDismissOld = useCallback(async () => {
+    if (typeof window !== "undefined" && !window.confirm("Убрать из «Новых» все тренировки старше 3 дней (по дате тренировки)? Ничего не удаляется — только уходят из списка.")) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/m/desk/reports/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, olderThanDays: 3 }),
+      });
+      const json = (await res.json()) as { ok: boolean; dismissed?: number; error?: string };
+      if (json.ok) await loadReports(initData);
+      else setReportToast((t) => ({ ...t, __batch__: { ok: false, text: json.error ?? "Не удалось разобрать очередь." } }));
+    } catch {
+      setReportToast((t) => ({ ...t, __batch__: { ok: false, text: "Ошибка сети." } }));
+    }
+  }, [initData, loadReports]);
+
+  // Group send: Business API can't post to a group, so open Telegram's share sheet from
+  // Igor's own account (mention prefix → the student gets a notification), then RECORD it as
+  // 'shared' (unverified) — unless the kill-switch is off, in which case it's prepare-only.
+  const shareToGroup = useCallback(
+    async (card: ReportCardModel) => {
+      const body = card.draftText ?? "";
+      const text = card.mention ? `${card.mention}\n${body}` : body;
+      if (typeof window !== "undefined") {
+        const shareUrl = `https://t.me/share/url?url=${encodeURIComponent("")}&text=${encodeURIComponent(text)}`;
+        const tg = getTelegramWebApp();
+        if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+        else window.open(shareUrl, "_blank");
+      }
+      setReportBusy({ id: card.id, op: "send" });
+      try {
+        const res = await fetch("/api/m/desk/reports/shared", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData, jobId: card.id }),
+        });
+        const json = (await res.json()) as { ok: boolean; outcome?: string; note?: string; error?: string };
+        if (json.ok && json.outcome === "shared") {
+          setReportsView((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  review: prev.review.filter((c) => c.id !== card.id),
+                  history: [{ ...card, status: "shared" }, ...prev.history],
+                  counts: { ...prev.counts, review: prev.counts.review - 1, history: prev.counts.history + 1 },
+                }
+              : prev
+          );
+        } else if (json.ok && json.outcome === "prepared") {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.note ?? "Шаринг открыт — статус не изменён (prepare-only)." } }));
+        } else {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось отметить." } }));
+        }
+      } catch {
+        setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: "Ошибка сети." } }));
+      } finally {
+        setReportBusy(null);
+      }
+    },
+    [initData]
+  );
+
+  // Coach-only backend toggle (api ⇄ cowork) — flips WHO writes the draft, no redeploy.
+  const toggleMode = useCallback(async () => {
+    const next = reportsView?.backend === "api" ? "cowork" : "api";
+    try {
+      const res = await fetch("/api/m/desk/reports/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, set: next }),
+      });
+      const json = (await res.json()) as { ok: boolean; backend?: "api" | "cowork"; error?: string };
+      if (json.ok && json.backend) {
+        setReportsView((prev) => (prev ? { ...prev, backend: json.backend! } : prev));
+      }
+    } catch {
+      /* leave as-is; coach can retry */
+    }
+  }, [initData, reportsView?.backend]);
 
   const toggleEvent = useCallback((key: string) => {
     setOpenEvents((prev) => {
@@ -711,6 +876,11 @@ export default function CoachDeskPage() {
           onSaveEdit={saveEditReport}
           onCancelEdit={cancelEditReport}
           onSend={sendReport}
+          onShare={shareToGroup}
+          onGenerate={generateReport}
+          onGenerateBatch={generateBatch}
+          onBulkDismissOld={bulkDismissOld}
+          onToggleMode={toggleMode}
           onDismiss={dismissReport}
         />
       ) : tab !== "today" ? (
