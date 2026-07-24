@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- FIT-ingest scan — считает derived_metrics ИЗ скачанного кэша. Идёт СЛЕДОМ за
-     workout-cache-scan (те же часы, но на :40, чтобы cache-scan успел скачать).
-     Окно последних 5 дней. Кладётся в ~/Library/LaunchAgents/. Ставит Игорь:
+<!-- FIT-ingest scan + feedback-enqueue — считает derived_metrics ИЗ скачанного кэша
+     и СРАЗУ САМ кладёт новые тренировки в «Новые» (enqueue на маке, ноль кронов Vercel).
+     Идёт СЛЕДОМ за workout-cache-scan (те же часы, но на :40, чтобы cache-scan успел
+     скачать). Окно последних 5 дней. Кладётся в ~/Library/LaunchAgents/. Ставит Игорь:
        cp .../com.igor.trainingpeaks.fit-ingest-scan.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.fit-ingest-scan.plist -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

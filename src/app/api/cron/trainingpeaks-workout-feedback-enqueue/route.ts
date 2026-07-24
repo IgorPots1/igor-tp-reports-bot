@@ -3,11 +3,11 @@
 // job per new/recomputed workout. Auth + cron-run-log mirror
 // trainingpeaks-stale-job-sweeper.
 //
-// ENQUEUE-ONLY, scheduled in vercel.json (daily). It fills the «Новые» list SO IGOR
-// SEES IT — it does NOT generate any drafts. In the on-demand model generation is a
-// deliberate coach tap in the Mini App (paid API), never a cron. Vercel injects
-// CRON_SECRET as the Bearer, so the auth below covers scheduled runs too. Needs
-// migration 20260722180000 applied.
+// ENQUEUE-ONLY: fills the «Новые» list, never generates (generation is Igor's Mini App
+// tap — Вариант Б). NOT scheduled on Vercel anymore: the same logic runs on the Mac right
+// after fit-ingest (tools/.../tp-feedback-enqueue-run.ts, driven by run-fit-ingest-scan.sh),
+// so there are ZERO Vercel crons for feedback (no Pro needed). This HTTP route is kept as a
+// manual/backup trigger (Bearer CRON_SECRET). Needs migration 20260722180000 applied.
 
 import { timingSafeEqual } from "node:crypto";
 
