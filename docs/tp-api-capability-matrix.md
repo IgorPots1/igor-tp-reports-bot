@@ -64,7 +64,7 @@ mechanism), but were not exercised live in this PR1 pass — either for time, or
 
 | Entity | Endpoint | Method | Note |
 |---|---|---|---|
-| Events (create/update/delete) | `/fitness/v6/athletes/{id}/events[/{id}]` | POST/PUT/DELETE | **Attempted live, unresolved.** POST with nagelflorian's documented body (`athleteId,name,eventDate,eventType:"Other",description`) returned **HTTP 500 "An error has occurred"** on two tries. Endpoint is reachable (not 404/401) but the exact working payload needs a live browser-network capture before PR6 relies on it. |
+| Event create | `POST /fitness/v6/athletes/{id}/event` | POST | ✅ **RESOLVED via UI capture (2026-07-24).** The earlier 500 was the wrong endpoint (`/events` plural) + wrong body. Real endpoint is **`/event` (singular)**; body uses **`personId`** (not `athleteId`), a real `eventType` (e.g. `RunningRoad`), `eventDate`, `distance`+`distanceUnits`, and `goals{}`/`legs[]`/`workouts[]`/`results[]`. Returns 200 with numeric event `id`. **Exact form: `docs/tp-write-payloads.md` §2.** |
 | Workout comments | `/fitness/v2/athletes/{id}/workouts/{workoutId}/comments[/{commentId}]` | GET/POST/DELETE | **Correction to plan §A**, which said "no dedicated comment endpoint" — nagelflorian shows there IS one (v2), separate from the full-object workout PUT. Not tested live. |
 | Private workout note | `/fitness/v6/workouts/{workoutId}/privateWorkoutNote` | PUT | Not tested. |
 | Calendar notes | `/fitness/v1/athletes/{id}/calendarNote[/{id}]` (+ `/comment`, `/comments`) | GET/POST/PUT/DELETE | Full CRUD available. Not tested. |
@@ -74,7 +74,7 @@ mechanism), but were not exercised live in this PR1 pass — either for time, or
 | Library → schedule to calendar | `POST /fitness/v6/athletes/{id}/commands/addworkoutfromlibraryitem` | POST | Reversible in principle (result is a normal workout, deletable via the now-verified workout-delete endpoint). Not tested — needs a valid `exerciseLibraryItemId` first (read-only lookup via `/exerciselibrary/v2/...`, already available). |
 | Equipment (bikes/shoes) | `PUT /fitness/v1/athletes/{id}/equipment` (whole-array replace) | PUT | Genuinely reversible by design (GET full array → append/remove → PUT the array back) — nagelflorian's `addEquipmentItem`/`deleteEquipmentItem` do exactly this. **Not live-tested this pass** (deliberately deferred to a dedicated, careful pass rather than rushed at the end of a long session — this is Igor's real gear list). |
 | Workout library CRUD | `/exerciselibrary/v1/libraries[/{id}][/items[/{id}]]` (+ `/name`) | POST/PUT/DELETE | Not tested. Note: `/exerciselibrary/v2` (read) vs `/v1` (write) — different versions for read vs write on this entity. |
-| Zones write (power/HR/speed) | `PUT /fitness/v2/athletes/{id}/{power|heartrate|speed}zones` | PUT | **🔴 No direct write** — gated propose/apply only. See **Zone-write policy** below. |
+| Zones write (power/HR/speed) | `PUT /fitness/v2/athletes/{id}/{power|heartrate|speed}zones` | PUT | **🔴 No direct write** — gated propose/apply only (see **Zone-write policy** below). Form now known via UI capture (2026-07-24): body is an **array of zone-sets**, each with `threshold` + full computed `zones[]` → **PUT overwrites the whole set**, returns 204. **Exact form: `docs/tp-write-payloads.md` §1.** |
 | FTP write | via settings/zones update | PUT | **🔴 No direct write** — same policy (FTP recalculates zones). |
 
 ### Zone-write policy (power/HR/speed zones + FTP/LTHR/threshold pace)
