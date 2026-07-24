@@ -55,7 +55,11 @@ export function ordinalWord(i: number): string {
 }
 
 export function registerWord(formality: string): string {
-  return formality === "vy" ? "вы" : formality === "ty" ? "ты" : "ты (по умолчанию)";
+  // Unknown formality defaults to «вы»: it's the lower-risk address. Over-formal reads as
+  // polite; over-familiar «ты» to someone who expects «вы» reads as rude — and among the
+  // students we CAN detect, unknowns lean formal (~14 «вы» to 8 «ты»). So when we don't
+  // know, be respectful, not familiar.
+  return formality === "vy" ? "вы" : formality === "ty" ? "ты" : "вы (по умолчанию)";
 }
 
 export function sexRuleText(sex: "female" | "male" | null): string {

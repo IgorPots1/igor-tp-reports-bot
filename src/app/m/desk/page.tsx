@@ -316,7 +316,7 @@ export default function CoachDeskPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [reportBusy, setReportBusy] = useState<{ id: string; op: "send" | "dismiss" | "save" | "generate" } | null>(null);
-  const [reportToast, setReportToast] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [reportToast, setReportToast] = useState<Record<string, { ok: boolean; text: string; tone?: "info" }>>({});
 
   const loadToday = useCallback(async (id: string) => {
     setStatus("loading");
@@ -598,8 +598,8 @@ export default function CoachDeskPage() {
               : prev
           );
         } else if (json.ok && json.outcome === "prepared") {
-          // Prepare-only: nothing sent. Keep the card; tell Igor plainly.
-          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.note ?? "Подготовлено — не отправлено (prepare-only)." } }));
+          // Prepare-only is a deliberate mode, not a failure — neutral (info) note, not red.
+          setReportToast((t) => ({ ...t, [card.id]: { ok: true, tone: "info", text: json.note ?? "Режим подготовки: черновик готов, отправка выключена." } }));
         } else {
           setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось отправить." } }));
         }
@@ -781,7 +781,7 @@ export default function CoachDeskPage() {
               : prev
           );
         } else if (json.ok && json.outcome === "prepared") {
-          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.note ?? "Шаринг открыт — статус не изменён (prepare-only)." } }));
+          setReportToast((t) => ({ ...t, [card.id]: { ok: true, tone: "info", text: json.note ?? "Режим подготовки: шаринг открыт, статус не меняю." } }));
         } else {
           setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось отметить." } }));
         }

@@ -65,7 +65,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       return jsonResponse(200, {
         ok: true,
         outcome: "prepared",
-        note: "Отправка выключена (prepare-only) — шаринг открыт, но статус не изменён.",
+        note: "Режим подготовки: шаринг открыт, но статус не меняю. Включить: FEEDBACK_SEND_ENABLED=true + передеплой.",
       });
     }
 

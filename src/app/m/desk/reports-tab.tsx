@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 
 // «Отчёты» tab: Igor reviews AI-drafted workout replies and consciously sends them.
 // INVARIANT: draft → read → edit if needed → tap Send. Zero auto-send. Sending is
@@ -40,7 +40,10 @@ export type ReportsView = {
 };
 
 export type ReportBusy = { id: string; op: "send" | "dismiss" | "save" | "generate" } | null;
-export type ReportToasts = Record<string, { ok: boolean; text: string }>;
+// tone "info" is a neutral (not-error) note — used for prepare-only, which is a deliberate
+// mode, not a failure. Without it a "не отправлено" note renders red and reads as a bug.
+export type ReportToast = { ok: boolean; text: string; tone?: "info" };
+export type ReportToasts = Record<string, ReportToast>;
 
 // UI mirror of the server's MAX_BATCH (feedback-generate.ts). Kept local so this client
 // component doesn't import the server generation module (and its Supabase deps).
@@ -95,6 +98,9 @@ const R = {
   genGhost: { flex: "0 0 auto", padding: "12px 16px", borderRadius: 12, border: `1px solid ${C.line}`, background: "#fff", color: C.faint, fontFamily: "inherit", fontSize: 14.5, fontWeight: 700, cursor: "pointer" } as CSSProperties,
   controlBar: { display: "flex", flexWrap: "wrap", gap: 8, padding: "4px 14px 10px" } as CSSProperties,
   controlBtn: { flex: "1 1 auto", padding: "10px 12px", borderRadius: 11, border: `1px solid ${C.line}`, background: "#fff", color: C.sub, fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" } as CSSProperties,
+  collapseHead: { display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", boxSizing: "border-box", padding: "14px 18px 8px", background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700, color: C.faint, letterSpacing: "0.05em", textTransform: "uppercase" as const } as CSSProperties,
+  showMore: { display: "block", boxSizing: "border-box", width: "calc(100% - 28px)", margin: "0 14px 12px", padding: "11px 12px", borderRadius: 11, border: `1px solid ${C.line}`, background: "#fff", color: C.sub, fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" } as CSSProperties,
+  chevron: { fontSize: 10, color: C.faint, fontWeight: 700 } as CSSProperties,
   modeRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "2px 18px 6px" } as CSSProperties,
   modeLabel: { fontSize: 12, fontWeight: 700, color: C.faint } as CSSProperties,
   modeChip: (api: boolean): CSSProperties => ({ padding: "5px 11px", borderRadius: 999, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 800, background: api ? "#e7f5ee" : "#f0efec", color: api ? "#1D7A54" : "#8a8577" }),
@@ -110,8 +116,11 @@ function sendButtonStyle(on: boolean): CSSProperties {
   return { flex: 1, padding: "13px 0", borderRadius: 12, border: "none", background: on ? C.teal : "#9cc9ba", color: "#fff", fontFamily: "inherit", fontSize: 15, fontWeight: 800, cursor: "pointer" };
 }
 
-function toastStyle(ok: boolean): CSSProperties {
-  return { margin: "11px 0 0", padding: "10px 13px", borderRadius: 11, background: ok ? "#eaf6f1" : C.warnBg, border: `1px solid ${ok ? "#cfe9df" : C.warnLine}`, color: ok ? C.tealDark : C.warn, fontSize: 13, fontWeight: 700, lineHeight: 1.4 };
+function toastStyle(t: ReportToast): CSSProperties {
+  const base = { margin: "11px 0 0", padding: "10px 13px", borderRadius: 11, fontSize: 13, fontWeight: 700, lineHeight: 1.4 };
+  // Neutral note (prepare-only, informational) — blue, not the alarming warn-orange.
+  if (t.tone === "info") return { ...base, background: "#eaf2f8", border: "1px solid #d3e3f0", color: "#2f6ea8" };
+  return { ...base, background: t.ok ? "#eaf6f1" : C.warnBg, border: `1px solid ${t.ok ? "#cfe9df" : C.warnLine}`, color: t.ok ? C.tealDark : C.warn };
 }
 
 function tagStyle(bg: string, fg: string): CSSProperties {
@@ -191,7 +200,7 @@ function SigBadge(props: { badge: ReportCardModel["significanceBadge"] }) {
 export function ReportQueueCard(props: {
   card: ReportCardModel;
   busy: ReportBusy;
-  toast: { ok: boolean; text: string } | undefined;
+  toast: ReportToast | undefined;
   onGenerate: (card: ReportCardModel) => void;
   onDismiss: (card: ReportCardModel, from: "queue") => void;
 }) {
@@ -217,7 +226,7 @@ export function ReportQueueCard(props: {
           Убрать
         </button>
       </div>
-      {props.toast ? <p style={toastStyle(props.toast.ok)}>{props.toast.text}</p> : null}
+      {props.toast ? <p style={toastStyle(props.toast)}>{props.toast.text}</p> : null}
     </div>
   );
 }
@@ -228,7 +237,7 @@ export function ReportReviewCard(props: {
   editing: boolean;
   editValue: string;
   busy: ReportBusy;
-  toast: { ok: boolean; text: string } | undefined;
+  toast: ReportToast | undefined;
   onStartEdit: (card: ReportCardModel) => void;
   onChangeEdit: (v: string) => void;
   onSaveEdit: (card: ReportCardModel) => void;
@@ -315,7 +324,7 @@ export function ReportReviewCard(props: {
         </>
       )}
 
-      {props.toast ? <p style={toastStyle(props.toast.ok)}>{props.toast.text}</p> : null}
+      {props.toast ? <p style={toastStyle(props.toast)}>{props.toast.text}</p> : null}
     </div>
   );
 }
@@ -323,7 +332,7 @@ export function ReportReviewCard(props: {
 export function ReportAttentionCard(props: {
   card: ReportCardModel;
   busy: ReportBusy;
-  toast: { ok: boolean; text: string } | undefined;
+  toast: ReportToast | undefined;
   onDismiss: (card: ReportCardModel, from: "review" | "attention") => void;
 }) {
   const c = props.card;
@@ -343,7 +352,7 @@ export function ReportAttentionCard(props: {
           {busyHere === "dismiss" ? "…" : "Разобрался"}
         </button>
       </div>
-      {props.toast ? <p style={toastStyle(props.toast.ok)}>{props.toast.text}</p> : null}
+      {props.toast ? <p style={toastStyle(props.toast)}>{props.toast.text}</p> : null}
     </div>
   );
 }
@@ -367,6 +376,13 @@ export function ReportsTab(props: {
   onToggleMode: () => void;
   onDismiss: (card: ReportCardModel, from: "review" | "attention" | "queue") => void;
 }) {
+  // «Новые» is capped to the top-N most-significant cards (queue is pre-sorted by
+  // significance server-side) so a backlog doesn't render as a wall; the rest expand on
+  // tap. «Разберись» and «История» are collapsed by default — coach opens them when needed.
+  const [queueShowAll, setQueueShowAll] = useState(false);
+  const [attnOpen, setAttnOpen] = useState(false);
+  const [histOpen, setHistOpen] = useState(false);
+
   if (props.status === "loading" || props.status === "idle") {
     return <div style={R.bigEmpty}>Загружаю…</div>;
   }
@@ -375,6 +391,8 @@ export function ReportsTab(props: {
   }
   const v = props.view;
   const batchBusy = props.busy?.op === "generate";
+  const QUEUE_CAP = 15;
+  const queueShown = queueShowAll ? v.queue : v.queue.slice(0, QUEUE_CAP);
   if (v.queue.length === 0 && v.review.length === 0 && v.attention.length === 0 && v.history.length === 0) {
     return <div style={R.bigEmpty}>Тренировок пока нет.<br />Появятся здесь после ночного разбора — по каждой решишь, генерить ответ или ответить самому.</div>;
   }
@@ -400,7 +418,7 @@ export function ReportsTab(props: {
               Убрать старше 3 дней
             </button>
           </div>
-          {v.queue.map((card) => (
+          {queueShown.map((card) => (
             <ReportQueueCard
               key={card.id}
               card={card}
@@ -410,6 +428,11 @@ export function ReportsTab(props: {
               onDismiss={props.onDismiss}
             />
           ))}
+          {!queueShowAll && v.queue.length > QUEUE_CAP ? (
+            <button type="button" style={R.showMore} onClick={() => setQueueShowAll(true)}>
+              Показать ещё {v.queue.length - QUEUE_CAP}
+            </button>
+          ) : null}
         </>
       ) : null}
 
@@ -439,24 +462,34 @@ export function ReportsTab(props: {
 
       {v.attention.length > 0 ? (
         <>
-          <p style={R.groupLabel}>⚠️ Разберись · {v.attention.length}</p>
-          {v.attention.map((card) => (
-            <ReportAttentionCard key={card.id} card={card} busy={props.busy} toast={props.toast[card.id]} onDismiss={props.onDismiss} />
-          ))}
+          <button type="button" style={R.collapseHead} onClick={() => setAttnOpen((o) => !o)}>
+            <span>⚠️ Разберись · {v.attention.length}</span>
+            <span style={R.chevron}>{attnOpen ? "▲ свернуть" : "▼ показать"}</span>
+          </button>
+          {attnOpen
+            ? v.attention.map((card) => (
+                <ReportAttentionCard key={card.id} card={card} busy={props.busy} toast={props.toast[card.id]} onDismiss={props.onDismiss} />
+              ))
+            : null}
         </>
       ) : null}
 
       {v.history.length > 0 ? (
         <>
-          <p style={R.groupLabel}>История · {v.history.length}</p>
-          {v.history.map((card) => (
-            <div key={card.id} style={R.histRow}>
-              <span style={R.histName}>{card.studentName}</span>
-              <span style={{ flex: "0 0 auto", fontSize: 12, fontWeight: 700, color: card.status === "sent" ? C.teal : card.status === "shared" ? C.warn : C.faint }}>
-                {card.status === "sent" ? "отправлено ✓" : card.status === "shared" ? "передано в чат" : "пропущено"}
-              </span>
-            </div>
-          ))}
+          <button type="button" style={R.collapseHead} onClick={() => setHistOpen((o) => !o)}>
+            <span>История · {v.history.length}</span>
+            <span style={R.chevron}>{histOpen ? "▲ свернуть" : "▼ показать"}</span>
+          </button>
+          {histOpen
+            ? v.history.map((card) => (
+                <div key={card.id} style={R.histRow}>
+                  <span style={R.histName}>{card.studentName}</span>
+                  <span style={{ flex: "0 0 auto", fontSize: 12, fontWeight: 700, color: card.status === "sent" ? C.teal : C.warn }}>
+                    {card.status === "sent" ? "отправлено ✓" : "передано в чат"}
+                  </span>
+                </div>
+              ))
+            : null}
         </>
       ) : null}
     </>

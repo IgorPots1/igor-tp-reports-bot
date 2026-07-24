@@ -126,6 +126,29 @@ export async function enqueueTrainingPeaksFeedbackJob(input: {
 }
 
 /**
+ * Which of these workouts already have a HANDLED job (done/dismissed/sent/shared): a
+ * draft was generated and is awaiting review, was sent/shared, or the coach dismissed
+ * it. The enqueue sweep skips these so an hourly metrics recompute can't resurrect a
+ * workout Igor already dealt with — the active-only partial-unique index covers only
+ * pending/generating, so terminal states would otherwise re-enqueue a fresh pending.
+ * blocked/failed are deliberately NOT here: those stay enqueuable (a retry path).
+ */
+export async function fetchHandledWorkoutCacheIds(cacheIds: string[]): Promise<Set<string>> {
+  if (cacheIds.length === 0) return new Set();
+  const supabase = createSupabaseServerClient();
+  const handled = new Set<string>();
+  for (let i = 0; i < cacheIds.length; i += 150) {
+    const part = cacheIds.slice(i, i + 150);
+    const { data, error } = await withSupabaseNetworkRetry(() =>
+      supabase.from(TABLE).select("workout_cache_id").in("workout_cache_id", part).in("status", ["done", "dismissed", "sent", "shared"])
+    );
+    if (error) throw new Error(`fetch handled workout cache ids failed: ${error.message}`);
+    for (const r of (data as Array<{ workout_cache_id: string }>) ?? []) handled.add(r.workout_cache_id);
+  }
+  return handled;
+}
+
+/**
  * Claim the oldest pending job with a compare-and-swap (status pending→generating),
  * so two runners never take the same job. Returns null when the queue is empty.
  */

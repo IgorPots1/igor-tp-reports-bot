@@ -51,7 +51,7 @@ export type ReportsView = {
   queue: ReportCardView[]; // 'pending' + 'generating' — cards WITHOUT text, awaiting Igor's «Сгенерить»
   review: ReportCardView[]; // status 'done' — actionable (send / edit / skip)
   attention: ReportCardView[]; // 'blocked' + 'failed' — coach signal, no student draft
-  history: ReportCardView[]; // 'sent' + 'shared' + 'dismissed' — badge only
+  history: ReportCardView[]; // 'sent' + 'shared' — badge only ('dismissed' excluded)
   sendEnabled: boolean; // FEEDBACK_SEND_ENABLED — false ⇒ Send is prepare-only
   counts: { queue: number; review: number; attention: number; history: number };
 };
@@ -203,7 +203,11 @@ export function buildReportCardView(
 
 const QUEUE_STATUSES = new Set<FeedbackJobStatus>(["pending", "generating"]);
 const ATTENTION_STATUSES = new Set<FeedbackJobStatus>(["blocked", "failed"]);
-const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "shared", "dismissed"]);
+// History shows only what actually LEFT the review cycle for the student: sent (verified
+// DM) or shared (handed to a group). 'dismissed' is deliberately excluded — a card the
+// coach cleared is handled, not history worth showing; keeping hundreds of them buried
+// the real signal. The list route also stops fetching dismissed rows.
+const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "shared"]);
 
 /**
  * Group jobs into the three tab sections. `jobs` should arrive newest-first (the

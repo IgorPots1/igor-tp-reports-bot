@@ -46,8 +46,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     // Plain Supabase reads — no TrainingPeaks/Mac call. «Новые» (pending/generating) now
     // surface too, so Igor sees the list before generating; shared is a history state.
     const [jobs, students, backend] = await Promise.all([
+      // 'dismissed' is intentionally NOT fetched: those are handled cards, and with 600+ of
+      // them they used to eat the newest-200 budget and bury live cards. History now shows
+      // only sent/shared. Everything the coach still acts on is here.
       listTrainingPeaksFeedbackJobs({
-        status: ["pending", "generating", "done", "blocked", "failed", "sent", "shared", "dismissed"],
+        status: ["pending", "generating", "done", "blocked", "failed", "sent", "shared"],
         limit: 200,
       }),
       listTrainingPeaksStudents(),

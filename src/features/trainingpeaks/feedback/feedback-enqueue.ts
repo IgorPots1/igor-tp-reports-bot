@@ -10,7 +10,7 @@
 
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
-import { enqueueTrainingPeaksFeedbackJob } from "@/features/trainingpeaks/feedback/feedback-queue";
+import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 
 type SupabaseLike = ReturnType<typeof createSupabaseServerClient>;
@@ -261,9 +261,19 @@ export async function sweepAndEnqueueFeedbackJobs(input: { sinceUpdatedAt: strin
   const packetsInput = await assemblePlannerInputsForWorkouts(supabase, derivedRows);
   const summary: FeedbackEnqueueSummary = { scanned: derivedRows.length, enqueued: 0, blocked: 0, skipped: 0 };
 
+  // Don't resurrect a workout the coach already dealt with. The queue's unique index only
+  // blocks duplicate ACTIVE jobs (pending/generating); once a job is done/dismissed/sent/
+  // shared the index lets a new pending in — so an hourly metrics recompute (fresh
+  // updated_at, same workout inside the 3-day window) would keep re-adding cleared cards.
+  const handledCacheIds = await fetchHandledWorkoutCacheIds([...new Set(derivedRows.map((r) => r.workout_cache_id as string))]);
+
   for (const r of derivedRows) {
     const cacheId = r.workout_cache_id as string;
     const studentId = r.student_id as string;
+    if (handledCacheIds.has(cacheId)) {
+      summary.skipped += 1;
+      continue;
+    }
     const plannerInput = packetsInput.get(cacheId);
     if (!plannerInput) continue;
     const built = buildFeedbackContextPacket(plannerInput);

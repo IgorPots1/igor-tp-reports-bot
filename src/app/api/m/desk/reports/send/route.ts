@@ -64,7 +64,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         ok: true,
         outcome: "prepared",
         studentName: result.studentName,
-        note: "Отправка выключена (prepare-only) — черновик готов, но НЕ отправлен.",
+        note: "Режим подготовки: черновик готов, но отправка выключена. Включить: FEEDBACK_SEND_ENABLED=true + передеплой.",
       });
     }
     return jsonResponse(REFUSAL_STATUS[result.kind] ?? 422, {
