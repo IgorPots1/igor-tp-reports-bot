@@ -36,6 +36,7 @@ import {
   getWorkoutsByDateRange,
 } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { reportsRoot } from "./lib/paths.ts";
+import { pickWhitelistedSettings } from "./lib/tp-settings-whitelist.ts";
 
 const DEFAULT_ATHLETE_ID = 3102415;
 
@@ -60,11 +61,6 @@ function describeShape(value: unknown, depth = 0): unknown {
   return typeof value;
 }
 
-/** Top-level keys whose name hints at a zone or threshold, for a quick "where do zones live" answer. */
-function zoneRelatedKeys(settings: Record<string, unknown>): string[] {
-  return Object.keys(settings).filter((k) => /zone|ftp|threshold|lthr|maxhr|resthr|pace|power|heart/i.test(k));
-}
-
 async function main(): Promise<void> {
   const athleteId = Number(getCliValue("--athlete-id=") ?? DEFAULT_ATHLETE_ID);
   if (!Number.isInteger(athleteId) || athleteId <= 0) {
@@ -78,16 +74,29 @@ async function main(): Promise<void> {
   const findings: Record<string, unknown> = { athleteId, ranAt: now.toISOString() };
   console.log(`tp-verify-reads: athlete ${athleteId} (GET-only, no mutation)\n`);
 
-  // ── 1. settings: zones + thresholds ────────────────────────────────────────
+  // ── 1. settings: zones + thresholds (WHITELIST — the full body is NEVER written) ─
   const settings = await getAthleteSettings(athleteId);
-  const zoneKeys = zoneRelatedKeys(settings);
-  await writeFile(path.join(outDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-  console.log(`[1] GET /fitness/v1/athletes/${athleteId}/settings — ${Object.keys(settings).length} top-level keys`);
-  console.log(`    zone/threshold-related keys: ${zoneKeys.join(", ") || "(none found by name)"}`);
-  for (const k of zoneKeys) {
-    console.log(`      ${k}: ${JSON.stringify(describeShape(settings[k]))}`);
+  const whitelisted = pickWhitelistedSettings(settings);
+  const whitelistKeys = Object.keys(whitelisted).sort();
+  const allKeys = Object.keys(settings).sort();
+  // Persist ONLY whitelisted keys+values. Raw settings hold email/firstName and a
+  // working iCalendarKeys access key — never written. structure.json records only
+  // the KEY NAMES (all + which are whitelisted); no non-whitelisted values or shapes.
+  await writeFile(path.join(outDir, "settings.whitelisted.json"), `${JSON.stringify(whitelisted, null, 2)}\n`, "utf8");
+  // Disk gets ONLY whitelisted key names + a count — non-whitelisted key names
+  // (email, iCalendarKeys, address, …) are never written, only shown on stdout below.
+  await writeFile(
+    path.join(outDir, "structure.json"),
+    `${JSON.stringify({ totalTopLevelKeyCount: allKeys.length, whitelistedKeyNames: whitelistKeys }, null, 2)}\n`,
+    "utf8",
+  );
+  console.log(`[1] GET /fitness/v1/athletes/${athleteId}/settings — ${allKeys.length} top-level keys`);
+  console.log(`    all key names: ${allKeys.join(", ")}`);
+  console.log(`    whitelisted (persisted) keys: ${whitelistKeys.join(", ") || "(none matched the whitelist)"}`);
+  for (const k of whitelistKeys) {
+    console.log(`      ${k}: ${JSON.stringify(describeShape(whitelisted[k]))}`);
   }
-  findings.settings = { topLevelKeyCount: Object.keys(settings).length, zoneRelatedKeys: zoneKeys };
+  findings.settings = { topLevelKeyCount: allKeys.length, whitelistedKeys: whitelistKeys };
 
   // ── 2. v2 zone read shape (the PUT target resource) ────────────────────────
   const v2 = ["heartrate", "power", "speed"] as const;

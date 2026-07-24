@@ -40,6 +40,7 @@ import {
   TpApiAuthError,
 } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { toolRoot } from "./lib/paths.ts";
+import { pickWhitelistedSettings, whitelistedKeySignature } from "./lib/tp-settings-whitelist.ts";
 
 // ── env loading (same inline pattern as the other tp-*.ts scripts) ────────────
 
@@ -95,22 +96,17 @@ function hasFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag);
 }
 
-// ── zones extraction (defensive; raw_settings is authoritative) ────────────────
+// ── zones extraction (WHITELIST — the raw settings are never persisted) ────────
+//
+// The full GET /settings body carries email/firstName and a working iCalendarKeys
+// access key, so we store ONLY the whitelisted zone/threshold projection (shared
+// with tp-verify-reads via ./lib/tp-settings-whitelist.ts). There is no raw_settings
+// column any more — nothing outside the whitelist reaches the database.
 
-const ZONE_KEY_PATTERN = /zone|ftp|threshold|lthr|maxhr|resthr/i;
-
-/** Project the zone/threshold-related settings keys into a compact object; null if none. */
+/** Whitelisted zone/threshold projection, or null if the athlete has none. */
 function extractZones(settings: Record<string, unknown>): Record<string, unknown> | null {
-  const zones: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(settings)) {
-    if (ZONE_KEY_PATTERN.test(k)) zones[k] = v;
-  }
+  const zones = pickWhitelistedSettings(settings);
   return Object.keys(zones).length > 0 ? zones : null;
-}
-
-/** Sorted zone-related key names — used to detect athletes whose structure differs from the norm. */
-function zoneKeySignature(settings: Record<string, unknown>): string {
-  return Object.keys(settings).filter((k) => ZONE_KEY_PATTERN.test(k)).sort().join(",");
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -185,18 +181,18 @@ async function main(): Promise<void> {
     const athleteId = toProcess[i];
     try {
       const settings = await getAthleteSettings(athleteId); // read-only GET
-      const zones = extractZones(settings);
-      const signature = zoneKeySignature(settings);
+      const zones = extractZones(settings); // whitelisted projection only — no PII/secrets
+      const signature = whitelistedKeySignature(settings);
       signatureByAthlete.set(athleteId, signature);
       signatureCount.set(signature, (signatureCount.get(signature) ?? 0) + 1);
       if (!zones) zonesAbsent += 1;
 
       // Write THIS athlete immediately (idempotent/resumable — never batched).
+      // Only the whitelisted zones are stored; the raw settings never reach the DB.
       const { error } = await supabase.from("tp_zone_snapshots").insert({
         trainingpeaks_athlete_id: athleteId,
         student_id: studentIdByAthlete.get(athleteId) ?? null,
         captured_at: new Date().toISOString(),
-        raw_settings: settings,
         zones,
         source: "settings_v1",
       });

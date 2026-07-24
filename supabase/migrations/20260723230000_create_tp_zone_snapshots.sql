@@ -18,9 +18,10 @@ create table if not exists public.tp_zone_snapshots (
   -- trainingpeaks_students row, and a removed student must not drop the snapshot.
   student_id uuid references public.trainingpeaks_students(id) on delete set null,
   captured_at timestamptz not null default now(),
-  -- full GET /fitness/v1/athletes/{id}/settings response, verbatim.
-  raw_settings jsonb not null default '{}'::jsonb,
-  -- normalized zones/thresholds extracted from raw_settings; null when the athlete has none.
+  -- WHITELISTED zone/threshold projection of GET /fitness/v1/athletes/{id}/settings
+  -- (see tools/trainingpeaks-export/scripts/lib/tp-settings-whitelist.ts). The raw
+  -- settings body carries PII + a working iCalendarKeys access key and is NEVER
+  -- stored — only whitelisted keys reach this column. null when the athlete has none.
   zones jsonb,
   -- provenance of this snapshot (endpoint + shape version), e.g. 'settings_v1'.
   source text not null default 'settings_v1',
