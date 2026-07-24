@@ -76,6 +76,7 @@
     "tp-fit-ingest-scan": "tsx scripts/tp-fit-ingest-scan.ts",
     "tp-feedback-enqueue-run": "tsx scripts/tp-feedback-enqueue-run.ts",
     "tp-ops-notify": "tsx scripts/tp-ops-notify.ts",
+    "tp-export-failure-monitor": "tsx scripts/tp-export-failure-monitor.ts",
     "check-fit-ingest-pipeline": "tsx scripts/check-fit-ingest-pipeline.ts",
     "tp-probe-workout-hidden-field": "tsx scripts/tp-probe-workout-hidden-field.ts",
     "tp-diagnose-workout-methodology-coverage": "tsx scripts/tp-diagnose-workout-methodology-coverage.ts",

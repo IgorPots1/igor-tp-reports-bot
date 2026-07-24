@@ -2,23 +2,23 @@
 # TrainingPeaks FIT-ingest scan + feedback-enqueue — ОДНА служба, весь хвост трубы.
 # ИДЁТ СЛЕДОМ за workout-cache-scan: cache-scan скачивает тренировки в кэш → этот скрипт
 # считает из них derived_metrics → и СРАЗУ САМ дёргает enqueue (кладёт новые тренировки
-# в «Новые»). Ноль кронов на Vercel: enqueue едет на маке, не по расписанию Vercel.
-# Генерация остаётся кнопкой Игоря (Вариант Б) — здесь её нет.
+# в «Новые»). Ноль кронов на Vercel. Генерация остаётся кнопкой Игоря (Вариант Б).
 #
-# Скользящее окно последних дней (по умолчанию 5): fit нужен только на ПРОШЕДШИЕ
-# тренировки. Окно с запасом ловит поздно долитые файлы.
-# Использование:
-#   PAST_DAYS=5  ./run-fit-ingest-scan.sh          # обычный прогон (плист)
-#   PAST_DAYS=14 ./run-fit-ingest-scan.sh          # добор после простоя
+# ЧАСТИЧНЫЕ СБОИ — НОРМА. При ~110 учениках всегда есть per-athlete-провалы (403 закрытого
+# экспорта, TP вернул HTML вместо JSON, транзиентный fetch). fit-ingest выходит кодом 1,
+# ЕСЛИ ХОТЬ ОДИН упал — но это НЕ значит «всё сломалось»: успешные метрики посчитаны.
+# Поэтому:
+#   * enqueue бежит ВСЕГДА (идемпотентно) — успешные тренировки должны попасть в список;
+#   * алерт «TP-сессия умерла» — ТОЛЬКО когда НИКТО не прошёл (0 ok) И ошибки авторизац.
+#     (мёртвый bearer/cookie/401), а не per-athlete 403. Иначе был бы ложный алерт каждый раз.
+#   * мониторинг: ученик, падающий N прогонов ПОДРЯД → отдельный алерт списком.
 #
-# ГРАБЛИ (учтены):
-#   * Рабочая папка/ветка: REPO=$HOME/igor-tp-reports-bot — служба читает код ИЗ main-папки,
-#     а не из feature-worktree. cd "$REPO" ниже фиксирует это.
-#   * Окружение службы ≠ терминала: плист запускает через `bash -lc` (login-shell), так
-#     что PATH/node/npm подхватываются из профиля, как у cache-scan.
-#   * Протухание токена TP: если fit-ingest упал с ошибкой авторизации — шлём Игорю
-#     Telegram-алерт «перелогинься» (tp-ops-notify), чтобы не узнавать через день по
-#     пустому списку. Автологин НЕ делаем — он требует браузера/человека.
+# Окно последних дней (по умолчанию 5). Использование:
+#   PAST_DAYS=5 ./run-fit-ingest-scan.sh          # обычный прогон (плист)
+#   PAST_DAYS=14 ./run-fit-ingest-scan.sh         # добор после простоя
+#
+# ГРАБЛИ (учтены): рабочая папка REPO=$HOME/igor-tp-reports-bot (код из main, не worktree);
+# окружение службы (плист bash -lc); токен TP протух → алерт «перелогинься» (npm run tp-login).
 set -uo pipefail
 
 REPO="${REPO:-$HOME/igor-tp-reports-bot}"
@@ -30,23 +30,32 @@ TO="$(TZ=Europe/Belgrade date +%F)"
 
 cd "$REPO" || { echo "[$(date '+%F %T')] нет папки $REPO"; exit 1; }
 
-# 1) FIT-ingest — считаем метрики. Ловим и код выхода, и вывод (для детекта авторизации).
+# 1) FIT-ingest — считаем метрики. Ловим вывод (для детекта сессии + мониторинга).
 echo "[$(date '+%F %T')] tp-fit-ingest-scan --from=${FROM} --to=${TO} (все активные)"
-FIT_OUT="$(npm run --silent tp-fit-ingest-scan -- --from="${FROM}" --to="${TO}" 2>&1)"
+FIT_LOG="$(mktemp -t fit-ingest-out)"
+npm run --silent tp-fit-ingest-scan -- --from="${FROM}" --to="${TO}" >"$FIT_LOG" 2>&1
 FIT_CODE=$?
-printf '%s\n' "$FIT_OUT"
+cat "$FIT_LOG"
 
-if [ "$FIT_CODE" -ne 0 ]; then
-  # Похоже на смерть TP-сессии? → Telegram-алерт «перелогинься».
-  if printf '%s' "$FIT_OUT" | grep -qiE '401|403|unauthor|forbidden|bearer|session|cookie|re-?login|not logged'; then
-    echo "[$(date '+%F %T')] FIT-ingest: похоже на мёртвую TP-сессию — шлю алерт"
+OK_COUNT="$(grep -c 'status=ok' "$FIT_LOG" || true)"
+FAILED_COUNT="$(grep -c 'status=failed' "$FIT_LOG" || true)"
+echo "[$(date '+%F %T')] fit-ingest: ok=${OK_COUNT} failed=${FAILED_COUNT} exit=${FIT_CODE}"
+
+# 2) Алерт «сессия умерла» — ТОЛЬКО если НИКТО не прошёл И это похоже на авторизацию
+#    (мёртвый bearer/cookie/401), НЕ на per-athlete 403.
+if [ "${OK_COUNT:-0}" -eq 0 ] && [ "$FIT_CODE" -ne 0 ]; then
+  if grep -qiE '401|unauthor|bearer|token|session|cookie|re-?login|not logged|snapshot' "$FIT_LOG"; then
+    echo "[$(date '+%F %T')] 0 успехов + авторизац. ошибка → алерт о смерти сессии"
     npm --prefix "$TOOLS" run --silent tp-ops-notify -- \
-      "⚠️ TP-сессия, похоже, умерла: fit-ingest не смог посчитать метрики, список не обновляется. Перелогинься: cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-login" || true
+      "⚠️ TP-сессия, похоже, умерла: fit-ingest не посчитал НИ ОДНОЙ тренировки. Перелогинься: cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npm run tp-login" || true
   fi
-  echo "[$(date '+%F %T')] FIT-ingest упал (код ${FIT_CODE}) — enqueue пропускаю"
-  exit "$FIT_CODE"
 fi
 
-# 2) Метрики посчитаны → тем же прогоном кладём новые тренировки в «Новые».
+# 3) Мониторинг: ученики, стабильно НЕ качающиеся (N прогонов подряд) → алерт списком.
+npm --prefix "$TOOLS" run --silent tp-export-failure-monitor -- --log="$FIT_LOG" || true
+
+# 4) enqueue ВСЕГДА (частичные сбои — норма; успешные метрики должны попасть в список).
 echo "[$(date '+%F %T')] enqueue (кладём новые тренировки в список)"
-npm --prefix "$TOOLS" run --silent tp-feedback-enqueue-run
+npm --prefix "$TOOLS" run --silent tp-feedback-enqueue-run || true
+
+rm -f "$FIT_LOG"

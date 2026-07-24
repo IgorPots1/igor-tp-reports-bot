@@ -14,6 +14,8 @@ import { loadLocalEnv } from "./lib/local-env.ts";
 loadLocalEnv();
 
 import { sweepAndEnqueueFeedbackJobs } from "../../../src/features/trainingpeaks/feedback/feedback-enqueue.ts";
+import { reclaimStaleGeneratingFeedbackJobs } from "../../../src/features/trainingpeaks/feedback/feedback-queue.ts";
+import { STALE_GENERATING_TTL_MS } from "../../../src/features/trainingpeaks/feedback/feedback-worker-auth.ts";
 import {
   createTrainingPeaksCronRunLog,
   finishTrainingPeaksCronRunLog,
@@ -34,6 +36,10 @@ async function main(): Promise<void> {
   });
 
   try {
+    // Reclaim any generation that was claimed but never submitted (crashed/abandoned) —
+    // the on-demand path doesn't reclaim, so this hourly run is the server-side safety net.
+    await reclaimStaleGeneratingFeedbackJobs(new Date(startedAtMs - STALE_GENERATING_TTL_MS).toISOString()).catch(() => {});
+
     const lastOk = await getLatestTrainingPeaksCronRunLog({ jobName: CRON_JOB_NAME, status: "sent" });
     const sinceUpdatedAt = lastOk?.startedAt ?? new Date(startedAtMs - DEFAULT_LOOKBACK_MS).toISOString();
 

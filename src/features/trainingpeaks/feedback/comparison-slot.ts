@@ -77,10 +77,16 @@ export function evaluateComparisonSlot(packet: ContextPacket): ComparisonSlotRes
     };
   }
 
+  // Carry the norm window (recent ≤8 нед / old >6 нед) so the draft can anchor the delta
+  // in TIME ("чем месяц назад") instead of a vague "раньше", and the coach panel can show
+  // the raw baseline. mode is dropped nowhere else, so stash it as a 0/1 flag in numbers.
+  const praiseNumbers = metricsToNumbers(result.observation.metrics);
+  praiseNumbers.comparisonModeOld = result.observation.mode === "old" ? 1 : 0;
+
   return {
     praise: {
-      numbers: metricsToNumbers(result.observation.metrics),
-      reason: `comparison base progress (${result.observation.kind}, weight ${result.observation.weight})`,
+      numbers: praiseNumbers,
+      reason: `comparison base progress (${result.observation.kind}, weight ${result.observation.weight}, mode ${result.observation.mode})`,
       weight: result.observation.weight as PraiseWeight,
     },
     hrSensorQuestion: null,

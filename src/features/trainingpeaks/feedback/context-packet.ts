@@ -29,6 +29,9 @@ export type FeedbackContextPacket = {
   fewshotsUsed: string[];
   // Fact-check input: the ONLY numbers a draft may contain (comparison deltas).
   allowedNumbers: number[];
+  // COACH-ONLY raw comparison baseline (n похожих, было/стало, период) so Igor can verify
+  // the delta in the «почему так» panel. NEVER shown to the student. null when no comparison.
+  comparisonBaseline: string | null;
   // Transparency for the coach panel (next part) — never shown to the student.
   observations: Array<{ type: string; adviceKey: string; focused: boolean; reason: string }>;
 };
@@ -176,25 +179,49 @@ function buildArc(sessionType: SessionType | null, current: PlannerDerivedMetric
 // ── comparison-base delta → student-facing digit (the ONLY allowed number) ──
 const PACE_ARTIFACT_SEC = 30;
 const HR_ARTIFACT_BPM = 15;
-function buildComparison(observations: Observation[]): { block: string; allowedInts: number[] } {
+// Time anchor: the norm window is recent (≤8 нед) or old (>6 нед). "old" → «месяц-плюс
+// назад»; "recent" → «за последние недели». Beats a bare "раньше" that Igor can't place.
+function comparisonPeriodPhrase(n: Record<string, number>): string {
+  return n.comparisonModeOld === 1 ? "чем месяц-плюс назад" : "чем на таких же за последние недели";
+}
+
+// Coach-only raw baseline for the «почему так» panel: how many similar workouts, what the
+// norm was, what it is now — so Igor can eyeball the delta. Never reaches the student.
+function comparisonBaselineNote(metric: string, n: Record<string, number>): string | null {
+  const baseN = n[`${metric}BaseN`];
+  if (baseN === undefined) return null;
+  const before = n[`${metric}Before`];
+  const after = n[`${metric}After`];
+  const period = n.comparisonModeOld === 1 ? "месяц-плюс назад" : "последние ~8 недель";
+  const unit = metric.includes("hr") ? "уд" : metric === "rep_count" ? "отрезков" : "с/км";
+  const beforeAfter =
+    before !== undefined && after !== undefined
+      ? `, было ~${Math.round(before)}, стало ~${Math.round(after)} ${unit}`
+      : "";
+  return `сравнение: ~${Math.round(baseN)} похожих (${period})${beforeAfter}`;
+}
+
+function buildComparison(observations: Observation[]): { block: string; allowedInts: number[]; baseline: string | null } {
   const comp = observations.find((o) => o.adviceKey === "praise_comparison_progress");
-  if (!comp) return { block: "Сравнения с прошлым нет — пиши только качественные наблюдения, без цифр.", allowedInts: [] };
+  if (!comp) return { block: "Сравнения с прошлым нет — пиши только качественные наблюдения, без цифр.", allowedInts: [], baseline: null };
   const n = comp.numbers;
   const deltaKey = Object.keys(n).find((k) => k.endsWith("Delta"));
-  if (!deltaKey) return { block: "Есть прогресс относительно прошлых таких же тренировок (общо, без конкретной цифры).", allowedInts: [] };
+  if (!deltaKey) return { block: "Есть прогресс относительно прошлых таких же тренировок (общо, без конкретной цифры).", allowedInts: [], baseline: null };
   const metric = deltaKey.slice(0, -"Delta".length);
   const delta = n[deltaKey]!;
   const abs = Math.round(Math.abs(delta));
+  const period = comparisonPeriodPhrase(n);
+  const baseline = comparisonBaselineNote(metric, n);
   if ((metric === "steady_pace" || metric === "rep_pace") && Math.abs(delta) <= PACE_ARTIFACT_SEC) {
-    return { block: `${metric === "rep_pace" ? "Отрезки" : "Темп"} примерно на ${abs} с/км быстрее, чем на таких же тренировках раньше. (Эту цифру назвать МОЖНО.)`, allowedInts: [abs] };
+    return { block: `${metric === "rep_pace" ? "Отрезки" : "Темп"} примерно на ${abs} с/км быстрее, ${period}. (Эту цифру назвать МОЖНО.)`, allowedInts: [abs], baseline };
   }
   if ((metric === "avg_hr" || metric === "rep_hr") && Math.abs(delta) <= HR_ARTIFACT_BPM) {
-    return { block: `Пульс на том же темпе примерно на ${abs} ниже, чем раньше. (Эту цифру назвать МОЖНО.)`, allowedInts: [abs] };
+    return { block: `Пульс на том же темпе примерно на ${abs} ниже, ${period}. (Эту цифру назвать МОЖНО.)`, allowedInts: [abs], baseline };
   }
   if (metric === "rep_count") {
-    return { block: `Отрезков на ${abs} больше, чем раньше. (Эту цифру назвать МОЖНО.)`, allowedInts: [abs] };
+    return { block: `Отрезков на ${abs} больше, ${period}. (Эту цифру назвать МОЖНО.)`, allowedInts: [abs], baseline };
   }
-  return { block: `Прогресс относительно прошлых таких же тренировок (${metric === "decoupling" ? "аэробно чище/ровнее" : "лучше"}, чем раньше) — назови словами, без цифры.`, allowedInts: [] };
+  return { block: `Прогресс относительно прошлых таких же тренировок (${metric === "decoupling" ? "аэробно чище/ровнее" : "лучше"}, ${period}) — назови словами, без цифры.`, allowedInts: [], baseline };
 }
 
 function workoutHeader(sessionType: SessionType | null): string {
@@ -254,10 +281,67 @@ function renderObservations(observations: Observation[], arc: { notes: string[];
 
 void median; // reserved for future recovery-drop phrasing; keeps the ported helper available
 
+// ── sensor-glitch / no-reliable-metrics draft (Игорь: молчание тренера хуже) ──
+// When the data can't be trusted (treadmill/no-GPS, sensor fragment, no FIT) we still
+// draft — WITHOUT numbers — leaning on what the student SAID. The person likely ran and
+// wrote; a warm "how did it go?" beats silence. The fact-check still forbids any digit
+// (allowedNumbers empty) and any pulse talk (hrTrusted=false), so the draft stays honest.
+function daysApart(a: string, b: string): number {
+  const ta = new Date(`${a}T00:00:00Z`).getTime();
+  const tb = new Date(`${b}T00:00:00Z`).getTime();
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return Number.POSITIVE_INFINITY;
+  return Math.abs(ta - tb) / 86_400_000;
+}
+
+function relevantMemoryText(input: ContextPacket): string[] {
+  const wd = input.workout.workoutDate;
+  // Prefer notes dated within ±2 days of the workout (likely about it); else the most recent.
+  const near = input.memoryItems.filter((m) => m.date && daysApart(m.date, wd) <= 2);
+  const chosen = (near.length ? near : input.memoryItems).slice(-4);
+  return chosen.map((m) => m.text).filter((t) => typeof t === "string" && t.trim().length > 0);
+}
+
+function buildSensorGlitchPacket(input: ContextPacket, reason: string): FeedbackContextPacket {
+  const words = relevantMemoryText(input);
+  const wordsBlock = words.length
+    ? `Слова ученика (недавняя память — мог упомянуть эту тренировку):\n${words.map((w) => `- ${w}`).join("\n")}`
+    : "Ученик ничего недавно не писал про тренировки.";
+  const observationsBlock = [
+    `Данные датчика по этой тренировке НЕДОСТОВЕРНЫ: ${reason}.`,
+    "Цифр нет — ни темпа, ни пульса, ни дистанции. Разбирать метрики НЕЛЬЗЯ.",
+    "Но молчать не надо — человек мог пробежать и написать. Напиши тёплый КОРОТКИЙ черновик БЕЗ единой цифры:",
+    "- если в словах ученика ниже видно, как далась тренировка — мягко обыграй это и спроси самочувствие;",
+    "- если слов нет — просто короткий тёплый вопрос: как прошла пробежка, что по ощущениям?",
+    "Не выдумывай метрики и не делай вид, что разобрал тренировку.",
+    "",
+    wordsBlock,
+  ].join("\n");
+  return {
+    workoutId: input.workout.workoutId,
+    workoutDate: input.workout.workoutDate,
+    title: input.workout.title,
+    sessionType: null,
+    sex: input.sex,
+    register: input.telegramFormality,
+    hrTrusted: false, // no pulse talk — data untrusted
+    workoutHeader: "Тип: не разобрать — данные датчика сломаны (дорожка / сбой часов). Числа НЕ называй.",
+    observationsBlock,
+    comparisonBlock: "Сравнения с прошлым нет — цифр нет вообще.",
+    fewshotsText: [...FEWSHOTS.A.slice(0, 4), ...FEWSHOTS.C.slice(0, 2)].map((p) => `- ${p}`).join("\n"),
+    fewshotsUsed: ["A×4", "C×2"],
+    allowedNumbers: [],
+    comparisonBaseline: null,
+    observations: [
+      { type: "question", adviceKey: "sensor_glitch_ask", focused: true, reason: `данные датчика недостоверны (${reason}) — черновик по словам/ощущениям, без цифр` },
+    ],
+  };
+}
+
 export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackContextPacketResult {
   const blockReason = resolveBlock(input.current);
   if (blockReason !== null) {
-    return { blocked: true, reason: blockReason };
+    // Данные недостоверны — НЕ молчим: словесный черновик по словам ученика (правка 2).
+    return { blocked: false, packet: buildSensorGlitchPacket(input, blockReason) };
   }
 
   const observations = planObservations(input);
@@ -280,6 +364,7 @@ export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackC
     fewshotsText: fewshots.text,
     fewshotsUsed: fewshots.used,
     allowedNumbers: [...new Set(comparison.allowedInts)],
+    comparisonBaseline: comparison.baseline,
     observations: observations.map((o) => ({ type: o.type, adviceKey: o.adviceKey, focused: o.focused, reason: o.reason })),
   };
   return { blocked: false, packet };

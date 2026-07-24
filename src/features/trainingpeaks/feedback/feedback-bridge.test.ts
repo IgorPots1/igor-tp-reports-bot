@@ -22,6 +22,7 @@ function basePacket(overrides: Partial<FeedbackContextPacket> = {}): FeedbackCon
     fewshotsText: "- Молодец 👍",
     fewshotsUsed: ["A×4"],
     allowedNumbers: [],
+    comparisonBaseline: null,
     observations: [],
     ...overrides,
   };
@@ -74,18 +75,26 @@ function plannerInput(current: Partial<PlannerDerivedMetrics>): ContextPacket {
   };
 }
 
-describe("context-packet block gate", () => {
-  test("no FIT → blocked (coach signal, no draft)", () => {
+describe("context-packet data-integrity → sensor-glitch words draft (правка 2)", () => {
+  // Data-integrity issues no longer go silent: they produce a numbers-free "how did it
+  // feel?" draft (allowedNumbers empty, hrTrusted false) instead of a blocked coach signal.
+  test("no FIT → words draft, not blocked", () => {
     const r = buildFeedbackContextPacket(plannerInput({ hasFit: false }));
-    assert.equal(r.blocked, true);
+    assert.equal(r.blocked, false);
+    if (!r.blocked) {
+      assert.deepEqual(r.packet.allowedNumbers, []);
+      assert.equal(r.packet.hrTrusted, false);
+      assert.match(r.packet.observationsBlock, /НЕДОСТОВЕРНЫ|ощущени/u);
+    }
   });
-  test("summary_only fallback → blocked", () => {
+  test("summary_only fallback → words draft, not blocked", () => {
     const r = buildFeedbackContextPacket(plannerInput({ fallbackLevel: "summary_only" }));
-    assert.equal(r.blocked, true);
+    assert.equal(r.blocked, false);
   });
-  test("untrusted pace → blocked", () => {
+  test("untrusted pace → words draft, not blocked", () => {
     const r = buildFeedbackContextPacket(plannerInput({ paceTrusted: false }));
-    assert.equal(r.blocked, true);
+    assert.equal(r.blocked, false);
+    if (!r.blocked) assert.deepEqual(r.packet.allowedNumbers, []);
   });
   test("clean fit_full workout → not blocked, builds a packet", () => {
     const r = buildFeedbackContextPacket(plannerInput({}));

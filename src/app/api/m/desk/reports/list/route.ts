@@ -2,7 +2,8 @@ import type { NextRequest } from "next/server";
 
 import { resolveMiniAppCoach } from "@/features/telegram/miniapp-coach-resolver";
 import { countTrainingPeaksStudentThreadsByStudentIds, listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
-import { listTrainingPeaksFeedbackJobs } from "@/features/trainingpeaks/feedback/feedback-queue";
+import { listTrainingPeaksFeedbackJobs, reclaimStaleGeneratingFeedbackJobs } from "@/features/trainingpeaks/feedback/feedback-queue";
+import { STALE_GENERATING_TTL_MS } from "@/features/trainingpeaks/feedback/feedback-worker-auth";
 import { isFeedbackSendEnabled } from "@/features/trainingpeaks/feedback/feedback-send";
 import { buildReportsView } from "@/features/trainingpeaks/feedback/feedback-review-view";
 import { getActiveFeedbackGeneratorBackend } from "@/features/trainingpeaks/feedback/feedback-backend-mode";
@@ -36,6 +37,12 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
+    // Self-heal stuck jobs: a draft claimed but never submitted (a crashed/abandoned
+    // generation) sits in 'generating' forever, because the reclaim used to live ONLY in
+    // the Cowork worker batch — the on-demand path never ran it. Opening «Отчёты» now
+    // reclaims anything idle past the TTL back to pending. Best-effort — never break the list.
+    await reclaimStaleGeneratingFeedbackJobs(new Date(Date.now() - STALE_GENERATING_TTL_MS).toISOString()).catch(() => {});
+
     // Plain Supabase reads — no TrainingPeaks/Mac call. «Новые» (pending/generating) now
     // surface too, so Igor sees the list before generating; shared is a history state.
     const [jobs, students, backend] = await Promise.all([

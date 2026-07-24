@@ -132,6 +132,10 @@ function buildTransparency(packet: FeedbackContextPacket | undefined): ReportTra
   if (hasComparison && typeof packet.comparisonBlock === "string") {
     const text = cleanComparison(packet.comparisonBlock);
     if (text) items.push({ kind: "comparison", text });
+    // Coach-only raw baseline so Igor can verify the delta (never shown to the student).
+    if (typeof packet.comparisonBaseline === "string" && packet.comparisonBaseline) {
+      items.push({ kind: "signal", text: `сверка: ${packet.comparisonBaseline}` });
+    }
   }
 
   for (const o of packet.observations.filter((o) => o.type === "coach_signal")) {
