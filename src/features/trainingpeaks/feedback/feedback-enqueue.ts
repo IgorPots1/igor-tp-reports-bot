@@ -108,6 +108,28 @@ export async function assemblePlannerInputsForWorkouts(
     memoryByStudent.set(m.student_id as string, list);
   }
 
+  // Raw inbound athlete messages (the transient "what the student said about the workout"
+  // that isn't durable memory). Verbatim previews from the context-observation store, last
+  // ~30 days; context-packet windows them to each workout's date. This is the general
+  // "student words → prompt" channel, so a report like "было 30-31°С" reaches the model
+  // even when no narrow rule (heat keyword, fatigue word) fires.
+  const obsRows = await fetchIn<Record<string, unknown>>(
+    supabase,
+    "trainingpeaks_telegram_context_observations",
+    "student_id, text_preview, labels, observed_at",
+    "student_id",
+    studentIds,
+    (q) => q.gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()).order("observed_at", { ascending: false }).limit(8000)
+  );
+  const messagesByStudent = new Map<string, ContextPacket["studentMessages"]>();
+  for (const o of obsRows) {
+    const text = (o.text_preview as string | null)?.trim();
+    if (!text) continue;
+    const list = messagesByStudent.get(o.student_id as string) ?? [];
+    list.push({ text, date: (o.observed_at as string).slice(0, 10), labels: Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [] });
+    messagesByStudent.set(o.student_id as string, list);
+  }
+
   const healthRows = await fetchIn<Record<string, unknown>>(
     supabase,
     "trainingpeaks_health_metrics_cache",
@@ -191,6 +213,7 @@ export async function assemblePlannerInputsForWorkouts(
       lastPraise: null,
       laps: lapsByCacheId.get(cacheId) ?? [],
       memoryItems: memoryByStudent.get(sid) ?? [],
+      studentMessages: messagesByStudent.get(sid) ?? [],
       healthMetrics: healthByStudent.get(sid) ?? [],
       healthProfile: profileByStudent.get(sid) ?? null,
     };

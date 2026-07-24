@@ -19,7 +19,7 @@ export type ReportChannel = "dm" | "group" | "none";
 
 // A line in the "почему так" panel. `kind` drives the coloured tag in the UI.
 export type ReportTransparencyItem = {
-  kind: "arc" | "praise" | "correction" | "care" | "question" | "comparison" | "signal";
+  kind: "arc" | "praise" | "correction" | "care" | "question" | "comparison" | "signal" | "words";
   text: string;
 };
 
@@ -114,6 +114,12 @@ function glossOf(adviceKey: string, reason: string): string {
 function buildTransparency(packet: FeedbackContextPacket | undefined): ReportTransparencyItem[] {
   if (!packet || !Array.isArray(packet.observations)) return [];
   const items: ReportTransparencyItem[] = [];
+
+  // What the student actually wrote around this workout — shown FIRST so Igor sees the
+  // context the draft leaned on (his ask). Verbatim; coach-only panel.
+  if (Array.isArray(packet.studentWords) && packet.studentWords.length > 0) {
+    items.push({ kind: "words", text: `ученик писал: ${packet.studentWords.map((w) => `«${w}»`).join(" · ")}` });
+  }
 
   const isArc = typeof packet.observationsBlock === "string" && packet.observationsBlock.startsWith("Разбери ДУГОЙ");
   if (isArc) {

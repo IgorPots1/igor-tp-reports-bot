@@ -32,6 +32,10 @@ export type FeedbackContextPacket = {
   // COACH-ONLY raw comparison baseline (n похожих, было/стало, период) so Igor can verify
   // the delta in the «почему так» panel. NEVER shown to the student. null when no comparison.
   comparisonBaseline: string | null;
+  // What the student ACTUALLY wrote around this workout (verbatim, windowed). Fed to the
+  // model as general context (tone + cause), rendered by feedback-prompt as {{STUDENT_WORDS}}
+  // and shown in the coach panel. NOT a number source — the fact-check still forbids stray digits.
+  studentWords: string[];
   // Transparency for the coach panel (next part), never shown to the student.
   observations: Array<{ type: string; adviceKey: string; focused: boolean; reason: string }>;
 };
@@ -68,14 +72,19 @@ function manyStops(laps: PlannerLap[]): boolean {
   }
   return paused > 150; // >2.5 min total pause → worth asking
 }
-function heatContext(workoutDate: string, memoryItems: ContextPacket["memoryItems"]): boolean {
+// Heat detected by WORDS or by DEGREES: "жарко/пекло/духота" OR a two-digit temperature
+// ("30-31°С", "было 30 градусов", "+29"). Checks the student's raw words too (break 3), so
+// a report like "на улице 30-31°С" registers — not only the жара keyword.
+const HEAT_RE = /жар|пекл|духот|обезвож|\d{2}\s*°|\d{2}\s*градус|[+]?[23]\d\s*[сcСC]\b/iu;
+function heatContext(workoutDate: string, memoryItems: ContextPacket["memoryItems"], studentWords: string[]): boolean {
   const m = Number(workoutDate.slice(5, 7));
   if (m >= 6 && m <= 8) return true;
-  return memoryItems.some((mi) => /жар|пекл|духот|обезвож/i.test(mi.text));
+  if (memoryItems.some((mi) => HEAT_RE.test(mi.text))) return true;
+  return studentWords.some((w) => HEAT_RE.test(w));
 }
 
 // ── narrative arc (deterministic: where it broke, why, advice; model voices it) ──
-function buildLongArc(current: PlannerDerivedMetrics, laps: PlannerLap[], observations: Observation[], workoutDate: string, memoryItems: ContextPacket["memoryItems"]): { notes: string[]; rich: boolean } {
+function buildLongArc(current: PlannerDerivedMetrics, laps: PlannerLap[], observations: Observation[], workoutDate: string, memoryItems: ContextPacket["memoryItems"], studentWords: string[]): { notes: string[]; rich: boolean } {
   const split = computeSplitHalf(laps);
   const D = current.hrDecouplingPct;
   const hrOk = current.hrTrusted !== false;
@@ -124,7 +133,7 @@ function buildLongArc(current: PlannerDerivedMetrics, laps: PlannerLap[], observ
   if (endDrift) {
     notes.push("[дуга-перелом] пульс подрос ТОЛЬКО к концу (последняя треть), середину держал ровно");
     notes.push("[утешение+прогноз] ничего страшного, тело адаптируется, с регулярными длинными в следующий раз будет легче");
-  } else if (heatContext(workoutDate, memoryItems)) {
+  } else if (heatContext(workoutDate, memoryItems, studentWords)) {
     notes.push("[дуга-перелом] во второй половине пульс заметно пополз вверх");
     notes.push("[причина] жара: в жару пульс лезет от обезвоживания (это не про форму)");
     notes.push("[вопрос] спросить, достаточно ли жидкости было по ходу");
@@ -170,8 +179,8 @@ function buildIntervalArc(current: PlannerDerivedMetrics): { notes: string[]; ri
   return { notes, rich: true };
 }
 
-function buildArc(sessionType: SessionType | null, current: PlannerDerivedMetrics, laps: PlannerLap[], observations: Observation[], workoutDate: string, memoryItems: ContextPacket["memoryItems"]): { notes: string[]; rich: boolean } | null {
-  if (sessionType === "long_tempo") return buildLongArc(current, laps, observations, workoutDate, memoryItems);
+function buildArc(sessionType: SessionType | null, current: PlannerDerivedMetrics, laps: PlannerLap[], observations: Observation[], workoutDate: string, memoryItems: ContextPacket["memoryItems"], studentWords: string[]): { notes: string[]; rich: boolean } | null {
+  if (sessionType === "long_tempo") return buildLongArc(current, laps, observations, workoutDate, memoryItems, studentWords);
   if (sessionType === "interval") return buildIntervalArc(current);
   return null;
 }
@@ -286,26 +295,37 @@ void median; // reserved for future recovery-drop phrasing; keeps the ported hel
 // draft, WITHOUT numbers, leaning on what the student SAID. The person likely ran and
 // wrote; a warm "how did it go?" beats silence. The fact-check still forbids any digit
 // (allowedNumbers empty) and any pulse talk (hrTrusted=false), so the draft stays honest.
-function daysApart(a: string, b: string): number {
-  const ta = new Date(`${a}T00:00:00Z`).getTime();
-  const tb = new Date(`${b}T00:00:00Z`).getTime();
-  if (Number.isNaN(ta) || Number.isNaN(tb)) return Number.POSITIVE_INFINITY;
-  return Math.abs(ta - tb) / 86_400_000;
-}
-
-function relevantMemoryText(input: ContextPacket): string[] {
-  const wd = input.workout.workoutDate;
-  // Prefer notes dated within ±2 days of the workout (likely about it); else the most recent.
-  const near = input.memoryItems.filter((m) => m.date && daysApart(m.date, wd) <= 2);
-  const chosen = (near.length ? near : input.memoryItems).slice(-4);
-  return chosen.map((m) => m.text).filter((t) => typeof t === "string" && t.trim().length > 0);
+// The general "student words" channel: the athlete's raw messages in a TIGHT window around
+// the workout (date−1 … date+2), so we catch the actual report ("было 30-31°С, трудно") and
+// NOT week-old chatter. report_like messages win; if none, fall back to any in-window message.
+// Newest first, deduped, capped — verbatim, for the model as tone/cause context (never numbers).
+function windowStudentWords(input: ContextPacket): string[] {
+  const wd = new Date(`${input.workout.workoutDate}T00:00:00Z`).getTime();
+  const inWindow = input.studentMessages.filter((mm) => {
+    if (!mm.date) return false;
+    const diffDays = (new Date(`${mm.date}T00:00:00Z`).getTime() - wd) / 86_400_000;
+    return Number.isFinite(diffDays) && diffDays >= -1 && diffDays <= 2;
+  });
+  const reports = inWindow.filter((mm) => mm.labels.includes("report_like"));
+  const chosen = reports.length ? reports : inWindow;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const mm of chosen) {
+    const t = mm.text.trim();
+    if (!t || seen.has(t)) continue;
+    if (/^https?:\/\/\S+$/iu.test(t)) continue; // bare link (e.g. a race URL), not a report
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 5) break;
+  }
+  return out;
 }
 
 function buildSensorGlitchPacket(input: ContextPacket, reason: string): FeedbackContextPacket {
-  const words = relevantMemoryText(input);
+  const words = windowStudentWords(input);
   const wordsBlock = words.length
-    ? `Слова ученика (недавняя память, мог упомянуть эту тренировку):\n${words.map((w) => `- ${w}`).join("\n")}`
-    : "Ученик ничего недавно не писал про тренировки.";
+    ? `Слова ученика про эту тренировку (его сообщения):\n${words.map((w) => `- ${w}`).join("\n")}`
+    : "Ученик ничего про эту тренировку не писал.";
   const observationsBlock = [
     `Данные датчика по этой тренировке НЕДОСТОВЕРНЫ: ${reason}.`,
     "Цифр нет, ни темпа, ни пульса, ни дистанции. Разбирать метрики НЕЛЬЗЯ.",
@@ -331,6 +351,7 @@ function buildSensorGlitchPacket(input: ContextPacket, reason: string): Feedback
     fewshotsUsed: ["A×4", "C×2"],
     allowedNumbers: [],
     comparisonBaseline: null,
+    studentWords: words,
     observations: [
       { type: "question", adviceKey: "sensor_glitch_ask", focused: true, reason: `данные датчика недостоверны (${reason}), черновик по словам/ощущениям, без цифр` },
     ],
@@ -346,7 +367,8 @@ export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackC
 
   const observations = planObservations(input);
   const sessionType = (observations[0]?.sessionType as SessionType | null) ?? null;
-  const arc = buildArc(sessionType, input.current, input.laps, observations, input.workout.workoutDate, input.memoryItems);
+  const studentWords = windowStudentWords(input);
+  const arc = buildArc(sessionType, input.current, input.laps, observations, input.workout.workoutDate, input.memoryItems, studentWords);
   const comparison = buildComparison(observations);
   const fewshots = pickFewshots(observations);
 
@@ -365,6 +387,7 @@ export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackC
     fewshotsUsed: fewshots.used,
     allowedNumbers: [...new Set(comparison.allowedInts)],
     comparisonBaseline: comparison.baseline,
+    studentWords,
     observations: observations.map((o) => ({ type: o.type, adviceKey: o.adviceKey, focused: o.focused, reason: o.reason })),
   };
   return { blocked: false, packet };

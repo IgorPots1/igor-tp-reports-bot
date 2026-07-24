@@ -10,7 +10,7 @@ import type { CSSProperties } from "react";
 
 // Shape mirrors /api/m/desk/reports/list (feedback-review-view.ts).
 export type ReportTransparencyItem = {
-  kind: "arc" | "praise" | "correction" | "care" | "question" | "comparison" | "signal";
+  kind: "arc" | "praise" | "correction" | "care" | "question" | "comparison" | "signal" | "words";
   text: string;
 };
 export type ReportCardModel = {
@@ -126,6 +126,7 @@ const TAGS: Record<ReportTransparencyItem["kind"], { label: string; bg: string; 
   comparison: { label: "сравнение", bg: "#e9f6e6", fg: "#3f7a2f" },
   arc: { label: "дуга", bg: "#eef3f1", fg: "#5b6f69" },
   signal: { label: "тренеру", bg: "#f0efec", fg: "#8a8577" },
+  words: { label: "ученик писал", bg: "#eaf2f8", fg: "#2f6ea8" },
 };
 
 function openStudentChat(username: string | null) {

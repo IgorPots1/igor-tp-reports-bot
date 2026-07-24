@@ -24,6 +24,7 @@ function packet(overrides: Partial<FeedbackContextPacket> = {}): FeedbackContext
     fewshotsUsed: ["A×4"],
     allowedNumbers: [],
     comparisonBaseline: null,
+    studentWords: [],
     observations: [{ type: "praise", adviceKey: "praise_comparison_progress", focused: true, reason: "comparison base progress" }],
     ...overrides,
   };

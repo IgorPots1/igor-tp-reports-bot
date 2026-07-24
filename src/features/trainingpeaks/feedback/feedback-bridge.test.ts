@@ -23,6 +23,7 @@ function basePacket(overrides: Partial<FeedbackContextPacket> = {}): FeedbackCon
     fewshotsUsed: ["A×4"],
     allowedNumbers: [],
     comparisonBaseline: null,
+    studentWords: [],
     observations: [],
     ...overrides,
   };
@@ -71,7 +72,7 @@ function plannerInput(current: Partial<PlannerDerivedMetrics>): ContextPacket {
       avgPaceSecPerKm: 330, durationS: 2400, hrDecouplingPct: 1, aerobicEf: null, repPaceCv: null, pctTimeHrTarget: null,
       pctTimePaceTarget: null, paceTrusted: true, distanceTrusted: true, hasFit: true, fallbackLevel: "fit_full", ...current,
     },
-    history: [], lastPraise: null, laps: [], memoryItems: [], healthMetrics: [], healthProfile: null,
+    history: [], lastPraise: null, laps: [], memoryItems: [], studentMessages: [], healthMetrics: [], healthProfile: null,
   };
 }
 
@@ -103,6 +104,51 @@ describe("context-packet data-integrity → sensor-glitch words draft (прав�
       assert.ok(r.packet.observationsBlock.length > 0);
       assert.equal(r.packet.sex, "female");
     }
+  });
+});
+
+describe("student-words channel (наряд: слова ученика → черновик)", () => {
+  function inputWithMessages(messages: ContextPacket["studentMessages"]): ContextPacket {
+    const base = plannerInput({});
+    return { ...base, workout: { ...base.workout, workoutDate: "2026-07-15" }, studentMessages: messages };
+  }
+
+  test("окно дата−1..+2: ловит отчёт про тренировку, НЕ тащит болтовню недельной давности", () => {
+    const r = buildFeedbackContextPacket(inputWithMessages([
+      { text: "было 30-31°С, трудно бегать интервалы", date: "2026-07-15", labels: ["report_like"] },
+      { text: "старый вопрос про план недельной давности", date: "2026-07-08", labels: ["unknown"] },
+    ]));
+    assert.equal(r.blocked, false);
+    if (!r.blocked) {
+      assert.ok(r.packet.studentWords.some((w) => w.includes("30-31°С")), "должен поймать отчёт про жару");
+      assert.ok(!r.packet.studentWords.some((w) => w.includes("недельной давности")), "не должен тащить старое");
+    }
+  });
+
+  test("report_like в приоритете над прочими сообщениями в окне", () => {
+    const r = buildFeedbackContextPacket(inputWithMessages([
+      { text: "спасибо, до встречи", date: "2026-07-15", labels: ["unknown"] },
+      { text: "сегодня очень тяжело, ноги ватные", date: "2026-07-15", labels: ["report_like"] },
+    ]));
+    if (!r.blocked) assert.deepEqual(r.packet.studentWords, ["сегодня очень тяжело, ноги ватные"]);
+  });
+
+  test("assembled prompt показывает слова ученика + правила «причина не вина» и «не цитируй числа»", () => {
+    const r = buildFeedbackContextPacket(inputWithMessages([
+      { text: "было 30-31°С, трудно", date: "2026-07-15", labels: ["report_like"] },
+    ]));
+    if (!r.blocked) {
+      const prompt = assembleFeedbackPrompt(r.packet);
+      assert.ok(prompt.includes("30-31°С"), "слова ученика в промпте");
+      assert.ok(prompt.includes("причина, не вина"), "правило причина-не-вина");
+      assert.match(prompt, /НЕ повторяй|переводи в слова/u, "правило не цитировать числа");
+    }
+  });
+
+  test("РЕГРЕСС: факт-чек отклоняет черновик, процитировавший число из слов ученика (30)", () => {
+    // studentWords дают модели «30-31°С», но факт-чек держит: 30 нет в allowedNumbers.
+    const r = validateFeedbackDraft({ draft: "Привет! В жару 30 было тяжело, молодец", packet: basePacket({ allowedNumbers: [] }) });
+    assert.equal(r.ok, false);
   });
 });
 

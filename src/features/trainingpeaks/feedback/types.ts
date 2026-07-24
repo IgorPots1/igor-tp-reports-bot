@@ -45,6 +45,15 @@ export type PlannerMemoryItem = {
   date: string | null;
 };
 
+// Raw inbound athlete message (verbatim preview) from telegram_context_observations —
+// the transient "what the student said about this workout" that (correctly) never becomes
+// durable memory. Loaded per student; context-packet windows it to the workout date.
+export type PlannerStudentMessage = {
+  text: string;
+  date: string; // 'YYYY-MM-DD' (observed_at day)
+  labels: string[];
+};
+
 export type PlannerHealthMetric = {
   metricDate: string; // 'YYYY-MM-DD'
   metricKey: "pulse" | "sleep_hours" | "hrv" | "body_battery";
@@ -76,6 +85,8 @@ export type ContextPacket = {
   /** Current workout's laps only (for the split-half computation). */
   laps: PlannerLap[];
   memoryItems: PlannerMemoryItem[];
+  /** Recent raw athlete messages (verbatim); context-packet windows them to the workout. */
+  studentMessages: PlannerStudentMessage[];
   healthMetrics: PlannerHealthMetric[];
   healthProfile: PlannerHealthProfile | null;
 };

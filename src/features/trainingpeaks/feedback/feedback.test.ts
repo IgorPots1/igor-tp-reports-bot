@@ -48,6 +48,7 @@ function basePacket(overrides: Partial<ContextPacket> = {}): ContextPacket {
     lastPraise: null,
     laps: [],
     memoryItems: [],
+    studentMessages: [],
     healthMetrics: [],
     healthProfile: null,
     ...overrides,
