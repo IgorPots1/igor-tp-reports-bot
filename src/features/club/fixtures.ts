@@ -66,8 +66,8 @@ export const CLUB_CHALLENGE_FIXTURE: ClubChallengeView = {
 export const CLUB_RECORDS_FIXTURE: ClubRecordsView = {
   freshness: FRESH,
   personal: [
-    { distanceKey: "10k", distanceLabel: "10 км", durationSeconds: 2610, paceSecPerKm: 261, date: "2026-06-14", dateLabel: "14 июн", trust: "verified", source: "reconstructed" },
-    { distanceKey: "21k", distanceLabel: "21.1 км", durationSeconds: 5940, paceSecPerKm: 281, date: "2026-05-11", dateLabel: "11 мая", trust: "preliminary", source: "reconstructed" },
+    { distanceKey: "10k", distanceLabel: "10 км", durationSeconds: 2610, paceSecPerKm: 261, date: "2026-06-14", dateLabel: "14 июн", trust: "verified", source: "reconstructed", calcMethod: "best_split" },
+    { distanceKey: "21k", distanceLabel: "21.1 км", durationSeconds: 5940, paceSecPerKm: 281, date: "2026-05-11", dateLabel: "11 мая", trust: "preliminary", source: "reconstructed", calcMethod: "whole_workout" },
   ],
   clubTops: [
     { distanceKey: "5k", distanceLabel: "5 км", alwaysPreliminary: true, rows: [] },

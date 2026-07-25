@@ -87,6 +87,8 @@ export type ClubRecordEntry = {
   trust: RecordTrust;
   /** reconstructed for now; schema leaves room for official_protocol / coach_confirmed. */
   source: RecordSource;
+  /** best_split (fastest continuous segment) | whole_workout (fallback, no laps). */
+  calcMethod: "best_split" | "whole_workout";
 };
 
 export type ClubRecordsClubTopRow = {

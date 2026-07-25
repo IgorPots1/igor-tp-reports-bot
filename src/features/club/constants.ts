@@ -57,11 +57,34 @@ export const CLUB_RECORD_PACE_FLOOR_SEC_PER_KM: Record<"5k" | "10k" | "21k" | "4
 /** elapsed/moving ratio above 1+this => paused effort => hidden (pause_gap). */
 export const CLUB_RECORD_PAUSE_TOLERANCE = 0.1;
 
+/**
+ * Upper pace bound (sec/km): a "record" slower than this is walking / a mixed
+ * activity, not a continuous running effort => hidden (not_running). Second layer
+ * behind the derived workout_type check. 12:00/km is generous — real slow runners
+ * stay under it, walks (e.g. "5k за 2:16" ≈ 27:00/km) are cut. */
+export const CLUB_RECORD_PACE_CEILING_SEC_PER_KM = 720;
+
 /** |sum(lap distance) - total| / total above this => broken record => hidden (lap_distance_mismatch). */
 export const CLUB_RECORD_LAP_DISTANCE_TOLERANCE = 0.05;
 
 /** Implied VDOT above the athlete's own other-distance VDOT by more than this => hidden (self_outlier). */
 export const CLUB_RECORD_SELF_OUTLIER_VDOT_MARGIN = 8;
+
+/**
+ * Best-continuous-split reconstruction (local analogue of Strava best_efforts).
+ * ON by default. A recorded race is usually LONGER than the target distance
+ * (warm-up / run-in in the same file) → timing the whole file underrates the
+ * result. Instead we take the fastest contiguous lap-segment whose summed distance
+ * covers the target. Falls back to whole-workout when laps are missing.
+ */
+export function isBestSplitEnabled(): boolean {
+  // Default ON — only an explicit "false" disables it.
+  return process.env.CLUB_RECORDS_BEST_SPLIT !== "false";
+}
+/** A lap-segment counts for a target if its summed distance is within this band above target. */
+export const CLUB_SPLIT_OVER_TOLERANCE_M = 500;
+/** …and may fall at most this far UNDER target (lap granularity slack). */
+export const CLUB_SPLIT_UNDER_TOLERANCE_M = 60;
 
 /**
  * Club challenge goal (total km) — FIXTURE. Coach OS has no challenge/goal table,

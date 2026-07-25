@@ -279,26 +279,53 @@ async function loadClubWorkoutRows(input: {
  * data => a conservative record (hasLaps:false) which caps the record at
  * `preliminary`.
  */
-async function loadWorkoutQualityIndex(ids: string[]): Promise<Map<string, WorkoutQuality>> {
+async function loadWorkoutQualityIndex(idsRaw: string[]): Promise<Map<string, WorkoutQuality>> {
   const index = new Map<string, WorkoutQuality>();
+  const ids = [...new Set(idsRaw)]; // candidates repeat workoutId across targets
   if (ids.length === 0) {
     return index;
   }
   const supabase = createSupabaseServerClient();
-  const [lapsRes, derivedRes] = await Promise.all([
-    withSupabaseNetworkRetry(() =>
-      supabase
-        .from("trainingpeaks_workout_laps")
-        .select("workout_cache_id, pace_sec_per_km, is_work, timer_time_s, elapsed_time_s, distance_m")
-        .in("workout_cache_id", ids)
-    ),
-    withSupabaseNetworkRetry(() =>
-      supabase
-        .from("trainingpeaks_workout_derived_metrics")
-        .select("workout_cache_id, reps_detected_count, rep_detection_method, has_fit")
-        .in("workout_cache_id", ids)
-    ),
-  ]);
+  // Chunk the `.in()` filters — with best-split ON the candidate set is large.
+  type LapRow = {
+    workout_cache_id: string;
+    pace_sec_per_km: number | null;
+    is_work: boolean | null;
+    timer_time_s: number | null;
+    elapsed_time_s: number | null;
+    distance_m: number | null;
+  };
+  type DerivedRow = {
+    workout_cache_id: string;
+    reps_detected_count: number | null;
+    rep_detection_method: string | null;
+    has_fit: boolean | null;
+    workout_type: string | null;
+  };
+  const lapsData: LapRow[] = [];
+  const derivedData: DerivedRow[] = [];
+  for (const ids0 of chunk(ids, IN_CHUNK)) {
+    const [lapsRes, derivedRes] = await Promise.all([
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_workout_laps")
+          .select("workout_cache_id, pace_sec_per_km, is_work, timer_time_s, elapsed_time_s, distance_m")
+          .in("workout_cache_id", ids0)
+      ),
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_workout_derived_metrics")
+          .select("workout_cache_id, reps_detected_count, rep_detection_method, has_fit, workout_type")
+          .in("workout_cache_id", ids0)
+      ),
+    ]);
+    if (!lapsRes.error && lapsRes.data) {
+      lapsData.push(...(lapsRes.data as LapRow[]));
+    }
+    if (!derivedRes.error && derivedRes.data) {
+      derivedData.push(...(derivedRes.data as DerivedRow[]));
+    }
+  }
 
   type LapAgg = {
     workPaces: number[];
@@ -309,15 +336,8 @@ async function loadWorkoutQualityIndex(ids: string[]): Promise<Map<string, Worko
     hasAny: boolean;
   };
   const lapAgg = new Map<string, LapAgg>();
-  if (!lapsRes.error) {
-    for (const row of (lapsRes.data as Array<{
-      workout_cache_id: string;
-      pace_sec_per_km: number | null;
-      is_work: boolean | null;
-      timer_time_s: number | null;
-      elapsed_time_s: number | null;
-      distance_m: number | null;
-    }> | null) ?? []) {
+  {
+    for (const row of lapsData) {
       const agg = lapAgg.get(row.workout_cache_id) ?? {
         workPaces: [],
         allPaces: [],
@@ -341,18 +361,17 @@ async function loadWorkoutQualityIndex(ids: string[]): Promise<Map<string, Worko
     }
   }
 
-  const derivedByWorkout = new Map<string, { isInterval: boolean; hasFit: boolean }>();
-  if (!derivedRes.error) {
-    for (const row of (derivedRes.data as Array<{
-      workout_cache_id: string;
-      reps_detected_count: number | null;
-      rep_detection_method: string | null;
-      has_fit: boolean | null;
-    }> | null) ?? []) {
+  const derivedByWorkout = new Map<string, { isInterval: boolean; hasFit: boolean; workoutType: string | null }>();
+  {
+    for (const row of derivedData) {
       const reps = toFiniteNumber(row.reps_detected_count) ?? 0;
       const method = row.rep_detection_method ?? "none";
       const isInterval = reps >= 2 && (method === "structure" || method === "lap_trigger");
-      derivedByWorkout.set(row.workout_cache_id, { isInterval, hasFit: row.has_fit === true });
+      derivedByWorkout.set(row.workout_cache_id, {
+        isInterval,
+        hasFit: row.has_fit === true,
+        workoutType: row.workout_type ?? null,
+      });
     }
   }
 
@@ -380,6 +399,7 @@ async function loadWorkoutQualityIndex(ids: string[]): Promise<Map<string, Worko
       lapElapsedSumS: agg && agg.elapsed > 0 ? agg.elapsed : null,
       lapDistanceSumM: agg && agg.dist > 0 ? agg.dist : null,
       isInterval: derived?.isInterval ?? false,
+      workoutType: derived?.workoutType ?? null,
     });
   }
   return index;
@@ -595,7 +615,138 @@ async function buildFreshness(): Promise<ClubFreshness> {
 
 const LABEL_BY_KEY = new Map(C.CLUB_RECORD_DISTANCES.map((d) => [d.key, d.label] as const));
 
-function collectCandidates(rows: ClubWorkoutRow[]): RecordCandidate[] {
+type OrderedLap = {
+  distanceM: number;
+  movingS: number;
+  elapsedS: number;
+  pace: number | null;
+};
+
+/** Split an id list into chunks so a `.in(...)` filter never blows the URL length. */
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+const IN_CHUNK = 60;
+
+/** Ordered (by lap_index) FIT laps per workout — for best-continuous-split. */
+async function loadOrderedLaps(ids: string[]): Promise<Map<string, OrderedLap[]>> {
+  const out = new Map<string, OrderedLap[]>();
+  if (ids.length === 0) {
+    return out;
+  }
+  const supabase = createSupabaseServerClient();
+  // Chunk the `.in()` — a 500+ id list overflows the PostgREST URL and errors out
+  // (which would silently drop every workout to the whole-workout fallback).
+  for (const ids0 of chunk(ids, IN_CHUNK)) {
+    const { data, error } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_workout_laps")
+        .select("workout_cache_id, lap_index, distance_m, timer_time_s, elapsed_time_s, pace_sec_per_km")
+        .in("workout_cache_id", ids0)
+        .eq("source", "fit")
+        .order("workout_cache_id", { ascending: true })
+        .order("lap_index", { ascending: true })
+    );
+    if (error) {
+      continue;
+    }
+    for (const row of (data as Array<{
+      workout_cache_id: string;
+      distance_m: number | null;
+      timer_time_s: number | null;
+      elapsed_time_s: number | null;
+      pace_sec_per_km: number | null;
+    }> | null) ?? []) {
+      const distanceM = toFiniteNumber(row.distance_m) ?? 0;
+      if (distanceM <= 0) {
+        continue; // drop rest/zero-distance laps that would poison the window
+      }
+      const timer = toFiniteNumber(row.timer_time_s);
+      const elapsed = toFiniteNumber(row.elapsed_time_s);
+      const list = out.get(row.workout_cache_id) ?? [];
+      list.push({
+        distanceM,
+        movingS: (timer && timer > 0 ? timer : elapsed) ?? 0,
+        elapsedS: (elapsed && elapsed > 0 ? elapsed : timer) ?? 0,
+        pace: toFiniteNumber(row.pace_sec_per_km),
+      });
+      out.set(row.workout_cache_id, list);
+    }
+  }
+  return out;
+}
+
+function cvOf(paces: number[]): number | null {
+  const clean = paces.filter((p) => p > 0);
+  if (clean.length < 3) {
+    return null;
+  }
+  const mean = clean.reduce((a, b) => a + b, 0) / clean.length;
+  if (mean <= 0) {
+    return null;
+  }
+  const variance = clean.reduce((a, b) => a + (b - mean) * (b - mean), 0) / clean.length;
+  return Math.sqrt(variance) / mean;
+}
+
+/**
+ * Fastest contiguous lap-segment whose summed distance covers `targetKm`
+ * (within [target-under, target+over]). Returns null when no such segment exists
+ * (workout shorter than target, or a single oversized lap → irregular/manual).
+ */
+function buildBestSplitSegment(
+  laps: OrderedLap[],
+  targetKm: number
+): { distanceKm: number; movingS: number; elapsedS: number; paceCv: number | null } | null {
+  if (laps.length < 2) {
+    return null; // single lap → cannot pick a tighter split than the whole file
+  }
+  const targetM = targetKm * 1000;
+  const lo = targetM - C.CLUB_SPLIT_UNDER_TOLERANCE_M;
+  const hi = targetM + C.CLUB_SPLIT_OVER_TOLERANCE_M;
+
+  let best: { distanceKm: number; movingS: number; elapsedS: number; paceCv: number | null } | null = null;
+  for (let i = 0; i < laps.length; i += 1) {
+    let dist = 0;
+    let moving = 0;
+    let elapsed = 0;
+    const paces: number[] = [];
+    for (let j = i; j < laps.length; j += 1) {
+      dist += laps[j].distanceM;
+      moving += laps[j].movingS;
+      elapsed += laps[j].elapsedS;
+      if (laps[j].pace) {
+        paces.push(laps[j].pace as number);
+      }
+      if (dist > hi) {
+        break; // window already too long; a longer window is even worse
+      }
+      if (dist >= lo) {
+        // qualifying window; prefer the fastest (min moving time)
+        if (!best || moving < best.movingS) {
+          best = { distanceKm: dist / 1000, movingS: moving, elapsedS: elapsed, paceCv: cvOf(paces) };
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Build record candidates. When `useBestSplit`, prefer the fastest contiguous
+ * lap-segment covering each target (local best_efforts); fall back to the whole
+ * workout (in ±band) only when laps are missing or no segment qualifies.
+ */
+function collectCandidates(
+  rows: ClubWorkoutRow[],
+  lapsByWorkout: Map<string, OrderedLap[]>,
+  useBestSplit: boolean
+): RecordCandidate[] {
   const out: RecordCandidate[] = [];
   for (const row of rows) {
     if (!row.isCompleted || !row.isRunning) {
@@ -606,7 +757,26 @@ function collectCandidates(rows: ClubWorkoutRow[]): RecordCandidate[] {
     if (!d || d <= 0 || !t || t <= 0) {
       continue;
     }
+    const laps = lapsByWorkout.get(row.id);
     for (const target of C.CLUB_RECORD_DISTANCES) {
+      const seg = useBestSplit && laps ? buildBestSplitSegment(laps, target.km) : null;
+      if (seg) {
+        out.push({
+          workoutId: row.id,
+          studentId: row.studentId,
+          studentName: row.studentName,
+          distanceKey: target.key,
+          targetKm: target.km,
+          distanceKm: seg.distanceKm,
+          durationSeconds: seg.movingS, // segment is continuous → moving time is fair
+          date: row.workoutDate,
+          bandDeltaKm: Math.abs(seg.distanceKm - target.km),
+          calcMethod: "best_split",
+          segment: seg,
+        });
+        continue;
+      }
+      // Fallback: whole workout, only if it lands in the ±band.
       const delta = Math.abs(d - target.km);
       if (delta <= C.CLUB_RECORD_BAND_KM) {
         out.push({
@@ -619,11 +789,26 @@ function collectCandidates(rows: ClubWorkoutRow[]): RecordCandidate[] {
           durationSeconds: t,
           date: row.workoutDate,
           bandDeltaKm: delta,
+          calcMethod: "whole_workout",
         });
       }
     }
   }
   return out;
+}
+
+/** Loads laps + quality and builds candidates for a set of rows. */
+async function buildRecordInputs(
+  rows: ClubWorkoutRow[],
+  useBestSplit: boolean
+): Promise<{ candidates: RecordCandidate[]; quality: Map<string, WorkoutQuality> }> {
+  const runningIds = rows
+    .filter((r) => r.isCompleted && r.isRunning && (r.distanceKm ?? 0) > 0 && (r.durationSeconds ?? 0) > 0)
+    .map((r) => r.id);
+  const laps = useBestSplit ? await loadOrderedLaps(runningIds) : new Map<string, OrderedLap[]>();
+  const candidates = collectCandidates(rows, laps, useBestSplit);
+  const quality = await loadWorkoutQualityIndex(candidates.map((c) => c.workoutId));
+  return { candidates, quality };
 }
 
 export type DistanceResult = {
@@ -681,6 +866,7 @@ function toRecordEntry(ev: EvaluatedRecord): ClubRecordEntry {
     dateLabel: formatRuDate(cand.date),
     trust: ev.trust === "verified" ? "verified" : "preliminary",
     source: ev.source,
+    calcMethod: ev.calcMethod,
   };
 }
 
@@ -999,8 +1185,7 @@ export async function getClubRecords(input: {
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
   const visibleRows = rows.filter((r) => visibleById.has(r.studentId));
 
-  const candidates = collectCandidates(visibleRows);
-  const quality = await loadWorkoutQualityIndex(candidates.map((c) => c.workoutId));
+  const { candidates, quality } = await buildRecordInputs(visibleRows, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
 
   const personal: ClubRecordEntry[] = [];
@@ -1052,8 +1237,7 @@ async function studentRecordsFromRows(
   studentId: string
 ): Promise<ClubRecordEntry[]> {
   const own = rows.filter((r) => r.studentId === studentId);
-  const candidates = collectCandidates(own);
-  const quality = await loadWorkoutQualityIndex(candidates.map((c) => c.workoutId));
+  const { candidates, quality } = await buildRecordInputs(own, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
   const perDist = byStudent.get(studentId);
   const out: ClubRecordEntry[] = [];
@@ -1494,7 +1678,7 @@ export async function getClubPublicProfile(input: {
 }
 
 /** Exposed for the validation script (Stage C4): raw per-candidate evaluation. */
-export async function evaluateAllRecordsForValidation(): Promise<{
+export async function evaluateAllRecordsForValidation(opts?: { useBestSplit?: boolean }): Promise<{
   students: ClubStudent[];
   byStudent: Map<string, Map<RecordDistanceKey, DistanceResult>>;
   quality: Map<string, WorkoutQuality>;
@@ -1507,8 +1691,10 @@ export async function evaluateAllRecordsForValidation(): Promise<{
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
   const visibleRows = rows.filter((r) => visibleById.has(r.studentId));
   const runningWorkoutCount = visibleRows.filter((r) => r.isCompleted && r.isRunning).length;
-  const candidates = collectCandidates(visibleRows);
-  const quality = await loadWorkoutQualityIndex(candidates.map((c) => c.workoutId));
+  const { candidates, quality } = await buildRecordInputs(
+    visibleRows,
+    opts?.useBestSplit ?? C.isBestSplitEnabled()
+  );
   const byStudent = reconstructRecords(candidates, quality);
   return {
     students: students.filter(isVisible),

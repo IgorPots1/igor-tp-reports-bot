@@ -30,9 +30,12 @@ export type RecordHiddenReason =
   | "pace_too_fast"
   | "pause_gap"
   | "lap_distance_mismatch"
-  | "self_outlier";
+  | "self_outlier"
+  | "not_running";
 
 export type RecordDistanceKey = "5k" | "10k" | "21k" | "42k";
+
+export type RecordCalcMethod = "best_split" | "whole_workout";
 
 export type RecordCandidate = {
   workoutId: string;
@@ -44,6 +47,15 @@ export type RecordCandidate = {
   durationSeconds: number;
   date: string;
   bandDeltaKm: number;
+  /** How the candidate was built. best_split => distanceKm/durationSeconds are the segment's. */
+  calcMethod: RecordCalcMethod;
+  /** Present for best_split: continuity stats measured INSIDE the segment. */
+  segment?: {
+    movingS: number;
+    elapsedS: number;
+    distanceKm: number;
+    paceCv: number | null;
+  };
 };
 
 export type WorkoutQuality = {
@@ -55,6 +67,8 @@ export type WorkoutQuality = {
   lapElapsedSumS: number | null;
   lapDistanceSumM: number | null;
   isInterval: boolean;
+  /** derived_metrics.workout_type ('run'|'bike'|'swim'|…) or null if unknown. */
+  workoutType: string | null;
 };
 
 export type EvaluatedRecord = {
@@ -64,6 +78,7 @@ export type EvaluatedRecord = {
   hasLaps: boolean;
   paceCv: number | null;
   source: RecordSource;
+  calcMethod: RecordCalcMethod;
 };
 
 /** Daniels VDOT from a race result (local copy of src/app/tools/plan/vdot.ts to keep the club isolated). */
@@ -92,14 +107,25 @@ export function evaluateCandidate(
   quality: WorkoutQuality | undefined,
   referenceVdot: number | null
 ): EvaluatedRecord {
+  const isSplit = cand.calcMethod === "best_split" && cand.segment != null;
+  // For best_split, continuity stats come from INSIDE the segment; for whole_workout,
+  // from the whole-file lap aggregates.
+  const effectivePaceCv = isSplit ? cand.segment!.paceCv : quality?.paceCv ?? null;
   const base = {
     candidate: cand,
     hasLaps: quality?.hasLaps ?? false,
-    paceCv: quality?.paceCv ?? null,
+    paceCv: effectivePaceCv,
     source: "reconstructed" as RecordSource,
+    calcMethod: cand.calcMethod,
   };
 
   // --- Plausibility (any fail => hidden) ---
+
+  // Not a continuous RUNNING effort: derived workout_type says non-run (walk / bike
+  // / mixed). First layer; the pace ceiling below is the backup.
+  if (quality?.workoutType && quality.workoutType !== "run") {
+    return { ...base, trust: "hidden", hiddenReason: "not_running" };
+  }
 
   // Known interval / fartlek structure — not a continuous distance effort.
   if (quality?.isInterval) {
@@ -108,23 +134,27 @@ export function evaluateCandidate(
 
   // Physically implausible pace (broken record). Ceiling has margin for the strongest club runner.
   const pace = paceSecPerKm(cand.distanceKm, cand.durationSeconds);
-  const ceiling = C.CLUB_RECORD_PACE_FLOOR_SEC_PER_KM[cand.distanceKey];
-  if (pace !== null && ceiling && pace < ceiling) {
+  const floor = C.CLUB_RECORD_PACE_FLOOR_SEC_PER_KM[cand.distanceKey];
+  if (pace !== null && floor && pace < floor) {
     return { ...base, trust: "hidden", hiddenReason: "pace_too_fast" };
   }
 
-  // Paused effort: elapsed >> moving (timer) → not a continuous run.
-  if (
-    quality?.lapElapsedSumS &&
-    quality?.lapTimerSumS &&
-    quality.lapTimerSumS > 0 &&
-    quality.lapElapsedSumS / quality.lapTimerSumS > 1 + C.CLUB_RECORD_PAUSE_TOLERANCE
-  ) {
+  // Too slow to be a running record → walking / mixed (backup to workout_type).
+  if (pace !== null && pace > C.CLUB_RECORD_PACE_CEILING_SEC_PER_KM) {
+    return { ...base, trust: "hidden", hiddenReason: "not_running" };
+  }
+
+  // Paused effort: elapsed >> moving. best_split checks WITHIN the segment; the
+  // 10% threshold is unchanged. whole_workout checks the whole file.
+  const elapsed = isSplit ? cand.segment!.elapsedS : quality?.lapElapsedSumS ?? 0;
+  const moving = isSplit ? cand.segment!.movingS : quality?.lapTimerSumS ?? 0;
+  if (elapsed && moving && moving > 0 && elapsed / moving > 1 + C.CLUB_RECORD_PAUSE_TOLERANCE) {
     return { ...base, trust: "hidden", hiddenReason: "pause_gap" };
   }
 
   // Lap distances disagree with the recorded total → broken record / bad GPS.
-  if (quality?.lapDistanceSumM && quality.lapDistanceSumM > 0) {
+  // Only for whole_workout: a best_split segment's distance IS the lap-sum by construction.
+  if (!isSplit && quality?.lapDistanceSumM && quality.lapDistanceSumM > 0) {
     const lapKm = quality.lapDistanceSumM / 1000;
     const rel = Math.abs(lapKm - cand.distanceKm) / cand.distanceKm;
     if (rel > C.CLUB_RECORD_LAP_DISTANCE_TOLERANCE) {
@@ -145,8 +175,8 @@ export function evaluateCandidate(
   const target = C.CLUB_RECORD_DISTANCES.find((d) => d.key === cand.distanceKey);
   const canVerify =
     !target?.alwaysPreliminary &&
-    (quality?.paceCv ?? null) !== null &&
-    (quality?.paceCv as number) <= C.CLUB_RECORD_PACE_CV_RELIABLE;
+    effectivePaceCv !== null &&
+    effectivePaceCv <= C.CLUB_RECORD_PACE_CV_RELIABLE;
 
   return {
     ...base,
