@@ -37,17 +37,22 @@ async function main() {
   const { students, byStudent, quality, candidateCount, runningWorkoutCount } =
     await evaluateAllRecordsForValidation();
 
+  // Block 1: docs/ artifact carries NO real names — only a short student_id. The
+  // named version (for the coach) is written OUTSIDE git (ops-log) below.
   const nameById = new Map(students.map((s) => [s.id, s.name]));
 
   let verified = 0;
   let preliminary = 0;
   let hidden = 0;
   const hiddenReasons = new Map<RecordHiddenReason, number>();
-  const tableRows: string[] = [];
+  const tableRows: string[] = []; // anonymized (student_id) → docs/
   const hiddenRows: string[] = [];
+  const tableRowsNamed: string[] = []; // with names → ops-log (outside git)
+  const hiddenRowsNamed: string[] = [];
 
   for (const [studentId, perDist] of byStudent) {
-    const name = nameById.get(studentId) ?? studentId.slice(0, 8);
+    const sid = studentId.slice(0, 8);
+    const name = nameById.get(studentId) ?? sid;
     for (const key of CLUB_RECORD_DISTANCES.map((d) => d.key) as RecordDistanceKey[]) {
       const res = perDist.get(key);
       if (!res) {
@@ -59,9 +64,10 @@ async function main() {
         const trust = surfaced.trust;
         if (trust === "verified") verified += 1;
         else preliminary += 1;
-        tableRows.push(
-          `| ${name} | ${key} | ${fmtTime(c.durationSeconds)} | ${c.date} | ${trust} | ${surfaced.hasLaps ? "да" : "нет"} | ${surfaced.paceCv !== null ? surfaced.paceCv.toFixed(3) : "-"} |`
-        );
+        const laps = surfaced.hasLaps ? "да" : "нет";
+        const cv = surfaced.paceCv !== null ? surfaced.paceCv.toFixed(3) : "-";
+        tableRows.push(`| ${sid} | ${key} | ${fmtTime(c.durationSeconds)} | ${c.date} | ${trust} | ${laps} | ${cv} |`);
+        tableRowsNamed.push(`| ${name} | ${key} | ${fmtTime(c.durationSeconds)} | ${c.date} | ${trust} | ${laps} | ${cv} |`);
       }
       // Count + list every hidden candidate (rejected), even if a slower record surfaced.
       for (const ev of res.evaluated) {
@@ -69,9 +75,8 @@ async function main() {
           hidden += 1;
           hiddenReasons.set(ev.hiddenReason, (hiddenReasons.get(ev.hiddenReason) ?? 0) + 1);
           const c = ev.candidate;
-          hiddenRows.push(
-            `| ${name} | ${key} | ${fmtTime(c.durationSeconds)} | ${c.date} | ${ev.hiddenReason} |`
-          );
+          hiddenRows.push(`| ${sid} | ${key} | ${fmtTime(c.durationSeconds)} | ${c.date} | ${ev.hiddenReason} |`);
+          hiddenRowsNamed.push(`| ${name} | ${key} | ${fmtTime(c.durationSeconds)} | ${c.date} | ${ev.hiddenReason} |`);
         }
       }
     }
@@ -109,22 +114,45 @@ async function main() {
     }
   }
   lines.push("");
+  lines.push("> ФИО не публикуются (персональные данные). Ниже `student_id` = первые 8 символов `trainingpeaks_students.id`. Именованная версия — вне git (ops-log).");
+  lines.push("");
   lines.push("## Показываемые рекорды");
   lines.push("");
-  lines.push("| Ученик | Дистанция | Время | Дата | Доверие | Есть laps | CV темпа |");
+  lines.push("| student_id | Дистанция | Время | Дата | Доверие | Есть laps | CV темпа |");
   lines.push("|---|---|---|---|---|---|---|");
   lines.push(...(tableRows.length ? tableRows : ["| _нет_ | | | | | | |"]));
   lines.push("");
   lines.push("## Отбракованные (hidden) кандидаты");
   lines.push("");
-  lines.push("| Ученик | Дистанция | Время | Дата | Причина |");
+  lines.push("| student_id | Дистанция | Время | Дата | Причина |");
   lines.push("|---|---|---|---|---|");
   lines.push(...(hiddenRows.length ? hiddenRows : ["| _нет_ | | | | |"]));
   lines.push("");
 
   const outPath = resolve(process.cwd(), "docs/records-validation.md");
   writeFileSync(outPath, lines.join("\n"), "utf8");
-  console.log(`Wrote ${outPath}`);
+  console.log(`Wrote ${outPath} (anonymized)`);
+
+  // Named companion — OUTSIDE git (ops-log). Same content, with real names, for the coach.
+  const named = [...lines];
+  const idxA = named.findIndex((l) => l.startsWith("| student_id | Дистанция | Время | Дата | Доверие"));
+  if (idxA >= 0) {
+    named[idxA] = "| Ученик | Дистанция | Время | Дата | Доверие | Есть laps | CV темпа |";
+    named.splice(idxA + 2, tableRows.length, ...(tableRowsNamed.length ? tableRowsNamed : ["| _нет_ | | | | | | |"]));
+  }
+  const idxB = named.findIndex((l) => l.startsWith("| student_id | Дистанция | Время | Дата | Причина"));
+  if (idxB >= 0) {
+    named[idxB] = "| Ученик | Дистанция | Время | Дата | Причина |";
+    named.splice(idxB + 2, hiddenRows.length, ...(hiddenRowsNamed.length ? hiddenRowsNamed : ["| _нет_ | | | | |"]));
+  }
+  const namedPath = "/Users/igor/ops-log/igor-tp-reports-bot/records-validation-with-names.md";
+  try {
+    writeFileSync(namedPath, named.join("\n"), "utf8");
+    console.log(`Wrote ${namedPath} (with names, outside git)`);
+  } catch (e) {
+    console.warn("named companion not written:", e);
+  }
+
   console.log(
     `verified=${verified} preliminary=${preliminary} hidden=${hidden} laps=${pctLaps}% candidates=${candidateCount}`
   );
