@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-import { getClubProfileDetail } from "@/features/club/service";
+import { getClubExtendedTops } from "@/features/club/service";
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
 
 export const runtime = "nodejs";
@@ -24,13 +24,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const view = await getClubProfileDetail({
-      currentStudentId: auth.student.id,
-      currentStudentName: auth.student.studentName,
-    });
+    const view = await getClubExtendedTops({ currentStudentId: auth.student.id });
     return jsonResponse(200, { ok: true, view });
   } catch (error) {
-    console.error("[m.club.profile] failed", error);
-    return jsonResponse(500, { ok: false, error: "Не удалось загрузить профиль." });
+    console.error("[m.club.tops] failed", error);
+    return jsonResponse(500, { ok: false, error: "Не удалось загрузить топы." });
   }
 }
