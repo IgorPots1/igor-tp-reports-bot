@@ -32,6 +32,7 @@ export default function AdminShell({
               <Link href="/admin/telegram-links">Telegram-привязки</Link>
               <Link href="/admin/billing">Биллинг</Link>
               <Link href="/admin/students/weekly-reports">Недельные отчёты</Link>
+              {process.env.CLUB_ADMIN_ENABLED === "true" && <Link href="/admin/club">Клуб</Link>}
             </nav>
             {hasAdminSession && (
               <form action={logoutAdminAction}>
