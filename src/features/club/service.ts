@@ -893,6 +893,24 @@ function toRecordEntry(ev: EvaluatedRecord, recordType: ClubRecordType): ClubRec
   };
 }
 
+function coachRaceEntry(
+  target: (typeof C.CLUB_RECORD_DISTANCES)[number],
+  c: CoachRecord
+): ClubRecordEntry {
+  return {
+    distanceKey: target.key,
+    distanceLabel: target.label,
+    durationSeconds: c.durationSeconds,
+    paceSecPerKm: c.paceSecPerKm,
+    date: c.recordDate ?? "",
+    dateLabel: c.recordDate ? formatRuDate(c.recordDate) : "гонка",
+    trust: "verified",
+    source: "coach_confirmed",
+    calcMethod: "whole_workout",
+    recordType: "race",
+  };
+}
+
 /** Best non-hidden EvaluatedRecord per record type (race / training_split) for a student+distance. */
 function splitByType(
   evaluated: EvaluatedRecord[],
@@ -1234,41 +1252,52 @@ export async function getClubRecords(input: {
 
   const { candidates, quality } = await buildRecordInputs(visibleRows, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
-  const raceDates = await loadRaceDatesByStudent();
+  const [raceDates, coach] = await Promise.all([loadRaceDatesByStudent(), loadCoachRecords()]);
 
   const personal: ClubRecordEntry[] = [];
   const clubTops: ClubRecordsView["clubTops"] = [];
   const ownResults = byStudent.get(input.currentStudentId);
 
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    // Personal card: race and training_split shown SEPARATELY (different meaning).
-    const ownEvals = ownResults?.get(target.key)?.evaluated ?? [];
-    const ownSplit = splitByType(ownEvals, input.currentStudentId, raceDates);
-    if (ownSplit.race) personal.push(toRecordEntry(ownSplit.race, "race"));
-    if (ownSplit.training) personal.push(toRecordEntry(ownSplit.training, "training_split"));
-
-    // Club top: ONLY real races (verified). A training-run segment never stands next
-    // to a real race on the leaderboard. Empty until races are in the cache.
-    const raceBests: EvaluatedRecord[] = [];
-    for (const [studentId, perDist] of byStudent) {
-      const bv = splitByType(perDist.get(target.key)?.evaluated ?? [], studentId, raceDates).bestVerifiedRace;
-      if (bv) raceBests.push(bv);
+    // Personal card: coach override wins; else reconstruction (race + training split).
+    const ownCoach = coach.get(`${input.currentStudentId}|${target.key}`);
+    if (ownCoach) {
+      if (ownCoach.trust !== "hidden") {
+        personal.push(coachRaceEntry(target, ownCoach));
+      }
+    } else {
+      const ownSplit = splitByType(ownResults?.get(target.key)?.evaluated ?? [], input.currentStudentId, raceDates);
+      if (ownSplit.race) personal.push(toRecordEntry(ownSplit.race, "race"));
+      if (ownSplit.training) personal.push(toRecordEntry(ownSplit.training, "training_split"));
     }
-    raceBests.sort((a, b) => a.candidate.durationSeconds - b.candidate.durationSeconds);
-    const topRows: ClubRecordsClubTopRow[] = raceBests
-      .slice(0, C.CLUB_RECORDS_TOP_N)
-      .map((ev, index) => ({
-        distanceKey: target.key,
-        rank: index + 1,
-        studentId: ev.candidate.studentId,
-        displayName: firstWord(ev.candidate.studentName),
-        monogram: monogram(ev.candidate.studentName),
-        durationSeconds: ev.candidate.durationSeconds,
-        paceSecPerKm: paceSecPerKm(ev.candidate.distanceKm, ev.candidate.durationSeconds),
-        isCurrentStudent: ev.candidate.studentId === input.currentStudentId,
-        trust: "verified",
-        recordType: "race",
-      }));
+
+    // Club top: ONLY real races (verified). Coach-confirmed races count; reconstructed
+    // races count; a coach-hidden distance is excluded for that student.
+    const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null }> = [];
+    for (const [studentId, perDist] of byStudent) {
+      const c = coach.get(`${studentId}|${target.key}`);
+      if (c) {
+        if (c.trust === "verified") {
+          raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm });
+        }
+        continue; // coach override (verified pushed above, hidden/preliminary excluded from tops)
+      }
+      const bv = splitByType(perDist.get(target.key)?.evaluated ?? [], studentId, raceDates).bestVerifiedRace;
+      if (bv) raceRows.push({ studentId, name: bv.candidate.studentName, durationSeconds: bv.candidate.durationSeconds, pace: paceSecPerKm(bv.candidate.distanceKm, bv.candidate.durationSeconds) });
+    }
+    raceRows.sort((a, b) => a.durationSeconds - b.durationSeconds);
+    const topRows: ClubRecordsClubTopRow[] = raceRows.slice(0, C.CLUB_RECORDS_TOP_N).map((r, index) => ({
+      distanceKey: target.key,
+      rank: index + 1,
+      studentId: r.studentId,
+      displayName: firstWord(r.name),
+      monogram: monogram(r.name),
+      durationSeconds: r.durationSeconds,
+      paceSecPerKm: r.pace,
+      isCurrentStudent: r.studentId === input.currentStudentId,
+      trust: "verified",
+      recordType: "race",
+    }));
     clubTops.push({
       distanceKey: target.key,
       distanceLabel: target.label,
@@ -1288,10 +1317,15 @@ async function studentRecordsFromRows(
   const own = rows.filter((r) => r.studentId === studentId);
   const { candidates, quality } = await buildRecordInputs(own, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
-  const raceDates = await loadRaceDatesByStudent();
+  const [raceDates, coach] = await Promise.all([loadRaceDatesByStudent(), loadCoachRecords()]);
   const perDist = byStudent.get(studentId);
   const out: ClubRecordEntry[] = [];
   for (const target of C.CLUB_RECORD_DISTANCES) {
+    const c = coach.get(`${studentId}|${target.key}`);
+    if (c) {
+      if (c.trust !== "hidden") out.push(coachRaceEntry(target, c));
+      continue; // coach override wins over reconstruction for this distance
+    }
     const split = splitByType(perDist?.get(target.key)?.evaluated ?? [], studentId, raceDates);
     if (split.race) out.push(toRecordEntry(split.race, "race"));
     if (split.training) out.push(toRecordEntry(split.training, "training_split"));
@@ -1833,6 +1867,48 @@ export async function loadRaceDatesByStudent(): Promise<Map<string, Set<string>>
     }
   } catch {
     /* table absent → no race dates */
+  }
+  return out;
+}
+
+export type CoachRecord = {
+  durationSeconds: number;
+  paceSecPerKm: number | null;
+  recordDate: string | null;
+  raceName: string | null;
+  trust: "verified" | "preliminary" | "hidden";
+  source: string;
+};
+
+/**
+ * Coach-entered / coach-hidden results from club_records (source=coach_confirmed).
+ * These OVERRIDE reconstruction: a verified coach row is a real race; a hidden row
+ * suppresses that distance. Keyed `${studentId}|${distanceKey}`. Inert if the table
+ * is absent. Feeds the club records tab, tops, and the E-Predictor anchor.
+ */
+export async function loadCoachRecords(): Promise<Map<string, CoachRecord>> {
+  const out = new Map<string, CoachRecord>();
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("club_records")
+      .select("student_id, distance_key, duration_seconds, pace_sec_per_km, record_date, race_name, trust, source")
+      .eq("source", "coach_confirmed");
+    if (error || !data) {
+      return out;
+    }
+    for (const r of data as Array<Record<string, unknown>>) {
+      out.set(`${r.student_id as string}|${r.distance_key as string}`, {
+        durationSeconds: Number(r.duration_seconds ?? 0),
+        paceSecPerKm: r.pace_sec_per_km != null ? Number(r.pace_sec_per_km) : null,
+        recordDate: (r.record_date as string | null) ?? null,
+        raceName: (r.race_name as string | null) ?? null,
+        trust: (r.trust as CoachRecord["trust"]) ?? "verified",
+        source: (r.source as string) ?? "coach_confirmed",
+      });
+    }
+  } catch {
+    /* table/columns absent → no coach overrides */
   }
   return out;
 }
