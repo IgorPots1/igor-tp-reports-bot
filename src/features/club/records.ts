@@ -12,11 +12,14 @@
 // No pace laps => at most `preliminary`, never `verified`. There is no
 // "narrow distance band => reliable" shortcut anymore.
 //
-// E-Predictor note: no per-athlete VDOT/threshold anchor is joinable to the
-// workout cache at read time (E-Predictor lives in tools/ scripts + config, not a
-// per-student column). Per spec we use the fallback: self-consistency — a
-// candidate whose implied VDOT is a sharp outlier vs the athlete's OWN records on
-// other distances is treated as suspicious (`self_outlier`). See docs/questions.md.
+// E-Predictor: uses the REAL Daniels VDOT model (src/app/tools/plan/vdot.ts) —
+// single source, no local copy. Self-consistency check: a candidate whose implied
+// VDOT is a sharp outlier vs the athlete's OWN records on other distances (their
+// E-Predictor level) is suspicious (`self_outlier`). A per-athlete threshold anchor
+// (tp_zone_snapshots) could tighten this further — see docs/questions.md §9.
+
+// Real Daniels VDOT model (E-Predictor). Single source of truth — no local copy.
+import { vdotFromRace } from "@/app/tools/plan/vdot";
 
 import * as C from "./constants";
 
@@ -80,15 +83,6 @@ export type EvaluatedRecord = {
   source: RecordSource;
   calcMethod: RecordCalcMethod;
 };
-
-/** Daniels VDOT from a race result (local copy of src/app/tools/plan/vdot.ts to keep the club isolated). */
-export function vdotFromRace(meters: number, seconds: number): number {
-  const min = seconds / 60;
-  const v = meters / min;
-  const vo2 = -4.6 + 0.182258 * v + 0.000104 * v * v;
-  const pct = 0.8 + 0.1894393 * Math.exp(-0.012778 * min) + 0.2989558 * Math.exp(-0.1932605 * min);
-  return vo2 / pct;
-}
 
 function paceSecPerKm(distanceKm: number, seconds: number): number | null {
   if (distanceKm <= 0 || seconds <= 0) {
@@ -162,8 +156,8 @@ export function evaluateCandidate(
     }
   }
 
-  // Self-consistency (E-Predictor fallback): implied VDOT far above the athlete's
-  // own level from OTHER distances → suspicious.
+  // Self-consistency via the real E-Predictor (Daniels VDOT): implied VDOT far
+  // above the athlete's own level from OTHER distances → suspicious.
   if (referenceVdot !== null && pace !== null) {
     const impliedVdot = vdotFromRace(cand.distanceKm * 1000, cand.durationSeconds);
     if (impliedVdot > referenceVdot + C.CLUB_RECORD_SELF_OUTLIER_VDOT_MARGIN) {
