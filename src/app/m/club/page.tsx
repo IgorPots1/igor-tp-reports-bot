@@ -94,20 +94,22 @@ function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }
 
+type Candidate = { studentId: string; displayName: string };
+
 async function apiPost<T>(
   path: string,
   initData: string,
   extra?: Record<string, unknown>
-): Promise<{ ok: boolean; view?: T; error?: string }> {
+): Promise<{ ok: boolean; view?: T; error?: string; code?: string; candidate?: Candidate }> {
   try {
     const res = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ initData, ...(extra ?? {}) }),
     });
-    const json = (await res.json()) as { ok?: boolean; view?: T; error?: string };
+    const json = (await res.json()) as { ok?: boolean; view?: T; error?: string; code?: string; candidate?: Candidate };
     if (!res.ok || !json.ok) {
-      return { ok: false, error: json.error ?? "Ошибка загрузки." };
+      return { ok: false, error: json.error ?? "Ошибка загрузки.", code: json.code, candidate: json.candidate };
     }
     return { ok: true, view: json.view };
   } catch {
@@ -140,6 +142,40 @@ export default function ClubPage() {
   const [profileStatus, setProfileStatus] = useState<Status>("idle");
 
   const [error, setError] = useState<string | null>(null);
+  const [needsConfirm, setNeedsConfirm] = useState<Candidate | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const maybeConfirm = useCallback((r: { code?: string; candidate?: Candidate }): boolean => {
+    if (r.code === "needs_confirm" && r.candidate) {
+      setNeedsConfirm(r.candidate);
+      return true;
+    }
+    return false;
+  }, []);
+
+  const confirmLink = useCallback(async () => {
+    if (initData === null) return;
+    setConfirming(true);
+    const res = await fetch("/api/m/club/confirm-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData }),
+    })
+      .then((r) => r.json())
+      .catch(() => ({ ok: false, error: "Ошибка" }));
+    setConfirming(false);
+    if (res.ok) {
+      setNeedsConfirm(null);
+      // reset every tab so the current one reloads now that we're bound
+      setFeedStatus("idle");
+      setChallengeStatus("idle");
+      setRecordsStatus("idle");
+      setClubStatus("idle");
+      setProfileStatus("idle");
+    } else {
+      setError(res.error ?? "Не удалось подтвердить");
+    }
+  }, [initData]);
 
   useEffect(() => {
     const tg = getTelegramWebApp();
@@ -163,6 +199,7 @@ export default function ClubPage() {
     setFeedStatus("loading");
     const r = await apiPost<ClubFeedView>("/api/m/club/feed", initData);
     if (!r.ok || !r.view) {
+      if (maybeConfirm(r)) return;
       setError(r.error ?? null);
       setFeedStatus("error");
       return;
@@ -171,7 +208,7 @@ export default function ClubPage() {
     setFeedItems(r.view.items);
     setFreshness(r.view.freshness);
     setFeedStatus("ready");
-  }, [initData]);
+  }, [initData, maybeConfirm]);
 
   const loadMoreFeed = useCallback(async () => {
     if (initData === null || !feed?.nextCursor) return;
@@ -189,6 +226,7 @@ export default function ClubPage() {
     setChallengeStatus("loading");
     const r = await apiPost<ClubChallengeView>("/api/m/club/challenge", initData);
     if (!r.ok || !r.view) {
+      if (maybeConfirm(r)) return;
       setError(r.error ?? null);
       setChallengeStatus("error");
       return;
@@ -196,13 +234,14 @@ export default function ClubPage() {
     setChallenge(r.view);
     setFreshness(r.view.freshness);
     setChallengeStatus("ready");
-  }, [initData]);
+  }, [initData, maybeConfirm]);
 
   const loadRecords = useCallback(async () => {
     if (initData === null) return;
     setRecordsStatus("loading");
     const r = await apiPost<ClubRecordsView>("/api/m/club/records", initData);
     if (!r.ok || !r.view) {
+      if (maybeConfirm(r)) return;
       setError(r.error ?? null);
       setRecordsStatus("error");
       return;
@@ -210,7 +249,7 @@ export default function ClubPage() {
     setRecords(r.view);
     setFreshness(r.view.freshness);
     setRecordsStatus("ready");
-  }, [initData]);
+  }, [initData, maybeConfirm]);
 
   const loadClub = useCallback(async () => {
     if (initData === null) return;
@@ -220,6 +259,7 @@ export default function ClubPage() {
       apiPost<ClubExtendedTopsView>("/api/m/club/tops", initData),
     ]);
     if (!s.ok || !s.view || !t.ok || !t.view) {
+      if (maybeConfirm(s) || maybeConfirm(t)) return;
       setError(s.error ?? t.error ?? null);
       setClubStatus("error");
       return;
@@ -227,13 +267,14 @@ export default function ClubPage() {
     setClub({ stats: s.view, tops: t.view });
     setFreshness(s.view.freshness);
     setClubStatus("ready");
-  }, [initData]);
+  }, [initData, maybeConfirm]);
 
   const loadProfile = useCallback(async () => {
     if (initData === null) return;
     setProfileStatus("loading");
     const r = await apiPost<ClubProfileDetailView>("/api/m/club/profile", initData);
     if (!r.ok || !r.view) {
+      if (maybeConfirm(r)) return;
       setError(r.error ?? null);
       setProfileStatus("error");
       return;
@@ -241,7 +282,7 @@ export default function ClubPage() {
     setProfile(r.view);
     setFreshness(r.view.freshness);
     setProfileStatus("ready");
-  }, [initData]);
+  }, [initData, maybeConfirm]);
 
   useEffect(() => {
     if (initData === null) return;
@@ -297,6 +338,10 @@ export default function ClubPage() {
 
       {openStudentId ? (
         <PublicProfileOverlay studentId={openStudentId} initData={initData ?? ""} onClose={() => setOpenStudentId(null)} />
+      ) : null}
+
+      {needsConfirm ? (
+        <ConfirmScreen candidate={needsConfirm} confirming={confirming} onConfirm={confirmLink} />
       ) : null}
 
       <nav style={S.tabBar}>
@@ -818,6 +863,29 @@ function PublicProfileOverlay({ studentId, initData, onClose }: { studentId: str
             </div>
           )
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Explicit registration confirmation (club-scoped; replaces silent auto-bind)
+// ---------------------------------------------------------------------------
+
+function ConfirmScreen({ candidate, confirming, onConfirm }: { candidate: Candidate; confirming: boolean; onConfirm: () => void }) {
+  return (
+    <div style={{ ...S.overlay, alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ ...S.card, maxWidth: 340, width: "100%", textAlign: "center", marginBottom: 0 }}>
+        <div style={{ fontSize: 34, marginBottom: 8 }}>👋</div>
+        <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink, marginBottom: 6 }}>Это ты?</div>
+        <div style={{ color: C.sub, fontSize: 14, marginBottom: 4 }}>Клуб привяжется к аккаунту</div>
+        <div style={{ fontFamily: HEAD, fontSize: 22, color: C.accent, marginBottom: 16 }}>{candidate.displayName}</div>
+        <div style={{ color: C.faint, fontSize: 12, marginBottom: 18 }}>
+          Подтверди только если это твой аккаунт. Если имя чужое — закрой и открой свою ссылку от тренера.
+        </div>
+        <button style={{ ...S.retry, width: "100%", opacity: confirming ? 0.6 : 1 }} type="button" disabled={confirming} onClick={onConfirm}>
+          {confirming ? "Подтверждаю…" : "Да, это я"}
+        </button>
       </div>
     </div>
   );

@@ -36,7 +36,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const auth = await resolveClubStudent(initData);
   if (!auth.ok) {
-    return jsonResponse(auth.httpStatus, { ok: false, error: auth.error });
+    return jsonResponse(auth.httpStatus, { ok: false, error: auth.error, code: auth.code, candidate: auth.candidate });
   }
   const studentId = auth.student.id; // authoritative — client-supplied ids are ignored
 
