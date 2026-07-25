@@ -11,15 +11,12 @@
 
 import { timingSafeEqual } from "node:crypto";
 
-import { createTrainingPeaksCronRunLog, finishTrainingPeaksCronRunLog, getLatestTrainingPeaksCronRunLog } from "@/features/trainingpeaks/repository";
-import { sweepAndEnqueueFeedbackJobs } from "@/features/trainingpeaks/feedback/feedback-enqueue";
+import { createTrainingPeaksCronRunLog, finishTrainingPeaksCronRunLog } from "@/features/trainingpeaks/repository";
+import { sweepAndEnqueueReportedRunWorkouts } from "@/features/trainingpeaks/feedback/feedback-enqueue";
 
 export const runtime = "nodejs";
 
 const CRON_JOB_NAME = "workout_feedback_enqueue";
-// First-run / no-prior-log window: look back this far so a manual first run has
-// something to enqueue instead of an empty scan.
-const DEFAULT_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1000;
 
 const jsonHeaders = { "Content-Type": "application/json" };
 function jsonResponse(status: number, body: Record<string, unknown>) {
@@ -62,18 +59,16 @@ async function handle(request: Request): Promise<Response> {
   });
 
   try {
-    const lastOk = await getLatestTrainingPeaksCronRunLog({ jobName: CRON_JOB_NAME, status: "sent" });
-    const sinceUpdatedAt = lastOk?.startedAt ?? new Date(startedAtMs - DEFAULT_LOOKBACK_MS).toISOString();
-
-    const summary = await sweepAndEnqueueFeedbackJobs({ sinceUpdatedAt });
+    // Report-triggered: enqueue only runs a student has written a recognised report about.
+    const summary = await sweepAndEnqueueReportedRunWorkouts();
 
     await finishTrainingPeaksCronRunLog(runLog.id, {
       status: "sent",
       durationMs: Date.now() - startedAtMs,
       responseStatus: 200,
-      counts: { ...summary, sinceUpdatedAt },
+      counts: { ...summary },
     });
-    return jsonResponse(200, { ok: true, ...summary, sinceUpdatedAt });
+    return jsonResponse(200, { ok: true, ...summary });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await finishTrainingPeaksCronRunLog(runLog.id, {

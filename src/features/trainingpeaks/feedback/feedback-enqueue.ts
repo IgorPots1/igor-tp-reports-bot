@@ -230,14 +230,14 @@ const DEFAULT_MAX_WORKOUT_AGE_DAYS = 3;
 export type FeedbackEnqueueSummary = { scanned: number; enqueued: number; blocked: number; skipped: number };
 
 /**
+ * @deprecated Workout-triggered enqueue — drafted EVERY synced run, including silent students'.
+ * Replaced by sweepAndEnqueueReportedRunWorkouts (draft only on a recognised report). No live
+ * path calls this anymore; kept only for reference/back-compat. Do NOT wire it back — it reopens
+ * the noise this model removed.
+ *
  * Poll derived_metrics.updated_at > sinceUpdatedAt (run workouts NEWER than the age
  * floor), assemble the packet, and enqueue each (pending or blocked). Idempotent via
- * the queue's active-workout partial-unique index (duplicates → skipped). Writes to
- * the queue table — needs migration 20260722180000 applied.
- *
- * The workout-date floor (maxWorkoutAgeDays, default 3) is the key guard against a
- * post-outage flood: when metrics for an 11-day backlog get recomputed at once, their
- * updated_at is fresh, so without this floor every stale workout would enqueue.
+ * the queue's active-workout partial-unique index (duplicates → skipped).
  */
 export async function sweepAndEnqueueFeedbackJobs(input: { sinceUpdatedAt: string; limit?: number; maxWorkoutAgeDays?: number }): Promise<FeedbackEnqueueSummary> {
   const supabase = createSupabaseServerClient();
@@ -284,5 +284,167 @@ export async function sweepAndEnqueueFeedbackJobs(input: { sinceUpdatedAt: strin
     else if (built.blocked) summary.blocked += 1;
     else summary.enqueued += 1;
   }
+  return summary;
+}
+
+// ─── Report-triggered enqueue (the new model) ────────────────────────────────────────────
+// A run is drafted ONLY once the student has written a recognised report about it — the message
+// is both the trigger AND the words context. Silent runs never enter the queue; strength/other
+// types are never candidates. The reverse of sweepAndEnqueueFeedbackJobs (which drafted every
+// synced run). Idempotent: the handled-guard skips a run that already has a job, and a report
+// with no synced run yet simply re-matches on the next hourly sweep (nothing is lost).
+
+export type FeedbackReportSweepSummary = {
+  reports: number; // report_like observations scanned in the lookback (active students)
+  studentsReporting: number;
+  reportsMatchedRun: number; // reports that found a fresh run in [D-1, D]
+  reportsNoRunYet: number; // report present, run not synced yet → waits for next sweep
+  reportsRunAlreadyHandled: number; // the window run already has a job (or was chosen this sweep)
+  runsEnqueued: number; // distinct runs enqueued as pending
+  runsBlocked: number;
+  runsSkipped: number;
+  runsWithWords: number; // of enqueued, how many packets carry student words (expected == enqueued)
+  // Populated only on a dryRun — the runs that WOULD be enqueued, for proof/inspection.
+  details?: Array<{ studentId: string; workoutCacheId: string; workoutDate: string; reportDate: string; wordsCount: number; blocked: boolean }>;
+};
+
+// Report on the run day OR the next morning: workout_date ∈ [reportDate-1, reportDate].
+const REPORT_MATCH_WINDOW_DAYS = 1;
+// How far back to scan reports each sweep. Wider than the match window so a report whose run
+// syncs late (TP lag) still binds on a later sweep; past this a report stops trying (the daily
+// safety-net digest catches a genuine report whose run never arrived).
+const DEFAULT_REPORT_LOOKBACK_MS = 48 * 60 * 60 * 1000;
+
+function shiftYmd(ymd: string, deltaDays: number): string {
+  return new Date(new Date(`${ymd}T00:00:00Z`).getTime() + deltaDays * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Scan recent recognised reports and enqueue the RUN each one is about (with the student's words
+ * already attached to the packet). Run-only: workout_type='run'; strength/other are never
+ * candidates. Selection per report: the runs in [reportDate-1, reportDate] that have no job yet;
+ * usually exactly one (run-only + 1-day window), so the match is unambiguous. If more than one,
+ * the LATEST run at/before the report is taken (the one they're writing about). If none has synced
+ * yet, the report is left for the next sweep. Nothing auto-sends (generation stays a Mini App tap).
+ */
+export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbackMs?: number; dryRun?: boolean }): Promise<FeedbackReportSweepSummary> {
+  const supabase = createSupabaseServerClient();
+  const lookbackMs = input?.reportLookbackMs ?? DEFAULT_REPORT_LOOKBACK_MS;
+  const dryRun = input?.dryRun ?? false;
+  const sinceIso = new Date(Date.now() - lookbackMs).toISOString();
+
+  // Active, non-service students only — a deactivated student gets no drafts.
+  const { data: studRows, error: sErr } = await withSupabaseNetworkRetry(() =>
+    supabase.from("trainingpeaks_students").select("id, is_active, is_service_account")
+  );
+  if (sErr) throw new Error(`report sweep: list students failed: ${sErr.message}`);
+  const activeIds = new Set(
+    ((studRows as Array<Record<string, unknown>>) ?? []).filter((s) => s.is_active && !s.is_service_account).map((s) => s.id as string)
+  );
+
+  // 1. recognised reports in the lookback, attributed to an active student.
+  const { data: obsRows, error: oErr } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select("student_id, observed_at, labels")
+      .gte("observed_at", sinceIso)
+      .order("observed_at", { ascending: false })
+      .limit(5000)
+  );
+  if (oErr) throw new Error(`report sweep: list observations failed: ${oErr.message}`);
+  const reports = ((obsRows as Array<Record<string, unknown>>) ?? [])
+    .filter((o) => {
+      const labels = Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [];
+      return labels.includes("report_like") && o.student_id && activeIds.has(o.student_id as string);
+    })
+    .map((o) => ({ studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10) }));
+
+  const summary: FeedbackReportSweepSummary = {
+    reports: reports.length,
+    studentsReporting: new Set(reports.map((r) => r.studentId)).size,
+    reportsMatchedRun: 0,
+    reportsNoRunYet: 0,
+    reportsRunAlreadyHandled: 0,
+    runsEnqueued: 0,
+    runsBlocked: 0,
+    runsSkipped: 0,
+    runsWithWords: 0,
+  };
+  if (reports.length === 0) return summary;
+
+  // 2. recent RUN rows for the reporting students (run-only gate here).
+  const reportingIds = [...new Set(reports.map((r) => r.studentId))];
+  const runFloor = shiftYmd(new Date(Date.now() - lookbackMs).toISOString().slice(0, 10), -(REPORT_MATCH_WINDOW_DAYS + 1));
+  const runRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", reportingIds, (q) =>
+    q.eq("workout_type", "run").gte("workout_date", runFloor).limit(8000)
+  );
+  const runsByStudent = new Map<string, DerivedRow[]>();
+  for (const r of runRows) {
+    const list = runsByStudent.get(r.student_id as string) ?? [];
+    list.push(r);
+    runsByStudent.set(r.student_id as string, list);
+  }
+
+  // 3. handled-guard: a run that already has a job (pending/…/sent) is never re-enqueued.
+  const handled = await fetchHandledWorkoutCacheIds([...new Set(runRows.map((r) => r.workout_cache_id as string))]);
+
+  // 4. per report, pick the run it's about; dedupe so two reports about one run enqueue it once.
+  const chosen = new Map<string, { row: DerivedRow; reportDate: string }>();
+  for (const rep of reports) {
+    const prevDay = shiftYmd(rep.date, -REPORT_MATCH_WINDOW_DAYS);
+    const candidates = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
+      const wd = r.workout_date as string;
+      return wd === rep.date || wd === prevDay;
+    });
+    if (candidates.length === 0) {
+      summary.reportsNoRunYet += 1; // run not synced yet → next sweep will bind it
+      continue;
+    }
+    const available = candidates.filter((r) => !handled.has(r.workout_cache_id as string) && !chosen.has(r.workout_cache_id as string));
+    if (available.length === 0) {
+      summary.reportsRunAlreadyHandled += 1;
+      continue;
+    }
+    // The LATEST run at/before the report is the one they're writing about. No wall-clock start
+    // time is stored, so a same-day tie breaks on updated_at (freshest metrics).
+    available.sort((a, b) => {
+      const byDate = (b.workout_date as string).localeCompare(a.workout_date as string);
+      if (byDate !== 0) return byDate;
+      return String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? ""));
+    });
+    chosen.set(available[0].workout_cache_id as string, { row: available[0], reportDate: rep.date });
+    summary.reportsMatchedRun += 1;
+  }
+  if (chosen.size === 0) return summary;
+
+  // 5. build packets (windowStudentWords attaches the report as words) and enqueue.
+  const chosenList = [...chosen.values()];
+  const packets = await assemblePlannerInputsForWorkouts(supabase, chosenList.map((c) => c.row));
+  const details: NonNullable<FeedbackReportSweepSummary["details"]> = [];
+  for (const { row, reportDate } of chosenList) {
+    const cacheId = row.workout_cache_id as string;
+    const studentId = row.student_id as string;
+    const plannerInput = packets.get(cacheId);
+    if (!plannerInput) {
+      summary.runsSkipped += 1;
+      continue;
+    }
+    const built = buildFeedbackContextPacket(plannerInput);
+    const wordsCount = built.blocked ? 0 : built.packet.studentWords.length;
+    if (!built.blocked && wordsCount > 0) summary.runsWithWords += 1;
+    if (dryRun) {
+      details.push({ studentId, workoutCacheId: cacheId, workoutDate: row.workout_date as string, reportDate, wordsCount, blocked: built.blocked });
+      if (built.blocked) summary.runsBlocked += 1;
+      else summary.runsEnqueued += 1;
+      continue;
+    }
+    const res = built.blocked
+      ? await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: built.reason })
+      : await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, packet: built.packet });
+    if (res.skipped) summary.runsSkipped += 1;
+    else if (built.blocked) summary.runsBlocked += 1;
+    else summary.runsEnqueued += 1;
+  }
+  if (dryRun) summary.details = details;
   return summary;
 }

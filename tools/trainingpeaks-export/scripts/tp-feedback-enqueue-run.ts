@@ -13,18 +13,15 @@ import { loadLocalEnv } from "./lib/local-env.ts";
 
 loadLocalEnv();
 
-import { sweepAndEnqueueFeedbackJobs } from "../../../src/features/trainingpeaks/feedback/feedback-enqueue.ts";
+import { sweepAndEnqueueReportedRunWorkouts } from "../../../src/features/trainingpeaks/feedback/feedback-enqueue.ts";
 import { reclaimStaleGeneratingFeedbackJobs } from "../../../src/features/trainingpeaks/feedback/feedback-queue.ts";
 import { STALE_GENERATING_TTL_MS } from "../../../src/features/trainingpeaks/feedback/feedback-worker-auth.ts";
 import {
   createTrainingPeaksCronRunLog,
   finishTrainingPeaksCronRunLog,
-  getLatestTrainingPeaksCronRunLog,
 } from "../../../src/features/trainingpeaks/repository.ts";
 
 const CRON_JOB_NAME = "workout_feedback_enqueue";
-// First-run / no-prior-log window (mirrors the HTTP route).
-const DEFAULT_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   const startedAtMs = Date.now();
@@ -40,18 +37,18 @@ async function main(): Promise<void> {
     // the on-demand path doesn't reclaim, so this hourly run is the server-side safety net.
     await reclaimStaleGeneratingFeedbackJobs(new Date(startedAtMs - STALE_GENERATING_TTL_MS).toISOString()).catch(() => {});
 
-    const lastOk = await getLatestTrainingPeaksCronRunLog({ jobName: CRON_JOB_NAME, status: "sent" });
-    const sinceUpdatedAt = lastOk?.startedAt ?? new Date(startedAtMs - DEFAULT_LOOKBACK_MS).toISOString();
-
-    const summary = await sweepAndEnqueueFeedbackJobs({ sinceUpdatedAt });
+    // Report-triggered: enqueue a run ONLY once the student has written a recognised report about
+    // it (the message is trigger + words). A fixed 48h report lookback (idempotent via the
+    // handled-guard) replaces the old updated_at watermark — no silent-run drafting.
+    const summary = await sweepAndEnqueueReportedRunWorkouts();
 
     await finishTrainingPeaksCronRunLog(runLog.id, {
       status: "sent",
       durationMs: Date.now() - startedAtMs,
       responseStatus: 200,
-      counts: { ...summary, sinceUpdatedAt },
+      counts: { ...summary },
     });
-    console.log(`[tp-feedback-enqueue-run] ${JSON.stringify({ ...summary, sinceUpdatedAt })}`);
+    console.log(`[tp-feedback-enqueue-run] ${JSON.stringify(summary)}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await finishTrainingPeaksCronRunLog(runLog.id, {
