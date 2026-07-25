@@ -111,6 +111,8 @@ export const CLUB_PROFILE_FIXTURE: ClubProfileDetailView = {
     { code: "month_100k", title: "100 км за месяц", hint: "Набрать 100 км в одном месяце", earned: true, earnedDateLabel: null, stub: false },
     { code: "streak_10", title: "10 дней подряд", hint: "10 дней подряд с пробежкой", earned: false, earnedDateLabel: null, stub: false },
   ],
+  clubVisible: true,
+  privacyEnabled: false,
   challengeRank: 2,
   challengeParticipants: 14,
   completionPct: 0.8,

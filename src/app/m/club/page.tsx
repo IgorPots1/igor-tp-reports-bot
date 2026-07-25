@@ -641,17 +641,23 @@ function VolumeChart({ series }: { series: ClubVolumePoint[] }) {
 
 function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string }) {
   const [privacyMsg, setPrivacyMsg] = useState<string | null>(null);
+  const [visible, setVisibleState] = useState<boolean | null>(null);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
+  const current = visible ?? v.clubVisible;
 
-  async function setVisibility(visible: boolean) {
+  async function setVisibility(next: boolean) {
+    setVisibleState(next);
     const res = await fetch("/api/m/club/privacy", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData: props.initData, visible }),
+      body: JSON.stringify({ initData: props.initData, visible: next }),
     }).then((r) => r.json()).catch(() => ({ ok: false, error: "Ошибка" }));
-    setPrivacyMsg(res.ok ? (visible ? "Ты в клубной ленте" : "Скрыт из клубной ленты") : (res.error ?? "Недоступно"));
+    if (!res.ok) {
+      setVisibleState(v.clubVisible); // revert optimistic toggle
+    }
+    setPrivacyMsg(res.ok ? (next ? "Ты в клубной ленте" : "Скрыт из клубной ленты") : (res.error ?? "Недоступно"));
   }
 
   return (
@@ -730,9 +736,10 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
       <div style={S.card}>
         <div style={S.secHead}>Видимость в клубе</div>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          <button style={S.pill(true)} type="button" onClick={() => setVisibility(true)}>Участвую</button>
-          <button style={S.pill(false)} type="button" onClick={() => setVisibility(false)}>Скрыть меня</button>
+          <button style={S.pill(current === true)} type="button" onClick={() => setVisibility(true)}>Участвую</button>
+          <button style={S.pill(current === false)} type="button" onClick={() => setVisibility(false)}>Скрыть меня</button>
         </div>
+        {!v.privacyEnabled ? <div style={S.cardMeta}>Управление видимостью включит тренер</div> : null}
         {privacyMsg ? <div style={S.cardMeta}>{privacyMsg}</div> : null}
       </div>
     </div>

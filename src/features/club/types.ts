@@ -150,6 +150,10 @@ export type ClubProfileDetailView = ClubProfileView & {
   weeklySeries: ClubVolumePoint[];
   typeBreakdown: ClubTypeBreakdown[];
   achievements: ClubAchievement[];
+  /** Current club visibility of THIS student (for the profile opt-out toggle). */
+  clubVisible: boolean;
+  /** Whether the opt-out toggle is live (CLUB_PRIVACY_ENABLED); UI hint only. */
+  privacyEnabled: boolean;
   freshness: ClubFreshness;
 };
 

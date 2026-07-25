@@ -79,13 +79,14 @@ type ClubWorkoutRow = {
 
 async function loadClubStudents(): Promise<ClubStudent[]> {
   const supabase = createSupabaseServerClient();
-  // NOTE: `club_visible` ships in supabase/migrations/..._add_club_visible_flag.sql
-  // (not applied in prod). Once applied, add it to the select and read it below;
-  // the default stays `true` (everyone participates) until then.
+  // club_visible (migration 20260724120000_add_club_visible_flag.sql) is APPLIED:
+  // boolean NOT NULL default true. When CLUB_PRIVACY_ENABLED is off, opt-out is
+  // ignored and everyone stays visible (see isVisible); the column is still read so
+  // the profile can show the current setting.
   const { data, error } = await withSupabaseNetworkRetry(() =>
     supabase
       .from("trainingpeaks_students")
-      .select("id, student_name, is_active, is_service_account")
+      .select("id, student_name, is_active, is_service_account, club_visible")
       .order("student_name", { ascending: true })
   );
   if (error) {
@@ -97,18 +98,26 @@ async function loadClubStudents(): Promise<ClubStudent[]> {
       student_name: string;
       is_active: boolean | null;
       is_service_account: boolean | null;
+      club_visible: boolean | null;
     }> | null) ?? []
   ).map((row) => ({
     id: row.id,
     name: row.student_name,
     isActive: row.is_active !== false,
     isServiceAccount: row.is_service_account === true,
-    clubVisible: true,
+    // null-safe: a missing/NULL value defaults to visible (matches column default true).
+    clubVisible: row.club_visible !== false,
   }));
 }
 
 function isVisible(student: ClubStudent): boolean {
-  return student.isActive && !student.isServiceAccount && student.clubVisible;
+  const base = student.isActive && !student.isServiceAccount;
+  // Opt-out only takes effect when the privacy feature is enabled; otherwise the
+  // club_visible flag is stored-but-ignored and everyone participates by default.
+  if (C.isPrivacyEnabled()) {
+    return base && student.clubVisible;
+  }
+  return base;
 }
 
 async function loadClubWorkoutRows(input: {
@@ -1047,6 +1056,8 @@ export async function getClubProfileDetail(input: {
     buildFreshness(),
   ]);
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
+  // Own row is read from the FULL list (a student who opted out still sees their cabinet).
+  const ownStudent = students.find((s) => s.id === input.currentStudentId) ?? null;
 
   const ownAll = rows.filter((r) => r.studentId === input.currentStudentId);
   const ownCompleted = ownAll.filter((r) => r.isCompleted);
@@ -1125,6 +1136,8 @@ export async function getClubProfileDetail(input: {
     typeBreakdown,
     records,
     achievements,
+    clubVisible: ownStudent?.clubVisible ?? true,
+    privacyEnabled: C.isPrivacyEnabled(),
     challengeRank: rankIndex >= 0 ? rankIndex + 1 : null,
     challengeParticipants: performers.length,
     completionPct: current?.completionPct ?? 0,
