@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Feedback safety-net + recall monitor — ОДИН РАЗ В ДЕНЬ (09:30 локального времени).
+     Шлёт тренеру ОДНУ строку в Telegram: беговые, про которые ученик писал, но черновика нет
+     (отчёт, что метка не поймала), + два числа для мониторинга полноты. READ-ONLY.
+     НЕ ставится автоматически. Ставит Игорь:
+       cp .../com.igor.trainingpeaks.feedback-safety-net.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.feedback-safety-net.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.feedback-safety-net</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-feedback-safety-net.sh"</string>
+  </array>
+
+  <!-- Раз в день в 09:30. Если ноут спал — launchd докрутит прогон при пробуждении.
+       RunAtLoad НЕ ставим намеренно: иначе строка слалась бы на каждый вход/включение. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/feedback-safety-net.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/feedback-safety-net.launchd.err.log</string>
+</dict>
+</plist>
