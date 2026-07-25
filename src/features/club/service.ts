@@ -18,16 +18,31 @@ import {
 } from "@/features/trainingpeaks/workout-activity-classification";
 
 import * as C from "./constants";
+import {
+  evaluateCandidate,
+  referenceVdotForAthlete,
+  type EvaluatedRecord,
+  type RecordCandidate,
+  type RecordDistanceKey,
+  type WorkoutQuality,
+} from "./records";
 import type {
+  ClubAchievement,
   ClubChallengeView,
+  ClubExtendedTopsView,
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
-  ClubProfileView,
+  ClubProfileDetailView,
+  ClubPublicProfileView,
   ClubRecordEntry,
   ClubRecordsClubTopRow,
   ClubRecordsView,
+  ClubStatisticsView,
   ClubTopPerformer,
+  ClubTopRow,
+  ClubTypeBreakdown,
+  ClubVolumePoint,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -151,58 +166,115 @@ async function loadClubWorkoutRows(input: {
 }
 
 /**
- * Returns the set of workout_cache_ids whose per-lap pace is stable enough to
- * certify a record as reliable (CV of pace_sec_per_km <= threshold, >=3 laps).
- * Missing laps => id simply absent from the set (record falls back to the
- * narrow-band reliability check).
+ * Builds a quality index for a set of workout_cache_ids from laps + derived
+ * metrics. Powers all three record trust levels + plausibility checks. Missing
+ * data => a conservative record (hasLaps:false) which caps the record at
+ * `preliminary`.
  */
-async function loadStableWorkoutIds(ids: string[]): Promise<Set<string>> {
-  const stable = new Set<string>();
+async function loadWorkoutQualityIndex(ids: string[]): Promise<Map<string, WorkoutQuality>> {
+  const index = new Map<string, WorkoutQuality>();
   if (ids.length === 0) {
-    return stable;
+    return index;
   }
   const supabase = createSupabaseServerClient();
-  const { data, error } = await withSupabaseNetworkRetry(() =>
-    supabase
-      .from("trainingpeaks_workout_laps")
-      .select("workout_cache_id, pace_sec_per_km, is_work")
-      .in("workout_cache_id", ids)
-  );
-  if (error) {
-    // Reliability degrades gracefully to narrow-band only; never throw the view away.
-    return stable;
-  }
-  const byWorkout = new Map<string, number[]>();
-  for (const row of (data as Array<{
-    workout_cache_id: string;
-    pace_sec_per_km: number | null;
-    is_work: boolean | null;
-  }> | null) ?? []) {
-    const pace = toFiniteNumber(row.pace_sec_per_km);
-    if (pace === null || pace <= 0) {
-      continue;
+  const [lapsRes, derivedRes] = await Promise.all([
+    withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_workout_laps")
+        .select("workout_cache_id, pace_sec_per_km, is_work, timer_time_s, elapsed_time_s, distance_m")
+        .in("workout_cache_id", ids)
+    ),
+    withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_workout_derived_metrics")
+        .select("workout_cache_id, reps_detected_count, rep_detection_method, has_fit")
+        .in("workout_cache_id", ids)
+    ),
+  ]);
+
+  type LapAgg = {
+    workPaces: number[];
+    allPaces: number[];
+    timer: number;
+    elapsed: number;
+    dist: number;
+    hasAny: boolean;
+  };
+  const lapAgg = new Map<string, LapAgg>();
+  if (!lapsRes.error) {
+    for (const row of (lapsRes.data as Array<{
+      workout_cache_id: string;
+      pace_sec_per_km: number | null;
+      is_work: boolean | null;
+      timer_time_s: number | null;
+      elapsed_time_s: number | null;
+      distance_m: number | null;
+    }> | null) ?? []) {
+      const agg = lapAgg.get(row.workout_cache_id) ?? {
+        workPaces: [],
+        allPaces: [],
+        timer: 0,
+        elapsed: 0,
+        dist: 0,
+        hasAny: false,
+      };
+      agg.hasAny = true;
+      const pace = toFiniteNumber(row.pace_sec_per_km);
+      if (pace !== null && pace > 0) {
+        agg.allPaces.push(pace);
+        if (row.is_work === true) {
+          agg.workPaces.push(pace);
+        }
+      }
+      agg.timer += toFiniteNumber(row.timer_time_s) ?? 0;
+      agg.elapsed += toFiniteNumber(row.elapsed_time_s) ?? 0;
+      agg.dist += toFiniteNumber(row.distance_m) ?? 0;
+      lapAgg.set(row.workout_cache_id, agg);
     }
-    // Prefer work laps; if a workout has none flagged, all laps are considered.
-    const bucket = byWorkout.get(row.workout_cache_id) ?? [];
-    bucket.push(pace);
-    byWorkout.set(row.workout_cache_id, bucket);
   }
-  for (const [workoutId, paces] of byWorkout) {
+
+  const derivedByWorkout = new Map<string, { isInterval: boolean; hasFit: boolean }>();
+  if (!derivedRes.error) {
+    for (const row of (derivedRes.data as Array<{
+      workout_cache_id: string;
+      reps_detected_count: number | null;
+      rep_detection_method: string | null;
+      has_fit: boolean | null;
+    }> | null) ?? []) {
+      const reps = toFiniteNumber(row.reps_detected_count) ?? 0;
+      const method = row.rep_detection_method ?? "none";
+      const isInterval = reps >= 2 && (method === "structure" || method === "lap_trigger");
+      derivedByWorkout.set(row.workout_cache_id, { isInterval, hasFit: row.has_fit === true });
+    }
+  }
+
+  function cv(paces: number[]): number | null {
     if (paces.length < 3) {
-      continue;
+      return null;
     }
     const mean = paces.reduce((a, b) => a + b, 0) / paces.length;
     if (mean <= 0) {
-      continue;
+      return null;
     }
-    const variance =
-      paces.reduce((a, b) => a + (b - mean) * (b - mean), 0) / paces.length;
-    const cv = Math.sqrt(variance) / mean;
-    if (cv <= C.CLUB_RECORD_PACE_CV_RELIABLE) {
-      stable.add(workoutId);
-    }
+    const variance = paces.reduce((a, b) => a + (b - mean) * (b - mean), 0) / paces.length;
+    return Math.sqrt(variance) / mean;
   }
-  return stable;
+
+  for (const id of ids) {
+    const agg = lapAgg.get(id);
+    const derived = derivedByWorkout.get(id);
+    const paceList = agg && agg.workPaces.length >= 3 ? agg.workPaces : agg?.allPaces ?? [];
+    index.set(id, {
+      hasLaps: agg?.hasAny ?? false,
+      hasFit: derived?.hasFit ?? (agg?.hasAny ?? false),
+      paceCv: cv(paceList),
+      lapTimerSumS: agg && agg.timer > 0 ? agg.timer : null,
+      lapElapsedSumS: agg && agg.elapsed > 0 ? agg.elapsed : null,
+      lapDistanceSumM: agg && agg.dist > 0 ? agg.dist : null,
+      isInterval: derived?.isInterval ?? false,
+    });
+  }
+  return index;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,21 +485,10 @@ async function buildFreshness(): Promise<ClubFreshness> {
 // Records reconstruction (shared by records + profile)
 // ---------------------------------------------------------------------------
 
-type RecordCandidate = {
-  workoutId: string;
-  studentId: string;
-  studentName: string;
-  distanceKm: number;
-  durationSeconds: number;
-  date: string;
-  bandDeltaKm: number;
-};
+const LABEL_BY_KEY = new Map(C.CLUB_RECORD_DISTANCES.map((d) => [d.key, d.label] as const));
 
-function collectCandidatesByDistance(rows: ClubWorkoutRow[]): Map<string, RecordCandidate[]> {
-  const byDistance = new Map<string, RecordCandidate[]>();
-  for (const target of C.CLUB_RECORD_DISTANCES) {
-    byDistance.set(target.key, []);
-  }
+function collectCandidates(rows: ClubWorkoutRow[]): RecordCandidate[] {
+  const out: RecordCandidate[] = [];
   for (const row of rows) {
     if (!row.isCompleted || !row.isRunning) {
       continue;
@@ -440,10 +501,12 @@ function collectCandidatesByDistance(rows: ClubWorkoutRow[]): Map<string, Record
     for (const target of C.CLUB_RECORD_DISTANCES) {
       const delta = Math.abs(d - target.km);
       if (delta <= C.CLUB_RECORD_BAND_KM) {
-        byDistance.get(target.key)!.push({
+        out.push({
           workoutId: row.id,
           studentId: row.studentId,
           studentName: row.studentName,
+          distanceKey: target.key,
+          targetKm: target.km,
           distanceKm: d,
           durationSeconds: t,
           date: row.workoutDate,
@@ -452,48 +515,64 @@ function collectCandidatesByDistance(rows: ClubWorkoutRow[]): Map<string, Record
       }
     }
   }
-  return byDistance;
+  return out;
 }
 
-/** Best (min duration) candidate per student for one distance. */
-function bestPerStudent(candidates: RecordCandidate[]): Map<string, RecordCandidate> {
-  const best = new Map<string, RecordCandidate>();
+export type DistanceResult = {
+  best: EvaluatedRecord | null; // min-duration non-hidden (verified or preliminary)
+  bestVerified: EvaluatedRecord | null; // min-duration verified only (feeds club tops)
+  evaluated: EvaluatedRecord[]; // every candidate incl. hidden (for validation logging)
+};
+
+/** studentId -> distanceKey -> result. Pure over the quality index (no I/O here). */
+function reconstructRecords(
+  candidates: RecordCandidate[],
+  quality: Map<string, WorkoutQuality>
+): Map<string, Map<RecordDistanceKey, DistanceResult>> {
+  const byStudent = new Map<string, Map<RecordDistanceKey, RecordCandidate[]>>();
   for (const cand of candidates) {
-    const existing = best.get(cand.studentId);
-    if (!existing || cand.durationSeconds < existing.durationSeconds) {
-      best.set(cand.studentId, cand);
+    const perDist = byStudent.get(cand.studentId) ?? new Map<RecordDistanceKey, RecordCandidate[]>();
+    const list = perDist.get(cand.distanceKey) ?? [];
+    list.push(cand);
+    perDist.set(cand.distanceKey, list);
+    byStudent.set(cand.studentId, perDist);
+  }
+
+  const result = new Map<string, Map<RecordDistanceKey, DistanceResult>>();
+  for (const [studentId, perDist] of byStudent) {
+    // Provisional per-distance min (pre-plausibility) → reference VDOT for the self-outlier check.
+    const provisionalBest = new Map<RecordDistanceKey, RecordCandidate>();
+    for (const [key, list] of perDist) {
+      const min = list.reduce((a, b) => (b.durationSeconds < a.durationSeconds ? b : a));
+      provisionalBest.set(key, min);
     }
+
+    const perDistResult = new Map<RecordDistanceKey, DistanceResult>();
+    for (const [key, list] of perDist) {
+      const refVdot = referenceVdotForAthlete(provisionalBest, key);
+      const evaluated = list
+        .map((cand) => evaluateCandidate(cand, quality.get(cand.workoutId), refVdot))
+        .sort((a, b) => a.candidate.durationSeconds - b.candidate.durationSeconds);
+      const best = evaluated.find((e) => e.trust !== "hidden") ?? null;
+      const bestVerified = evaluated.find((e) => e.trust === "verified") ?? null;
+      perDistResult.set(key, { best, bestVerified, evaluated });
+    }
+    result.set(studentId, perDistResult);
   }
-  return best;
+  return result;
 }
 
-function isReliable(
-  target: (typeof C.CLUB_RECORD_DISTANCES)[number],
-  cand: RecordCandidate,
-  stableIds: Set<string>
-): boolean {
-  if (target.alwaysPreliminary) {
-    return false;
-  }
-  if (cand.bandDeltaKm <= C.CLUB_RECORD_NARROW_BAND_KM) {
-    return true;
-  }
-  return stableIds.has(cand.workoutId);
-}
-
-function toRecordEntry(
-  target: (typeof C.CLUB_RECORD_DISTANCES)[number],
-  cand: RecordCandidate,
-  reliable: boolean
-): ClubRecordEntry {
+function toRecordEntry(ev: EvaluatedRecord): ClubRecordEntry {
+  const cand = ev.candidate;
   return {
-    distanceKey: target.key,
-    distanceLabel: target.label,
+    distanceKey: cand.distanceKey,
+    distanceLabel: LABEL_BY_KEY.get(cand.distanceKey) ?? cand.distanceKey,
     durationSeconds: cand.durationSeconds,
     paceSecPerKm: paceSecPerKm(cand.distanceKm, cand.durationSeconds),
     date: cand.date,
     dateLabel: formatRuDate(cand.date),
-    reliable,
+    trust: ev.trust === "verified" ? "verified" : "preliminary",
+    source: ev.source,
   };
 }
 
@@ -620,6 +699,7 @@ export async function getClubFeed(input: {
     const label = typeLabel(row.family);
     return {
       id: row.id,
+      studentId: row.studentId,
       studentDisplayName: firstWord(row.studentName),
       monogram: monogram(row.studentName),
       typeLabel: label,
@@ -630,28 +710,71 @@ export async function getClubFeed(input: {
       durationSeconds: row.durationSeconds,
       paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
       caption: sanitizeCaption(row.title, label),
-      reactionsEnabled: false,
+      reactionsEnabled: C.isReactionsEnabled(),
+      reactions: { like: 0, fire: 0 },
     };
   });
 
   return { items, nextCursor, freshness };
 }
 
+/** Club running km completed within [from,to] over visible students. */
+function clubKmInRange(rows: ClubWorkoutRow[], visibleIds: Set<string>, from: string, to: string): number {
+  let km = 0;
+  for (const row of rows) {
+    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
+      continue;
+    }
+    if (row.workoutDate >= from && row.workoutDate <= to) {
+      km += row.distanceKm ?? 0;
+    }
+  }
+  return km;
+}
+
+async function loadManualGoalKm(): Promise<number | null> {
+  // club_challenges migration is NOT applied in prod → this read fails/empty and
+  // the caller falls back. Wrapped so a missing table never throws the view away.
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("club_challenges")
+      .select("goal_km, starts_at, ends_at")
+      .lte("starts_at", clubTodayIso())
+      .gte("ends_at", clubTodayIso())
+      .order("starts_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) {
+      return null;
+    }
+    const goal = toFiniteNumber((data as { goal_km: number | null }).goal_km);
+    return goal && goal > 0 ? goal : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getClubChallenge(input: {
   currentStudentId: string;
 }): Promise<ClubChallengeView> {
   const range = currentWeekRange();
-  const [students, rows] = await Promise.all([
+  const prevFrom = addDaysIso(range.from, -7);
+  const prevTo = addDaysIso(range.to, -7);
+  const [students, rows, freshness] = await Promise.all([
     loadClubStudents(),
-    loadClubWorkoutRows({ from: range.from, to: range.to }),
+    loadClubWorkoutRows({ from: prevFrom, to: range.to }),
+    buildFreshness(),
   ]);
   const visible = students.filter(isVisible);
   const visibleById = new Map(visible.map((s) => [s.id, s]));
   const visibleIds = new Set(visibleById.keys());
 
+  const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
+
   let clubKm = 0;
   let personalKm = 0;
-  for (const row of rows) {
+  for (const row of weekRows) {
     if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
       continue;
     }
@@ -664,21 +787,40 @@ export async function getClubChallenge(input: {
   clubKm = Number(clubKm.toFixed(1));
   personalKm = Number(personalKm.toFixed(1));
 
-  const performers = buildWeekPerformers(rows, visibleById).map((p) => ({
+  const performers = buildWeekPerformers(weekRows, visibleById).map((p) => ({
     ...p,
     isCurrentStudent: p.studentId === input.currentStudentId,
   }));
   const currentPerformer = performers.find((p) => p.studentId === input.currentStudentId) ?? null;
 
-  const goalKm = C.CLUB_CHALLENGE_GOAL_KM_FIXTURE;
+  // Goal resolution: auto (prev week club km * factor) | manual (table) | fixture.
+  const mode = C.resolveChallengeGoalMode();
+  let goalKm = C.CLUB_CHALLENGE_GOAL_KM_FIXTURE;
+  let goalMode: "auto" | "manual" | "fixture" = "fixture";
+  if (mode === "manual") {
+    const manual = await loadManualGoalKm();
+    if (manual) {
+      goalKm = manual;
+      goalMode = "manual";
+    }
+  } else if (mode === "auto") {
+    const prevKm = clubKmInRange(rows, visibleIds, prevFrom, prevTo);
+    if (prevKm > 0) {
+      const raw = prevKm * C.CLUB_CHALLENGE_AUTO_FACTOR;
+      goalKm = Math.ceil(raw / C.CLUB_CHALLENGE_AUTO_ROUND_STEP) * C.CLUB_CHALLENGE_AUTO_ROUND_STEP;
+      goalMode = "auto";
+    }
+  }
   const progressPct = goalKm > 0 ? Math.min(Math.round((clubKm / goalKm) * 100), 100) : 0;
 
   return {
     clubKm,
     goalKm,
-    goalIsFixture: true,
+    goalIsFixture: goalMode === "fixture",
+    goalMode,
     progressPct,
     weekLabel: weekLabel(range),
+    freshness,
     topPerformers: performers.slice(0, C.CLUB_TOP_PERFORMERS_N),
     personal: currentPerformer
       ? {
@@ -698,127 +840,273 @@ export async function getClubRecords(input: {
 }): Promise<ClubRecordsView> {
   const today = clubTodayIso();
   const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
-  const [students, rows] = await Promise.all([
+  const [students, rows, freshness] = await Promise.all([
     loadClubStudents(),
     loadClubWorkoutRows({ from, to: today }),
+    buildFreshness(),
   ]);
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
   const visibleRows = rows.filter((r) => visibleById.has(r.studentId));
 
-  const byDistance = collectCandidatesByDistance(visibleRows);
-
-  // Determine winners first, then fetch laps once for reliability certification.
-  const winnerIds = new Set<string>();
-  const clubBest = new Map<string, Map<string, RecordCandidate>>();
-  for (const target of C.CLUB_RECORD_DISTANCES) {
-    const best = bestPerStudent(byDistance.get(target.key) ?? []);
-    clubBest.set(target.key, best);
-    for (const cand of best.values()) {
-      winnerIds.add(cand.workoutId);
-    }
-  }
-  const stableIds = await loadStableWorkoutIds([...winnerIds]);
+  const candidates = collectCandidates(visibleRows);
+  const quality = await loadWorkoutQualityIndex(candidates.map((c) => c.workoutId));
+  const byStudent = reconstructRecords(candidates, quality);
 
   const personal: ClubRecordEntry[] = [];
   const clubTops: ClubRecordsView["clubTops"] = [];
-  for (const target of C.CLUB_RECORD_DISTANCES) {
-    const best = clubBest.get(target.key)!;
+  const ownResults = byStudent.get(input.currentStudentId);
 
-    const own = best.get(input.currentStudentId);
-    if (own) {
-      personal.push(toRecordEntry(target, own, isReliable(target, own, stableIds)));
+  for (const target of C.CLUB_RECORD_DISTANCES) {
+    const ownBest = ownResults?.get(target.key)?.best;
+    if (ownBest) {
+      personal.push(toRecordEntry(ownBest));
     }
 
-    const ranked = [...best.values()].sort(
-      (a, b) => a.durationSeconds - b.durationSeconds
-    );
-    const rows: ClubRecordsClubTopRow[] = ranked
+    // Club top: each student's VERIFIED best only; preliminary/hidden never leak in.
+    const verifiedBests: EvaluatedRecord[] = [];
+    for (const perDist of byStudent.values()) {
+      const bv = perDist.get(target.key)?.bestVerified;
+      if (bv) {
+        verifiedBests.push(bv);
+      }
+    }
+    verifiedBests.sort((a, b) => a.candidate.durationSeconds - b.candidate.durationSeconds);
+    const topRows: ClubRecordsClubTopRow[] = verifiedBests
       .slice(0, C.CLUB_RECORDS_TOP_N)
-      .map((cand, index) => ({
+      .map((ev, index) => ({
         distanceKey: target.key,
         rank: index + 1,
-        displayName: firstWord(cand.studentName),
-        monogram: monogram(cand.studentName),
-        durationSeconds: cand.durationSeconds,
-        paceSecPerKm: paceSecPerKm(cand.distanceKm, cand.durationSeconds),
-        isCurrentStudent: cand.studentId === input.currentStudentId,
-        reliable: isReliable(target, cand, stableIds),
+        studentId: ev.candidate.studentId,
+        displayName: firstWord(ev.candidate.studentName),
+        monogram: monogram(ev.candidate.studentName),
+        durationSeconds: ev.candidate.durationSeconds,
+        paceSecPerKm: paceSecPerKm(ev.candidate.distanceKm, ev.candidate.durationSeconds),
+        isCurrentStudent: ev.candidate.studentId === input.currentStudentId,
+        trust: "verified",
       }));
     clubTops.push({
       distanceKey: target.key,
       distanceLabel: target.label,
       alwaysPreliminary: target.alwaysPreliminary,
-      rows,
+      rows: topRows,
     });
   }
 
-  return { personal, clubTops };
+  return { personal, clubTops, freshness };
 }
 
-export async function getClubProfile(input: {
-  currentStudentId: string;
-  currentStudentName: string;
-}): Promise<ClubProfileView> {
-  const today = clubTodayIso();
-  const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
-  const week = currentWeekRange();
-  const month = currentMonthRange();
-  const [students, rows] = await Promise.all([
-    loadClubStudents(),
-    loadClubWorkoutRows({ from, to: today }),
-  ]);
-  const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
-
-  const ownRows = rows.filter(
-    (r) => r.studentId === input.currentStudentId && r.isCompleted && r.isRunning
-  );
-
-  let weekKm = 0;
-  let monthKm = 0;
-  const activeDays = new Set<string>();
-  for (const row of ownRows) {
-    const km = row.distanceKm ?? 0;
-    if (row.workoutDate >= week.from && row.workoutDate <= week.to) {
-      weekKm += km;
+/** Reusable: current student's records (best per distance, verified|preliminary). */
+async function studentRecordsFromRows(
+  rows: ClubWorkoutRow[],
+  studentId: string
+): Promise<ClubRecordEntry[]> {
+  const own = rows.filter((r) => r.studentId === studentId);
+  const candidates = collectCandidates(own);
+  const quality = await loadWorkoutQualityIndex(candidates.map((c) => c.workoutId));
+  const byStudent = reconstructRecords(candidates, quality);
+  const perDist = byStudent.get(studentId);
+  const out: ClubRecordEntry[] = [];
+  for (const target of C.CLUB_RECORD_DISTANCES) {
+    const best = perDist?.get(target.key)?.best;
+    if (best) {
+      out.push(toRecordEntry(best));
     }
-    if (row.workoutDate >= month.from && row.workoutDate <= month.to) {
-      monthKm += km;
-    }
-    activeDays.add(row.workoutDate);
   }
+  return out;
+}
 
-  // Streak: consecutive days (ending today or yesterday) with >=1 completed run.
-  let streakDays = 0;
+function weekStartIso(iso: string): string {
+  const offset = dayOfWeekMondayZero(iso);
+  return addDaysIso(iso, -offset);
+}
+
+function computeStreakDays(activeDays: Set<string>, today: string): number {
+  let streak = 0;
   let cursor = today;
   if (!activeDays.has(cursor)) {
     cursor = addDaysIso(today, -1); // grace: today may not be logged yet
   }
   while (activeDays.has(cursor)) {
-    streakDays += 1;
+    streak += 1;
     cursor = addDaysIso(cursor, -1);
   }
+  return streak;
+}
 
-  // Records for this student.
-  const byDistance = collectCandidatesByDistance(ownRows);
-  const winnerIds = new Set<string>();
-  const bestByKey = new Map<string, RecordCandidate>();
-  for (const target of C.CLUB_RECORD_DISTANCES) {
-    const best = bestPerStudent(byDistance.get(target.key) ?? []).get(input.currentStudentId);
-    if (best) {
-      bestByKey.set(target.key, best);
-      winnerIds.add(best.workoutId);
+/** Longest consecutive-day streak anywhere in the set (for the streak achievement). */
+function longestStreak(activeDays: Set<string>): number {
+  let best = 0;
+  for (const day of activeDays) {
+    if (activeDays.has(addDaysIso(day, -1))) {
+      continue; // not a run start
+    }
+    let len = 1;
+    let cursor = addDaysIso(day, 1);
+    while (activeDays.has(cursor)) {
+      len += 1;
+      cursor = addDaysIso(cursor, 1);
+    }
+    best = Math.max(best, len);
+  }
+  return best;
+}
+
+function kmByWeek(runningRows: ClubWorkoutRow[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of runningRows) {
+    const wk = weekStartIso(row.workoutDate);
+    map.set(wk, (map.get(wk) ?? 0) + (row.distanceKm ?? 0));
+  }
+  return map;
+}
+
+function kmByMonth(runningRows: ClubWorkoutRow[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const row of runningRows) {
+    const m = row.workoutDate.slice(0, 7);
+    map.set(m, (map.get(m) ?? 0) + (row.distanceKm ?? 0));
+  }
+  return map;
+}
+
+function buildAchievements(
+  studentRunningRows: ClubWorkoutRow[],
+  studentAllRows: ClubWorkoutRow[],
+  records: ClubRecordEntry[]
+): ClubAchievement[] {
+  const activeDays = new Set(studentRunningRows.map((r) => r.workoutDate));
+  const maxStreak = longestStreak(activeDays);
+  const monthMap = kmByMonth(studentRunningRows);
+  const totalKm = studentRunningRows.reduce((a, r) => a + (r.distanceKm ?? 0), 0);
+  const haveDistance = new Set(records.map((r) => r.distanceKey));
+
+  // week completion 100%: any ISO week with >=1 planned run and completed>=planned
+  const weekPlanned = new Map<string, number>();
+  const weekDone = new Map<string, number>();
+  for (const r of studentAllRows) {
+    if (!r.isRunning) {
+      continue;
+    }
+    const wk = weekStartIso(r.workoutDate);
+    if (r.isPlanned) {
+      weekPlanned.set(wk, (weekPlanned.get(wk) ?? 0) + 1);
+    }
+    if (r.isCompleted) {
+      weekDone.set(wk, (weekDone.get(wk) ?? 0) + 1);
     }
   }
-  const stableIds = await loadStableWorkoutIds([...winnerIds]);
-  const records: ClubRecordEntry[] = [];
-  for (const target of C.CLUB_RECORD_DISTANCES) {
-    const best = bestByKey.get(target.key);
-    if (best) {
-      records.push(toRecordEntry(target, best, isReliable(target, best, stableIds)));
+  let hadPerfectWeek = false;
+  for (const [wk, planned] of weekPlanned) {
+    if (planned > 0 && (weekDone.get(wk) ?? 0) >= planned) {
+      hadPerfectWeek = true;
+      break;
     }
   }
 
-  // Challenge rank among all visible participants (this week).
+  const out: ClubAchievement[] = [];
+  for (const rule of C.CLUB_ACHIEVEMENT_RULES) {
+    if (rule.stub) {
+      out.push({ code: rule.code, title: rule.title, hint: rule.hint, earned: false, earnedDateLabel: null, stub: true });
+      continue;
+    }
+    let earned = false;
+    switch (rule.kind) {
+      case "first_distance":
+        earned = rule.distanceKey ? haveDistance.has(rule.distanceKey) : false;
+        break;
+      case "month_volume":
+        earned = [...monthMap.values()].some((km) => km >= (rule.param ?? Infinity));
+        break;
+      case "streak":
+        earned = maxStreak >= (rule.param ?? Infinity);
+        break;
+      case "week_full_completion":
+        earned = hadPerfectWeek;
+        break;
+      case "total_volume":
+        earned = totalKm >= (rule.param ?? Infinity);
+        break;
+    }
+    out.push({ code: rule.code, title: rule.title, hint: rule.hint, earned, earnedDateLabel: null, stub: false });
+  }
+  return out;
+}
+
+export async function getClubProfileDetail(input: {
+  currentStudentId: string;
+  currentStudentName: string;
+}): Promise<ClubProfileDetailView> {
+  const today = clubTodayIso();
+  const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
+  const week = currentWeekRange();
+  const month = currentMonthRange();
+  const yearFrom = `${today.slice(0, 4)}-01-01`;
+  const [students, rows, freshness] = await Promise.all([
+    loadClubStudents(),
+    loadClubWorkoutRows({ from, to: today }),
+    buildFreshness(),
+  ]);
+  const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
+
+  const ownAll = rows.filter((r) => r.studentId === input.currentStudentId);
+  const ownCompleted = ownAll.filter((r) => r.isCompleted);
+  const ownRunning = ownCompleted.filter((r) => r.isRunning);
+
+  let weekKm = 0;
+  let monthKm = 0;
+  let yearKm = 0;
+  const activeDays = new Set<string>();
+  for (const row of ownRunning) {
+    const km = row.distanceKm ?? 0;
+    if (row.workoutDate >= week.from && row.workoutDate <= week.to) weekKm += km;
+    if (row.workoutDate >= month.from && row.workoutDate <= month.to) monthKm += km;
+    if (row.workoutDate >= yearFrom) yearKm += km;
+    activeDays.add(row.workoutDate);
+  }
+
+  const streakDays = computeStreakDays(activeDays, today);
+  const records = await studentRecordsFromRows(ownRunning, input.currentStudentId);
+
+  // Weekly series (last 12 ISO weeks) + best week (over full window).
+  const weekMap = kmByWeek(ownRunning);
+  const weeklySeries: ClubVolumePoint[] = [];
+  let wkCursor = weekStartIso(today);
+  const seriesWeeks: string[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    seriesWeeks.push(wkCursor);
+    wkCursor = addDaysIso(wkCursor, -7);
+  }
+  seriesWeeks.reverse();
+  for (const wk of seriesWeeks) {
+    weeklySeries.push({ label: formatRuDate(wk), km: Number((weekMap.get(wk) ?? 0).toFixed(1)) });
+  }
+  let bestWeekKm = 0;
+  let bestWeekLabel: string | null = null;
+  for (const [wk, km] of weekMap) {
+    if (km > bestWeekKm) {
+      bestWeekKm = km;
+      bestWeekLabel = formatRuDate(wk);
+    }
+  }
+
+  // Type breakdown over all completed workouts.
+  const typeAgg = new Map<string, { label: string; count: number; km: number }>();
+  for (const row of ownCompleted) {
+    const label = typeLabel(row.family);
+    const agg = typeAgg.get(row.family) ?? { label, count: 0, km: 0 };
+    agg.count += 1;
+    agg.km += row.distanceKm ?? 0;
+    typeAgg.set(row.family, agg);
+  }
+  const typeBreakdown: ClubTypeBreakdown[] = [...typeAgg.entries()]
+    .map(([family, v]) => ({ family, label: v.label, count: v.count, km: Number(v.km.toFixed(1)) }))
+    .sort((a, b) => b.count - a.count);
+
+  const achievements = buildAchievements(ownRunning, ownAll, records).filter(
+    (a) => !a.stub || C.isStubsEnabled()
+  );
+
+  // Challenge rank this week.
   const weekRows = rows.filter((r) => r.workoutDate >= week.from && r.workoutDate <= week.to);
   const performers = buildWeekPerformers(weekRows, visibleById);
   const rankIndex = performers.findIndex((p) => p.studentId === input.currentStudentId);
@@ -829,13 +1117,251 @@ export async function getClubProfile(input: {
     monogram: monogram(input.currentStudentName),
     weekKm: Number(weekKm.toFixed(1)),
     monthKm: Number(monthKm.toFixed(1)),
+    yearKm: Number(yearKm.toFixed(1)),
     streakDays,
+    bestWeekKm: Number(bestWeekKm.toFixed(1)),
+    bestWeekLabel,
+    weeklySeries,
+    typeBreakdown,
     records,
+    achievements,
     challengeRank: rankIndex >= 0 ? rankIndex + 1 : null,
     challengeParticipants: performers.length,
     completionPct: current?.completionPct ?? 0,
     noPlan: current?.noPlan ?? true,
+    freshness,
+  };
+}
+
+export async function getClubStatistics(): Promise<ClubStatisticsView> {
+  const range = currentWeekRange();
+  const prevFrom = addDaysIso(range.from, -7);
+  const prevTo = addDaysIso(range.to, -7);
+  const [students, rows, freshness] = await Promise.all([
+    loadClubStudents(),
+    loadClubWorkoutRows({ from: prevFrom, to: range.to }),
+    buildFreshness(),
+  ]);
+  const visible = students.filter(isVisible);
+  const visibleById = new Map(visible.map((s) => [s.id, s]));
+  const visibleIds = new Set(visibleById.keys());
+
+  const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
+  const active = new Set<string>();
+  let workoutsCount = 0;
+  let clubKm = 0;
+  for (const row of weekRows) {
+    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
+      continue;
+    }
+    active.add(row.studentId);
+    workoutsCount += 1;
+    clubKm += row.distanceKm ?? 0;
+  }
+  clubKm = Number(clubKm.toFixed(1));
+  const prevClubKm = Number(clubKmInRange(rows, visibleIds, prevFrom, prevTo).toFixed(1));
+
+  const performers = buildWeekPerformers(weekRows, visibleById).filter((p) => !p.noPlan);
+  const avgCompletionPct =
+    performers.length > 0
+      ? performers.reduce((a, p) => a + p.completionPct, 0) / performers.length
+      : 0;
+
+  return {
+    weekLabel: weekLabel(range),
+    clubKm,
+    activeCount: active.size,
+    workoutsCount,
+    avgCompletionPct,
+    prevClubKm,
+    weekOverWeekPct: prevClubKm > 0 ? Math.round(((clubKm - prevClubKm) / prevClubKm) * 100) : null,
+    freshness,
+  };
+}
+
+export async function getClubExtendedTops(input: {
+  currentStudentId: string;
+}): Promise<ClubExtendedTopsView> {
+  const today = clubTodayIso();
+  const range = currentWeekRange();
+  const from = addDaysIso(today, -60); // wide enough for streaks
+  const [students, rows, freshness] = await Promise.all([
+    loadClubStudents(),
+    loadClubWorkoutRows({ from, to: today }),
+    buildFreshness(),
+  ]);
+  const visible = students.filter(isVisible);
+  const visibleById = new Map(visible.map((s) => [s.id, s]));
+  const visibleIds = new Set(visibleById.keys());
+
+  const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
+
+  const volume = new Map<string, number>();
+  const count = new Map<string, number>();
+  const activeDaysByStudent = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
+      continue;
+    }
+    const days = activeDaysByStudent.get(row.studentId) ?? new Set<string>();
+    days.add(row.workoutDate);
+    activeDaysByStudent.set(row.studentId, days);
+  }
+  for (const row of weekRows) {
+    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
+      continue;
+    }
+    volume.set(row.studentId, (volume.get(row.studentId) ?? 0) + (row.distanceKm ?? 0));
+    count.set(row.studentId, (count.get(row.studentId) ?? 0) + 1);
+  }
+
+  const nameOf = (id: string) => firstWord(visibleById.get(id)?.name ?? "");
+  const monoOf = (id: string) => monogram(visibleById.get(id)?.name ?? "");
+  const mkRow = (id: string, value: string): ClubTopRow => ({
+    studentId: id,
+    displayName: nameOf(id),
+    monogram: monoOf(id),
+    value,
+    isCurrentStudent: id === input.currentStudentId,
+  });
+
+  const byVolume = [...volume.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, C.CLUB_EXTENDED_TOP_N)
+    .map(([id, km]) => mkRow(id, `${km.toFixed(1).replace(".", ",")} км`));
+
+  const byCount = [...count.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, C.CLUB_EXTENDED_TOP_N)
+    .map(([id, n]) => mkRow(id, `${n} трен.`));
+
+  const performers = buildWeekPerformers(weekRows, visibleById).filter((p) => !p.noPlan);
+  const byCompletion = performers
+    .slice(0, C.CLUB_EXTENDED_TOP_N)
+    .map((p) => mkRow(p.studentId, `${Math.round(p.completionPct * 100)}%`));
+
+  const streaks = [...activeDaysByStudent.entries()]
+    .map(([id, days]) => [id, computeStreakDays(days, today)] as const)
+    .filter(([, s]) => s > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, C.CLUB_EXTENDED_TOP_N)
+    .map(([id, s]) => mkRow(id, `${s} дн`));
+
+  return {
+    weekLabel: weekLabel(range),
+    byVolume,
+    byCount,
+    byCompletion,
+    byStreak: streaks,
+    freshness,
+  };
+}
+
+export async function getClubPublicProfile(input: {
+  currentStudentId: string;
+  targetStudentId: string;
+}): Promise<ClubPublicProfileView> {
+  const today = clubTodayIso();
+  const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
+  const week = currentWeekRange();
+  const month = currentMonthRange();
+  const [students, rows] = await Promise.all([
+    loadClubStudents(),
+    loadClubWorkoutRows({ from, to: today }),
+  ]);
+  const target = students.find((s) => s.id === input.targetStudentId);
+  const isSelf = input.targetStudentId === input.currentStudentId;
+  const canSee = Boolean(target) && (isSelf || (target ? isVisible(target) : false));
+
+  const name = target?.name ?? "";
+  if (!canSee) {
+    return {
+      studentId: input.targetStudentId,
+      displayName: firstWord(name || "Участник клуба"),
+      monogram: monogram(name || "•"),
+      visible: false,
+      weekKm: 0,
+      monthKm: 0,
+      streakDays: 0,
+      records: [],
+      recentFeed: [],
+    };
+  }
+
+  const ownRunning = rows.filter((r) => r.studentId === input.targetStudentId && r.isCompleted && r.isRunning);
+  let weekKm = 0;
+  let monthKm = 0;
+  const activeDays = new Set<string>();
+  for (const row of ownRunning) {
+    const km = row.distanceKm ?? 0;
+    if (row.workoutDate >= week.from && row.workoutDate <= week.to) weekKm += km;
+    if (row.workoutDate >= month.from && row.workoutDate <= month.to) monthKm += km;
+    activeDays.add(row.workoutDate);
+  }
+  const records = await studentRecordsFromRows(ownRunning, input.targetStudentId);
+
+  const recentCompleted = rows
+    .filter((r) => r.studentId === input.targetStudentId && r.isCompleted && r.family !== "day_off")
+    .sort((a, b) => (a.workoutDate < b.workoutDate ? 1 : a.workoutDate > b.workoutDate ? -1 : 0))
+    .slice(0, 8);
+  const recentFeed: ClubFeedItem[] = recentCompleted.map((row) => {
+    const label = typeLabel(row.family);
+    return {
+      id: row.id,
+      studentId: row.studentId,
+      studentDisplayName: firstWord(row.studentName),
+      monogram: monogram(row.studentName),
+      typeLabel: label,
+      isRunning: row.isRunning,
+      date: row.workoutDate,
+      dateLabel: formatRuDate(row.workoutDate),
+      distanceKm: row.distanceKm,
+      durationSeconds: row.durationSeconds,
+      paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
+      caption: sanitizeCaption(row.title, label),
+      reactionsEnabled: C.isReactionsEnabled(),
+      reactions: { like: 0, fire: 0 },
+    };
+  });
+
+  return {
+    studentId: input.targetStudentId,
+    displayName: firstWord(name),
+    monogram: monogram(name),
+    visible: true,
+    weekKm: Number(weekKm.toFixed(1)),
+    monthKm: Number(monthKm.toFixed(1)),
+    streakDays: computeStreakDays(activeDays, today),
+    records,
+    recentFeed,
+  };
+}
+
+/** Exposed for the validation script (Stage C4): raw per-candidate evaluation. */
+export async function evaluateAllRecordsForValidation(): Promise<{
+  students: ClubStudent[];
+  byStudent: Map<string, Map<RecordDistanceKey, DistanceResult>>;
+  quality: Map<string, WorkoutQuality>;
+  candidateCount: number;
+  runningWorkoutCount: number;
+}> {
+  const today = clubTodayIso();
+  const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
+  const [students, rows] = await Promise.all([loadClubStudents(), loadClubWorkoutRows({ from, to: today })]);
+  const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
+  const visibleRows = rows.filter((r) => visibleById.has(r.studentId));
+  const runningWorkoutCount = visibleRows.filter((r) => r.isCompleted && r.isRunning).length;
+  const candidates = collectCandidates(visibleRows);
+  const quality = await loadWorkoutQualityIndex(candidates.map((c) => c.workoutId));
+  const byStudent = reconstructRecords(candidates, quality);
+  return {
+    students: students.filter(isVisible),
+    byStudent,
+    quality,
+    candidateCount: candidates.length,
+    runningWorkoutCount,
   };
 }
 
 export { formatDuration, formatRuDate };
+export type { ClubStudent };

@@ -10,6 +10,8 @@ export type ClubFreshness = {
 
 export type ClubFeedItem = {
   id: string;
+  /** Owner student id — enables tap-through to a public profile (respecting privacy). */
+  studentId: string;
   studentDisplayName: string;
   monogram: string;
   /** Human-readable activity type, e.g. "Бег". Gender-neutral. */
@@ -23,8 +25,10 @@ export type ClubFeedItem = {
   paceSecPerKm: number | null;
   /** Short neutral caption derived from the workout title (safe subset). */
   caption: string | null;
-  /** Placeholder so the UI can reserve room for future reactions (disabled in v1). */
-  reactionsEnabled: false;
+  /** Whether the reactions row is interactive (CLUB_REACTIONS_ENABLED). */
+  reactionsEnabled: boolean;
+  /** Aggregate reaction counts (all zero until the reactions feature ships). */
+  reactions: { like: number; fire: number };
 };
 
 export type ClubFeedView = {
@@ -54,6 +58,8 @@ export type ClubChallengeView = {
   goalIsFixture: boolean;
   progressPct: number;
   weekLabel: string;
+  /** How the goal was resolved: auto (prev week + factor) | manual | fixture. */
+  goalMode: "auto" | "manual" | "fixture";
   topPerformers: ClubTopPerformer[];
   personal: {
     contributionKm: number;
@@ -63,7 +69,10 @@ export type ClubChallengeView = {
     completedCount: number;
     noPlan: boolean;
   } | null;
+  freshness: ClubFreshness;
 };
+
+import type { RecordSource, RecordTrust } from "./records";
 
 export type ClubRecordEntry = {
   distanceKey: "5k" | "10k" | "21k" | "42k";
@@ -72,19 +81,23 @@ export type ClubRecordEntry = {
   paceSecPerKm: number | null;
   date: string;
   dateLabel: string;
-  /** false → shown as "предварительно" (weak band match / no pace-stability evidence). */
-  reliable: boolean;
+  /** verified | preliminary (hidden records are never emitted to the UI). */
+  trust: RecordTrust;
+  /** reconstructed for now; schema leaves room for official_protocol / coach_confirmed. */
+  source: RecordSource;
 };
 
 export type ClubRecordsClubTopRow = {
   distanceKey: "5k" | "10k" | "21k" | "42k";
   rank: number;
+  studentId: string;
   displayName: string;
   monogram: string;
   durationSeconds: number;
   paceSecPerKm: number | null;
   isCurrentStudent: boolean;
-  reliable: boolean;
+  /** Club tops only ever contain verified records. */
+  trust: RecordTrust;
 };
 
 export type ClubRecordsView = {
@@ -97,6 +110,7 @@ export type ClubRecordsView = {
     alwaysPreliminary: boolean;
     rows: ClubRecordsClubTopRow[];
   }>;
+  freshness: ClubFreshness;
 };
 
 export type ClubProfileView = {
@@ -110,4 +124,71 @@ export type ClubProfileView = {
   challengeParticipants: number;
   completionPct: number;
   noPlan: boolean;
+};
+
+// --- Stage A: extended BUILD views ---
+
+export type ClubTypeBreakdown = { family: string; label: string; count: number; km: number };
+
+export type ClubVolumePoint = { label: string; km: number };
+
+export type ClubAchievement = {
+  code: string;
+  title: string;
+  hint: string;
+  earned: boolean;
+  earnedDateLabel: string | null;
+  /** demo card (data not available yet) — only surfaced under CLUB_STUBS_ENABLED. */
+  stub: boolean;
+};
+
+export type ClubProfileDetailView = ClubProfileView & {
+  yearKm: number;
+  bestWeekKm: number;
+  bestWeekLabel: string | null;
+  /** Last ~12 ISO weeks of running volume, for a lightweight SVG chart. */
+  weeklySeries: ClubVolumePoint[];
+  typeBreakdown: ClubTypeBreakdown[];
+  achievements: ClubAchievement[];
+  freshness: ClubFreshness;
+};
+
+export type ClubStatisticsView = {
+  weekLabel: string;
+  clubKm: number;
+  activeCount: number;
+  workoutsCount: number;
+  avgCompletionPct: number;
+  prevClubKm: number;
+  weekOverWeekPct: number | null;
+  freshness: ClubFreshness;
+};
+
+export type ClubTopRow = {
+  studentId: string;
+  displayName: string;
+  monogram: string;
+  value: string;
+  isCurrentStudent: boolean;
+};
+
+export type ClubExtendedTopsView = {
+  weekLabel: string;
+  byVolume: ClubTopRow[];
+  byCount: ClubTopRow[];
+  byCompletion: ClubTopRow[];
+  byStreak: ClubTopRow[];
+  freshness: ClubFreshness;
+};
+
+export type ClubPublicProfileView = {
+  studentId: string;
+  displayName: string;
+  monogram: string;
+  visible: boolean;
+  weekKm: number;
+  monthKm: number;
+  streakDays: number;
+  records: ClubRecordEntry[];
+  recentFeed: ClubFeedItem[];
 };
