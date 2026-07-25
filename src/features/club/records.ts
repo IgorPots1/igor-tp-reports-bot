@@ -52,14 +52,22 @@ export type RecordCandidate = {
   bandDeltaKm: number;
   /** How the candidate was built. best_split => distanceKm/durationSeconds are the segment's. */
   calcMethod: RecordCalcMethod;
-  /** Present for best_split: continuity stats measured INSIDE the segment. */
+  /** Full distance of the source workout (whole file), km — for diagnosis. */
+  wholeDistanceKm: number;
+  /** Present for best_split: continuity stats + lap boundaries INSIDE the segment. */
   segment?: {
     movingS: number;
     elapsedS: number;
     distanceKm: number;
     paceCv: number | null;
+    startLap: number;
+    endLap: number;
+    lapCount: number;
   };
 };
+
+/** race = record on a declared race date / coach-confirmed; else a training-run segment. */
+export type ClubRecordType = "race" | "training_split";
 
 export type WorkoutQuality = {
   hasLaps: boolean;

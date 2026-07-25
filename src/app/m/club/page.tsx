@@ -588,7 +588,21 @@ function RecordsTab(props: {
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
   const clubTop = v.clubTops.find((c) => c.distanceKey === props.distance);
-  const mine = v.personal.find((p) => p.distanceKey === props.distance);
+  const mineAll = v.personal.filter((p) => p.distanceKey === props.distance);
+  const mineRace = mineAll.find((p) => p.recordType === "race");
+  const mineTraining = mineAll.find((p) => p.recordType === "training_split");
+
+  const recordBlock = (rec: typeof mineAll[number], label: string) => (
+    <div style={{ marginTop: 6 }}>
+      <div style={S.cardMeta}>{label}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 2 }}>
+        <span style={S.bigNumber}>{fmtDuration(rec.durationSeconds)}</span>
+        {rec.paceSecPerKm ? <span style={{ color: C.sub, fontSize: 14 }}>{fmtPace(rec.paceSecPerKm)}</span> : null}
+      </div>
+      <div style={S.cardMeta}>{rec.dateLabel}</div>
+      <div style={{ marginTop: 8 }}><TrustBadge trust={rec.trust} /></div>
+    </div>
+  );
 
   return (
     <div>
@@ -601,23 +615,17 @@ function RecordsTab(props: {
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>Мой рекорд</div>
-        {mine ? (
-          <div style={{ marginTop: 6 }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-              <span style={S.bigNumber}>{fmtDuration(mine.durationSeconds)}</span>
-              {mine.paceSecPerKm ? <span style={{ color: C.sub, fontSize: 14 }}>{fmtPace(mine.paceSecPerKm)}</span> : null}
-            </div>
-            <div style={S.cardMeta}>{mine.dateLabel}</div>
-            <div style={{ marginTop: 8 }}><TrustBadge trust={mine.trust} /></div>
-          </div>
-        ) : (
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>Пока нет тренировки на эту дистанцию</div>
-        )}
+        <div style={S.secHead}>Мои рекорды</div>
+        {mineRace ? recordBlock(mineRace, "🏁 Гонка") : null}
+        {mineTraining ? recordBlock(mineTraining, "🏃 Лучший отрезок тренировки") : null}
+        {!mineRace && !mineTraining ? (
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>Пока нет данных на эту дистанцию</div>
+        ) : null}
+        {mineTraining && !mineRace ? <div style={S.fixtureNote}>Это отрезок тренировки, не гонка. Настоящий рекорд появится с забегом.</div> : null}
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>Клубный топ · {clubTop?.distanceLabel} · только подтверждённые</div>
+        <div style={S.secHead}>Клубный топ · {clubTop?.distanceLabel} · только гонки</div>
         {clubTop && clubTop.rows.length > 0 ? (
           clubTop.rows.map((row) => (
             <div key={`${row.rank}-${row.studentId}`} style={S.rankRow(row.isCurrentStudent)}>
@@ -631,7 +639,7 @@ function RecordsTab(props: {
             </div>
           ))
         ) : (
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет подтверждённых рекордов клуба</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет гонок в данных — топ появится, когда забеги подтянутся в TrainingPeaks</div>
         )}
         {clubTop?.alwaysPreliminary ? <div style={S.fixtureNote}>5 км — только предварительно по методике, в клубный топ не идёт</div> : null}
       </div>

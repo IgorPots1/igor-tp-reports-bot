@@ -21,6 +21,7 @@ import * as C from "./constants";
 import {
   evaluateCandidate,
   referenceVdotForAthlete,
+  type ClubRecordType,
   type EvaluatedRecord,
   type RecordCandidate,
   type RecordDistanceKey,
@@ -58,7 +59,7 @@ type ClubStudent = {
   clubVisible: boolean;
 };
 
-type ClubWorkoutRow = {
+export type ClubWorkoutRow = {
   id: string;
   studentId: string;
   studentName: string;
@@ -617,6 +618,7 @@ async function buildFreshness(): Promise<ClubFreshness> {
 const LABEL_BY_KEY = new Map(C.CLUB_RECORD_DISTANCES.map((d) => [d.key, d.label] as const));
 
 type OrderedLap = {
+  lapIndex: number;
   distanceM: number;
   movingS: number;
   elapsedS: number;
@@ -658,6 +660,7 @@ async function loadOrderedLaps(ids: string[]): Promise<Map<string, OrderedLap[]>
     }
     for (const row of (data as Array<{
       workout_cache_id: string;
+      lap_index: number | null;
       distance_m: number | null;
       timer_time_s: number | null;
       elapsed_time_s: number | null;
@@ -671,6 +674,7 @@ async function loadOrderedLaps(ids: string[]): Promise<Map<string, OrderedLap[]>
       const elapsed = toFiniteNumber(row.elapsed_time_s);
       const list = out.get(row.workout_cache_id) ?? [];
       list.push({
+        lapIndex: toFiniteNumber(row.lap_index) ?? list.length,
         distanceM,
         movingS: (timer && timer > 0 ? timer : elapsed) ?? 0,
         elapsedS: (elapsed && elapsed > 0 ? elapsed : timer) ?? 0,
@@ -700,10 +704,17 @@ function cvOf(paces: number[]): number | null {
  * (within [target-under, target+over]). Returns null when no such segment exists
  * (workout shorter than target, or a single oversized lap → irregular/manual).
  */
-function buildBestSplitSegment(
-  laps: OrderedLap[],
-  targetKm: number
-): { distanceKm: number; movingS: number; elapsedS: number; paceCv: number | null } | null {
+type SplitSegment = {
+  distanceKm: number;
+  movingS: number;
+  elapsedS: number;
+  paceCv: number | null;
+  startLap: number;
+  endLap: number;
+  lapCount: number;
+};
+
+function buildBestSplitSegment(laps: OrderedLap[], targetKm: number): SplitSegment | null {
   if (laps.length < 2) {
     return null; // single lap → cannot pick a tighter split than the whole file
   }
@@ -711,7 +722,7 @@ function buildBestSplitSegment(
   const lo = targetM - C.CLUB_SPLIT_UNDER_TOLERANCE_M;
   const hi = targetM + C.CLUB_SPLIT_OVER_TOLERANCE_M;
 
-  let best: { distanceKm: number; movingS: number; elapsedS: number; paceCv: number | null } | null = null;
+  let best: SplitSegment | null = null;
   for (let i = 0; i < laps.length; i += 1) {
     let dist = 0;
     let moving = 0;
@@ -730,7 +741,15 @@ function buildBestSplitSegment(
       if (dist >= lo) {
         // qualifying window; prefer the fastest (min moving time)
         if (!best || moving < best.movingS) {
-          best = { distanceKm: dist / 1000, movingS: moving, elapsedS: elapsed, paceCv: cvOf(paces) };
+          best = {
+            distanceKm: dist / 1000,
+            movingS: moving,
+            elapsedS: elapsed,
+            paceCv: cvOf(paces),
+            startLap: laps[i].lapIndex,
+            endLap: laps[j].lapIndex,
+            lapCount: j - i + 1,
+          };
         }
       }
     }
@@ -773,6 +792,7 @@ function collectCandidates(
           date: row.workoutDate,
           bandDeltaKm: Math.abs(seg.distanceKm - target.km),
           calcMethod: "best_split",
+          wholeDistanceKm: d,
           segment: seg,
         });
         continue;
@@ -791,6 +811,7 @@ function collectCandidates(
           date: row.workoutDate,
           bandDeltaKm: delta,
           calcMethod: "whole_workout",
+          wholeDistanceKm: d,
         });
       }
     }
@@ -856,7 +877,7 @@ function reconstructRecords(
   return result;
 }
 
-function toRecordEntry(ev: EvaluatedRecord): ClubRecordEntry {
+function toRecordEntry(ev: EvaluatedRecord, recordType: ClubRecordType): ClubRecordEntry {
   const cand = ev.candidate;
   return {
     distanceKey: cand.distanceKey,
@@ -868,7 +889,32 @@ function toRecordEntry(ev: EvaluatedRecord): ClubRecordEntry {
     trust: ev.trust === "verified" ? "verified" : "preliminary",
     source: ev.source,
     calcMethod: ev.calcMethod,
+    recordType,
   };
+}
+
+/** Best non-hidden EvaluatedRecord per record type (race / training_split) for a student+distance. */
+function splitByType(
+  evaluated: EvaluatedRecord[],
+  studentId: string,
+  raceDates: Map<string, Set<string>>
+): { race: EvaluatedRecord | null; training: EvaluatedRecord | null; bestVerifiedRace: EvaluatedRecord | null } {
+  let race: EvaluatedRecord | null = null;
+  let training: EvaluatedRecord | null = null;
+  let bestVerifiedRace: EvaluatedRecord | null = null;
+  for (const ev of evaluated) {
+    if (ev.trust === "hidden") continue;
+    const type = classifyRecordType(studentId, ev.candidate.date, raceDates);
+    if (type === "race") {
+      if (!race || ev.candidate.durationSeconds < race.candidate.durationSeconds) race = ev;
+      if (ev.trust === "verified" && (!bestVerifiedRace || ev.candidate.durationSeconds < bestVerifiedRace.candidate.durationSeconds)) {
+        bestVerifiedRace = ev;
+      }
+    } else if (!training || ev.candidate.durationSeconds < training.candidate.durationSeconds) {
+      training = ev;
+    }
+  }
+  return { race, training, bestVerifiedRace };
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,27 +1234,28 @@ export async function getClubRecords(input: {
 
   const { candidates, quality } = await buildRecordInputs(visibleRows, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
+  const raceDates = await loadRaceDatesByStudent();
 
   const personal: ClubRecordEntry[] = [];
   const clubTops: ClubRecordsView["clubTops"] = [];
   const ownResults = byStudent.get(input.currentStudentId);
 
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    const ownBest = ownResults?.get(target.key)?.best;
-    if (ownBest) {
-      personal.push(toRecordEntry(ownBest));
-    }
+    // Personal card: race and training_split shown SEPARATELY (different meaning).
+    const ownEvals = ownResults?.get(target.key)?.evaluated ?? [];
+    const ownSplit = splitByType(ownEvals, input.currentStudentId, raceDates);
+    if (ownSplit.race) personal.push(toRecordEntry(ownSplit.race, "race"));
+    if (ownSplit.training) personal.push(toRecordEntry(ownSplit.training, "training_split"));
 
-    // Club top: each student's VERIFIED best only; preliminary/hidden never leak in.
-    const verifiedBests: EvaluatedRecord[] = [];
-    for (const perDist of byStudent.values()) {
-      const bv = perDist.get(target.key)?.bestVerified;
-      if (bv) {
-        verifiedBests.push(bv);
-      }
+    // Club top: ONLY real races (verified). A training-run segment never stands next
+    // to a real race on the leaderboard. Empty until races are in the cache.
+    const raceBests: EvaluatedRecord[] = [];
+    for (const [studentId, perDist] of byStudent) {
+      const bv = splitByType(perDist.get(target.key)?.evaluated ?? [], studentId, raceDates).bestVerifiedRace;
+      if (bv) raceBests.push(bv);
     }
-    verifiedBests.sort((a, b) => a.candidate.durationSeconds - b.candidate.durationSeconds);
-    const topRows: ClubRecordsClubTopRow[] = verifiedBests
+    raceBests.sort((a, b) => a.candidate.durationSeconds - b.candidate.durationSeconds);
+    const topRows: ClubRecordsClubTopRow[] = raceBests
       .slice(0, C.CLUB_RECORDS_TOP_N)
       .map((ev, index) => ({
         distanceKey: target.key,
@@ -1220,6 +1267,7 @@ export async function getClubRecords(input: {
         paceSecPerKm: paceSecPerKm(ev.candidate.distanceKm, ev.candidate.durationSeconds),
         isCurrentStudent: ev.candidate.studentId === input.currentStudentId,
         trust: "verified",
+        recordType: "race",
       }));
     clubTops.push({
       distanceKey: target.key,
@@ -1240,13 +1288,13 @@ async function studentRecordsFromRows(
   const own = rows.filter((r) => r.studentId === studentId);
   const { candidates, quality } = await buildRecordInputs(own, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
+  const raceDates = await loadRaceDatesByStudent();
   const perDist = byStudent.get(studentId);
   const out: ClubRecordEntry[] = [];
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    const best = perDist?.get(target.key)?.best;
-    if (best) {
-      out.push(toRecordEntry(best));
-    }
+    const split = splitByType(perDist?.get(target.key)?.evaluated ?? [], studentId, raceDates);
+    if (split.race) out.push(toRecordEntry(split.race, "race"));
+    if (split.training) out.push(toRecordEntry(split.training, "training_split"));
   }
   return out;
 }
@@ -1725,9 +1773,11 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
   const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
   const rows = await loadClubWorkoutRows({ from, to: today });
   const own = rows.filter((r) => r.studentId === input.currentStudentId && r.isCompleted && r.isRunning);
-  const records = await studentRecordsFromRows(own, input.currentStudentId);
+  const allRecords = await studentRecordsFromRows(own, input.currentStudentId);
+  // E-Predictor anchors on RACES only — a training-run segment corrupts the anchor.
+  const records = allRecords.filter((r) => r.recordType === "race");
   if (records.length === 0) {
-    return none("Пока мало данных для прогноза. Нужен хотя бы один надёжный результат.");
+    return none("Прогноз строится по результатам гонок — их пока нет в данных. Заяви старт или дождись синка забега.");
   }
 
   // Pick the record whose distance is closest (log-ratio) to the target — most reliable base.
@@ -1759,6 +1809,43 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
   };
 }
 
+/**
+ * Race dates per student from club_races (any non-rejected declared/approved race).
+ * A reconstructed record whose date matches one of these is a RACE. Empty until the
+ * club_races table has rows — which, per the root-cause finding, is exactly why
+ * every current record is a training_split. Inert (empty) if the table is absent.
+ */
+export async function loadRaceDatesByStudent(): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("club_races")
+      .select("student_id, race_date, status")
+      .neq("status", "rejected");
+    if (error || !data) {
+      return out;
+    }
+    for (const row of data as Array<{ student_id: string; race_date: string }>) {
+      const set = out.get(row.student_id) ?? new Set<string>();
+      set.add((row.race_date ?? "").slice(0, 10));
+      out.set(row.student_id, set);
+    }
+  } catch {
+    /* table absent → no race dates */
+  }
+  return out;
+}
+
+/** race = record date is a declared race date (or coach-confirmed, future); else training_split. */
+export function classifyRecordType(
+  studentId: string,
+  dateIso: string,
+  raceDatesByStudent: Map<string, Set<string>>
+): ClubRecordType {
+  return raceDatesByStudent.get(studentId)?.has(dateIso) ? "race" : "training_split";
+}
+
 /** Exposed for the validation script (Stage C4): raw per-candidate evaluation. */
 export async function evaluateAllRecordsForValidation(opts?: { useBestSplit?: boolean }): Promise<{
   students: ClubStudent[];
@@ -1766,6 +1853,8 @@ export async function evaluateAllRecordsForValidation(opts?: { useBestSplit?: bo
   quality: Map<string, WorkoutQuality>;
   candidateCount: number;
   runningWorkoutCount: number;
+  rows: ClubWorkoutRow[];
+  raceDatesByStudent: Map<string, Set<string>>;
 }> {
   const today = clubTodayIso();
   const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
@@ -1784,6 +1873,8 @@ export async function evaluateAllRecordsForValidation(opts?: { useBestSplit?: bo
     quality,
     candidateCount: candidates.length,
     runningWorkoutCount,
+    rows: visibleRows,
+    raceDatesByStudent: await loadRaceDatesByStudent(),
   };
 }
 

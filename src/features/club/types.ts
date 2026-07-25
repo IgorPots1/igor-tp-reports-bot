@@ -89,6 +89,8 @@ export type ClubRecordEntry = {
   source: RecordSource;
   /** best_split (fastest continuous segment) | whole_workout (fallback, no laps). */
   calcMethod: "best_split" | "whole_workout";
+  /** race (declared-race date / coach-confirmed) vs training_split (segment of a training run). */
+  recordType: "race" | "training_split";
 };
 
 export type ClubRecordsClubTopRow = {
@@ -102,6 +104,8 @@ export type ClubRecordsClubTopRow = {
   isCurrentStudent: boolean;
   /** Club tops only ever contain verified records. */
   trust: RecordTrust;
+  /** Club tops only ever contain real races. */
+  recordType: "race";
 };
 
 export type ClubRecordsView = {
