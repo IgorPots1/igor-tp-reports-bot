@@ -189,6 +189,56 @@ export type ClubExtendedTopsView = {
   freshness: ClubFreshness;
 };
 
+// --- Cabinet sections (blocks 6/7/8) ---
+
+export type ClubRaceStatus = "declared" | "approved" | "synced_to_tp" | "rejected";
+export type ClubRace = {
+  id: string;
+  name: string;
+  raceDate: string;
+  dateLabel: string;
+  distanceLabel: string | null;
+  city: string | null;
+  targetResultSeconds: number | null;
+  status: ClubRaceStatus;
+};
+
+export type ClubDayoffStatus = "pending" | "approved" | "rejected" | "applied";
+export type ClubDayoffRequest = {
+  id: string;
+  fromDate: string;
+  toDate: string;
+  reason: string | null;
+  status: ClubDayoffStatus;
+};
+
+export type ClubWish = {
+  id: string;
+  dateLabel: string;
+  loadScale: number | null;
+  wellbeingScale: number | null;
+  scheduleScale: number | null;
+  note: string | null;
+};
+
+export type ClubBillingView = {
+  available: boolean;
+  note: string;
+  status: string | null;
+  history: Array<{ label: string; amount: string | null }>;
+};
+
+export type ClubPrediction = {
+  available: boolean;
+  reason: string;
+  raceName: string | null;
+  distanceLabel: string | null;
+  low: number | null; // seconds
+  high: number | null;
+  recomputedLabel: string | null;
+  basedOn: string | null;
+};
+
 export type ClubPublicProfileView = {
   studentId: string;
   displayName: string;

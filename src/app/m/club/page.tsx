@@ -3,18 +3,32 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type {
+  ClubBillingView,
   ClubChallengeView,
+  ClubDayoffRequest,
   ClubExtendedTopsView,
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
+  ClubPrediction,
   ClubProfileDetailView,
   ClubPublicProfileView,
+  ClubRace,
   ClubRecordsView,
   ClubStatisticsView,
   ClubTopRow,
   ClubVolumePoint,
+  ClubWish,
 } from "@/features/club/types";
+
+type CabinetSection = "races" | "dayoff" | "wishes" | "billing" | "prediction";
+const CABINET_META: Record<CabinetSection, { icon: string; title: string; path: string }> = {
+  races: { icon: "🏁", title: "Старты", path: "/api/m/club/races" },
+  dayoff: { icon: "🛌", title: "Выходные", path: "/api/m/club/dayoff" },
+  wishes: { icon: "💬", title: "Пожелания", path: "/api/m/club/wishes" },
+  billing: { icon: "💳", title: "Оплата", path: "/api/m/club/billing" },
+  prediction: { icon: "🎯", title: "Прогноз старта", path: "/api/m/club/prediction" },
+};
 
 // --- Telegram WebApp handle (isolated; does not clash with /m/desk or /m/n) ---
 type TelegramWebApp = {
@@ -122,6 +136,7 @@ export default function ClubPage() {
   const [tab, setTab] = useState<Tab>("feed");
   const [freshness, setFreshness] = useState<ClubFreshness | null>(null);
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
+  const [openSection, setOpenSection] = useState<CabinetSection | null>(null);
 
   const [feed, setFeed] = useState<ClubFeedView | null>(null);
   const [feedItems, setFeedItems] = useState<ClubFeedItem[]>([]);
@@ -345,9 +360,13 @@ export default function ClubPage() {
           <ClubTab status={clubStatus} data={club} onRetry={loadClub} onOpenStudent={setOpenStudentId} />
         ) : null}
         {tab === "profile" ? (
-          <ProfileTab status={profileStatus} view={profile} onRetry={loadProfile} initData={initData ?? ""} />
+          <ProfileTab status={profileStatus} view={profile} onRetry={loadProfile} initData={initData ?? ""} onOpenSection={setOpenSection} />
         ) : null}
       </main>
+
+      {openSection ? (
+        <CabinetOverlay section={openSection} initData={initData ?? ""} onClose={() => setOpenSection(null)} />
+      ) : null}
 
       {openStudentId ? (
         <PublicProfileOverlay studentId={openStudentId} initData={initData ?? ""} onClose={() => setOpenStudentId(null)} />
@@ -699,7 +718,7 @@ function VolumeChart({ series }: { series: ClubVolumePoint[] }) {
   );
 }
 
-function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string }) {
+function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string; onOpenSection: (s: CabinetSection) => void }) {
   const [privacyMsg, setPrivacyMsg] = useState<string | null>(null);
   const [visible, setVisibleState] = useState<boolean | null>(null);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
@@ -794,6 +813,18 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
       </div>
 
       <div style={S.card}>
+        <div style={S.secHead}>Мои разделы</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+          {(Object.keys(CABINET_META) as CabinetSection[]).map((key) => (
+            <button key={key} style={S.sectionBtn} type="button" onClick={() => props.onOpenSection(key)}>
+              <span style={{ fontSize: 16 }}>{CABINET_META[key].icon}</span>
+              <span>{CABINET_META[key].title}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={S.card}>
         <div style={S.secHead}>Видимость в клубе</div>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           <button style={S.pill(current === true)} type="button" onClick={() => setVisibility(true)}>Участвую</button>
@@ -875,6 +906,199 @@ function PublicProfileOverlay({ studentId, initData, onClose }: { studentId: str
               ))}
             </div>
           )
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cabinet sections (races / day-off / wishes / billing / prediction)
+// ---------------------------------------------------------------------------
+
+function parseHms(v: string): number | null {
+  const parts = v.trim().split(":").map((x) => Number(x));
+  if (parts.some((n) => !Number.isFinite(n))) return null;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 1) return parts[0];
+  return null;
+}
+const RACE_STATUS_LABEL: Record<string, string> = {
+  declared: "на подтверждении", approved: "подтверждён", synced_to_tp: "в TP", rejected: "отклонён",
+};
+const DAYOFF_STATUS_LABEL: Record<string, string> = {
+  pending: "на подтверждении", approved: "подтверждён", rejected: "отклонён", applied: "применён",
+};
+
+function CabinetOverlay({ section, initData, onClose }: { section: CabinetSection; initData: string; onClose: () => void }) {
+  const meta = CABINET_META[section];
+  const [status, setStatus] = useState<Status>("loading");
+  const [inactive, setInactive] = useState(false);
+  const [races, setRaces] = useState<ClubRace[]>([]);
+  const [requests, setRequests] = useState<ClubDayoffRequest[]>([]);
+  const [wishes, setWishes] = useState<ClubWish[]>([]);
+  const [billing, setBilling] = useState<ClubBillingView | null>(null);
+  const [prediction, setPrediction] = useState<ClubPrediction | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const load = useCallback(
+    async (extra?: Record<string, unknown>) => {
+      const res = await fetch(meta.path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, ...(extra ?? {}) }),
+      });
+      const json = await res.json().catch(() => ({ ok: false }));
+      if (res.status === 503) {
+        setInactive(true);
+        setStatus("ready");
+        return;
+      }
+      if (!res.ok || !json.ok) {
+        setStatus("error");
+        return;
+      }
+      const v = json.view ?? {};
+      if (section === "races") setRaces(v.races ?? []);
+      else if (section === "dayoff") setRequests(v.requests ?? []);
+      else if (section === "wishes") setWishes(v.wishes ?? []);
+      else if (section === "billing") setBilling(v as ClubBillingView);
+      else if (section === "prediction") setPrediction(v as ClubPrediction);
+      setStatus("ready");
+    },
+    [initData, meta.path, section]
+  );
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function submit(extra: Record<string, unknown>) {
+    setSaving(true);
+    await load({ action: "create", ...extra });
+    setSaving(false);
+    setForm({});
+  }
+
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <span style={{ fontFamily: HEAD, fontSize: 18, color: C.ink }}>{meta.icon} {meta.title}</span>
+          <button style={S.closeBtn} onClick={onClose} type="button">✕</button>
+        </div>
+        {status === "loading" ? <Loading /> : null}
+        {status === "error" ? <Empty text="Не удалось загрузить" /> : null}
+        {status === "ready" && inactive ? <Empty text="Раздел пока не активен" /> : null}
+
+        {status === "ready" && !inactive && section === "races" ? (
+          <div>
+            <div style={S.formCard}>
+              <input style={S.input} placeholder="Название старта" value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} />
+              <input style={S.input} type="date" value={form.date ?? ""} onChange={(e) => set("date", e.target.value)} />
+              <input style={S.input} placeholder="Дистанция (напр. 21.1 км)" value={form.dist ?? ""} onChange={(e) => set("dist", e.target.value)} />
+              <input style={S.input} placeholder="Город (необязательно)" value={form.city ?? ""} onChange={(e) => set("city", e.target.value)} />
+              <input style={S.input} placeholder="Цель, чч:мм:сс (необязательно)" value={form.target ?? ""} onChange={(e) => set("target", e.target.value)} />
+              <button style={S.saveBtn} type="button" disabled={saving} onClick={() => submit({ race: { name: form.name, raceDate: form.date, distanceLabel: form.dist, city: form.city, targetResultSeconds: form.target ? parseHms(form.target) : null } })}>
+                {saving ? "Отправляю…" : "Заявить старт"}
+              </button>
+              <div style={S.hint}>Заявка уйдёт тренеру на подтверждение. В TrainingPeaks ничего не пишется.</div>
+            </div>
+            {races.map((r) => (
+              <div key={r.id} style={S.listRow}>
+                <div style={{ flex: 1 }}>
+                  <div style={S.cardName}>{r.name}</div>
+                  <div style={S.cardMeta}>{r.dateLabel}{r.distanceLabel ? ` · ${r.distanceLabel}` : ""}{r.city ? ` · ${r.city}` : ""}</div>
+                </div>
+                <span style={S.statusChip}>{RACE_STATUS_LABEL[r.status] ?? r.status}</span>
+              </div>
+            ))}
+            {races.length === 0 ? <Empty text="Пока нет заявленных стартов" /> : null}
+          </div>
+        ) : null}
+
+        {status === "ready" && !inactive && section === "dayoff" ? (
+          <div>
+            <div style={S.formCard}>
+              <input style={S.input} type="date" value={form.from ?? ""} onChange={(e) => set("from", e.target.value)} />
+              <input style={S.input} type="date" placeholder="по (необязательно)" value={form.to ?? ""} onChange={(e) => set("to", e.target.value)} />
+              <input style={S.input} placeholder="Причина (необязательно)" value={form.reason ?? ""} onChange={(e) => set("reason", e.target.value)} />
+              <button style={S.saveBtn} type="button" disabled={saving} onClick={() => submit({ request: { fromDate: form.from, toDate: form.to || form.from, reason: form.reason } })}>
+                {saving ? "Отправляю…" : "Запросить выходной"}
+              </button>
+              <div style={S.hint}>Это заявка тренеру. Выходной не проставляется автоматически.</div>
+            </div>
+            {requests.map((r) => (
+              <div key={r.id} style={S.listRow}>
+                <div style={{ flex: 1 }}>
+                  <div style={S.cardName}>{r.fromDate === r.toDate ? r.fromDate : `${r.fromDate} — ${r.toDate}`}</div>
+                  {r.reason ? <div style={S.cardMeta}>{r.reason}</div> : null}
+                </div>
+                <span style={S.statusChip}>{DAYOFF_STATUS_LABEL[r.status] ?? r.status}</span>
+              </div>
+            ))}
+            {requests.length === 0 ? <Empty text="Пока нет заявок на выходные" /> : null}
+          </div>
+        ) : null}
+
+        {status === "ready" && !inactive && section === "wishes" ? (
+          <div>
+            <div style={S.formCard}>
+              {[["load", "Нагрузка"], ["wellbeing", "Самочувствие"], ["schedule", "Удобство расписания"]].map(([k, label]) => (
+                <div key={k} style={{ marginBottom: 10 }}>
+                  <div style={S.cardMeta}>{label}: {form[k] ?? "—"}</div>
+                  <input type="range" min={1} max={10} value={form[k] ?? "5"} onChange={(e) => set(k, e.target.value)} style={{ width: "100%", accentColor: C.accent }} />
+                </div>
+              ))}
+              <textarea style={{ ...S.input, minHeight: 60 }} placeholder="Что хочется поменять в тренировках?" value={form.note ?? ""} onChange={(e) => set("note", e.target.value)} />
+              <button style={S.saveBtn} type="button" disabled={saving} onClick={() => submit({ wish: { load: form.load ? Number(form.load) : null, wellbeing: form.wellbeing ? Number(form.wellbeing) : null, schedule: form.schedule ? Number(form.schedule) : null, note: form.note } })}>
+                {saving ? "Отправляю…" : "Отправить пожелание"}
+              </button>
+              <div style={S.hint}>Тренер увидит это в своём разделе. Ничего не отправляется автоматически.</div>
+            </div>
+            {wishes.map((w) => (
+              <div key={w.id} style={S.listRow}>
+                <div style={{ flex: 1 }}>
+                  <div style={S.cardMeta}>{w.dateLabel} · нагрузка {w.loadScale ?? "—"} · самочувствие {w.wellbeingScale ?? "—"} · расписание {w.scheduleScale ?? "—"}</div>
+                  {w.note ? <div style={{ ...S.cardName, whiteSpace: "normal" }}>{w.note}</div> : null}
+                </div>
+              </div>
+            ))}
+            {wishes.length === 0 ? <Empty text="Пока нет отправленных пожеланий" /> : null}
+          </div>
+        ) : null}
+
+        {status === "ready" && !inactive && section === "billing" && billing ? (
+          <div style={S.formCard}>
+            <div style={S.cardMeta}>{billing.note}</div>
+            {billing.status ? <div style={{ ...S.bigNumber, fontSize: 22, marginTop: 8 }}>{billing.status}</div> : null}
+            {billing.history.map((h, i) => (
+              <div key={i} style={S.listRow}>
+                <span style={{ flex: 1, color: C.ink, fontSize: 14 }}>{h.label}</span>
+                <span style={{ color: C.sub, fontSize: 13 }}>{h.amount ?? ""}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {status === "ready" && !inactive && section === "prediction" && prediction ? (
+          <div style={S.formCard}>
+            {prediction.available ? (
+              <div>
+                <div style={S.cardMeta}>{prediction.raceName} · {prediction.distanceLabel}</div>
+                <div style={{ ...S.bigNumber, marginTop: 8 }}>
+                  {fmtDuration(prediction.low)}–{fmtDuration(prediction.high)}
+                </div>
+                <div style={S.cardMeta}>Пересчитано: {prediction.recomputedLabel} · {prediction.basedOn}</div>
+                <div style={S.hint}>Это диапазон-оценка по твоим результатам, не гарантия.</div>
+              </div>
+            ) : (
+              <Empty text={prediction.reason} />
+            )}
+          </div>
         ) : null}
       </div>
     </div>
@@ -986,6 +1210,13 @@ const S = {
   overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", zIndex: 50 } as React.CSSProperties,
   sheet: { background: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderTop: `1px solid ${C.line}`, padding: 16, width: "100%", maxHeight: "82vh", overflowY: "auto", paddingBottom: "calc(16px + env(safe-area-inset-bottom))" } as React.CSSProperties,
   closeBtn: { background: C.cardAlt, border: `1px solid ${C.line}`, color: C.sub, borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontSize: 14 } as React.CSSProperties,
+  sectionBtn: { display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.ink, fontSize: 13, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" } as React.CSSProperties,
+  formCard: { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12 } as React.CSSProperties,
+  input: { display: "block", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginBottom: 8, borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, fontSize: 14, fontFamily: BODY } as React.CSSProperties,
+  saveBtn: { width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 14, cursor: "pointer" } as React.CSSProperties,
+  hint: { color: C.faint, fontSize: 11.5, marginTop: 8, lineHeight: 1.4 } as React.CSSProperties,
+  listRow: { display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderTop: `1px solid ${C.line}` } as React.CSSProperties,
+  statusChip: { fontSize: 11.5, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" } as React.CSSProperties,
   tabBar: { position: "fixed", left: 0, right: 0, bottom: 0, display: "flex", background: C.card, borderTop: `1px solid ${C.line}`, paddingBottom: "env(safe-area-inset-bottom)" } as React.CSSProperties,
   tab: (active: boolean): React.CSSProperties => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 0 6px", background: "transparent", border: "none", color: active ? C.accent : C.faint, cursor: "pointer", fontFamily: BODY }),
 };

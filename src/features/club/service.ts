@@ -33,6 +33,7 @@ import type {
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
+  ClubPrediction,
   ClubProfileDetailView,
   ClubPublicProfileView,
   ClubRecordEntry,
@@ -1674,6 +1675,87 @@ export async function getClubPublicProfile(input: {
     streakDays: computeStreakDays(activeDays, today),
     records,
     recentFeed,
+  };
+}
+
+const DISTANCE_METERS: Record<"5k" | "10k" | "21k" | "42k", number> = {
+  "5k": 5000,
+  "10k": 10000,
+  "21k": 21097,
+  "42k": 42195,
+};
+
+/**
+ * Result prediction (Block 7.3). ONLY when the student has a declared/approved
+ * upcoming race — predicts a RANGE (never one number) for that race's distance,
+ * via Riegel from the athlete's own best record. No false precision.
+ */
+export async function getClubPrediction(input: { currentStudentId: string }): Promise<ClubPrediction> {
+  const none = (reason: string): ClubPrediction => ({
+    available: false,
+    reason,
+    raceName: null,
+    distanceLabel: null,
+    low: null,
+    high: null,
+    recomputedLabel: null,
+    basedOn: null,
+  });
+
+  const today = clubTodayIso();
+  const supabase = createSupabaseServerClient();
+  const { data: raceRow } = await supabase
+    .from("club_races")
+    .select("name, race_date, distance_meters, distance_label")
+    .eq("student_id", input.currentStudentId)
+    .in("status", ["declared", "approved"])
+    .gte("race_date", today)
+    .order("race_date", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (!raceRow) {
+    return none("Прогноз появится, когда объявишь предстоящий старт.");
+  }
+  const race = raceRow as { name: string; distance_meters: number | null; distance_label: string | null };
+  const targetM = race.distance_meters && race.distance_meters > 0 ? race.distance_meters : null;
+  if (!targetM) {
+    return none("У старта не указана дистанция — прогноз недоступен.");
+  }
+
+  const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
+  const rows = await loadClubWorkoutRows({ from, to: today });
+  const own = rows.filter((r) => r.studentId === input.currentStudentId && r.isCompleted && r.isRunning);
+  const records = await studentRecordsFromRows(own, input.currentStudentId);
+  if (records.length === 0) {
+    return none("Пока мало данных для прогноза. Нужен хотя бы один надёжный результат.");
+  }
+
+  // Pick the record whose distance is closest (log-ratio) to the target — most reliable base.
+  let chosen = records[0];
+  let bestGap = Infinity;
+  for (const r of records) {
+    const m = DISTANCE_METERS[r.distanceKey];
+    const gap = Math.abs(Math.log(m / targetM));
+    if (gap < bestGap) {
+      bestGap = gap;
+      chosen = r;
+    }
+  }
+  const baseM = DISTANCE_METERS[chosen.distanceKey];
+  // Riegel: T2 = T1 * (D2/D1)^1.06
+  const pred = chosen.durationSeconds * Math.pow(targetM / baseM, 1.06);
+  const low = Math.round(pred * 0.98);
+  const high = Math.round(pred * 1.05);
+
+  return {
+    available: true,
+    reason: "",
+    raceName: race.name,
+    distanceLabel: race.distance_label ?? `${(targetM / 1000).toFixed(1)} км`,
+    low,
+    high,
+    recomputedLabel: formatRuDate(today),
+    basedOn: `твой результат на ${chosen.distanceLabel}`,
   };
 }
 

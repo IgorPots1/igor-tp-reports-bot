@@ -160,3 +160,19 @@ export function isPrivacyEnabled(): boolean {
 export function isStubsEnabled(): boolean {
   return process.env.CLUB_STUBS_ENABLED === "true";
 }
+// Cabinet sections — all OFF by default (blind rollout).
+export function isRacesEnabled(): boolean {
+  return process.env.CLUB_RACES_ENABLED === "true";
+}
+export function isWishesEnabled(): boolean {
+  return process.env.CLUB_WISHES_ENABLED === "true";
+}
+export function isBillingEnabled(): boolean {
+  return process.env.CLUB_BILLING_ENABLED === "true";
+}
+export function isPredictionEnabled(): boolean {
+  return process.env.CLUB_PREDICTION_ENABLED === "true";
+}
+export function isDayoffEnabled(): boolean {
+  return process.env.CLUB_DAYOFF_ENABLED === "true";
+}
