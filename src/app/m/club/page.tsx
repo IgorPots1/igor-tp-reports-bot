@@ -144,6 +144,7 @@ export default function ClubPage() {
   const [error, setError] = useState<string | null>(null);
   const [needsConfirm, setNeedsConfirm] = useState<Candidate | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [linkOutcome, setLinkOutcome] = useState<"idle" | "rejected" | "conflict">("idle");
 
   const maybeConfirm = useCallback((r: { code?: string; candidate?: Candidate }): boolean => {
     if (r.code === "needs_confirm" && r.candidate) {
@@ -166,6 +167,7 @@ export default function ClubPage() {
     setConfirming(false);
     if (res.ok) {
       setNeedsConfirm(null);
+      setLinkOutcome("idle");
       // reset every tab so the current one reloads now that we're bound
       setFeedStatus("idle");
       setChallengeStatus("idle");
@@ -173,8 +175,19 @@ export default function ClubPage() {
       setClubStatus("idle");
       setProfileStatus("idle");
     } else {
-      setError(res.error ?? "Не удалось подтвердить");
+      // Binding failed (collision / already-bound / …) — terminal, no retry.
+      setLinkOutcome("conflict");
     }
+  }, [initData]);
+
+  const rejectLink = useCallback(async () => {
+    if (initData === null) return;
+    await fetch("/api/m/club/reject-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData }),
+    }).catch(() => undefined);
+    setLinkOutcome("rejected"); // terminal, no retry
   }, [initData]);
 
   useEffect(() => {
@@ -341,7 +354,7 @@ export default function ClubPage() {
       ) : null}
 
       {needsConfirm ? (
-        <ConfirmScreen candidate={needsConfirm} confirming={confirming} onConfirm={confirmLink} />
+        <ConfirmScreen candidate={needsConfirm} confirming={confirming} outcome={linkOutcome} onConfirm={confirmLink} onReject={rejectLink} />
       ) : null}
 
       <nav style={S.tabBar}>
@@ -872,22 +885,63 @@ function PublicProfileOverlay({ studentId, initData, onClose }: { studentId: str
 // Explicit registration confirmation (club-scoped; replaces silent auto-bind)
 // ---------------------------------------------------------------------------
 
-function ConfirmScreen({ candidate, confirming, onConfirm }: { candidate: Candidate; confirming: boolean; onConfirm: () => void }) {
-  return (
+// Spec v3 block 2.1. ONLY the name is shown to an unverified account — never birth
+// date / avatar / metrics / any training or payment data.
+function ConfirmScreen({
+  candidate,
+  confirming,
+  outcome,
+  onConfirm,
+  onReject,
+}: {
+  candidate: Candidate;
+  confirming: boolean;
+  outcome: "idle" | "rejected" | "conflict";
+  onConfirm: () => void;
+  onReject: () => void;
+}) {
+  const wrap = (children: React.ReactNode) => (
     <div style={{ ...S.overlay, alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ ...S.card, maxWidth: 340, width: "100%", textAlign: "center", marginBottom: 0 }}>
-        <div style={{ fontSize: 34, marginBottom: 8 }}>👋</div>
-        <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink, marginBottom: 6 }}>Это ты?</div>
-        <div style={{ color: C.sub, fontSize: 14, marginBottom: 4 }}>Клуб привяжется к аккаунту</div>
-        <div style={{ fontFamily: HEAD, fontSize: 22, color: C.accent, marginBottom: 16 }}>{candidate.displayName}</div>
-        <div style={{ color: C.faint, fontSize: 12, marginBottom: 18 }}>
-          Подтверди только если это твой аккаунт. Если имя чужое — закрой и открой свою ссылку от тренера.
-        </div>
-        <button style={{ ...S.retry, width: "100%", opacity: confirming ? 0.6 : 1 }} type="button" disabled={confirming} onClick={onConfirm}>
-          {confirming ? "Подтверждаю…" : "Да, это я"}
-        </button>
-      </div>
+      <div style={{ ...S.card, maxWidth: 340, width: "100%", textAlign: "center", marginBottom: 0 }}>{children}</div>
     </div>
+  );
+
+  if (outcome === "rejected") {
+    return wrap(
+      <>
+        <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink, marginBottom: 10 }}>Привязка аккаунта</div>
+        <div style={{ color: C.sub, fontSize: 14 }}>Хорошо, ничего не привязали. Напиши тренеру, чтобы он проверил.</div>
+      </>
+    );
+  }
+  if (outcome === "conflict") {
+    return wrap(
+      <>
+        <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink, marginBottom: 10 }}>Привязка аккаунта</div>
+        <div style={{ color: C.sub, fontSize: 14 }}>Не получилось привязать. Напиши тренеру.</div>
+      </>
+    );
+  }
+  return wrap(
+    <>
+      <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink, marginBottom: 8 }}>Привязка аккаунта</div>
+      <div style={{ color: C.sub, fontSize: 14, marginBottom: 12 }}>Похоже, это твой аккаунт в клубе.</div>
+      <div style={{ fontFamily: HEAD, fontSize: 24, color: C.accent, marginBottom: 14 }}>{candidate.displayName}</div>
+      <div style={{ color: C.faint, fontSize: 12.5, lineHeight: 1.5, marginBottom: 20 }}>
+        После подтверждения этот Telegram будет привязан к твоему профилю. Изменить привязку можно только через тренера.
+      </div>
+      <button style={{ ...S.retry, width: "100%", opacity: confirming ? 0.6 : 1 }} type="button" disabled={confirming} onClick={onConfirm}>
+        {confirming ? "Привязываю…" : "Да, это я"}
+      </button>
+      <button
+        style={{ background: "none", border: "none", color: C.sub, fontFamily: BODY, fontSize: 14, marginTop: 14, cursor: "pointer" }}
+        type="button"
+        disabled={confirming}
+        onClick={onReject}
+      >
+        Это не я
+      </button>
+    </>
   );
 }
 

@@ -5,17 +5,14 @@ import {
   parseTelegramInitDataUser,
   validateTelegramInitData,
 } from "@/features/telegram/validate-init-data";
-import { resolveMiniAppStudent } from "@/features/telegram/miniapp-student-resolver";
 import { isClubEnabled, jsonResponse } from "@/features/club/miniapp-guard";
 import { logClubLinkEvent } from "@/features/club/service";
 
 export const runtime = "nodejs";
 
-// The ONLY place the club binds a Telegram account to a student — after the student
-// taps «Да, это я» (spec v3 block 2.1). Binding is one-time; unbind/rebind from the
-// mini app is impossible (coach-only). Delegates the actual bind + guards to the
-// shared resolveMiniAppStudent. Every attempt is logged (confirmed | conflict).
-// Nothing is sent to students.
+// Student tapped «Это не я» on the confirmation screen (spec v3 block 2.1). No
+// binding, no access. Logs a `rejected` event for coach review. Terminal — the
+// client shows "Хорошо, ничего не привязали" with no retry.
 export async function POST(request: NextRequest): Promise<Response> {
   if (!isClubEnabled()) {
     return jsonResponse(503, { ok: false, error: "Клуб пока не активен." });
@@ -36,26 +33,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   const rawStart = parseTelegramInitDataStartParam(initData);
   const rowId = rawStart ? (rawStart.startsWith("r_") ? rawStart.slice(2) : rawStart) : null;
 
-  const resolved = await resolveMiniAppStudent({ initData });
-  if (!resolved.ok) {
-    // Any failed bind (collision / wrong target / coach / …) is a "couldn't bind"
-    // event — log as conflict with the reason code for coach review.
-    await logClubLinkEvent({
-      telegramUserId: tgUser?.id ?? null,
-      telegramUsername: tgUser?.username ?? null,
-      studentId: rowId,
-      result: "conflict",
-      reason: resolved.code,
-    });
-    return jsonResponse(resolved.httpStatus, { ok: false, error: resolved.message, code: resolved.code });
-  }
-
   await logClubLinkEvent({
     telegramUserId: tgUser?.id ?? null,
     telegramUsername: tgUser?.username ?? null,
-    studentId: resolved.student.id,
-    result: "confirmed",
-    reason: resolved.justLinked ? "first_open" : "already_linked",
+    studentId: rowId,
+    result: "rejected",
+    reason: "not_me",
   });
-  return jsonResponse(200, { ok: true, justLinked: resolved.justLinked });
+
+  return jsonResponse(200, { ok: true });
 }

@@ -184,6 +184,31 @@ export async function countRecentReactions(studentId: string, windowSeconds: num
   return count ?? 0;
 }
 
+/**
+ * Audit a /m/club binding attempt (spec v3 block 2.1). Inert until the
+ * club_link_events table is applied — never throws, never blocks the flow.
+ */
+export async function logClubLinkEvent(input: {
+  telegramUserId: number | null;
+  telegramUsername?: string | null;
+  studentId?: string | null;
+  result: "confirmed" | "rejected" | "conflict";
+  reason?: string | null;
+}): Promise<void> {
+  try {
+    const supabase = createSupabaseServerClient();
+    await supabase.from("club_link_events").insert({
+      telegram_user_id: input.telegramUserId,
+      telegram_username: input.telegramUsername ?? null,
+      student_id: input.studentId ?? null,
+      result: input.result,
+      reason: input.reason ?? null,
+    });
+  } catch {
+    /* table not applied yet → swallow */
+  }
+}
+
 function isVisible(student: ClubStudent): boolean {
   const base = student.isActive && !student.isServiceAccount;
   // Opt-out only takes effect when the privacy feature is enabled; otherwise the

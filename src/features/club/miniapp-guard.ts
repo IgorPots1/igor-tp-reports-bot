@@ -53,9 +53,9 @@ function startParamRowId(initData: string): string | null {
   return raw.startsWith("r_") ? raw.slice(2) : raw;
 }
 
-function firstName(name: string | null | undefined): string {
-  const t = (name ?? "").trim();
-  return t ? t.split(/\s+/u)[0] : "Участник клуба";
+function fullName(name: string | null | undefined): string {
+  const t = (name ?? "").replace(/\s+/gu, " ").trim();
+  return t || "Участник клуба";
 }
 
 /**
@@ -107,7 +107,8 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
     };
   }
 
-  // Read the candidate's display name (read-only) so the client can ask "Это ты?".
+  // Read the candidate's FULL name (spec v3 2.1 shows «Имя Фамилия» — and ONLY the
+  // name: no birth date / avatar / metrics / anything else on this screen).
   let displayName = "Участник клуба";
   try {
     const supabase = createSupabaseServerClient();
@@ -116,7 +117,7 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
       .select("student_name")
       .eq("id", rowId)
       .maybeSingle();
-    displayName = firstName((data as { student_name: string } | null)?.student_name);
+    displayName = fullName((data as { student_name: string } | null)?.student_name);
   } catch {
     /* keep default */
   }
