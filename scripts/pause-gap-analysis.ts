@@ -16,8 +16,30 @@ import { resolve } from "node:path";
 import { evaluateAllRecordsForValidation } from "@/features/club/service";
 import type { RecordDistanceKey } from "@/features/club/records";
 
+function countPauseGap(run: { byStudent: Map<string, Map<string, { evaluated: Array<{ trust: string; hiddenReason: string | null }> }>> }): number {
+  let n = 0;
+  for (const perDist of run.byStudent.values()) {
+    for (const res of perDist.values()) {
+      for (const ev of res.evaluated) {
+        if (ev.trust === "hidden" && ev.hiddenReason === "pause_gap") n += 1;
+      }
+    }
+  }
+  return n;
+}
+
 async function main() {
+  const oldRun = await evaluateAllRecordsForValidation({ useBestSplit: false });
   const run = await evaluateAllRecordsForValidation({ useBestSplit: true });
+
+  // A#1: pause_gap as a FRACTION of candidates (abs numbers are not comparable —
+  // best-split has many more candidates).
+  const oldPause = countPauseGap(oldRun);
+  const oldTotal = oldRun.candidateCount;
+  const newPause = countPauseGap(run);
+  const newTotal = run.candidateCount;
+  const pctOld = oldTotal ? Math.round((oldPause / oldTotal) * 100) : 0;
+  const pctNew = newTotal ? Math.round((newPause / newTotal) * 100) : 0;
 
   const rows: string[] = [];
   const byType = new Map<string, number>();
@@ -52,6 +74,9 @@ async function main() {
   L.push("");
   L.push("## Итог");
   L.push("");
+  L.push(`- **Доля отбраковок по паузам: старый метод ${oldPause}/${oldTotal} = ${pctOld}%; новый метод ${newPause}/${newTotal} = ${pctNew}%.**`);
+  L.push(`  (Абсолютные числа несравнимы — best-split даёт в разы больше кандидатов. Сравнивать надо доли.)`);
+  L.push(`- Проверка elapsed/moving для best_split считается ВНУТРИ найденного отрезка (не по всей записи) — подтверждено в коде (records.ts, ветка isSplit → cand.segment).`);
   L.push(`- Всего кандидатов отбраковано по паузам (best-split, после фильтра бег-усилия): **${total}**`);
   L.push("- По типу активности (derived workout_type):");
   for (const [t, n] of [...byType.entries()].sort((a, b) => b[1] - a[1])) {
