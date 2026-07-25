@@ -49,7 +49,12 @@ async function main() {
     return n;
   };
 
-  const rows: string[] = [];
+  // Names come from TP (trainingpeaks_students) — used ONLY for the ops-log
+  // companion (outside git). The docs/ table stays anonymized (student_id).
+  const nameById = new Map(newRun.students.map((s) => [s.id, s.name]));
+
+  const rows: string[] = []; // student_id → docs/
+  const rowsNamed: string[] = []; // Имя Фамилия → ops-log
   const deltas: number[] = [];
   let bothCount = 0;
   let onlyNew = 0;
@@ -57,6 +62,7 @@ async function main() {
   const allStudents = new Set<string>([...oldRun.byStudent.keys(), ...newRun.byStudent.keys()]);
   for (const sid of allStudents) {
     const shortId = sid.slice(0, 8);
+    const name = nameById.get(sid) ?? shortId;
     for (const key of KEYS) {
       const oldBest = oldRun.byStudent.get(sid)?.get(key)?.best ?? null;
       const newBest = newRun.byStudent.get(sid)?.get(key)?.best ?? null;
@@ -75,9 +81,9 @@ async function main() {
         onlyNew += 1;
         deltaCell = "новый";
       }
-      rows.push(
-        `| ${shortId} | ${key} | ${oldT !== null ? fmt(oldT) : "—"} | ${newT !== null ? fmt(newT) : "—"} | ${deltaCell} | ${trust} | ${method} |`
-      );
+      const cells = `${key} | ${oldT !== null ? fmt(oldT) : "—"} | ${newT !== null ? fmt(newT) : "—"} | ${deltaCell} | ${trust} | ${method}`;
+      rows.push(`| ${shortId} | ${cells} |`);
+      rowsNamed.push(`| ${name} | ${cells} |`);
     }
   }
 
@@ -112,7 +118,24 @@ async function main() {
 
   const out = resolve(process.cwd(), "docs/records-best-split.md");
   writeFileSync(out, L.join("\n"), "utf8");
-  console.log(`Wrote ${out}`);
+  console.log(`Wrote ${out} (anonymized)`);
+
+  // Named companion — OUTSIDE git (ops-log), with real TP names, for the coach.
+  const named = [...L];
+  named[0] = "# Рекорды: лучший непрерывный отрезок vs вся тренировка (с именами)";
+  const hi = named.findIndex((l) => l.startsWith("| student_id | дист"));
+  if (hi >= 0) {
+    named[hi] = "| Ученик | дист | старое время | новое время | дельта | доверие | метод |";
+    named.splice(hi + 2, rows.length, ...(rowsNamed.length ? rowsNamed : ["| _нет_ | | | | | | |"]));
+  }
+  const namedPath = "/Users/igor/ops-log/igor-tp-reports-bot/records-best-split-with-names.md";
+  try {
+    writeFileSync(namedPath, named.join("\n"), "utf8");
+    console.log(`Wrote ${namedPath} (with names, outside git)`);
+  } catch (e) {
+    console.warn("named companion not written:", e);
+  }
+
   console.log(`pairs=${bothCount} improved=${improved} avgDelta=${avgDelta.toFixed(1)}s onlyNew=${onlyNew} pause ${oldPause}->${newPause}`);
 }
 
