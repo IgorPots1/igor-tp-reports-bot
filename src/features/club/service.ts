@@ -824,6 +824,41 @@ function clubKmInRange(rows: ClubWorkoutRow[], visibleIds: Set<string>, from: st
   return km;
 }
 
+/**
+ * Auto challenge goal: rolling average of club km over the last N COMPLETED weeks,
+ * nudged up by RAISE_STEP ONLY if the club beat its average last week. Anchoring on
+ * an average of ACTUALS (not on the previous goal) means it never compounds into an
+ * unreachable target. Returns null when there is no completed-week data yet.
+ */
+function computeAutoGoalKm(
+  rows: ClubWorkoutRow[],
+  visibleIds: Set<string>,
+  currentWeekFrom: string
+): number | null {
+  const kmForWeekBack = (i: number): number => {
+    const from = addDaysIso(currentWeekFrom, -7 * i);
+    return clubKmInRange(rows, visibleIds, from, addDaysIso(from, 6));
+  };
+  // km[0]=last completed week (W-1) … km[4]=W-5
+  const km = [1, 2, 3, 4, 5].map(kmForWeekBack);
+  const n = C.CLUB_CHALLENGE_ROLLING_WEEKS;
+
+  const baseWeeks = km.slice(0, n).filter((k) => k > 0);
+  if (baseWeeks.length === 0) {
+    return null;
+  }
+  const baseAvg = baseWeeks.reduce((a, b) => a + b, 0) / baseWeeks.length;
+
+  const prevWeeks = km.slice(1, n + 1).filter((k) => k > 0);
+  const prevAvg = prevWeeks.length ? prevWeeks.reduce((a, b) => a + b, 0) / prevWeeks.length : 0;
+  const prevActual = km[0];
+  const beatPrevious = prevActual > 0 && prevAvg > 0 && prevActual >= prevAvg;
+
+  const raw = beatPrevious ? baseAvg * (1 + C.CLUB_CHALLENGE_RAISE_STEP) : baseAvg;
+  const step = C.CLUB_CHALLENGE_AUTO_ROUND_STEP;
+  return Math.max(step, Math.ceil(raw / step) * step);
+}
+
 async function loadManualGoalKm(): Promise<number | null> {
   // club_challenges migration is NOT applied in prod → this read fails/empty and
   // the caller falls back. Wrapped so a missing table never throws the view away.
@@ -851,11 +886,11 @@ export async function getClubChallenge(input: {
   currentStudentId: string;
 }): Promise<ClubChallengeView> {
   const range = currentWeekRange();
-  const prevFrom = addDaysIso(range.from, -7);
-  const prevTo = addDaysIso(range.to, -7);
+  // Load enough history for the rolling-average goal (up to 5 completed weeks back).
+  const historyFrom = addDaysIso(range.from, -7 * 5);
   const [students, rows, freshness] = await Promise.all([
     loadClubStudents(),
-    loadClubWorkoutRows({ from: prevFrom, to: range.to }),
+    loadClubWorkoutRows({ from: historyFrom, to: range.to }),
     buildFreshness(),
   ]);
   const visible = students.filter(isVisible);
@@ -896,10 +931,9 @@ export async function getClubChallenge(input: {
       goalMode = "manual";
     }
   } else if (mode === "auto") {
-    const prevKm = clubKmInRange(rows, visibleIds, prevFrom, prevTo);
-    if (prevKm > 0) {
-      const raw = prevKm * C.CLUB_CHALLENGE_AUTO_FACTOR;
-      goalKm = Math.ceil(raw / C.CLUB_CHALLENGE_AUTO_ROUND_STEP) * C.CLUB_CHALLENGE_AUTO_ROUND_STEP;
+    const auto = computeAutoGoalKm(rows, visibleIds, range.from);
+    if (auto !== null) {
+      goalKm = auto;
       goalMode = "auto";
     }
   }

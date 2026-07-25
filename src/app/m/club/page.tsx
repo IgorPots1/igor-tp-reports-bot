@@ -503,7 +503,7 @@ function ChallengeTab(props: { status: Status; view: ClubChallengeView | null; o
         </div>
         <div style={S.progressTrack}><div style={{ ...S.progressFill, width: `${v.progressPct}%` }} /></div>
         <div style={S.cardMeta}>{v.weekLabel}</div>
-        {v.goalMode === "auto" ? <div style={S.okNote}>Цель авто: прошлая неделя клуба +10%</div> : null}
+        {v.goalMode === "auto" ? <div style={S.okNote}>Цель авто: среднее клуба за 4 недели</div> : null}
         {v.goalMode === "fixture" ? <div style={S.fixtureNote}>Демо-цель. Прогресс — реальный.</div> : null}
       </div>
 

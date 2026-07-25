@@ -87,8 +87,14 @@ export function resolveChallengeGoalMode(): ClubChallengeGoalMode {
   const raw = (process.env.CLUB_CHALLENGE_GOAL_MODE ?? "auto").toLowerCase();
   return raw === "manual" || raw === "fixture" ? raw : "auto";
 }
-/** Auto-goal = last week's club km * this factor, rounded up to a tidy step. */
-export const CLUB_CHALLENGE_AUTO_FACTOR = 1.1;
+/**
+ * Auto-goal anchor: a rolling average of club km over the last N COMPLETED weeks.
+ * Averaging ACTUALS (not previous goals) means the bar self-corrects and never
+ * compounds away from reality. The bar is nudged up by RAISE_STEP only when the
+ * club actually beat its average last week — otherwise it holds at the average.
+ */
+export const CLUB_CHALLENGE_ROLLING_WEEKS = 4;
+export const CLUB_CHALLENGE_RAISE_STEP = 0.1;
 export const CLUB_CHALLENGE_AUTO_ROUND_STEP = 10;
 
 /**
