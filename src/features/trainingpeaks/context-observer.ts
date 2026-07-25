@@ -21,6 +21,7 @@ import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/train
 import { logTrainingPeaksPrivateMessageIntent } from "@/features/trainingpeaks/message-intent-log";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
+import { detectTrainingReport, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import type { TelegramMessage } from "@/features/telegram/types";
 
 export type TrainingPeaksObserverLabel =
@@ -107,19 +108,6 @@ type CoachGroupTopicNoReplyContactCandidateInput = {
   isTelegramServiceMessage: (message: TelegramMessage) => boolean;
 };
 
-const TRAINING_REPORT_KEYWORDS = [
-  "тренировка",
-  "пробежка",
-  "темп",
-  "интервалы",
-  "пульс",
-  "hr",
-  "км",
-  "km",
-  "workout",
-  "run",
-  "pace",
-];
 const PAIN_OR_HEALTH_KEYWORDS = [
   "боль",
   "болит",
@@ -158,7 +146,6 @@ const NOISE_ACK_PATTERNS: RegExp[] = [
   /^принято$/i,
   /^[👍👌🙏]$/u,
 ];
-const OBSERVER_TRAINING_REPORT_MIN_LENGTH = 24;
 const TELEGRAM_SERVICE_MESSAGE_KEYS = [
   "new_chat_members",
   "left_chat_member",
@@ -183,14 +170,6 @@ const TELEGRAM_SERVICE_MESSAGE_KEYS = [
   "video_chat_ended",
   "video_chat_participants_invited",
 ] as const;
-
-function normalizeObserverText(value: string): string {
-  return value
-    .toLocaleLowerCase("ru")
-    .replace(/ё/g, "е")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function isCoachTelegramId(value: number | undefined): boolean {
   if (value === undefined) {
@@ -605,12 +584,10 @@ function classifyObserverText(text: string | null): {
     scores.question_to_coach = normalized.includes("?") ? 0.88 : 0.7;
   }
 
-  if (
-    normalized.length >= OBSERVER_TRAINING_REPORT_MIN_LENGTH &&
-    TRAINING_REPORT_KEYWORDS.some((keyword) => normalized.includes(keyword))
-  ) {
+  const reportScore = detectTrainingReport(normalized);
+  if (reportScore !== null) {
     labels.push("possibly_training_report");
-    scores.possibly_training_report = 0.72;
+    scores.possibly_training_report = reportScore;
   }
 
   if (PAIN_OR_HEALTH_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
@@ -1038,10 +1015,20 @@ async function observeLinkedGroupTopicMessage(input: {
     fromUsername: input.message.from?.username,
   });
 
-  const senderMatchesLinkedStudent =
-    senderIdentity.student !== null && senderIdentity.student.id === input.linkedStudent.id;
+  // A message in a student's OWN linked topic is almost certainly from that student: the coach
+  // is diverted earlier, and the topic is 1:1-mapped to linkedStudent. Treat it as third-party
+  // ONLY when the sender POSITIVELY resolves to a different known student, or is the coach — NOT
+  // merely when we can't match their telegram id. 95 of 112 students have no telegram_user_id,
+  // so "unresolved" is the norm; defaulting those to third-party silently dropped whole students'
+  // reports (e.g. every report from a student posting via a linked group topic).
+  // Safety: nothing downstream consumes the persisted third_party label, and move-safety gates on
+  // the live reply-author/pronoun check (group-move-safety.ts), not on this role — so widening the
+  // linked-student path here weakens no action guard.
+  const senderIsCoach = isCoachTelegramId(input.fromId);
+  const senderIsDifferentKnownStudent =
+    senderIdentity.student !== null && senderIdentity.student.id !== input.linkedStudent.id;
 
-  if (!senderMatchesLinkedStudent) {
+  if (senderIsCoach || senderIsDifferentKnownStudent) {
     await persistObserverObservation({
       studentId: input.linkedStudent.id,
       sourceType: "group_topic",
