@@ -3,12 +3,17 @@ import type { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
 import { isReactionsEnabled } from "@/features/club/constants";
+import { countRecentReactions, isWorkoutReactable } from "@/features/club/service";
 
 export const runtime = "nodejs";
 
-// STUB layer: reactions on workouts. Gated by CLUB_REACTIONS_ENABLED (OFF by
-// default → 503). The club_reactions table ships as a migration file that is NOT
-// applied in prod, so even under the flag this is inert until the schema exists.
+// Coarse rate limit: max reactions a student may create in the window.
+const RATE_WINDOW_SECONDS = 10;
+const RATE_MAX = 12;
+
+// Reactions on club workouts. Gated by CLUB_REACTIONS_ENABLED (OFF by default →
+// 503). Auth strictly by initData; student_id is taken from the RESOLVER, never
+// from the client body. Idempotent toggle. Never notifies or messages anyone.
 export async function POST(request: NextRequest): Promise<Response> {
   if (!isClubEnabled() || !isReactionsEnabled()) {
     return jsonResponse(503, { ok: false, error: "Реакции пока не активны." });
@@ -33,20 +38,46 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!auth.ok) {
     return jsonResponse(auth.httpStatus, { ok: false, error: auth.error });
   }
+  const studentId = auth.student.id; // authoritative — client-supplied ids are ignored
+
+  // Cannot react to a workout whose owner is hidden (opted out / inactive / service).
+  const reactable = await isWorkoutReactable(workoutId);
+  if (!reactable) {
+    return jsonResponse(403, { ok: false, error: "Недоступно." });
+  }
+
+  // Rate limit.
+  const recent = await countRecentReactions(studentId, RATE_WINDOW_SECONDS);
+  if (recent >= RATE_MAX) {
+    return jsonResponse(429, { ok: false, error: "Слишком часто. Подожди немного." });
+  }
 
   try {
     const supabase = createSupabaseServerClient();
-    // Toggle-on upsert (student's OWN reaction only). No-op until the table exists.
+    // Idempotent toggle: remove if present, else insert. Unique (workout,student,kind).
+    const { data: existing } = await supabase
+      .from("club_reactions")
+      .select("id")
+      .eq("workout_cache_id", workoutId)
+      .eq("student_id", studentId)
+      .eq("kind", kind)
+      .maybeSingle();
+
+    if (existing) {
+      const { error } = await supabase.from("club_reactions").delete().eq("id", (existing as { id: string }).id);
+      if (error) {
+        return jsonResponse(503, { ok: false, error: "Реакции пока не активны." });
+      }
+      return jsonResponse(200, { ok: true, active: false });
+    }
+
     const { error } = await supabase
       .from("club_reactions")
-      .upsert(
-        { workout_cache_id: workoutId, student_id: auth.student.id, kind },
-        { onConflict: "workout_cache_id,student_id,kind" }
-      );
+      .insert({ workout_cache_id: workoutId, student_id: studentId, kind });
     if (error) {
       return jsonResponse(503, { ok: false, error: "Реакции пока не активны." });
     }
-    return jsonResponse(200, { ok: true });
+    return jsonResponse(200, { ok: true, active: true });
   } catch (error) {
     console.error("[m.club.react] failed", error);
     return jsonResponse(500, { ok: false, error: "Не удалось поставить реакцию." });

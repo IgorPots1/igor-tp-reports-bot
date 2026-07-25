@@ -397,7 +397,9 @@ function FeedTab(props: {
 }
 
 function FeedCard({ item, onOpenStudent, initData }: { item: ClubFeedItem; onOpenStudent: (id: string) => void; initData: string }) {
-  const [reacted, setReacted] = useState<{ like: boolean; fire: boolean }>({ like: false, fire: false });
+  const [reacted, setReacted] = useState<{ like: boolean; fire: boolean }>({ like: item.mine.like, fire: item.mine.fire });
+  const countOf = (kind: "like" | "fire") =>
+    item.reactions[kind] + (reacted[kind] === item.mine[kind] ? 0 : reacted[kind] ? 1 : -1);
   const stats: string[] = [];
   if (item.distanceKm && item.distanceKm > 0) stats.push(fmtKm(item.distanceKm));
   const dur = fmtDuration(item.durationSeconds);
@@ -431,8 +433,8 @@ function FeedCard({ item, onOpenStudent, initData }: { item: ClubFeedItem; onOpe
       ) : null}
       {item.caption ? <div style={S.caption}>{item.caption}</div> : null}
       <div style={{ ...S.reactRow, opacity: item.reactionsEnabled ? 1 : 0.35 }} aria-hidden={!item.reactionsEnabled}>
-        <span style={{ ...S.reactChip, color: reacted.like ? C.accent : C.sub }} onClick={() => react("like")}>👍 {item.reactions.like + (reacted.like ? 1 : 0)}</span>
-        <span style={{ ...S.reactChip, color: reacted.fire ? C.accent : C.sub }} onClick={() => react("fire")}>🔥 {item.reactions.fire + (reacted.fire ? 1 : 0)}</span>
+        <span style={{ ...S.reactChip, color: reacted.like ? C.accent : C.sub }} onClick={() => react("like")}>👍 {countOf("like")}</span>
+        <span style={{ ...S.reactChip, color: reacted.fire ? C.accent : C.sub }} onClick={() => react("fire")}>🔥 {countOf("fire")}</span>
       </div>
     </div>
   );

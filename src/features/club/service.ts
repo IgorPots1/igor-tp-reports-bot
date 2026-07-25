@@ -110,6 +110,80 @@ async function loadClubStudents(): Promise<ClubStudent[]> {
   }));
 }
 
+type ReactionAgg = { like: number; fire: number; mineLike: boolean; mineFire: boolean };
+
+/**
+ * One query for the whole feed page (no N+1). Returns per-workout aggregate counts
+ * plus whether the current student reacted. Empty when reactions are disabled.
+ */
+async function loadReactionsForWorkouts(
+  workoutIds: string[],
+  currentStudentId: string
+): Promise<Map<string, ReactionAgg>> {
+  const out = new Map<string, ReactionAgg>();
+  if (!C.isReactionsEnabled() || workoutIds.length === 0) {
+    return out;
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_reactions")
+    .select("workout_cache_id, kind, student_id")
+    .in("workout_cache_id", workoutIds);
+  if (error) {
+    // Table missing / schema-cache lag → treat as no reactions, never break the feed.
+    return out;
+  }
+  for (const row of (data as Array<{ workout_cache_id: string; kind: string; student_id: string }> | null) ?? []) {
+    const agg = out.get(row.workout_cache_id) ?? { like: 0, fire: 0, mineLike: false, mineFire: false };
+    const mine = row.student_id === currentStudentId;
+    if (row.kind === "like") {
+      agg.like += 1;
+      if (mine) agg.mineLike = true;
+    } else if (row.kind === "fire") {
+      agg.fire += 1;
+      if (mine) agg.mineFire = true;
+    }
+    out.set(row.workout_cache_id, agg);
+  }
+  return out;
+}
+
+/**
+ * A workout is reactable only if its owner is currently visible in the club
+ * (active, non-service, and not opted out when privacy is on). Used to refuse
+ * reacting to a hidden student's workout.
+ */
+export async function isWorkoutReactable(workoutId: string): Promise<boolean> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache")
+    .select("student_id")
+    .eq("id", workoutId)
+    .maybeSingle();
+  if (error || !data) {
+    return false;
+  }
+  const ownerId = (data as { student_id: string }).student_id;
+  const students = await loadClubStudents();
+  const owner = students.find((s) => s.id === ownerId);
+  return owner ? isVisible(owner) : false;
+}
+
+/** Coarse rate limit: reactions created by this student in the last window. */
+export async function countRecentReactions(studentId: string, windowSeconds: number): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const sinceIso = new Date(Date.now() - windowSeconds * 1000).toISOString();
+  const { count, error } = await supabase
+    .from("club_reactions")
+    .select("id", { count: "exact", head: true })
+    .eq("student_id", studentId)
+    .gte("created_at", sinceIso);
+  if (error) {
+    return 0;
+  }
+  return count ?? 0;
+}
+
 function isVisible(student: ClubStudent): boolean {
   const base = student.isActive && !student.isServiceAccount;
   // Opt-out only takes effect when the privacy feature is enabled; otherwise the
@@ -669,6 +743,7 @@ function decodeCursor(cursor: string | null | undefined): number {
 
 export async function getClubFeed(input: {
   cursor?: string | null;
+  currentStudentId: string;
 }): Promise<ClubFeedView> {
   const today = clubTodayIso();
   const from = addDaysIso(today, -C.CLUB_FEED_WINDOW_DAYS);
@@ -704,8 +779,15 @@ export async function getClubFeed(input: {
   const nextOffset = offset + C.CLUB_FEED_PAGE_SIZE;
   const nextCursor = nextOffset < feedRows.length ? String(nextOffset) : null;
 
+  // Single reactions query for the whole page (no N+1).
+  const reactions = await loadReactionsForWorkouts(
+    pageRows.map((r) => r.id),
+    input.currentStudentId
+  );
+
   const items: ClubFeedItem[] = pageRows.map((row) => {
     const label = typeLabel(row.family);
+    const agg = reactions.get(row.id);
     return {
       id: row.id,
       studentId: row.studentId,
@@ -720,7 +802,8 @@ export async function getClubFeed(input: {
       paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
       caption: sanitizeCaption(row.title, label),
       reactionsEnabled: C.isReactionsEnabled(),
-      reactions: { like: 0, fire: 0 },
+      reactions: { like: agg?.like ?? 0, fire: agg?.fire ?? 0 },
+      mine: { like: agg?.mineLike ?? false, fire: agg?.mineFire ?? false },
     };
   });
 
@@ -1334,6 +1417,7 @@ export async function getClubPublicProfile(input: {
       caption: sanitizeCaption(row.title, label),
       reactionsEnabled: C.isReactionsEnabled(),
       reactions: { like: 0, fire: 0 },
+      mine: { like: false, fire: false },
     };
   });
 

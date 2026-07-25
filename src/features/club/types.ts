@@ -27,8 +27,10 @@ export type ClubFeedItem = {
   caption: string | null;
   /** Whether the reactions row is interactive (CLUB_REACTIONS_ENABLED). */
   reactionsEnabled: boolean;
-  /** Aggregate reaction counts (all zero until the reactions feature ships). */
+  /** Aggregate reaction counts (real when reactions enabled, else zero). */
   reactions: { like: number; fire: number };
+  /** Whether THIS student already reacted (for toggle state). */
+  mine: { like: boolean; fire: boolean };
 };
 
 export type ClubFeedView = {

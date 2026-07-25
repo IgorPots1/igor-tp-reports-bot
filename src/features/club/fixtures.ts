@@ -32,6 +32,7 @@ function feedItem(over: Partial<ClubFeedItem> & { id: string; studentId: string 
     caption: null,
     reactionsEnabled: false,
     reactions: { like: 0, fire: 0 },
+    mine: { like: false, fire: false },
     ...over,
   };
 }

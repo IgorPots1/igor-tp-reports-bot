@@ -26,7 +26,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const view = await getClubFeed({ cursor });
+    const view = await getClubFeed({ cursor, currentStudentId: auth.student.id });
     return jsonResponse(200, { ok: true, view });
   } catch (error) {
     console.error("[m.club.feed] failed", error);
