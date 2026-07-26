@@ -24,6 +24,19 @@ describe("detectTrainingReport — recall (must be reports)", () => {
     "Загрузила новую тренировку, чувствовала себя хорошо!",
     "Утренний отчет. Было хорошо) в выходные будет тренировка?",
     "Вот вернулся с пробежки",
+    // widening: impersonal / passive completion
+    "Привет Под проливным дождем отбегано полтора часа Ух",
+    "12 км пройдено, доволен собой",
+    "Длительная намотана, ноги живые",
+    // widening: deliberate Garmin/Strava share
+    "Просмотрите мое занятие «бег» в Garmin Connect",
+    // widening: descriptive segment, no run verb
+    "Как договаривались, очень медленно. Первые 600 метров я отчудила, потом норм",
+    "Последние 2 км совсем тяжело шли",
+    // widening: how it felt
+    "Ноги ватные после вчерашней длительной",
+    "Тяжело далось сегодня, спалось трудно ночью",
+    "Легко пошло, прям в удовольствие",
   ];
   for (const text of reports) {
     test(`report: ${text.slice(0, 40)}`, () => assert.equal(isReport(text), true));
@@ -45,6 +58,11 @@ describe("detectTrainingReport — precision (must NOT be reports)", () => {
     "перенеси длительную на среду, тяжело так рано вставать",
     "Поставите на завтра тренировку, пожалуйста",
     "А можно завтра длительную побежать? Я боюсь не успею",
+    // widening guards: plan/advice with a segment/pace word must NOT read as a report
+    "Давай первые 2 км помедленнее в следующий раз",
+    "В следующий раз первые 500 метров не гони",
+    "Попробую первые 600 метров быстрее",
+    "Ноги будут ватные, если рано вставать",
   ];
   for (const text of nonReports) {
     test(`not: ${text.slice(0, 40)}`, () => assert.equal(isReport(text), false));
