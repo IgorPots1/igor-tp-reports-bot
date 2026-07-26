@@ -14,6 +14,7 @@ import {
   parseTelegramInitDataUser,
   validateClubInitData,
   clubInitDataTokenInfo,
+  clubSignatureProbe,
   initDataDiag,
 } from "@/features/telegram/validate-init-data";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
@@ -88,9 +89,13 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
   if (!validateClubInitData(initData)) {
     const { varName } = clubInitDataTokenInfo();
     const diag = initDataDiag(initData);
+    // FACTS only (no hypothesis): which token var, which keys, and the 4-way probe —
+    // botId shows WHICH bot the deployed token belongs to (compare with @igorp_coach_bot),
+    // and the four variants show whether it's a code bug vs a wrong token vs the sig field.
+    const probe = clubSignatureProbe(initData);
     console.warn(
-      `[club.resolve] bad_signature tokenVar=${varName} keys=[${diag.keys.join(",")}] hashLen=${diag.hashLen}` +
-        (varName === "TELEGRAM_BOT_TOKEN" ? " (CLUB_TELEGRAM_BOT_TOKEN не задан → проверяем токеном /m/n = НЕ тот бот)" : "")
+      `[club.resolve] bad_signature botId=${probe.botId} tokenVar=${varName} keys=[${diag.keys.join(",")}] hashLen=${diag.hashLen} ` +
+        `probe: current=${probe.current} currentWithSig=${probe.currentWithSig} refDropHashSig=${probe.refDropHashSig} refDropHashOnly=${probe.refDropHashOnly}`
     );
     return {
       ok: false,

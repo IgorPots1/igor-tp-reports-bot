@@ -77,6 +77,99 @@ export function initDataDiag(initData: string): { keys: string[]; hashLen: numbe
   }
 }
 
+/**
+ * The numeric bot id — the part BEFORE the ":" in a bot token. This is NOT a secret
+ * (it is the bot's public @-account id, visible via getMe / t.me). Logging it lets us
+ * confirm WHICH bot the deployed TELEGRAM_BOT_TOKEN belongs to, without exposing the
+ * secret half. Returns null if the token is missing/malformed.
+ */
+function botIdFromToken(token: string | undefined): number | null {
+  if (!token) return null;
+  const head = token.split(":")[0];
+  const n = Number(head);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** Numeric id of the bot whose token the CLUB surface validates against. Not a secret. */
+export function clubBotId(): number | null {
+  return botIdFromToken(clubInitDataTokenInfo().token);
+}
+
+// --- 4-way signature probe (diagnostic) --------------------------------------
+// Reimplementation A — mirrors the production path (timing-safe compare).
+function probeHmacA(initData: string, token: string, dropSignature: boolean): boolean {
+  try {
+    const p = new URLSearchParams(initData);
+    const hash = p.get("hash");
+    if (!hash) return false;
+    p.delete("hash");
+    if (dropSignature) p.delete("signature");
+    const cs = [...p.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n");
+    const secretKey = createHmac("sha256", "WebAppData").update(token).digest();
+    const expected = createHmac("sha256", secretKey).update(cs).digest("hex");
+    return safeTimingEqual(hash, expected);
+  } catch {
+    return false;
+  }
+}
+
+// Reimplementation B — independent reference built fresh from the Telegram docs,
+// plain === compare and default lexical sort (rules out a bug in the prod helpers).
+function probeHmacB(initData: string, token: string, dropSignature: boolean): boolean {
+  try {
+    const p = new URLSearchParams(initData);
+    const given = p.get("hash");
+    if (!given) return false;
+    const pairs: string[] = [];
+    for (const [k, v] of p.entries()) {
+      if (k === "hash") continue;
+      if (dropSignature && k === "signature") continue;
+      pairs.push(`${k}=${v}`);
+    }
+    pairs.sort();
+    const secret = createHmac("sha256", "WebAppData").update(token).digest();
+    const expected = createHmac("sha256", secret).update(pairs.join("\n")).digest("hex");
+    return given === expected;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Runs one real initData through FOUR validation variants against the CLUB token,
+ * reporting which (if any) matched. Diagnostic-only — no secrets in the result.
+ *  - current           : the exact production path (drops hash + signature, timing-safe)
+ *  - currentWithSig     : production algo but signature KEPT in the check-string
+ *  - refDropHashSig     : independent reference, drops hash + signature
+ *  - refDropHashOnly    : independent reference, drops hash only
+ * If `current` is false but `refDropHashSig` is true → bug in the production helper.
+ * If a *WithSig / *HashOnly variant is the only match → signature must NOT be dropped.
+ * If all four are false → the token is the wrong bot (compare botId) or data is stale.
+ */
+export function clubSignatureProbe(initData: string): {
+  botId: number | null;
+  current: boolean;
+  currentWithSig: boolean;
+  refDropHashSig: boolean;
+  refDropHashOnly: boolean;
+} {
+  const token = clubInitDataTokenInfo().token;
+  const botId = botIdFromToken(token);
+  if (!token) {
+    return { botId, current: false, currentWithSig: false, refDropHashSig: false, refDropHashOnly: false };
+  }
+  return {
+    botId,
+    current: validateTelegramInitDataWithToken(initData, token), // literal production path
+    currentWithSig: probeHmacA(initData, token, false),
+    refDropHashSig: probeHmacB(initData, token, true),
+    refDropHashOnly: probeHmacB(initData, token, false),
+  };
+}
+
 export type TelegramInitDataUser = {
   id: number;
   firstName: string | null;
