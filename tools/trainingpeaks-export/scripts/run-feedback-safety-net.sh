@@ -15,3 +15,7 @@ cd "$REPO" || { echo "[$(date '+%F %T')] нет папки $REPO"; exit 1; }
 
 echo "[$(date '+%F %T')] feedback safety-net digest"
 npm --prefix "$TOOLS" run --silent tp-feedback-safety-net || true
+
+# Pipeline staleness monitor: last-success age per data flow → Telegram alert if a flow is silent.
+echo "[$(date '+%F %T')] pipeline heartbeat monitor"
+npm --prefix "$TOOLS" run --silent tp-pipeline-heartbeat-monitor || true

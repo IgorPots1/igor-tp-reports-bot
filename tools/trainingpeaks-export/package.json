@@ -77,6 +77,8 @@
     "tp-feedback-enqueue-run": "tsx scripts/tp-feedback-enqueue-run.ts",
     "tp-ops-notify": "tsx scripts/tp-ops-notify.ts",
     "tp-feedback-safety-net": "tsx scripts/tp-feedback-safety-net.ts",
+    "tp-heartbeat": "tsx scripts/tp-heartbeat.ts",
+    "tp-pipeline-heartbeat-monitor": "tsx scripts/tp-pipeline-heartbeat-monitor.ts",
     "tp-export-failure-monitor": "tsx scripts/tp-export-failure-monitor.ts",
     "tp-cadence-report": "tsx scripts/tp-cadence-report.ts",
     "check-fit-ingest-pipeline": "tsx scripts/check-fit-ingest-pipeline.ts",

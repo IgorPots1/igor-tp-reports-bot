@@ -41,6 +41,10 @@ OK_COUNT="$(grep -c 'status=ok' "$FIT_LOG" || true)"
 FAILED_COUNT="$(grep -c 'status=failed' "$FIT_LOG" || true)"
 echo "[$(date '+%F %T')] fit-ingest: ok=${OK_COUNT} failed=${FAILED_COUNT} exit=${FIT_CODE}"
 
+# Heartbeat for the pipeline monitor: a SUCCESS means metrics were actually computed for someone
+# (ok>0). Per-athlete 403s are normal, but 0 successes = a real stall (dead session), so mark failed.
+npm --prefix "$TOOLS" run --silent tp-heartbeat -- --job=fit_ingest_scan --status="$([ "${OK_COUNT:-0}" -gt 0 ] && echo sent || echo failed)" || true
+
 # 2) Алерт «сессия умерла» — ТОЛЬКО если НИКТО не прошёл И это похоже на авторизацию
 #    (мёртвый bearer/cookie/401), НЕ на per-athlete 403.
 if [ "${OK_COUNT:-0}" -eq 0 ] && [ "$FIT_CODE" -ne 0 ]; then

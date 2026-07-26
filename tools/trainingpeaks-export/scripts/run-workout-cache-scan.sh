@@ -13,5 +13,13 @@ FROM="$(TZ=Europe/Belgrade date -v-"${PAST_DAYS}"d +%F)"
 TO="$(TZ=Europe/Belgrade date -v+"${FUTURE_DAYS}"d +%F)"
 
 cd "$REPO"
+TOOLS="tools/trainingpeaks-export"
 echo "[$(date '+%F %T')] tp-workouts-cache-scan --all-active --from=${FROM} --to=${TO}"
-exec npm run tp-workouts-cache-scan -- --all-active --from="${FROM}" --to="${TO}"
+# Capture the scan's exit code (no more `exec`, so the heartbeat runs after) and record a SUCCESS
+# heartbeat only when it actually succeeded — the pipeline monitor uses this to spot silent stalls.
+set +e
+npm run tp-workouts-cache-scan -- --all-active --from="${FROM}" --to="${TO}"
+CODE=$?
+set -e
+npm --prefix "$TOOLS" run --silent tp-heartbeat -- --job=workout_cache_scan --status="$([ "$CODE" -eq 0 ] && echo sent || echo failed)" || true
+exit "$CODE"
