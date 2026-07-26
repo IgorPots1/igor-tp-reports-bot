@@ -62,4 +62,13 @@ npm --prefix "$TOOLS" run --silent tp-export-failure-monitor -- --log="$FIT_LOG"
 echo "[$(date '+%F %T')] enqueue (кладём новые тренировки в список)"
 npm --prefix "$TOOLS" run --silent tp-feedback-enqueue-run || true
 
+# 5) Пересчёт материализованных клубных рекордов. КРИТИЧНО именно здесь: FIT-лапы
+#    приезжают ПОЗЖЕ summary, и только теперь best-split может поднять уровень доверия.
+#    За флагом (ВЫКЛ по умолчанию): rollout включит ПОСЛЕ применения миграции
+#    club_record_snapshots. || true — пересчёт никогда не валит скан.
+if [ "${CLUB_MATERIALIZE_ENABLED:-false}" = "true" ]; then
+  echo "[$(date '+%F %T')] materialize club records (touched students, incl. свежий FIT)"
+  npm run --silent materialize-club-records -- --since-hours=6 || true
+fi
+
 rm -f "$FIT_LOG"

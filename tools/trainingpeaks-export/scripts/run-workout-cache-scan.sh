@@ -22,4 +22,13 @@ npm run tp-workouts-cache-scan -- --all-active --from="${FROM}" --to="${TO}"
 CODE=$?
 set -e
 npm --prefix "$TOOLS" run --silent tp-heartbeat -- --job=workout_cache_scan --status="$([ "$CODE" -eq 0 ] && echo sent || echo failed)" || true
+
+# Пересчёт материализованных клубных рекордов по затронутым ученикам (инкрементально).
+# За флагом (ВЫКЛ по умолчанию): включить в rollout ПОСЛЕ применения миграции
+# club_record_snapshots. || true — пересчёт никогда не валит скан.
+if [ "${CLUB_MATERIALIZE_ENABLED:-false}" = "true" ]; then
+  echo "[$(date '+%F %T')] materialize club records (touched students)"
+  npm run --silent materialize-club-records -- --since-hours=6 || true
+fi
+
 exit "$CODE"
