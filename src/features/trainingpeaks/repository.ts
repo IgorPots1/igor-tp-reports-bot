@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
+import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
 import type { ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
 import {
   buildTelegramContextTextPreview,
@@ -2259,27 +2260,33 @@ export async function listTrainingPeaksWorkoutCacheForDateRange(input: {
   studentId?: string;
 }): Promise<TrainingPeaksWorkoutCacheRow[]> {
   const supabase = createSupabaseServerClient();
-  let query = supabase
-    .from("trainingpeaks_workout_cache")
-    .select("*")
-    .gte("workout_date", input.from)
-    .lte("workout_date", input.to)
-    .order("student_name", { ascending: true })
-    .order("workout_date", { ascending: true })
-    .order("trainingpeaks_workout_id", { ascending: true });
+  // Paginated: a fleet-wide range (e.g. the morning digest reads a whole day for all
+  // students) can exceed 1000 rows; the old unpaged read silently capped at 1000, so
+  // students past the cap were dropped from the digest (missed-workout signals
+  // under-reported). `id` is the stable tiebreaker on top of the display order.
+  const data = await fetchAllRows<TrainingPeaksWorkoutCacheDbRow>(
+    (from, to) => {
+      let query = supabase
+        .from("trainingpeaks_workout_cache")
+        .select("*")
+        .gte("workout_date", input.from)
+        .lte("workout_date", input.to)
+        .order("student_name", { ascending: true })
+        .order("workout_date", { ascending: true })
+        .order("trainingpeaks_workout_id", { ascending: true })
+        .order("id", { ascending: true });
+      if (input.studentId) {
+        query = query.eq("student_id", input.studentId);
+      }
+      return withSupabaseNetworkRetry(() => query.range(from, to)) as Promise<{
+        data: TrainingPeaksWorkoutCacheDbRow[] | null;
+        error: { message: string } | null;
+      }>;
+    },
+    { label: `workout-cache-range ${input.from}..${input.to}` }
+  );
 
-  if (input.studentId) {
-    query = query.eq("student_id", input.studentId);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(
-      `Failed to list TrainingPeaks workout cache for range ${input.from}..${input.to}: ${error.message}`
-    );
-  }
-
-  return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
+  return (data ?? []).map(mapTrainingPeaksWorkoutCacheRow);
 }
 
 export async function listTrainingPeaksWorkoutCacheScanStatusesForRange(input: {
@@ -3265,24 +3272,34 @@ export async function getTrainingPeaksStudentInboundRecency(
 
   const supabase = createSupabaseServerClient();
   const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
-  for (let i = 0; i < ids.length; i += 150) {
-    const part = ids.slice(i, i + 150);
-    const { data, error } = await withSupabaseNetworkRetry(() =>
-      supabase
-        .from("trainingpeaks_telegram_context_observations")
-        .select("student_id, observed_at, source_type")
-        .in("student_id", part)
-        .gte("observed_at", since)
-        .order("observed_at", { ascending: false })
-    );
-    if (error) throw new Error(`Failed to load TrainingPeaks inbound recency: ${error.message}`);
-    for (const row of (data as Array<{ student_id: string; observed_at: string; source_type: string | null }> | null) ?? []) {
-      const cur = out.get(row.student_id) ?? { lastBusinessDmAt: null, lastGroupAt: null };
-      const src = row.source_type ?? "";
-      if (src === "business_dm" && !cur.lastBusinessDmAt) cur.lastBusinessDmAt = row.observed_at;
-      else if (src === "group_topic" && !cur.lastGroupAt) cur.lastGroupAt = row.observed_at;
-      out.set(row.student_id, cur);
-    }
+  // Paginated per 150-student chunk. The 45-day window over a 150-student chunk can
+  // exceed 1000 observations; the old unpaged read returned only the newest 1000
+  // ACROSS the chunk, so a student whose latest DM/group message sat below that row
+  // got null recency → wrong send-channel decision. Ordered newest-first (with `id`
+  // as the stable tiebreaker) so the first business_dm / group_topic per student is
+  // still their most recent.
+  const rows = await fetchAllInChunks<{ student_id: string; observed_at: string; source_type: string | null }>(
+    ids,
+    150,
+    (part, from, to) =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_telegram_context_observations")
+          .select("student_id, observed_at, source_type")
+          .in("student_id", part)
+          .gte("observed_at", since)
+          .order("observed_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to)
+      ) as Promise<{ data: Array<{ student_id: string; observed_at: string; source_type: string | null }> | null; error: { message: string } | null }>,
+    { label: "inbound-recency:observations" }
+  );
+  for (const row of rows) {
+    const cur = out.get(row.student_id) ?? { lastBusinessDmAt: null, lastGroupAt: null };
+    const src = row.source_type ?? "";
+    if (src === "business_dm" && !cur.lastBusinessDmAt) cur.lastBusinessDmAt = row.observed_at;
+    else if (src === "group_topic" && !cur.lastGroupAt) cur.lastGroupAt = row.observed_at;
+    out.set(row.student_id, cur);
   }
   return out;
 }
