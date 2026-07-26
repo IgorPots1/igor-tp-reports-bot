@@ -362,6 +362,7 @@ export type FeedbackReportSweepSummary = {
   reportsNoRunYet: number; // report present, run not synced yet → waits for next sweep
   reportsRunAlreadyHandled: number; // the window run already has a job (or was chosen this sweep)
   reportsRunIsRace: number; // the window run is a race (calendar) → not drafted; coach answers it personally
+  reportsRunTooOld: number; // the matched run is older than the freshness cap → not queued (keeps the queue to today/yesterday)
   runsEnqueued: number; // distinct runs enqueued as pending
   runsBlocked: number;
   runsSkipped: number;
@@ -372,6 +373,12 @@ export type FeedbackReportSweepSummary = {
 
 // Report on the run day OR the next morning: workout_date ∈ [reportDate-1, reportDate].
 const REPORT_MATCH_WINDOW_DAYS = 1;
+// Freshness cap for the QUEUE (relative to today, not to the report). fit-ingest recomputes metrics
+// over a 5-day window, and a report from a day or two ago can still match an older run — but the
+// coach only wants TODAY's cards. So only a run from today or yesterday is queued; an older matched
+// run is counted (reportsRunTooOld) and skipped. Metrics still recompute over 5d; only the QUEUE
+// stays fresh, so a 5-day recompute never resurrects old cards to hand-clean.
+const ENQUEUE_MAX_WORKOUT_AGE_DAYS = 1;
 // How far back to scan reports each sweep. Wider than the match window so a report whose run
 // syncs late (TP lag) still binds on a later sweep; past this a report stops trying (the daily
 // safety-net digest catches a genuine report whose run never arrived).
@@ -439,6 +446,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     reportsNoRunYet: 0,
     reportsRunAlreadyHandled: 0,
     reportsRunIsRace: 0,
+    reportsRunTooOld: 0,
     runsEnqueued: 0,
     runsBlocked: 0,
     runsSkipped: 0,
@@ -469,6 +477,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   const raceKeys = await fetchRaceKeys(supabase, reportingIds, runFloor);
 
   // 4. per report, pick the run it's about; dedupe so two reports about one run enqueue it once.
+  const enqueueFloor = shiftYmd(new Date().toISOString().slice(0, 10), -ENQUEUE_MAX_WORKOUT_AGE_DAYS);
   const chosen = new Map<string, { row: DerivedRow; reportDate: string }>();
   for (const rep of reports) {
     const prevDay = shiftYmd(rep.date, -REPORT_MATCH_WINDOW_DAYS);
@@ -480,7 +489,14 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       summary.reportsNoRunYet += 1; // run not synced yet → next sweep will bind it
       continue;
     }
-    const candidates = inWindow.filter((r) => !raceKeys.has(`${r.student_id as string}|${r.workout_date as string}`));
+    // Freshness cap: only queue runs from today/yesterday, even if an older report matched. Keeps a
+    // 5-day metrics recompute from resurrecting old cards. An older matched run is counted, not queued.
+    const fresh = inWindow.filter((r) => (r.workout_date as string) >= enqueueFloor);
+    if (fresh.length === 0) {
+      summary.reportsRunTooOld += 1;
+      continue;
+    }
+    const candidates = fresh.filter((r) => !raceKeys.has(`${r.student_id as string}|${r.workout_date as string}`));
     if (candidates.length === 0) {
       summary.reportsRunIsRace += 1; // only a race in window → not drafted
       continue;
