@@ -69,7 +69,7 @@ type Tab = "feed" | "challenge" | "records" | "club" | "profile";
 const TABS: Array<{ key: Tab; icon: string; label: string }> = [
   { key: "feed", icon: "📻", label: "Лента" },
   { key: "challenge", icon: "🔥", label: "Челлендж" },
-  { key: "records", icon: "🏅", label: "Рекорды" },
+  { key: "records", icon: "🏅", label: "Результаты" },
   { key: "club", icon: "📊", label: "Клуб" },
   { key: "profile", icon: "👤", label: "Профиль" },
 ];
@@ -615,13 +615,24 @@ function RecordsTab(props: {
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>Мои рекорды</div>
-        {mineRace ? recordBlock(mineRace, "🏁 Гонка") : null}
-        {mineTraining ? recordBlock(mineTraining, "🏃 Лучший отрезок тренировки") : null}
-        {!mineRace && !mineTraining ? (
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>Пока нет данных на эту дистанцию</div>
-        ) : null}
-        {mineTraining && !mineRace ? <div style={S.fixtureNote}>Это отрезок тренировки, не гонка. Настоящий рекорд появится с забегом.</div> : null}
+        <div style={S.secHead}>🏁 Гонки · {clubTop?.distanceLabel}</div>
+        {mineRace ? (
+          recordBlock(mineRace, "Подтверждённая гонка")
+        ) : (
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>Пока нет подтверждённых гонок</div>
+        )}
+      </div>
+
+      <div style={S.card}>
+        <div style={S.secHead}>🏃 Лучшие отрезки тренировок · {clubTop?.distanceLabel}</div>
+        {mineTraining ? (
+          <>
+            {recordBlock(mineTraining, "Быстрый отрезок из тренировки")}
+            <div style={S.fixtureNote}>Это отрезок из тренировки, не соревновательный результат. Подтверждённый результат появится после забега.</div>
+          </>
+        ) : (
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 6 }}>Нет данных на эту дистанцию</div>
+        )}
       </div>
 
       <div style={S.card}>
@@ -806,12 +817,13 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>Личные рекорды</div>
+        <div style={S.secHead}>Личные результаты</div>
         {v.records.length === 0 ? (
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет реконструированных рекордов</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет данных</div>
         ) : (
           v.records.map((r) => (
-            <div key={r.distanceKey} style={S.recRow}>
+            <div key={`${r.distanceKey}-${r.recordType}`} style={S.recRow}>
+              <span style={{ fontSize: 13, width: 18 }}>{r.recordType === "race" ? "🏁" : "🏃"}</span>
               <span style={{ fontFamily: HEAD, fontSize: 15, color: C.ink, width: 64 }}>{r.distanceLabel}</span>
               <span style={{ flex: 1, fontFamily: HEAD, fontSize: 17, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
               <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>
@@ -895,9 +907,10 @@ function PublicProfileOverlay({ studentId, initData, onClose }: { studentId: str
               </div>
               {view.records.length > 0 ? (
                 <div style={{ marginBottom: 14 }}>
-                  <div style={S.secHead}>Личные рекорды</div>
+                  <div style={S.secHead}>Личные результаты</div>
                   {view.records.map((r) => (
-                    <div key={r.distanceKey} style={S.recRow}>
+                    <div key={`${r.distanceKey}-${r.recordType}`} style={S.recRow}>
+                      <span style={{ fontSize: 12, width: 16 }}>{r.recordType === "race" ? "🏁" : "🏃"}</span>
                       <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink, width: 60 }}>{r.distanceLabel}</span>
                       <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
                       <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>

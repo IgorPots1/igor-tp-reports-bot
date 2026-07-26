@@ -90,6 +90,35 @@ export const CLUB_RECORD_ABSOLUTE_VDOT_CEILING = 65;
 export const CLUB_RECORD_MAX_HUMAN_VDOT = 85;
 
 /**
+ * A1 — meaningfulness filter for TRAINING SPLITS (races / coach_confirmed exempt).
+ * Diagnosis (2026-07): many surfaced "records" were within 5% of the athlete's usual
+ * pace — a best segment barely faster than an easy run is not a result worth showing.
+ * A training_split surfaces ONLY if its pace is at least this fraction FASTER (lower
+ * sec/km) than the athlete's baseline; otherwise → "нет данных". BLOCKER for enabling
+ * the tab on students. Applied at MATERIALIZE time (not read), so the tab stays fast.
+ */
+export const CLUB_RECORD_MEANINGFUL_SPLIT_MARGIN = 0.05;
+/** Baseline = median whole-workout pace over completed runs ≥ this distance (km). */
+export const CLUB_RECORD_BASELINE_MIN_KM = 2;
+/** Need at least this many usable runs to trust a baseline; fewer → no baseline → split hidden. */
+export const CLUB_RECORD_BASELINE_MIN_RUNS = 5;
+/** Paces faster than this (sec/km) are broken data, excluded from the baseline. */
+export const CLUB_RECORD_BASELINE_PACE_FLOOR_SEC_PER_KM = 150;
+/** Meaningfulness filter switch. ON by default (only explicit "false" disables) — it is a SAFETY filter. */
+export function isMeaningfulSplitFilterEnabled(): boolean {
+  return process.env.CLUB_RECORDS_MEANINGFUL_FILTER !== "false";
+}
+
+/**
+ * A3 — use TrainingPeaks device mean-max peaks (club_tp_peaks) as the training-split
+ * source, with the lap best-split heuristic as fallback. OFF by default; inert until
+ * the table is backfilled. The A1 filter + plausibility checks apply on top.
+ */
+export function isTpPeaksEnabled(): boolean {
+  return process.env.CLUB_RECORDS_TP_PEAKS === "true";
+}
+
+/**
  * Best-continuous-split reconstruction (local analogue of Strava best_efforts).
  * ON by default. A recorded race is usually LONGER than the target distance
  * (warm-up / run-in in the same file) → timing the whole file underrates the

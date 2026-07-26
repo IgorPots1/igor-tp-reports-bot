@@ -207,6 +207,77 @@ export function evaluateCandidate(
 }
 
 /**
+ * Plausibility for a TrainingPeaks device peak time (A3). Device peaks have no laps
+ * / pause / interval structure to check, but the ABSOLUTE checks still apply: too
+ * fast for the distance (broken), too slow (walking), or an impossible implied VDOT.
+ * Mirrors the absolute guards in evaluateCandidate.
+ */
+export function tpPeakPlausible(
+  distanceKey: RecordDistanceKey,
+  distanceKm: number,
+  durationSeconds: number
+): boolean {
+  if (distanceKm <= 0 || durationSeconds <= 0) {
+    return false;
+  }
+  const pace = durationSeconds / distanceKm;
+  const floor = C.CLUB_RECORD_PACE_FLOOR_SEC_PER_KM[distanceKey];
+  if (floor && pace < floor) {
+    return false;
+  }
+  if (pace > C.CLUB_RECORD_PACE_CEILING_SEC_PER_KM) {
+    return false;
+  }
+  if (vdotFromRace(distanceKm * 1000, durationSeconds) > C.CLUB_RECORD_ABSOLUTE_VDOT_CEILING) {
+    return false;
+  }
+  return true;
+}
+
+/** Median of a numeric list, or null if empty. Does not mutate the input. */
+function median(values: number[]): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/**
+ * Athlete baseline pace (sec/km): median whole-workout pace across their completed
+ * runs. Broken-fast paces are excluded (they would poison the baseline). Returns
+ * null when there are too few usable runs to trust a baseline.
+ */
+export function baselinePaceSecPerKm(
+  paces: number[],
+  opts: { minRuns: number; floorSecPerKm: number; ceilingSecPerKm: number }
+): number | null {
+  const usable = paces.filter((p) => p >= opts.floorSecPerKm && p <= opts.ceilingSecPerKm);
+  if (usable.length < opts.minRuns) {
+    return null;
+  }
+  return median(usable);
+}
+
+/**
+ * A1 — is a training split meaningfully faster than the athlete's baseline? A split
+ * whose pace is not at least `margin` faster (lower sec/km) than baseline is NOT
+ * worth surfacing. Unknown split pace or unknown baseline => not meaningful
+ * (conservative: when we cannot establish it, we do not show it).
+ */
+export function isSplitMeaningful(
+  splitPaceSecPerKm: number | null,
+  baselineSecPerKm: number | null,
+  margin: number
+): boolean {
+  if (splitPaceSecPerKm === null || baselineSecPerKm === null) {
+    return false;
+  }
+  return splitPaceSecPerKm <= baselineSecPerKm * (1 - margin);
+}
+
+/**
  * Athlete reference VDOT = median VDOT across their best candidate on EACH OTHER
  * distance (excluding `excludeKey`). Used for the self-outlier check. Returns null
  * when the athlete has no other-distance candidate.

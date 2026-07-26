@@ -63,6 +63,8 @@
     "report-race-events": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/report-race-events.ts",
     "smoke-club": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/smoke-club.ts",
     "club-tp-dryrun": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/club-tp-dryrun.ts",
+    "recompute-a1-a3": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/recompute-a1-a3.ts",
+    "tp-peaks-coverage": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/tp-peaks-coverage.ts",
     "check-trainingpeaks-workout-cache-reconcile": "npx tsx scripts/check-trainingpeaks-workout-cache-reconcile.ts",
     "check-workout-activity-classification": "npx tsx scripts/check-workout-activity-classification.ts",
     "check-supabase-network-retry": "npx tsx scripts/check-supabase-network-retry.ts",

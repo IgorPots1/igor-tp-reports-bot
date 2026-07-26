@@ -22,6 +22,9 @@ import * as C from "./constants";
 import {
   evaluateCandidate,
   referenceVdotForAthlete,
+  baselinePaceSecPerKm,
+  isSplitMeaningful,
+  tpPeakPlausible,
   type ClubRecordType,
   type EvaluatedRecord,
   type RecordCalcMethod,
@@ -2037,6 +2040,121 @@ function evaluatedToSnapshot(
   };
 }
 
+// --- A1 meaningfulness filter + A3 TP-peaks (applied at MATERIALIZE, not read) ---
+
+/**
+ * A1 — athlete baseline pace (sec/km) = median whole-workout pace over their
+ * completed runs (≥ min distance). null → no trustworthy baseline → splits suppressed.
+ */
+function athleteBaselinePace(rows: ClubWorkoutRow[], studentId: string): number | null {
+  const paces: number[] = [];
+  for (const r of rows) {
+    if (r.studentId !== studentId || !r.isCompleted || !r.isRunning) continue;
+    const km = r.distanceKm ?? 0;
+    const sec = r.durationSeconds ?? 0;
+    if (km < C.CLUB_RECORD_BASELINE_MIN_KM || sec <= 0) continue;
+    paces.push(sec / km);
+  }
+  return baselinePaceSecPerKm(paces, {
+    minRuns: C.CLUB_RECORD_BASELINE_MIN_RUNS,
+    floorSecPerKm: C.CLUB_RECORD_BASELINE_PACE_FLOOR_SEC_PER_KM,
+    ceilingSecPerKm: C.CLUB_RECORD_PACE_CEILING_SEC_PER_KM,
+  });
+}
+
+/** A1 — does a lap-based training split clear the meaningfulness bar? Filter off => passes. */
+function trainingSplitPasses(training: EvaluatedRecord | null, baseline: number | null): boolean {
+  if (!training) return false;
+  if (!C.isMeaningfulSplitFilterEnabled()) return true;
+  const pace = paceSecPerKm(training.candidate.distanceKm, training.candidate.durationSeconds);
+  return isSplitMeaningful(pace, baseline, C.CLUB_RECORD_MEANINGFUL_SPLIT_MARGIN);
+}
+
+export type TpPeakBest = {
+  durationSeconds: number;
+  speedMps: number;
+  workoutDate: string | null;
+};
+
+/**
+ * A3 — best TrainingPeaks device peak per `${studentId}|${distanceKey}` from
+ * club_tp_peaks. Inert (empty) unless CLUB_RECORDS_TP_PEAKS is on AND the table is
+ * backfilled. Lap heuristic stays the fallback.
+ */
+export async function loadTpPeaksBest(): Promise<Map<string, TpPeakBest>> {
+  const out = new Map<string, TpPeakBest>();
+  if (!C.isTpPeaksEnabled()) {
+    return out;
+  }
+  try {
+    const supabase = createSupabaseServerClient();
+    const rows = await fetchAllRows<Record<string, unknown>>(
+      (fromRow, toRow) =>
+        withSupabaseNetworkRetry(() =>
+          supabase
+            .from("club_tp_peaks")
+            .select("student_id, distance_key, best_speed_mps, duration_seconds, workout_date")
+            .order("id", { ascending: true })
+            .range(fromRow, toRow)
+        ),
+      { label: "club:tp_peaks" }
+    );
+    for (const r of rows) {
+      out.set(`${r.student_id as string}|${r.distance_key as string}`, {
+        durationSeconds: Number(r.duration_seconds ?? 0),
+        speedMps: Number(r.best_speed_mps ?? 0),
+        workoutDate: (r.workout_date as string | null) ?? null,
+      });
+    }
+  } catch {
+    /* table absent → no TP peaks */
+  }
+  return out;
+}
+
+/**
+ * Build the training-split snapshot row for a (student, distance), applying A3 then
+ * A1. Preference: a TP device peak (A3) that is plausible, meaningful, and at least
+ * as fast as the lap split wins (cleaner, no pause noise); else the lap split IF it
+ * clears the A1 meaningfulness bar; else null (→ "нет данных"). All at materialize time.
+ */
+function buildTrainingSnapshotRow(
+  studentId: string,
+  target: (typeof C.CLUB_RECORD_DISTANCES)[number],
+  training: EvaluatedRecord | null,
+  baseline: number | null,
+  tpPeak: TpPeakBest | undefined
+): SnapshotDbRow | null {
+  const filterOn = C.isMeaningfulSplitFilterEnabled();
+  // A3: TP peak, if enabled + plausible + meaningful.
+  if (tpPeak && tpPeak.durationSeconds > 0 && tpPeakPlausible(target.key, target.km, tpPeak.durationSeconds)) {
+    const peakPace = paceSecPerKm(target.km, tpPeak.durationSeconds);
+    const peakMeaningful = !filterOn || isSplitMeaningful(peakPace, baseline, C.CLUB_RECORD_MEANINGFUL_SPLIT_MARGIN);
+    const lapDur = training?.candidate.durationSeconds ?? Infinity;
+    if (peakMeaningful && tpPeak.durationSeconds <= lapDur) {
+      return {
+        student_id: studentId,
+        distance_key: target.key,
+        record_type: "training_split",
+        slot: "best",
+        duration_seconds: Math.round(tpPeak.durationSeconds),
+        distance_km: target.km,
+        pace_sec_per_km: peakPace,
+        record_date: tpPeak.workoutDate || null,
+        trust: "verified", // device-computed peak: clean by construction
+        calc_method: "best_split",
+        source: "reconstructed",
+        source_workout_cache_id: null,
+      };
+    }
+  }
+  // A1: lap split only if meaningful.
+  if (training && trainingSplitPasses(training, baseline)) {
+    return evaluatedToSnapshot(studentId, target.key, "training_split", "best", training);
+  }
+  return null;
+}
+
 export type MaterializeResult = {
   studentsProcessed: number;
   rowsWritten: number;
@@ -2114,13 +2232,19 @@ export async function materializeClubRecords(opts?: {
   const raceSourceFor = (studentId: string, dateIso: string): RecordSource =>
     raceDatesWithSource.get(studentId)?.get(dateIso) ?? "reconstructed";
 
+  // A3 TP peaks (inert unless flag on + table backfilled). Loaded ONCE per recompute.
+  const tpPeaks = await loadTpPeaksBest();
+
   const snapshotRows: SnapshotDbRow[] = [];
   const targetSet = new Set(targetIds);
   for (const studentId of targetIds) {
     const perDist = byStudent.get(studentId);
+    // A1 baseline for this athlete (median usual pace) — computed here at materialize.
+    const baseline = athleteBaselinePace(visibleRows, studentId);
     for (const target of C.CLUB_RECORD_DISTANCES) {
       const evaluated = perDist?.get(target.key)?.evaluated ?? [];
       const { race, training, bestVerifiedRace } = splitByType(evaluated, studentId, raceDates);
+      // Races (race_events / coach_confirmed / declared) are NOT subject to A1/A3.
       if (race) {
         snapshotRows.push(
           evaluatedToSnapshot(studentId, target.key, "race", "best", race, raceSourceFor(studentId, race.candidate.date))
@@ -2131,8 +2255,10 @@ export async function materializeClubRecords(opts?: {
           evaluatedToSnapshot(studentId, target.key, "race", "best_verified", bestVerifiedRace, raceSourceFor(studentId, bestVerifiedRace.candidate.date))
         );
       }
-      if (training) {
-        snapshotRows.push(evaluatedToSnapshot(studentId, target.key, "training_split", "best", training));
+      // Training split: A3 (TP peak) preferred, else A1-filtered lap split, else nothing.
+      const trainingRow = buildTrainingSnapshotRow(studentId, target, training, baseline, tpPeaks.get(`${studentId}|${target.key}`));
+      if (trainingRow) {
+        snapshotRows.push(trainingRow);
       }
     }
   }
