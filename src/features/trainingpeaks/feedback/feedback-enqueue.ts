@@ -10,6 +10,7 @@
 
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
+import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-extraction-ai";
 import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
@@ -280,6 +281,16 @@ export async function assemblePlannerInputsForWorkouts(
     };
     result.set(cacheId, packet);
   }
+
+  // Block 1 — extract the factors each student named around their workout (Haiku primary, keyword
+  // fallback). Parallel across packets; only packets with in-window messages call the model, so the
+  // cost tracks the enqueue rate (a handful/day). Never throws — degrades to [] / deterministic.
+  await Promise.all(
+    [...result.values()].map(async (packet) => {
+      packet.statedFactors = await extractStatedFactors(packet.studentMessages, packet.workout.workoutDate);
+    })
+  );
+
   return result;
 }
 

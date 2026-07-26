@@ -14,7 +14,7 @@ if (typeof createSupabaseServerClient !== "function") {
   throw new Error("supabase/server.createSupabaseServerClient is unavailable.");
 }
 
-export type AiCallSite = "memory" | "intent" | "parser";
+export type AiCallSite = "memory" | "intent" | "parser" | "feedback_factor";
 
 export type AiCallLogInput = {
   callSite: AiCallSite;

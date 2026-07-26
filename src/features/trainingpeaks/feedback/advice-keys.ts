@@ -28,6 +28,15 @@ export type AdviceKey =
   | "cause_confirmed_tired_sleep"
   | "cause_confirmed_tired_hrv_trend"
   | "cause_confirmed_tired_generic"
+  // Block 1 — student NAMED the cause (жара/не пил/недосып/болел/ремонт/болит/рельеф).
+  // Same "причина, не вина" category D; honored over a mechanical question.
+  | "cause_confirmed_heat"
+  | "cause_confirmed_dehydration"
+  | "cause_confirmed_undersleep"
+  | "cause_confirmed_illness"
+  | "cause_confirmed_life_stress"
+  | "cause_confirmed_soreness"
+  | "cause_confirmed_conditions"
   // Questions (corpus category C)
   | "question_high_pulse_unknown"
   | "question_accumulated_load"

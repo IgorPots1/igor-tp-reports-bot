@@ -29,6 +29,16 @@ export const PRIORITY: Record<AdviceKey, number> = {
   // this entry covers the composite tier specifically
   praise_comparison_progress: 70,
 
+  // Block 1 — student NAMED the cause: sits at the top of the cause tier (a factor the student
+  // spoke outright beats a health-inferred one). Care-worthy (illness/soreness) highest.
+  cause_confirmed_illness: 67,
+  cause_confirmed_soreness: 66,
+  cause_confirmed_undersleep: 65,
+  cause_confirmed_dehydration: 64,
+  cause_confirmed_heat: 64,
+  cause_confirmed_life_stress: 63,
+  cause_confirmed_conditions: 63,
+
   // C4 confirmed cause — words confirmed tired, health named a reason
   cause_confirmed_tired_rhr: 62,
   cause_confirmed_tired_sleep: 62,

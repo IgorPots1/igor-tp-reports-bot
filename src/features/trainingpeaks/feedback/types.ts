@@ -67,6 +67,27 @@ export type PlannerHealthProfile = {
   hasBodyBattery: boolean;
 };
 
+/** A cause the STUDENT themselves named around this workout, extracted from their raw messages
+ *  (жара, не пил, недосып, болел, устал по жизни/работа/ремонт, болит, рельеф/дорожка/ветер).
+ *  Igor's rule "причина, не вина": a named factor beats a mechanical verdict — the planner honors
+ *  it as a cause and suppresses the "student said nothing → ask" question. Words only, NEVER a
+ *  number source (the quote is for tone/coach-panel; the fact-check still forbids stray digits). */
+export type StatedFactorKind =
+  | "illness" // болел, простыл, горло, температура, недомогание
+  | "soreness" // болит/тянет/забиты (колено, стопа, спина)
+  | "undersleep" // мало спал, недосып, не выспался
+  | "dehydration" // не пил, забыл попить, воду не брал, пил мало
+  | "heat" // жара, духота, пекло (перекрывает существующий HEAT_RE)
+  | "life_stress" // работа, ремонт, аврал, стресс, устаю по жизни
+  | "conditions"; // рельеф/горки, дорожка/манеж, ветер — внешние условия бега
+
+export type StatedFactor = {
+  factor: StatedFactorKind;
+  quote: string; // verbatim span the student wrote (tone/coach-panel only, never a number)
+  date: string; // 'YYYY-MM-DD' of the message
+  recurring: boolean; // named on ≥2 distinct days in the window → accumulation, not a one-off
+};
+
 export type ContextPacket = {
   studentId: string;
   sex: "female" | "male" | null;
@@ -89,6 +110,10 @@ export type ContextPacket = {
   studentMessages: PlannerStudentMessage[];
   healthMetrics: PlannerHealthMetric[];
   healthProfile: PlannerHealthProfile | null;
+  /** Factors the student named around this workout, extracted from studentMessages at packet-build
+   *  time (Haiku with a deterministic keyword fallback). Optional: callers that don't extract leave
+   *  it undefined and the planner behaves exactly as before (no factor → no override). */
+  statedFactors?: StatedFactor[];
 };
 
 export type ObservationType = "praise" | "correction" | "question" | "coach_signal";

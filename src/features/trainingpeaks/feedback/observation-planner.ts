@@ -7,6 +7,7 @@
 
 import { evaluateComparisonSlot } from "./comparison-slot.ts";
 import { evaluateFatigueCause } from "./fatigue-cause.ts";
+import { resolveStatedCause } from "./stated-factors.ts";
 import { PRIORITY, priorityForComparisonWeight, selectFocus } from "./focus.ts";
 import { evaluateTrustGate } from "./hr-trust-gate.ts";
 import { evaluateNegativeSplit } from "./negative-split.ts";
@@ -109,10 +110,21 @@ export function planObservations(packet: ContextPacket): Observation[] {
     }
   }
 
-  // C4 — fatigue → cause, words-first. Skipped entirely when HR is untrusted:
-  // its only trigger is an elevated pulse signal.
+  // Block 1 — a factor the STUDENT named beats the mechanical verdict. If they explained why the
+  // run was hard (жара, не пил, недосып, ремонт, болит колено), honor it as the cause and do NOT
+  // ask the "пульс выше, а ты про самочувствие молчал" question — that contradicts what they
+  // literally wrote (the Дима case). A stated cause needs no pulse trigger (Надя's dehydration on a
+  // long run, Виктория's life-stress on a hard one), so it runs ahead of C4 and, when present,
+  // C4 is skipped entirely to avoid two competing causes.
   let fatigueTriggered = false;
-  if (trustGate.hrTrusted) {
+  const statedCause = resolveStatedCause(packet);
+  if (statedCause) {
+    fatigueTriggered = true; // owns this workout's tired-signal → suppresses the C6 contradiction too
+    observations.push(makeObservation({ type: "correction", metric: "stated_factor", numbers: statedCause.numbers, sessionType, adviceKey: statedCause.adviceKey, reason: statedCause.reason }));
+  } else if (trustGate.hrTrusted) {
+    // C4 — fatigue → cause, words-first. Skipped when HR is untrusted: its only trigger is an
+    // elevated pulse signal. Unchanged: when no factor is named this is exactly the old behavior,
+    // so a genuinely silent student still gets the question_high_pulse_unknown ask.
     const fatigue = evaluateFatigueCause(packet, sessionType);
     if (fatigue.kind === "confirmed") {
       fatigueTriggered = true;
@@ -134,9 +146,10 @@ export function planObservations(packet: ContextPacket): Observation[] {
     observations.push(makeObservation({ type: "question", metric: "contradiction", numbers: contradiction.numbers, sessionType, adviceKey: "question_contradiction", reason: contradiction.reason }));
   }
 
-  // C5 — accumulation question (duration-based, not gated by HR/pace trust).
+  // C5 — accumulation question (duration-based, not gated by HR/pace trust). Suppressed when the
+  // student named a factor: they already explained the load, don't interrogate on top of it.
   const accumulation = evaluateAccumulationQuestion(packet);
-  if (accumulation.fired) {
+  if (accumulation.fired && !statedCause) {
     observations.push(makeObservation({ type: "question", metric: "accumulated_load", numbers: accumulation.numbers, sessionType, adviceKey: "question_accumulated_load", reason: accumulation.reason }));
   }
 
