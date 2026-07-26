@@ -6,6 +6,7 @@ import { computeSplitHalf } from "./split-half.ts";
 import { evaluateNegativeSplit } from "./negative-split.ts";
 import { evaluateEvenPace, evaluateFullStructure } from "./positive-dictionary.ts";
 import { evaluateFatigueCause } from "./fatigue-cause.ts";
+import { resolveRecentMetricValue, computeHrvTrend, computeHealthBaseline } from "./health-baseline.ts";
 import { FOCUS_CAP } from "./focus.ts";
 import { planObservations } from "./observation-planner.ts";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "./types.ts";
@@ -184,6 +185,100 @@ describe("C4 fatigue-cause — words beat the number", () => {
       memoryItems: [{ type: "health_status", text: "Тяжело устала", date: "2026-07-15" }],
     });
     assert.equal(evaluateFatigueCause(packet, "easy").kind, "not_triggered");
+  });
+});
+
+describe("health-baseline — window resolution + HRV trend (loosening)", () => {
+  test("resolveRecentMetricValue picks the nearest reading in the window", () => {
+    const metrics = [
+      { metricDate: "2026-07-13", metricKey: "pulse" as const, value: 58 },
+      { metricDate: "2026-07-14", metricKey: "pulse" as const, value: 61 },
+    ];
+    const got = resolveRecentMetricValue(metrics, "pulse", "2026-07-15", 2);
+    assert.equal(got?.value, 61); // 07-14 is closer to 07-15 than 07-13
+    assert.equal(got?.ageDays, 1);
+  });
+  test("resolveRecentMetricValue returns null outside the window", () => {
+    const metrics = [{ metricDate: "2026-07-10", metricKey: "pulse" as const, value: 61 }];
+    assert.equal(resolveRecentMetricValue(metrics, "pulse", "2026-07-15", 2), null); // 5d away
+  });
+  test("computeHrvTrend flags a sustained decline, not a single dip", () => {
+    const prior = ["06-27", "06-29", "07-01", "07-03", "07-05"].map((d) => ({ metricDate: `2026-${d}`, metricKey: "hrv" as const, value: 60 }));
+    const recent = ["07-08", "07-10", "07-11", "07-12"].map((d) => ({ metricDate: `2026-${d}`, metricKey: "hrv" as const, value: 50 }));
+    const trend = computeHrvTrend({ metrics: [...prior, ...recent], asOfDate: "2026-07-15" });
+    assert.equal(trend?.direction, "down");
+    assert.ok((trend?.dropPct ?? 0) >= 8);
+  });
+  test("computeHrvTrend: one low night can't move the median -> flat", () => {
+    const prior = ["06-27", "06-29", "07-01", "07-03", "07-05"].map((d) => ({ metricDate: `2026-${d}`, metricKey: "hrv" as const, value: 60 }));
+    const recent = [
+      { metricDate: "2026-07-08", metricKey: "hrv" as const, value: 60 },
+      { metricDate: "2026-07-10", metricKey: "hrv" as const, value: 60 },
+      { metricDate: "2026-07-11", metricKey: "hrv" as const, value: 60 },
+      { metricDate: "2026-07-12", metricKey: "hrv" as const, value: 35 }, // one bad night
+    ];
+    const trend = computeHrvTrend({ metrics: [...prior, ...recent], asOfDate: "2026-07-15" });
+    assert.equal(trend?.direction, "flat");
+  });
+  test("computeHrvTrend needs enough points per half -> null", () => {
+    const few = ["07-08", "07-10"].map((d) => ({ metricDate: `2026-${d}`, metricKey: "hrv" as const, value: 50 }));
+    assert.equal(computeHrvTrend({ metrics: few, asOfDate: "2026-07-15" }), null);
+  });
+  test("baseline with fewer points is allowed when minPoints lowered", () => {
+    const three = ["07-01", "07-03", "07-05"].map((d) => ({ metricDate: `2026-${d}`, metricKey: "pulse" as const, value: 55 }));
+    assert.equal(computeHealthBaseline({ metrics: three, metricKey: "pulse", asOfDate: "2026-07-15" }), null); // default min 5
+    assert.equal(computeHealthBaseline({ metrics: three, metricKey: "pulse", asOfDate: "2026-07-15", minPoints: 3 })?.medianValue, 55);
+  });
+});
+
+describe("C4 fatigue-cause — loosening (window + trend) and honesty guards", () => {
+  test("RHR confirms when the reading is a day OFF the workout date (old exact-match missed it)", () => {
+    const packet = basePacket({
+      current: baseCurrent({ avgHr: 145 }),
+      history: easyHistoryBaseline(),
+      memoryItems: [{ type: "health_status", text: "Тяжело далось, устала", date: "2026-07-15" }],
+      healthProfile: { hasPulse: true, hasSleepHours: false, hasHrv: false, hasBodyBattery: false },
+      // baseline 55 in June; today's RHR reading dated 07-14 (the day before), value 60
+      healthMetrics: [...thirtyDaysOfPulse(55), { metricDate: "2026-07-14", metricKey: "pulse", value: 60 }],
+    });
+    const outcome = evaluateFatigueCause(packet, "easy");
+    assert.equal(outcome.kind, "confirmed");
+    if (outcome.kind === "confirmed") assert.equal(outcome.adviceKey, "cause_confirmed_tired_rhr");
+  });
+  test("regression: tired but baseline too thin (2 points) -> generic, never names RHR", () => {
+    const packet = basePacket({
+      current: baseCurrent({ avgHr: 145 }),
+      history: easyHistoryBaseline(),
+      memoryItems: [{ type: "health_status", text: "Тяжело, устала", date: "2026-07-15" }],
+      healthProfile: { hasPulse: true, hasSleepHours: false, hasHrv: false, hasBodyBattery: false },
+      healthMetrics: [
+        { metricDate: "2026-07-01", metricKey: "pulse", value: 55 },
+        { metricDate: "2026-07-03", metricKey: "pulse", value: 55 },
+        { metricDate: "2026-07-15", metricKey: "pulse", value: 62 },
+      ],
+    });
+    const outcome = evaluateFatigueCause(packet, "easy");
+    assert.equal(outcome.kind, "confirmed");
+    if (outcome.kind === "confirmed") assert.equal(outcome.adviceKey, "cause_confirmed_tired_generic");
+  });
+  test("HRV declining trend confirms (words only), single spike does not", () => {
+    const priorHrv = ["06-27", "06-29", "07-01", "07-03", "07-05"].map((d) => ({ metricDate: `2026-${d}`, metricKey: "hrv" as const, value: 60 }));
+    const recentHrvDown = ["07-08", "07-10", "07-11", "07-13"].map((d) => ({ metricDate: `2026-${d}`, metricKey: "hrv" as const, value: 50 }));
+    const packet = basePacket({
+      current: baseCurrent({ avgHr: 145 }),
+      history: easyHistoryBaseline(),
+      memoryItems: [{ type: "health_status", text: "Тяжело далось", date: "2026-07-15" }],
+      healthProfile: { hasPulse: false, hasSleepHours: false, hasHrv: true, hasBodyBattery: false },
+      healthMetrics: [...priorHrv, ...recentHrvDown],
+    });
+    const outcome = evaluateFatigueCause(packet, "easy");
+    assert.equal(outcome.kind, "confirmed");
+    if (outcome.kind === "confirmed") {
+      assert.equal(outcome.adviceKey, "cause_confirmed_tired_hrv_trend");
+      // honesty: no HRV number leaks into the observation's numbers (allowedNumbers is comparison-only anyway)
+      assert.equal("hrvToday" in outcome.numbers, false);
+      assert.equal("hrvRecent" in outcome.numbers, false);
+    }
   });
 });
 

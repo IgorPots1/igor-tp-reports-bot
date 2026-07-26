@@ -26,7 +26,7 @@ export type AdviceKey =
   // C4 — fatigue → cause (corpus category D, cause not blame)
   | "cause_confirmed_tired_rhr"
   | "cause_confirmed_tired_sleep"
-  | "cause_confirmed_tired_hrv_soft"
+  | "cause_confirmed_tired_hrv_trend"
   | "cause_confirmed_tired_generic"
   // Questions (corpus category C)
   | "question_high_pulse_unknown"

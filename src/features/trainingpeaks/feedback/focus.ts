@@ -32,7 +32,7 @@ export const PRIORITY: Record<AdviceKey, number> = {
   // C4 confirmed cause — words confirmed tired, health named a reason
   cause_confirmed_tired_rhr: 62,
   cause_confirmed_tired_sleep: 62,
-  cause_confirmed_tired_hrv_soft: 61,
+  cause_confirmed_tired_hrv_trend: 61,
   cause_confirmed_tired_generic: 58,
 
   // коррекция по контролю усилия (C1/C2)

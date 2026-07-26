@@ -470,10 +470,15 @@ async function buildAvailability(
         pulse: metricDates.get("pulse") ?? 0,
       };
 
-      const meetsRecovery =
-        recoveryMetricDays.sleep_hours >= recoveryThreshold &&
-        recoveryMetricDays.hrv >= recoveryThreshold &&
-        recoveryMetricDays.pulse >= recoveryThreshold;
+      // Recovery eligibility rests on RESTING PULSE alone. RHR is the most reliable short-horizon
+      // fatigue signal ("elevated a third day") and by far the best-covered — most students sync
+      // 24-30 days of it. Sleep and HRV are NOT gate conditions: sleep is sparsely synced (most have
+      // 1-6 days, so requiring it blocked ~12 students who have solid RHR), and a single HRV reading
+      // is noisy (our design: "HRV один не решает, только в связке"). Both are still tracked and used
+      // downstream as EXTRA signals — sleep on a short horizon, HRV only as a 2-3 week trend — but a
+      // student is eligible on RHR coverage alone. The fatigue-cause reads pulse/sleep/HRV
+      // independently, so RHR-only eligibility already unlocks the RHR branch for them.
+      const meetsRecovery = recoveryMetricDays.pulse >= recoveryThreshold;
 
       const anyRecoverySignal = RECOVERY_KEYS.some((key) => (metricDates.get(key) ?? 0) > 0);
 
