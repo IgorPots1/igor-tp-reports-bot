@@ -22,6 +22,14 @@ function fmt(sec: number | null): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
 
+// Provenance of a record — shown as a hover tooltip in the compact revision table.
+const SOURCE_LABEL: Record<string, string> = {
+  race_events: "гонка из календаря TP (race_events)",
+  club_races: "старт, заявленный учеником (club_races)",
+  coach_confirmed: "подтверждено тренером",
+  reconstructed: "реконструкция из тренировки",
+};
+
 export default async function ClubResultsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   if (!isClubAdminEnabled()) {
     return <section className="admin-section"><div className="admin-alert admin-alert-warning">Раздел выключен (CLUB_ADMIN_ENABLED=false).</div></section>;
@@ -50,7 +58,7 @@ export default async function ClubResultsPage({ searchParams }: { searchParams: 
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Ревизия результатов</h1>
-        <p className="admin-section-subtitle">Гонки = coach_confirmed или дата совпала со стартом. Остальное — отрезки тренировок. Подтверждённые гонки идут в топы и якорь прогноза.</p>
+        <p className="admin-section-subtitle">Гонки = coach_confirmed, дата из календаря TP (race_events) или заявленный старт. Остальное — отрезки тренировок. Наведи на ячейку — происхождение записи. Гонки идут в топы и якорь прогноза.</p>
       </div>
 
       {notice ? <div className="admin-alert admin-alert-success">{notice}</div> : null}
@@ -83,7 +91,12 @@ export default async function ClubResultsPage({ searchParams }: { searchParams: 
                 {KEYS.map((k) => {
                   const r = s.records.find((x) => x.distanceKey === k);
                   const badge = r?.type === "race" ? "🏁" : r?.type === "training_split" ? "🏃" : r?.trust === "hidden" ? "🚫" : "";
-                  return <td key={k}>{r?.durationSeconds ? `${badge} ${fmt(r.durationSeconds)}` : (r?.trust === "hidden" ? "🚫" : "—")}</td>;
+                  const origin = r?.source ? SOURCE_LABEL[r.source] ?? r.source : undefined;
+                  return (
+                    <td key={k} title={origin}>
+                      {r?.durationSeconds ? `${badge} ${fmt(r.durationSeconds)}` : r?.trust === "hidden" ? "🚫" : "—"}
+                    </td>
+                  );
                 })}
                 <td><Link className="admin-button admin-button-small" href={`/admin/club/results/${s.studentId}`}>Ввести</Link></td>
               </tr>

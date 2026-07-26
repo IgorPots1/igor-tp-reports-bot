@@ -8,6 +8,7 @@ import {
   classifyRecordType,
   evaluateAllRecordsForValidation,
   loadCoachRecords,
+  loadRaceDatesWithSource,
   type CoachRecord,
 } from "@/features/club/service";
 import { CLUB_RECORD_DISTANCES } from "@/features/club/constants";
@@ -33,7 +34,9 @@ export type RevisionRecord = {
   recordDate: string | null;
   type: "race" | "training_split" | null;
   trust: "verified" | "preliminary" | "hidden" | null;
-  source: "reconstructed" | "coach_confirmed" | null;
+  // Provenance: race_events / club_races = real-race date (source of the race typing);
+  // reconstructed = training segment; coach_confirmed = coach override.
+  source: "reconstructed" | "coach_confirmed" | "race_events" | "club_races" | null;
   raceName: string | null;
   hiddenReason: string | null;
 };
@@ -44,9 +47,10 @@ export type RevisionStudent = {
 };
 
 export async function loadClubResultsForRevision(): Promise<RevisionStudent[]> {
-  const [run, coach] = await Promise.all([
+  const [run, coach, raceSource] = await Promise.all([
     evaluateAllRecordsForValidation({ useBestSplit: true }),
     loadCoachRecords(),
+    loadRaceDatesWithSource(),
   ]);
   const out: RevisionStudent[] = [];
   for (const student of run.students.sort((a, b) => a.name.localeCompare(b.name, "ru"))) {
@@ -70,13 +74,18 @@ export async function loadClubResultsForRevision(): Promise<RevisionStudent[]> {
       const res = perDist?.get(key);
       const best = res?.best ?? null;
       if (best) {
+        const type = classifyRecordType(student.id, best.candidate.date, run.raceDatesByStudent);
+        // Provenance: a race record shows which source declared its date; a training
+        // segment stays "reconstructed".
+        const source =
+          type === "race" ? raceSource.get(student.id)?.get(best.candidate.date) ?? "reconstructed" : "reconstructed";
         records.push({
           distanceKey: key,
           durationSeconds: best.candidate.durationSeconds,
           recordDate: best.candidate.date,
-          type: classifyRecordType(student.id, best.candidate.date, run.raceDatesByStudent),
+          type,
           trust: best.trust === "verified" ? "verified" : "preliminary",
-          source: "reconstructed",
+          source,
           raceName: null,
           hiddenReason: null,
         });

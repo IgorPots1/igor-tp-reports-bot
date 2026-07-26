@@ -27,6 +27,7 @@ import {
   type RecordCalcMethod,
   type RecordCandidate,
   type RecordDistanceKey,
+  type RecordSource,
   type WorkoutQuality,
 } from "./records";
 import type {
@@ -1860,24 +1861,76 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
  * club_races table has rows — which, per the root-cause finding, is exactly why
  * every current record is a training_split. Inert (empty) if the table is absent.
  */
-export async function loadRaceDatesByStudent(): Promise<Map<string, Set<string>>> {
-  const out = new Map<string, Set<string>>();
+/** Which source declared a given (student, date) a race. Priority high→low. */
+export type RaceDateSource = "race_events" | "club_races";
+
+/**
+ * Race dates per student WITH their source (Phase 1.5). Two sources:
+ *   - trainingpeaks_race_events — the TP calendar scan (133 real races). PRIORITY.
+ *   - club_races                — student-declared starts in the mini app.
+ * A date present in BOTH is a race_events race (higher priority) — this is the
+ * dedup: one date → one source label → one race record (the workout that day gives
+ * the time; race_events.distance_km is unreliable and intentionally unused).
+ * Coach_confirmed overrides are handled separately (loadCoachRecords), above both.
+ */
+export async function loadRaceDatesWithSource(): Promise<Map<string, Map<string, RaceDateSource>>> {
+  const out = new Map<string, Map<string, RaceDateSource>>();
+  const supabase = createSupabaseServerClient();
+
+  const put = (studentId: string, dateIso: string, source: RaceDateSource): void => {
+    if (!studentId || !dateIso) return;
+    const perStudent = out.get(studentId) ?? new Map<string, RaceDateSource>();
+    const existing = perStudent.get(dateIso);
+    // race_events wins over club_races; never downgrade.
+    if (existing === "race_events") return;
+    perStudent.set(dateIso, source);
+    out.set(studentId, perStudent);
+  };
+
+  // club_races (lower priority) first, race_events second so it overrides.
   try {
-    const supabase = createSupabaseServerClient();
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("club_races")
       .select("student_id, race_date, status")
       .neq("status", "rejected");
-    if (error || !data) {
-      return out;
-    }
-    for (const row of data as Array<{ student_id: string; race_date: string }>) {
-      const set = out.get(row.student_id) ?? new Set<string>();
-      set.add((row.race_date ?? "").slice(0, 10));
-      out.set(row.student_id, set);
+    for (const row of (data as Array<{ student_id: string; race_date: string }> | null) ?? []) {
+      put(row.student_id, (row.race_date ?? "").slice(0, 10), "club_races");
     }
   } catch {
-    /* table absent → no race dates */
+    /* table absent → skip */
+  }
+
+  try {
+    const rows = await fetchAllRows<{ student_id: string; event_date: string }>(
+      (from, to) =>
+        withSupabaseNetworkRetry(() =>
+          supabase
+            .from("trainingpeaks_race_events")
+            .select("student_id, event_date")
+            .order("id", { ascending: true })
+            .range(from, to)
+        ),
+      { label: "club:race_events" }
+    );
+    for (const r of rows) {
+      put(r.student_id, (r.event_date ?? "").slice(0, 10), "race_events");
+    }
+  } catch {
+    /* table absent → skip */
+  }
+
+  return out;
+}
+
+/**
+ * Race dates per student (union of all sources). Backs classifyRecordType, which
+ * only needs "is this date a race?". Built from loadRaceDatesWithSource.
+ */
+export async function loadRaceDatesByStudent(): Promise<Map<string, Set<string>>> {
+  const withSource = await loadRaceDatesWithSource();
+  const out = new Map<string, Set<string>>();
+  for (const [studentId, perStudent] of withSource) {
+    out.set(studentId, new Set(perStudent.keys()));
   }
   return out;
 }
@@ -1963,7 +2016,9 @@ function evaluatedToSnapshot(
   distanceKey: RecordDistanceKey,
   recordType: ClubRecordType,
   slot: SnapshotSlot,
-  ev: EvaluatedRecord
+  ev: EvaluatedRecord,
+  /** Provenance override for race records (race_events / club_races). training keeps ev.source. */
+  sourceOverride?: RecordSource
 ): SnapshotDbRow {
   const cand = ev.candidate;
   return {
@@ -1977,7 +2032,7 @@ function evaluatedToSnapshot(
     record_date: cand.date || null,
     trust: ev.trust === "verified" ? "verified" : "preliminary",
     calc_method: ev.calcMethod,
-    source: ev.source,
+    source: sourceOverride ?? ev.source,
     source_workout_cache_id: cand.workoutId || null,
   };
 }
@@ -2051,7 +2106,13 @@ export async function materializeClubRecords(opts?: {
   const visibleRows = rows.filter((r) => visibleIds.has(r.studentId));
   const { candidates, quality } = await buildRecordInputs(visibleRows, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
-  const raceDates = await loadRaceDatesByStudent();
+  const raceDatesWithSource = await loadRaceDatesWithSource();
+  const raceDates = new Map(
+    [...raceDatesWithSource].map(([studentId, perStudent]) => [studentId, new Set(perStudent.keys())])
+  );
+  // Provenance for a race record: which source declared that date (race_events > club_races).
+  const raceSourceFor = (studentId: string, dateIso: string): RecordSource =>
+    raceDatesWithSource.get(studentId)?.get(dateIso) ?? "reconstructed";
 
   const snapshotRows: SnapshotDbRow[] = [];
   const targetSet = new Set(targetIds);
@@ -2060,9 +2121,15 @@ export async function materializeClubRecords(opts?: {
     for (const target of C.CLUB_RECORD_DISTANCES) {
       const evaluated = perDist?.get(target.key)?.evaluated ?? [];
       const { race, training, bestVerifiedRace } = splitByType(evaluated, studentId, raceDates);
-      if (race) snapshotRows.push(evaluatedToSnapshot(studentId, target.key, "race", "best", race));
+      if (race) {
+        snapshotRows.push(
+          evaluatedToSnapshot(studentId, target.key, "race", "best", race, raceSourceFor(studentId, race.candidate.date))
+        );
+      }
       if (bestVerifiedRace) {
-        snapshotRows.push(evaluatedToSnapshot(studentId, target.key, "race", "best_verified", bestVerifiedRace));
+        snapshotRows.push(
+          evaluatedToSnapshot(studentId, target.key, "race", "best_verified", bestVerifiedRace, raceSourceFor(studentId, bestVerifiedRace.candidate.date))
+        );
       }
       if (training) {
         snapshotRows.push(evaluatedToSnapshot(studentId, target.key, "training_split", "best", training));

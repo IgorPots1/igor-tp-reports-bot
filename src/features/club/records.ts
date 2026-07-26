@@ -25,8 +25,19 @@ import * as C from "./constants";
 
 export type RecordTrust = "verified" | "preliminary" | "hidden";
 
-/** Future-proofing for probeg.org / coach confirmation (schema only; see club_records migration). */
-export type RecordSource = "reconstructed" | "official_protocol" | "coach_confirmed";
+/**
+ * Provenance of a record. reconstructed = built from a training-run segment;
+ * race_events / club_races = a real race date (TP calendar scan / student-declared),
+ * whose TIME still comes from the matched workout; coach_confirmed / official_protocol
+ * = human-authored override. Priority when a date has several: coach_confirmed >
+ * official_protocol > race_events > club_races > reconstructed.
+ */
+export type RecordSource =
+  | "reconstructed"
+  | "official_protocol"
+  | "coach_confirmed"
+  | "race_events"
+  | "club_races";
 
 export type RecordHiddenReason =
   | "interval"
