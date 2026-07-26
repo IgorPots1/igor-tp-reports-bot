@@ -12,7 +12,9 @@
 import {
   parseTelegramInitDataStartParam,
   parseTelegramInitDataUser,
-  validateTelegramInitData,
+  validateClubInitData,
+  clubInitDataTokenInfo,
+  initDataDiag,
 } from "@/features/telegram/validate-init-data";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import {
@@ -83,8 +85,13 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
       code: "no_init_data",
     };
   }
-  if (!validateTelegramInitData(initData)) {
-    console.warn("[club.resolve] bad_signature (initData есть, HMAC не сошёлся — не тот бот-токен?)");
+  if (!validateClubInitData(initData)) {
+    const { varName } = clubInitDataTokenInfo();
+    const diag = initDataDiag(initData);
+    console.warn(
+      `[club.resolve] bad_signature tokenVar=${varName} keys=[${diag.keys.join(",")}] hashLen=${diag.hashLen}` +
+        (varName === "TELEGRAM_BOT_TOKEN" ? " (CLUB_TELEGRAM_BOT_TOKEN не задан → проверяем токеном /m/n = НЕ тот бот)" : "")
+    );
     return {
       ok: false,
       httpStatus: 401,

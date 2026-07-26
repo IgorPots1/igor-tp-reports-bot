@@ -13,7 +13,7 @@ import {
 } from "@/features/club/service";
 import { CLUB_RECORD_DISTANCES } from "@/features/club/constants";
 import type { RecordDistanceKey } from "@/features/club/records";
-import { getTelegramBotUsername } from "@/features/telegram/telegram-client";
+import { resolveClubBotUsername } from "@/features/club/entry-links";
 import {
   clubMiniAppShortName,
   clubTokenLinkStr,
@@ -285,7 +285,7 @@ export async function getClubLinksAdminData(): Promise<ClubLinksAdminData> {
   if (!shortName) {
     configError = "CLUB_MINIAPP_SHORT_NAME не задан (BotFather /newapp короткое имя, напр. club).";
   } else {
-    username = await getTelegramBotUsername().catch(() => null);
+    username = await resolveClubBotUsername().catch(() => null);
     if (!username) configError = "Не удалось получить username бота (TELEGRAM_BOT_TOKEN).";
   }
   const configured = Boolean(shortName && username);
@@ -318,7 +318,7 @@ export async function generateClubLinksForUnbound(coach: string): Promise<BulkLi
   const links = await listTelegramLinks();
   const unbound = links.filter((l) => !l.telegramUserId);
   const shortName = clubMiniAppShortName();
-  const username = shortName ? await getTelegramBotUsername().catch(() => null) : null;
+  const username = shortName ? await resolveClubBotUsername().catch(() => null) : null;
   const configured = Boolean(shortName && username);
 
   const out: BulkLinkRow[] = [];

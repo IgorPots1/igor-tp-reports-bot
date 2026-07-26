@@ -10,6 +10,16 @@ export function clubMiniAppShortName(): string | null {
   return process.env.CLUB_MINIAPP_SHORT_NAME?.trim() || null;
 }
 
+/**
+ * The club bot's username. The club app lives under its OWN bot (igor_agent_hub_bot),
+ * NOT the one getTelegramBotUsername() resolves from TELEGRAM_BOT_TOKEN (igorp_coach_bot).
+ * So the club link must use CLUB_BOT_USERNAME; getTelegramBotUsername is only a fallback.
+ */
+export async function resolveClubBotUsername(): Promise<string> {
+  const explicit = process.env.CLUB_BOT_USERNAME?.trim();
+  return explicit || (await getTelegramBotUsername());
+}
+
 /** Pure builders (given a resolved bot username + short name) — avoid N getMe calls. */
 export function clubTokenLinkStr(username: string, shortName: string, token: string): string {
   return `https://t.me/${username}/${shortName}?startapp=${encodeURIComponent(token)}`;
@@ -28,10 +38,10 @@ function requireShortName(): string {
 
 /** Personal one-time link: t.me/<bot>/<club>?startapp=<token>. For an UNBOUND student. */
 export async function buildClubTokenLink(token: string): Promise<string> {
-  return clubTokenLinkStr(await getTelegramBotUsername(), requireShortName(), token);
+  return clubTokenLinkStr(await resolveClubBotUsername(), requireShortName(), token);
 }
 
 /** General link, no parameter: t.me/<bot>/<club>. For an ALREADY-BOUND student. */
 export async function buildClubGeneralLink(): Promise<string> {
-  return clubGeneralLinkStr(await getTelegramBotUsername(), requireShortName());
+  return clubGeneralLinkStr(await resolveClubBotUsername(), requireShortName());
 }

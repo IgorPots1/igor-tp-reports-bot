@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import {
   parseTelegramInitDataStartParam,
   parseTelegramInitDataUser,
-  validateTelegramInitData,
+  validateClubInitData,
 } from "@/features/telegram/validate-init-data";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import {
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   } catch {
     return jsonResponse(400, { ok: false, error: "Неверный запрос." });
   }
-  if (!initData || !validateTelegramInitData(initData)) {
+  if (!initData || !validateClubInitData(initData)) {
     return jsonResponse(401, { ok: false, error: "Не авторизован." });
   }
 
