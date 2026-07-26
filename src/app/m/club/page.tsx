@@ -206,20 +206,50 @@ export default function ClubPage() {
   }, [initData]);
 
   useEffect(() => {
-    const tg = getTelegramWebApp();
-    if (tg) {
-      try {
-        tg.ready();
-        tg.expand();
-        tg.setBackgroundColor?.(C.bg);
-        tg.setHeaderColor?.(C.bg);
-      } catch {
-        /* older clients */
+    // The Telegram Web App SDK is loaded by /m/layout. `beforeInteractive` only
+    // takes effect in the ROOT layout (Next.js constraint) — in this nested layout
+    // the script can still be loading when this effect first runs, so reading
+    // window.Telegram.WebApp once would give null → empty initData → 401 for
+    // everyone. Poll briefly until initData is present (or give up → auth error).
+    let cancelled = false;
+    let applied = false;
+    let tries = 0;
+    const MAX_TRIES = 40; // ~2s at 50ms
+
+    const apply = (tg: TelegramWebApp | null) => {
+      if (applied || cancelled) return;
+      applied = true;
+      if (tg) {
+        try {
+          tg.ready();
+          tg.expand();
+          tg.setBackgroundColor?.(C.bg);
+          tg.setHeaderColor?.(C.bg);
+        } catch {
+          /* older clients */
+        }
       }
-      setInitData(tg.initData ?? "");
-    } else {
-      setInitData("");
-    }
+      setInitData(tg?.initData ?? "");
+    };
+
+    const tick = () => {
+      if (cancelled) return;
+      const tg = getTelegramWebApp();
+      if (tg && (tg.initData ?? "") !== "") {
+        apply(tg);
+        return;
+      }
+      tries += 1;
+      if (tries >= MAX_TRIES) {
+        apply(tg); // give up: real non-Telegram open or genuinely no initData
+        return;
+      }
+      setTimeout(tick, 50);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const loadFeed = useCallback(async () => {
