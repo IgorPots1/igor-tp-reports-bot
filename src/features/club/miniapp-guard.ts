@@ -42,8 +42,17 @@ export type ClubStudentResolution =
       ok: false;
       httpStatus: number;
       error: string;
-      /** Machine code so the client can branch (e.g. show the confirm/waiting screen). */
-      code: "unauthorized" | "coach_account" | "needs_confirm" | "needs_link" | "wrong_target" | "invalid_link" | "needs_request";
+      /** Machine code so the client can branch + the reason lands in Vercel logs. */
+      code:
+        | "no_init_data"
+        | "bad_signature"
+        | "unauthorized"
+        | "coach_account"
+        | "needs_confirm"
+        | "needs_link"
+        | "wrong_target"
+        | "invalid_link"
+        | "needs_request";
       /** Present with needs_confirm: who the link says this account is. */
       candidate?: { studentId: string; displayName: string };
     };
@@ -64,16 +73,34 @@ function startParamToken(initData: string): string | null {
  */
 export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStudentResolution> {
   const initData = typeof initDataRaw === "string" ? initDataRaw.trim() : "";
-  if (!initData || !validateTelegramInitData(initData)) {
-    return { ok: false, httpStatus: 401, error: "Не авторизован.", code: "unauthorized" };
+  // Distinguish «Telegram didn't pass initData» from «signature invalid» — different fixes.
+  if (!initData) {
+    console.warn("[club.resolve] no_init_data (пустой initData от клиента)");
+    return {
+      ok: false,
+      httpStatus: 401,
+      error: "Telegram не передал данные входа. Открой клуб ссылкой XOclub ВНУТРИ Telegram, не в браузере.",
+      code: "no_init_data",
+    };
+  }
+  if (!validateTelegramInitData(initData)) {
+    console.warn("[club.resolve] bad_signature (initData есть, HMAC не сошёлся — не тот бот-токен?)");
+    return {
+      ok: false,
+      httpStatus: 401,
+      error: "Подпись Telegram не сошлась. Переоткрой клуб; если повторяется — сообщи тренеру.",
+      code: "bad_signature",
+    };
   }
   const user = parseTelegramInitDataUser(initData);
   if (!user) {
+    console.warn("[club.resolve] unauthorized (initData без user)");
     return { ok: false, httpStatus: 401, error: "Не авторизован.", code: "unauthorized" };
   }
 
   // Coach's personal account must never bind to / view a student's club data.
   if (getTrainingPeaksCoachChatIds().includes(String(user.id))) {
+    console.warn(`[club.resolve] coach_account user=${user.id} (id в TELEGRAM_COACH_CHAT_IDS)`);
     return {
       ok: false,
       httpStatus: 403,
@@ -86,6 +113,7 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
   const tokensOn = isClubLinkTokensEnabled();
   const existing = await getTrainingPeaksStudentByTelegramUserId(user.id).catch(() => null);
   if (existing) {
+    console.info(`[club.resolve] ok user=${user.id} student=${existing.id}`);
     // Already bound → own data only. Under the token flow, a token naming a DIFFERENT
     // student on a bound account is a forwarded/wrong link → wrong_target.
     if (token && tokensOn) {

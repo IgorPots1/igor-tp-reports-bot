@@ -221,7 +221,7 @@ export default function ClubPage() {
     let cancelled = false;
     let applied = false;
     let tries = 0;
-    const MAX_TRIES = 40; // ~2s at 50ms
+    const MAX_TRIES = 100; // ~5s at 50ms — tolerate a slow webview loading the SDK
 
     const apply = (tg: TelegramWebApp | null) => {
       if (applied || cancelled) return;
