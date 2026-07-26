@@ -234,3 +234,55 @@ export async function revokeClubLinkAction(formData: FormData): Promise<void> {
   revalidateClub();
   redirect(withNotice(redirectTo, "notice", "Токен отозван."));
 }
+
+// ── Access requests (coach-approved entry) ─────────────────────────────────
+
+export async function approveClubAccessRequestAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const requestId = req(formData, "requestId");
+  const studentId = req(formData, "studentId");
+  const tgId = Number(req(formData, "telegramUserId"));
+  if (!Number.isFinite(tgId) || tgId <= 0) {
+    redirect(withNotice(redirectTo, "error", "Неверный Telegram id заявки."));
+  }
+  const { linkTelegramUserIdToStudent } = await import("@/features/trainingpeaks/repository");
+  const { markClubAccessRequestApproved } = await import("@/features/club/access-requests");
+  const { getBoundStudentSummary } = await import("@/features/club-admin/repository");
+  const { logClubLinkEvent } = await import("@/features/club/service");
+  try {
+    const res = await linkTelegramUserIdToStudent(studentId, tgId);
+    if (res.status !== "linked" && res.status !== "already_linked_same") {
+      // One Telegram = one student: collision or wrong target — blocked, logged, visible.
+      await logClubLinkEvent({ telegramUserId: tgId, telegramUsername: null, studentId, result: "conflict", reason: res.status });
+      revalidateClub();
+      redirect(withNotice(redirectTo, "error", `Привязка заблокирована: ${res.status} (этот Telegram или ученик уже заняты).`));
+    }
+    await markClubAccessRequestApproved(requestId, studentId, COACH);
+    await logClubLinkEvent({ telegramUserId: tgId, telegramUsername: null, studentId, result: "confirmed", reason: "access_request_approved" });
+    const sum = await getBoundStudentSummary(studentId);
+    revalidateClub();
+    redirect(withNotice(redirectTo, "notice", `Привязано: ${sum.name}. Последняя тренировка: ${sum.lastWorkoutDate ?? "нет"}, за 7 дней: ${sum.count7d}.${sum.count7d === 0 ? " ⚠ пусто — проверь, та ли строка." : ""}`));
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+}
+
+export async function rejectClubAccessRequestAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const requestId = req(formData, "requestId");
+  const tgId = Number(opt(formData, "telegramUserId") ?? "0");
+  const { markClubAccessRequestRejected } = await import("@/features/club/access-requests");
+  const { logClubLinkEvent } = await import("@/features/club/service");
+  try {
+    await markClubAccessRequestRejected(requestId, COACH);
+    await logClubLinkEvent({ telegramUserId: tgId || null, telegramUsername: null, studentId: null, result: "rejected", reason: "access_request_rejected" });
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", "Заявка отклонена."));
+}

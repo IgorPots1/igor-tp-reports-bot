@@ -22,9 +22,10 @@ export default function ClubHubPage() {
         <p className="admin-section-subtitle">Тренерская панель: ревизия результатов, очередь заявок, привязки, управление.</p>
       </div>
       <div className="admin-actions">
+        <Link className="admin-button admin-button-primary" href="/admin/club/requests">Заявки на доступ</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/results">Ревизия результатов</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/queue">Очередь заявок</Link>
-        <Link className="admin-button admin-button-secondary" href="/admin/club/links">Telegram-привязки</Link>
+        <Link className="admin-button admin-button-secondary" href="/admin/club/links">Ссылки на клуб</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/manage">Управление клубом</Link>
       </div>
     </section>

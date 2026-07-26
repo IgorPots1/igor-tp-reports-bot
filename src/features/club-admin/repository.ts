@@ -23,6 +23,9 @@ import {
   createClubLinkToken,
   listAllActiveClubLinkTokens,
 } from "@/features/club/link-tokens";
+import { listPendingClubAccessRequests, type ClubAccessRequest } from "@/features/club/access-requests";
+import { nameSim } from "@/features/club/name-match";
+import { fetchAllRows } from "@/features/supabase/paginate";
 
 export function isClubAdminEnabled(): boolean {
   return process.env.CLUB_ADMIN_ENABLED === "true";
@@ -329,6 +332,105 @@ export async function generateClubLinksForUnbound(coach: string): Promise<BulkLi
     });
   }
   return out;
+}
+
+// ── Access requests (coach-approved club entry) ────────────────────────────
+
+export type AccessCandidate = {
+  studentId: string;
+  name: string;
+  tpAthleteId: string | null;
+  active: boolean;
+  service: boolean;
+  lastWorkoutDate: string | null;
+  count30d: number;
+  boundTelegramUserId: number | null;
+  duplicateTp: boolean;
+};
+export type AccessRequestView = {
+  request: ClubAccessRequest;
+  suggestions: Array<{ studentId: string; name: string; sim: number }>;
+};
+export type ClubAccessAdminData = { requests: AccessRequestView[]; candidates: AccessCandidate[] };
+
+function reqFullName(r: ClubAccessRequest): string {
+  return [r.firstName, r.lastName].filter(Boolean).join(" ").trim() || r.telegramUsername || "";
+}
+
+/** Pending requests + full candidate list (with TP id, last workout, 30d count, status, dup). */
+export async function getClubAccessRequestsAdminData(): Promise<ClubAccessAdminData> {
+  const supabase = createSupabaseServerClient();
+  const [requests, studentsRes] = await Promise.all([
+    listPendingClubAccessRequests(),
+    // student_id (text) is the TrainingPeaks athlete identifier; id (uuid) is the local row.
+    supabase.from("trainingpeaks_students").select("id, student_name, student_id, is_active, is_service_account, telegram_user_id").order("student_name", { ascending: true }),
+  ]);
+  const students = ((studentsRes.data as Array<Record<string, unknown>> | null) ?? []);
+
+  // Workout aggregates from the last 90 days (bounded): last workout + 30-day count.
+  const since90 = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
+  const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+  const wrows = await fetchAllRows<{ student_id: string; workout_date: string; is_completed: boolean | null }>(
+    async (from, to) =>
+      supabase.from("trainingpeaks_workout_cache").select("student_id, workout_date, is_completed").gte("workout_date", since90).eq("is_completed", true).order("id", { ascending: true }).range(from, to),
+    { label: "access:workouts90" }
+  );
+  const lastByStudent = new Map<string, string>();
+  const count30 = new Map<string, number>();
+  for (const w of wrows) {
+    const cur = lastByStudent.get(w.student_id);
+    if (!cur || w.workout_date > cur) lastByStudent.set(w.student_id, w.workout_date);
+    if (w.workout_date >= since30) count30.set(w.student_id, (count30.get(w.student_id) ?? 0) + 1);
+  }
+  // Duplicate TP athlete ids (one athlete as several rows).
+  const tpCount = new Map<string, number>();
+  for (const s of students) {
+    const tp = s.student_id != null ? String(s.student_id) : null;
+    if (tp) tpCount.set(tp, (tpCount.get(tp) ?? 0) + 1);
+  }
+
+  const candidates: AccessCandidate[] = students.map((s) => {
+    const id = s.id as string;
+    const tp = s.student_id != null ? String(s.student_id) : null;
+    return {
+      studentId: id,
+      name: (s.student_name as string) ?? "",
+      tpAthleteId: tp,
+      active: s.is_active !== false,
+      service: s.is_service_account === true,
+      lastWorkoutDate: lastByStudent.get(id) ?? null,
+      count30d: count30.get(id) ?? 0,
+      boundTelegramUserId: (s.telegram_user_id as number | null) ?? null,
+      duplicateTp: tp ? (tpCount.get(tp) ?? 0) > 1 : false,
+    };
+  });
+
+  // Autosuggest: active, non-service candidates most similar to the request's name.
+  const pool = candidates.filter((c) => c.active && !c.service);
+  const views: AccessRequestView[] = requests.map((r) => {
+    const rn = reqFullName(r);
+    const ranked = pool
+      .map((c) => ({ studentId: c.studentId, name: c.name, sim: rn ? nameSim(rn, c.name) : 0 }))
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, 3);
+    return { request: r, suggestions: ranked };
+  });
+
+  return { requests: views, candidates };
+}
+
+/** Short post-bind summary for the coach: last workout + completed count in last 7 days. */
+export async function getBoundStudentSummary(studentId: string): Promise<{ name: string; lastWorkoutDate: string | null; count7d: number }> {
+  const supabase = createSupabaseServerClient();
+  const since7 = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const [{ data: s }, { data: w }] = await Promise.all([
+    supabase.from("trainingpeaks_students").select("student_name").eq("id", studentId).maybeSingle(),
+    supabase.from("trainingpeaks_workout_cache").select("workout_date, is_completed").eq("student_id", studentId).eq("is_completed", true).order("workout_date", { ascending: false }).limit(60),
+  ]);
+  const rows = (w as Array<{ workout_date: string }> | null) ?? [];
+  const last = rows.length ? rows[0].workout_date : null;
+  const count7d = rows.filter((r) => r.workout_date >= since7).length;
+  return { name: (s as { student_name: string } | null)?.student_name ?? studentId.slice(0, 8), lastWorkoutDate: last, count7d };
 }
 
 export type LinkEvent = { id: string; telegramUserId: number | null; username: string | null; studentId: string | null; result: string; reason: string | null; createdAt: string };

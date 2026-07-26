@@ -21,6 +21,8 @@ import {
 } from "@/features/trainingpeaks/repository";
 
 import { resolveClubLinkToken } from "./link-tokens";
+import { isClubLinkTokensEnabled } from "./constants";
+import { recordClubAccessRequest } from "./access-requests";
 
 /** Outer mini-app gate + club feature flag. Both must be on. */
 export function isClubEnabled(): boolean {
@@ -40,8 +42,8 @@ export type ClubStudentResolution =
       ok: false;
       httpStatus: number;
       error: string;
-      /** Machine code so the client can branch (e.g. show the confirm screen). */
-      code: "unauthorized" | "coach_account" | "needs_confirm" | "needs_link" | "wrong_target" | "invalid_link";
+      /** Machine code so the client can branch (e.g. show the confirm/waiting screen). */
+      code: "unauthorized" | "coach_account" | "needs_confirm" | "needs_link" | "wrong_target" | "invalid_link" | "needs_request";
       /** Present with needs_confirm: who the link says this account is. */
       candidate?: { studentId: string; displayName: string };
     };
@@ -81,11 +83,12 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
   }
 
   const token = startParamToken(initData);
+  const tokensOn = isClubLinkTokensEnabled();
   const existing = await getTrainingPeaksStudentByTelegramUserId(user.id).catch(() => null);
   if (existing) {
-    // Already bound → own data only. A token naming a DIFFERENT student on a bound
-    // account is a forwarded/wrong link: signal wrong_target (never switches accounts).
-    if (token) {
+    // Already bound → own data only. Under the token flow, a token naming a DIFFERENT
+    // student on a bound account is a forwarded/wrong link → wrong_target.
+    if (token && tokensOn) {
       const resolved = await resolveClubLinkToken(token);
       if (resolved.ok && resolved.studentId !== existing.id) {
         return {
@@ -99,33 +102,38 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
     return { ok: true, student: existing };
   }
 
-  // Not bound → need a valid one-time token. No write happens here.
-  if (!token) {
+  // Token flow (only when CLUB_LINK_TOKENS_ENABLED): personal one-time link → confirm.
+  if (token && tokensOn) {
+    const resolved = await resolveClubLinkToken(token);
+    if (!resolved.ok) {
+      return {
+        ok: false,
+        httpStatus: 403,
+        error: "Ссылка недействительна, обратись к тренеру.",
+        code: "invalid_link",
+      };
+    }
     return {
       ok: false,
-      httpStatus: 403,
-      error: "Открой клуб по личной ссылке от тренера — иначе мы не знаем, кто ты.",
-      code: "needs_link",
+      httpStatus: 409,
+      error: "Подтверди, что это твой аккаунт.",
+      code: "needs_confirm",
+      candidate: { studentId: resolved.studentId, displayName: resolved.displayName },
     };
   }
 
-  const resolved = await resolveClubLinkToken(token);
-  if (!resolved.ok) {
-    // Used / expired / revoked / unknown — never show any student data.
-    return {
-      ok: false,
-      httpStatus: 403,
-      error: "Ссылка недействительна, обратись к тренеру.",
-      code: "invalid_link",
-    };
-  }
-
-  // Valid token → confirm screen. Spec v3 2.1: ONLY the name is shown, nothing else.
+  // Default flow: general link → record an access request, show the waiting screen.
+  // No club data is exposed; the coach matches the request to a student in the admin.
+  await recordClubAccessRequest({
+    id: user.id,
+    username: user.username,
+    first_name: user.firstName,
+    last_name: user.lastName,
+  });
   return {
     ok: false,
-    httpStatus: 409,
-    error: "Подтверди, что это твой аккаунт.",
-    code: "needs_confirm",
-    candidate: { studentId: resolved.studentId, displayName: resolved.displayName },
+    httpStatus: 403,
+    error: "Заявка отправлена — тренер подтвердит доступ.",
+    code: "needs_request",
   };
 }

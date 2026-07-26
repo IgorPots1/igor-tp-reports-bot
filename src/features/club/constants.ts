@@ -225,6 +225,14 @@ export function isDayoffEnabled(): boolean {
   return process.env.CLUB_DAYOFF_ENABLED === "true";
 }
 /**
+ * Per-student one-time token links (/admin/club/links). OFF by default — the main
+ * flow is now the general link + coach-approved access requests. Kept behind this
+ * flag so the token path stays available but out of the default scenario.
+ */
+export function isClubLinkTokensEnabled(): boolean {
+  return process.env.CLUB_LINK_TOKENS_ENABLED === "true";
+}
+/**
  * Phase 3 — executing approved club requests (starts / days off) INTO TrainingPeaks
  * via the existing assisted-write pipeline. OFF by default. The highest-risk flag:
  * it is the only path that turns a club request into a real TP mutation. Even ON,

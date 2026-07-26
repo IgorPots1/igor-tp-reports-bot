@@ -45,6 +45,7 @@ export function validateTelegramInitData(initData: string): boolean {
 export type TelegramInitDataUser = {
   id: number;
   firstName: string | null;
+  lastName: string | null;
   username: string | null;
 };
 
@@ -60,6 +61,7 @@ export function parseTelegramInitDataUser(initData: string): TelegramInitDataUse
     return {
       id: u.id,
       firstName: typeof u.first_name === "string" ? u.first_name : null,
+      lastName: typeof u.last_name === "string" ? u.last_name : null,
       username: typeof u.username === "string" ? u.username : null,
     };
   } catch {
