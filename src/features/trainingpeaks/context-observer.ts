@@ -516,7 +516,7 @@ export function buildObservationLogPayload(input: BuildObservationLogPayloadInpu
   };
 }
 
-function mapObserverLabelsToPersistedLabels(labels: TrainingPeaksObserverLabel[]): PersistedObservationLabel[] {
+export function mapObserverLabelsToPersistedLabels(labels: TrainingPeaksObserverLabel[]): PersistedObservationLabel[] {
   const mapped = new Set<PersistedObservationLabel>();
 
   for (const label of labels) {
@@ -559,7 +559,7 @@ function shouldExtractMemoryForLabels(labels: PersistedObservationLabel[]): bool
   return labels.some((l) => l !== "ack_or_noise" && l !== "third_party_in_linked_topic");
 }
 
-function classifyObserverText(text: string | null): {
+export function classifyObserverText(text: string | null): {
   labels: TrainingPeaksObserverLabel[];
   scores: Partial<Record<TrainingPeaksObserverLabel, number>>;
 } {
@@ -1015,20 +1015,22 @@ async function observeLinkedGroupTopicMessage(input: {
     fromUsername: input.message.from?.username,
   });
 
-  // A message in a student's OWN linked topic is almost certainly from that student: the coach
-  // is diverted earlier, and the topic is 1:1-mapped to linkedStudent. Treat it as third-party
-  // ONLY when the sender POSITIVELY resolves to a different known student, or is the coach — NOT
-  // merely when we can't match their telegram id. 95 of 112 students have no telegram_user_id,
-  // so "unresolved" is the norm; defaulting those to third-party silently dropped whole students'
-  // reports (e.g. every report from a student posting via a linked group topic).
-  // Safety: nothing downstream consumes the persisted third_party label, and move-safety gates on
-  // the live reply-author/pronoun check (group-move-safety.ts), not on this role — so widening the
-  // linked-student path here weakens no action guard.
+  // Three cases for a message in a linked group topic, by who sent it:
+  //   1. the coach            → third-party under the owner (not a student report);
+  //   2. a DIFFERENT known    → the shared coaching group is a reporting channel; it's the SENDER's
+  //      student (resolved)      own report about their own run — attribute it to THEM (below);
+  //   3. the owner OR an      → the owner's own message. 95 of 112 students have no telegram_user_id,
+  //      unresolved sender       so "unresolved" is the norm; treating it as the owner keeps the
+  //                              owner's own reports (defaulting unresolved to third-party used to
+  //                              drop them). Handled by the final classify+persist below.
+  // Move-safety is unaffected in every case: group-move-safety.ts gates on the live reply-author /
+  // third-person pronoun, not on this attribution — a report is never a right to move a workout.
   const senderIsCoach = isCoachTelegramId(input.fromId);
-  const senderIsDifferentKnownStudent =
-    senderIdentity.student !== null && senderIdentity.student.id !== input.linkedStudent.id;
+  const senderStudent = senderIdentity.student;
 
-  if (senderIsCoach || senderIsDifferentKnownStudent) {
+  // The coach writing in a student's topic is not a student report — keep it out of the queue,
+  // logged as third-party under the topic owner (unchanged).
+  if (senderIsCoach) {
     await persistObserverObservation({
       studentId: input.linkedStudent.id,
       sourceType: "group_topic",
@@ -1044,6 +1046,40 @@ async function observeLinkedGroupTopicMessage(input: {
       hasAttachment: input.hasAttachment,
       text: input.text,
       senderRole: "third_party_in_linked_topic",
+      senderMatchMethod: senderIdentity.matchMethod,
+    });
+
+    return {
+      handled: true,
+      reason: "linked_group_topic",
+    };
+  }
+
+  // A KNOWN student writing in someone ELSE'S linked topic is reporting about THEIR OWN run — the
+  // shared coaching group is a common reporting channel. Attribute the observation to the ACTUAL
+  // sender and classify it for THEM (so report_like fires and a card is drafted for the author),
+  // instead of burying it as third-party under the topic owner (which dropped every group-reporter).
+  // The owner-unchanged path below still handles the owner's own messages and unresolved senders.
+  // Safety preserved: move-safety gates on the live reply-author/pronoun (group-move-safety.ts), NOT
+  // on this attribution, so a report is never a right to move a workout; memory/signals now follow
+  // the real author (input.studentId), so no foreign context lands in the owner's memory.
+  if (senderStudent !== null && senderStudent.id !== input.linkedStudent.id) {
+    const classifiedForSender = classifyObserverText(input.text);
+    await persistObserverObservation({
+      studentId: senderStudent.id,
+      sourceType: "group_topic",
+      chatId: String(input.message.chat.id),
+      messageThreadId: input.message.message_thread_id ?? null,
+      messageId: input.message.message_id,
+      fromId: input.fromId === undefined ? null : String(input.fromId),
+      fromUsername: input.fromUsername,
+      isTopicMessage: true,
+      labels: classifiedForSender.labels,
+      scores: classifiedForSender.scores,
+      messageLength: input.messageLength,
+      hasAttachment: input.hasAttachment,
+      text: input.text,
+      senderRole: "known_student",
       senderMatchMethod: senderIdentity.matchMethod,
     });
 
