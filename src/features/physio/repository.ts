@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { fetchAllRows } from "@/features/supabase/paginate";
 
 /**
  * Доступ к витринам движка физиологии (миграции с префиксом physio_).
@@ -213,18 +214,20 @@ export async function getPhysioGroupSummary(): Promise<PhysioGroupSummary | null
 
 export async function listPhysioRadar(): Promise<PhysioRadarRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("physio_coach_radar")
-    .select("*")
-    .order("fully_explained", { ascending: true })
-    .order("max_severity", { ascending: false })
-    .order("student_name", { ascending: true });
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      supabase
+        .from("physio_coach_radar")
+        .select("*")
+        .order("fully_explained", { ascending: true })
+        .order("max_severity", { ascending: false })
+        .order("student_name", { ascending: true })
+        .order("student_id", { ascending: true })
+        .range(from, to),
+    { label: "physio_coach_radar" }
+  );
 
-  if (error) {
-    throw new Error(`Failed to load physio coach radar: ${error.message}`);
-  }
-
-  return (data ?? []).map((row: Record<string, unknown>) => ({
+  return data.map((row: Record<string, unknown>) => ({
     studentId: row.student_id as string,
     studentName: row.student_name as string,
     alertDate: row.alert_date as string,
@@ -258,16 +261,18 @@ export async function listPhysioRadar(): Promise<PhysioRadarRow[]> {
 
 export async function listPhysioAthletes(): Promise<PhysioAthleteRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("physio_athlete_overview")
-    .select("*")
-    .order("student_name", { ascending: true });
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      supabase
+        .from("physio_athlete_overview")
+        .select("*")
+        .order("student_name", { ascending: true })
+        .order("student_id", { ascending: true })
+        .range(from, to),
+    { label: "physio_athlete_overview" }
+  );
 
-  if (error) {
-    throw new Error(`Failed to load physio athlete overview: ${error.message}`);
-  }
-
-  return (data ?? []).map((row: Record<string, unknown>) => ({
+  return data.map((row: Record<string, unknown>) => ({
     studentId: row.student_id as string,
     studentName: row.student_name as string,
     sex: (row.sex as string) ?? null,
@@ -314,16 +319,18 @@ export async function listPhysioAthletes(): Promise<PhysioAthleteRow[]> {
 
 export async function listPhysioDataHealth(): Promise<PhysioDataHealthRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("physio_data_health")
-    .select("*")
-    .order("runs_30", { ascending: false });
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      supabase
+        .from("physio_data_health")
+        .select("*")
+        .order("runs_30", { ascending: false })
+        .order("student_id", { ascending: true })
+        .range(from, to),
+    { label: "physio_data_health" }
+  );
 
-  if (error) {
-    throw new Error(`Failed to load physio data health: ${error.message}`);
-  }
-
-  return (data ?? []).map((row: Record<string, unknown>) => ({
+  return data.map((row: Record<string, unknown>) => ({
     studentId: row.student_id as string,
     studentName: row.student_name as string,
     hrvDays30: Number(row.hrv_days_30 ?? 0),
@@ -341,17 +348,19 @@ export async function listPhysioDataHealth(): Promise<PhysioDataHealthRow[]> {
 
 export async function listPhysioGlossary(): Promise<PhysioGlossaryRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("physio_glossary")
-    .select("*")
-    .order("kind", { ascending: false })
-    .order("sort_order", { ascending: true });
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      supabase
+        .from("physio_glossary")
+        .select("*")
+        .order("kind", { ascending: false })
+        .order("sort_order", { ascending: true })
+        .order("code", { ascending: true })
+        .range(from, to),
+    { label: "physio_glossary" }
+  );
 
-  if (error) {
-    throw new Error(`Failed to load physio glossary: ${error.message}`);
-  }
-
-  return (data ?? []).map((row: Record<string, unknown>) => ({
+  return data.map((row: Record<string, unknown>) => ({
     code: row.code as string,
     kind: row.kind as "alert" | "metric",
     plainName: row.plain_name as string,
