@@ -11,6 +11,7 @@ import {
   createSupabaseServerClient,
   withSupabaseNetworkRetry,
 } from "@/features/supabase/server";
+import { fetchAllRows, fetchAllInChunks, chunkIds } from "@/features/supabase/paginate";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
 import {
   classifyTrainingPeaksWorkoutActivity,
@@ -23,6 +24,7 @@ import {
   referenceVdotForAthlete,
   type ClubRecordType,
   type EvaluatedRecord,
+  type RecordCalcMethod,
   type RecordCandidate,
   type RecordDistanceKey,
   type WorkoutQuality,
@@ -224,27 +226,31 @@ function isVisible(student: ClubStudent): boolean {
 async function loadClubWorkoutRows(input: {
   from: string;
   to: string;
+  /** Incremental recompute: restrict to these students (materialize). Omit = whole club. */
+  studentIds?: string[];
 }): Promise<ClubWorkoutRow[]> {
   const supabase = createSupabaseServerClient();
   // Lean explicit column list: never pull `source_snapshot` (raw private TP
   // payload) or per-workout compliance into the club layer.
-  const { data, error } = await withSupabaseNetworkRetry(() =>
-    supabase
-      .from("trainingpeaks_workout_cache")
-      .select(
-        "id, student_id, student_name, workout_date, title, sport_or_type_code, workout_type_value_id, workout_sub_type_id, is_planned, is_completed, completed_time_raw, completed_distance_raw, start_time"
-      )
-      .gte("workout_date", input.from)
-      .lte("workout_date", input.to)
+  // Paginate: the window is ~20k rows — a single-shot select truncates at the
+  // 1000-row PostgREST cap (the club used to see ~5% of data). Stable .order("id").
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (fromRow, toRow) => {
+      let q = supabase
+        .from("trainingpeaks_workout_cache")
+        .select(
+          "id, student_id, student_name, workout_date, title, sport_or_type_code, workout_type_value_id, workout_sub_type_id, is_planned, is_completed, completed_time_raw, completed_distance_raw, start_time"
+        )
+        .gte("workout_date", input.from)
+        .lte("workout_date", input.to);
+      if (input.studentIds && input.studentIds.length > 0) {
+        q = q.in("student_id", input.studentIds);
+      }
+      return withSupabaseNetworkRetry(() => q.order("id", { ascending: true }).range(fromRow, toRow));
+    },
+    { label: `club:workout_rows ${input.from}..${input.to}` }
   );
-  if (error) {
-    throw new Error(
-      `club: failed to load workout rows ${input.from}..${input.to}: ${error.message}`
-    );
-  }
-  return (
-    (data as Array<Record<string, unknown>> | null) ?? []
-  ).map((row) => {
+  return data.map((row) => {
     const classification = classifyTrainingPeaksWorkoutActivity({
       title: (row.title as string | null) ?? null,
       sportOrTypeCode: (row.sport_or_type_code as string | null) ?? null,
@@ -304,30 +310,40 @@ async function loadWorkoutQualityIndex(idsRaw: string[]): Promise<Map<string, Wo
     has_fit: boolean | null;
     workout_type: string | null;
   };
-  const lapsData: LapRow[] = [];
-  const derivedData: DerivedRow[] = [];
-  for (const ids0 of chunk(ids, IN_CHUNK)) {
-    const [lapsRes, derivedRes] = await Promise.all([
-      withSupabaseNetworkRetry(() =>
-        supabase
-          .from("trainingpeaks_workout_laps")
-          .select("workout_cache_id, pace_sec_per_km, is_work, timer_time_s, elapsed_time_s, distance_m")
-          .in("workout_cache_id", ids0)
-      ),
-      withSupabaseNetworkRetry(() =>
-        supabase
-          .from("trainingpeaks_workout_derived_metrics")
-          .select("workout_cache_id, reps_detected_count, rep_detection_method, has_fit, workout_type")
-          .in("workout_cache_id", ids0)
-      ),
-    ]);
-    if (!lapsRes.error && lapsRes.data) {
-      lapsData.push(...(lapsRes.data as LapRow[]));
-    }
-    if (!derivedRes.error && derivedRes.data) {
-      derivedData.push(...(derivedRes.data as DerivedRow[]));
-    }
-  }
+  // Paginate EACH chunk's result: an interval workout can carry >1000 lap rows,
+  // so a chunked `.in()` that is not paged truncates silently (the disguised
+  // best-split "flakiness"). fetchAllInChunks chunks the id list AND pages each chunk.
+  const [lapsData, derivedData] = await Promise.all([
+    fetchAllInChunks<LapRow>(
+      ids,
+      IN_CHUNK,
+      (ids0, fromRow, toRow) =>
+        withSupabaseNetworkRetry(() =>
+          supabase
+            .from("trainingpeaks_workout_laps")
+            .select("workout_cache_id, pace_sec_per_km, is_work, timer_time_s, elapsed_time_s, distance_m")
+            .in("workout_cache_id", ids0)
+            .order("workout_cache_id", { ascending: true })
+            .order("lap_index", { ascending: true })
+            .range(fromRow, toRow)
+        ),
+      { label: "club:quality_laps" }
+    ),
+    fetchAllInChunks<DerivedRow>(
+      ids,
+      IN_CHUNK,
+      (ids0, fromRow, toRow) =>
+        withSupabaseNetworkRetry(() =>
+          supabase
+            .from("trainingpeaks_workout_derived_metrics")
+            .select("workout_cache_id, reps_detected_count, rep_detection_method, has_fit, workout_type")
+            .in("workout_cache_id", ids0)
+            .order("workout_cache_id", { ascending: true })
+            .range(fromRow, toRow)
+        ),
+      { label: "club:quality_derived" }
+    ),
+  ]);
 
   type LapAgg = {
     workPaces: number[];
@@ -626,14 +642,6 @@ type OrderedLap = {
 };
 
 /** Split an id list into chunks so a `.in(...)` filter never blows the URL length. */
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    out.push(arr.slice(i, i + size));
-  }
-  return out;
-}
-
 const IN_CHUNK = 60;
 
 /** Ordered (by lap_index) FIT laps per workout — for best-continuous-split. */
@@ -643,45 +651,49 @@ async function loadOrderedLaps(ids: string[]): Promise<Map<string, OrderedLap[]>
     return out;
   }
   const supabase = createSupabaseServerClient();
-  // Chunk the `.in()` — a 500+ id list overflows the PostgREST URL and errors out
-  // (which would silently drop every workout to the whole-workout fallback).
-  for (const ids0 of chunk(ids, IN_CHUNK)) {
-    const { data, error } = await withSupabaseNetworkRetry(() =>
-      supabase
-        .from("trainingpeaks_workout_laps")
-        .select("workout_cache_id, lap_index, distance_m, timer_time_s, elapsed_time_s, pace_sec_per_km")
-        .in("workout_cache_id", ids0)
-        .eq("source", "fit")
-        .order("workout_cache_id", { ascending: true })
-        .order("lap_index", { ascending: true })
-    );
-    if (error) {
-      continue;
+  // Chunk the `.in()` (URL length) AND paginate each chunk (row cap): an interval
+  // workout carries many laps, so an unpaged chunk >1000 rows truncated silently —
+  // dropping the tail of a workout's laps and poisoning best-split. Loud on error.
+  type LapRow = {
+    workout_cache_id: string;
+    lap_index: number | null;
+    distance_m: number | null;
+    timer_time_s: number | null;
+    elapsed_time_s: number | null;
+    pace_sec_per_km: number | null;
+  };
+  const rows = await fetchAllInChunks<LapRow>(
+    ids,
+    IN_CHUNK,
+    (ids0, fromRow, toRow) =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_workout_laps")
+          .select("workout_cache_id, lap_index, distance_m, timer_time_s, elapsed_time_s, pace_sec_per_km")
+          .in("workout_cache_id", ids0)
+          .eq("source", "fit")
+          .order("workout_cache_id", { ascending: true })
+          .order("lap_index", { ascending: true })
+          .range(fromRow, toRow)
+      ),
+    { label: "club:ordered_laps" }
+  );
+  for (const row of rows) {
+    const distanceM = toFiniteNumber(row.distance_m) ?? 0;
+    if (distanceM <= 0) {
+      continue; // drop rest/zero-distance laps that would poison the window
     }
-    for (const row of (data as Array<{
-      workout_cache_id: string;
-      lap_index: number | null;
-      distance_m: number | null;
-      timer_time_s: number | null;
-      elapsed_time_s: number | null;
-      pace_sec_per_km: number | null;
-    }> | null) ?? []) {
-      const distanceM = toFiniteNumber(row.distance_m) ?? 0;
-      if (distanceM <= 0) {
-        continue; // drop rest/zero-distance laps that would poison the window
-      }
-      const timer = toFiniteNumber(row.timer_time_s);
-      const elapsed = toFiniteNumber(row.elapsed_time_s);
-      const list = out.get(row.workout_cache_id) ?? [];
-      list.push({
-        lapIndex: toFiniteNumber(row.lap_index) ?? list.length,
-        distanceM,
-        movingS: (timer && timer > 0 ? timer : elapsed) ?? 0,
-        elapsedS: (elapsed && elapsed > 0 ? elapsed : timer) ?? 0,
-        pace: toFiniteNumber(row.pace_sec_per_km),
-      });
-      out.set(row.workout_cache_id, list);
-    }
+    const timer = toFiniteNumber(row.timer_time_s);
+    const elapsed = toFiniteNumber(row.elapsed_time_s);
+    const list = out.get(row.workout_cache_id) ?? [];
+    list.push({
+      lapIndex: toFiniteNumber(row.lap_index) ?? list.length,
+      distanceM,
+      movingS: (timer && timer > 0 ? timer : elapsed) ?? 0,
+      elapsedS: (elapsed && elapsed > 0 ? elapsed : timer) ?? 0,
+      pace: toFiniteNumber(row.pace_sec_per_km),
+    });
+    out.set(row.workout_cache_id, list);
   }
   return out;
 }
@@ -1240,41 +1252,40 @@ export async function getClubChallenge(input: {
 export async function getClubRecords(input: {
   currentStudentId: string;
 }): Promise<ClubRecordsView> {
-  const today = clubTodayIso();
-  const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
-  const [students, rows, freshness] = await Promise.all([
+  // Reads MATERIALIZED snapshots (Phase 1.1) — no live lap loading. The whole tab
+  // is now a few small reads instead of ~20k workouts + all laps. Snapshots are
+  // refreshed by materializeClubRecords after each cache/FIT scan. Coach overrides
+  // (club_records) still win at read time.
+  const [students, snapshots, coach, freshness] = await Promise.all([
     loadClubStudents(),
-    loadClubWorkoutRows({ from, to: today }),
+    loadRecordSnapshots(),
+    loadCoachRecords(),
     buildFreshness(),
   ]);
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
-  const visibleRows = rows.filter((r) => visibleById.has(r.studentId));
-
-  const { candidates, quality } = await buildRecordInputs(visibleRows, C.isBestSplitEnabled());
-  const byStudent = reconstructRecords(candidates, quality);
-  const [raceDates, coach] = await Promise.all([loadRaceDatesByStudent(), loadCoachRecords()]);
 
   const personal: ClubRecordEntry[] = [];
   const clubTops: ClubRecordsView["clubTops"] = [];
-  const ownResults = byStudent.get(input.currentStudentId);
+  const ownSnap = snapshots.get(input.currentStudentId);
 
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    // Personal card: coach override wins; else reconstruction (race + training split).
+    // Personal card: coach override wins; else snapshot (race + training split).
     const ownCoach = coach.get(`${input.currentStudentId}|${target.key}`);
     if (ownCoach) {
       if (ownCoach.trust !== "hidden") {
         personal.push(coachRaceEntry(target, ownCoach));
       }
     } else {
-      const ownSplit = splitByType(ownResults?.get(target.key)?.evaluated ?? [], input.currentStudentId, raceDates);
-      if (ownSplit.race) personal.push(toRecordEntry(ownSplit.race, "race"));
-      if (ownSplit.training) personal.push(toRecordEntry(ownSplit.training, "training_split"));
+      const slot = ownSnap?.get(target.key);
+      if (slot?.race) personal.push(snapshotToEntry(target.key, slot.race, "race"));
+      if (slot?.training) personal.push(snapshotToEntry(target.key, slot.training, "training_split"));
     }
 
-    // Club top: ONLY real races (verified). Coach-confirmed races count; reconstructed
-    // races count; a coach-hidden distance is excluded for that student.
+    // Club top: ONLY real races (verified). Coach-confirmed verified races count;
+    // materialized best_verified races count; coach-hidden distance excluded.
     const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null }> = [];
-    for (const [studentId, perDist] of byStudent) {
+    for (const [studentId, perStudent] of snapshots) {
+      if (!visibleById.has(studentId)) continue; // student turned non-visible after last materialize
       const c = coach.get(`${studentId}|${target.key}`);
       if (c) {
         if (c.trust === "verified") {
@@ -1282,8 +1293,8 @@ export async function getClubRecords(input: {
         }
         continue; // coach override (verified pushed above, hidden/preliminary excluded from tops)
       }
-      const bv = splitByType(perDist.get(target.key)?.evaluated ?? [], studentId, raceDates).bestVerifiedRace;
-      if (bv) raceRows.push({ studentId, name: bv.candidate.studentName, durationSeconds: bv.candidate.durationSeconds, pace: paceSecPerKm(bv.candidate.distanceKm, bv.candidate.durationSeconds) });
+      const rv = perStudent.get(target.key)?.raceVerified;
+      if (rv) raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: rv.durationSeconds, pace: rv.paceSecPerKm });
     }
     raceRows.sort((a, b) => a.durationSeconds - b.durationSeconds);
     const topRows: ClubRecordsClubTopRow[] = raceRows.slice(0, C.CLUB_RECORDS_TOP_N).map((r, index) => ({
@@ -1920,6 +1931,243 @@ export function classifyRecordType(
   raceDatesByStudent: Map<string, Set<string>>
 ): ClubRecordType {
   return raceDatesByStudent.get(studentId)?.has(dateIso) ? "race" : "training_split";
+}
+
+// ---------------------------------------------------------------------------
+// Materialized records (Phase 1.1) — precompute reconstruction into
+// club_record_snapshots so the tab reads ready rows instead of loading ~20k
+// workouts + all laps on every open. Reuses the SAME pure logic as the live path
+// (buildRecordInputs → reconstructRecords → splitByType); only I/O differs.
+// ---------------------------------------------------------------------------
+
+type SnapshotSlot = "best" | "best_verified";
+
+/** One materialized snapshot row (db shape is snake_case; see migration). */
+type SnapshotDbRow = {
+  student_id: string;
+  distance_key: string;
+  record_type: ClubRecordType;
+  slot: SnapshotSlot;
+  duration_seconds: number;
+  distance_km: number | null;
+  pace_sec_per_km: number | null;
+  record_date: string | null;
+  trust: "verified" | "preliminary";
+  calc_method: RecordCalcMethod;
+  source: string;
+  source_workout_cache_id: string | null;
+};
+
+function evaluatedToSnapshot(
+  studentId: string,
+  distanceKey: RecordDistanceKey,
+  recordType: ClubRecordType,
+  slot: SnapshotSlot,
+  ev: EvaluatedRecord
+): SnapshotDbRow {
+  const cand = ev.candidate;
+  return {
+    student_id: studentId,
+    distance_key: distanceKey,
+    record_type: recordType,
+    slot,
+    duration_seconds: Math.round(cand.durationSeconds),
+    distance_km: cand.distanceKm,
+    pace_sec_per_km: paceSecPerKm(cand.distanceKm, cand.durationSeconds),
+    record_date: cand.date || null,
+    trust: ev.trust === "verified" ? "verified" : "preliminary",
+    calc_method: ev.calcMethod,
+    source: ev.source,
+    source_workout_cache_id: cand.workoutId || null,
+  };
+}
+
+export type MaterializeResult = {
+  studentsProcessed: number;
+  rowsWritten: number;
+  dryRun: boolean;
+};
+
+/**
+ * Students whose workouts changed since `sinceIso` — summary (workout_cache) OR
+ * FIT laps (workout_laps). Both matter: FIT arrives after summary and only the
+ * laps table moves, so a cache-only signal would miss best-split trust upgrades.
+ * This is the incremental recompute set — decoupled from any scan's internals.
+ */
+export async function loadStudentsTouchedSince(sinceIso: string): Promise<string[]> {
+  const supabase = createSupabaseServerClient();
+  const ids = new Set<string>();
+  for (const table of ["trainingpeaks_workout_cache", "trainingpeaks_workout_laps"] as const) {
+    const rows = await fetchAllRows<{ student_id: string | null }>(
+      (from, to) =>
+        withSupabaseNetworkRetry(() =>
+          supabase
+            .from(table)
+            .select("student_id")
+            .gt("updated_at", sinceIso)
+            .order("student_id", { ascending: true })
+            .range(from, to)
+        ),
+      { label: `club:touched:${table}` }
+    );
+    for (const r of rows) {
+      if (r.student_id) ids.add(r.student_id);
+    }
+  }
+  return [...ids];
+}
+
+/**
+ * Recompute reconstructed records into club_record_snapshots. Scoped, incremental
+ * DELETE+INSERT per affected student. `studentIds` null/empty => whole club.
+ * Does NOT touch club_records (coach overrides). Idempotent.
+ */
+export async function materializeClubRecords(opts?: {
+  studentIds?: string[] | null;
+  dryRun?: boolean;
+}): Promise<MaterializeResult> {
+  const dryRun = opts?.dryRun ?? false;
+  const today = clubTodayIso();
+  const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
+
+  const students = await loadClubStudents();
+  const visible = students.filter(isVisible);
+  const visibleIds = new Set(visible.map((s) => s.id));
+
+  const explicit = opts?.studentIds && opts.studentIds.length > 0;
+  const targetIds = explicit
+    ? opts!.studentIds!.filter((id) => visibleIds.has(id))
+    : visible.map((s) => s.id);
+  if (targetIds.length === 0) {
+    return { studentsProcessed: 0, rowsWritten: 0, dryRun };
+  }
+
+  // Incremental read restricts to the target students; full recompute reads the club.
+  const rows = await loadClubWorkoutRows({
+    from,
+    to: today,
+    studentIds: explicit ? targetIds : undefined,
+  });
+  const visibleRows = rows.filter((r) => visibleIds.has(r.studentId));
+  const { candidates, quality } = await buildRecordInputs(visibleRows, C.isBestSplitEnabled());
+  const byStudent = reconstructRecords(candidates, quality);
+  const raceDates = await loadRaceDatesByStudent();
+
+  const snapshotRows: SnapshotDbRow[] = [];
+  const targetSet = new Set(targetIds);
+  for (const studentId of targetIds) {
+    const perDist = byStudent.get(studentId);
+    for (const target of C.CLUB_RECORD_DISTANCES) {
+      const evaluated = perDist?.get(target.key)?.evaluated ?? [];
+      const { race, training, bestVerifiedRace } = splitByType(evaluated, studentId, raceDates);
+      if (race) snapshotRows.push(evaluatedToSnapshot(studentId, target.key, "race", "best", race));
+      if (bestVerifiedRace) {
+        snapshotRows.push(evaluatedToSnapshot(studentId, target.key, "race", "best_verified", bestVerifiedRace));
+      }
+      if (training) {
+        snapshotRows.push(evaluatedToSnapshot(studentId, target.key, "training_split", "best", training));
+      }
+    }
+  }
+
+  if (dryRun) {
+    return { studentsProcessed: targetIds.length, rowsWritten: snapshotRows.length, dryRun: true };
+  }
+
+  const supabase = createSupabaseServerClient();
+  // Scoped replace: wipe THIS student set's snapshots, then insert fresh. Never
+  // touches students outside targetSet, never touches club_records.
+  for (const idChunk of chunkIds([...targetSet], 100)) {
+    const { error } = await supabase.from("club_record_snapshots").delete().in("student_id", idChunk);
+    if (error) {
+      throw new Error(`materializeClubRecords: delete failed: ${error.message}`);
+    }
+  }
+  for (const batch of chunkIds(snapshotRows, 500)) {
+    const { error } = await supabase.from("club_record_snapshots").insert(batch);
+    if (error) {
+      throw new Error(`materializeClubRecords: insert failed: ${error.message}`);
+    }
+  }
+  return { studentsProcessed: targetIds.length, rowsWritten: snapshotRows.length, dryRun: false };
+}
+
+export type SnapshotEntry = {
+  durationSeconds: number;
+  distanceKm: number | null;
+  paceSecPerKm: number | null;
+  date: string | null;
+  trust: "verified" | "preliminary";
+  calcMethod: RecordCalcMethod;
+  source: string;
+};
+
+export type StudentSnapshot = Map<
+  RecordDistanceKey,
+  { race: SnapshotEntry | null; raceVerified: SnapshotEntry | null; training: SnapshotEntry | null }
+>;
+
+/** Read materialized snapshots: studentId -> distanceKey -> {race,raceVerified,training}. */
+export async function loadRecordSnapshots(): Promise<Map<string, StudentSnapshot>> {
+  const out = new Map<string, StudentSnapshot>();
+  const supabase = createSupabaseServerClient();
+  let rows: SnapshotDbRow[];
+  try {
+    rows = await fetchAllRows<SnapshotDbRow>(
+      (from, to) =>
+        withSupabaseNetworkRetry(() =>
+          supabase
+            .from("club_record_snapshots")
+            .select(
+              "student_id, distance_key, record_type, slot, duration_seconds, distance_km, pace_sec_per_km, record_date, trust, calc_method, source, source_workout_cache_id"
+            )
+            .order("id", { ascending: true })
+            .range(from, to)
+        ),
+      { label: "club:record_snapshots" }
+    );
+  } catch {
+    return out; // table absent (pre-migration) → empty; caller renders nothing
+  }
+  for (const r of rows) {
+    const distanceKey = r.distance_key as RecordDistanceKey;
+    const perStudent = out.get(r.student_id) ?? (new Map() as StudentSnapshot);
+    const slot = perStudent.get(distanceKey) ?? { race: null, raceVerified: null, training: null };
+    const entry: SnapshotEntry = {
+      durationSeconds: Number(r.duration_seconds ?? 0),
+      distanceKm: r.distance_km != null ? Number(r.distance_km) : null,
+      paceSecPerKm: r.pace_sec_per_km != null ? Number(r.pace_sec_per_km) : null,
+      date: (r.record_date as string | null) ?? null,
+      trust: r.trust,
+      calcMethod: r.calc_method,
+      source: r.source,
+    };
+    if (r.record_type === "race" && r.slot === "best") slot.race = entry;
+    else if (r.record_type === "race" && r.slot === "best_verified") slot.raceVerified = entry;
+    else if (r.record_type === "training_split" && r.slot === "best") slot.training = entry;
+    perStudent.set(distanceKey, slot);
+    out.set(r.student_id, perStudent);
+  }
+  return out;
+}
+
+function snapshotToEntry(
+  distanceKey: RecordDistanceKey,
+  entry: SnapshotEntry,
+  recordType: ClubRecordType
+): ClubRecordEntry {
+  return {
+    distanceKey,
+    distanceLabel: LABEL_BY_KEY.get(distanceKey) ?? distanceKey,
+    durationSeconds: entry.durationSeconds,
+    paceSecPerKm: entry.paceSecPerKm,
+    date: entry.date ?? "",
+    dateLabel: entry.date ? formatRuDate(entry.date) : "",
+    trust: entry.trust,
+    source: entry.source as ClubRecordEntry["source"],
+    calcMethod: entry.calcMethod,
+    recordType,
+  };
 }
 
 /** Exposed for the validation script (Stage C4): raw per-candidate evaluation. */
