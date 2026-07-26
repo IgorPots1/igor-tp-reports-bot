@@ -37,11 +37,28 @@ type TelegramWebApp = {
   expand: () => void;
   setBackgroundColor?: (c: string) => void;
   setHeaderColor?: (c: string) => void;
+  platform?: string;
+  version?: string;
+  initDataUnsafe?: { user?: { id?: number }; start_param?: string };
 };
 
 function getTelegramWebApp(): TelegramWebApp | null {
   const tg = (globalThis as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
   return tg ?? null;
+}
+
+/** Client-side diagnostics — distinguishes «SDK not loaded» vs «SDK loaded, no mini-app data». */
+function clientDiag(): { hasTelegram: boolean; hasWebApp: boolean; platform: string | null; version: string | null; initDataLen: number; hasUser: boolean } {
+  const T = (globalThis as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram;
+  const wa = T?.WebApp;
+  return {
+    hasTelegram: Boolean(T),
+    hasWebApp: Boolean(wa),
+    platform: wa?.platform ?? null,
+    version: wa?.version ?? null,
+    initDataLen: (wa?.initData ?? "").length,
+    hasUser: Boolean(wa?.initDataUnsafe?.user?.id),
+  };
 }
 
 // --- Dark "club" palette: dark theme + yellow accent (naryad) ---
@@ -159,6 +176,7 @@ export default function ClubPage() {
   const [error, setError] = useState<string | null>(null);
   const [needsConfirm, setNeedsConfirm] = useState<Candidate | null>(null);
   const [accessRequested, setAccessRequested] = useState(false);
+  const [noInitData, setNoInitData] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [linkOutcome, setLinkOutcome] = useState<"idle" | "rejected" | "conflict">("idle");
 
@@ -236,7 +254,20 @@ export default function ClubPage() {
           /* older clients */
         }
       }
-      setInitData(tg?.initData ?? "");
+      const id = tg?.initData ?? "";
+      if (id === "") {
+        // No initData → capture WHY (SDK missing vs SDK present but no mini-app data)
+        // and ship it to the server log, then show a clear screen (not a red error).
+        const diag = clientDiag();
+        console.warn("[club.client] no initData", diag);
+        setNoInitData(true);
+        void fetch("/api/m/club/clientlog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(diag),
+        }).catch(() => undefined);
+      }
+      setInitData(id);
     };
 
     const tick = () => {
@@ -414,6 +445,8 @@ export default function ClubPage() {
       ) : null}
 
       {accessRequested ? <RequestSentScreen /> : null}
+
+      {noInitData ? <NoInitDataScreen /> : null}
 
       <nav style={S.tabBar}>
         {TABS.map((t) => {
@@ -1230,6 +1263,21 @@ function ConfirmScreen({
 }
 
 /** Shown to an unbound account on the general link — a request was recorded server-side. */
+/** Telegram passed no initData — opened as a plain page or via a bad link. */
+function NoInitDataScreen() {
+  return (
+    <div style={{ ...S.overlay, alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ ...S.card, maxWidth: 340, width: "100%", textAlign: "center", marginBottom: 0 }}>
+        <div style={{ fontSize: 40, marginBottom: 10 }}>📲</div>
+        <div style={{ fontFamily: HEAD, fontSize: 22, color: C.ink, marginBottom: 10 }}>Открой внутри Telegram</div>
+        <div style={{ color: C.sub, fontSize: 14, lineHeight: 1.5 }}>
+          Клуб открывается только по ссылке <b style={{ color: C.accent }}>t.me/igorp_coach_bot/XOclub</b> в приложении Telegram (не в браузере). Нажми ссылку от тренера ещё раз.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RequestSentScreen() {
   return (
     <div style={{ ...S.overlay, alignItems: "center", justifyContent: "center", padding: 24 }}>
