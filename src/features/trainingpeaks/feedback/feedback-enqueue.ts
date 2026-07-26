@@ -12,6 +12,7 @@ import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features
 import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
 import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
+import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
 
 type SupabaseLike = ReturnType<typeof createSupabaseServerClient>;
 
@@ -53,24 +54,26 @@ function toPlannerDerived(r: DerivedRow, agg: { avgPaceSecPerKm: number | null; 
   };
 }
 
-function chunk<T>(a: T[], n: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < a.length; i += n) out.push(a.slice(i, i + n));
-  return out;
-}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyQuery = any;
+// Chunks the `.in()` list (URL length) AND paginates each chunk's result (the 1000
+// server cap). Ordered by `id` so pages don't overlap. Callers pass FILTERS in
+// `extra`; they must NOT pass `.limit(N>1000)` (a no-op cap that silently truncates)
+// or an `.order()` (pagination owns ordering here).
 async function fetchIn<T>(supabase: SupabaseLike, table: string, select: string, column: string, ids: string[], extra?: (q: AnyQuery) => AnyQuery): Promise<T[]> {
-  const out: T[] = [];
-  for (const part of chunk(ids, 150)) {
-    let q: AnyQuery = supabase.from(table).select(select).in(column, part);
-    if (extra) q = extra(q);
-    const { data, error } = (await withSupabaseNetworkRetry(() => q)) as { data: T[] | null; error: { message: string } | null };
-    if (error) throw new Error(`fetch ${table} failed: ${error.message}`);
-    out.push(...((data as T[]) ?? []));
-  }
-  return out;
+  if (ids.length === 0) return [];
+  return fetchAllInChunks<T>(
+    ids,
+    150,
+    (chunkIds, from, to) => {
+      let q: AnyQuery = supabase.from(table).select(select).in(column, chunkIds);
+      if (extra) q = extra(q);
+      q = q.order("id", { ascending: true }).range(from, to);
+      return withSupabaseNetworkRetry(() => q) as Promise<{ data: T[] | null; error: { message: string } | null }>;
+    },
+    { label: `feedback:${table}` }
+  );
 }
 
 /**
@@ -112,7 +115,7 @@ export async function assemblePlannerInputsForWorkouts(
 
   // Full run history per student (for compareWorkout + personal baselines).
   const historyRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", studentIds, (q) =>
-    q.eq("workout_type", "run").limit(6000)
+    q.eq("workout_type", "run")
   );
 
   const students = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_students", "id, sex, telegram_formality", "id", studentIds);
@@ -124,7 +127,7 @@ export async function assemblePlannerInputsForWorkouts(
     "student_id, memory_type, summary_text, valid_from, last_seen_at",
     "student_id",
     studentIds,
-    (q) => q.in("memory_type", ["emotional_state", "health_status"]).limit(4000)
+    (q) => q.in("memory_type", ["emotional_state", "health_status"])
   );
   const memoryByStudent = new Map<string, ContextPacket["memoryItems"]>();
   for (const m of memoryRows) {
@@ -145,7 +148,7 @@ export async function assemblePlannerInputsForWorkouts(
     "student_id, text_preview, labels, observed_at",
     "student_id",
     studentIds,
-    (q) => q.gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()).order("observed_at", { ascending: false }).limit(8000)
+    (q) => q.gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
   );
   const messagesByStudent = new Map<string, ContextPacket["studentMessages"]>();
   for (const o of obsRows) {
@@ -162,7 +165,7 @@ export async function assemblePlannerInputsForWorkouts(
     "student_id, metric_date, metric_key, value_numeric, value_avg_numeric",
     "student_id",
     studentIds,
-    (q) => q.in("metric_key", ["pulse", "sleep_hours", "hrv", "body_battery"]).limit(40000)
+    (q) => q.in("metric_key", ["pulse", "sleep_hours", "hrv", "body_battery"])
   );
   const healthByStudent = new Map<string, ContextPacket["healthMetrics"]>();
   for (const h of healthRows) {
@@ -362,25 +365,36 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   const sinceIso = new Date(Date.now() - lookbackMs).toISOString();
 
   // Active, non-service students only — a deactivated student gets no drafts.
-  const { data: studRows, error: sErr } = await withSupabaseNetworkRetry(() =>
-    supabase.from("trainingpeaks_students").select("id, is_active, is_service_account")
+  // Paginated: the roster is ~600 today, but an unpaged read would silently drop
+  // students past 1000 as the club grows.
+  const studRows = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      withSupabaseNetworkRetry(() =>
+        supabase.from("trainingpeaks_students").select("id, is_active, is_service_account").order("id", { ascending: true }).range(from, to)
+      ) as Promise<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+    { label: "report-sweep:students" }
   );
-  if (sErr) throw new Error(`report sweep: list students failed: ${sErr.message}`);
   const activeIds = new Set(
-    ((studRows as Array<Record<string, unknown>>) ?? []).filter((s) => s.is_active && !s.is_service_account).map((s) => s.id as string)
+    (studRows ?? []).filter((s) => s.is_active && !s.is_service_account).map((s) => s.id as string)
   );
 
   // 1. recognised reports in the lookback, attributed to an active student.
-  const { data: obsRows, error: oErr } = await withSupabaseNetworkRetry(() =>
-    supabase
-      .from("trainingpeaks_telegram_context_observations")
-      .select("student_id, observed_at, labels")
-      .gte("observed_at", sinceIso)
-      .order("observed_at", { ascending: false })
-      .limit(5000)
+  // Paginated: a busy 48h window can exceed 1000 observations; the old .limit(5000)
+  // silently capped at 1000 (server max-rows) and report_like reports past it were
+  // dropped → those runs were never drafted.
+  const obsRows = await fetchAllRows<Record<string, unknown>>(
+    (from, to) =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_telegram_context_observations")
+          .select("student_id, observed_at, labels")
+          .gte("observed_at", sinceIso)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ) as Promise<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+    { label: "report-sweep:observations" }
   );
-  if (oErr) throw new Error(`report sweep: list observations failed: ${oErr.message}`);
-  const reports = ((obsRows as Array<Record<string, unknown>>) ?? [])
+  const reports = (obsRows ?? [])
     .filter((o) => {
       const labels = Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [];
       return labels.includes("report_like") && o.student_id && activeIds.has(o.student_id as string);
@@ -405,7 +419,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   const reportingIds = [...new Set(reports.map((r) => r.studentId))];
   const runFloor = shiftYmd(new Date(Date.now() - lookbackMs).toISOString().slice(0, 10), -(REPORT_MATCH_WINDOW_DAYS + 1));
   const runRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", reportingIds, (q) =>
-    q.eq("workout_type", "run").gte("workout_date", runFloor).limit(8000)
+    q.eq("workout_type", "run").gte("workout_date", runFloor)
   );
   const runsByStudent = new Map<string, DerivedRow[]>();
   for (const r of runRows) {
