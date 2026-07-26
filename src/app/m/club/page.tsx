@@ -47,10 +47,36 @@ function getTelegramWebApp(): TelegramWebApp | null {
   return tg ?? null;
 }
 
-/** Client-side diagnostics — distinguishes «SDK not loaded» vs «SDK loaded, no mini-app data». */
-function clientDiag(): { hasTelegram: boolean; hasWebApp: boolean; platform: string | null; version: string | null; initDataLen: number; hasUser: boolean } {
+/** Client-side diagnostics — distinguishes «SDK not loaded» vs «SDK loaded, no mini-app data»
+ *  vs «launch hash lost before the page ran» (redirect). No secret values are captured. */
+function clientDiag(): {
+  hasTelegram: boolean;
+  hasWebApp: boolean;
+  platform: string | null;
+  version: string | null;
+  initDataLen: number;
+  hasUser: boolean;
+  hashLen: number;
+  hashHasTgData: boolean;
+  hasSessionInit: boolean;
+  referrerHost: string | null;
+} {
   const T = (globalThis as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram;
   const wa = T?.WebApp;
+  const hash = typeof window !== "undefined" ? window.location.hash : "";
+  let referrerHost: string | null = null;
+  try {
+    referrerHost = typeof document !== "undefined" && document.referrer ? new URL(document.referrer).host : null;
+  } catch {
+    referrerHost = null;
+  }
+  let hasSessionInit = false;
+  try {
+    hasSessionInit =
+      typeof sessionStorage !== "undefined" && (sessionStorage.getItem("__telegram__initParams") ?? "").includes("tgWebAppData");
+  } catch {
+    hasSessionInit = false;
+  }
   return {
     hasTelegram: Boolean(T),
     hasWebApp: Boolean(wa),
@@ -58,7 +84,41 @@ function clientDiag(): { hasTelegram: boolean; hasWebApp: boolean; platform: str
     version: wa?.version ?? null,
     initDataLen: (wa?.initData ?? "").length,
     hasUser: Boolean(wa?.initDataUnsafe?.user?.id),
+    // Was the launch hash (#tgWebAppData=…) still present when the page ran?
+    // If false while hasWebApp is true, the hash was stripped (redirect) before load.
+    hashLen: hash.length,
+    hashHasTgData: hash.includes("tgWebAppData"),
+    hasSessionInit,
+    referrerHost,
   };
+}
+
+/** Recover initData when window.Telegram.WebApp.initData is empty — mirrors what
+ *  telegram-web-app.js does internally: read it from the launch hash, then from the
+ *  SDK's session store (survives in-app navigation after the hash is gone). Returns
+ *  "" if neither source has it (genuinely no mini-app launch data). */
+function recoverInitData(): string {
+  // 1) Launch hash: #tgWebAppData=<urlencoded initData>&tgWebAppVersion=…
+  try {
+    const h = typeof window !== "undefined" ? window.location.hash : "";
+    if (h.length > 1) {
+      const fromHash = new URLSearchParams(h.slice(1)).get("tgWebAppData");
+      if (fromHash) return fromHash;
+    }
+  } catch {
+    /* ignore */
+  }
+  // 2) The raw SDK persists launch params here after the first load.
+  try {
+    const raw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("__telegram__initParams") : null;
+    if (raw) {
+      const parsed = JSON.parse(raw) as { tgWebAppData?: string };
+      if (parsed?.tgWebAppData) return parsed.tgWebAppData;
+    }
+  } catch {
+    /* ignore */
+  }
+  return "";
 }
 
 // --- Dark "club" palette: dark theme + yellow accent (naryad) ---
@@ -241,7 +301,7 @@ export default function ClubPage() {
     let tries = 0;
     const MAX_TRIES = 100; // ~5s at 50ms — tolerate a slow webview loading the SDK
 
-    const apply = (tg: TelegramWebApp | null) => {
+    const apply = (tg: TelegramWebApp | null, id: string, source: "sdk" | "recovered" | "none") => {
       if (applied || cancelled) return;
       applied = true;
       if (tg) {
@@ -254,18 +314,21 @@ export default function ClubPage() {
           /* older clients */
         }
       }
-      const id = tg?.initData ?? "";
-      if (id === "") {
-        // No initData → capture WHY (SDK missing vs SDK present but no mini-app data)
-        // and ship it to the server log, then show a clear screen (not a red error).
-        const diag = clientDiag();
-        console.warn("[club.client] no initData", diag);
-        setNoInitData(true);
+      // Log the resolution when the SDK gave nothing: either we recovered initData
+      // from the launch hash / session store (source="recovered" — SDK timing/race),
+      // or we have nothing at all (source="none" — hash stripped or non-Telegram open).
+      // Ship the full client state to the server log so Vercel shows WHY.
+      if (source !== "sdk") {
+        const diag = { ...clientDiag(), source, recoveredLen: id.length };
+        console.warn("[club.client] initData not from SDK", diag);
         void fetch("/api/m/club/clientlog", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(diag),
         }).catch(() => undefined);
+      }
+      if (id === "") {
+        setNoInitData(true); // clear screen, not a red error
       }
       setInitData(id);
     };
@@ -273,13 +336,20 @@ export default function ClubPage() {
     const tick = () => {
       if (cancelled) return;
       const tg = getTelegramWebApp();
-      if (tg && (tg.initData ?? "") !== "") {
-        apply(tg);
+      const sdkId = tg?.initData ?? "";
+      if (sdkId !== "") {
+        apply(tg, sdkId, "sdk");
+        return;
+      }
+      // SDK has no initData yet — try recovering it from the launch hash / session store.
+      const recovered = recoverInitData();
+      if (recovered !== "") {
+        apply(tg, recovered, "recovered");
         return;
       }
       tries += 1;
       if (tries >= MAX_TRIES) {
-        apply(tg); // give up: real non-Telegram open or genuinely no initData
+        apply(tg, "", "none"); // give up: real non-Telegram open or genuinely no initData
         return;
       }
       setTimeout(tick, 50);
