@@ -176,3 +176,13 @@ export function isPredictionEnabled(): boolean {
 export function isDayoffEnabled(): boolean {
   return process.env.CLUB_DAYOFF_ENABLED === "true";
 }
+/**
+ * Phase 3 — executing approved club requests (starts / days off) INTO TrainingPeaks
+ * via the existing assisted-write pipeline. OFF by default. The highest-risk flag:
+ * it is the only path that turns a club request into a real TP mutation. Even ON,
+ * every action still goes dry-run → coach confirm → local runner → verify → rollback;
+ * nothing auto-applies. Keep OFF until the rollout explicitly enables it.
+ */
+export function isClubTpExecutionEnabled(): boolean {
+  return process.env.CLUB_TP_EXECUTION_ENABLED === "true";
+}
