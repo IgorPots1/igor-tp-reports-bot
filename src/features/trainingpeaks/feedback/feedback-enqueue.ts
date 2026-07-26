@@ -74,6 +74,28 @@ async function fetchIn<T>(supabase: SupabaseLike, table: string, select: string,
 }
 
 /**
+ * Races (starts) must not distort a student's normal picture: a race is a max effort with high
+ * pulse, fast pace and end drift — normal for a competition, wrong to "correct". This returns the
+ * set of `${studentId}|${date}` that are races, from the trainingpeaks_race_events calendar
+ * (student + event_date). Used to keep races out of the comparison base / personal baselines and
+ * out of the normal feedback queue. Calendar-only by design (title/HR heuristics are unreliable).
+ */
+async function fetchRaceKeys(supabase: SupabaseLike, studentIds: string[], fromYmd: string): Promise<Set<string>> {
+  const keys = new Set<string>();
+  if (studentIds.length === 0) return keys;
+  const rows = await fetchIn<{ student_id: string; event_date: string }>(
+    supabase,
+    "trainingpeaks_race_events",
+    "student_id, event_date",
+    "student_id",
+    studentIds,
+    (q) => q.gte("event_date", fromYmd)
+  );
+  for (const r of rows) keys.add(`${r.student_id}|${r.event_date}`);
+  return keys;
+}
+
+/**
  * Build the planner input (ContextPacket) for each target workout, doing the
  * derived+laps+history+memory+health+student joins in bulk. Returns a map keyed
  * by workout_cache_id. Pure read.
@@ -83,6 +105,10 @@ export async function assemblePlannerInputsForWorkouts(
   targetDerivedRows: DerivedRow[]
 ): Promise<Map<string, ContextPacket>> {
   const studentIds = [...new Set(targetDerivedRows.map((r) => r.student_id as string))];
+
+  // Races to exclude from history (comparison base + personal easy-run baselines) so a max-effort
+  // start doesn't inflate the norm and later read as "the student regressed".
+  const raceKeys = await fetchRaceKeys(supabase, studentIds, new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10));
 
   // Full run history per student (for compareWorkout + personal baselines).
   const historyRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", studentIds, (q) =>
@@ -190,6 +216,7 @@ export async function assemblePlannerInputsForWorkouts(
 
   const historyByStudent = new Map<string, PlannerDerivedMetrics[]>();
   for (const r of historyRows) {
+    if (raceKeys.has(`${r.student_id as string}|${r.workout_date as string}`)) continue; // race → out of baselines/comparison
     const row = toPlannerDerived(r, aggFor(r.workout_cache_id as string));
     const list = historyByStudent.get(r.student_id as string) ?? [];
     list.push(row);
@@ -300,6 +327,7 @@ export type FeedbackReportSweepSummary = {
   reportsMatchedRun: number; // reports that found a fresh run in [D-1, D]
   reportsNoRunYet: number; // report present, run not synced yet → waits for next sweep
   reportsRunAlreadyHandled: number; // the window run already has a job (or was chosen this sweep)
+  reportsRunIsRace: number; // the window run is a race (calendar) → not drafted; coach answers it personally
   runsEnqueued: number; // distinct runs enqueued as pending
   runsBlocked: number;
   runsSkipped: number;
@@ -365,6 +393,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     reportsMatchedRun: 0,
     reportsNoRunYet: 0,
     reportsRunAlreadyHandled: 0,
+    reportsRunIsRace: 0,
     runsEnqueued: 0,
     runsBlocked: 0,
     runsSkipped: 0,
@@ -390,16 +419,25 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   // (a fresh report after the coach cleared the card resurrects it; the same report doesn't loop).
   const blockState = await fetchWorkoutJobBlockState([...new Set(runRows.map((r) => r.workout_cache_id as string))]);
 
+  // Races (from the calendar) are never drafted for the normal queue — a start has race-normal
+  // high pulse / drift, and "hold an even pace" would be nonsense. Igor answers starts personally.
+  const raceKeys = await fetchRaceKeys(supabase, reportingIds, runFloor);
+
   // 4. per report, pick the run it's about; dedupe so two reports about one run enqueue it once.
   const chosen = new Map<string, { row: DerivedRow; reportDate: string }>();
   for (const rep of reports) {
     const prevDay = shiftYmd(rep.date, -REPORT_MATCH_WINDOW_DAYS);
-    const candidates = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
+    const inWindow = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
       const wd = r.workout_date as string;
       return wd === rep.date || wd === prevDay;
     });
-    if (candidates.length === 0) {
+    if (inWindow.length === 0) {
       summary.reportsNoRunYet += 1; // run not synced yet → next sweep will bind it
+      continue;
+    }
+    const candidates = inWindow.filter((r) => !raceKeys.has(`${r.student_id as string}|${r.workout_date as string}`));
+    if (candidates.length === 0) {
+      summary.reportsRunIsRace += 1; // only a race in window → not drafted
       continue;
     }
     const available = candidates.filter((r) => {
