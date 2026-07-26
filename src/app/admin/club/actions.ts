@@ -186,3 +186,51 @@ export async function relinkStudentAction(formData: FormData): Promise<void> {
   revalidateClub();
   redirect(withNotice(redirectTo, "notice", "Привязано."));
 }
+
+// ── Entry links (one-time binding tokens) ──────────────────────────────────
+
+export async function generateClubLinkAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = req(formData, "studentId");
+  const { createClubLinkToken } = await import("@/features/club/link-tokens");
+  try {
+    await createClubLinkToken(studentId, COACH);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", "Ссылка сгенерирована."));
+}
+
+export async function generateAllUnboundLinksAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const { generateClubLinksForUnbound } = await import("@/features/club-admin/repository");
+  let count = 0;
+  try {
+    const rows = await generateClubLinksForUnbound(COACH);
+    count = rows.length;
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", `Сгенерировано ссылок: ${count}.`));
+}
+
+export async function revokeClubLinkAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const tokenId = req(formData, "tokenId");
+  const { revokeClubLinkToken } = await import("@/features/club/link-tokens");
+  try {
+    await revokeClubLinkToken(tokenId);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", "Токен отозван."));
+}

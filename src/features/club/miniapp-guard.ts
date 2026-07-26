@@ -9,7 +9,6 @@
 // POST /api/m/club/confirm-link after the student taps "Это я". This prevents a
 // silent wrong-account bind on a forwarded/shared link within the club surface.
 
-import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
   parseTelegramInitDataStartParam,
   parseTelegramInitDataUser,
@@ -20,6 +19,8 @@ import {
   getTrainingPeaksStudentByTelegramUserId,
   type TrainingPeaksStudent,
 } from "@/features/trainingpeaks/repository";
+
+import { resolveClubLinkToken } from "./link-tokens";
 
 /** Outer mini-app gate + club feature flag. Both must be on. */
 export function isClubEnabled(): boolean {
@@ -40,27 +41,24 @@ export type ClubStudentResolution =
       httpStatus: number;
       error: string;
       /** Machine code so the client can branch (e.g. show the confirm screen). */
-      code: "unauthorized" | "coach_account" | "needs_confirm" | "needs_link" | "wrong_target";
+      code: "unauthorized" | "coach_account" | "needs_confirm" | "needs_link" | "wrong_target" | "invalid_link";
       /** Present with needs_confirm: who the link says this account is. */
       candidate?: { studentId: string; displayName: string };
     };
 
-function startParamRowId(initData: string): string | null {
+/** The club link's start_param is a one-time TOKEN (not the student row id). */
+function startParamToken(initData: string): string | null {
   const raw = parseTelegramInitDataStartParam(initData);
-  if (!raw) {
-    return null;
-  }
-  return raw.startsWith("r_") ? raw.slice(2) : raw;
-}
-
-function fullName(name: string | null | undefined): string {
-  const t = (name ?? "").replace(/\s+/gu, " ").trim();
-  return t || "Участник клуба";
+  return raw ? raw.trim() : null;
 }
 
 /**
  * NON-binding resolution for club data routes. Never writes. Returns the bound
- * student when one exists, else a needs_confirm/needs_link signal for the client.
+ * student when one exists, else a needs_confirm/needs_link/invalid_link signal.
+ *
+ * The entry link carries a one-time token (see link-tokens.ts): it resolves to a
+ * candidate (name only) for confirmation. An already-bound account opens the club
+ * with the GENERAL link (no token) and gets straight through.
  */
 export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStudentResolution> {
   const initData = typeof initDataRaw === "string" ? initDataRaw.trim() : "";
@@ -82,51 +80,52 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
     };
   }
 
-  const rowId = startParamRowId(initData);
+  const token = startParamToken(initData);
   const existing = await getTrainingPeaksStudentByTelegramUserId(user.id).catch(() => null);
   if (existing) {
-    // Bound already, but a link naming a DIFFERENT student reached this account.
-    if (rowId && rowId !== existing.id) {
-      return {
-        ok: false,
-        httpStatus: 403,
-        error: "Эта ссылка для другого аккаунта. Открой свою ссылку от тренера.",
-        code: "wrong_target",
-      };
+    // Already bound → own data only. A token naming a DIFFERENT student on a bound
+    // account is a forwarded/wrong link: signal wrong_target (never switches accounts).
+    if (token) {
+      const resolved = await resolveClubLinkToken(token);
+      if (resolved.ok && resolved.studentId !== existing.id) {
+        return {
+          ok: false,
+          httpStatus: 403,
+          error: "Эта ссылка для другого аккаунта. Открой клуб своей ссылкой.",
+          code: "wrong_target",
+        };
+      }
     }
     return { ok: true, student: existing };
   }
 
-  // Not bound yet → require explicit confirmation. No write happens here.
-  if (!rowId) {
+  // Not bound → need a valid one-time token. No write happens here.
+  if (!token) {
     return {
       ok: false,
       httpStatus: 403,
-      error: "Открой клуб через кнопку от тренера — иначе мы не знаем, кто ты.",
+      error: "Открой клуб по личной ссылке от тренера — иначе мы не знаем, кто ты.",
       code: "needs_link",
     };
   }
 
-  // Read the candidate's FULL name (spec v3 2.1 shows «Имя Фамилия» — and ONLY the
-  // name: no birth date / avatar / metrics / anything else on this screen).
-  let displayName = "Участник клуба";
-  try {
-    const supabase = createSupabaseServerClient();
-    const { data } = await supabase
-      .from("trainingpeaks_students")
-      .select("student_name")
-      .eq("id", rowId)
-      .maybeSingle();
-    displayName = fullName((data as { student_name: string } | null)?.student_name);
-  } catch {
-    /* keep default */
+  const resolved = await resolveClubLinkToken(token);
+  if (!resolved.ok) {
+    // Used / expired / revoked / unknown — never show any student data.
+    return {
+      ok: false,
+      httpStatus: 403,
+      error: "Ссылка недействительна, обратись к тренеру.",
+      code: "invalid_link",
+    };
   }
 
+  // Valid token → confirm screen. Spec v3 2.1: ONLY the name is shown, nothing else.
   return {
     ok: false,
     httpStatus: 409,
     error: "Подтверди, что это твой аккаунт.",
     code: "needs_confirm",
-    candidate: { studentId: rowId, displayName },
+    candidate: { studentId: resolved.studentId, displayName: resolved.displayName },
   };
 }

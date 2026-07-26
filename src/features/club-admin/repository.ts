@@ -13,6 +13,16 @@ import {
 } from "@/features/club/service";
 import { CLUB_RECORD_DISTANCES } from "@/features/club/constants";
 import type { RecordDistanceKey } from "@/features/club/records";
+import { getTelegramBotUsername } from "@/features/telegram/telegram-client";
+import {
+  clubMiniAppShortName,
+  clubTokenLinkStr,
+  clubGeneralLinkStr,
+} from "@/features/club/entry-links";
+import {
+  createClubLinkToken,
+  listAllActiveClubLinkTokens,
+} from "@/features/club/link-tokens";
 
 export function isClubAdminEnabled(): boolean {
   return process.env.CLUB_ADMIN_ENABLED === "true";
@@ -241,6 +251,84 @@ export async function listTelegramLinks(): Promise<LinkRow[]> {
   return (data as Array<Record<string, unknown>>)
     .filter((r) => r.is_active !== false && r.is_service_account !== true)
     .map((r) => ({ studentId: r.id as string, name: r.student_name as string, telegramUserId: (r.telegram_user_id as number | null) ?? null, username: (r.telegram_username as string | null) ?? null }));
+}
+
+// ── Entry links (one-time binding tokens) ──────────────────────────────────
+
+export type ClubLinkTokenView = { id: string; token: string; link: string | null; expiresAt: string };
+export type ClubLinksAdminData = {
+  bound: LinkRow[];
+  unbound: LinkRow[];
+  generalLink: string | null;
+  /** false when CLUB_MINIAPP_SHORT_NAME / bot username can't be resolved. */
+  configured: boolean;
+  configError: string | null;
+  tokensByStudent: Record<string, ClubLinkTokenView[]>;
+};
+
+/**
+ * Everything the /admin/club/links page needs: bind status + active tokens with
+ * their copy-ready links + the general link. Resolves the bot username + short name
+ * ONCE. Read-only; never sends anything to students.
+ */
+export async function getClubLinksAdminData(): Promise<ClubLinksAdminData> {
+  const links = await listTelegramLinks();
+  const bound = links.filter((l) => l.telegramUserId);
+  const unbound = links.filter((l) => !l.telegramUserId);
+
+  const shortName = clubMiniAppShortName();
+  let username: string | null = null;
+  let configError: string | null = null;
+  if (!shortName) {
+    configError = "CLUB_MINIAPP_SHORT_NAME не задан (BotFather /newapp короткое имя, напр. club).";
+  } else {
+    username = await getTelegramBotUsername().catch(() => null);
+    if (!username) configError = "Не удалось получить username бота (TELEGRAM_BOT_TOKEN).";
+  }
+  const configured = Boolean(shortName && username);
+
+  const tokensMap = await listAllActiveClubLinkTokens();
+  const tokensByStudent: Record<string, ClubLinkTokenView[]> = {};
+  for (const [studentId, rows] of tokensMap) {
+    tokensByStudent[studentId] = rows.map((r) => ({
+      id: r.id,
+      token: r.token,
+      link: configured ? clubTokenLinkStr(username!, shortName!, r.token) : null,
+      expiresAt: r.expiresAt,
+    }));
+  }
+
+  return {
+    bound,
+    unbound,
+    generalLink: configured ? clubGeneralLinkStr(username!, shortName!) : null,
+    configured,
+    configError,
+    tokensByStudent,
+  };
+}
+
+export type BulkLinkRow = { studentId: string; name: string; link: string | null; expiresAt: string };
+
+/** Generate a fresh one-time link for every UNBOUND student — for a copy/export list. No send. */
+export async function generateClubLinksForUnbound(coach: string): Promise<BulkLinkRow[]> {
+  const links = await listTelegramLinks();
+  const unbound = links.filter((l) => !l.telegramUserId);
+  const shortName = clubMiniAppShortName();
+  const username = shortName ? await getTelegramBotUsername().catch(() => null) : null;
+  const configured = Boolean(shortName && username);
+
+  const out: BulkLinkRow[] = [];
+  for (const s of unbound) {
+    const { token, expiresAt } = await createClubLinkToken(s.studentId, coach);
+    out.push({
+      studentId: s.studentId,
+      name: s.name,
+      link: configured ? clubTokenLinkStr(username!, shortName!, token) : null,
+      expiresAt,
+    });
+  }
+  return out;
 }
 
 export type LinkEvent = { id: string; telegramUserId: number | null; username: string | null; studentId: string | null; result: string; reason: string | null; createdAt: string };
