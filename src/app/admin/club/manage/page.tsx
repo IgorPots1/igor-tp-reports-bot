@@ -33,6 +33,36 @@ export default async function ClubManagePage() {
       </div>
 
       {d.latestScannedAt ? <p className="admin-summary-label" style={{ marginTop: 8 }}>Последний скан: {new Date(d.latestScannedAt).toLocaleString("ru-RU")}</p> : null}
+
+      {(() => {
+        const bad = d.clubTablesHealth.filter((t) => !t.ok);
+        return (
+          <div className="admin-card" style={{ marginTop: 12 }}>
+            <div className="admin-badge-row">
+              <strong>Доступ к клубным таблицам</strong>
+              {bad.length === 0
+                ? <span className="admin-badge admin-badge-success">все {d.clubTablesHealth.length} ОК</span>
+                : <span className="admin-badge admin-badge-danger">{bad.length} с ошибкой</span>}
+            </div>
+            {bad.length > 0 ? (
+              <div className="admin-alert admin-alert-error" style={{ marginTop: 8 }}>
+                Ошибка доступа — вкладки клуба покажут ПУСТО, пока не починить (гранты/миграция):
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                  {bad.map((t) => (
+                    <li key={t.table}>
+                      <code>{t.table}</code> — {t.code === "42501" ? "нет прав (42501): применить гранты" : t.code === "42P01" ? "таблицы нет (42P01): применить миграцию" : `${t.code ?? "ошибка"}: ${t.message ?? ""}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="admin-summary-label" style={{ marginTop: 6 }}>
+                service_role видит все клубные таблицы. 42501/42P01 здесь появятся ГРОМКО, а не «пусто».
+              </p>
+            )}
+          </div>
+        );
+      })()}
     </section>
   );
 }

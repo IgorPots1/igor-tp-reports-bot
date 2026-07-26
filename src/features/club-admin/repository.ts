@@ -279,12 +279,53 @@ export async function relinkStudent(studentId: string, telegramUserId: number): 
 // 4. Club management panel
 // ---------------------------------------------------------------------------
 
+/** Access health of a club table — surfaces 42501 (permission denied) / 42P01 (missing) LOUDLY. */
+export type ClubTableHealth = { table: string; ok: boolean; code: string | null; message: string | null };
+
+const CLUB_TABLES = [
+  "club_records",
+  "club_record_snapshots",
+  "club_races",
+  "club_tp_peaks",
+  "club_reactions",
+  "club_wishes",
+  "club_dayoff_requests",
+  "club_link_events",
+  "club_challenges",
+] as const;
+
+/**
+ * Probe every club table with a HEAD count. A read that hits a missing GRANT
+ * returns Postgres 42501 (permission denied) — WITHOUT this the mini-app tab would
+ * just render EMPTY and hide the misconfiguration. Here it becomes a loud red row
+ * in /admin/club/manage. 42P01 = table not created (migration not applied).
+ */
+export async function probeClubTablesHealth(): Promise<ClubTableHealth[]> {
+  const supabase = createSupabaseServerClient();
+  const out: ClubTableHealth[] = [];
+  for (const table of CLUB_TABLES) {
+    const { error } = await supabase.from(table).select("id", { count: "exact", head: true });
+    if (error) {
+      out.push({
+        table,
+        ok: false,
+        code: (error as { code?: string }).code ?? null,
+        message: error.message,
+      });
+    } else {
+      out.push({ table, ok: true, code: null, message: null });
+    }
+  }
+  return out;
+}
+
 export async function getClubManagementData(): Promise<{
   goalMode: string; freshnessLabel: string; latestScannedAt: string | null; cacheRows: number;
-  activeStudents: number; lapDensityPct: number; peaksCoverage: string;
+  activeStudents: number; lapDensityPct: number; peaksCoverage: string; clubTablesHealth: ClubTableHealth[];
 }> {
   const supabase = createSupabaseServerClient();
   const fresh = await getTrainingPeaksWorkoutCacheFreshness();
+  const clubTablesHealth = await probeClubTablesHealth();
   const [{ count: withLaps }, { count: totalCompleted }, { count: activeStudents }] = await Promise.all([
     supabase.from("trainingpeaks_workout_derived_metrics").select("id", { count: "exact", head: true }).eq("has_fit", true),
     supabase.from("trainingpeaks_workout_cache").select("id", { count: "exact", head: true }).eq("is_completed", true),
@@ -298,5 +339,6 @@ export async function getClubManagementData(): Promise<{
     freshnessLabel: label, latestScannedAt: fresh.latestScannedAt, cacheRows: fresh.rowCount,
     activeStudents: activeStudents ?? 0, lapDensityPct,
     peaksCoverage: "нет данных (TP-пики не ингестятся; CLUB_RECORDS_TP_PEAKS не включён)",
+    clubTablesHealth,
   };
 }
