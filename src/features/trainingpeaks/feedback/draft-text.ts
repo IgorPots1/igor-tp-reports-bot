@@ -38,3 +38,40 @@ export function enforceGreeting(text: string, register: "ty" | "vy" | "unknown")
   }
   return `${desired}\n${text}`; // no greeting at all → prepend it as the first line
 }
+
+// Block 3 — formatting. Two rules, both deterministic (the prompt asks too, but the model drifts):
+//   (a) NO trailing period. Igor never ends on a period (corpus: 0 of ~20 examples do — they end on
+//       a word, emoji, «)», «!» or «?»). Strip a single final «.» (not «…», not «?»/«!»).
+//   (b) Blank line BETWEEN blocks — but ONLY for a multi-block (rich) draft. The corpus voice is
+//       "одно-два предложения, не абзацы", so a short one-liner stays compact (greeting inline). A
+//       rich draft (a trailing question over a body, or ≥2 sentences / long body) is split into
+//       greeting / body / question paragraphs — the wall of text Igor flagged.
+function stripTrailingPeriod(t: string): string {
+  return t.endsWith(".") && !t.endsWith("..") ? t.slice(0, -1) : t;
+}
+
+export function normalizeDraftFormat(text: string): string {
+  const t = stripTrailingPeriod(text.replace(/[ \t]+$/gmu, "").replace(/\n{3,}/g, "\n\n").trim());
+  const gm = t.match(/^(привет!?|здравствуйте!?)[\s,]*/iu);
+  if (!gm) return t; // no greeting to anchor on (shouldn't happen post-enforce) → leave structure alone
+  const greeting = gm[1]!.replace(/[\s,]+$/u, "");
+  const body = t.slice(gm[0]!.length).trim();
+  if (!body) return greeting;
+
+  // Peel a trailing question (a «…?» clause) off the end, if there's other content before it.
+  let mainBody = body;
+  let question = "";
+  const qm = body.match(/([^.!?\n]+\?)\s*$/u);
+  if (qm && body.slice(0, body.length - qm[1]!.length).trim().length > 0) {
+    question = qm[1]!.trim();
+    mainBody = stripTrailingPeriod(body.slice(0, body.length - qm[1]!.length).trim());
+  }
+
+  // Count sentence groups (so «..» or «?» is one, not many). Rich = a peeled question over a body,
+  // OR ≥2 sentences in the body, OR a long body. A lone short clause/question stays compact.
+  const sentenceGroups = (mainBody.match(/[.!?]+/gu) ?? []).length;
+  const rich = question !== "" || sentenceGroups >= 2 || mainBody.length > 80;
+  if (!rich) return `${greeting} ${body}`.trim(); // short → compact one-liner, greeting inline
+
+  return [greeting, mainBody, question].filter(Boolean).join("\n\n");
+}
