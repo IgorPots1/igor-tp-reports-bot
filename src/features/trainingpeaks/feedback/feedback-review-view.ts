@@ -43,8 +43,11 @@ export type ReportCardView = {
   // How Igor sends this one (drives which button shows on a 'done' card).
   channel: ReportChannel;
   // Group share prefix so the student gets a mention notification ('@username' when
-  // known, else the plain name). null for dm/none.
+  // known, else the plain name). Also used for the DM share-fallback. null only for 'none'.
   mention: string | null;
+  // Business-DM 24h window for a 'dm' card: true = API can deliver, false = window closed so
+  // «Отправить» would fail and the card falls back to share. null for group/none (no API path).
+  windowOpen: boolean | null;
 };
 
 export type ReportsView = {
@@ -63,6 +66,12 @@ export type StudentChannelInfo = {
   dmCapable?: boolean;
   // A linked group/topic exists — share-only channel.
   hasGroupThread?: boolean;
+  // The Business DM 24h window is open (the student's last DM message is ≤24h ago) — the API can
+  // deliver now. When closed, a dm card falls back to share.
+  dmWindowOpen?: boolean;
+  // The student actually converses in the linked group topic (their recent messages come via the
+  // group, not the business DM) — treat as 'group' even if a chat_id exists.
+  reportsViaGroup?: boolean;
 };
 
 export type StudentLookup = (studentId: string) => StudentChannelInfo | undefined;
@@ -151,33 +160,37 @@ function buildTransparency(packet: FeedbackContextPacket | undefined): ReportTra
   return items;
 }
 
-// Decide the send channel + mention from the student's Telegram wiring. DM wins when
-// available (server can deliver); otherwise a group thread means share-only.
-function resolveChannel(opts: { dmCapable?: boolean; hasGroupThread?: boolean; telegramUsername: string | null; studentName: string }): {
+// Decide the send channel + mention + DM-window state from the student's Telegram wiring.
+// A student who actually converses in the linked group topic is 'group' even with a chat_id;
+// otherwise a DM-capable student is 'dm' (with the 24h-window state, so the UI can fall back to
+// share when it's closed); a group thread alone is 'group'; nothing reachable is 'none'.
+function resolveChannel(opts: { dmCapable?: boolean; hasGroupThread?: boolean; dmWindowOpen?: boolean; reportsViaGroup?: boolean; telegramUsername: string | null; studentName: string }): {
   channel: ReportChannel;
   mention: string | null;
+  windowOpen: boolean | null;
 } {
-  if (opts.dmCapable) return { channel: "dm", mention: null };
-  if (opts.hasGroupThread) {
-    const mention = opts.telegramUsername ? `@${opts.telegramUsername.replace(/^@/u, "")}` : opts.studentName;
-    return { channel: "group", mention };
-  }
-  return { channel: "none", mention: null };
+  const mention = opts.telegramUsername ? `@${opts.telegramUsername.replace(/^@/u, "")}` : opts.studentName;
+  if (opts.reportsViaGroup && opts.hasGroupThread) return { channel: "group", mention, windowOpen: null };
+  if (opts.dmCapable) return { channel: "dm", mention, windowOpen: opts.dmWindowOpen ?? false };
+  if (opts.hasGroupThread) return { channel: "group", mention, windowOpen: null };
+  return { channel: "none", mention: null, windowOpen: null };
 }
 
 export function buildReportCardView(
   job: TrainingPeaksFeedbackJob,
   studentName: string,
   telegramUsername: string | null,
-  opts?: { dmCapable?: boolean; hasGroupThread?: boolean }
+  opts?: { dmCapable?: boolean; hasGroupThread?: boolean; dmWindowOpen?: boolean; reportsViaGroup?: boolean }
 ): ReportCardView {
   const packet = job.contextPacket as FeedbackContextPacket | undefined;
   const workoutDate = packet?.workoutDate ?? null;
   const isAttention = job.status === "blocked" || job.status === "failed";
   const isQueue = job.status === "pending" || job.status === "generating";
-  const { channel, mention } = resolveChannel({
+  const { channel, mention, windowOpen } = resolveChannel({
     dmCapable: opts?.dmCapable,
     hasGroupThread: opts?.hasGroupThread,
+    dmWindowOpen: opts?.dmWindowOpen,
+    reportsViaGroup: opts?.reportsViaGroup,
     telegramUsername,
     studentName,
   });
@@ -198,6 +211,7 @@ export function buildReportCardView(
     significanceBadge: isQueue ? scoreFeedbackSignificance(packet).badge : null,
     channel,
     mention,
+    windowOpen,
   };
 }
 
@@ -226,6 +240,8 @@ export function buildReportsView(jobs: TrainingPeaksFeedbackJob[], lookup: Stude
     const card = buildReportCardView(job, student?.name ?? "Ученик", student?.telegramUsername ?? null, {
       dmCapable: student?.dmCapable,
       hasGroupThread: student?.hasGroupThread,
+      dmWindowOpen: student?.dmWindowOpen,
+      reportsViaGroup: student?.reportsViaGroup,
     });
     if (QUEUE_STATUSES.has(job.status)) {
       const packet = job.contextPacket as FeedbackContextPacket | undefined;

@@ -3251,6 +3251,42 @@ export async function countTrainingPeaksStudentThreadsByStudentIds(
   return counts;
 }
 
+/**
+ * Per student, the most recent inbound message time via the Business DM and via a group topic.
+ * Drives the send-channel decision: the Business API 24h window (last business-DM ≤24h) and whether
+ * the student actually converses in the group (their latest message is a group one). Last 45 days.
+ */
+export async function getTrainingPeaksStudentInboundRecency(
+  studentIds: string[]
+): Promise<Map<string, { lastBusinessDmAt: string | null; lastGroupAt: string | null }>> {
+  const out = new Map<string, { lastBusinessDmAt: string | null; lastGroupAt: string | null }>();
+  const ids = Array.from(new Set(studentIds.filter(Boolean)));
+  if (ids.length === 0) return out;
+
+  const supabase = createSupabaseServerClient();
+  const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
+  for (let i = 0; i < ids.length; i += 150) {
+    const part = ids.slice(i, i + 150);
+    const { data, error } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_telegram_context_observations")
+        .select("student_id, observed_at, source_type")
+        .in("student_id", part)
+        .gte("observed_at", since)
+        .order("observed_at", { ascending: false })
+    );
+    if (error) throw new Error(`Failed to load TrainingPeaks inbound recency: ${error.message}`);
+    for (const row of (data as Array<{ student_id: string; observed_at: string; source_type: string | null }> | null) ?? []) {
+      const cur = out.get(row.student_id) ?? { lastBusinessDmAt: null, lastGroupAt: null };
+      const src = row.source_type ?? "";
+      if (src === "business_dm" && !cur.lastBusinessDmAt) cur.lastBusinessDmAt = row.observed_at;
+      else if (src === "group_topic" && !cur.lastGroupAt) cur.lastGroupAt = row.observed_at;
+      out.set(row.student_id, cur);
+    }
+  }
+  return out;
+}
+
 export async function listTrainingPeaksStudentThreads(
   studentId: string
 ): Promise<TrainingPeaksStudentThread[]> {

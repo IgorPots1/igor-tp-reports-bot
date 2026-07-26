@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 
 import { resolveMiniAppCoach } from "@/features/telegram/miniapp-coach-resolver";
-import { countTrainingPeaksStudentThreadsByStudentIds, listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
+import { countTrainingPeaksStudentThreadsByStudentIds, getTrainingPeaksStudentInboundRecency, listTrainingPeaksStudents } from "@/features/trainingpeaks/repository";
 import { listTrainingPeaksFeedbackJobs, reclaimStaleGeneratingFeedbackJobs } from "@/features/trainingpeaks/feedback/feedback-queue";
 import { STALE_GENERATING_TTL_MS } from "@/features/trainingpeaks/feedback/feedback-worker-auth";
 import { isFeedbackSendEnabled } from "@/features/trainingpeaks/feedback/feedback-send";
@@ -59,18 +59,35 @@ export async function POST(request: NextRequest): Promise<Response> {
     // Which students have a linked group/topic → share-only channel (Business API can't
     // post to groups). Only the students who actually appear in the jobs are counted.
     const jobStudentIds = Array.from(new Set(jobs.map((j) => j.studentId)));
-    const threadCounts = await countTrainingPeaksStudentThreadsByStudentIds(jobStudentIds);
+    const [threadCounts, inboundRecency] = await Promise.all([
+      countTrainingPeaksStudentThreadsByStudentIds(jobStudentIds),
+      getTrainingPeaksStudentInboundRecency(jobStudentIds),
+    ]);
+    const now = Date.now();
     const byId = new Map(
-      students.map((s) => [
-        s.id,
-        {
-          name: s.studentName,
-          telegramUsername: s.telegramUsername ?? null,
-          // DM-reachable = chat linked AND delivery enabled (mirrors the send gates).
-          dmCapable: Boolean(s.telegramChatId) && s.telegramDeliveryEnabled,
-          hasGroupThread: (threadCounts.get(s.id) ?? 0) > 0,
-        },
-      ])
+      students.map((s) => {
+        const hasGroupThread = (threadCounts.get(s.id) ?? 0) > 0;
+        const rec = inboundRecency.get(s.id);
+        const lastDm = rec?.lastBusinessDmAt ?? null;
+        const lastGroup = rec?.lastGroupAt ?? null;
+        // Business API can deliver only within 24h of the student's last DM message.
+        const dmWindowOpen = lastDm !== null && now - new Date(lastDm).getTime() <= 24 * 60 * 60 * 1000;
+        // The student's conversation actually lives in the group when they have a group thread AND
+        // their latest message came via the group (or they have no business-DM history at all).
+        const reportsViaGroup = hasGroupThread && (lastDm === null || (lastGroup !== null && lastGroup > lastDm));
+        return [
+          s.id,
+          {
+            name: s.studentName,
+            telegramUsername: s.telegramUsername ?? null,
+            // DM-reachable = chat linked AND delivery enabled (mirrors the send gates).
+            dmCapable: Boolean(s.telegramChatId) && s.telegramDeliveryEnabled,
+            hasGroupThread,
+            dmWindowOpen,
+            reportsViaGroup,
+          },
+        ];
+      })
     );
     const view = buildReportsView(jobs, (id) => byId.get(id), isFeedbackSendEnabled());
     // Merge the active backend into the view so the client's toggle reflects it.

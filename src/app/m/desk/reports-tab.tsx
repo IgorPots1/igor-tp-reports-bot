@@ -28,6 +28,7 @@ export type ReportCardModel = {
   significanceBadge: "разбор" | "прогресс" | "чисто" | null;
   channel: "dm" | "group" | "none";
   mention: string | null;
+  windowOpen: boolean | null;
 };
 export type ReportsView = {
   queue: ReportCardModel[];
@@ -86,6 +87,7 @@ const R = {
   skip: { flex: "0 0 auto", padding: "13px 16px", borderRadius: 12, border: `1px solid ${C.line}`, background: "#fff", color: C.faint, fontFamily: "inherit", fontSize: 14.5, fontWeight: 700, cursor: "pointer" } as CSSProperties,
   save: { flex: 1, padding: "13px 0", borderRadius: 12, border: "none", background: C.teal, color: "#fff", fontFamily: "inherit", fontSize: 15, fontWeight: 800, cursor: "pointer" } as CSSProperties,
   prepHint: { margin: "9px 2px 0", fontSize: 11.5, fontWeight: 700, color: C.faint, textAlign: "center" as const } as CSSProperties,
+  channelInfo: (open: boolean): CSSProperties => ({ margin: "11px 2px 0", fontSize: 12, fontWeight: 700, color: open ? "#1D7A54" : C.warn, textAlign: "center" }),
   attn: { background: C.warnBg, borderRadius: 16, padding: "15px 16px", margin: "0 14px 12px", border: `1px solid ${C.warnLine}` } as CSSProperties,
   attnReason: { margin: "8px 0 0", fontSize: 14, fontWeight: 600, color: C.warn, lineHeight: 1.4 } as CSSProperties,
   attnNote: { margin: "8px 0 0", fontSize: 12.5, fontWeight: 600, color: C.faint, lineHeight: 1.4 } as CSSProperties,
@@ -274,53 +276,49 @@ export function ReportReviewCard(props: {
         <>
           <p style={R.draft}>{c.draftText}</p>
           <Transparency items={c.transparency} />
-          <div style={R.actions}>
-            {c.channel === "group" ? (
-              // Group: Business API can't post there — Igor shares from his own account.
-              <button
-                type="button"
-                style={sendButtonStyle(props.sendEnabled)}
-                disabled={busyHere === "send"}
-                onClick={() => props.onShare(c)}
-              >
-                {busyHere === "send" ? "…" : "Отправить в чат"}
-              </button>
-            ) : c.channel === "dm" ? (
-              <button
-                type="button"
-                style={sendButtonStyle(props.sendEnabled)}
-                disabled={busyHere === "send"}
-                onClick={() => props.onSend(c)}
-              >
-                {busyHere === "send" ? "…" : "Отправить"}
-              </button>
-            ) : (
-              <button type="button" style={{ ...sendButtonStyle(false), cursor: "default", opacity: 0.6 }} disabled>
-                Нет канала
-              </button>
-            )}
-            <button type="button" style={R.edit} onClick={() => props.onStartEdit(c)}>
-              Править
-            </button>
-            <button
-              type="button"
-              style={R.skip}
-              disabled={busyHere === "dismiss"}
-              onClick={() => props.onDismiss(c, "review")}
-            >
-              Пропустить
-            </button>
-          </div>
-          {c.channel === "group" ? (
-            <p style={R.prepHint}>
-              группа — уйдёт с твоего аккаунта через шаринг{c.mention ? `, с упоминанием ${c.mention}` : ""}
-              {props.sendEnabled ? "" : " · пока prepare-only, статус не меняется"}
-            </p>
-          ) : c.channel === "none" ? (
-            <p style={R.prepHint}>у ученика нет привязанного чата — отправить нельзя</p>
-          ) : !props.sendEnabled ? (
-            <p style={R.prepHint}>отправка выключена — кнопка готовит, но не шлёт (prepare-only)</p>
-          ) : null}
+          {(() => {
+            // Share is the path for a group, and the fallback for a DM whose 24h window is closed
+            // (Business API would fail). So no card is ever left without a working way to send.
+            const useShare = c.channel === "group" || (c.channel === "dm" && !c.windowOpen);
+            const badge =
+              c.channel === "none"
+                ? "нет привязанного чата — отправить нельзя"
+                : c.channel === "group"
+                  ? `💬 группа — уйдёт шарингом с твоего аккаунта${c.mention ? `, с упоминанием ${c.mention}` : ""}`
+                  : c.windowOpen
+                    ? "✓ окно открыто — уйдёт в личку по «Отправить»"
+                    : "⏳ окно закрыто (>24ч) — уйдёт шарингом по «Отправить в чат»";
+            return (
+              <>
+                <p style={R.channelInfo(c.channel === "dm" && c.windowOpen === true)}>{badge}</p>
+                <div style={R.actions}>
+                  {c.channel === "none" ? (
+                    <button type="button" style={{ ...sendButtonStyle(false), cursor: "default", opacity: 0.6 }} disabled>
+                      Нет канала
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      style={sendButtonStyle(props.sendEnabled)}
+                      disabled={busyHere === "send"}
+                      onClick={() => (useShare ? props.onShare(c) : props.onSend(c))}
+                    >
+                      {busyHere === "send" ? "…" : useShare ? "Отправить в чат" : "Отправить"}
+                    </button>
+                  )}
+                  <button type="button" style={R.edit} onClick={() => props.onStartEdit(c)}>
+                    Править
+                  </button>
+                  <button type="button" style={R.skip} disabled={busyHere === "dismiss"} onClick={() => props.onDismiss(c, "review")}>
+                    Пропустить
+                  </button>
+                </div>
+                {!props.sendEnabled && c.channel !== "none" ? (
+                  <p style={R.prepHint}>отправка выключена — кнопка готовит, но не шлёт (prepare-only)</p>
+                ) : null}
+              </>
+            );
+          })()}
         </>
       )}
 
