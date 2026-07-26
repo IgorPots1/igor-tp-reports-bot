@@ -10,7 +10,7 @@
 
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
-import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds } from "@/features/trainingpeaks/feedback/feedback-queue";
+import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 
 type SupabaseLike = ReturnType<typeof createSupabaseServerClient>;
@@ -357,7 +357,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       const labels = Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [];
       return labels.includes("report_like") && o.student_id && activeIds.has(o.student_id as string);
     })
-    .map((o) => ({ studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10) }));
+    .map((o) => ({ studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10), observedAt: o.observed_at as string }));
 
   const summary: FeedbackReportSweepSummary = {
     reports: reports.length,
@@ -385,8 +385,10 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     runsByStudent.set(r.student_id as string, list);
   }
 
-  // 3. handled-guard: a run that already has a job (pending/…/sent) is never re-enqueued.
-  const handled = await fetchHandledWorkoutCacheIds([...new Set(runRows.map((r) => r.workout_cache_id as string))]);
+  // 3. block-state guard: a run with an active/done/sent/shared job is never re-enqueued; a run
+  // whose only job is DISMISSED is re-enqueued only when THIS report is newer than the dismissal
+  // (a fresh report after the coach cleared the card resurrects it; the same report doesn't loop).
+  const blockState = await fetchWorkoutJobBlockState([...new Set(runRows.map((r) => r.workout_cache_id as string))]);
 
   // 4. per report, pick the run it's about; dedupe so two reports about one run enqueue it once.
   const chosen = new Map<string, { row: DerivedRow; reportDate: string }>();
@@ -400,7 +402,15 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       summary.reportsNoRunYet += 1; // run not synced yet → next sweep will bind it
       continue;
     }
-    const available = candidates.filter((r) => !handled.has(r.workout_cache_id as string) && !chosen.has(r.workout_cache_id as string));
+    const available = candidates.filter((r) => {
+      const cacheId = r.workout_cache_id as string;
+      if (chosen.has(cacheId)) return false;
+      const bs = blockState.get(cacheId);
+      if (!bs) return true; // no job yet → enqueue
+      if (bs.blocked) return false; // active/done/sent/shared → already handled
+      // only dismissed: resurrect only if the report is newer than the dismissal
+      return !bs.dismissedAt || rep.observedAt > bs.dismissedAt;
+    });
     if (available.length === 0) {
       summary.reportsRunAlreadyHandled += 1;
       continue;

@@ -148,6 +148,41 @@ export async function fetchHandledWorkoutCacheIds(cacheIds: string[]): Promise<S
   return handled;
 }
 
+export type WorkoutJobBlockState = { blocked: boolean; dismissedAt: string | null };
+
+/**
+ * Per workout, the state the REPORT-triggered sweep needs to decide whether to (re)enqueue:
+ *   blocked      — an active or completed job exists (pending/generating/done/sent/shared): never
+ *                  re-enqueue (already in the queue, already drafted, or already delivered).
+ *   dismissedAt  — the newest dismissal, when the ONLY jobs are dismissed (no blocking job). The
+ *                  sweep re-enqueues such a run ONLY if the student's report is NEWER than this — a
+ *                  fresh report after the coach cleared the card resurrects it, but the same report
+ *                  the coach already dismissed does not (no re-dismiss loop).
+ * This is the report-triggered replacement for fetchHandledWorkoutCacheIds, which treated every
+ * 'dismissed' as a permanent block (correct for the old workout-driven sweep, wrong once the trigger
+ * is the student's message).
+ */
+export async function fetchWorkoutJobBlockState(cacheIds: string[]): Promise<Map<string, WorkoutJobBlockState>> {
+  const out = new Map<string, WorkoutJobBlockState>();
+  if (cacheIds.length === 0) return out;
+  const supabase = createSupabaseServerClient();
+  const BLOCKING = new Set<FeedbackJobStatus>(["pending", "generating", "done", "sent", "shared"]);
+  for (let i = 0; i < cacheIds.length; i += 150) {
+    const part = cacheIds.slice(i, i + 150);
+    const { data, error } = await withSupabaseNetworkRetry(() =>
+      supabase.from(TABLE).select("workout_cache_id, status, dismissed_at").in("workout_cache_id", part)
+    );
+    if (error) throw new Error(`fetch workout job block state failed: ${error.message}`);
+    for (const r of (data as Array<{ workout_cache_id: string; status: FeedbackJobStatus; dismissed_at: string | null }>) ?? []) {
+      const cur = out.get(r.workout_cache_id) ?? { blocked: false, dismissedAt: null };
+      if (BLOCKING.has(r.status)) cur.blocked = true;
+      else if (r.status === "dismissed" && r.dismissed_at && (!cur.dismissedAt || r.dismissed_at > cur.dismissedAt)) cur.dismissedAt = r.dismissed_at;
+      out.set(r.workout_cache_id, cur);
+    }
+  }
+  return out;
+}
+
 /**
  * Claim the oldest pending job with a compare-and-swap (status pending→generating),
  * so two runners never take the same job. Returns null when the queue is empty.
