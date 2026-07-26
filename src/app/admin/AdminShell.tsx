@@ -28,6 +28,7 @@ export default function AdminShell({
             <nav className="admin-nav">
               <Link href="/admin/reports">Отчёты</Link>
               <Link href="/admin/coach-os">Coach OS</Link>
+              <Link href="/admin/physio">Физиология</Link>
               <Link href="/admin/students">Ученики</Link>
               <Link href="/admin/telegram-links">Telegram-привязки</Link>
               <Link href="/admin/billing">Биллинг</Link>

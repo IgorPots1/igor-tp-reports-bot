@@ -1148,3 +1148,42 @@ code {
   max-width: 100%;
   box-sizing: border-box;
 }
+
+/* --- Вкладка «Физиология» --- */
+.admin-physio-header {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-stat-value {
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 2px 0 0;
+}
+
+.admin-hint {
+  margin: 6px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #cbd5e1;
+  color: #0f172a;
+}
+
+.admin-table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #dbe3ef;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.admin-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-card-header h3 {
+  margin: 0;
+}
