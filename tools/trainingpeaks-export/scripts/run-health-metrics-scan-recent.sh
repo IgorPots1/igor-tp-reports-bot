@@ -9,8 +9,13 @@ WORK_DIR="${REPO_DIR}/tools/trainingpeaks-export"
 LOG_DIR="${WORK_DIR}/logs"
 LOG_FILE="${LOG_DIR}/health-metrics-scan-recent.log"
 
+# Write a 35-day window so the personal recovery baseline (a trailing 30-day median, see
+# health-baseline.ts DEFAULT_BASELINE_WINDOW_DAYS=30) is always computable. A 3-day window left the
+# cache too shallow — for any report older than a couple of days the baseline window had no points,
+# so "tired → cause" stayed silent. The custom-metrics API returns the whole range in ONE call per
+# student, so widening the window does NOT add API calls; it only writes more (idempotent upserts).
 TO_DATE="$(TZ=Europe/Belgrade date -v-1d +%F)"
-FROM_DATE="$(TZ=Europe/Belgrade date -v-3d +%F)"
+FROM_DATE="$(TZ=Europe/Belgrade date -v-35d +%F)"
 
 mkdir -p "${LOG_DIR}"
 
