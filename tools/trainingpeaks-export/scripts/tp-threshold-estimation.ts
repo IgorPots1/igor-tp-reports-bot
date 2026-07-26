@@ -394,24 +394,36 @@ async function main(): Promise<void> {
     const chunkSize = 150;
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
-      const { data, error } = await supabase
-        .from("trainingpeaks_workout_laps")
-        .select("workout_cache_id, lap_index, distance_m, timer_time_s, elapsed_time_s, avg_hr, is_work")
-        .in("workout_cache_id", chunk);
-      if (error) throw new Error(`trainingpeaks_workout_laps read failed: ${error.message}`);
-      for (const row of data ?? []) {
-        const key = row.workout_cache_id as string;
-        const lap: Lap = {
-          lapIndex: row.lap_index,
-          distanceM: row.distance_m,
-          timerTimeS: row.timer_time_s,
-          elapsedTimeS: row.elapsed_time_s,
-          avgHr: row.avg_hr,
-          isWork: row.is_work,
-        };
-        const arr = lapsByWorkoutCacheId.get(key);
-        if (arr) arr.push(lap);
-        else lapsByWorkoutCacheId.set(key, [lap]);
+      // Paginate the chunk result: 150 workouts × ~9 laps ≈ 1350 rows exceed the
+      // 1000 server cap, so the old single read silently dropped ~26% of laps →
+      // wrong threshold/VDOT. Same page-loop the derived read above already uses.
+      const pageSize = 1000;
+      let from = 0;
+      for (;;) {
+        const { data, error } = await supabase
+          .from("trainingpeaks_workout_laps")
+          .select("workout_cache_id, lap_index, distance_m, timer_time_s, elapsed_time_s, avg_hr, is_work")
+          .in("workout_cache_id", chunk)
+          .order("id", { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (error) throw new Error(`trainingpeaks_workout_laps read failed: ${error.message}`);
+        const rows = data ?? [];
+        for (const row of rows) {
+          const key = row.workout_cache_id as string;
+          const lap: Lap = {
+            lapIndex: row.lap_index,
+            distanceM: row.distance_m,
+            timerTimeS: row.timer_time_s,
+            elapsedTimeS: row.elapsed_time_s,
+            avgHr: row.avg_hr,
+            isWork: row.is_work,
+          };
+          const arr = lapsByWorkoutCacheId.get(key);
+          if (arr) arr.push(lap);
+          else lapsByWorkoutCacheId.set(key, [lap]);
+        }
+        if (rows.length < pageSize) break;
+        from += pageSize;
       }
       console.log(`  laps fetched for chunk ${i / chunkSize + 1}/${Math.ceil(ids.length / chunkSize)}`);
     }
