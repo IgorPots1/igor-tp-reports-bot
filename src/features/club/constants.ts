@@ -71,6 +71,25 @@ export const CLUB_RECORD_LAP_DISTANCE_TOLERANCE = 0.05;
 export const CLUB_RECORD_SELF_OUTLIER_VDOT_MARGIN = 8;
 
 /**
+ * Absolute VDOT plausibility ceiling for a RECONSTRUCTED training split, applied
+ * ALWAYS — it is the backstop the relative self-outlier check cannot provide when
+ * the athlete's OTHER distances are ALSO corrupt-fast (a 0:26/km "5k" makes the
+ * reference VDOT itself garbage, defeating a relative comparison). A2 finding
+ * (2026-07, restored 2026-07-27): a single member's 21k best-split read ~3:01/km
+ * (implied VDOT ~76) from broken lap data and surfaced as a VERIFIED club record.
+ * 65 sits far above this club's real training level (median paces 5:30–7:00/km) so
+ * it cuts only broken data, never a genuine fast member. Coach-confirmed races
+ * bypass reconstruction entirely and are unaffected. */
+export const CLUB_RECORD_ABSOLUTE_VDOT_CEILING = 65;
+
+/**
+ * Physically-impossible VDOT — no human reaches it (world records sit ~85). A
+ * candidate implying more than this is corrupt data (e.g. a 0:26/km "5k" from
+ * broken lap distance). Such candidates are EXCLUDED from the athlete's reference
+ * VDOT so they cannot poison the relative self-outlier check for other distances (A2). */
+export const CLUB_RECORD_MAX_HUMAN_VDOT = 85;
+
+/**
  * Best-continuous-split reconstruction (local analogue of Strava best_efforts).
  * ON by default. A recorded race is usually LONGER than the target distance
  * (warm-up / run-in in the same file) → timing the whole file underrates the

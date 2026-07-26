@@ -175,11 +175,19 @@ export function evaluateCandidate(
     }
   }
 
-  // Self-consistency via the real E-Predictor (Daniels VDOT): implied VDOT far
-  // above the athlete's own level from OTHER distances → suspicious.
-  if (referenceVdot !== null && pace !== null) {
+  // Self-consistency via the real E-Predictor (Daniels VDOT). Two layers (A2):
+  //  1. ABSOLUTE ceiling, applied ALWAYS. A reconstructed split implying a VDOT far
+  //     above this club's real level is broken data. This is the backstop the
+  //     relative check cannot provide: when the athlete's OTHER distances are ALSO
+  //     corrupt-fast (e.g. a 0:26/km "5k"), the reference VDOT is itself garbage and
+  //     a relative check is defeated — the absolute ceiling still fires.
+  //  2. RELATIVE check vs the athlete's own realistic level from OTHER distances.
+  if (pace !== null) {
     const impliedVdot = vdotFromRace(cand.distanceKm * 1000, cand.durationSeconds);
-    if (impliedVdot > referenceVdot + C.CLUB_RECORD_SELF_OUTLIER_VDOT_MARGIN) {
+    if (impliedVdot > C.CLUB_RECORD_ABSOLUTE_VDOT_CEILING) {
+      return { ...base, trust: "hidden", hiddenReason: "self_outlier" };
+    }
+    if (referenceVdot !== null && impliedVdot > referenceVdot + C.CLUB_RECORD_SELF_OUTLIER_VDOT_MARGIN) {
       return { ...base, trust: "hidden", hiddenReason: "self_outlier" };
     }
   }
@@ -212,7 +220,12 @@ export function referenceVdotForAthlete(
     if (key === excludeKey) {
       continue;
     }
-    vdots.push(vdotFromRace(cand.distanceKm * 1000, cand.durationSeconds));
+    const v = vdotFromRace(cand.distanceKm * 1000, cand.durationSeconds);
+    // Skip corrupt-fast neighbours so broken lap data can't poison the reference (A2).
+    if (v > C.CLUB_RECORD_MAX_HUMAN_VDOT) {
+      continue;
+    }
+    vdots.push(v);
   }
   if (vdots.length === 0) {
     return null;
