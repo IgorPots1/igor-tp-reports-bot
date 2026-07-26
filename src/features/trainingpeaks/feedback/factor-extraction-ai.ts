@@ -13,7 +13,7 @@ const CLAUDE_MODEL = process.env.FEEDBACK_FACTOR_MODEL?.trim() || "claude-haiku-
 const ANTHROPIC_API_URL = process.env.ANTHROPIC_API_URL?.trim() || "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
-const ALLOWED_FACTORS = new Set<StatedFactorKind>(["illness", "soreness", "undersleep", "dehydration", "heat", "life_stress", "conditions"]);
+const ALLOWED_FACTORS = new Set<StatedFactorKind>(["illness", "soreness", "undersleep", "dehydration", "heat", "life_stress", "conditions", "device_glitch"]);
 
 function extractJsonOnly(content: string): string {
   const trimmed = content.trim();
@@ -46,6 +46,7 @@ function buildPrompt(windowed: PlannerStudentMessage[]): string {
     "- heat (жара/духота/пекло/высокая температура воздуха)",
     "- life_stress (работа/ремонт/переезд/аврал/стресс/устаю по жизни)",
     "- conditions (рельеф/горки/дорожка-манеж/ветер/грязь/снег)",
+    "- device_glitch (часы/датчик врут, глючат, «странно себя ведут», пульс кривой/завышен) — сигнал, что данным пульса нельзя верить",
     "Правила: бери фактор ТОЛЬКО если он явно назван словами ученика. Не выдумывай и не додумывай.",
     "quote — дословно из сообщения, без чисел-выдумок. Если ничего не названо, верни {\"factors\":[]}.",
     "Одно сообщение может нести несколько факторов; перечисли каждый отдельным элементом.",

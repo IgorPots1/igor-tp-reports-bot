@@ -44,6 +44,9 @@ const FACTOR_PATTERNS: Array<{ factor: StatedFactorKind; re: RegExp; neg?: RegEx
   { factor: "heat", re: /жар|пекл|духот|парил|очень тепло|[+]?[23]\d\s*(?:°|градус|[сc]\b)/iu, neg: /не\s+жарк|без\s+жар|не\s+душно|прохладн|свеж|не\s+пекл/iu },
   { factor: "life_stress", re: /ремонт|переезд|аврал|завал на работе|работ[а-яё]* (много|завал|запар)|нервотрёп|стресс|устаю по жизни|вымотал|замотал|не высыпаюсь из-за|напряжённ[а-яё]* недел/iu },
   { factor: "conditions", re: /горк|в гору|рельеф|подъём|подъем|дорожк|манеж|тредмил|бегов[а-яё]* дорож|ветер|встречный ветер|против ветра|грязь|снег|гололёд|гололед/iu },
+  // Device distrust — NOT a fatigue cause, a signal to stop trusting pulse this workout. Allows one
+  // intervening word ("часы СЕГОДНЯ глючат", "пульс НАВЕРНОЕ кривой") since the stemmer is blind to it.
+  { factor: "device_glitch", re: /час[ыои][а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|стран|сбо|подвис|туп|врал)|глюч[а-яё]*\s+час|датчик[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|сбо|отвал|потерял|врал)|пульс[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|завыш|занижен|кривой|не\s+тот|странн|врал)|странно\s+себя\s+вед[а-яё]т|сбой\s+(?:часов|датчика|пульса)|потерял[а-яё]*\s+сигнал|неверн[а-яё]*\s+пульс/iu },
 ];
 
 function daysFrom(date: string, workoutDate: string): number {
@@ -98,7 +101,9 @@ export function extractStatedFactorsDeterministic(messages: PlannerStudentMessag
 // Which factor explains the run best when several are named. Care-worthy signals (illness/soreness)
 // win — you never brush past "болит колено" to talk pacing. Then recovery (недосып), then the run's
 // own conditions (обезвоживание/жара), then life-load, then external conditions.
-const FACTOR_PRIORITY: Record<StatedFactorKind, number> = {
+// device_glitch is NOT a cause (it's a data-trust signal), so it never appears in these cause maps.
+type CauseFactorKind = Exclude<StatedFactorKind, "device_glitch">;
+const FACTOR_PRIORITY: Record<CauseFactorKind, number> = {
   illness: 7,
   soreness: 6,
   undersleep: 5,
@@ -108,7 +113,7 @@ const FACTOR_PRIORITY: Record<StatedFactorKind, number> = {
   conditions: 2,
 };
 
-const FACTOR_ADVICE_KEY: Record<StatedFactorKind, AdviceKey> = {
+const FACTOR_ADVICE_KEY: Record<CauseFactorKind, AdviceKey> = {
   illness: "cause_confirmed_illness",
   soreness: "cause_confirmed_soreness",
   undersleep: "cause_confirmed_undersleep",
@@ -118,17 +123,24 @@ const FACTOR_ADVICE_KEY: Record<StatedFactorKind, AdviceKey> = {
   conditions: "cause_confirmed_conditions",
 };
 
+/** True when the student flagged their watch/sensor as unreliable this workout. The caller then
+ *  drops HR trust so the arc/fact-check stop asserting pulse on data the student themselves distrusts. */
+export function hasDeviceGlitch(factors: StatedFactor[] | undefined): boolean {
+  return (factors ?? []).some((f) => f.factor === "device_glitch");
+}
+
 export type StatedCause = { adviceKey: AdviceKey; numbers: Record<string, number>; reason: string; factor: StatedFactorKind; recurring: boolean };
 
 /** Pick the single most-explaining stated factor and map it to a cause. Pure/deterministic — the
  *  planner calls this and, when it returns non-null, honors it as the workout's cause and skips the
  *  mechanical "ask" questions. numbers is ALWAYS empty: a stated factor never leaks a number. */
 export function resolveStatedCause(packet: ContextPacket): StatedCause | null {
-  const factors = packet.statedFactors ?? [];
+  // device_glitch is a data-trust signal, not a cause — it never becomes a cause_confirmed_* here.
+  const factors = (packet.statedFactors ?? []).filter((f): f is StatedFactor & { factor: CauseFactorKind } => f.factor !== "device_glitch");
   if (factors.length === 0) return null;
   // recurring bumps recovery/life-load a tier: repeated «устал/ремонт/недосып» is accumulation,
   // which matters more than a one-off mention (design point 5).
-  const score = (f: StatedFactor) => FACTOR_PRIORITY[f.factor] + (f.recurring && (f.factor === "life_stress" || f.factor === "undersleep") ? 2 : 0);
+  const score = (f: StatedFactor & { factor: CauseFactorKind }) => FACTOR_PRIORITY[f.factor] + (f.recurring && (f.factor === "life_stress" || f.factor === "undersleep") ? 2 : 0);
   const best = [...factors].sort((a, b) => score(b) - score(a))[0]!;
   const recurringNote = best.recurring ? " (упоминает не первый день — накопление)" : "";
   return {

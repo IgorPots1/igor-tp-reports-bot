@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { extractStatedFactorsDeterministic, resolveStatedCause } from "./stated-factors.ts";
+import { extractStatedFactorsDeterministic, resolveStatedCause, hasDeviceGlitch } from "./stated-factors.ts";
 import { planObservations } from "./observation-planner.ts";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerStudentMessage, StatedFactor } from "./types.ts";
 
@@ -100,6 +100,37 @@ describe("stated-factors — resolveStatedCause precedence", () => {
   test("no factors → null", () => {
     assert.equal(resolveStatedCause(basePacket()), null);
   });
+
+  test("device_glitch is NOT a cause (data-trust signal, not вина)", () => {
+    const packet = basePacket({ statedFactors: [{ factor: "device_glitch", quote: "часы странно себя ведут", date: WD, recurring: false }] });
+    assert.equal(resolveStatedCause(packet), null);
+    assert.equal(hasDeviceGlitch(packet.statedFactors), true);
+  });
+
+  test("device_glitch alongside a real cause → cause still resolves, glitch flagged separately", () => {
+    const packet = basePacket({ statedFactors: [
+      { factor: "device_glitch", quote: "часы врут", date: WD, recurring: false },
+      { factor: "heat", quote: "жарко", date: WD, recurring: false },
+    ] });
+    assert.equal(resolveStatedCause(packet)?.adviceKey, "cause_confirmed_heat");
+    assert.equal(hasDeviceGlitch(packet.statedFactors), true);
+  });
+});
+
+describe("stated-factors — device_glitch extraction", () => {
+  const cases = [
+    "Часы странно себя ведут, надо разбираться",
+    "часы сегодня глючат, пульс наверное кривой",
+    "датчик врёт, пульс завышен",
+    "сбой часов, потеряла сигнал",
+    "пульс наверное кривой сегодня",
+  ];
+  for (const text of cases) {
+    test(`«${text}» → device_glitch`, () => {
+      const factors = extractStatedFactorsDeterministic([msg(text)], WD);
+      assert.ok(factors.some((f) => f.factor === "device_glitch"), `expected device_glitch in ${JSON.stringify(factors)}`);
+    });
+  }
 });
 
 describe("stated-factors — planner integration + regression", () => {

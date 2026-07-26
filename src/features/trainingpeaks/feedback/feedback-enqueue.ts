@@ -11,6 +11,7 @@
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
 import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-extraction-ai";
+import { hasDeviceGlitch } from "@/features/trainingpeaks/feedback/stated-factors";
 import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
@@ -288,6 +289,13 @@ export async function assemblePlannerInputsForWorkouts(
   await Promise.all(
     [...result.values()].map(async (packet) => {
       packet.statedFactors = await extractStatedFactors(packet.studentMessages, packet.workout.workoutDate);
+      // If the student flagged their watch/sensor as off ("часы странно себя ведут"), drop HR trust
+      // for this workout BEFORE the planner runs — otherwise the arc asserts "пульс подрос" on data
+      // the student themselves distrusts (a factual error). Downstream trustGate/arc/fact-check then
+      // treat pulse as unreliable and lean on pace + the student's words.
+      if (hasDeviceGlitch(packet.statedFactors)) {
+        packet.current = { ...packet.current, hrTrusted: false };
+      }
     })
   );
 
