@@ -15,17 +15,23 @@ function safeTimingEqual(a: string, b: string): boolean {
  * check_string = sorted(key=value pairs, except hash) joined by "\n"
  * expected_hash = HMAC_SHA256(check_string, secret_key).hex
  */
-export function validateTelegramInitDataWithToken(initData: string, botToken: string): boolean {
+export function validateTelegramInitDataWithToken(
+  initData: string,
+  botToken: string,
+  opts?: { dropSignature?: boolean }
+): boolean {
   try {
     const params = new URLSearchParams(initData);
     const hash = params.get("hash");
     if (!hash) return false;
     params.delete("hash");
-    // Newer Telegram clients add `signature` (Ed25519, for third-party validation).
-    // It is NOT part of the HMAC data-check-string — Telegram computes `hash` without
-    // it. Leaving it in makes the HMAC mismatch (bad_signature) on new clients only.
-    // delete() is a no-op when absent, so older clients are unaffected.
-    params.delete("signature");
+    // `signature` (Ed25519, for third-party validation) is dropped ONLY when the caller
+    // opts in. DEFAULT is false = the exact behaviour that /m/desk and /m/n shipped with
+    // and that worked in production — do NOT change the proven coach/student path. The
+    // club opts in (validateClubInitData) because its investigation is still open.
+    if (opts?.dropSignature) {
+      params.delete("signature");
+    }
 
     const checkString = [...params.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
@@ -60,11 +66,12 @@ export function clubInitDataTokenInfo(): { token: string | undefined; varName: "
   return { token: process.env.TELEGRAM_BOT_TOKEN?.trim(), varName: "TELEGRAM_BOT_TOKEN" };
 }
 
-/** initData validation for the CLUB surface — uses the club bot's token. */
+/** initData validation for the CLUB surface — uses the club bot's token, and drops
+ *  the `signature` field (club-only; desk/n keep the proven default). */
 export function validateClubInitData(initData: string): boolean {
   const { token } = clubInitDataTokenInfo();
   if (!token) return false;
-  return validateTelegramInitDataWithToken(initData, token);
+  return validateTelegramInitDataWithToken(initData, token, { dropSignature: true });
 }
 
 /** Diagnostic-only: keys present in initData + hash length (no secret values). */
@@ -93,6 +100,11 @@ function botIdFromToken(token: string | undefined): number | null {
 /** Numeric id of the bot whose token the CLUB surface validates against. Not a secret. */
 export function clubBotId(): number | null {
   return botIdFromToken(clubInitDataTokenInfo().token);
+}
+
+/** Numeric id of the MAIN bot (TELEGRAM_BOT_TOKEN) used by /m/desk and /m/n. Not a secret. */
+export function mainBotId(): number | null {
+  return botIdFromToken(process.env.TELEGRAM_BOT_TOKEN?.trim());
 }
 
 // --- 4-way signature probe (diagnostic) --------------------------------------
@@ -163,7 +175,8 @@ export function clubSignatureProbe(initData: string): {
   }
   return {
     botId,
-    current: validateTelegramInitDataWithToken(initData, token), // literal production path
+    // literal production club path (drops signature)
+    current: validateTelegramInitDataWithToken(initData, token, { dropSignature: true }),
     currentWithSig: probeHmacA(initData, token, false),
     refDropHashSig: probeHmacB(initData, token, true),
     refDropHashOnly: probeHmacB(initData, token, false),

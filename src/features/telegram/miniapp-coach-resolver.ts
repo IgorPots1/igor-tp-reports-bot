@@ -1,4 +1,6 @@
 import {
+  initDataDiag,
+  mainBotId,
   parseTelegramInitDataUser,
   validateTelegramInitData,
 } from "@/features/telegram/validate-init-data";
@@ -13,8 +15,20 @@ export type ResolveMiniAppCoachResult =
 
 export function resolveMiniAppCoach(input: { initData: string }): ResolveMiniAppCoachResult {
   const initData = input.initData?.trim() ?? "";
-  if (!initData || !validateTelegramInitData(initData)) {
-    return { ok: false, httpStatus: 401, code: "unauthorized", message: "Не авторизован." };
+  if (!initData) {
+    // FACT, not guess: empty initData = Telegram didn't pass launch data (client/redirect),
+    // NOT a signature problem. Distinct from bad_signature so the log names the real cause.
+    console.warn("[desk.resolve] no_init_data (пустой initData от клиента)");
+    return { ok: false, httpStatus: 401, code: "no_init_data", message: "Не авторизован." };
+  }
+  if (!validateTelegramInitData(initData)) {
+    // Validation failed with a present initData = HMAC mismatch. botId shows WHICH bot the
+    // deployed TELEGRAM_BOT_TOKEN belongs to — if it changed on Vercel, /m/desk AND /m/n break.
+    const diag = initDataDiag(initData);
+    console.warn(
+      `[desk.resolve] bad_signature botId=${mainBotId()} keys=[${diag.keys.join(",")}] hashLen=${diag.hashLen}`
+    );
+    return { ok: false, httpStatus: 401, code: "bad_signature", message: "Не авторизован." };
   }
 
   const user = parseTelegramInitDataUser(initData);
