@@ -6,6 +6,7 @@ import { buildReportCardView, buildReportsView } from "./feedback-review-view.ts
 import { scoreFeedbackSignificance } from "./feedback-significance.ts";
 import type { FeedbackContextPacket } from "./context-packet.ts";
 import type { FeedbackJobStatus, TrainingPeaksFeedbackJob } from "./feedback-queue.ts";
+import { stripLongDash } from "./draft-text.ts";
 
 // ── fixtures ──
 function packet(overrides: Partial<FeedbackContextPacket> = {}): FeedbackContextPacket {
@@ -261,5 +262,30 @@ describe("buildReportCardView — channel", () => {
   test("no channel → 'none'", () => {
     const card = buildReportCardView(makeJob(), "Мария", null, {});
     assert.equal(card.channel, "none");
+  });
+});
+
+describe("stripLongDash — the model still slips «—» in despite the prompt ban", () => {
+  test("spaced em-dash clause separator → comma", () => {
+    assert.equal(stripLongDash("Привет! Хорошо разложил темп — молодец)"), "Привет! Хорошо разложил темп, молодец)");
+  });
+  test("spaced en-dash → comma too", () => {
+    assert.equal(stripLongDash("Держи ровно – не разгоняйся"), "Держи ровно, не разгоняйся");
+  });
+  test("unspaced numeric range dash → short hyphen, no comma", () => {
+    assert.equal(stripLongDash("темп 5:10–5:20"), "темп 5:10-5:20");
+  });
+  test("dash glued to a word → short hyphen", () => {
+    assert.equal(stripLongDash("пульс—ровный"), "пульс-ровный");
+  });
+  test("never joins across newlines", () => {
+    assert.equal(stripLongDash("строка —\nдругая"), "строка -\nдругая");
+  });
+  test("clean text is untouched", () => {
+    const clean = "Привет! Отлично, темп ровный, молодец) 👍";
+    assert.equal(stripLongDash(clean), clean);
+  });
+  test("multiple dashes in one message all handled", () => {
+    assert.equal(stripLongDash("Привет! Темп ровный — хорошо, пульс — стабильный)"), "Привет! Темп ровный, хорошо, пульс, стабильный)");
   });
 });
