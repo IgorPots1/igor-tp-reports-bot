@@ -12,7 +12,7 @@
 import {
   parseTelegramInitDataStartParam,
   parseTelegramInitDataUser,
-  validateClubInitData,
+  validateClubInitDataVerbose,
   clubInitDataTokenInfo,
   clubSignatureProbe,
   initDataDiag,
@@ -86,15 +86,16 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
       code: "no_init_data",
     };
   }
-  if (!validateClubInitData(initData)) {
+  const clubValid = validateClubInitDataVerbose(initData);
+  if (!clubValid.ok) {
     const { varName } = clubInitDataTokenInfo();
     const diag = initDataDiag(initData);
-    // FACTS only (no hypothesis): which token var, which keys, and the 4-way probe —
-    // botId shows WHICH bot the deployed token belongs to (compare with @igorp_coach_bot),
-    // and the four variants show whether it's a code bug vs a wrong token vs the sig field.
+    // FACTS only: botId (which bot the deployed token belongs to — compare @igorp_coach_bot),
+    // and the 4-way probe. Both club variants already failed here, so if the probe is all-false
+    // the token is wrong; the probe columns pin code-bug vs token vs the signature field.
     const probe = clubSignatureProbe(initData);
     console.warn(
-      `[club.resolve] bad_signature botId=${probe.botId} tokenVar=${varName} keys=[${diag.keys.join(",")}] hashLen=${diag.hashLen} ` +
+      `[club.resolve] bad_signature botId=${clubValid.botId} tokenVar=${varName} keys=[${diag.keys.join(",")}] hashLen=${diag.hashLen} ` +
         `probe: current=${probe.current} currentWithSig=${probe.currentWithSig} refDropHashSig=${probe.refDropHashSig} refDropHashOnly=${probe.refDropHashOnly}`
     );
     return {
@@ -104,6 +105,8 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
       code: "bad_signature",
     };
   }
+  // Signature OK — record WHICH variant matched, so the open question is closed by fact.
+  console.info(`[club.resolve] ok_signature variant=${clubValid.variant} botId=${clubValid.botId}`);
   const user = parseTelegramInitDataUser(initData);
   if (!user) {
     console.warn("[club.resolve] unauthorized (initData без user)");

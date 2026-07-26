@@ -66,12 +66,35 @@ export function clubInitDataTokenInfo(): { token: string | undefined; varName: "
   return { token: process.env.TELEGRAM_BOT_TOKEN?.trim(), varName: "TELEGRAM_BOT_TOKEN" };
 }
 
-/** initData validation for the CLUB surface — uses the club bot's token, and drops
- *  the `signature` field (club-only; desk/n keep the proven default). */
+/**
+ * initData validation for the CLUB surface. Tries BOTH data-check-string variants and
+ * reports which one matched — no hypothesis about the client baked in:
+ *  - "with_signature"    : signature INCLUDED in the hash (dropSignature:false) — the
+ *                          same, proven behaviour as /m/desk and /m/n. Tried FIRST.
+ *  - "without_signature" : signature EXCLUDED (dropSignature:true) — fallback for
+ *                          clients where Telegram omits it from the HMAC.
+ * botId is the club token's public bot id (compare with @igorp_coach_bot on failure).
+ */
+export function validateClubInitDataVerbose(initData: string): {
+  ok: boolean;
+  variant: "with_signature" | "without_signature" | null;
+  botId: number | null;
+} {
+  const token = clubInitDataTokenInfo().token;
+  const botId = botIdFromToken(token);
+  if (!token) return { ok: false, variant: null, botId };
+  if (validateTelegramInitDataWithToken(initData, token, { dropSignature: false })) {
+    return { ok: true, variant: "with_signature", botId };
+  }
+  if (validateTelegramInitDataWithToken(initData, token, { dropSignature: true })) {
+    return { ok: true, variant: "without_signature", botId };
+  }
+  return { ok: false, variant: null, botId };
+}
+
+/** Boolean club validation (both variants). Kept for confirm-link / reject-link routes. */
 export function validateClubInitData(initData: string): boolean {
-  const { token } = clubInitDataTokenInfo();
-  if (!token) return false;
-  return validateTelegramInitDataWithToken(initData, token, { dropSignature: true });
+  return validateClubInitDataVerbose(initData).ok;
 }
 
 /** Diagnostic-only: keys present in initData + hash length (no secret values). */
