@@ -52,7 +52,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (!job) {
       return jsonResponse(404, { ok: false, error: "Черновик не найден." });
     }
-    if (job.status !== "done") {
+    // Allow a re-share from 'shared' (Igor picked the wrong chat → «Отправить ещё раз»), not only
+    // the first share from 'done'. A confirmed/sent/dismissed card is closed and refused.
+    if (job.status !== "done" && job.status !== "shared") {
       return jsonResponse(409, { ok: false, error: "Черновик уже обработан." });
     }
     const finalText = (job.coachEditedText ?? job.draftText ?? "").trim();

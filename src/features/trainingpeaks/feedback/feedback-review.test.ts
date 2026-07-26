@@ -179,13 +179,15 @@ describe("buildReportsView — grouping", () => {
   );
   const lookup = (id: string) => ({ name: `Ученик ${id}`, telegramUsername: null });
 
-  test("done→review, blocked/failed→attention, sent/dismissed→history", () => {
+  test("done→review, blocked/failed→attention, sent→history; dismissed dropped", () => {
     const v = buildReportsView(jobs, lookup, false);
     assert.deepEqual(v.review.map((c) => c.status), ["done"]);
     assert.deepEqual(v.attention.map((c) => c.status).sort(), ["blocked", "failed"]);
-    assert.deepEqual(v.history.map((c) => c.status).sort(), ["dismissed", "sent"]);
+    // Only sent reaches history (verified DM). dismissed is excluded (a cleared card is handled,
+    // not history) → it lands in no bucket. shared_confirmed would join history; plain shared does not.
+    assert.deepEqual(v.history.map((c) => c.status).sort(), ["sent"]);
     assert.equal(v.sendEnabled, false);
-    assert.deepEqual(v.counts, { queue: 0, review: 1, attention: 2, history: 2 });
+    assert.deepEqual(v.counts, { queue: 0, review: 1, attention: 2, history: 1 });
   });
 
   test("sendEnabled flag is carried through", () => {
@@ -198,9 +200,15 @@ describe("buildReportsView — grouping", () => {
     assert.equal(v.review[0].studentName, "Ученик");
   });
 
-  test("shared job lands in history (not review)", () => {
+  test("shared (unconfirmed) STAYS in review — not buried in history", () => {
     const v = buildReportsView([makeJob({ status: "shared", id: "sh" })], lookup, false);
-    assert.deepEqual(v.history.map((c) => c.status), ["shared"]);
+    assert.deepEqual(v.review.map((c) => c.status), ["shared"]);
+    assert.equal(v.history.length, 0);
+  });
+
+  test("shared_confirmed (Igor tapped «Готово») → history, terminal", () => {
+    const v = buildReportsView([makeJob({ status: "shared_confirmed", id: "shc" })], lookup, false);
+    assert.deepEqual(v.history.map((c) => c.status), ["shared_confirmed"]);
     assert.equal(v.review.length, 0);
   });
 });

@@ -19,10 +19,13 @@ const TABLE = "trainingpeaks_workout_feedback_jobs";
 // dismissed are the review terminal states the Mini App writes:
 //   sent    — delivered to a 1:1 Business DM by the server (confirmed).
 //   shared  — handed to Telegram's share sheet for a GROUP from Igor's own account;
-//             delivery is NOT confirmable (no API round-trip), so it's a distinct state
-//             from 'sent' — the history must not claim a group message as verified.
+//             delivery is NOT confirmable (no API round-trip). Because a wrong-chat pick
+//             can't be detected, 'shared' is NOT terminal: the card STAYS in review with
+//             «Отправить ещё раз», and only Igor's explicit «Готово» closes it.
+//   shared_confirmed — Igor confirmed the group share actually landed («Готово»). Terminal,
+//             moves to history. The only way a shared card leaves the review cycle.
 //   dismissed — coach chose not to send / cleared from the queue.
-export type FeedbackJobStatus = "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "shared" | "dismissed";
+export type FeedbackJobStatus = "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "shared" | "shared_confirmed" | "dismissed";
 
 export type TrainingPeaksFeedbackJob = {
   id: string;
@@ -141,7 +144,7 @@ export async function fetchHandledWorkoutCacheIds(cacheIds: string[]): Promise<S
   for (let i = 0; i < cacheIds.length; i += 150) {
     const part = cacheIds.slice(i, i + 150);
     const { data, error } = await withSupabaseNetworkRetry(() =>
-      supabase.from(TABLE).select("workout_cache_id").in("workout_cache_id", part).in("status", ["done", "dismissed", "sent", "shared"])
+      supabase.from(TABLE).select("workout_cache_id").in("workout_cache_id", part).in("status", ["done", "dismissed", "sent", "shared", "shared_confirmed"])
     );
     if (error) throw new Error(`fetch handled workout cache ids failed: ${error.message}`);
     for (const r of (data as Array<{ workout_cache_id: string }>) ?? []) handled.add(r.workout_cache_id);
@@ -167,7 +170,7 @@ export async function fetchWorkoutJobBlockState(cacheIds: string[]): Promise<Map
   const out = new Map<string, WorkoutJobBlockState>();
   if (cacheIds.length === 0) return out;
   const supabase = createSupabaseServerClient();
-  const BLOCKING = new Set<FeedbackJobStatus>(["pending", "generating", "done", "sent", "shared"]);
+  const BLOCKING = new Set<FeedbackJobStatus>(["pending", "generating", "done", "sent", "shared", "shared_confirmed"]);
   for (let i = 0; i < cacheIds.length; i += 150) {
     const part = cacheIds.slice(i, i + 150);
     const { data, error } = await withSupabaseNetworkRetry(() =>
@@ -406,11 +409,12 @@ export async function markPendingFeedbackJobsDismissedOlderThan(input: {
 }
 
 /**
- * Mark a reviewed draft as SHARED to a group (done→shared): Igor tapped «Отправить в
- * чат», which opens Telegram's share sheet from his own account. There is no delivery
- * confirmation for a share, so this is deliberately NOT 'sent' — the history shows it as
- * "передано в чат" (unverified). Freezes the shared text. CAS on 'done' so it can't
- * double-fire or race a DM send. Returns the updated job, or null if it wasn't 'done'.
+ * Mark a reviewed draft as SHARED to a group: Igor tapped «Отправить в чат», which opens
+ * Telegram's share sheet from his own account. There is no delivery confirmation, so this is
+ * NOT 'sent', and NOT terminal — the card stays in review as "передано в чат" so a wrong-chat
+ * pick can be re-shared. CAS allows 'done' OR 'shared' (an idempotent «Отправить ещё раз»), but
+ * NOT 'shared_confirmed' (already closed) — so a resend re-freezes the text without reopening a
+ * confirmed card. Returns the updated job, or null if it was neither 'done' nor 'shared'.
  */
 export async function markFeedbackJobShared(input: {
   jobId: string;
@@ -423,11 +427,31 @@ export async function markFeedbackJobShared(input: {
       .from(TABLE)
       .update({ status: "shared", sent_text: input.sharedText, sent_at: new Date().toISOString(), reviewed_by_chat_id: input.actorChatId })
       .eq("id", input.jobId)
-      .eq("status", "done")
+      .in("status", ["done", "shared"])
       .select("*")
       .maybeSingle()
   );
   if (error) throw new Error(`mark feedback job shared failed: ${error.message}`);
+  return data ? mapRow(data as FeedbackJobRow) : null;
+}
+
+/**
+ * Confirm a group share actually landed (shared→shared_confirmed): Igor tapped «Готово». This is
+ * the ONLY exit from 'shared' — it moves the card to history. CAS on 'shared' so it can't fire on
+ * a card that isn't awaiting confirmation. Returns the updated job, or null if it wasn't 'shared'.
+ */
+export async function markFeedbackJobSharedConfirmed(input: { jobId: string; actorChatId: string }): Promise<TrainingPeaksFeedbackJob | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(TABLE)
+      .update({ status: "shared_confirmed", reviewed_by_chat_id: input.actorChatId })
+      .eq("id", input.jobId)
+      .eq("status", "shared")
+      .select("*")
+      .maybeSingle()
+  );
+  if (error) throw new Error(`confirm feedback job shared failed: ${error.message}`);
   return data ? mapRow(data as FeedbackJobRow) : null;
 }
 

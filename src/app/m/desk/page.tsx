@@ -315,7 +315,7 @@ export default function CoachDeskPage() {
   const [reportsView, setReportsView] = useState<ReportsView | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [reportBusy, setReportBusy] = useState<{ id: string; op: "send" | "dismiss" | "save" | "generate" } | null>(null);
+  const [reportBusy, setReportBusy] = useState<{ id: string; op: "send" | "dismiss" | "save" | "generate" | "confirm" } | null>(null);
   const [reportToast, setReportToast] = useState<Record<string, { ok: boolean; text: string; tone?: "info" }>>({});
 
   const loadToday = useCallback(async (id: string) => {
@@ -770,20 +770,52 @@ export default function CoachDeskPage() {
         });
         const json = (await res.json()) as { ok: boolean; outcome?: string; note?: string; error?: string };
         if (json.ok && json.outcome === "shared") {
+          // Delivery to a group isn't confirmable, so the card STAYS in review as 'shared' (with
+          // «Отправить ещё раз» / «Готово») — a wrong-chat share can be redone, not buried.
+          setReportsView((prev) =>
+            prev
+              ? { ...prev, review: prev.review.map((c) => (c.id === card.id ? { ...c, status: "shared" as const } : c)) }
+              : prev
+          );
+          setReportToast((t) => ({ ...t, [card.id]: { ok: true, tone: "info", text: "Передано в чат. Проверь, что ушло в нужный чат, потом «Готово»." } }));
+        } else if (json.ok && json.outcome === "prepared") {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: true, tone: "info", text: json.note ?? "Режим подготовки: шаринг открыт, статус не меняю." } }));
+        } else {
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось отметить." } }));
+        }
+      } catch {
+        setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: "Ошибка сети." } }));
+      } finally {
+        setReportBusy(null);
+      }
+    },
+    [initData]
+  );
+
+  // «Готово» on a shared card: Igor confirms the group share landed → shared_confirmed → history.
+  const confirmShare = useCallback(
+    async (card: ReportCardModel) => {
+      setReportBusy({ id: card.id, op: "confirm" });
+      try {
+        const res = await fetch("/api/m/desk/reports/shared-confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData, jobId: card.id }),
+        });
+        const json = (await res.json()) as { ok: boolean; outcome?: string; error?: string };
+        if (json.ok && json.outcome === "shared_confirmed") {
           setReportsView((prev) =>
             prev
               ? {
                   ...prev,
                   review: prev.review.filter((c) => c.id !== card.id),
-                  history: [{ ...card, status: "shared" }, ...prev.history],
+                  history: [{ ...card, status: "shared_confirmed" as const }, ...prev.history],
                   counts: { ...prev.counts, review: prev.counts.review - 1, history: prev.counts.history + 1 },
                 }
               : prev
           );
-        } else if (json.ok && json.outcome === "prepared") {
-          setReportToast((t) => ({ ...t, [card.id]: { ok: true, tone: "info", text: json.note ?? "Режим подготовки: шаринг открыт, статус не меняю." } }));
         } else {
-          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось отметить." } }));
+          setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: json.error ?? "Не удалось отметить готовым." } }));
         }
       } catch {
         setReportToast((t) => ({ ...t, [card.id]: { ok: false, text: "Ошибка сети." } }));
@@ -877,6 +909,7 @@ export default function CoachDeskPage() {
           onCancelEdit={cancelEditReport}
           onSend={sendReport}
           onShare={shareToGroup}
+          onConfirmShared={confirmShare}
           onGenerate={generateReport}
           onGenerateBatch={generateBatch}
           onBulkDismissOld={bulkDismissOld}

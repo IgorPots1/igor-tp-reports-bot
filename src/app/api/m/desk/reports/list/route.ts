@@ -44,13 +44,14 @@ export async function POST(request: NextRequest): Promise<Response> {
     await reclaimStaleGeneratingFeedbackJobs(new Date(Date.now() - STALE_GENERATING_TTL_MS).toISOString()).catch(() => {});
 
     // Plain Supabase reads — no TrainingPeaks/Mac call. «Новые» (pending/generating) now
-    // surface too, so Igor sees the list before generating; shared is a history state.
+    // surface too, so Igor sees the list before generating. 'shared' is an ACTIONABLE review
+    // state (unconfirmed group share); 'shared_confirmed' is its history terminal.
     const [jobs, students, backend] = await Promise.all([
       // 'dismissed' is intentionally NOT fetched: those are handled cards, and with 600+ of
       // them they used to eat the newest-200 budget and bury live cards. History now shows
-      // only sent/shared. Everything the coach still acts on is here.
+      // only sent/shared_confirmed. Everything the coach still acts on is here.
       listTrainingPeaksFeedbackJobs({
-        status: ["pending", "generating", "done", "blocked", "failed", "sent", "shared"],
+        status: ["pending", "generating", "done", "blocked", "failed", "sent", "shared", "shared_confirmed"],
         limit: 200,
       }),
       listTrainingPeaksStudents(),

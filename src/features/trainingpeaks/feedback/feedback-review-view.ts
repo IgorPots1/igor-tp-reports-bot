@@ -217,11 +217,12 @@ export function buildReportCardView(
 
 const QUEUE_STATUSES = new Set<FeedbackJobStatus>(["pending", "generating"]);
 const ATTENTION_STATUSES = new Set<FeedbackJobStatus>(["blocked", "failed"]);
-// History shows only what actually LEFT the review cycle for the student: sent (verified
-// DM) or shared (handed to a group). 'dismissed' is deliberately excluded — a card the
-// coach cleared is handled, not history worth showing; keeping hundreds of them buried
-// the real signal. The list route also stops fetching dismissed rows.
-const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "shared"]);
+// History shows only what actually LEFT the review cycle for the student: sent (verified DM) or
+// shared_confirmed (Igor confirmed the group share landed). 'shared' is NOT here — an unconfirmed
+// group share is unverified, so its card STAYS in review (with «Отправить ещё раз» / «Готово») and
+// a wrong-chat pick isn't buried. 'dismissed' is excluded too — a cleared card is handled, not
+// history worth showing. The list route also stops fetching dismissed rows.
+const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "shared_confirmed"]);
 
 /**
  * Group jobs into the three tab sections. `jobs` should arrive newest-first (the
@@ -246,7 +247,7 @@ export function buildReportsView(jobs: TrainingPeaksFeedbackJob[], lookup: Stude
     if (QUEUE_STATUSES.has(job.status)) {
       const packet = job.contextPacket as FeedbackContextPacket | undefined;
       queue.push({ card, score: scoreFeedbackSignificance(packet).score, date: packet?.workoutDate ?? "" });
-    } else if (job.status === "done") review.push(card);
+    } else if (job.status === "done" || job.status === "shared") review.push(card); // 'shared' stays actionable (resend / confirm)
     else if (ATTENTION_STATUSES.has(job.status)) attention.push(card);
     else if (HISTORY_STATUSES.has(job.status)) history.push(card);
   }

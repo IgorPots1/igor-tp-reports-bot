@@ -20,7 +20,7 @@ export type ReportCardModel = {
   workoutDate: string | null;
   dateLabel: string;
   sessionTypeLabel: string;
-  status: "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "shared" | "dismissed";
+  status: "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "shared" | "shared_confirmed" | "dismissed";
   draftText: string | null;
   coachEdited: boolean;
   transparency: ReportTransparencyItem[];
@@ -40,7 +40,7 @@ export type ReportsView = {
   counts: { queue: number; review: number; attention: number; history: number };
 };
 
-export type ReportBusy = { id: string; op: "send" | "dismiss" | "save" | "generate" } | null;
+export type ReportBusy = { id: string; op: "send" | "dismiss" | "save" | "generate" | "confirm" } | null;
 // tone "info" is a neutral (not-error) note — used for prepare-only, which is a deliberate
 // mode, not a failure. Without it a "не отправлено" note renders red and reads as a bug.
 export type ReportToast = { ok: boolean; text: string; tone?: "info" };
@@ -246,6 +246,7 @@ export function ReportReviewCard(props: {
   onCancelEdit: () => void;
   onSend: (card: ReportCardModel) => void;
   onShare: (card: ReportCardModel) => void;
+  onConfirmShared: (card: ReportCardModel) => void;
   onDismiss: (card: ReportCardModel, from: "review" | "attention") => void;
 }) {
   const c = props.card;
@@ -276,7 +277,21 @@ export function ReportReviewCard(props: {
         <>
           <p style={R.draft}>{c.draftText}</p>
           <Transparency items={c.transparency} />
-          {(() => {
+          {c.status === "shared" ? (
+            // Already shared to a group, but delivery is NOT confirmable — so the card is not buried.
+            // Igor can re-share (if he picked the wrong chat) or mark it done once it actually landed.
+            <>
+              <p style={R.channelInfo(false)}>💬 передано в чат — проверь, что ушло в нужный чат</p>
+              <div style={R.actions}>
+                <button type="button" style={sendButtonStyle(props.sendEnabled)} disabled={busyHere === "send"} onClick={() => props.onShare(c)}>
+                  {busyHere === "send" ? "…" : "Отправить ещё раз"}
+                </button>
+                <button type="button" style={R.save} disabled={busyHere === "confirm"} onClick={() => props.onConfirmShared(c)}>
+                  {busyHere === "confirm" ? "…" : "Готово"}
+                </button>
+              </div>
+            </>
+          ) : (() => {
             // Share is the path for a group, and the fallback for a DM whose 24h window is closed
             // (Business API would fail). So no card is ever left without a working way to send.
             const useShare = c.channel === "group" || (c.channel === "dm" && !c.windowOpen);
@@ -368,6 +383,7 @@ export function ReportsTab(props: {
   onCancelEdit: () => void;
   onSend: (card: ReportCardModel) => void;
   onShare: (card: ReportCardModel) => void;
+  onConfirmShared: (card: ReportCardModel) => void;
   onGenerate: (card: ReportCardModel) => void;
   onGenerateBatch: () => void;
   onBulkDismissOld: () => void;
@@ -452,6 +468,7 @@ export function ReportsTab(props: {
               onCancelEdit={props.onCancelEdit}
               onSend={props.onSend}
               onShare={props.onShare}
+              onConfirmShared={props.onConfirmShared}
               onDismiss={props.onDismiss}
             />
           ))}
@@ -483,7 +500,7 @@ export function ReportsTab(props: {
                 <div key={card.id} style={R.histRow}>
                   <span style={R.histName}>{card.studentName}</span>
                   <span style={{ flex: "0 0 auto", fontSize: 12, fontWeight: 700, color: card.status === "sent" ? C.teal : C.warn }}>
-                    {card.status === "sent" ? "отправлено ✓" : "передано в чат"}
+                    {card.status === "sent" ? "отправлено ✓" : "передано в чат ✓"}
                   </span>
                 </div>
               ))
