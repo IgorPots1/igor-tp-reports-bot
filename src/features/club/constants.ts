@@ -186,3 +186,20 @@ export function isDayoffEnabled(): boolean {
 export function isClubTpExecutionEnabled(): boolean {
   return process.env.CLUB_TP_EXECUTION_ENABLED === "true";
 }
+/** Phase 4 — coach-facing payment-reminder drafts screen. OFF by default. */
+export function isClubBillingRemindersEnabled(): boolean {
+  return process.env.CLUB_BILLING_REMINDERS_ENABLED === "true";
+}
+/**
+ * Phase 4 — future auto-send of reminders WITHOUT coach confirmation. OFF, and
+ * intentionally not wired to any sender. Placeholder for a later decision; today
+ * every reminder is a draft the coach confirms. Do NOT enable.
+ */
+export function isClubBillingReminderAutosendEnabled(): boolean {
+  return process.env.CLUB_BILLING_REMINDER_AUTOSEND_ENABLED === "true";
+}
+/** Days-before-due to start reminding (config, default 3). */
+export function clubBillingReminderDaysBefore(): number {
+  const raw = Number(process.env.CLUB_BILLING_REMINDER_DAYS_BEFORE ?? "3");
+  return Number.isFinite(raw) && raw >= 0 ? raw : 3;
+}

@@ -5,8 +5,11 @@
 // files (not applied) — reads/writes are inert until applied.
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { getBillingClientForStudent, getBillingClientDetail, getEffectiveBillingRowStatus } from "@/features/billing/admin";
+import type { BillingMonthStatusRow } from "@/features/billing/types";
 
 import { formatRuDate } from "./service";
+import { buildClubTbankPayUrl } from "./billing-links";
 import type {
   ClubBillingView,
   ClubDayoffRequest,
@@ -184,16 +187,60 @@ export async function listWishes(studentId: string): Promise<ClubWish[]> {
 // billing module is wired. NO payment fields ever live in the mini app.
 // ---------------------------------------------------------------------------
 
-export async function getClubBilling(_studentId: string): Promise<ClubBillingView> {
-  void _studentId;
-  // TODO(billing): read-only join to the existing Coach OS billing module by
-  // student. Needed interface: current status (paid/due/overdue), next due date,
-  // and a short payment history (label + amount) — NO card/requisite/PII fields.
-  // Reminders must be drafted into the coach approval queue, never auto-sent.
+function billingAmountLabel(amount: number | null, currency: string): string | null {
+  if (amount == null || !Number.isFinite(amount)) return null;
+  const sign = currency === "RUB" ? "₽" : currency;
+  return `${Math.round(amount)} ${sign}`;
+}
+
+function billingStatusLabel(row: BillingMonthStatusRow): { label: string; kind: ClubBillingView["statusKind"] } {
+  const eff = getEffectiveBillingRowStatus(row);
+  if (eff === "paid") return { label: "Оплачено", kind: "paid" };
+  if (eff === "overdue") {
+    return { label: row.daysOverdue ? `Просрочено ${row.daysOverdue} дн.` : "Просрочено", kind: "overdue" };
+  }
+  return { label: "Ожидается", kind: "due" };
+}
+
+/**
+ * READ-ONLY projection of the Coach OS billing module for one student. Surfaces
+ * status / next due date / amount / short history + a T-Bank pay link. Never
+ * exposes payer identities, card data, or requisites (PII stays in /admin/billing).
+ */
+export async function getClubBilling(studentId: string): Promise<ClubBillingView> {
+  const empty = (note: string): ClubBillingView => ({
+    available: false, note, status: null, statusKind: "unknown", nextDueDate: null, amountLabel: null, history: [], payUrl: null,
+  });
+
+  const client = await getBillingClientForStudent(studentId);
+  if (!client) {
+    return empty("Оплата не привязана. Обратись к тренеру, чтобы связать профиль с биллингом.");
+  }
+  const detail = await getBillingClientDetail(client.id);
+  if (!detail) {
+    return empty("Данные оплаты пока недоступны.");
+  }
+
+  const current = detail.currentMonthStatus;
+  const status = current ? billingStatusLabel(current) : null;
+  const payUrl = buildClubTbankPayUrl(client.clientName ?? studentId);
+
+  const history = detail.paymentHistory
+    .slice(-6)
+    .reverse()
+    .map((row) => ({
+      label: row.billingMonth ?? "",
+      amount: billingAmountLabel(row.paidAmount ?? row.plannedAmount, row.currency),
+    }));
+
   return {
-    available: false,
-    note: "Раздел оплаты в разработке. Нужен read-only доступ к биллинг-модулю Coach OS (статус, история). Платёжных реквизитов в мини-аппе не будет.",
-    status: null,
-    history: [],
+    available: true,
+    note: "",
+    status: status?.label ?? null,
+    statusKind: status?.kind ?? "unknown",
+    nextDueDate: current?.plannedPaymentDate ?? null,
+    amountLabel: current ? billingAmountLabel(current.plannedAmount, current.currency) : null,
+    history,
+    payUrl,
   };
 }

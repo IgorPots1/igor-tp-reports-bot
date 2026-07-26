@@ -228,8 +228,20 @@ export type ClubWish = {
 export type ClubBillingView = {
   available: boolean;
   note: string;
+  /** Human status label, e.g. "Оплачено" / "Ожидается" / "Просрочено 3 дн.". */
   status: string | null;
+  statusKind: "paid" | "due" | "overdue" | "unknown";
+  /** Next planned payment date (ISO) if known. */
+  nextDueDate: string | null;
+  /** Planned amount label, e.g. "3500 ₽". NO card/requisite/PII fields ever. */
+  amountLabel: string | null;
   history: Array<{ label: string; amount: string | null }>;
+  /**
+   * T-Bank payment link (from CLUB_TBANK_PAYMENT_URL). The mini app opens it via
+   * Telegram.WebApp.openLink (in-app browser), never renders payment fields itself.
+   * null when unconfigured.
+   */
+  payUrl: string | null;
 };
 
 export type ClubPrediction = {
