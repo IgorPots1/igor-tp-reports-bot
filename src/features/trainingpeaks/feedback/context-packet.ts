@@ -238,23 +238,43 @@ function workoutHeader(sessionType: SessionType | null): string {
   return `Тип: ${t}. (Числа этой тренировки НЕ называй, только словами.)`;
 }
 
-function pickFewshots(observations: Observation[]): { text: string; used: string[] } {
+// Block 2 — few-shots were mixed «ты»/«вы» and picked regardless of the student's register, so a
+// «вы» prompt shipped «ты» exemplars and the body drifted to the wrong register (with the greeting
+// following its own rule, the two diverged). Tag each example by the register its wording implies
+// («вы»/«вас»/«-йте» → vy; «ты»/«тебя»/«-ешь»/«делай» → ty; neither → neutral) and drop examples
+// whose register contradicts the target. Neutral examples (most praise) stay for both.
+const EXAMPLE_VY_RE = /(?<![а-яё])(вы|вас|вам|ваш[а-яё]*)(?![а-яё])|[а-яё]йте(?![а-яё])/iu;
+const EXAMPLE_TY_RE = /(?<![а-яё])(ты|тебя|тебе|тво[а-яё]*|делай|держи|бегай|начинаешь|разгоняйся)(?![а-яё])|[а-яё](ешь|ишь)(?![а-яё])/iu;
+function exampleMatchesRegister(example: string, register: "ty" | "vy" | "unknown"): boolean {
+  const isVy = EXAMPLE_VY_RE.test(example);
+  const isTy = EXAMPLE_TY_RE.test(example);
+  if (isVy === isTy) return true; // neutral (neither, or ambiguous both) → fits any register
+  const target = register === "ty" ? "ty" : "vy"; // unknown defaults to вы, same as registerWord
+  return target === "ty" ? isTy : isVy;
+}
+
+function pickFewshots(observations: Observation[], register: "ty" | "vy" | "unknown"): { text: string; used: string[] } {
   const studentFacing = observations.filter((o) => o.type !== "coach_signal");
   const types = new Set(studentFacing.map((o) => o.type));
+  const fit = (examples: string[], n: number) => examples.filter((e) => exampleMatchesRegister(e, register)).slice(0, n);
   const used: string[] = [];
-  const parts: string[] = [...FEWSHOTS.A.slice(0, 4)];
-  used.push("A×4");
+  const a = fit(FEWSHOTS.A, 4);
+  const parts: string[] = [...a];
+  used.push(`A×${a.length}`);
   if (types.has("correction")) {
-    parts.push(...FEWSHOTS.B.slice(0, 3));
-    used.push("B×3");
+    const b = fit(FEWSHOTS.B, 3);
+    parts.push(...b);
+    used.push(`B×${b.length}`);
   }
   if (types.has("question")) {
-    parts.push(...FEWSHOTS.C.slice(0, 3));
-    used.push("C×3");
+    const c = fit(FEWSHOTS.C, 3);
+    parts.push(...c);
+    used.push(`C×${c.length}`);
   }
   if (studentFacing.some((o) => o.adviceKey.startsWith("cause_confirmed"))) {
-    parts.push(...FEWSHOTS.D.slice(0, 2));
-    used.push("D×2");
+    const d = fit(FEWSHOTS.D, 2);
+    parts.push(...d);
+    used.push(`D×${d.length}`);
   }
   return { text: parts.map((p) => `- ${p}`).join("\n"), used };
 }
@@ -370,7 +390,7 @@ export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackC
   const studentWords = windowStudentWords(input);
   const arc = buildArc(sessionType, input.current, input.laps, observations, input.workout.workoutDate, input.memoryItems, studentWords);
   const comparison = buildComparison(observations);
-  const fewshots = pickFewshots(observations);
+  const fewshots = pickFewshots(observations, input.telegramFormality);
 
   const packet: FeedbackContextPacket = {
     workoutId: input.workout.workoutId,

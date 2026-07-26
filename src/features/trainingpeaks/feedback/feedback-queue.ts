@@ -11,7 +11,7 @@ import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features
 import { validateFeedbackDraft } from "@/features/trainingpeaks/feedback/feedback-factcheck";
 import type { FeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
 import type { FeedbackGeneratorBackend } from "@/features/trainingpeaks/feedback/feedback-generator";
-import { stripLongDash } from "@/features/trainingpeaks/feedback/draft-text";
+import { enforceGreeting, stripLongDash } from "@/features/trainingpeaks/feedback/draft-text";
 
 const TABLE = "trainingpeaks_workout_feedback_jobs";
 
@@ -294,8 +294,9 @@ export async function submitFeedbackDraft(input: {
   const job = mapRow(jobRow as FeedbackJobRow);
 
   // Normalize before both the fact-check and storage, so the stored draft is exactly what
-  // the check ran on and no long dash ever survives to the coach card.
-  const draftText = stripLongDash(input.draftText);
+  // the check ran on and no long dash ever survives to the coach card. Greeting is forced to the
+  // student's register here (deterministic, like the dash) — the prompt rule alone drifted.
+  const draftText = enforceGreeting(stripLongDash(input.draftText), job.contextPacket.register);
   const check = validateFeedbackDraft({ draft: draftText, packet: job.contextPacket });
   const now = new Date().toISOString();
   const nextStatus = check.ok ? "done" : "failed";
