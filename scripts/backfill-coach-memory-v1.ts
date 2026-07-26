@@ -508,7 +508,13 @@ async function fetchExistingSourceObservationIds(studentIds: string[]): Promise<
   }
   const supabase = createSupabaseServerClient();
   const observed = new Set<string>();
-  const pageSize = 5000;
+  // PostgREST caps a response at 1000 rows, so the page MUST be 1000: with the old
+  // pageSize=5000 the first page returned 1000 (< 5000) and the loop broke after one
+  // page, seeing only the first 1000 already-ingested ids → the rest were treated as
+  // new and re-ingested (duplicate memory items). A stable .order() is required or
+  // pages overlap. (Latent today: the table is < 1000 rows; this prevents it biting
+  // as memory grows.)
+  const pageSize = 1000;
   let from = 0;
   while (true) {
     const to = from + pageSize - 1;
@@ -517,6 +523,7 @@ async function fetchExistingSourceObservationIds(studentIds: string[]): Promise<
       .select("source_observation_id")
       .in("student_id", studentIds)
       .not("source_observation_id", "is", null)
+      .order("id", { ascending: true })
       .range(from, to);
     if (error) {
       if (isMissingRelationError(error)) {
