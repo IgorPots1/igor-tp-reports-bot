@@ -564,14 +564,21 @@ function buildFollowUpReason(input: {
 
 async function fetchStudents(studentQuery: string | null): Promise<Map<string, StudentRow>> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_students")
-    .select("id, student_id, student_name")
-    .limit(5000);
-  if (error) {
-    throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_students: ${error.message}`);
+  // Paginated (roster ~600 today; .limit(5000) would silently cap at 1000 as it grows).
+  const rows: StudentRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("trainingpeaks_students")
+      .select("id, student_id, student_name")
+      .order("id", { ascending: true })
+      .range(from, from + 999);
+    if (error) {
+      throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_students: ${error.message}`);
+    }
+    const page = (data as StudentRow[] | null) ?? [];
+    rows.push(...page);
+    if (page.length < 1000) break;
   }
-  const rows = (data as StudentRow[] | null) ?? [];
   if (!studentQuery) {
     return new Map(rows.map((row) => [row.id, row]));
   }
@@ -589,31 +596,41 @@ async function fetchStudents(studentQuery: string | null): Promise<Map<string, S
 async function fetchObservations(options: CliOptions, studentIds: string[]): Promise<ObservationRow[]> {
   const supabase = createSupabaseServerClient();
   const selectLimit = Math.min(MAX_FETCH, Math.max(options.limit * 12, 200));
-  let query = supabase
-    .from("trainingpeaks_telegram_context_observations")
-    .select(
-      "id, student_id, source_type, chat_id, message_id, message_thread_id, text_preview, labels, metadata, observed_at, created_at"
-    )
-    .order("created_at", { ascending: false })
-    .limit(selectLimit);
-
-  if (options.source !== "all") {
-    query = query.eq("source_type", DB_SOURCE_BY_CLI[options.source]!);
-  } else {
-    query = query.in("source_type", ["business_dm", "group_topic", "group_general"]);
-  }
-  if (studentIds.length > 0) {
-    query = query.in("student_id", studentIds);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingRelationError(error)) {
-      return [];
+  // Paginate the newest `selectLimit` rows in pages of 1000. The old single
+  // `.limit(selectLimit)` was silently capped at the 1000 server max, so once
+  // selectLimit>1000 (a large --limit) it processed only the newest 1000 and skipped
+  // older-but-in-window messages → operational signals for them were never created.
+  const PAGE = 1000;
+  const rows: ObservationRow[] = [];
+  for (let from = 0; rows.length < selectLimit; from += PAGE) {
+    let query = supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select(
+        "id, student_id, source_type, chat_id, message_id, message_thread_id, text_preview, labels, metadata, observed_at, created_at"
+      )
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (options.source !== "all") {
+      query = query.eq("source_type", DB_SOURCE_BY_CLI[options.source]!);
+    } else {
+      query = query.in("source_type", ["business_dm", "group_topic", "group_general"]);
     }
-    throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_telegram_context_observations: ${error.message}`);
+    if (studentIds.length > 0) {
+      query = query.in("student_id", studentIds);
+    }
+    const { data, error } = await query;
+    if (error) {
+      if (isMissingRelationError(error)) {
+        return [];
+      }
+      throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_telegram_context_observations: ${error.message}`);
+    }
+    const page = (data as ObservationRow[] | null) ?? [];
+    rows.push(...page);
+    if (page.length < PAGE) break;
   }
-  return (data as ObservationRow[] | null) ?? [];
+  return rows.slice(0, selectLimit);
 }
 
 function printTextOutput(
