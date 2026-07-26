@@ -11,6 +11,7 @@ import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features
 import { validateFeedbackDraft } from "@/features/trainingpeaks/feedback/feedback-factcheck";
 import type { FeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
 import type { FeedbackGeneratorBackend } from "@/features/trainingpeaks/feedback/feedback-generator";
+import { stripLongDash } from "@/features/trainingpeaks/feedback/draft-text";
 
 const TABLE = "trainingpeaks_workout_feedback_jobs";
 
@@ -292,12 +293,15 @@ export async function submitFeedbackDraft(input: {
   if (!jobRow) throw new Error(`submit: job ${input.jobId} not found`);
   const job = mapRow(jobRow as FeedbackJobRow);
 
-  const check = validateFeedbackDraft({ draft: input.draftText, packet: job.contextPacket });
+  // Normalize before both the fact-check and storage, so the stored draft is exactly what
+  // the check ran on and no long dash ever survives to the coach card.
+  const draftText = stripLongDash(input.draftText);
+  const check = validateFeedbackDraft({ draft: draftText, packet: job.contextPacket });
   const now = new Date().toISOString();
   const nextStatus = check.ok ? "done" : "failed";
   const update: Record<string, unknown> = {
     status: nextStatus,
-    draft_text: input.draftText,
+    draft_text: draftText,
     generator_backend: input.backend,
     generated_at: now,
     attempts: job.attempts + 1,
