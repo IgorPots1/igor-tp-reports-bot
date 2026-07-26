@@ -1,5 +1,11 @@
-import { createSupabaseServerClient } from "@/features/supabase/server";
+import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import { fetchAllRows } from "@/features/supabase/paginate";
+
+/** Форма страницы, которую ждёт fetchAllRows от построителя запроса Supabase. */
+type SupabasePage = Promise<{
+  data: Record<string, unknown>[] | null;
+  error: { message: string } | null;
+}>;
 
 /**
  * Доступ к витринам движка физиологии (миграции с префиксом physio_).
@@ -216,14 +222,16 @@ export async function listPhysioRadar(): Promise<PhysioRadarRow[]> {
   const supabase = createSupabaseServerClient();
   const data = await fetchAllRows<Record<string, unknown>>(
     (from, to) =>
-      supabase
-        .from("physio_coach_radar")
-        .select("*")
-        .order("fully_explained", { ascending: true })
-        .order("max_severity", { ascending: false })
-        .order("student_name", { ascending: true })
-        .order("student_id", { ascending: true })
-        .range(from, to),
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("physio_coach_radar")
+          .select("*")
+          .order("fully_explained", { ascending: true })
+          .order("max_severity", { ascending: false })
+          .order("student_name", { ascending: true })
+          .order("student_id", { ascending: true })
+          .range(from, to)
+      ) as SupabasePage,
     { label: "physio_coach_radar" }
   );
 
@@ -263,12 +271,14 @@ export async function listPhysioAthletes(): Promise<PhysioAthleteRow[]> {
   const supabase = createSupabaseServerClient();
   const data = await fetchAllRows<Record<string, unknown>>(
     (from, to) =>
-      supabase
-        .from("physio_athlete_overview")
-        .select("*")
-        .order("student_name", { ascending: true })
-        .order("student_id", { ascending: true })
-        .range(from, to),
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("physio_athlete_overview")
+          .select("*")
+          .order("student_name", { ascending: true })
+          .order("student_id", { ascending: true })
+          .range(from, to)
+      ) as SupabasePage,
     { label: "physio_athlete_overview" }
   );
 
@@ -321,12 +331,14 @@ export async function listPhysioDataHealth(): Promise<PhysioDataHealthRow[]> {
   const supabase = createSupabaseServerClient();
   const data = await fetchAllRows<Record<string, unknown>>(
     (from, to) =>
-      supabase
-        .from("physio_data_health")
-        .select("*")
-        .order("runs_30", { ascending: false })
-        .order("student_id", { ascending: true })
-        .range(from, to),
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("physio_data_health")
+          .select("*")
+          .order("runs_30", { ascending: false })
+          .order("student_id", { ascending: true })
+          .range(from, to)
+      ) as SupabasePage,
     { label: "physio_data_health" }
   );
 
@@ -350,13 +362,15 @@ export async function listPhysioGlossary(): Promise<PhysioGlossaryRow[]> {
   const supabase = createSupabaseServerClient();
   const data = await fetchAllRows<Record<string, unknown>>(
     (from, to) =>
-      supabase
-        .from("physio_glossary")
-        .select("*")
-        .order("kind", { ascending: false })
-        .order("sort_order", { ascending: true })
-        .order("code", { ascending: true })
-        .range(from, to),
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("physio_glossary")
+          .select("*")
+          .order("kind", { ascending: false })
+          .order("sort_order", { ascending: true })
+          .order("code", { ascending: true })
+          .range(from, to)
+      ) as SupabasePage,
     { label: "physio_glossary" }
   );
 
