@@ -56,6 +56,8 @@
     "tp-races-loop:install": "npm --prefix tools/trainingpeaks-export run tp-races-loop:install",
     "tp-races-loop:uninstall": "npm --prefix tools/trainingpeaks-export run tp-races-loop:uninstall",
     "tp-races-loop:logs": "npm --prefix tools/trainingpeaks-export run tp-races-loop:logs",
+    "smoke-feedback-sweep": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/smoke-feedback-sweep.ts",
+    "check-feedback-sweep-health": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-feedback-sweep-health.ts",
     "check-trainingpeaks-workout-cache-reconcile": "npx tsx scripts/check-trainingpeaks-workout-cache-reconcile.ts",
     "check-workout-activity-classification": "npx tsx scripts/check-workout-activity-classification.ts",
     "check-supabase-network-retry": "npx tsx scripts/check-supabase-network-retry.ts",
