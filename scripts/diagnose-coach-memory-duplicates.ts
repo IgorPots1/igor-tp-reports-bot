@@ -5,6 +5,7 @@ import process from "node:process";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { fetchAllRows } from "@/features/supabase/paginate";
 import {
   buildIllnessMergedSummary,
   collectIllnessClusterEpisodes,
@@ -225,14 +226,15 @@ function isMissingRelationError(error: PostgrestError): boolean {
 
 async function fetchStudents(): Promise<StudentRow[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("trainingpeaks_students")
-    .select("id, student_id, student_name")
-    .limit(5000);
-  if (error) {
-    throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_students: ${error.message}`);
-  }
-  return (data as StudentRow[] | null) ?? [];
+  return fetchAllRows<StudentRow>(
+    (from, to) =>
+      supabase
+        .from("trainingpeaks_students")
+        .select("id, student_id, student_name")
+        .order("id", { ascending: true })
+        .range(from, to),
+    { label: "dupes:students" }
+  );
 }
 
 function resolveStudentFilter(students: StudentRow[], query: string): StudentRow[] {
@@ -251,32 +253,36 @@ async function fetchActiveMemoryItems(
   memoryType: TrainingPeaksStudentMemoryType | null
 ): Promise<MemoryItemRow[]> {
   const supabase = createSupabaseServerClient();
-  let query = supabase
-    .from("trainingpeaks_student_memory_items")
-    .select(
-      "id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at"
-    )
-    .eq("is_active", true)
-    .order("student_id", { ascending: true })
-    .order("memory_type", { ascending: true })
-    .order("last_seen_at", { ascending: false })
-    .limit(5000);
-
-  if (memoryType) {
-    query = query.eq("memory_type", memoryType);
-  }
-  if (studentIds && studentIds.length > 0) {
-    query = query.in("student_id", studentIds);
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    if (isMissingRelationError(error)) {
+  try {
+    return await fetchAllRows<MemoryItemRow>(
+      (from, to) => {
+        let query = supabase
+          .from("trainingpeaks_student_memory_items")
+          .select(
+            "id, student_id, memory_type, summary_text, confidence, valid_from, valid_until, first_seen_at, last_seen_at, created_at, updated_at"
+          )
+          .eq("is_active", true)
+          .order("student_id", { ascending: true })
+          .order("memory_type", { ascending: true })
+          .order("last_seen_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
+        if (memoryType) {
+          query = query.eq("memory_type", memoryType);
+        }
+        if (studentIds && studentIds.length > 0) {
+          query = query.in("student_id", studentIds);
+        }
+        return query as unknown as Promise<{ data: MemoryItemRow[] | null; error: { message: string } | null }>;
+      },
+      { label: "dupes:memory-items" }
+    );
+  } catch (error) {
+    if (error instanceof Error && /schema cache|does not exist|Could not find the table/i.test(error.message)) {
       return [];
     }
-    throw new Error(`${LOG_PREFIX} FAIL: trainingpeaks_student_memory_items: ${error.message}`);
+    throw error;
   }
-  return (data as MemoryItemRow[] | null) ?? [];
 }
 
 function dedupeSummaries(items: MemoryItemRow[]): string[] {
