@@ -158,12 +158,19 @@ export default function ClubPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [needsConfirm, setNeedsConfirm] = useState<Candidate | null>(null);
+  const [accessRequested, setAccessRequested] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [linkOutcome, setLinkOutcome] = useState<"idle" | "rejected" | "conflict">("idle");
 
   const maybeConfirm = useCallback((r: { code?: string; candidate?: Candidate }): boolean => {
     if (r.code === "needs_confirm" && r.candidate) {
       setNeedsConfirm(r.candidate);
+      return true;
+    }
+    // Unbound on the general link → an access request was recorded server-side.
+    // Show a friendly waiting screen (not the red error banner). No club data.
+    if (r.code === "needs_request") {
+      setAccessRequested(true);
       return true;
     }
     return false;
@@ -405,6 +412,8 @@ export default function ClubPage() {
       {needsConfirm ? (
         <ConfirmScreen candidate={needsConfirm} confirming={confirming} outcome={linkOutcome} onConfirm={confirmLink} onReject={rejectLink} />
       ) : null}
+
+      {accessRequested ? <RequestSentScreen /> : null}
 
       <nav style={S.tabBar}>
         {TABS.map((t) => {
@@ -1217,6 +1226,21 @@ function ConfirmScreen({
         Это не я
       </button>
     </>
+  );
+}
+
+/** Shown to an unbound account on the general link — a request was recorded server-side. */
+function RequestSentScreen() {
+  return (
+    <div style={{ ...S.overlay, alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ ...S.card, maxWidth: 340, width: "100%", textAlign: "center", marginBottom: 0 }}>
+        <div style={{ fontSize: 40, marginBottom: 10 }}>⏳</div>
+        <div style={{ fontFamily: HEAD, fontSize: 22, color: C.ink, marginBottom: 10 }}>Заявка отправлена</div>
+        <div style={{ color: C.sub, fontSize: 14, lineHeight: 1.5 }}>
+          Тренер подтвердит доступ. Когда он привяжет твой аккаунт — открой клуб снова, и всё появится.
+        </div>
+      </div>
+    </div>
   );
 }
 

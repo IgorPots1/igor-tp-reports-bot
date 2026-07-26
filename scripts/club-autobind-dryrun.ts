@@ -15,13 +15,37 @@
  * Apply (Igor):  ... scripts/club-autobind-dryrun.ts --apply
  */
 
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { fetchAllRows } from "@/features/supabase/paginate";
 
 const APPLY = process.argv.includes("--apply");
+
+// --skip=<token,token> and/or --skip-file=<path> (one token per line). A token
+// matches a candidate by student id (uuid, exact) OR student_name (exact, case-
+// insensitive) — NOT substring, so a short name like "Alex" can't hit "Aleksandra".
+// Skipped candidates are excluded from --apply (do them by hand via the admin).
+function skipTokens(): string[] {
+  const out: string[] = [];
+  const inline = process.argv.find((a) => a.startsWith("--skip="));
+  if (inline) out.push(...inline.slice("--skip=".length).split(",").map((s) => s.trim()).filter(Boolean));
+  const fileArg = process.argv.find((a) => a.startsWith("--skip-file="));
+  if (fileArg) {
+    try {
+      out.push(...readFileSync(fileArg.slice("--skip-file=".length), "utf8").split("\n").map((s) => s.trim()).filter(Boolean));
+    } catch (e) {
+      console.error(`[skip-file] не прочитан: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  return out;
+}
+const SKIP = skipTokens();
+function isSkipped(studentId: string, name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return SKIP.some((t) => t === studentId || n === t.trim().toLowerCase());
+}
 
 // --- Cyrillic (RU) → Latin, roughly matching how TP transliterates names. ---
 const CYR: Record<string, string> = {
@@ -89,20 +113,22 @@ async function main(): Promise<void> {
   const chatIdCounts = new Map<string, number>();
   for (const r of active) if (r.telegram_chat_id) chatIdCounts.set(r.telegram_chat_id, (chatIdCounts.get(r.telegram_chat_id) ?? 0) + 1);
 
-  type Row = { name: string; tgId: string; tgName: string; tgUser: string; sim: number; noName: boolean };
+  type Row = { studentId: string; name: string; tgId: string; tgName: string; tgUser: string; sim: number; noName: boolean };
   const autobind: Row[] = [];
   const manual: Array<{ name: string; reason: string }> = [];
+  const skipped: Array<{ name: string; tgId: string }> = [];
 
   for (const s of active.filter((r) => r.telegram_user_id == null)) {
     const chat = s.telegram_chat_id ?? "";
     if (!/^[0-9]+$/.test(chat)) { manual.push({ name: s.student_name, reason: "нет приватного numeric telegram_chat_id" }); continue; }
     if (boundUserIds.has(chat)) { manual.push({ name: s.student_name, reason: `chat_id ${chat} уже привязан — коллизия` }); continue; }
     if ((chatIdCounts.get(chat) ?? 0) > 1) { manual.push({ name: s.student_name, reason: `chat_id ${chat} делят несколько строк` }); continue; }
+    if (isSkipped(s.id, s.student_name)) { skipped.push({ name: s.student_name, tgId: chat }); continue; }
     const bc = chatBy[chat];
     const tgFull = bc ? `${bc.first_name ?? ""} ${bc.last_name ?? ""}`.trim() : "";
     const tgUser = bc?.username ?? s.telegram_username ?? "";
     const sim = Math.max(tgFull ? nameSim(s.student_name, tgFull) : 0, tgUser ? nameSim(s.student_name, tgUser) : 0);
-    autobind.push({ name: s.student_name, tgId: chat, tgName: tgFull || "—", tgUser: tgUser || "—", sim, noName: !tgFull && !tgUser });
+    autobind.push({ studentId: s.id, name: s.student_name, tgId: chat, tgName: tgFull || "—", tgUser: tgUser || "—", sim, noName: !tgFull && !tgUser });
   }
 
   autobind.sort((a, b) => a.sim - b.sim); // most dissimilar first
@@ -121,6 +147,9 @@ async function main(): Promise<void> {
   lines.push(`## Без сохранённого Telegram-имени (сверить нечем): ${noName.length}`);
   for (const r of noName) lines.push(`- ${r.name} (${r.tgId})`);
   lines.push("");
+  lines.push(`## Исключены из --apply (--skip, ${skipped.length}) — провести вручную через /admin/club/requests`);
+  for (const r of skipped) lines.push(`- ${r.name} (${r.tgId})`);
+  lines.push("");
   lines.push(`## На ручное решение (не автопривязка): ${manual.length}`);
   for (const m of manual) lines.push(`- ${m.name} — ${m.reason}`);
 
@@ -128,12 +157,13 @@ async function main(): Promise<void> {
   writeFileSync(out, lines.join("\n"), "utf8");
 
   console.log(`== auto-bind name cross-check (dry-run) ==`);
-  console.log(`autobind=${autobind.length} manual=${manual.length} no_tg_name=${noName.length}`);
+  console.log(`autobind=${autobind.length} skip=${skipped.length} manual=${manual.length} no_tg_name=${noName.length}`);
+  if (skipped.length) console.log(`исключены (--skip): ${skipped.map((s) => s.name).join(", ")}`);
   console.log("Топ-10 самых НЕПОХОЖИХ:");
   for (const r of autobind.slice(0, 10)) console.log(`  ${r.sim.toFixed(2)}  ${r.name}  ←→  ${r.tgName} / @${r.tgUser}`);
   console.log(`wrote ${out}`);
 
-  if (!APPLY) { console.log("\n(dry-run — ничего не записано. --apply привяжет однозначные, где telegram_user_id пуст.)"); return; }
+  if (!APPLY) { console.log("\n(dry-run — ничего не записано. --apply привяжет однозначные (кроме --skip), где telegram_user_id пуст.)"); return; }
   let done = 0;
   for (const r of autobind) {
     const { error } = await supabase.from("trainingpeaks_students").update({ telegram_user_id: Number(r.tgId) }).eq("telegram_chat_id", r.tgId).is("telegram_user_id", null);

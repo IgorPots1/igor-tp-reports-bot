@@ -100,6 +100,8 @@
 
 ## Без сохранённого Telegram-имени (сверить нечем): 0
 
+## Исключены из --apply (--skip, 0) — провести вручную через /admin/club/requests
+
 ## На ручное решение (не автопривязка): 3
 - Valentin Shavkun — нет приватного numeric telegram_chat_id
 - Irina Melnikova — нет приватного numeric telegram_chat_id
