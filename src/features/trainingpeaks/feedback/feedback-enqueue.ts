@@ -19,6 +19,16 @@ type SupabaseLike = ReturnType<typeof createSupabaseServerClient>;
 const DERIVED_SELECT =
   "id, student_id, workout_cache_id, trainingpeaks_workout_id, workout_date, workout_type, comparison_key, reps_detected_count, rep_paces, rep_peak_hrs, rep_pace_fade_pct, rep_recovery_drops, avg_hr, hr_trusted, hr_quality, hr_decoupling_pct, aerobic_ef, rep_pace_cv, pct_time_hr_target, pct_time_pace_target, pace_trusted, distance_trusted, has_fit, fallback_level, updated_at";
 
+// Read windows for the feedback sweep. Sized to what each consumer actually reads
+// back, verified by output parity vs full history (docs/pagination-window-report.md).
+//   history: the comparison norm uses recent (≤8 нед) + an "old" pool (>6 нед). A
+//     year (365d) covers the full data depth (~14 мес) with margin, so the old-mode
+//     median is unchanged, while cutting the per-sweep volume vs unbounded.
+//   health: health-baseline.ts uses only the last 30 days before a workout; targets
+//     are ≤3 days old, so 60 days is a safe superset.
+export const FEEDBACK_HISTORY_WINDOW_DAYS = 365;
+export const FEEDBACK_HEALTH_WINDOW_DAYS = 60;
+
 type DerivedRow = Record<string, unknown>;
 
 function asNums(value: unknown): Array<number | null> | null {
@@ -61,15 +71,18 @@ type AnyQuery = any;
 // server cap). Ordered by `id` so pages don't overlap. Callers pass FILTERS in
 // `extra`; they must NOT pass `.limit(N>1000)` (a no-op cap that silently truncates)
 // or an `.order()` (pagination owns ordering here).
-async function fetchIn<T>(supabase: SupabaseLike, table: string, select: string, column: string, ids: string[], extra?: (q: AnyQuery) => AnyQuery): Promise<T[]> {
+async function fetchIn<T>(supabase: SupabaseLike, table: string, select: string, column: string, ids: string[], extra?: (q: AnyQuery) => AnyQuery, orderBy: string = "id"): Promise<T[]> {
   if (ids.length === 0) return [];
+  // `orderBy` must be a UNIQUE column for pagination to be correct. Default `id`;
+  // tables without an `id` (e.g. trainingpeaks_student_health_metric_profiles, keyed
+  // by student_id) pass their own unique column.
   return fetchAllInChunks<T>(
     ids,
     150,
     (chunkIds, from, to) => {
       let q: AnyQuery = supabase.from(table).select(select).in(column, chunkIds);
       if (extra) q = extra(q);
-      q = q.order("id", { ascending: true }).range(from, to);
+      q = q.order(orderBy, { ascending: true }).range(from, to);
       return withSupabaseNetworkRetry(() => q) as Promise<{ data: T[] | null; error: { message: string } | null }>;
     },
     { label: `feedback:${table}` }
@@ -105,18 +118,33 @@ async function fetchRaceKeys(supabase: SupabaseLike, studentIds: string[], fromY
  */
 export async function assemblePlannerInputsForWorkouts(
   supabase: SupabaseLike,
-  targetDerivedRows: DerivedRow[]
+  targetDerivedRows: DerivedRow[],
+  opts?: { historyWindowDays?: number | null; healthWindowDays?: number | null }
 ): Promise<Map<string, ContextPacket>> {
   const studentIds = [...new Set(targetDerivedRows.map((r) => r.student_id as string))];
+
+  // Read windows bound the sweep's data volume without changing output (verified by
+  // the parity harness — scripts/measure-window-parity.ts). `null` = no window (full
+  // history), used by the parity test. The comparison norm looks back at most
+  // ~8 weeks recent + an "old" pool; the health baseline uses only the last 30 days
+  // (health-baseline.ts). See docs/pagination-window-report.md §1.
+  const historyWindowDays = opts?.historyWindowDays === undefined ? FEEDBACK_HISTORY_WINDOW_DAYS : opts.historyWindowDays;
+  const healthWindowDays = opts?.healthWindowDays === undefined ? FEEDBACK_HEALTH_WINDOW_DAYS : opts.healthWindowDays;
+  const dayFloor = (days: number | null): string | null =>
+    days == null ? null : new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const historyFloor = dayFloor(historyWindowDays);
+  const healthFloor = dayFloor(healthWindowDays);
 
   // Races to exclude from history (comparison base + personal easy-run baselines) so a max-effort
   // start doesn't inflate the norm and later read as "the student regressed".
   const raceKeys = await fetchRaceKeys(supabase, studentIds, new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10));
 
-  // Full run history per student (for compareWorkout + personal baselines).
-  const historyRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", studentIds, (q) =>
-    q.eq("workout_type", "run")
-  );
+  // Run history per student (for compareWorkout + personal baselines), bounded to the
+  // window the comparison actually reads back.
+  const historyRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", studentIds, (q) => {
+    const base = q.eq("workout_type", "run");
+    return historyFloor ? base.gte("workout_date", historyFloor) : base;
+  });
 
   const students = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_students", "id, sex, telegram_formality", "id", studentIds);
   const studentById = new Map(students.map((s) => [s.id as string, s]));
@@ -165,7 +193,10 @@ export async function assemblePlannerInputsForWorkouts(
     "student_id, metric_date, metric_key, value_numeric, value_avg_numeric",
     "student_id",
     studentIds,
-    (q) => q.in("metric_key", ["pulse", "sleep_hours", "hrv", "body_battery"])
+    (q) => {
+      const base = q.in("metric_key", ["pulse", "sleep_hours", "hrv", "body_battery"]);
+      return healthFloor ? base.gte("metric_date", healthFloor) : base;
+    }
   );
   const healthByStudent = new Map<string, ContextPacket["healthMetrics"]>();
   for (const h of healthRows) {
@@ -175,7 +206,7 @@ export async function assemblePlannerInputsForWorkouts(
     list.push({ metricDate: h.metric_date as string, metricKey: h.metric_key as ContextPacket["healthMetrics"][number]["metricKey"], value });
     healthByStudent.set(h.student_id as string, list);
   }
-  const profiles = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_student_health_metric_profiles", "student_id, has_pulse, has_sleep_hours, has_hrv, has_body_battery", "student_id", studentIds);
+  const profiles = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_student_health_metric_profiles", "student_id, has_pulse, has_sleep_hours, has_hrv, has_body_battery", "student_id", studentIds, undefined, "student_id");
   const profileByStudent = new Map(profiles.map((p) => [p.student_id as string, { hasPulse: !!p.has_pulse, hasSleepHours: !!p.has_sleep_hours, hasHrv: !!p.has_hrv, hasBodyBattery: !!p.has_body_battery }]));
 
   // Laps + titles for every involved workout (targets + history).
