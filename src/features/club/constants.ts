@@ -309,3 +309,13 @@ export function clubCoachParticipantStudentId(): string | null {
   const raw = (process.env.CLUB_COACH_PARTICIPANT_STUDENT_ID ?? "").trim();
   return raw.length > 0 ? raw : null;
 }
+
+/**
+ * Phase 4 — GPS route silhouettes for NEW workouts. OFF by default. When on:
+ *  - the FIT ingest extracts a simplified polyline and writes trainingpeaks_workout_tracks;
+ *  - the club draws an SVG silhouette in the feed card (small) + workout detail (large).
+ * No map tiles/keys/external services. Old workouts are not backfilled by default.
+ */
+export function isClubTracksEnabled(): boolean {
+  return process.env.CLUB_TRACKS_ENABLED === "true";
+}
