@@ -16,7 +16,7 @@
 import { median } from "./norm.ts";
 import { evaluateMechanismB } from "./signal-consistency.ts";
 import { buildMetricShift, metricStrength, type BuiltShift } from "./metric-shift.ts";
-import { OLD_MODE_MIN_AGE_DAYS, SLIDING_WINDOW_DAYS, daysBetween } from "./resolve-window.ts";
+import { MIN_RECENT_FOR_STABLE_NORM, OLD_MODE_MIN_AGE_DAYS, SLIDING_WINDOW_DAYS, daysBetween } from "./resolve-window.ts";
 import type { MatchResult } from "./match-result.ts";
 import type { ComparisonMetric, DerivedRowForComparison, MetricShift, PraiseCandidate } from "./types.ts";
 
@@ -126,7 +126,12 @@ export function matchSteadyWorkout(input: {
 
   const runMode = (mode: Recency, poolRows: DerivedRowForComparison[]): void => {
     if (poolRows.length === 0) return;
-    const spreadFor = (metric: ComparisonMetric) => (mode === "old" ? valuesOf(recentRows, metric) : valuesOf(poolRows, metric));
+    // Spread (MAD) is measured over the SAME pool the norm is built from, incl. old-mode. The old
+    // code measured old-mode spread over the thin recent rows, which disabled the MAD gate (Anton:
+    // 2 recent points → no MAD → old fired on the flat threshold alone despite scattered old data).
+    // Now if a month-plus-ago baseline is itself unstable (high MAD, "месяц назад скакали"), 2×MAD
+    // exceeds the delta and the claim is silenced — there is no norm there to compare against.
+    const spreadFor = (metric: ComparisonMetric) => valuesOf(poolRows, metric);
 
     // aerobic_ef corroboration: an improvement in pace/HR is only credited when
     // EF moved the same way (faster-per-HR) by ≥3% of its norm.
@@ -188,7 +193,11 @@ export function matchSteadyWorkout(input: {
   };
 
   runMode("recent", recentRows);
-  runMode("old", oldRows);
+  // Old-mode only when the recent norm is too thin to judge — otherwise "прогресс vs месяц назад" can
+  // contradict a flat/declining recent trend (Anton). Recent speaks first; old fills a gap, not competes.
+  if (recentRows.length < MIN_RECENT_FOR_STABLE_NORM) {
+    runMode("old", oldRows);
+  }
 
   return {
     evaluated: true,

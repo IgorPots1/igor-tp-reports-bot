@@ -250,3 +250,44 @@ describe("pulse anomaly detector (unchanged from наряд 1)", () => {
     assert.equal(detectPulseAnomaly({ current: mk([120, 150, 150, 150]), normPool, paceDeltaSec: 25 }).reason, "pace_not_comparable");
   });
 });
+
+describe("old-mode gate (Anton: не сравнивать со скачущим/устаревшим якорем)", () => {
+  const cur = { workoutId: 99, workoutDate: "2026-07-01", avgPaceSecPerKm: 350, aerobicEf: 0.019 };
+  test("scattered old baseline (high MAD) → no candidate (silence)", () => {
+    const res = matchSteadyWorkout({
+      current: steady(cur),
+      history: [
+        steady({ workoutId: 1, workoutDate: "2026-04-20", avgPaceSecPerKm: 400 }),
+        steady({ workoutId: 2, workoutDate: "2026-04-22", avgPaceSecPerKm: 340 }),
+        steady({ workoutId: 3, workoutDate: "2026-04-25", avgPaceSecPerKm: 390 }),
+        steady({ workoutId: 4, workoutDate: "2026-04-28", avgPaceSecPerKm: 360, aerobicEf: 0.017 }),
+      ],
+    });
+    assert.equal(res.candidates.filter((c) => c.mode === "old").length, 0);
+  });
+  test("tight old baseline, thin recent → old progress still speaks", () => {
+    const res = matchSteadyWorkout({
+      current: steady(cur),
+      history: [
+        steady({ workoutId: 1, workoutDate: "2026-04-20", avgPaceSecPerKm: 372, aerobicEf: 0.017 }),
+        steady({ workoutId: 2, workoutDate: "2026-04-22", avgPaceSecPerKm: 370, aerobicEf: 0.017 }),
+        steady({ workoutId: 3, workoutDate: "2026-04-25", avgPaceSecPerKm: 371, aerobicEf: 0.017 }),
+      ],
+    });
+    assert.ok(res.candidates.some((c) => c.mode === "old"));
+  });
+  test("enough recent norm + current slower than recent → old suppressed (no false progress)", () => {
+    const res = matchSteadyWorkout({
+      current: steady({ ...cur, avgPaceSecPerKm: 369 }),
+      history: [
+        steady({ workoutId: 10, workoutDate: "2026-06-20", avgPaceSecPerKm: 360, aerobicEf: 0.017 }),
+        steady({ workoutId: 11, workoutDate: "2026-06-15", avgPaceSecPerKm: 358, aerobicEf: 0.017 }),
+        steady({ workoutId: 12, workoutDate: "2026-06-10", avgPaceSecPerKm: 362, aerobicEf: 0.017 }),
+        steady({ workoutId: 1, workoutDate: "2026-04-20", avgPaceSecPerKm: 383, aerobicEf: 0.017 }),
+        steady({ workoutId: 2, workoutDate: "2026-04-22", avgPaceSecPerKm: 384, aerobicEf: 0.017 }),
+        steady({ workoutId: 3, workoutDate: "2026-04-25", avgPaceSecPerKm: 382, aerobicEf: 0.017 }),
+      ],
+    });
+    assert.equal(res.candidates.filter((c) => c.mode === "old").length, 0);
+  });
+});

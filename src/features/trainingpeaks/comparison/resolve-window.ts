@@ -31,6 +31,12 @@ export function daysBetween(a: string, b: string): number {
 
 export const SLIDING_WINDOW_DAYS = 56; // 8 weeks — the "свежее" lookback
 export const OLD_MODE_MIN_AGE_DAYS = 42; // ">6 недель назад" — the "давнее" boundary
+// Old-mode ("прогресс vs месяц-плюс назад") speaks ONLY when recent comparable data is too thin to
+// judge. With ≥ this many recent comparable runs there IS a fresh norm, and "faster than a month ago"
+// is misleading when the recent trend is flat or down (Anton: recent ~362 vs today 369 = slower, yet
+// old 383→369 read as +14 progress). Recent is the truth; old just fills the gap for a new/returning
+// student. Matches the MAD-points floor: below 3 points a norm has no measurable spread anyway.
+export const MIN_RECENT_FOR_STABLE_NORM = 3;
 
 export type ComparisonWindow = {
   from: string; // inclusive 'YYYY-MM-DD'

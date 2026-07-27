@@ -13,7 +13,7 @@ import { computeComparisonKey, isSingleBlockKey, parseComparisonKey } from "./co
 import { median, medianOfReps } from "./norm.ts";
 import { classifyShift, evaluateMechanismB } from "./signal-consistency.ts";
 import { buildMetricShift, metricStrength, MIN_POINTS, type BuiltShift } from "./metric-shift.ts";
-import { OLD_MODE_MIN_AGE_DAYS, SLIDING_WINDOW_DAYS, daysBetween } from "./resolve-window.ts";
+import { MIN_RECENT_FOR_STABLE_NORM, OLD_MODE_MIN_AGE_DAYS, SLIDING_WINDOW_DAYS, daysBetween } from "./resolve-window.ts";
 import type { MatchResult } from "./match-result.ts";
 import type { ComparisonMetric, DerivedRowForComparison, MetricShift, PraiseCandidate } from "./types.ts";
 
@@ -132,7 +132,9 @@ export function matchIntervalWorkout(input: {
 
   const runMode = (mode: Recency, poolRows: DerivedRowForComparison[]): void => {
     if (poolRows.length === 0) return;
-    const spreadFor = (metric: ComparisonMetric) => (mode === "old" ? valuesOf(recentRows, metric) : valuesOf(poolRows, metric));
+    // Spread (MAD) over the SAME pool the norm is built from — incl. old-mode, so an unstable
+    // month-plus-ago baseline (high MAD) silences the claim instead of firing on the flat threshold.
+    const spreadFor = (metric: ComparisonMetric) => valuesOf(poolRows, metric);
 
     const builtByMetric = new Map<ComparisonMetric, BuiltShift>();
     // pace first (rep-HR comparability + composite depend on it)
@@ -217,7 +219,11 @@ export function matchIntervalWorkout(input: {
   };
 
   runMode("recent", recentRows);
-  runMode("old", oldRows);
+  // Old-mode only when the recent norm is too thin to judge — a fresh norm makes "прогресс vs месяц
+  // назад" misleading when the recent trend is flat/down. Recent speaks first; old just fills a gap.
+  if (recentRows.length < MIN_RECENT_FOR_STABLE_NORM) {
+    runMode("old", oldRows);
+  }
 
   return {
     evaluated: true,
