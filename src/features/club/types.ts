@@ -394,4 +394,21 @@ export type ClubWorkoutDetailView = {
   zoneBasisLabel: string | null;
   /** Phase 4: GPS route silhouette (null when no track / feature off). */
   track: ClubTrack | null;
+  /** Phase D: whether the comments UI is interactive (CLUB_COMMENTS_ENABLED). */
+  commentsEnabled: boolean;
+};
+
+/** Phase D: a single student comment on a club workout. */
+export type ClubComment = {
+  id: string;
+  studentId: string;
+  authorName: string;
+  monogram: string;
+  body: string;
+  /** e.g. "24 июл, 14:30". */
+  dateLabel: string;
+  /** Author edited the comment after posting. */
+  edited: boolean;
+  /** True when the current caller is the author (can edit/delete). */
+  mine: boolean;
 };

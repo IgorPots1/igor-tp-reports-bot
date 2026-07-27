@@ -203,6 +203,13 @@ export function isReactionsEnabled(): boolean {
   return process.env.CLUB_REACTIONS_ENABLED === "true";
 }
 /**
+ * Phase D: student comments on club workouts. OFF by default -> the comments API
+ * returns 503 and the mini-app renders no comment UI. First proper student write path.
+ */
+export function isCommentsEnabled(): boolean {
+  return process.env.CLUB_COMMENTS_ENABLED === "true";
+}
+/**
  * Phase 1.4: read challenge / statistics / tops / profile-rank from the precomputed
  * club_daily_aggregates table instead of the raw whole-club window. Default OFF so the
  * proven raw path stays live until parity is confirmed (see docs/club-aggregates-parity.md).

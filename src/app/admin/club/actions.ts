@@ -263,6 +263,21 @@ export async function setClubChallengeStatusAction(formData: FormData): Promise<
   redirect(withNotice(redirectTo, "notice", next === "completed" ? "Завершён." : next === "archived" ? "В архив." : "Активен."));
 }
 
+export async function deleteClubCommentAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const id = req(formData, "commentId");
+  const { deleteClubCommentAdmin } = await import("@/features/club-admin/repository");
+  try {
+    await deleteClubCommentAdmin(id);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", "Комментарий удалён."));
+}
+
 export async function setClubDisplayNameAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);

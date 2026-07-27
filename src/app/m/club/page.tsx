@@ -17,6 +17,7 @@ import type {
   ClubPublicProfileView,
   ClubRace,
   ClubRecordsView,
+  ClubComment,
   ClubStatisticsView,
   ClubTopRow,
   ClubTrack,
@@ -1447,8 +1448,120 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
                 </div>
               </div>
             ) : null}
+
+            {view.commentsEnabled ? <WorkoutComments workoutId={view.id} initData={initData} /> : null}
           </div>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// Phase D — comments on a workout. Fetches on mount; supports add / edit / delete of
+// the caller's own comment. The server authorizes by initData (student_id from the
+// resolver) and returns the fresh list after every write, so the client just mirrors it.
+function WorkoutComments({ workoutId, initData }: { workoutId: string; initData: string }) {
+  const [comments, setComments] = useState<ClubComment[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function call(payload: Record<string, unknown>): Promise<void> {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/m/club/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, ...payload }),
+      });
+      const json = (await res.json()) as { ok?: boolean; comments?: ClubComment[]; error?: string };
+      if (!res.ok || !json.ok) {
+        setErr(json.error ?? "Не удалось.");
+        return;
+      }
+      if (Array.isArray(json.comments)) setComments(json.comments);
+    } catch {
+      setErr("Нет связи. Попробуй ещё раз.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const res = await fetch("/api/m/club/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, action: "list", workoutId }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; comments?: ClubComment[] };
+      if (!alive) return;
+      if (json.ok && Array.isArray(json.comments)) setComments(json.comments);
+      setLoaded(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [workoutId, initData]);
+
+  async function add() {
+    const text = draft.trim();
+    if (!text || busy) return;
+    await call({ action: "create", workoutId, body: text });
+    setDraft("");
+  }
+  async function saveEdit(id: string) {
+    const text = editText.trim();
+    if (!text || busy) return;
+    await call({ action: "edit", commentId: id, body: text });
+    setEditingId(null);
+    setEditText("");
+  }
+
+  return (
+    <div style={S.card}>
+      <div style={S.secHead}>Комментарии{comments.length > 0 ? ` · ${comments.length}` : ""}</div>
+      <div style={{ marginTop: 8 }}>
+        {loaded && comments.length === 0 ? <div style={{ ...S.cardMeta, marginTop: 4 }}>Пока нет комментариев.</div> : null}
+        {comments.map((c) => (
+          <div key={c.id} style={{ padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink }}>{c.authorName}</span>
+              <span style={{ fontSize: 11, color: C.faint }}>{c.dateLabel}{c.edited ? ", изм." : ""}</span>
+            </div>
+            {editingId === c.id ? (
+              <div style={{ marginTop: 6 }}>
+                <textarea style={{ ...S.input, minHeight: 44 }} value={editText} maxLength={500} onChange={(e) => setEditText(e.target.value)} />
+                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                  <button type="button" style={S.smallPrimaryBtn} disabled={busy} onClick={() => saveEdit(c.id)}>Сохранить</button>
+                  <button type="button" style={S.smallBtn} onClick={() => { setEditingId(null); setEditText(""); }}>Отмена</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: 14, color: C.ink, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.body}</div>
+                {c.mine ? (
+                  <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+                    <span style={S.linkAction} onClick={() => { setEditingId(c.id); setEditText(c.body); }}>Изменить</span>
+                    <span style={S.linkAction} onClick={() => call({ action: "delete", commentId: c.id })}>Удалить</span>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <textarea style={{ ...S.input, minHeight: 44 }} placeholder="Написать комментарий" value={draft} maxLength={500} onChange={(e) => setDraft(e.target.value)} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+          {err ? <span style={{ fontSize: 12, color: "#d9534f" }}>{err}</span> : <span />}
+          <button type="button" style={S.smallPrimaryBtn} disabled={busy || !draft.trim()} onClick={add}>Отправить</button>
+        </div>
       </div>
     </div>
   );
@@ -1987,6 +2100,9 @@ const S = {
   formCard: { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12 } as React.CSSProperties,
   input: { display: "block", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginBottom: 8, borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, fontSize: 14, fontFamily: BODY } as React.CSSProperties,
   saveBtn: { width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 14, cursor: "pointer" } as React.CSSProperties,
+  smallPrimaryBtn: { padding: "7px 16px", borderRadius: 999, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 13, cursor: "pointer" } as React.CSSProperties,
+  smallBtn: { padding: "7px 14px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.sub, fontFamily: HEAD, fontWeight: 600, fontSize: 13, cursor: "pointer" } as React.CSSProperties,
+  linkAction: { fontSize: 12.5, color: C.sub, cursor: "pointer", textDecoration: "underline" } as React.CSSProperties,
   hint: { color: C.faint, fontSize: 11.5, marginTop: 8, lineHeight: 1.4 } as React.CSSProperties,
   listRow: { display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderTop: `1px solid ${C.line}` } as React.CSSProperties,
   statusChip: { fontSize: 11.5, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" } as React.CSSProperties,

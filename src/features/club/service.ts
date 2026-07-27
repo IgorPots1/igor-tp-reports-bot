@@ -37,6 +37,7 @@ import {
 import type {
   ClubAchievement,
   ClubChallengeView,
+  ClubComment,
   ClubExtendedTopsView,
   ClubFeedItem,
   ClubFeedView,
@@ -2610,7 +2611,110 @@ export async function getClubWorkoutDetail(input: {
     zones,
     zoneBasisLabel,
     track,
+    commentsEnabled: C.isCommentsEnabled(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase D — comments on club workouts (first proper student write path)
+// ---------------------------------------------------------------------------
+
+/** "24 июл, 14:30" from a timestamptz ISO string. Local formatting only, no deps. */
+function formatRuDateTime(iso: string): string {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/u);
+  if (!m) {
+    return formatRuDate(iso);
+  }
+  const day = Number.parseInt(m[3], 10);
+  const month = RU_MONTHS[Number.parseInt(m[2], 10) - 1] ?? "";
+  return `${day} ${month}, ${m[4]}:${m[5]}`;
+}
+
+/**
+ * A workout is commentable only when its owner is currently visible in the club
+ * (active, non-service, and not opted out when privacy is on). Mirrors
+ * isWorkoutReactable: refuses commenting on a hidden student's workout.
+ */
+export async function isWorkoutCommentable(workoutId: string): Promise<boolean> {
+  return isWorkoutReactable(workoutId);
+}
+
+/** Whether a student is themselves currently visible in the club (may write). */
+export async function isStudentClubVisible(studentId: string): Promise<boolean> {
+  const students = await loadClubStudents();
+  const me = students.find((s) => s.id === studentId);
+  return me ? isVisible(me) : false;
+}
+
+/** Coarse rate limit: comments created by this student in the last window. */
+export async function countRecentComments(studentId: string, windowSeconds: number): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const sinceIso = new Date(Date.now() - windowSeconds * 1000).toISOString();
+  const { count, error } = await supabase
+    .from("club_comments")
+    .select("id", { count: "exact", head: true })
+    .eq("student_id", studentId)
+    .gte("created_at", sinceIso);
+  if (error) {
+    return 0;
+  }
+  return count ?? 0;
+}
+
+/**
+ * Comments for ONE workout, oldest first, with author display name + whether the
+ * caller owns each. Author names use the club display-name override; a comment whose
+ * author is no longer visible in the club is still shown (they wrote it while active),
+ * but is labelled by their stored name. Empty when comments are disabled.
+ */
+export async function loadWorkoutComments(workoutId: string, currentStudentId: string): Promise<ClubComment[]> {
+  if (!C.isCommentsEnabled()) {
+    return [];
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_comments")
+    .select("id, student_id, body, created_at, updated_at")
+    .eq("workout_cache_id", workoutId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    return [];
+  }
+  const rows = (data as Array<{ id: string; student_id: string; body: string; created_at: string; updated_at: string | null }> | null) ?? [];
+  if (rows.length === 0) {
+    return [];
+  }
+  const students = await loadClubStudents();
+  const byId = new Map(students.map((s) => [s.id, s]));
+  return rows.map((r) => {
+    const author = byId.get(r.student_id);
+    const name = author?.displayName ?? "Участник клуба";
+    return {
+      id: r.id,
+      studentId: r.student_id,
+      authorName: name,
+      monogram: monogram(author?.name ?? name),
+      body: r.body,
+      dateLabel: formatRuDateTime(r.created_at),
+      edited: r.updated_at != null,
+      mine: r.student_id === currentStudentId,
+    };
+  });
+}
+
+/** Fetch one comment's owner (for edit/delete authorization). Null if absent. */
+export async function getCommentOwner(commentId: string): Promise<{ studentId: string; workoutId: string } | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_comments")
+    .select("student_id, workout_cache_id")
+    .eq("id", commentId)
+    .maybeSingle();
+  if (error || !data) {
+    return null;
+  }
+  const row = data as { student_id: string; workout_cache_id: string };
+  return { studentId: row.student_id, workoutId: row.workout_cache_id };
 }
 
 const DISTANCE_METERS: Record<"5k" | "10k" | "21k" | "42k", number> = {

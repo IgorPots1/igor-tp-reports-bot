@@ -396,6 +396,69 @@ export async function setClubChallengeStatus(id: string, status: "active" | "com
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Comments moderation (Phase D). Coach sees every comment and can delete any.
+// Tolerant of a missing table (migration 20260807 not applied) -> empty list.
+// ---------------------------------------------------------------------------
+
+export type ClubCommentAdminRow = {
+  id: string;
+  authorName: string;
+  workoutId: string;
+  workoutLabel: string;
+  body: string;
+  createdAtLabel: string;
+};
+
+export async function listClubCommentsAdmin(): Promise<ClubCommentAdminRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_comments")
+    .select("id, student_id, workout_cache_id, body, created_at")
+    .order("created_at", { ascending: false })
+    .limit(300);
+  if (error || !data) return [];
+  const rows = data as Array<{ id: string; student_id: string; workout_cache_id: string; body: string; created_at: string }>;
+  if (rows.length === 0) return [];
+
+  const studentIds = [...new Set(rows.map((r) => r.student_id))];
+  const workoutIds = [...new Set(rows.map((r) => r.workout_cache_id))];
+  const [{ data: studentData }, { data: workoutData }] = await Promise.all([
+    supabase.from("trainingpeaks_students").select("id, student_name, club_display_name").in("id", studentIds),
+    supabase.from("trainingpeaks_workout_cache").select("id, student_name, workout_date, title").in("id", workoutIds),
+  ]);
+  const nameById = new Map(
+    ((studentData as Array<{ id: string; student_name: string; club_display_name: string | null }> | null) ?? []).map((s) => {
+      const override = (s.club_display_name ?? "").trim();
+      return [s.id, override || s.student_name || "Участник клуба"] as const;
+    })
+  );
+  const workoutById = new Map(
+    ((workoutData as Array<{ id: string; student_name: string | null; workout_date: string; title: string | null }> | null) ?? []).map(
+      (w) => [w.id, { date: w.workout_date, owner: w.student_name ?? "", title: (w.title ?? "").trim() }] as const
+    )
+  );
+
+  return rows.map((r) => {
+    const w = workoutById.get(r.workout_cache_id);
+    const wLabel = w ? [w.date, w.owner, w.title].filter(Boolean).join(" · ") : r.workout_cache_id;
+    return {
+      id: r.id,
+      authorName: nameById.get(r.student_id) ?? "Участник клуба",
+      workoutId: r.workout_cache_id,
+      workoutLabel: wLabel,
+      body: r.body,
+      createdAtLabel: r.created_at.replace("T", " ").slice(0, 16),
+    };
+  });
+}
+
+export async function deleteClubCommentAdmin(id: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("club_comments").delete().eq("id", id);
+  if (error) throw new Error(`club-admin: delete comment: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
 // 3. Telegram links
 // ---------------------------------------------------------------------------
 
