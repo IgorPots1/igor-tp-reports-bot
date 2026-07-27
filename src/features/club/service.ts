@@ -227,6 +227,41 @@ function isVisible(student: ClubStudent): boolean {
   return base;
 }
 
+// Lean explicit column list: never pull `source_snapshot` (raw private TP payload)
+// or per-workout compliance into the club layer. Shared by the windowed reader and
+// the keyset feed loader.
+const WORKOUT_CACHE_COLUMNS =
+  "id, student_id, student_name, workout_date, title, sport_or_type_code, workout_type_value_id, workout_sub_type_id, is_planned, is_completed, completed_time_raw, completed_distance_raw, start_time";
+
+/** Map one trainingpeaks_workout_cache DB row → the lean ClubWorkoutRow (+ classification). */
+function mapWorkoutCacheRow(row: Record<string, unknown>): ClubWorkoutRow {
+  const classification = classifyTrainingPeaksWorkoutActivity({
+    title: (row.title as string | null) ?? null,
+    sportOrTypeCode: (row.sport_or_type_code as string | null) ?? null,
+    workoutTypeValueId: (row.workout_type_value_id as number | null) ?? null,
+    workoutSubTypeId: (row.workout_sub_type_id as number | null) ?? null,
+  });
+  return {
+    id: row.id as string,
+    studentId: row.student_id as string,
+    studentName: (row.student_name as string) ?? "",
+    workoutDate: row.workout_date as string,
+    title: (row.title as string | null) ?? null,
+    sportOrTypeCode: (row.sport_or_type_code as string | null) ?? null,
+    workoutTypeValueId: (row.workout_type_value_id as number | null) ?? null,
+    workoutSubTypeId: (row.workout_sub_type_id as number | null) ?? null,
+    isPlanned: row.is_planned === true,
+    isCompleted: row.is_completed === true,
+    completedTimeRaw: (row.completed_time_raw as number | string | null) ?? null,
+    completedDistanceRaw: (row.completed_distance_raw as number | string | null) ?? null,
+    startTime: (row.start_time as string | null) ?? null,
+    distanceKm: normalizeDistanceKm(row.completed_distance_raw as number | string | null),
+    durationSeconds: rawHoursToSeconds(row.completed_time_raw as number | string | null),
+    isRunning: classification.isRunning,
+    family: classification.family,
+  };
+}
+
 async function loadClubWorkoutRows(input: {
   from: string;
   to: string;
@@ -234,55 +269,59 @@ async function loadClubWorkoutRows(input: {
   studentIds?: string[];
 }): Promise<ClubWorkoutRow[]> {
   const supabase = createSupabaseServerClient();
-  // Lean explicit column list: never pull `source_snapshot` (raw private TP
-  // payload) or per-workout compliance into the club layer.
-  // Paginate: the window is ~20k rows — a single-shot select truncates at the
-  // 1000-row PostgREST cap (the club used to see ~5% of data). Stable .order("id").
+  // Paginate: the window can be ~20k rows — a single-shot select truncates at the
+  // 1000-row PostgREST cap. Order by (workout_date, id) — index-aligned (Phase 1.3).
   const data = await fetchAllRows<Record<string, unknown>>(
     (fromRow, toRow) => {
       let q = supabase
         .from("trainingpeaks_workout_cache")
-        .select(
-          "id, student_id, student_name, workout_date, title, sport_or_type_code, workout_type_value_id, workout_sub_type_id, is_planned, is_completed, completed_time_raw, completed_distance_raw, start_time"
-        )
+        .select(WORKOUT_CACHE_COLUMNS)
         .gte("workout_date", input.from)
         .lte("workout_date", input.to);
       if (input.studentIds && input.studentIds.length > 0) {
         q = q.in("student_id", input.studentIds);
       }
-      return withSupabaseNetworkRetry(() => q.order("id", { ascending: true }).range(fromRow, toRow));
+      return withSupabaseNetworkRetry(() =>
+        q.order("workout_date", { ascending: true }).order("id", { ascending: true }).range(fromRow, toRow)
+      );
     },
     { label: `club:workout_rows ${input.from}..${input.to}` }
   );
-  return data.map((row) => {
-    const classification = classifyTrainingPeaksWorkoutActivity({
-      title: (row.title as string | null) ?? null,
-      sportOrTypeCode: (row.sport_or_type_code as string | null) ?? null,
-      workoutTypeValueId: (row.workout_type_value_id as number | null) ?? null,
-      workoutSubTypeId: (row.workout_sub_type_id as number | null) ?? null,
-    });
-    const distanceKm = normalizeDistanceKm(row.completed_distance_raw as number | string | null);
-    const durationSeconds = rawHoursToSeconds(row.completed_time_raw as number | string | null);
-    return {
-      id: row.id as string,
-      studentId: row.student_id as string,
-      studentName: (row.student_name as string) ?? "",
-      workoutDate: row.workout_date as string,
-      title: (row.title as string | null) ?? null,
-      sportOrTypeCode: (row.sport_or_type_code as string | null) ?? null,
-      workoutTypeValueId: (row.workout_type_value_id as number | null) ?? null,
-      workoutSubTypeId: (row.workout_sub_type_id as number | null) ?? null,
-      isPlanned: row.is_planned === true,
-      isCompleted: row.is_completed === true,
-      completedTimeRaw: (row.completed_time_raw as number | string | null) ?? null,
-      completedDistanceRaw: (row.completed_distance_raw as number | string | null) ?? null,
-      startTime: (row.start_time as string | null) ?? null,
-      distanceKm,
-      durationSeconds,
-      isRunning: classification.isRunning,
-      family: classification.family,
-    };
-  });
+  return data.map(mapWorkoutCacheRow);
+}
+
+/**
+ * Keyset page of COMPLETED workouts for the feed, newest first, filtered + ordered +
+ * limited IN POSTGRES (Phase 1.2). Ordering key is (workout_date DESC, id DESC); the
+ * cursor resumes strictly after (beforeDate, beforeId). is_completed is filtered in
+ * SQL; the "running / visible / non-empty" predicate is a JS post-filter on this
+ * bounded batch (it depends on classification, not a column), so the caller over-fetches.
+ */
+async function loadFeedCandidates(input: {
+  from: string;
+  to: string;
+  beforeDate: string | null;
+  beforeId: string | null;
+  limit: number;
+}): Promise<ClubWorkoutRow[]> {
+  const supabase = createSupabaseServerClient();
+  let q = supabase
+    .from("trainingpeaks_workout_cache")
+    .select(WORKOUT_CACHE_COLUMNS)
+    .gte("workout_date", input.from)
+    .lte("workout_date", input.to)
+    .eq("is_completed", true);
+  if (input.beforeDate && input.beforeId) {
+    // (workout_date, id) < (beforeDate, beforeId) in DESC order — keyset, no offset.
+    q = q.or(
+      `workout_date.lt.${input.beforeDate},and(workout_date.eq.${input.beforeDate},id.lt.${input.beforeId})`
+    );
+  }
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    q.order("workout_date", { ascending: false }).order("id", { ascending: false }).limit(input.limit)
+  );
+  if (error) throw new Error(`club: feed candidates failed: ${error.message}`);
+  return ((data as Record<string, unknown>[] | null) ?? []).map(mapWorkoutCacheRow);
 }
 
 /**
@@ -1025,12 +1064,27 @@ function buildWeekPerformers(
 // Public view builders
 // ---------------------------------------------------------------------------
 
-function decodeCursor(cursor: string | null | undefined): number {
-  if (!cursor) {
-    return 0;
-  }
-  const parsed = Number.parseInt(cursor, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+/** Keyset feed cursor: "<workout_date>|<id>" of the last returned card. */
+function decodeFeedCursor(cursor: string | null | undefined): { date: string; id: string } | null {
+  if (!cursor) return null;
+  const i = cursor.indexOf("|");
+  if (i <= 0) return null;
+  const date = cursor.slice(0, i);
+  const id = cursor.slice(i + 1);
+  return date && id ? { date, id } : null;
+}
+function encodeFeedCursor(row: { workoutDate: string; id: string }): string {
+  return `${row.workoutDate}|${row.id}`;
+}
+
+/** Feed post-filter (depends on classification, so it can't be a SQL column filter). */
+function isFeedRow(row: ClubWorkoutRow, visibleIds: Set<string>): boolean {
+  return (
+    row.isCompleted &&
+    visibleIds.has(row.studentId) &&
+    row.family !== "day_off" &&
+    ((row.distanceKm ?? 0) > 0 || (row.durationSeconds ?? 0) > 0)
+  );
 }
 
 export async function getClubFeed(input: {
@@ -1039,37 +1093,35 @@ export async function getClubFeed(input: {
 }): Promise<ClubFeedView> {
   const today = clubTodayIso();
   const from = addDaysIso(today, -C.CLUB_FEED_WINDOW_DAYS);
-  const [students, rows, freshness] = await Promise.all([
-    loadClubStudents(),
-    loadClubWorkoutRows({ from, to: today }),
-    buildFreshness(),
-  ]);
+  const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visibleIds = new Set(students.filter(isVisible).map((s) => s.id));
 
-  const feedRows = rows
-    .filter(
-      (row) =>
-        row.isCompleted &&
-        visibleIds.has(row.studentId) &&
-        row.family !== "day_off" &&
-        ((row.distanceKm ?? 0) > 0 || (row.durationSeconds ?? 0) > 0)
-    )
-    .sort((a, b) => {
-      if (a.workoutDate !== b.workoutDate) {
-        return a.workoutDate < b.workoutDate ? 1 : -1;
-      }
-      const sa = a.startTime ?? "";
-      const sb = b.startTime ?? "";
-      if (sa !== sb) {
-        return sa < sb ? 1 : -1;
-      }
-      return a.id < b.id ? 1 : -1;
-    });
+  // Keyset pagination IN POSTGRES: fetch batches newest-first from the cursor, over-
+  // fetching (×4) to survive the JS running/visible post-filter, until the page is full
+  // or the window is exhausted. Replaces the old "load 45d whole-club, sort+slice in JS".
+  const pageSize = C.CLUB_FEED_PAGE_SIZE;
+  const batchLimit = pageSize * 4;
+  const decoded = decodeFeedCursor(input.cursor);
+  let cursorDate = decoded?.date ?? null;
+  let cursorId = decoded?.id ?? null;
+  const pageRows: ClubWorkoutRow[] = [];
+  let exhausted = false;
 
-  const offset = decodeCursor(input.cursor);
-  const pageRows = feedRows.slice(offset, offset + C.CLUB_FEED_PAGE_SIZE);
-  const nextOffset = offset + C.CLUB_FEED_PAGE_SIZE;
-  const nextCursor = nextOffset < feedRows.length ? String(nextOffset) : null;
+  while (pageRows.length < pageSize && !exhausted) {
+    const batch = await loadFeedCandidates({ from, to: today, beforeDate: cursorDate, beforeId: cursorId, limit: batchLimit });
+    if (batch.length < batchLimit) exhausted = true;
+    for (const row of batch) {
+      cursorDate = row.workoutDate;
+      cursorId = row.id;
+      if (!isFeedRow(row, visibleIds)) continue;
+      pageRows.push(row);
+      if (pageRows.length >= pageSize) break;
+    }
+  }
+  // hasMore: full page AND more data may remain past it. A rare false-positive only
+  // costs one empty "показать ещё" (the UI then shows the end hint). No offset drift.
+  const nextCursor =
+    pageRows.length === pageSize && !exhausted ? encodeFeedCursor(pageRows[pageRows.length - 1]) : null;
 
   // Single reactions query for the whole page (no N+1).
   const reactions = await loadReactionsForWorkouts(
@@ -1253,6 +1305,32 @@ export async function getClubChallenge(input: {
   };
 }
 
+/**
+ * Personal records for ONE student from MATERIALIZED snapshots (+ coach overrides).
+ * The SINGLE SOURCE for personal records, shared by the Results tab (getClubRecords)
+ * and the Profile tab (getClubProfileDetail) so the two can never diverge. Coach
+ * override wins; else the snapshot's race + training split. No live lap loading.
+ */
+function personalRecordsFromSnapshots(
+  studentId: string,
+  snapshots: Map<string, StudentSnapshot>,
+  coach: Map<string, CoachRecord>
+): ClubRecordEntry[] {
+  const ownSnap = snapshots.get(studentId);
+  const out: ClubRecordEntry[] = [];
+  for (const target of C.CLUB_RECORD_DISTANCES) {
+    const ownCoach = coach.get(`${studentId}|${target.key}`);
+    if (ownCoach) {
+      if (ownCoach.trust !== "hidden") out.push(coachRaceEntry(target, ownCoach));
+    } else {
+      const slot = ownSnap?.get(target.key);
+      if (slot?.race) out.push(snapshotToEntry(target.key, slot.race, "race"));
+      if (slot?.training) out.push(snapshotToEntry(target.key, slot.training, "training_split"));
+    }
+  }
+  return out;
+}
+
 export async function getClubRecords(input: {
   currentStudentId: string;
 }): Promise<ClubRecordsView> {
@@ -1268,23 +1346,11 @@ export async function getClubRecords(input: {
   ]);
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
 
-  const personal: ClubRecordEntry[] = [];
+  // Personal card uses the shared snapshot source (identical to the Profile tab).
+  const personal = personalRecordsFromSnapshots(input.currentStudentId, snapshots, coach);
   const clubTops: ClubRecordsView["clubTops"] = [];
-  const ownSnap = snapshots.get(input.currentStudentId);
 
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    // Personal card: coach override wins; else snapshot (race + training split).
-    const ownCoach = coach.get(`${input.currentStudentId}|${target.key}`);
-    if (ownCoach) {
-      if (ownCoach.trust !== "hidden") {
-        personal.push(coachRaceEntry(target, ownCoach));
-      }
-    } else {
-      const slot = ownSnap?.get(target.key);
-      if (slot?.race) personal.push(snapshotToEntry(target.key, slot.race, "race"));
-      if (slot?.training) personal.push(snapshotToEntry(target.key, slot.training, "training_split"));
-    }
-
     // Club top: ONLY real races (verified). Coach-confirmed verified races count;
     // materialized best_verified races count; coach-hidden distance excluded.
     const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null }> = [];
@@ -1474,16 +1540,24 @@ export async function getClubProfileDetail(input: {
   const week = currentWeekRange();
   const month = currentMonthRange();
   const yearFrom = `${today.slice(0, 4)}-01-01`;
-  const [students, rows, freshness] = await Promise.all([
+  // Two NARROW reads instead of one 365-day whole-club scan (Phase 1):
+  //  - ownRows: this student's 365-day rows only (volumes, series, type, achievements);
+  //  - weekAllRows: the WHOLE club but only the current week (challenge rank via performers).
+  // The old path loaded all students × 365 days just to use one student's slice + the
+  // current week — that whole-club-year read was the profile's dominant cost.
+  const [students, ownRows, weekAllRows, snapshots, coach, freshness] = await Promise.all([
     loadClubStudents(),
-    loadClubWorkoutRows({ from, to: today }),
+    loadClubWorkoutRows({ from, to: today, studentIds: [input.currentStudentId] }),
+    loadClubWorkoutRows({ from: week.from, to: week.to }),
+    loadRecordSnapshots(),
+    loadCoachRecords(),
     buildFreshness(),
   ]);
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
   // Own row is read from the FULL list (a student who opted out still sees their cabinet).
   const ownStudent = students.find((s) => s.id === input.currentStudentId) ?? null;
 
-  const ownAll = rows.filter((r) => r.studentId === input.currentStudentId);
+  const ownAll = ownRows;
   const ownCompleted = ownAll.filter((r) => r.isCompleted);
   const ownRunning = ownCompleted.filter((r) => r.isRunning);
 
@@ -1500,7 +1574,10 @@ export async function getClubProfileDetail(input: {
   }
 
   const streakDays = computeStreakDays(activeDays, today);
-  const records = await studentRecordsFromRows(ownRunning, input.currentStudentId);
+  // Records come from the SAME materialized snapshots as the Results tab — no live
+  // lap reconstruction here (Phase 1.1 removed loadOrderedLaps + loadWorkoutQualityIndex
+  // from the profile path). Guarantees profile records == Results tab records.
+  const records = personalRecordsFromSnapshots(input.currentStudentId, snapshots, coach);
 
   // Weekly series (last 12 ISO weeks) + best week (over full window).
   const weekMap = kmByWeek(ownRunning);
@@ -1541,9 +1618,8 @@ export async function getClubProfileDetail(input: {
     (a) => !a.stub || C.isStubsEnabled()
   );
 
-  // Challenge rank this week.
-  const weekRows = rows.filter((r) => r.workoutDate >= week.from && r.workoutDate <= week.to);
-  const performers = buildWeekPerformers(weekRows, visibleById);
+  // Challenge rank this week (whole club, current week only).
+  const performers = buildWeekPerformers(weekAllRows, visibleById);
   const rankIndex = performers.findIndex((p) => p.studentId === input.currentStudentId);
   const current = rankIndex >= 0 ? performers[rankIndex] : null;
 
