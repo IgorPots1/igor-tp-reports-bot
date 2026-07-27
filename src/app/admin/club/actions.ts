@@ -187,6 +187,37 @@ export async function relinkStudentAction(formData: FormData): Promise<void> {
   redirect(withNotice(redirectTo, "notice", "Привязано."));
 }
 
+export async function setCalendarEntryStatusAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const id = req(formData, "entryId");
+  const status = req(formData, "status") === "rejected" ? "rejected" : "approved";
+  const { setCalendarEntryStatus } = await import("@/features/club-admin/repository");
+  try {
+    await setCalendarEntryStatus(id, status);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", status === "approved" ? "Подтверждено." : "Отклонено."));
+}
+
+export async function approveAllPendingCalendarAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const { approveAllPendingCalendar } = await import("@/features/club-admin/repository");
+  let count = 0;
+  try {
+    count = await approveAllPendingCalendar();
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", `Подтверждено записей: ${count}.`));
+}
+
 export async function setClubDisplayNameAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);

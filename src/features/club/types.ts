@@ -243,6 +243,39 @@ export type ClubWish = {
   note: string | null;
 };
 
+// Phase 5 — unified 45-day calendar entry.
+export type ClubCalendarKind = "day_off" | "preference" | "note" | "race";
+export type ClubCalendarPreferredType = "long" | "intervals" | "rest";
+export type ClubCalendarStatus = "pending" | "approved" | "rejected" | "applied";
+
+export type ClubCalendarEntry = {
+  id: string;
+  date: string; // ISO YYYY-MM-DD
+  kind: ClubCalendarKind;
+  preferredType: ClubCalendarPreferredType | null;
+  note: string | null;
+  raceName: string | null;
+  raceCity: string | null;
+  raceDistanceLabel: string | null;
+  raceTargetSeconds: number | null;
+  status: ClubCalendarStatus;
+};
+
+export type ClubCalendarDay = {
+  date: string;
+  dateLabel: string;
+  weekday: number; // 0=Mon..6=Sun
+  isToday: boolean;
+  entries: ClubCalendarEntry[];
+};
+
+export type ClubCalendarView = {
+  active: boolean;
+  fromDate: string;
+  toDate: string;
+  days: ClubCalendarDay[];
+};
+
 export type ClubBillingView = {
   available: boolean;
   note: string;

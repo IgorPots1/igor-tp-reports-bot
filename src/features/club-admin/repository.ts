@@ -243,6 +243,82 @@ export async function setDayoffStatus(id: string, status: "approved" | "rejected
 }
 
 // ---------------------------------------------------------------------------
+// Phase 5 — unified calendar inbox (club_calendar_entries), next 45 days
+// ---------------------------------------------------------------------------
+
+export type ClubCalendarAdminEntry = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  date: string;
+  kind: "day_off" | "preference" | "note" | "race";
+  detail: string;
+  status: "pending" | "approved" | "rejected" | "applied";
+};
+
+const CAL_PREF_LABEL: Record<string, string> = { long: "длительная", intervals: "интервальная", rest: "отдых" };
+
+/** All calendar entries for the next 45 days (any status), with student names. */
+export async function listClubCalendarAdmin(): Promise<ClubCalendarAdminEntry[]> {
+  const supabase = createSupabaseServerClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("club_calendar_entries")
+    .select("id, student_id, entry_date, kind, preferred_workout_type, note, race_name, race_city, race_distance_label, race_target_seconds, status")
+    .gte("entry_date", today)
+    .lte("entry_date", to)
+    .order("entry_date", { ascending: true });
+  if (error || !data) return [];
+  const rows = data as Array<Record<string, unknown>>;
+  const ids = [...new Set(rows.map((r) => r.student_id as string))];
+  const nameById = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: studs } = await supabase.from("trainingpeaks_students").select("id, student_name").in("id", ids);
+    for (const s of (studs as Array<{ id: string; student_name: string }> | null) ?? []) nameById.set(s.id, s.student_name);
+  }
+  return rows.map((r) => {
+    const kind = (r.kind as ClubCalendarAdminEntry["kind"]) ?? "note";
+    let detail = "";
+    if (kind === "day_off") detail = "Выходной";
+    else if (kind === "preference") detail = `Тип: ${CAL_PREF_LABEL[r.preferred_workout_type as string] ?? r.preferred_workout_type}`;
+    else if (kind === "note") detail = (r.note as string) ?? "";
+    else if (kind === "race") detail = `${r.race_name ?? "Забег"}${r.race_city ? ` · ${r.race_city}` : ""}${r.race_distance_label ? ` · ${r.race_distance_label}` : ""}`;
+    return {
+      id: r.id as string,
+      studentId: r.student_id as string,
+      studentName: nameById.get(r.student_id as string) ?? (r.student_id as string).slice(0, 8),
+      date: r.entry_date as string,
+      kind,
+      detail,
+      status: (r.status as ClubCalendarAdminEntry["status"]) ?? "pending",
+    };
+  });
+}
+
+export async function setCalendarEntryStatus(id: string, status: "approved" | "rejected"): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("club_calendar_entries").update({ status }).eq("id", id);
+  if (error) throw new Error(`club-admin: calendar status: ${error.message}`);
+}
+
+/** Batch-approve every currently pending calendar entry in the 45-day window. */
+export async function approveAllPendingCalendar(): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("club_calendar_entries")
+    .update({ status: "approved" })
+    .eq("status", "pending")
+    .gte("entry_date", today)
+    .lte("entry_date", to)
+    .select("id");
+  if (error) throw new Error(`club-admin: calendar batch approve: ${error.message}`);
+  return (data as Array<unknown> | null)?.length ?? 0;
+}
+
+// ---------------------------------------------------------------------------
 // 3. Telegram links
 // ---------------------------------------------------------------------------
 

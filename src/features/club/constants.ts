@@ -244,6 +244,17 @@ export function isDayoffEnabled(): boolean {
   return process.env.CLUB_DAYOFF_ENABLED === "true";
 }
 /**
+ * Phase 5 — the unified 45-day calendar (day_off / preference / note / race in one
+ * surface, stored in club_calendar_entries). OFF by default. Supersedes the separate
+ * day-off form as the primary student surface. Everything stays a coach-inbox request;
+ * nothing is written to TrainingPeaks here (that is Phase 11, gated separately).
+ */
+export function isCalendarEnabled(): boolean {
+  return process.env.CLUB_CALENDAR_ENABLED === "true";
+}
+/** How many days forward the club calendar shows (naryad: 45). */
+export const CLUB_CALENDAR_DAYS = 45;
+/**
  * Per-student one-time token links (/admin/club/links). OFF by default — the main
  * flow is now the general link + coach-approved access requests. Kept behind this
  * flag so the token path stays available but out of the default scenario.
