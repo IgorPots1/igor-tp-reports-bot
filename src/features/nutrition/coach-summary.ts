@@ -564,6 +564,87 @@ function buildDataQualityLine(summary: Record<string, unknown>): string {
   return `Качество данных: ${parsedText}, ${lowText}.`;
 }
 
+/**
+ * Наряд 3: расхождение модельного текста итога с фактами дней.
+ *
+ * НЕ цензор и НЕ валидатор: ничего не режет, не переписывает и не меняет статусы —
+ * только показывает Игорю строку «текст итога расходится с днями: N нагрузочных дней
+ * low». Это сознательно: регэксп-семантика в этом проекте уже кусалась (status_softened
+ * ложно срезал 4 дня из 7), поэтому здесь у ложного срабатывания цена — одна лишняя
+ * строка тренеру, а не испорченный разбор.
+ *
+ * Срабатывает ТОЛЬКО когда совпало всё сразу:
+ *   1) среди ОЦЕНИМЫХ дней (suspect не в счёт — см. isNutritionDayJudgeable) есть
+ *      нагрузочные дни с низкими углеводами или энергетической проблемой;
+ *   2) недельный текст звучит благополучно;
+ *   3) и при этом НИГДЕ не признаёт недобор.
+ * Пункт 3 — главный предохранитель: текст, который сам говорит «углеводов было мало»,
+ * не расходится с днями и пометки не получает.
+ */
+// БЕЗ \b: в JS граница слова определена по ASCII (\w = [A-Za-z0-9_]), поэтому перед
+// кириллицей \b не срабатывает вовсе и регэксп молча не матчит ничего. Это поймал
+// первый прогон теста — ровно тот класс ошибок, из-за которого пометка тут только
+// показывает, а не режет.
+const WELLBEING_MARKERS =
+  /(отличн|прекрасн|молодец|супер|здорово|уверенн|стабильн|ровн|хорош|на цели|всё в порядке|все в порядке|без замечан)/iu;
+const SHORTFALL_ACKNOWLEDGEMENT_MARKERS =
+  /(низк|мало|недобор|не хватил|нехватк|просед|провал|добав|подтян|увелич|подним|дефицит|пуст[оы]|скудн)/iu;
+
+function buildTextVsDaysMismatchWarning(input: {
+  review: NutritionWeeklyAnalysis;
+  days: NutritionWeeklySummaryDayFact[];
+}): string | null {
+  const problemLoadDays = input.days
+    .filter((day) => isNutritionDayJudgeable(day))
+    .filter((day) => day.roleInfo.role !== "rest")
+    .filter((day) => day.macro.carbsStatus === "low" || day.hasEnergyIssue);
+  if (problemLoadDays.length === 0) {
+    return null;
+  }
+
+  const summary = asObject(input.review.nutritionSummary);
+  const oneFocus = asObject(summary.one_focus);
+  const focusText = compactText(typeof oneFocus.statement_ru === "string" ? oneFocus.statement_ru : null) ?? "";
+  // Закрывающий абзац черновика ученице: именно он задаёт итоговое впечатление недели.
+  // Абзацы режем ДО compactText — он схлопывает \n\n в пробел, и «закрывающий абзац»
+  // выродился бы во весь текст письма. Тогда любое упоминание недобора в середине
+  // сообщения глушило бы пометку (проверено на 60 реальных разборах: глушило все).
+  const rawDraft = input.review.athleteMessageDraft ?? "";
+  const paragraphs = rawDraft
+    .split(/\n{2,}/u)
+    .map((part) => compactText(part) ?? "")
+    .filter(Boolean);
+  const closingParagraph = paragraphs.length > 0 ? paragraphs[paragraphs.length - 1] : "";
+  const weeklyText = `${focusText} ${closingParagraph}`.trim();
+  if (!weeklyText) {
+    return null;
+  }
+  if (!WELLBEING_MARKERS.test(weeklyText)) {
+    return null;
+  }
+  // Текст сам назвал недобор — расхождения нет.
+  if (SHORTFALL_ACKNOWLEDGEMENT_MARKERS.test(weeklyText)) {
+    return null;
+  }
+
+  const dayList = problemLoadDays.map((day) => formatWeekdayShortRu(day.date)).join("/");
+  const count = problemLoadDays.length;
+  const lastTwo = count % 100;
+  const lastOne = count % 10;
+  const noun =
+    lastTwo >= 11 && lastTwo <= 14
+      ? "нагрузочных дней"
+      : lastOne === 1
+        ? "нагрузочный день"
+        : lastOne >= 2 && lastOne <= 4
+          ? "нагрузочных дня"
+          : "нагрузочных дней";
+  return (
+    `Текст итога расходится с днями: ${count} ${noun} low (${dayList}),` +
+    " а недельный текст звучит благополучно. Ничего не менялось автоматически — решение за тренером."
+  );
+}
+
 function buildWarningLines(input: {
   review: NutritionWeeklyAnalysis;
   plan?: NutritionWeeklyPlan | null;
@@ -737,7 +818,9 @@ export function buildDerivedNutritionCoachSummary(input: {
     sections.push(`Заметки тренеру: ${coachDayNotes.join(" ")}`);
   }
 
-  const warningLines = buildWarningLines(input);
+  // Наряд 3: расхождение модельного текста с фактами дней — только показать тренеру.
+  const textVsDaysWarning = buildTextVsDaysMismatchWarning({ review: input.review, days: summaryDays });
+  const warningLines = [...buildWarningLines(input), ...(textVsDaysWarning ? [textVsDaysWarning] : [])];
   if (warningLines.length > 0) {
     sections.push(`Предупреждения: ${warningLines.join(" ")}`);
   }
