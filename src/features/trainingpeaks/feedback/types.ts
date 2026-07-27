@@ -51,6 +51,7 @@ export type PlannerMemoryItem = {
 export type PlannerStudentMessage = {
   text: string;
   date: string; // 'YYYY-MM-DD' (observed_at day)
+  at?: string; // full ISO observed_at — lets windowStudentWords anchor to the trigger TIME, not just day
   labels: string[];
 };
 
@@ -110,6 +111,11 @@ export type ContextPacket = {
   memoryItems: PlannerMemoryItem[];
   /** Recent raw athlete messages (verbatim); context-packet windows them to the workout. */
   studentMessages: PlannerStudentMessage[];
+  /** ISO timestamp of the REPORT that triggered this card (the message the sweep matched to the run).
+   *  When set, windowStudentWords anchors the words to it — the trigger + same-day messages from it
+   *  onward — instead of a date window, so yesterday's report about a DIFFERENT run can't bleed in.
+   *  Optional: callers that don't know the trigger (tests, targeted rebuilds) fall back to the window. */
+  triggerObservedAt?: string;
   healthMetrics: PlannerHealthMetric[];
   healthProfile: PlannerHealthProfile | null;
   /** Factors the student named around this workout, extracted from studentMessages at packet-build

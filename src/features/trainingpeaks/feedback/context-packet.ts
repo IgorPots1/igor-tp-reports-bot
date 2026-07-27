@@ -11,7 +11,7 @@
 import { computeSplitHalf } from "./split-half.ts";
 import { planObservations } from "./observation-planner.ts";
 import { FEWSHOTS, GLOSS, ordinalWord, registerWord, sexRuleText } from "./feedback-corpus.ts";
-import type { ContextPacket, Observation, PlannerDerivedMetrics, PlannerLap, SessionType } from "./types.ts";
+import type { ContextPacket, Observation, PlannerDerivedMetrics, PlannerLap, PlannerStudentMessage, SessionType } from "./types.ts";
 
 export type FeedbackContextPacket = {
   workoutId: number;
@@ -327,19 +327,30 @@ void median; // reserved for future recovery-drop phrasing; keeps the ported hel
 // draft, WITHOUT numbers, leaning on what the student SAID. The person likely ran and
 // wrote; a warm "how did it go?" beats silence. The fact-check still forbids any digit
 // (allowedNumbers empty) and any pulse talk (hrTrusted=false), so the draft stays honest.
-// The general "student words" channel: the athlete's raw messages in a TIGHT window around
-// the workout (date−1 … date+2), so we catch the actual report ("было 30-31°С, трудно") and
-// NOT week-old chatter. report_like messages win; if none, fall back to any in-window message.
-// Newest first, deduped, capped — verbatim, for the model as tone/cause context (never numbers).
+// The general "student words" channel. Anchored to the TRIGGER when known (the report that matched
+// this run): its own message + same-day messages from it ONWARD (a 10-min lookback catches a report
+// split across a burst just before the report_like one). Yesterday's report about a DIFFERENT run is
+// earlier than the trigger and on another day → it can't bleed in (the Левина bug). Same-day follow-
+// ups ("а ещё ноги гудели" 5 мин спустя) DO stay — people add detail right after the report.
+// Fallback with no trigger (targeted rebuilds / tests): the old tight date window (date−1 … date+2),
+// report_like preferred. Newest first, deduped, capped — verbatim, tone/cause context (never numbers).
 function windowStudentWords(input: ContextPacket): string[] {
-  const wd = new Date(`${input.workout.workoutDate}T00:00:00Z`).getTime();
-  const inWindow = input.studentMessages.filter((mm) => {
-    if (!mm.date) return false;
-    const diffDays = (new Date(`${mm.date}T00:00:00Z`).getTime() - wd) / 86_400_000;
-    return Number.isFinite(diffDays) && diffDays >= -1 && diffDays <= 2;
-  });
-  const reports = inWindow.filter((mm) => mm.labels.includes("report_like"));
-  const chosen = reports.length ? reports : inWindow;
+  let chosen: PlannerStudentMessage[];
+  if (input.triggerObservedAt) {
+    const triggerMs = Date.parse(input.triggerObservedAt);
+    const triggerDay = input.triggerObservedAt.slice(0, 10);
+    // trigger + same-day-onward: ALL of them (report + its follow-ups), not just report_like.
+    chosen = input.studentMessages.filter((mm) => mm.date === triggerDay && (!mm.at || Date.parse(mm.at) >= triggerMs - 10 * 60_000));
+  } else {
+    const wd = new Date(`${input.workout.workoutDate}T00:00:00Z`).getTime();
+    const inWindow = input.studentMessages.filter((mm) => {
+      if (!mm.date) return false;
+      const diffDays = (new Date(`${mm.date}T00:00:00Z`).getTime() - wd) / 86_400_000;
+      return Number.isFinite(diffDays) && diffDays >= -1 && diffDays <= 2;
+    });
+    const reports = inWindow.filter((mm) => mm.labels.includes("report_like"));
+    chosen = reports.length ? reports : inWindow;
+  }
   const seen = new Set<string>();
   const out: string[] = [];
   for (const mm of chosen) {

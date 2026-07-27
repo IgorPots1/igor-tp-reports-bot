@@ -186,7 +186,7 @@ export async function assemblePlannerInputsForWorkouts(
     const text = (o.text_preview as string | null)?.trim();
     if (!text) continue;
     const list = messagesByStudent.get(o.student_id as string) ?? [];
-    list.push({ text, date: (o.observed_at as string).slice(0, 10), labels: Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [] });
+    list.push({ text, date: (o.observed_at as string).slice(0, 10), at: o.observed_at as string, labels: Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [] });
     messagesByStudent.set(o.student_id as string, list);
   }
 
@@ -530,7 +530,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
 
   // 4. per report, pick the run it's about; dedupe so two reports about one run enqueue it once.
   const reportFreshFloor = shiftYmd(new Date().toISOString().slice(0, 10), -ENQUEUE_MAX_REPORT_AGE_DAYS);
-  const chosen = new Map<string, { row: DerivedRow; reportDate: string }>();
+  const chosen = new Map<string, { row: DerivedRow; reportDate: string; triggerObservedAt: string }>();
   for (const rep of reports) {
     const prevDay = shiftYmd(rep.date, -REPORT_MATCH_WINDOW_DAYS);
     let inWindow = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
@@ -589,7 +589,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       if (byDate !== 0) return byDate;
       return String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? ""));
     });
-    chosen.set(available[0].workout_cache_id as string, { row: available[0], reportDate: rep.date });
+    chosen.set(available[0].workout_cache_id as string, { row: available[0], reportDate: rep.date, triggerObservedAt: rep.observedAt });
     summary.reportsMatchedRun += 1;
   }
   if (chosen.size === 0) return summary;
@@ -598,7 +598,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   const chosenList = [...chosen.values()];
   const packets = await assemblePlannerInputsForWorkouts(supabase, chosenList.map((c) => c.row));
   const details: NonNullable<FeedbackReportSweepSummary["details"]> = [];
-  for (const { row, reportDate } of chosenList) {
+  for (const { row, reportDate, triggerObservedAt } of chosenList) {
     const cacheId = row.workout_cache_id as string;
     const studentId = row.student_id as string;
     const plannerInput = packets.get(cacheId);
@@ -606,6 +606,9 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       summary.runsSkipped += 1;
       continue;
     }
+    // Anchor the student-words window to the TRIGGER (the report that matched this run), so yesterday's
+    // report about a DIFFERENT run can't bleed in — see windowStudentWords.
+    plannerInput.triggerObservedAt = triggerObservedAt;
     const built = buildFeedbackContextPacket(plannerInput);
     const wordsCount = built.blocked ? 0 : built.packet.studentWords.length;
     if (!built.blocked && wordsCount > 0) summary.runsWithWords += 1;

@@ -147,6 +147,34 @@ describe("student-words channel (наряд: слова ученика → че�
     }
   });
 
+  test("триггер-якорь: вчерашний отчёт про ДРУГОЙ бег не тащится, сегодняшний + follow-up остаются (Левина)", () => {
+    const base = plannerInput({});
+    const packet: ContextPacket = {
+      ...base,
+      workout: { ...base.workout, workoutDate: "2026-07-15" },
+      triggerObservedAt: "2026-07-15T13:04:00Z",
+      studentMessages: [
+        { text: "вчера выбежала, ни часов не взяла", date: "2026-07-14", at: "2026-07-14T13:00:00Z", labels: ["report_like"] },
+        { text: "сегодня 5 км за 35 минут, как в плане", date: "2026-07-15", at: "2026-07-15T13:04:00Z", labels: ["report_like"] },
+        { text: "ну вроде стабильно", date: "2026-07-15", at: "2026-07-15T13:10:00Z", labels: ["unknown"] },
+      ],
+    };
+    const r = buildFeedbackContextPacket(packet);
+    if (!r.blocked) {
+      assert.ok(r.packet.studentWords.some((w) => w.includes("5 км за 35")), "сегодняшний отчёт остаётся");
+      assert.ok(r.packet.studentWords.some((w) => w.includes("стабильно")), "same-day follow-up остаётся");
+      assert.ok(!r.packet.studentWords.some((w) => w.includes("вчера выбежала")), "вчерашний отчёт про другой бег НЕ тащится");
+    }
+  });
+
+  test("без триггера — прежнее окно дата−1..+2 (фолбэк для тестов/пересборок)", () => {
+    const r = buildFeedbackContextPacket(inputWithMessages([
+      { text: "вчера тоже бегала, было норм", date: "2026-07-14", labels: ["report_like"] },
+    ]));
+    // нет triggerObservedAt → старое поведение: −1 день попадает
+    if (!r.blocked) assert.ok(r.packet.studentWords.some((w) => w.includes("вчера тоже бегала")));
+  });
+
   test("report_like в приоритете над прочими сообщениями в окне", () => {
     const r = buildFeedbackContextPacket(inputWithMessages([
       { text: "спасибо, до встречи", date: "2026-07-15", labels: ["unknown"] },
