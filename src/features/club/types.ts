@@ -23,6 +23,10 @@ export type ClubFeedItem = {
   distanceKm: number | null;
   durationSeconds: number | null;
   paceSecPerKm: number | null;
+  /** Average heart rate (bpm) from FIT-derived metrics, when available. */
+  avgHr: number | null;
+  /** Workout title (title fill-rate ~100%), shown on the feed card. */
+  title: string | null;
   /** Short neutral caption derived from the workout title (safe subset). */
   caption: string | null;
   /** Whether the reactions row is interactive (CLUB_REACTIONS_ENABLED). */

@@ -142,13 +142,14 @@ const C = {
 const HEAD = "var(--font-oswald), var(--font-montserrat), system-ui, sans-serif";
 const BODY = "var(--font-montserrat), system-ui, sans-serif";
 
-type Tab = "feed" | "challenge" | "records" | "club" | "profile";
+type Tab = "profile" | "feed" | "challenge" | "records" | "club";
+// Phase 3.3 — Profile first, then Лента, Челлендж, Результаты, Клуб.
 const TABS: Array<{ key: Tab; icon: string; label: string }> = [
+  { key: "profile", icon: "👤", label: "Профиль" },
   { key: "feed", icon: "📻", label: "Лента" },
   { key: "challenge", icon: "🔥", label: "Челлендж" },
   { key: "records", icon: "🏅", label: "Результаты" },
   { key: "club", icon: "📊", label: "Клуб" },
-  { key: "profile", icon: "👤", label: "Профиль" },
 ];
 
 type Status = "idle" | "loading" | "ready" | "error";
@@ -210,7 +211,7 @@ async function apiPost<T>(
 
 export default function ClubPage() {
   const [initData, setInitData] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("feed");
+  const [tab, setTab] = useState<Tab>("profile");
   const [freshness, setFreshness] = useState<ClubFreshness | null>(null);
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [openSection, setOpenSection] = useState<CabinetSection | null>(null);
@@ -882,10 +883,25 @@ function VolumeChart({ series }: { series: ClubVolumePoint[] }) {
 function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string; onOpenSection: (s: CabinetSection) => void }) {
   const [privacyMsg, setPrivacyMsg] = useState<string | null>(null);
   const [visible, setVisibleState] = useState<boolean | null>(null);
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameMsg, setNameMsg] = useState<string | null>(null);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
   const current = visible ?? v.clubVisible;
+  const nameValue = nameDraft ?? v.displayName;
+
+  async function saveName() {
+    setNameSaving(true);
+    const res = await fetch("/api/m/club/display-name", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData: props.initData, name: nameValue }),
+    }).then((r) => r.json()).catch(() => ({ ok: false, error: "Ошибка" }));
+    setNameSaving(false);
+    setNameMsg(res.ok ? "Имя обновлено" : (res.error ?? "Недоступно"));
+  }
 
   async function setVisibility(next: boolean) {
     setVisibleState(next);
@@ -984,6 +1000,21 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
             </button>
           ))}
         </div>
+      </div>
+
+      <div style={S.card}>
+        <div style={S.secHead}>Имя в клубе</div>
+        <input
+          style={{ ...S.input, marginTop: 10, marginBottom: 8 }}
+          value={nameValue}
+          maxLength={40}
+          onChange={(e) => setNameDraft(e.target.value)}
+          placeholder="Как показывать тебя в клубе"
+        />
+        <button style={{ ...S.saveBtn, opacity: nameSaving ? 0.6 : 1 }} type="button" disabled={nameSaving} onClick={saveName}>
+          {nameSaving ? "Сохраняю…" : "Сохранить имя"}
+        </button>
+        {nameMsg ? <div style={S.cardMeta}>{nameMsg}</div> : null}
       </div>
 
       <div style={S.card}>

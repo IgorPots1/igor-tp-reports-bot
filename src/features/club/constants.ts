@@ -278,3 +278,34 @@ export function clubBillingReminderDaysBefore(): number {
   const raw = Number(process.env.CLUB_BILLING_REMINDER_DAYS_BEFORE ?? "3");
   return Number.isFinite(raw) && raw >= 0 ? raw : 3;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3.1 — coach as club participant
+// ---------------------------------------------------------------------------
+// The coach's own student row is flagged is_service_account=true, which excludes
+// it EVERYWHERE (feedback generation, digests, billing, admin lists, aggregate
+// parity). That flag MUST stay set — removing it would silently start generating
+// coach feedback and pull the coach into billing/attention flows. Instead we keep
+// the flag and add a CLUB-ONLY override: an explicit allowlist of student ids that
+// participate in club visibility despite being service accounts. Nothing outside
+// the club surface reads this list.
+export function clubIncludedServiceStudentIds(): Set<string> {
+  const raw = process.env.CLUB_INCLUDE_SERVICE_STUDENT_IDS ?? "";
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+
+// The coach opens the club from their COACH Telegram account (id in
+// TELEGRAM_COACH_CHAT_IDS), which resolveClubStudent otherwise rejects with
+// coach_account/403 so a coach can never bind to a student. To let the coach ALSO
+// act as a participant (feed / profile / challenge / tops) without weakening that
+// guard for anyone else, we map the coach account straight to this explicit
+// participant student row id — no auto-bind, no confirm, coach-configured only.
+export function clubCoachParticipantStudentId(): string | null {
+  const raw = (process.env.CLUB_COACH_PARTICIPANT_STUDENT_ID ?? "").trim();
+  return raw.length > 0 ? raw : null;
+}

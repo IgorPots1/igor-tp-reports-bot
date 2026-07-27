@@ -187,6 +187,22 @@ export async function relinkStudentAction(formData: FormData): Promise<void> {
   redirect(withNotice(redirectTo, "notice", "Привязано."));
 }
 
+export async function setClubDisplayNameAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = req(formData, "studentId");
+  const displayName = opt(formData, "displayName");
+  const { setClubDisplayName } = await import("@/features/club-admin/repository");
+  try {
+    await setClubDisplayName(studentId, displayName);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", displayName ? "Имя обновлено." : "Имя сброшено."));
+}
+
 // ── Entry links (one-time binding tokens) ──────────────────────────────────
 
 export async function generateClubLinkAction(formData: FormData): Promise<void> {

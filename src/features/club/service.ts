@@ -60,6 +60,8 @@ import type {
 type ClubStudent = {
   id: string;
   name: string;
+  /** Club-facing display name: club_display_name override, else first+last real name. */
+  displayName: string;
   isActive: boolean;
   isServiceAccount: boolean;
   clubVisible: boolean;
@@ -91,31 +93,81 @@ async function loadClubStudents(): Promise<ClubStudent[]> {
   // boolean NOT NULL default true. When CLUB_PRIVACY_ENABLED is off, opt-out is
   // ignored and everyone stays visible (see isVisible); the column is still read so
   // the profile can show the current setting.
+  // club_display_name (migration 20260802000000) is optional; select it defensively
+  // so the layer still works before the migration is applied (PostgREST returns the
+  // column only when present — we read it with `?? null`).
   const { data, error } = await withSupabaseNetworkRetry(() =>
     supabase
       .from("trainingpeaks_students")
-      .select("id, student_name, is_active, is_service_account, club_visible")
+      .select("id, student_name, club_display_name, is_active, is_service_account, club_visible")
       .order("student_name", { ascending: true })
   );
   if (error) {
-    throw new Error(`club: failed to load students: ${error.message}`);
+    // Column may not exist yet (migration pending) → retry without it, never break.
+    const retry = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_students")
+        .select("id, student_name, is_active, is_service_account, club_visible")
+        .order("student_name", { ascending: true })
+    );
+    if (retry.error) {
+      throw new Error(`club: failed to load students: ${retry.error.message}`);
+    }
+    return mapClubStudentRows(retry.data);
   }
+  return mapClubStudentRows(data);
+}
+
+function mapClubStudentRows(data: unknown): ClubStudent[] {
   return (
     (data as Array<{
       id: string;
       student_name: string;
+      club_display_name?: string | null;
       is_active: boolean | null;
       is_service_account: boolean | null;
       club_visible: boolean | null;
     }> | null) ?? []
-  ).map((row) => ({
-    id: row.id,
-    name: row.student_name,
-    isActive: row.is_active !== false,
-    isServiceAccount: row.is_service_account === true,
-    // null-safe: a missing/NULL value defaults to visible (matches column default true).
-    clubVisible: row.club_visible !== false,
-  }));
+  ).map((row) => {
+    const override = (row.club_display_name ?? "").trim();
+    return {
+      id: row.id,
+      name: row.student_name,
+      displayName: override.length > 0 ? override : fullName(row.student_name),
+      isActive: row.is_active !== false,
+      isServiceAccount: row.is_service_account === true,
+      // null-safe: a missing/NULL value defaults to visible (matches column default true).
+      clubVisible: row.club_visible !== false,
+    };
+  });
+}
+
+/**
+ * One batched read of per-workout average heart rate from FIT-derived metrics
+ * (avg_hr, one row per workout_cache_id). Only trusted HR is returned — a workout
+ * whose HR the cleaner flagged as unreliable (hr_trusted=false) is omitted so the
+ * feed never shows a bogus pulse. Empty on any error / missing table.
+ */
+async function loadAvgHrForWorkouts(workoutIds: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (workoutIds.length === 0) {
+    return out;
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_derived_metrics")
+    .select("workout_cache_id, avg_hr, hr_trusted")
+    .in("workout_cache_id", workoutIds);
+  if (error) {
+    return out;
+  }
+  for (const row of (data as Array<{ workout_cache_id: string; avg_hr: number | null; hr_trusted: boolean | null }> | null) ?? []) {
+    // hr_trusted null (older rows) is treated as trusted; only an explicit false hides it.
+    if (row.avg_hr && row.avg_hr > 0 && row.hr_trusted !== false) {
+      out.set(row.workout_cache_id, Math.round(row.avg_hr));
+    }
+  }
+  return out;
 }
 
 type ReactionAgg = { like: number; fire: number; mineLike: boolean; mineFire: boolean };
@@ -218,7 +270,11 @@ export async function logClubLinkEvent(input: {
 }
 
 function isVisible(student: ClubStudent): boolean {
-  const base = student.isActive && !student.isServiceAccount;
+  // Phase 3.1: a service account participates in the club ONLY when explicitly
+  // allowlisted (CLUB_INCLUDE_SERVICE_STUDENT_IDS) — the coach's own row. The
+  // is_service_account flag itself stays set for every other surface.
+  const serviceOk = !student.isServiceAccount || C.clubIncludedServiceStudentIds().has(student.id);
+  const base = student.isActive && serviceOk;
   // Opt-out only takes effect when the privacy feature is enabled; otherwise the
   // club_visible flag is stored-but-ignored and everyone participates by default.
   if (C.isPrivacyEnabled()) {
@@ -509,12 +565,19 @@ function paceSecPerKm(distanceKm: number | null, durationSeconds: number | null)
   return Math.round(durationSeconds / distanceKm);
 }
 
-function firstWord(name: string): string {
+/**
+ * Club display name: first + last (Phase 3.2). Coach OS stores names as
+ * "Имя Фамилия" (occasionally with a patronymic/extra word). The club shows the
+ * first TWO words — enough to identify by name+surname without leaking a full
+ * three-part legal name. Falls back to "Участник клуба" when empty.
+ */
+function fullName(name: string): string {
   const trimmed = (name ?? "").trim();
   if (!trimmed) {
     return "Участник клуба";
   }
-  return trimmed.split(/\s+/u)[0] ?? trimmed;
+  const words = trimmed.split(/\s+/u).filter(Boolean);
+  return words.slice(0, 2).join(" ") || trimmed;
 }
 
 function monogram(name: string): string {
@@ -563,6 +626,18 @@ function sanitizeCaption(title: string | null, label: string): string | null {
     return null;
   }
   return cleaned.length > 80 ? `${cleaned.slice(0, 79)}…` : cleaned;
+}
+
+/** Workout title for the feed card / detail header: whitespace-normalised, capped. */
+function cleanTitle(title: string | null): string | null {
+  if (!title) {
+    return null;
+  }
+  const cleaned = title.replace(/\s+/gu, " ").trim();
+  if (!cleaned) {
+    return null;
+  }
+  return cleaned.length > 90 ? `${cleaned.slice(0, 89)}…` : cleaned;
 }
 
 const RU_MONTHS = [
@@ -1043,7 +1118,7 @@ function finalizePerformers(counts: PerfCounts, visibleById: Map<string, ClubStu
     const c = counts.get(student.id);
     accum.set(student.id, {
       studentId: student.id,
-      displayName: firstWord(student.name),
+      displayName: student.displayName,
       planned: c?.planned ?? 0,
       completed: c?.completed ?? 0,
     });
@@ -1353,6 +1428,7 @@ export async function getClubFeed(input: {
   const from = addDaysIso(today, -C.CLUB_FEED_WINDOW_DAYS);
   const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visibleIds = new Set(students.filter(isVisible).map((s) => s.id));
+  const displayById = new Map(students.map((s) => [s.id, s.displayName]));
 
   // Keyset pagination IN POSTGRES: fetch batches newest-first from the cursor, over-
   // fetching (×4) to survive the JS running/visible post-filter, until the page is full
@@ -1381,11 +1457,12 @@ export async function getClubFeed(input: {
   const nextCursor =
     pageRows.length === pageSize && !exhausted ? encodeFeedCursor(pageRows[pageRows.length - 1]) : null;
 
-  // Single reactions query for the whole page (no N+1).
-  const reactions = await loadReactionsForWorkouts(
-    pageRows.map((r) => r.id),
-    input.currentStudentId
-  );
+  // Single reactions + avg-HR query each for the whole page (no N+1).
+  const pageIds = pageRows.map((r) => r.id);
+  const [reactions, avgHrById] = await Promise.all([
+    loadReactionsForWorkouts(pageIds, input.currentStudentId),
+    loadAvgHrForWorkouts(pageIds),
+  ]);
 
   const items: ClubFeedItem[] = pageRows.map((row) => {
     const label = typeLabel(row.family);
@@ -1393,7 +1470,7 @@ export async function getClubFeed(input: {
     return {
       id: row.id,
       studentId: row.studentId,
-      studentDisplayName: firstWord(row.studentName),
+      studentDisplayName: displayById.get(row.studentId) ?? fullName(row.studentName),
       monogram: monogram(row.studentName),
       typeLabel: label,
       isRunning: row.isRunning,
@@ -1402,6 +1479,8 @@ export async function getClubFeed(input: {
       distanceKm: row.distanceKm,
       durationSeconds: row.durationSeconds,
       paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
+      avgHr: avgHrById.get(row.id) ?? null,
+      title: cleanTitle(row.title),
       caption: sanitizeCaption(row.title, label),
       reactionsEnabled: C.isReactionsEnabled(),
       reactions: { like: agg?.like ?? 0, fire: agg?.fire ?? 0 },
@@ -1650,7 +1729,7 @@ export async function getClubRecords(input: {
       distanceKey: target.key,
       rank: index + 1,
       studentId: r.studentId,
-      displayName: firstWord(r.name),
+      displayName: visibleById.get(r.studentId)?.displayName ?? fullName(r.name),
       monogram: monogram(r.name),
       durationSeconds: r.durationSeconds,
       paceSecPerKm: r.pace,
@@ -1916,7 +1995,7 @@ export async function getClubProfileDetail(input: {
   const current = rankIndex >= 0 ? performers[rankIndex] : null;
 
   return {
-    displayName: firstWord(input.currentStudentName),
+    displayName: ownStudent?.displayName ?? fullName(input.currentStudentName),
     monogram: monogram(input.currentStudentName),
     weekKm: Number(weekKm.toFixed(1)),
     monthKm: Number(monthKm.toFixed(1)),
@@ -2081,7 +2160,7 @@ export async function getClubExtendedTops(input: {
     for (const [id, days] of activeDaysByStudent) streakByStudent.set(id, computeStreakDays(days, today));
   }
 
-  const nameOf = (id: string) => firstWord(visibleById.get(id)?.name ?? "");
+  const nameOf = (id: string) => visibleById.get(id)?.displayName ?? fullName(visibleById.get(id)?.name ?? "");
   const monoOf = (id: string) => monogram(visibleById.get(id)?.name ?? "");
   const mkRow = (id: string, value: string): ClubTopRow => ({
     studentId: id,
@@ -2148,7 +2227,7 @@ export async function getClubPublicProfile(input: {
   if (!canSee) {
     return {
       studentId: input.targetStudentId,
-      displayName: firstWord(name || "Участник клуба"),
+      displayName: target?.displayName ?? fullName(name || "Участник клуба"),
       monogram: monogram(name || "•"),
       visible: false,
       weekKm: 0,
@@ -2180,7 +2259,7 @@ export async function getClubPublicProfile(input: {
     return {
       id: row.id,
       studentId: row.studentId,
-      studentDisplayName: firstWord(row.studentName),
+      studentDisplayName: target?.displayName ?? fullName(row.studentName),
       monogram: monogram(row.studentName),
       typeLabel: label,
       isRunning: row.isRunning,
@@ -2189,6 +2268,8 @@ export async function getClubPublicProfile(input: {
       distanceKm: row.distanceKm,
       durationSeconds: row.durationSeconds,
       paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
+      avgHr: null,
+      title: cleanTitle(row.title),
       caption: sanitizeCaption(row.title, label),
       reactionsEnabled: C.isReactionsEnabled(),
       reactions: { like: 0, fire: 0 },
@@ -2198,7 +2279,7 @@ export async function getClubPublicProfile(input: {
 
   return {
     studentId: input.targetStudentId,
-    displayName: firstWord(name),
+    displayName: target?.displayName ?? fullName(name),
     monogram: monogram(name),
     visible: true,
     weekKm: Number(weekKm.toFixed(1)),

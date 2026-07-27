@@ -24,8 +24,9 @@ import {
 } from "@/features/trainingpeaks/repository";
 
 import { resolveClubLinkToken } from "./link-tokens";
-import { isClubLinkTokensEnabled } from "./constants";
+import { isClubLinkTokensEnabled, clubCoachParticipantStudentId } from "./constants";
 import { recordClubAccessRequest } from "./access-requests";
+import { getTrainingPeaksStudentById } from "@/features/trainingpeaks/repository";
 
 /** Outer mini-app gate + club feature flag. Both must be on. */
 export function isClubEnabled(): boolean {
@@ -113,8 +114,21 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
     return { ok: false, httpStatus: 401, error: "Не авторизован.", code: "unauthorized" };
   }
 
-  // Coach's personal account must never bind to / view a student's club data.
+  // Coach's personal account must never bind to / view a student's club data...
   if (getTrainingPeaksCoachChatIds().includes(String(user.id))) {
+    // ...EXCEPT the coach may ALSO participate in the club as themselves (Phase 3.1).
+    // When CLUB_COACH_PARTICIPANT_STUDENT_ID is configured, the coach account maps
+    // straight to that explicit participant row — no auto-bind, no confirm, and no
+    // change to the guard for any other account. Without the env, the 403 stands.
+    const participantId = clubCoachParticipantStudentId();
+    if (participantId) {
+      const participant = await getTrainingPeaksStudentById(participantId).catch(() => null);
+      if (participant) {
+        console.info(`[club.resolve] coach_participant user=${user.id} student=${participant.id}`);
+        return { ok: true, student: participant };
+      }
+      console.warn(`[club.resolve] coach_participant configured id=${participantId} but no such student`);
+    }
     console.warn(`[club.resolve] coach_account user=${user.id} (id в TELEGRAM_COACH_CHAT_IDS)`);
     return {
       ok: false,

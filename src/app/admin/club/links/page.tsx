@@ -7,6 +7,7 @@ import {
   generateClubLinkAction,
   generateAllUnboundLinksAction,
   revokeClubLinkAction,
+  setClubDisplayNameAction,
 } from "@/app/admin/club/actions";
 
 export const dynamic = "force-dynamic";
@@ -120,11 +121,19 @@ export default async function ClubLinksPage({ searchParams }: { searchParams: Pr
       <h2 className="admin-section-subtitle">Привязанные</h2>
       <div className="admin-table-wrap">
         <table className="admin-table admin-table-compact">
-          <thead><tr><th>Ученик</th><th>Telegram user id</th><th>@username</th><th>Отвязка</th></tr></thead>
+          <thead><tr><th>Ученик</th><th>Telegram user id</th><th>@username</th><th>Имя в клубе</th><th>Отвязка</th></tr></thead>
           <tbody>
             {bound.map((l) => (
               <tr key={l.studentId}>
                 <td>{l.name}</td><td>{l.telegramUserId}</td><td>{l.username ?? "—"}</td>
+                <td>
+                  <form action={setClubDisplayNameAction} className="admin-form-inline" style={{ gap: 6 }}>
+                    <input type="hidden" name="redirectTo" value={selfPath} />
+                    <input type="hidden" name="studentId" value={l.studentId} />
+                    <input className="admin-input" name="displayName" placeholder="переопределить (пусто = сброс)" style={{ width: 200 }} maxLength={40} />
+                    <FormActionButton className="admin-button admin-button-small" pendingText="…">Сохранить</FormActionButton>
+                  </form>
+                </td>
                 <td>
                   <form action={unbindStudentAction}>
                     <input type="hidden" name="redirectTo" value={selfPath} />

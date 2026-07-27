@@ -465,6 +465,18 @@ export async function relinkStudent(studentId: string, telegramUserId: number): 
   } catch { /* enum not extended yet */ }
 }
 
+/**
+ * Phase 3.2 — coach sets any student's club display name. Empty string clears the
+ * override (falls back to the real first+last name). Writes only club_display_name
+ * (migration 20260802000000); no other surface reads it.
+ */
+export async function setClubDisplayName(studentId: string, displayName: string | null): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const value = (displayName ?? "").trim().slice(0, 40) || null;
+  const { error } = await supabase.from("trainingpeaks_students").update({ club_display_name: value }).eq("id", studentId);
+  if (error) throw new Error(`club-admin: setClubDisplayName: ${error.message}`);
+}
+
 // ---------------------------------------------------------------------------
 // 4. Club management panel
 // ---------------------------------------------------------------------------

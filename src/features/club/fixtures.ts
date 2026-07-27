@@ -29,6 +29,8 @@ function feedItem(over: Partial<ClubFeedItem> & { id: string; studentId: string 
     distanceKm: 10,
     durationSeconds: 3000,
     paceSecPerKm: 300,
+    avgHr: null,
+    title: null,
     caption: null,
     reactionsEnabled: false,
     reactions: { like: 0, fire: 0 },
