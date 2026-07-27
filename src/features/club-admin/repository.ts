@@ -204,7 +204,7 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
     const { data } = await supabase.from("club_dayoff_requests").select("id, student_id, from_date, to_date, reason, status, created_at").order("created_at", { ascending: false }).limit(300);
     for (const r of (data as Array<Record<string, unknown>> | null) ?? []) {
       items.push({ kind: "dayoff", id: r.id as string, studentId: r.student_id as string, title: "Выходной",
-        subtitle: `${r.from_date}${r.to_date && r.to_date !== r.from_date ? ` — ${r.to_date}` : ""}${r.reason ? ` · ${r.reason}` : ""}`,
+        subtitle: `${r.from_date}${r.to_date && r.to_date !== r.from_date ? ` - ${r.to_date}` : ""}${r.reason ? ` · ${r.reason}` : ""}`,
         status: (r.status as string) ?? "pending", createdAt: r.created_at as string, actionable: (r.status as string) === "pending" });
     }
   }
@@ -212,8 +212,8 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
     const { data } = await supabase.from("club_wishes").select("id, student_id, load_scale, wellbeing_scale, schedule_scale, note, created_at").order("created_at", { ascending: false }).limit(300);
     for (const r of (data as Array<Record<string, unknown>> | null) ?? []) {
       items.push({ kind: "wish", id: r.id as string, studentId: r.student_id as string, title: "Пожелание",
-        subtitle: `нагрузка ${r.load_scale ?? "—"} · самочувствие ${r.wellbeing_scale ?? "—"} · расписание ${r.schedule_scale ?? "—"}${r.note ? ` · ${r.note}` : ""}`,
-        status: "—", createdAt: r.created_at as string, actionable: false });
+        subtitle: `нагрузка ${r.load_scale ?? "-"} · самочувствие ${r.wellbeing_scale ?? "-"} · расписание ${r.schedule_scale ?? "-"}${r.note ? ` · ${r.note}` : ""}`,
+        status: "-", createdAt: r.created_at as string, actionable: false });
     }
   }
   const withNames = await attachStudentNames(items);
@@ -316,6 +316,83 @@ export async function approveAllPendingCalendar(): Promise<number> {
     .select("id");
   if (error) throw new Error(`club-admin: calendar batch approve: ${error.message}`);
   return (data as Array<unknown> | null)?.length ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Phase C — admin challenges (club_challenges, extended 20260806)
+// ---------------------------------------------------------------------------
+
+export type ClubChallengeAdminRow = {
+  id: string;
+  title: string;
+  goalType: "km" | "workouts";
+  goalValue: number;
+  startsAt: string;
+  endsAt: string;
+  participantScope: "all" | "selected";
+  participantCount: number;
+  status: "active" | "completed" | "archived";
+};
+
+export async function listClubChallengesAdmin(): Promise<ClubChallengeAdminRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_challenges")
+    .select("id, title, goal_type, goal_value, goal_km, starts_at, ends_at, participant_scope, participant_ids, status")
+    .order("starts_at", { ascending: false })
+    .limit(200);
+  if (error || !data) return [];
+  return (data as Array<Record<string, unknown>>).map((r) => ({
+    id: r.id as string,
+    title: ((r.title as string | null) ?? "").trim() || "Челлендж",
+    goalType: r.goal_type === "workouts" ? "workouts" : "km",
+    goalValue: Number(r.goal_value ?? r.goal_km ?? 0),
+    startsAt: r.starts_at as string,
+    endsAt: r.ends_at as string,
+    participantScope: r.participant_scope === "selected" ? "selected" : "all",
+    participantCount: Array.isArray(r.participant_ids) ? (r.participant_ids as unknown[]).length : 0,
+    status: (["active", "completed", "archived"].includes(r.status as string) ? r.status : "active") as ClubChallengeAdminRow["status"],
+  }));
+}
+
+export async function createClubChallenge(input: {
+  title: string;
+  goalType: "km" | "workouts";
+  goalValue: number;
+  startsAt: string;
+  endsAt: string;
+  participantScope: "all" | "selected";
+  participantIds: string[];
+  coach: string;
+}): Promise<void> {
+  if (!(input.goalValue > 0)) throw new Error("Значение цели должно быть > 0.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startsAt) || !/^\d{4}-\d{2}-\d{2}$/.test(input.endsAt) || input.endsAt < input.startsAt) {
+    throw new Error("Неверный период.");
+  }
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("club_challenges").insert({
+    title: input.title.trim() || null,
+    goal_type: input.goalType,
+    goal_value: input.goalValue,
+    // Keep legacy goal_km populated for a km challenge (the manual-km path still reads it);
+    // null for a workouts challenge (column is now nullable).
+    goal_km: input.goalType === "km" ? input.goalValue : null,
+    starts_at: input.startsAt,
+    ends_at: input.endsAt,
+    participant_scope: input.participantScope,
+    participant_ids: input.participantScope === "selected" ? input.participantIds : [],
+    status: "active",
+    created_by: input.coach,
+  });
+  if (error) throw new Error(`club-admin: create challenge: ${error.message}`);
+}
+
+export async function setClubChallengeStatus(id: string, status: "active" | "completed" | "archived"): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const patch: Record<string, unknown> = { status };
+  if (status === "completed") patch.completed_at = new Date().toISOString();
+  const { error } = await supabase.from("club_challenges").update(patch).eq("id", id);
+  if (error) throw new Error(`club-admin: challenge status: ${error.message}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -631,7 +708,7 @@ export async function getClubManagementData(): Promise<{
   // Stale = never computed OR older than 24h (scans should refresh several times a day).
   const snapshotStale = snapAgeMin === null || snapAgeMin > 24 * 60;
   const snapshotFreshnessLabel =
-    snapAgeMin === null ? "никогда — пересчёт не запускался (CLUB_MATERIALIZE_ENABLED?)" : humanAge(snapAgeMin);
+    snapAgeMin === null ? "никогда - пересчёт не запускался (CLUB_MATERIALIZE_ENABLED?)" : humanAge(snapAgeMin);
 
   return {
     goalMode: (process.env.CLUB_CHALLENGE_GOAL_MODE ?? "auto"),

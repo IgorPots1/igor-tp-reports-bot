@@ -57,6 +57,9 @@ export const CLUB_CHALLENGE_FIXTURE: ClubChallengeView = {
   goalMode: "auto",
   progressPct: 92,
   weekLabel: "20 июл - 26 июл",
+  challenges: [],
+  performersPeriod: "week",
+  performersPeriodLabel: "за неделю",
   freshness: FRESH,
   topPerformers: [
     { studentId: "s1", displayName: "Анна", monogram: "АК", completionPct: 1, plannedCount: 5, completedCount: 5, noPlan: false, isCurrentStudent: false },

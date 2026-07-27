@@ -1620,8 +1620,99 @@ async function loadManualGoalKm(): Promise<number | null> {
   }
 }
 
+type ChallengeRow = {
+  id: string;
+  title: string | null;
+  goal_type: string | null;
+  goal_value: number | null;
+  goal_km: number | null;
+  starts_at: string;
+  ends_at: string;
+  participant_scope: string | null;
+  participant_ids: string[] | null;
+  status: string | null;
+};
+
+/**
+ * Phase C — active admin challenges with live club + personal progress. Reads
+ * club_challenges (extended in 20260806); tolerant of the pre-Phase-C shape / missing
+ * table (returns []). Progress is completed running distance (km) or completed running
+ * workout COUNT over the challenge window, restricted to participants (all visible club,
+ * or a selected subset intersected with visible). Never counts club marker rows (they
+ * are already excluded at loadClubWorkoutRows — Phase A).
+ */
+async function getClubActiveChallenges(
+  currentStudentId: string,
+  visibleById: Map<string, ClubStudent>
+): Promise<import("./types").ClubChallengeItem[]> {
+  const today = clubTodayIso();
+  let rows: ChallengeRow[] = [];
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("club_challenges")
+      .select("id, title, goal_type, goal_value, goal_km, starts_at, ends_at, participant_scope, participant_ids, status")
+      .eq("status", "active")
+      .lte("starts_at", today)
+      .gte("ends_at", today)
+      .order("starts_at", { ascending: true });
+    if (error || !data) return [];
+    rows = data as ChallengeRow[];
+  } catch {
+    return [];
+  }
+  if (rows.length === 0) return [];
+
+  const earliest = rows.reduce((min, r) => (r.starts_at < min ? r.starts_at : min), today);
+  const workoutRows = await loadClubWorkoutRows({ from: earliest, to: today });
+  const completedRunning = workoutRows.filter((r) => r.isCompleted && r.isRunning && visibleById.has(r.studentId));
+
+  return rows.map((r) => {
+    const goalType: "km" | "workouts" = r.goal_type === "workouts" ? "workouts" : "km";
+    const goalValue = toFiniteNumber(r.goal_value) ?? toFiniteNumber(r.goal_km) ?? 0;
+    const scope: "all" | "selected" = r.participant_scope === "selected" ? "selected" : "all";
+    const selected = new Set((r.participant_ids ?? []).filter((id) => visibleById.has(id)));
+    const isParticipant = (id: string) => (scope === "all" ? visibleById.has(id) : selected.has(id));
+    const participantCount = scope === "all" ? visibleById.size : selected.size;
+    const winFrom = r.starts_at;
+    const winTo = r.ends_at < today ? r.ends_at : today;
+
+    let clubProgress = 0;
+    let personalProgress = 0;
+    for (const row of completedRunning) {
+      if (row.workoutDate < winFrom || row.workoutDate > winTo) continue;
+      if (!isParticipant(row.studentId)) continue;
+      const inc = goalType === "km" ? row.distanceKm ?? 0 : 1;
+      clubProgress += inc;
+      if (row.studentId === currentStudentId) personalProgress += inc;
+    }
+    clubProgress = goalType === "km" ? Number(clubProgress.toFixed(1)) : clubProgress;
+    personalProgress = goalType === "km" ? Number(personalProgress.toFixed(1)) : personalProgress;
+    const progressPct = goalValue > 0 ? Math.min(Math.round((clubProgress / goalValue) * 100), 100) : 0;
+    const daysLeft = Math.max(0, Math.round((Date.parse(r.ends_at) - Date.parse(today)) / 86400000));
+
+    return {
+      id: r.id,
+      title: (r.title && r.title.trim()) || (goalType === "km" ? "Клубный километраж" : "Число тренировок"),
+      goalType,
+      goalValue,
+      startsAt: r.starts_at,
+      endsAt: r.ends_at,
+      dateLabel: `${formatRuDate(r.starts_at)} - ${formatRuDate(r.ends_at)}`,
+      daysLeft,
+      clubProgress,
+      personalProgress,
+      progressPct,
+      participantScope: scope,
+      participantCount,
+    };
+  });
+}
+
 export async function getClubChallenge(input: {
   currentStudentId: string;
+  /** Phase C: красавчики over "week" (default) or "month". */
+  period?: "week" | "month";
 }): Promise<ClubChallengeView> {
   const range = currentWeekRange();
   // Load enough history for the rolling-average goal (up to 5 completed weeks back).
@@ -1698,6 +1789,22 @@ export async function getClubChallenge(input: {
   }
   const progressPct = goalKm > 0 ? Math.min(Math.round((clubKm / goalKm) * 100), 100) : 0;
 
+  // Phase C: красавчики period toggle. week (default) = the performers computed above;
+  // month = recompute over the calendar month (raw path — the aggregate optimization is
+  // week-shaped; month is a rarer view, so a plain read is fine). clubKm/goal/personal
+  // stay weekly — only the leaderboard period changes.
+  const period: "week" | "month" = input.period === "month" ? "month" : "week";
+  let periodPerformers = performers;
+  if (period === "month") {
+    const monthRange = currentMonthRange();
+    const monthRows = await loadClubWorkoutRows({ from: monthRange.from, to: monthRange.to });
+    periodPerformers = buildWeekPerformers(monthRows, visibleById).map((p) => ({
+      ...p,
+      isCurrentStudent: p.studentId === input.currentStudentId,
+    }));
+  }
+  const challenges = await getClubActiveChallenges(input.currentStudentId, visibleById);
+
   return {
     clubKm,
     goalKm,
@@ -1705,8 +1812,11 @@ export async function getClubChallenge(input: {
     goalMode,
     progressPct,
     weekLabel: weekLabel(range),
+    challenges,
+    performersPeriod: period,
+    performersPeriodLabel: period === "month" ? "за месяц" : "за неделю",
     freshness,
-    topPerformers: performers.slice(0, C.CLUB_TOP_PERFORMERS_N),
+    topPerformers: periodPerformers.slice(0, C.CLUB_TOP_PERFORMERS_N),
     personal: currentPerformer
       ? {
           contributionKm: personalKm,

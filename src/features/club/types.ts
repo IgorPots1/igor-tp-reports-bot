@@ -68,6 +68,26 @@ export type ClubTopPerformer = {
   isCurrentStudent: boolean;
 };
 
+// Phase C — one admin-managed challenge with live club + personal progress.
+export type ClubChallengeGoalType = "km" | "workouts";
+export type ClubChallengeItem = {
+  id: string;
+  title: string;
+  goalType: ClubChallengeGoalType;
+  goalValue: number;
+  startsAt: string;
+  endsAt: string;
+  dateLabel: string;
+  daysLeft: number;
+  /** Club total toward the goal (km sum, or completed running workouts), over participants. */
+  clubProgress: number;
+  personalProgress: number;
+  progressPct: number;
+  /** all = whole visible club; selected = a chosen subset. */
+  participantScope: "all" | "selected";
+  participantCount: number;
+};
+
 export type ClubChallengeView = {
   clubKm: number;
   goalKm: number;
@@ -77,6 +97,11 @@ export type ClubChallengeView = {
   weekLabel: string;
   /** How the goal was resolved: auto (prev week + factor) | manual | fixture. */
   goalMode: "auto" | "manual" | "fixture";
+  /** Phase C: active admin challenges (empty → the auto club-km challenge above is shown). */
+  challenges: ClubChallengeItem[];
+  /** Phase C: period the красавчики list is computed over. */
+  performersPeriod: "week" | "month";
+  performersPeriodLabel: string;
   topPerformers: ClubTopPerformer[];
   personal: {
     contributionKm: number;

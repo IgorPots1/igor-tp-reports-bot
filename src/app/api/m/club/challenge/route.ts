@@ -11,9 +11,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   let initData: unknown = "";
+  let period: "week" | "month" = "week";
   try {
-    const body = (await request.json()) as { initData?: unknown };
+    const body = (await request.json()) as { initData?: unknown; period?: unknown };
     initData = body.initData;
+    if (body.period === "month") period = "month";
   } catch {
     return jsonResponse(400, { ok: false, error: "Неверный запрос." });
   }
@@ -24,7 +26,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const view = await getClubChallenge({ currentStudentId: auth.student.id });
+    const view = await getClubChallenge({ currentStudentId: auth.student.id, period });
     return jsonResponse(200, { ok: true, view });
   } catch (error) {
     console.error("[m.club.challenge] failed", error);

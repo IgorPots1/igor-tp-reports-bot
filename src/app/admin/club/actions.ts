@@ -218,6 +218,51 @@ export async function approveAllPendingCalendarAction(formData: FormData): Promi
   redirect(withNotice(redirectTo, "notice", `Подтверждено записей: ${count}.`));
 }
 
+export async function createClubChallengeAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const goalType = req(formData, "goalType") === "workouts" ? "workouts" : "km";
+  const goalValue = Number(req(formData, "goalValue").replace(",", "."));
+  const scope = req(formData, "participantScope") === "selected" ? "selected" : "all";
+  const idsRaw = opt(formData, "participantIds") ?? "";
+  const participantIds = idsRaw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+  const { createClubChallenge } = await import("@/features/club-admin/repository");
+  try {
+    await createClubChallenge({
+      title: opt(formData, "title") ?? "",
+      goalType,
+      goalValue,
+      startsAt: req(formData, "startsAt"),
+      endsAt: req(formData, "endsAt"),
+      participantScope: scope,
+      participantIds,
+      coach: COACH,
+    });
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", "Челлендж создан."));
+}
+
+export async function setClubChallengeStatusAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const id = req(formData, "challengeId");
+  const status = req(formData, "status");
+  const next = status === "completed" ? "completed" : status === "archived" ? "archived" : "active";
+  const { setClubChallengeStatus } = await import("@/features/club-admin/repository");
+  try {
+    await setClubChallengeStatus(id, next);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", next === "completed" ? "Завершён." : next === "archived" ? "В архив." : "Активен."));
+}
+
 export async function setClubDisplayNameAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);

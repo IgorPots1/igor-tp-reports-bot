@@ -264,6 +264,7 @@ export default function ClubPage() {
 
   const [challenge, setChallenge] = useState<ClubChallengeView | null>(null);
   const [challengeStatus, setChallengeStatus] = useState<Status>("idle");
+  const [challengePeriod, setChallengePeriod] = useState<"week" | "month">("week");
 
   const [records, setRecords] = useState<ClubRecordsView | null>(null);
   const [recordsStatus, setRecordsStatus] = useState<Status>("idle");
@@ -466,10 +467,11 @@ export default function ClubPage() {
     }
   }, [initData, feed]);
 
-  const loadChallenge = useCallback(async () => {
+  const loadChallenge = useCallback(async (periodArg?: "week" | "month") => {
     if (initData === null) return;
+    const period = periodArg ?? challengePeriod;
     setChallengeStatus("loading");
-    const r = await apiPost<ClubChallengeView>("/api/m/club/challenge", initData);
+    const r = await apiPost<ClubChallengeView>("/api/m/club/challenge", initData, { period });
     if (!r.ok || !r.view) {
       if (maybeConfirm(r)) return;
       setError(r.error ?? null);
@@ -479,7 +481,12 @@ export default function ClubPage() {
     setChallenge(r.view);
     setFreshness(r.view.freshness);
     setChallengeStatus("ready");
-  }, [initData, maybeConfirm]);
+  }, [initData, maybeConfirm, challengePeriod]);
+
+  const onChallengePeriod = useCallback((p: "week" | "month") => {
+    setChallengePeriod(p);
+    void loadChallenge(p);
+  }, [loadChallenge]);
 
   const loadRecords = useCallback(async () => {
     if (initData === null) return;
@@ -569,7 +576,7 @@ export default function ClubPage() {
           />
         ) : null}
         {tab === "challenge" ? (
-          <ChallengeTab status={challengeStatus} view={challenge} onRetry={loadChallenge} onOpenStudent={setOpenStudentId} />
+          <ChallengeTab status={challengeStatus} view={challenge} onRetry={loadChallenge} onOpenStudent={setOpenStudentId} period={challengePeriod} onPeriod={onChallengePeriod} />
         ) : null}
         {tab === "records" ? (
           <RecordsTab status={recordsStatus} view={records} distance={recDistance} onDistance={setRecDistance} onRetry={loadRecords} onOpenStudent={setOpenStudentId} />
@@ -801,27 +808,46 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
 // Challenge
 // ---------------------------------------------------------------------------
 
-function ChallengeTab(props: { status: Status; view: ClubChallengeView | null; onRetry: () => void; onOpenStudent: (id: string) => void }) {
+function ChallengeTab(props: { status: Status; view: ClubChallengeView | null; onRetry: () => void; onOpenStudent: (id: string) => void; period: "week" | "month"; onPeriod: (p: "week" | "month") => void }) {
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
+  const fmtGoal = (val: number, type: "km" | "workouts") => (type === "km" ? fmtKm(val) : `${val} трен.`);
   return (
     <div>
-      <div style={S.card}>
-        <div style={S.secHead}>Клубный километраж · неделя</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
-          <span style={S.bigNumber}>{v.clubKm.toFixed(1).replace(".", ",")}</span>
-          <span style={{ color: C.sub, fontSize: 14 }}>из {v.goalKm} км</span>
+      {v.challenges.length > 0 ? (
+        v.challenges.map((ch) => (
+          <div key={ch.id} style={S.card}>
+            <div style={S.secHead}>{ch.title}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span style={S.bigNumber}>{ch.goalType === "km" ? ch.clubProgress.toFixed(1).replace(".", ",") : ch.clubProgress}</span>
+              <span style={{ color: C.sub, fontSize: 14 }}>из {fmtGoal(ch.goalValue, ch.goalType)}</span>
+            </div>
+            <div style={S.progressTrack}><div style={{ ...S.progressFill, width: `${ch.progressPct}%` }} /></div>
+            <div style={S.cardMeta}>{ch.dateLabel} · осталось {ch.daysLeft} дн{ch.participantScope === "selected" ? ` · участников ${ch.participantCount}` : ""}</div>
+            <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+              <Metric label="мой вклад" value={fmtGoal(ch.personalProgress, ch.goalType)} />
+              <Metric label="доля клуба" value={`${ch.clubProgress > 0 ? Math.round((ch.personalProgress / ch.clubProgress) * 100) : 0}%`} />
+            </div>
+          </div>
+        ))
+      ) : (
+        <div style={S.card}>
+          <div style={S.secHead}>Клубный километраж · неделя</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+            <span style={S.bigNumber}>{v.clubKm.toFixed(1).replace(".", ",")}</span>
+            <span style={{ color: C.sub, fontSize: 14 }}>из {v.goalKm} км</span>
+          </div>
+          <div style={S.progressTrack}><div style={{ ...S.progressFill, width: `${v.progressPct}%` }} /></div>
+          <div style={S.cardMeta}>{v.weekLabel}</div>
+          {v.goalMode === "auto" ? <div style={S.okNote}>Цель авто: среднее клуба за 4 недели</div> : null}
+          {v.goalMode === "fixture" ? <div style={S.fixtureNote}>Демо-цель. Прогресс - реальный.</div> : null}
         </div>
-        <div style={S.progressTrack}><div style={{ ...S.progressFill, width: `${v.progressPct}%` }} /></div>
-        <div style={S.cardMeta}>{v.weekLabel}</div>
-        {v.goalMode === "auto" ? <div style={S.okNote}>Цель авто: среднее клуба за 4 недели</div> : null}
-        {v.goalMode === "fixture" ? <div style={S.fixtureNote}>Демо-цель. Прогресс - реальный.</div> : null}
-      </div>
+      )}
 
       {v.personal ? (
         <div style={S.card}>
-          <div style={S.secHead}>Мой вклад</div>
+          <div style={S.secHead}>Мой вклад · неделя</div>
           <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
             <Metric label="км за неделю" value={fmtKm(v.personal.contributionKm)} />
             <Metric label="доля клуба" value={`${v.personal.contributionPct}%`} />
@@ -831,9 +857,15 @@ function ChallengeTab(props: { status: Status; view: ClubChallengeView | null; o
       ) : null}
 
       <div style={S.card}>
-        <div style={S.secHead}>Красавчики недели · по проценту выполнения</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={S.secHead}>Красавчики {v.performersPeriodLabel} · по проценту выполнения</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <button style={S.pill(props.period === "week")} type="button" onClick={() => props.onPeriod("week")}>Неделя</button>
+          <button style={S.pill(props.period === "month")} type="button" onClick={() => props.onPeriod("month")}>Месяц</button>
+        </div>
         {v.topPerformers.length === 0 ? (
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет данных за неделю</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет данных {v.performersPeriodLabel}</div>
         ) : (
           v.topPerformers.map((p, i) => (
             <div key={p.studentId} style={S.rankRow(p.isCurrentStudent)}>
