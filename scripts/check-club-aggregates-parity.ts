@@ -64,7 +64,10 @@ async function pickStudent(): Promise<{ id: string; name: string }> {
     .eq("is_active", true)
     .order("student_name", { ascending: true });
   const rows = (data as Array<{ id: string; student_name: string; is_service_account: boolean | null }> | null) ?? [];
-  const active = rows.filter((r) => r.is_service_account !== true);
+  // Phase G #35: honor the club coach-participant allowlist so the parity baseline matches
+  // the app (isVisible includes allowlisted service accounts). Run with the same env as prod.
+  const inc = new Set((process.env.CLUB_INCLUDE_SERVICE_STUDENT_IDS ?? "").split(",").map((x) => x.trim()).filter(Boolean));
+  const active = rows.filter((r) => r.is_service_account !== true || inc.has(r.id));
   const chosen = active.find((r) => touched.includes(r.id)) ?? active[0];
   if (!chosen) throw new Error("no active student");
   return { id: chosen.id, name: chosen.student_name };

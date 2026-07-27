@@ -71,7 +71,9 @@ async function main(): Promise<void> {
   const touched = await loadStudentsTouchedSince(new Date(Date.now() - 90 * 864e5).toISOString()).catch(() => []);
   const sb = createSupabaseServerClient();
   const { data } = await sb.from("trainingpeaks_students").select("id, student_name, is_service_account").eq("is_active", true).order("student_name");
-  const cand = ((data as Array<{ id: string; student_name: string; is_service_account: boolean | null }> | null) ?? []).filter((r) => r.is_service_account !== true);
+  // Phase G #35: honor the coach-participant allowlist (matches app isVisible).
+  const inc = new Set((process.env.CLUB_INCLUDE_SERVICE_STUDENT_IDS ?? "").split(",").map((x) => x.trim()).filter(Boolean));
+  const cand = ((data as Array<{ id: string; student_name: string; is_service_account: boolean | null }> | null) ?? []).filter((r) => r.is_service_account !== true || inc.has(r.id));
   const s = cand.find((r) => touched.includes(r.id)) ?? cand[0];
 
   let bad = 0;

@@ -52,8 +52,11 @@ async function main(): Promise<void> {
     .select("id, student_name, is_service_account")
     .eq("is_active", true)
     .order("student_name");
+  // Phase G #35: honor the coach-participant allowlist (isVisible does) so the parity
+  // baseline matches the app. Run with the same CLUB_INCLUDE_SERVICE_STUDENT_IDS as prod.
+  const inc = new Set((process.env.CLUB_INCLUDE_SERVICE_STUDENT_IDS ?? "").split(",").map((x) => x.trim()).filter(Boolean));
   const rows = ((data as Array<{ id: string; student_name: string; is_service_account: boolean | null }> | null) ?? []).filter(
-    (r) => r.is_service_account !== true
+    (r) => r.is_service_account !== true || inc.has(r.id)
   );
   const s = rows.find((r) => touched.includes(r.id)) ?? rows[0];
 
