@@ -287,7 +287,7 @@ export async function submitFeedbackDraft(input: {
   jobId: string;
   draftText: string;
   backend: FeedbackGeneratorBackend;
-}): Promise<{ status: "done" | "failed"; reason?: string }> {
+}): Promise<{ status: "done" | "failed"; reason?: string; draftText?: string }> {
   const supabase = createSupabaseServerClient();
   const { data: jobRow, error: fetchError } = await withSupabaseNetworkRetry(() =>
     supabase.from(TABLE).select("*").eq("id", input.jobId).maybeSingle()
@@ -314,7 +314,9 @@ export async function submitFeedbackDraft(input: {
   };
   const { error: updateError } = await withSupabaseNetworkRetry(() => supabase.from(TABLE).update(update).eq("id", input.jobId));
   if (updateError) throw new Error(`submit: update failed: ${updateError.message}`);
-  return check.ok ? { status: "done" } : { status: "failed", reason: check.reason };
+  // Return the STORED (normalized) text so callers show the client exactly what was saved/sent —
+  // not the raw model output (which still carries the long dash / wrong greeting).
+  return check.ok ? { status: "done", draftText } : { status: "failed", reason: check.reason };
 }
 
 export async function listTrainingPeaksFeedbackJobs(options?: { status?: FeedbackJobStatus | FeedbackJobStatus[]; limit?: number }): Promise<TrainingPeaksFeedbackJob[]> {
@@ -347,10 +349,15 @@ export async function saveFeedbackDraftCoachEdit(input: {
   actorChatId: string;
 }): Promise<TrainingPeaksFeedbackJob | null> {
   const supabase = createSupabaseServerClient();
+  // Strip the long dash on the coach's edit too — the generation seam already does, but the edit
+  // path stored the text raw, so a dash the coach kept/typed (or one that survived because the API
+  // generate route returns the UNstripped text to the client) leaked into the sent message. Only the
+  // dash is touched here — the coach's own formatting/period is deliberate and left alone (Block 3).
+  const coachEditedText = stripLongDash(input.coachEditedText);
   const { data, error } = await withSupabaseNetworkRetry(() =>
     supabase
       .from(TABLE)
-      .update({ coach_edited_text: input.coachEditedText, reviewed_by_chat_id: input.actorChatId })
+      .update({ coach_edited_text: coachEditedText, reviewed_by_chat_id: input.actorChatId })
       .eq("id", input.jobId)
       .eq("status", "done")
       .select("*")

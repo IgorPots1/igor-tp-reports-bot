@@ -56,7 +56,9 @@ export async function generateOneFeedbackJobViaApi(jobId: string): Promise<Gener
   if (submitted.status === "failed") {
     return { status: "failed", jobId, reason: submitted.reason ?? "факт-чек отклонил черновик" };
   }
-  return { status: "done", jobId, draftText: result.text };
+  // Return the STORED normalized draft (dash stripped, greeting/format fixed), not the raw model
+  // text — so the coach's editable preview matches what was saved and will be sent.
+  return { status: "done", jobId, draftText: submitted.draftText ?? result.text };
 }
 
 export type GenerateBatchSummary = {
