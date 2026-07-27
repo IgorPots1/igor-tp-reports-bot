@@ -51,6 +51,9 @@ import type {
   ClubTopRow,
   ClubTypeBreakdown,
   ClubVolumePoint,
+  ClubWorkoutDetailView,
+  ClubWorkoutLap,
+  ClubZoneSlice,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -2235,6 +2238,7 @@ export async function getClubPublicProfile(input: {
       streakDays: 0,
       records: [],
       recentFeed: [],
+      weeklySeries: [],
     };
   }
 
@@ -2249,6 +2253,21 @@ export async function getClubPublicProfile(input: {
     activeDays.add(row.workoutDate);
   }
   const records = await studentRecordsFromRows(ownRunning, input.targetStudentId);
+
+  // Phase 3.9 weekly trend: last 12 ISO weeks of running volume (same shape as the
+  // own-profile chart) so a member profile shows a trend, not just current totals.
+  const weekMap = kmByWeek(ownRunning);
+  const weeklySeries: ClubVolumePoint[] = [];
+  let wkCursor = weekStartIso(today);
+  const trendWeeks: string[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    trendWeeks.push(wkCursor);
+    wkCursor = addDaysIso(wkCursor, -7);
+  }
+  trendWeeks.reverse();
+  for (const wk of trendWeeks) {
+    weeklySeries.push({ label: formatRuDate(wk), km: Number((weekMap.get(wk) ?? 0).toFixed(1)) });
+  }
 
   const recentCompleted = rows
     .filter((r) => r.studentId === input.targetStudentId && r.isCompleted && r.family !== "day_off")
@@ -2287,6 +2306,126 @@ export async function getClubPublicProfile(input: {
     streakDays: computeStreakDays(activeDays, today),
     records,
     recentFeed,
+    weeklySeries,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3.8 — single-workout detail (tap from feed)
+// ---------------------------------------------------------------------------
+
+type DetailLapRow = {
+  lap_index: number;
+  distance_m: number | null;
+  timer_time_s: number | null;
+  elapsed_time_s: number | null;
+  pace_sec_per_km: number | null;
+  avg_hr: number | null;
+  max_hr: number | null;
+  avg_cadence: number | null;
+  total_ascent_m: number | null;
+};
+
+/** Parse derived_metrics.time_in_zones (array of seconds OR {z1:sec,...}) → slices. */
+function parseZones(raw: unknown, basis: "threshold_hr" | "max_hr_pct" | null): ClubZoneSlice[] {
+  const label = (z: number) => `Зона ${z}`;
+  const out: ClubZoneSlice[] = [];
+  if (Array.isArray(raw)) {
+    raw.forEach((v, i) => {
+      const sec = typeof v === "number" ? v : Number(v);
+      if (Number.isFinite(sec) && sec > 0) out.push({ zone: i + 1, label: label(i + 1), seconds: Math.round(sec) });
+    });
+  } else if (raw && typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const z = Number(String(k).replace(/[^0-9]/gu, ""));
+      const sec = typeof v === "number" ? v : Number(v);
+      if (Number.isFinite(z) && z > 0 && Number.isFinite(sec) && sec > 0) {
+        out.push({ zone: z, label: label(z), seconds: Math.round(sec) });
+      }
+    }
+    out.sort((a, b) => a.zone - b.zone);
+  }
+  // basis is accepted for future labelling; currently only used to expose a hint.
+  void basis;
+  return out;
+}
+
+export async function getClubWorkoutDetail(input: {
+  currentStudentId: string;
+  workoutId: string;
+}): Promise<ClubWorkoutDetailView | null> {
+  const supabase = createSupabaseServerClient();
+  const { data: cacheData, error: cacheErr } = await supabase
+    .from("trainingpeaks_workout_cache")
+    .select(WORKOUT_CACHE_COLUMNS)
+    .eq("id", input.workoutId)
+    .maybeSingle();
+  if (cacheErr || !cacheData) {
+    return null;
+  }
+  const row = mapWorkoutCacheRow(cacheData as Record<string, unknown>);
+
+  // Authorization: the workout owner must be visible in the club, OR it is the
+  // caller's own workout. Never expose a hidden student's workout via a guessed id.
+  const students = await loadClubStudents();
+  const owner = students.find((s) => s.id === row.studentId) ?? null;
+  const isSelf = row.studentId === input.currentStudentId;
+  if (!isSelf && !(owner && isVisible(owner))) {
+    return null;
+  }
+
+  // Laps for THIS workout only (not a window). Ordered by lap index.
+  const { data: lapData } = await supabase
+    .from("trainingpeaks_workout_laps")
+    .select("lap_index, distance_m, timer_time_s, elapsed_time_s, pace_sec_per_km, avg_hr, max_hr, avg_cadence, total_ascent_m")
+    .eq("workout_cache_id", input.workoutId)
+    .order("lap_index", { ascending: true });
+  const lapRows = (lapData as DetailLapRow[] | null) ?? [];
+
+  const { data: derivedData } = await supabase
+    .from("trainingpeaks_workout_derived_metrics")
+    .select("avg_hr, hr_trusted, time_in_zones, zone_basis")
+    .eq("workout_cache_id", input.workoutId)
+    .maybeSingle();
+  const derived = (derivedData as { avg_hr: number | null; hr_trusted: boolean | null; time_in_zones: unknown; zone_basis: "threshold_hr" | "max_hr_pct" | null } | null) ?? null;
+
+  const laps: ClubWorkoutLap[] = lapRows.map((l) => ({
+    index: l.lap_index,
+    distanceKm: l.distance_m != null && l.distance_m > 0 ? Number((l.distance_m / 1000).toFixed(2)) : null,
+    durationSeconds: l.timer_time_s ?? l.elapsed_time_s ?? null,
+    paceSecPerKm: l.pace_sec_per_km ?? null,
+    avgHr: l.avg_hr != null && l.avg_hr > 0 ? Math.round(l.avg_hr) : null,
+    avgCadence: l.avg_cadence != null && l.avg_cadence > 0 ? Math.round(l.avg_cadence) : null,
+  }));
+
+  // Aggregate metrics — prefer FIT-derived, fall back to lap aggregates.
+  const avgHr = derived && derived.avg_hr && derived.avg_hr > 0 && derived.hr_trusted !== false ? Math.round(derived.avg_hr) : null;
+  const maxHrFromLaps = lapRows.reduce<number | null>((m, l) => (l.max_hr && l.max_hr > 0 ? Math.max(m ?? 0, l.max_hr) : m), null);
+  const cadenceVals = lapRows.map((l) => l.avg_cadence).filter((c): c is number => c != null && c > 0);
+  const avgCadence = cadenceVals.length > 0 ? Math.round(cadenceVals.reduce((a, b) => a + b, 0) / cadenceVals.length) : null;
+  const ascentSum = lapRows.reduce<number | null>((s, l) => (l.total_ascent_m != null ? (s ?? 0) + l.total_ascent_m : s), null);
+  const zones = derived ? parseZones(derived.time_in_zones, derived.zone_basis) : [];
+  const zoneBasisLabel = derived?.zone_basis === "threshold_hr" ? "по порогу ЧСС" : derived?.zone_basis === "max_hr_pct" ? "по % от макс. ЧСС" : null;
+
+  return {
+    id: row.id,
+    studentId: row.studentId,
+    studentDisplayName: owner?.displayName ?? fullName(row.studentName),
+    monogram: monogram(row.studentName),
+    typeLabel: typeLabel(row.family),
+    isRunning: row.isRunning,
+    dateLabel: formatRuDate(row.workoutDate),
+    title: cleanTitle(row.title),
+    distanceKm: row.distanceKm,
+    durationSeconds: row.durationSeconds,
+    paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
+    avgHr,
+    maxHr: maxHrFromLaps != null ? Math.round(maxHrFromLaps) : null,
+    avgCadence,
+    ascentM: ascentSum != null && ascentSum > 0 ? Math.round(ascentSum) : null,
+    laps,
+    zones,
+    zoneBasisLabel,
   };
 }
 

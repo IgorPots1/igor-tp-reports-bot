@@ -269,4 +269,44 @@ export type ClubPublicProfileView = {
   streakDays: number;
   records: ClubRecordEntry[];
   recentFeed: ClubFeedItem[];
+  /** Phase 3.9: last ~12 ISO weeks of running volume (weekly trend). */
+  weeklySeries: ClubVolumePoint[];
+};
+
+// --- Phase 3.8: single-workout detail (tap from the feed) ---
+
+export type ClubWorkoutLap = {
+  index: number;
+  distanceKm: number | null;
+  durationSeconds: number | null;
+  paceSecPerKm: number | null;
+  avgHr: number | null;
+  avgCadence: number | null;
+};
+
+/** One heart-rate zone slice (seconds in zone), when time_in_zones is present. */
+export type ClubZoneSlice = { zone: number; label: string; seconds: number };
+
+export type ClubWorkoutDetailView = {
+  id: string;
+  studentId: string;
+  studentDisplayName: string;
+  monogram: string;
+  typeLabel: string;
+  isRunning: boolean;
+  dateLabel: string;
+  title: string | null;
+  /** Metrics grid — each null when unavailable (shown only when present). */
+  distanceKm: number | null;
+  durationSeconds: number | null;
+  paceSecPerKm: number | null;
+  avgHr: number | null;
+  maxHr: number | null;
+  avgCadence: number | null;
+  ascentM: number | null;
+  /** Per-lap breakdown (empty when no FIT laps for this workout). */
+  laps: ClubWorkoutLap[];
+  /** HR zones (empty when time_in_zones absent). */
+  zones: ClubZoneSlice[];
+  zoneBasisLabel: string | null;
 };

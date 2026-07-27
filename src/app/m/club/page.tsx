@@ -19,6 +19,7 @@ import type {
   ClubTopRow,
   ClubVolumePoint,
   ClubWish,
+  ClubWorkoutDetailView,
 } from "@/features/club/types";
 
 type CabinetSection = "races" | "dayoff" | "wishes" | "billing" | "prediction";
@@ -214,6 +215,7 @@ export default function ClubPage() {
   const [tab, setTab] = useState<Tab>("profile");
   const [freshness, setFreshness] = useState<ClubFreshness | null>(null);
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
+  const [openWorkoutId, setOpenWorkoutId] = useState<string | null>(null);
   const [openSection, setOpenSection] = useState<CabinetSection | null>(null);
 
   const [feed, setFeed] = useState<ClubFeedView | null>(null);
@@ -486,6 +488,7 @@ export default function ClubPage() {
             onMore={loadMoreFeed}
             onRetry={loadFeed}
             onOpenStudent={setOpenStudentId}
+            onOpenWorkout={setOpenWorkoutId}
             initData={initData ?? ""}
           />
         ) : null}
@@ -508,7 +511,11 @@ export default function ClubPage() {
       ) : null}
 
       {openStudentId ? (
-        <PublicProfileOverlay studentId={openStudentId} initData={initData ?? ""} onClose={() => setOpenStudentId(null)} />
+        <PublicProfileOverlay studentId={openStudentId} initData={initData ?? ""} onClose={() => setOpenStudentId(null)} onOpenWorkout={setOpenWorkoutId} />
+      ) : null}
+
+      {openWorkoutId ? (
+        <WorkoutDetailOverlay workoutId={openWorkoutId} initData={initData ?? ""} onClose={() => setOpenWorkoutId(null)} />
       ) : null}
 
       {needsConfirm ? (
@@ -595,6 +602,7 @@ function FeedTab(props: {
   onMore: () => void;
   onRetry: () => void;
   onOpenStudent: (id: string) => void;
+  onOpenWorkout: (id: string) => void;
   initData: string;
 }) {
   if (props.status === "loading" || props.status === "idle") return <Loading />;
@@ -603,7 +611,7 @@ function FeedTab(props: {
   return (
     <div>
       {props.items.map((item) => (
-        <FeedCard key={item.id} item={item} onOpenStudent={props.onOpenStudent} initData={props.initData} />
+        <FeedCard key={item.id} item={item} onOpenStudent={props.onOpenStudent} onOpenWorkout={props.onOpenWorkout} initData={props.initData} />
       ))}
       {props.hasMore ? (
         <button style={S.more} onClick={props.onMore} type="button" disabled={props.moreLoading}>
@@ -616,16 +624,28 @@ function FeedTab(props: {
   );
 }
 
-function FeedCard({ item, onOpenStudent, initData }: { item: ClubFeedItem; onOpenStudent: (id: string) => void; initData: string }) {
+function StatCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontFamily: HEAD, fontSize: 19, fontWeight: 700, color: C.ink, lineHeight: "21px" }}>{value}</div>
+      <div style={{ color: C.sub, fontSize: 11 }}>{label}</div>
+    </div>
+  );
+}
+
+function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: ClubFeedItem; onOpenStudent: (id: string) => void; onOpenWorkout: (id: string) => void; initData: string }) {
   const [reacted, setReacted] = useState<{ like: boolean; fire: boolean }>({ like: item.mine.like, fire: item.mine.fire });
   const countOf = (kind: "like" | "fire") =>
     item.reactions[kind] + (reacted[kind] === item.mine[kind] ? 0 : reacted[kind] ? 1 : -1);
-  const stats: string[] = [];
-  if (item.distanceKm && item.distanceKm > 0) stats.push(fmtKm(item.distanceKm));
+
+  // Phase 3.7 mockup: large distance / time / pace / avg pulse as a metrics grid.
+  const cells: Array<{ label: string; value: string }> = [];
+  if (item.distanceKm && item.distanceKm > 0) cells.push({ label: "дистанция", value: fmtKm(item.distanceKm) });
   const dur = fmtDuration(item.durationSeconds);
-  if (dur) stats.push(dur);
+  if (dur) cells.push({ label: "время", value: dur });
   const pace = fmtPace(item.paceSecPerKm);
-  if (pace) stats.push(pace);
+  if (pace) cells.push({ label: "темп", value: pace.replace(" /км", "") });
+  if (item.avgHr) cells.push({ label: "ср. пульс", value: `${item.avgHr}` });
 
   async function react(kind: "like" | "fire") {
     if (!item.reactionsEnabled) return;
@@ -646,12 +666,16 @@ function FeedCard({ item, onOpenStudent, initData }: { item: ClubFeedItem; onOpe
           <div style={S.cardMeta}>{item.typeLabel} · {item.dateLabel}</div>
         </div>
       </div>
-      {stats.length > 0 ? (
-        <div style={S.statRow}>
-          {stats.map((s, i) => (<span key={i} style={S.stat}>{s}</span>))}
-        </div>
-      ) : null}
-      {item.caption ? <div style={S.caption}>{item.caption}</div> : null}
+      <div style={{ cursor: "pointer" }} onClick={() => onOpenWorkout(item.id)}>
+        {item.title ? <div style={{ ...S.cardName, whiteSpace: "normal", marginTop: 10, fontSize: 14, color: C.ink }}>{item.title}</div> : null}
+        {cells.length > 0 ? (
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${cells.length}, 1fr)`, gap: 10, marginTop: 10 }}>
+            {cells.map((c, i) => (<StatCell key={i} label={c.label} value={c.value} />))}
+          </div>
+        ) : null}
+        {item.caption && !item.title ? <div style={S.caption}>{item.caption}</div> : null}
+        <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>Тапни, чтобы открыть тренировку →</div>
+      </div>
       <div style={{ ...S.reactRow, opacity: item.reactionsEnabled ? 1 : 0.35 }} aria-hidden={!item.reactionsEnabled}>
         <span style={{ ...S.reactChip, color: reacted.like ? C.accent : C.sub }} onClick={() => react("like")}>👍 {countOf("like")}</span>
         <span style={{ ...S.reactChip, color: reacted.fire ? C.accent : C.sub }} onClick={() => react("fire")}>🔥 {countOf("fire")}</span>
@@ -1034,7 +1058,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
 // Public profile overlay
 // ---------------------------------------------------------------------------
 
-function PublicProfileOverlay({ studentId, initData, onClose }: { studentId: string; initData: string; onClose: () => void }) {
+function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: { studentId: string; initData: string; onClose: () => void; onOpenWorkout: (id: string) => void }) {
   const [view, setView] = useState<ClubPublicProfileView | null>(null);
   const [status, setStatus] = useState<Status>("loading");
 
@@ -1078,6 +1102,12 @@ function PublicProfileOverlay({ studentId, initData, onClose }: { studentId: str
                 <Metric label="км за месяц" value={fmtKm(view.monthKm)} />
                 <Metric label="серия дней" value={String(view.streakDays)} />
               </div>
+              {view.weeklySeries.some((p) => p.km > 0) ? (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={S.secHead}>Объём по неделям</div>
+                  <VolumeChart series={view.weeklySeries} />
+                </div>
+              ) : null}
               {view.records.length > 0 ? (
                 <div style={{ marginBottom: 14 }}>
                   <div style={S.secHead}>Личные результаты</div>
@@ -1093,13 +1123,153 @@ function PublicProfileOverlay({ studentId, initData, onClose }: { studentId: str
               ) : null}
               <div style={S.secHead}>Последние тренировки</div>
               {view.recentFeed.map((it) => (
-                <div key={it.id} style={{ ...S.recRow }}>
+                <div key={it.id} style={{ ...S.recRow, cursor: "pointer" }} onClick={() => onOpenWorkout(it.id)}>
                   <span style={{ flex: 1, color: C.ink, fontSize: 14 }}>{it.typeLabel} · {it.dateLabel}</span>
                   <span style={{ color: C.sub, fontSize: 13 }}>{it.distanceKm ? fmtKm(it.distanceKm) : (fmtDuration(it.durationSeconds) ?? "")}</span>
                 </div>
               ))}
             </div>
           )
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Workout detail (Phase 3.8) — tap a feed card
+// ---------------------------------------------------------------------------
+
+function LapBars({ values }: { values: Array<number | null> }) {
+  const nums = values.filter((v): v is number => v != null && v > 0);
+  if (nums.length === 0) return null;
+  const max = Math.max(...nums);
+  const min = Math.min(...nums);
+  const span = Math.max(1, max - min);
+  const w = 320;
+  const h = 46;
+  const barW = (w - 2) / Math.max(1, values.length);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} style={{ marginTop: 6 }}>
+      {values.map((v, i) => {
+        if (v == null || v <= 0) return null;
+        // Normalise within [min,max] so differences between laps are visible.
+        const bh = 6 + Math.round(((v - min) / span) * (h - 12));
+        const x = 1 + i * barW;
+        return <rect key={i} x={x + 1} y={h - bh} width={Math.max(2, barW - 2)} height={bh} rx={2} fill={C.accent} opacity={0.85} />;
+      })}
+    </svg>
+  );
+}
+
+function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: string; initData: string; onClose: () => void }) {
+  const [view, setView] = useState<ClubWorkoutDetailView | null>(null);
+  const [status, setStatus] = useState<Status>("loading");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const r = await apiPost<ClubWorkoutDetailView>("/api/m/club/workout", initData, { workoutId });
+      if (!alive) return;
+      if (r.ok && r.view) {
+        setView(r.view);
+        setStatus("ready");
+      } else {
+        setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [workoutId, initData]);
+
+  const metric = (label: string, value: string | null) =>
+    value ? <Metric key={label} label={label} value={value} /> : null;
+
+  const zoneTotal = view?.zones.reduce((a, z) => a + z.seconds, 0) ?? 0;
+
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <span style={{ fontFamily: HEAD, fontSize: 18, color: C.ink }}>Тренировка</span>
+          <button style={S.closeBtn} onClick={onClose} type="button">✕</button>
+        </div>
+        {status === "loading" ? <Loading /> : null}
+        {status === "error" ? <Empty text="Тренировка недоступна" /> : null}
+        {status === "ready" && view ? (
+          <div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 4 }}>
+              <Monogram text={view.monogram} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontFamily: HEAD, fontSize: 17, color: C.ink }}>{view.studentDisplayName}</div>
+                <div style={S.cardMeta}>{view.typeLabel} · {view.dateLabel}</div>
+              </div>
+            </div>
+            {view.title ? <div style={{ ...S.cardName, whiteSpace: "normal", marginTop: 8, marginBottom: 4 }}>{view.title}</div> : null}
+
+            <div style={S.card}>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", rowGap: 12 }}>
+                {metric("дистанция", view.distanceKm ? fmtKm(view.distanceKm) : null)}
+                {metric("время", fmtDuration(view.durationSeconds))}
+                {metric("темп", fmtPace(view.paceSecPerKm))}
+                {metric("ср. пульс", view.avgHr ? `${view.avgHr}` : null)}
+                {metric("макс. пульс", view.maxHr ? `${view.maxHr}` : null)}
+                {metric("каденс", view.avgCadence ? `${view.avgCadence}` : null)}
+                {metric("набор", view.ascentM ? `${view.ascentM} м` : null)}
+              </div>
+            </div>
+
+            {view.laps.length > 0 ? (
+              <div style={S.card}>
+                <div style={S.secHead}>Разбивка по лапам</div>
+                <div style={{ marginTop: 8 }}>
+                  {view.laps.map((l) => (
+                    <div key={l.index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: l.index > 1 ? `1px solid ${C.line}` : "none" }}>
+                      <span style={{ width: 22, color: C.faint, fontFamily: HEAD, fontSize: 13 }}>{l.index}</span>
+                      <span style={{ width: 58, color: C.ink, fontSize: 13 }}>{l.distanceKm ? fmtKm(l.distanceKm) : "—"}</span>
+                      <span style={{ width: 52, color: C.sub, fontSize: 13 }}>{fmtDuration(l.durationSeconds) ?? "—"}</span>
+                      <span style={{ flex: 1, color: C.ink, fontSize: 13 }}>{fmtPace(l.paceSecPerKm)?.replace(" /км", "") ?? "—"}</span>
+                      <span style={{ width: 44, textAlign: "right", color: C.sub, fontSize: 13 }}>{l.avgHr ? `${l.avgHr}` : "—"}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <div style={S.cardMeta}>Темп по лапам</div>
+                  <LapBars values={view.laps.map((l) => (l.paceSecPerKm ? -l.paceSecPerKm : null))} />
+                </div>
+                {view.laps.some((l) => l.avgHr) ? (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={S.cardMeta}>Пульс по лапам</div>
+                    <LapBars values={view.laps.map((l) => l.avgHr)} />
+                  </div>
+                ) : null}
+                {view.laps.some((l) => l.avgCadence) ? (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={S.cardMeta}>Каденс по лапам</div>
+                    <LapBars values={view.laps.map((l) => l.avgCadence)} />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {view.zones.length > 0 ? (
+              <div style={S.card}>
+                <div style={S.secHead}>Зоны пульса{view.zoneBasisLabel ? ` · ${view.zoneBasisLabel}` : ""}</div>
+                <div style={{ marginTop: 8 }}>
+                  {view.zones.map((z) => (
+                    <div key={z.zone} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                      <span style={{ width: 60, color: C.sub, fontSize: 13 }}>{z.label}</span>
+                      <div style={{ flex: 1, height: 8, background: C.cardAlt, borderRadius: 999, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${zoneTotal > 0 ? Math.round((z.seconds / zoneTotal) * 100) : 0}%`, background: C.accent }} />
+                      </div>
+                      <span style={{ width: 52, textAlign: "right", color: C.ink, fontSize: 12 }}>{fmtDuration(z.seconds)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>

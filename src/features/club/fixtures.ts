@@ -165,4 +165,7 @@ export const CLUB_PUBLIC_PROFILE_FIXTURE: ClubPublicProfileView = {
   streakDays: 6,
   records: CLUB_RECORDS_FIXTURE.personal,
   recentFeed: CLUB_FEED_FIXTURE.items.slice(0, 2),
+  weeklySeries: [
+    { label: "9 июн", km: 42 }, { label: "16 июн", km: 51 }, { label: "23 июн", km: 47 }, { label: "30 июн", km: 58 },
+  ],
 };
