@@ -17,10 +17,25 @@ export default async function ClubManagePage() {
 
       <div className="admin-summary-grid">
         <div className="admin-summary-card"><div className="admin-summary-label">Свежесть кэша</div><div className="admin-summary-value">{d.freshnessLabel}</div></div>
+        <div className="admin-summary-card">
+          <div className="admin-summary-label">Пересчёт «Результатов»</div>
+          <div className="admin-summary-value" style={d.snapshotStale ? { color: "#c0392b" } : undefined}>{d.snapshotFreshnessLabel}</div>
+        </div>
         <div className="admin-summary-card"><div className="admin-summary-label">Строк в кэше</div><div className="admin-summary-value">{d.cacheRows}</div></div>
         <div className="admin-summary-card"><div className="admin-summary-label">Плотность лапов</div><div className="admin-summary-value">{d.lapDensityPct}%</div></div>
         <div className="admin-summary-card"><div className="admin-summary-label">Активных учеников</div><div className="admin-summary-value">{d.activeStudents}</div></div>
       </div>
+
+      {d.snapshotStale ? (
+        <div className="admin-card" style={{ marginTop: 12, borderColor: "#c0392b", background: "#fdecea" }}>
+          <strong style={{ color: "#c0392b" }}>⚠️ Снапшоты рекордов устарели ({d.snapshotFreshnessLabel})</strong>
+          <p className="admin-summary-label" style={{ marginTop: 6 }}>
+            Вкладка «Результаты» и рекорды в профиле читают материализованные снапшоты. Пересчёт (materializeClubRecords)
+            вшит в run-workout-cache-scan.sh и run-fit-ingest-scan.sh, но гейтится <code>CLUB_MATERIALIZE_ENABLED=true</code>.
+            Если старше суток — пересчёт на раннере не запускается: проверь флаг и логи сканов.
+          </p>
+        </div>
+      ) : null}
 
       <div className="admin-card" style={{ marginTop: 12 }}>
         <div className="admin-badge-row"><strong>Режим цели челленджа</strong><span className="admin-badge admin-badge-accent">{d.goalMode}</span></div>

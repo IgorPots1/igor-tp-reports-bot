@@ -509,26 +509,48 @@ export async function probeClubTablesHealth(): Promise<ClubTableHealth[]> {
   return out;
 }
 
+/** Humanise an age in minutes → «N мин / N ч / N дн назад». */
+function humanAge(minutes: number): string {
+  if (minutes < 90) return `${minutes} мин назад`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 36) return `${hours} ч назад`;
+  return `${Math.round(hours / 24)} дн назад`;
+}
+
 export async function getClubManagementData(): Promise<{
   goalMode: string; freshnessLabel: string; latestScannedAt: string | null; cacheRows: number;
   activeStudents: number; lapDensityPct: number; peaksCoverage: string; clubTablesHealth: ClubTableHealth[];
+  snapshotFreshnessLabel: string; snapshotStale: boolean; snapshotComputedAt: string | null;
 }> {
   const supabase = createSupabaseServerClient();
   const fresh = await getTrainingPeaksWorkoutCacheFreshness();
   const clubTablesHealth = await probeClubTablesHealth();
-  const [{ count: withLaps }, { count: totalCompleted }, { count: activeStudents }] = await Promise.all([
+  const [{ count: withLaps }, { count: totalCompleted }, { count: activeStudents }, snap] = await Promise.all([
     supabase.from("trainingpeaks_workout_derived_metrics").select("id", { count: "exact", head: true }).eq("has_fit", true),
     supabase.from("trainingpeaks_workout_cache").select("id", { count: "exact", head: true }).eq("is_completed", true),
     supabase.from("trainingpeaks_students").select("id", { count: "exact", head: true }).eq("is_active", true),
+    // Snapshot freshness (Phase 1.5): newest computed_at across club_record_snapshots.
+    // If materialize never ran (CLUB_MATERIALIZE_ENABLED off on the scan runner) the
+    // Results tab silently serves stale/empty snapshots — surface it loudly.
+    supabase.from("club_record_snapshots").select("computed_at").order("computed_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   const lapDensityPct = totalCompleted && totalCompleted > 0 ? Math.round(((withLaps ?? 0) / totalCompleted) * 100) : 0;
   const scanned = fresh.latestScannedAt ? new Date(fresh.latestScannedAt) : null;
-  const label = scanned ? `${Math.round((Date.now() - scanned.getTime()) / 60000)} мин назад` : "нет данных";
+  const label = scanned ? humanAge(Math.round((Date.now() - scanned.getTime()) / 60000)) : "нет данных";
+
+  const snapComputedAt = (snap.data as { computed_at?: string } | null)?.computed_at ?? null;
+  const snapAgeMin = snapComputedAt ? Math.round((Date.now() - new Date(snapComputedAt).getTime()) / 60000) : null;
+  // Stale = never computed OR older than 24h (scans should refresh several times a day).
+  const snapshotStale = snapAgeMin === null || snapAgeMin > 24 * 60;
+  const snapshotFreshnessLabel =
+    snapAgeMin === null ? "никогда — пересчёт не запускался (CLUB_MATERIALIZE_ENABLED?)" : humanAge(snapAgeMin);
+
   return {
     goalMode: (process.env.CLUB_CHALLENGE_GOAL_MODE ?? "auto"),
     freshnessLabel: label, latestScannedAt: fresh.latestScannedAt, cacheRows: fresh.rowCount,
     activeStudents: activeStudents ?? 0, lapDensityPct,
     peaksCoverage: "нет данных (TP-пики не ингестятся; CLUB_RECORDS_TP_PEAKS не включён)",
     clubTablesHealth,
+    snapshotFreshnessLabel, snapshotStale, snapshotComputedAt: snapComputedAt,
   };
 }
