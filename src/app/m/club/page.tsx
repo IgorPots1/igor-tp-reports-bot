@@ -40,6 +40,8 @@ type TelegramWebApp = {
   setHeaderColor?: (c: string) => void;
   platform?: string;
   version?: string;
+  colorScheme?: "light" | "dark";
+  themeParams?: { bg_color?: string };
   initDataUnsafe?: { user?: { id?: number }; start_param?: string };
 };
 
@@ -122,23 +124,53 @@ function recoverInitData(): string {
   return "";
 }
 
-// --- Dark "club" palette: dark theme + yellow accent (naryad) ---
+// --- Themeable "club" palette (Phase 3.4) ---
+// C.* are CSS custom-property references so every existing inline style / S.* stays
+// unchanged; the actual colours come from `themeVars(theme)` applied to the shell.
+// Yellow accent + Oswald are preserved in BOTH themes. Light is the default.
 const C = {
-  bg: "#0e1116",
-  card: "#171b22",
-  cardAlt: "#1e232c",
-  ink: "#f2f4f7",
-  sub: "#9aa4b2",
-  faint: "#5b6472",
-  accent: "#f5c518",
-  accentInk: "#0e1116",
-  line: "#252b35",
-  good: "#4ec9a5",
-  warn: "#e0a13a",
-  gold: "#f5c518",
-  silver: "#c3ccd8",
-  bronze: "#cd8a54",
+  bg: "var(--c-bg)",
+  card: "var(--c-card)",
+  cardAlt: "var(--c-card-alt)",
+  ink: "var(--c-ink)",
+  sub: "var(--c-sub)",
+  faint: "var(--c-faint)",
+  accent: "var(--c-accent)",
+  accentInk: "var(--c-accent-ink)",
+  line: "var(--c-line)",
+  good: "var(--c-good)",
+  warn: "var(--c-warn)",
+  gold: "var(--c-gold)",
+  silver: "var(--c-silver)",
+  bronze: "var(--c-bronze)",
 };
+
+type Theme = "light" | "dark";
+
+// Real hex per theme (for the CSS custom properties + Telegram chrome, which needs a
+// concrete colour, not a var()). Dark == the original club palette.
+const THEME_HEX: Record<Theme, Record<string, string>> = {
+  light: {
+    bg: "#f4f6f9", card: "#ffffff", cardAlt: "#eef1f5", ink: "#131820", sub: "#5b6472",
+    faint: "#9aa4b2", accent: "#f5c518", accentInk: "#151a1f", line: "#e3e7ec",
+    good: "#1f9e78", warn: "#b57d1c", gold: "#e0a800", silver: "#8b95a3", bronze: "#b0743f",
+  },
+  dark: {
+    bg: "#0e1116", card: "#171b22", cardAlt: "#1e232c", ink: "#f2f4f7", sub: "#9aa4b2",
+    faint: "#5b6472", accent: "#f5c518", accentInk: "#0e1116", line: "#252b35",
+    good: "#4ec9a5", warn: "#e0a13a", gold: "#f5c518", silver: "#c3ccd8", bronze: "#cd8a54",
+  },
+};
+
+function themeVars(theme: Theme): React.CSSProperties {
+  const h = THEME_HEX[theme];
+  return {
+    "--c-bg": h.bg, "--c-card": h.card, "--c-card-alt": h.cardAlt, "--c-ink": h.ink,
+    "--c-sub": h.sub, "--c-faint": h.faint, "--c-accent": h.accent, "--c-accent-ink": h.accentInk,
+    "--c-line": h.line, "--c-good": h.good, "--c-warn": h.warn, "--c-gold": h.gold,
+    "--c-silver": h.silver, "--c-bronze": h.bronze,
+  } as React.CSSProperties;
+}
 
 const HEAD = "var(--font-oswald), var(--font-montserrat), system-ui, sans-serif";
 const BODY = "var(--font-montserrat), system-ui, sans-serif";
@@ -213,6 +245,9 @@ async function apiPost<T>(
 export default function ClubPage() {
   const [initData, setInitData] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("profile");
+  // Phase 3.4: light by default. On first load, honour a saved choice, else the
+  // Telegram client's colorScheme (themeParams). Toggle lives in the profile.
+  const [theme, setThemeState] = useState<Theme>("light");
   const [freshness, setFreshness] = useState<ClubFreshness | null>(null);
   const [openStudentId, setOpenStudentId] = useState<string | null>(null);
   const [openWorkoutId, setOpenWorkoutId] = useState<string | null>(null);
@@ -311,8 +346,7 @@ export default function ClubPage() {
         try {
           tg.ready();
           tg.expand();
-          tg.setBackgroundColor?.(C.bg);
-          tg.setHeaderColor?.(C.bg);
+          // Chrome colour is applied by the theme effect (needs real hex, not var()).
         } catch {
           /* older clients */
         }
@@ -361,6 +395,44 @@ export default function ClubPage() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Resolve initial theme once: saved choice wins, else the Telegram colorScheme.
+  useEffect(() => {
+    let initial: Theme = "light";
+    try {
+      const saved = typeof localStorage !== "undefined" ? localStorage.getItem("club_theme") : null;
+      if (saved === "light" || saved === "dark") {
+        initial = saved;
+      } else {
+        const scheme = getTelegramWebApp()?.colorScheme;
+        if (scheme === "dark") initial = "dark";
+      }
+    } catch {
+      /* ignore */
+    }
+    setThemeState(initial);
+  }, []);
+
+  // Apply the theme to the Telegram chrome (real hex) whenever it changes.
+  useEffect(() => {
+    const tg = getTelegramWebApp();
+    const hex = THEME_HEX[theme].bg;
+    try {
+      tg?.setBackgroundColor?.(hex);
+      tg?.setHeaderColor?.(hex);
+    } catch {
+      /* older clients */
+    }
+  }, [theme]);
+
+  const setTheme = useCallback((next: Theme) => {
+    setThemeState(next);
+    try {
+      localStorage.setItem("club_theme", next);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const loadFeed = useCallback(async () => {
@@ -466,7 +538,7 @@ export default function ClubPage() {
   ]);
 
   return (
-    <div style={S.shell}>
+    <div style={{ ...S.shell, ...themeVars(theme) }}>
       <header style={S.header}>
         <h1 style={S.h1}>КЛУБ</h1>
         {freshness?.label ? <span style={S.fresh}>{freshness.label}</span> : null}
@@ -502,7 +574,7 @@ export default function ClubPage() {
           <ClubTab status={clubStatus} data={club} onRetry={loadClub} onOpenStudent={setOpenStudentId} />
         ) : null}
         {tab === "profile" ? (
-          <ProfileTab status={profileStatus} view={profile} onRetry={loadProfile} initData={initData ?? ""} onOpenSection={setOpenSection} />
+          <ProfileTab status={profileStatus} view={profile} onRetry={loadProfile} initData={initData ?? ""} onOpenSection={setOpenSection} theme={theme} onTheme={setTheme} />
         ) : null}
       </main>
 
@@ -896,7 +968,7 @@ function VolumeChart({ series }: { series: ClubVolumePoint[] }) {
         const y = h - bh - 2;
         return (
           <g key={i}>
-            <rect x={x + 1} y={y} width={Math.max(2, barW - 3)} height={Math.max(1, bh)} rx={2} fill={i === series.length - 1 ? C.accent : C.cardAlt} stroke={C.line} strokeWidth={0.5} />
+            <rect x={x + 1} y={y} width={Math.max(2, barW - 3)} height={Math.max(1, bh)} rx={2} style={{ fill: i === series.length - 1 ? C.accent : C.cardAlt, stroke: C.line, strokeWidth: 0.5 }} />
           </g>
         );
       })}
@@ -904,7 +976,7 @@ function VolumeChart({ series }: { series: ClubVolumePoint[] }) {
   );
 }
 
-function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string; onOpenSection: (s: CabinetSection) => void }) {
+function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string; onOpenSection: (s: CabinetSection) => void; theme: Theme; onTheme: (t: Theme) => void }) {
   const [privacyMsg, setPrivacyMsg] = useState<string | null>(null);
   const [visible, setVisibleState] = useState<boolean | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
@@ -1039,6 +1111,14 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
       </div>
 
       <div style={S.card}>
+        <div style={S.secHead}>Тема</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button style={S.pill(props.theme === "light")} type="button" onClick={() => props.onTheme("light")}>☀️ Светлая</button>
+          <button style={S.pill(props.theme === "dark")} type="button" onClick={() => props.onTheme("dark")}>🌙 Тёмная</button>
+        </div>
+      </div>
+
+      <div style={S.card}>
         <div style={S.secHead}>Имя в клубе</div>
         <input
           style={{ ...S.input, marginTop: 10, marginBottom: 8 }}
@@ -1168,7 +1248,7 @@ function LapBars({ values }: { values: Array<number | null> }) {
         // Normalise within [min,max] so differences between laps are visible.
         const bh = 6 + Math.round(((v - min) / span) * (h - 12));
         const x = 1 + i * barW;
-        return <rect key={i} x={x + 1} y={h - bh} width={Math.max(2, barW - 2)} height={bh} rx={2} fill={C.accent} opacity={0.85} />;
+        return <rect key={i} x={x + 1} y={h - bh} width={Math.max(2, barW - 2)} height={bh} rx={2} style={{ fill: C.accent }} opacity={0.85} />;
       })}
     </svg>
   );
