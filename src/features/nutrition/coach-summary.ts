@@ -619,6 +619,24 @@ function buildWarningLines(input: {
   return [...new Set(warnings.map((line) => line.trim()).filter(Boolean))];
 }
 
+/**
+ * Заметки тренеру, сохранённые по дням разбора (coach_notes_ru). Старые разборы поля
+ * не имеют — тогда пусто, и секция не появляется.
+ */
+function collectCoachDayNotes(summary: Record<string, unknown>): string[] {
+  const days = Array.isArray(summary.daily_analysis) ? (summary.daily_analysis as Array<unknown>) : [];
+  const notes: string[] = [];
+  for (const rawDay of days) {
+    const day = asObject(rawDay);
+    for (const note of asStringArray(day.coach_notes_ru)) {
+      if (!notes.includes(note)) {
+        notes.push(note);
+      }
+    }
+  }
+  return notes;
+}
+
 export function buildDerivedNutritionCoachSummary(input: {
   review: NutritionWeeklyAnalysis;
   plan?: NutritionWeeklyPlan | null;
@@ -701,6 +719,15 @@ export function buildDerivedNutritionCoachSummary(input: {
   const trainingLinks = asStringArray(summary.training_nutrition_links);
   if (trainingLinks.length > 0) {
     sections.push(`Связки тренировка ↔ питание: ${trainingLinks.join(" · ")}`);
+  }
+
+  // Заметки тренеру по дням: сигналы, которые сознательно НЕ вынесены ученице
+  // (сейчас — подавленный углеводный finding на pre_long у худеющей). Отдельная
+  // секция, а не safety_flags.soft_flags: те в UI не рендерятся вовсе, а этот блок
+  // виден в «Главный вывод для тренера» и собирается кодом, не моделью.
+  const coachDayNotes = collectCoachDayNotes(summary);
+  if (coachDayNotes.length > 0) {
+    sections.push(`Заметки тренеру: ${coachDayNotes.join(" ")}`);
   }
 
   const warningLines = buildWarningLines(input);

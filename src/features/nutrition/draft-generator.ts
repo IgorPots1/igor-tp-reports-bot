@@ -973,6 +973,10 @@ export function buildNutritionDailyFactsForNarrative(input: {
             ? canonical.hintForComment
             : buildCoachReasonForDay(day),
         findings: dayFindings,
+        // Заметки ТРЕНЕРУ по дню (сигналы, сознательно не вынесенные ученице).
+        // Персистим, чтобы они пережили перерендер карточки и попали в сводку тренера.
+        // Пусто у подавляющего большинства дней; у старых разборов поля просто нет.
+        coach_notes_ru: Array.isArray(day.coachNotesRu) ? day.coachNotesRu : [],
         training_nutrition_links:
           Array.isArray(canonical?.trainingNutritionLinks)
             ? canonical.trainingNutritionLinks

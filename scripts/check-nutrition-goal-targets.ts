@@ -29,9 +29,14 @@ assert.deepEqual(
 
 const restLose = applyNutritionGoalToDayTarget(restIdeal, { goalType: "lose", dayType: "rest", bodyweightKg: BW })!;
 const hardLose = applyNutritionGoalToDayTarget(hardIdeal, { goalType: "lose", dayType: "hard", bodyweightKg: BW })!;
-// Deficit: lose kcal below maintenance, and rest is cut MORE than hard (periodization).
+// Дефицит режет ТОЛЬКО восстановительные дни. Правило тренера (2026-07-28): в дни
+// большой работы (hard / long_run / long_endurance) дефицита нет вовсе — до правки
+// здесь стояло обратное утверждение («hard тоже ниже поддержания»).
 assert.ok(restLose.target_kcal < restIdeal.target_kcal, "lose rest kcal must be below maintenance");
-assert.ok(hardLose.target_kcal < hardIdeal.target_kcal, "lose hard kcal must be below maintenance");
+assert.ok(
+  hardLose.target_kcal >= hardIdeal.target_kcal,
+  `lose hard day must NOT be cut (deficit off on load days): ${hardLose.target_kcal} vs ideal ${hardIdeal.target_kcal}`
+);
 assert.ok(
   restIdeal.target_kcal - restLose.target_kcal > hardIdeal.target_kcal - hardLose.target_kcal,
   "rest day must be cut more than hard day (fuel for the work required)"

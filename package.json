@@ -272,6 +272,7 @@
     "check:nutrition-coach-notes-and-memory": "npx tsx scripts/check-nutrition-coach-notes-and-memory.ts",
     "check:nutrition-goal-targets": "npx tsx scripts/check-nutrition-goal-targets.ts",
     "check:nutrition-goal-methodology": "npx tsx scripts/check-nutrition-goal-methodology.ts",
+    "check:nutrition-load-day-no-deficit": "npx tsx scripts/check-nutrition-load-day-no-deficit.ts",
     "check:nutrition-intensity-rest-eval": "npx tsx scripts/check-nutrition-intensity-rest-eval.ts",
     "check:nutrition-activity-transcription": "npx tsx scripts/check-nutrition-activity-transcription.ts",
     "check:nutrition-report-archive": "npx tsx scripts/check-nutrition-report-archive.ts",

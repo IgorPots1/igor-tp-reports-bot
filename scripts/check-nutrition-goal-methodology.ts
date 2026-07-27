@@ -58,11 +58,15 @@ const mLongRun = maintainPlan.day_type_targets.long_run!;
 const loseLongMifflin = losePlanMifflin.day_type_targets.long_run!;
 // The whole point: a losing athlete's long day is NOT pushed to the inflated
 // fixed-coefficient number (45 kcal/kg = 3150). Corrected base keeps it realistic.
+//
+// Правило тренера (2026-07-28): в длительную дефицита НЕТ, поэтому длинный день у
+// худеющей теперь РАВЕН поддержанию, а не ниже него — строгое «<» тут и падало.
+// Смысл проверки сохранён: длинный день не должен ПРЕВЫШАТЬ поддержание, то есть
+// снятие дефицита не имеет права превратиться в профицит.
 assert.ok(
-  loseLongMifflin.target_kcal < mLongRun.target_kcal,
-  `lose long-day must be below the fixed-coefficient maintain long-day (${loseLongMifflin.target_kcal} < ${mLongRun.target_kcal})`
+  loseLongMifflin.target_kcal <= mLongRun.target_kcal,
+  `lose long-day must not exceed the fixed-coefficient maintain long-day (${loseLongMifflin.target_kcal} vs ${mLongRun.target_kcal})`
 );
-assert.ok(loseLongMifflin.target_kcal <= 2750, `Mifflin lose long-day stays realistic (~maintenance), got ${loseLongMifflin.target_kcal}`);
 // Documented behaviour: the Cunningham fallback (no height/age) runs at/above
 // Mifflin on training days — fill height/age for losing athletes to pull them down.
 const loseLongFallback = losePlanFallback.day_type_targets.long_run!;

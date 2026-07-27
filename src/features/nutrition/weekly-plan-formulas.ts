@@ -860,16 +860,33 @@ export function computeCarbLoadingTargets(params: {
 // Task 10: periodized daily kcal deficit for goal=lose ("fuel for the work
 // required") — bigger cut in rest/easy, minimal in hard/long. Weekly average
 // lands in the moderate 300–500 kcal/day band.
+//
+// ПРАВИЛО ТРЕНЕРА (Игорь, 2026-07-28): дефицит НЕ применяется в дни БОЛЬШОЙ РАБОТЫ —
+// длительная (long_run / long_endurance) и тяжёлая/интервальная (hard). Нельзя
+// одновременно бежать такую работу и урезать питание: это ровно те дни, где недобор
+// топлива стоит качества тренировки и восстановления. Отсюда 0, а не «маленький дефицит».
+//
+// Остальные дни дефицит СОХРАНЯЮТ — сознательно, тем же решением:
+//   pre_long (день перед длительной; загрузку перед длительной не считаем),
+//   rest / easy / strength / cross_training.
+// У pre_long есть следствие: предписанные ему углеводы лежат НИЖЕ канонического
+// коридора (5-7 г/кг), поэтому у худеющих углеводный finding на pre_long подавляется,
+// а тренеру вместо него идёт заметка — см. analyzeDailyTrainingNutrition в methodology.ts.
+//
+// День гонки и загрузку перед HM/M эта таблица НЕ обслуживает: их закрывает
+// raceWeekDeficitOff (окно [дата гонки − loading.days … дата гонки + 1]). Поэтому race
+// здесь намеренно оставлен с ненулевым дефицитом — он сработает только для «гоночного»
+// дня ВНЕ такого окна.
 const LOSE_DEFICIT_BY_DAY_TYPE: Record<NutritionPlanDayType, number> = {
   rest: 500,
   easy: 400,
   cross_training: 350,
   strength: 300,
   pre_long: 250,
-  hard: 200,
+  hard: 0,
   race: 200,
-  long_run: 150,
-  long_endurance: 150,
+  long_run: 0,
+  long_endurance: 0,
   unknown: 350,
 };
 

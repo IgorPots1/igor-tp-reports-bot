@@ -71,6 +71,12 @@ export type NutritionDailyAnalysis = {
   relevance: NutritionDailyRelevance;
   findings: string[];
   trainingNutritionLinks: string[];
+  /**
+   * Заметки ТРЕНЕРУ по этому дню (не ученице). Появляются там, где сигнал сознательно
+   * не выносится ученице, но день всё равно должен быть виден Игорю — сейчас это
+   * подавленный углеводный finding на pre_long у lose. Пусто в подавляющем большинстве дней.
+   */
+  coachNotesRu: string[];
   duringRunFuelPlanned?: boolean;
   fuelingEvidence?: string[];
   canonicalDailyAnalysis: NutritionCanonicalDailyAnalysis;
@@ -1700,12 +1706,35 @@ export function detectWorkoutFuelingInstructions(text: string | null): WorkoutFu
   };
 }
 
+/**
+ * Заметка тренеру про подавленный углеводный finding на pre_long у худеющей.
+ * Показывает ФАКТ (сколько углеводов реально было), чтобы Игорь мог решить сам,
+ * а не гадать, почему день молчит.
+ */
+function buildPreLongDeficitCoachNote(date: string, carbsG: number | null, carbsGPerKg: number | null): string {
+  const carbsPart =
+    carbsG !== null
+      ? `углеводы ${Math.round(carbsG)} г${carbsGPerKg !== null ? ` (${carbsGPerKg.toFixed(1)} г/кг)` : ""}`
+      : "углеводы не распознаны";
+  return `${date}: день перед длительной шёл на дефиците, ${carbsPart} — ученице про недобор не пишем (дефицит на pre_long оставлен намеренно).`;
+}
+
 function analyzeDailyTrainingNutrition(input: {
   rows: NormalizedManualMacroRow[];
   workoutsByDate: Map<string, WorkoutContextByDate>;
   bodyweightKg: number | null;
   sex: "female" | "male" | "unknown";
   trainingCacheStatus: NutritionTrainingPeaksWeekContext["cacheStatus"];
+  /**
+   * Цель ученицы. Нужна ровно для одного решения тренера (2026-07-28): у lose на
+   * pre_long углеводный finding подавляется, потому что дефицит 250 на этом дне
+   * оставлен сознательно и предписанные углеводы заведомо ниже коридора 5-7 г/кг —
+   * ругать за недобор там, где сама система предписала меньше, нечестно. День при
+   * этом не исчезает: вместо finding тренеру уходит заметка (coachNotesRu).
+   * Все ОСТАЛЬНЫЕ дни судятся как прежде — после снятия дефицита с long_run/hard
+   * их finding'и стали честными.
+   */
+  goalType?: NutritionGoalType;
 }): NutritionDailyAnalysis[] {
   const sortedRows = [...input.rows]
     .filter((row) => !row.day.startsWith("unresolved:"))
@@ -1731,6 +1760,9 @@ function analyzeDailyTrainingNutrition(input: {
         : null;
     const findings: string[] = [];
     const trainingNutritionLinks: string[] = [];
+    // Заметки ТРЕНЕРУ (не ученице): день, который мы сознательно не выносим в finding,
+    // но который Игорь должен видеть. Пусто у всех, кроме подавленных случаев.
+    const coachNotesRu: string[] = [];
     let relevance: NutritionDailyRelevance = "low";
     let nutritionStatus: NutritionStatusForDay = "adequate";
     let duringRunFuelPlanned: boolean | undefined;
@@ -1762,6 +1794,12 @@ function analyzeDailyTrainingNutrition(input: {
       trainingType !== "tempo";
     const lowKcal = row.kcal !== null && thresholds.lowKcal !== null && row.kcal <= thresholds.lowKcal;
     const lowCarbs = row.carbsG !== null && thresholds.lowCarbs !== null && row.carbsG <= thresholds.lowCarbs;
+    // Решение тренера (2026-07-28), УЗКО: только lose и только pre_long. Дефицит 250 на
+    // этом дне оставлен намеренно, а канонический коридор pre_long (5-7 г/кг, порог low
+    // 4.5) требует заметно больше, чем система сама предписала, — finding получался
+    // упрёком за исполнение собственного плана. Подавляем finding, но НЕ день: он уходит
+    // тренеру заметкой. На всех прочих днях всё как было.
+    const suppressPreLongCarbFinding = input.goalType === "lose" && isPreLong;
 
     if (row.kcal === null && row.carbsG === null && row.proteinG === null && row.fatG === null) {
       nutritionStatus = "missing";
@@ -1770,10 +1808,16 @@ function analyzeDailyTrainingNutrition(input: {
     }
 
     if (nextIsHardOrLong && lowCarbs) {
-      findings.push("День перед ключевой тренировкой попал в низкие по углеводам.");
-      trainingNutritionLinks.push("Перед ключевой тренировкой нужны более стабильные углеводы.");
-      nutritionStatus = "low_for_load";
-      relevance = "high";
+      if (suppressPreLongCarbFinding) {
+        // lose + день перед ключевой: дефицит здесь оставлен сознательно, поэтому
+        // «мало углеводов» ученице не выносим — но тренер день видит (заметка ниже).
+        coachNotesRu.push(buildPreLongDeficitCoachNote(row.day, row.carbsG, carbsGPerKg));
+      } else {
+        findings.push("День перед ключевой тренировкой попал в низкие по углеводам.");
+        trainingNutritionLinks.push("Перед ключевой тренировкой нужны более стабильные углеводы.");
+        nutritionStatus = "low_for_load";
+        relevance = "high";
+      }
     }
 
     if (isHardOrLong && (lowCarbs || lowKcal)) {
@@ -1957,9 +2001,13 @@ function analyzeDailyTrainingNutrition(input: {
         canonicalFindings.push(finding);
       }
     }
-    if (macroGuardrails.carbs.status === "low") {
+    // Углеводный finding на pre_long у худеющей подавляется тем же решением тренера,
+    // что и одноимённый статус ниже: дефицит там оставлен намеренно, и предписанные
+    // углеводы заведомо ниже коридора. Иначе код сигнала утёк бы в findings мимо
+    // подавленного статуса и всё равно дошёл бы до ученицы.
+    if (macroGuardrails.carbs.status === "low" && !suppressPreLongCarbFinding) {
       canonicalFindings.push("low_carbs_for_load_type");
-    } else if (macroGuardrails.carbs.status === "borderline") {
+    } else if (macroGuardrails.carbs.status === "borderline" && !suppressPreLongCarbFinding) {
       canonicalFindings.push("carbs_borderline_for_load_type");
     }
     for (const note of energyAvailability.notes) {
@@ -2027,11 +2075,15 @@ function analyzeDailyTrainingNutrition(input: {
       canonicalNutritionStatus = "long_run_low";
     } else if (
       canonicalTrainingType === "pre_long" &&
+      !suppressPreLongCarbFinding &&
       ((carbsPerKg !== null && carbsPerKg < 4.5) || lowCarbs)
     ) {
       canonicalNutritionStatus = "pre_long_low";
     } else if (
       macroGuardrails.carbs.status === "low" &&
+      // pre_long у худеющей исключён из углеводного «low» — тем же решением тренера,
+      // что и pre_long_low выше. Прочие типы дней судятся как раньше.
+      !(suppressPreLongCarbFinding && canonicalTrainingType === "pre_long") &&
       (canonicalTrainingType === "easy" ||
         canonicalTrainingType === "hard" ||
         canonicalTrainingType === "race" ||
@@ -2059,6 +2111,18 @@ function analyzeDailyTrainingNutrition(input: {
       carbsPerKg >= 6
     ) {
       canonicalNutritionStatus = "ample";
+    }
+
+    // Подавили углеводный сигнал на pre_long у худеющей — значит день обязан дойти до
+    // тренера заметкой. Канонический триггер (абсолютные 4.5 г/кг или низкий коридор)
+    // шире недельного lowCarbs из legacy-ветки выше, поэтому проверяем отдельно и
+    // защищаемся от дубля.
+    if (
+      suppressPreLongCarbFinding &&
+      coachNotesRu.length === 0 &&
+      ((carbsPerKg !== null && carbsPerKg < 4.5) || lowCarbs || macroGuardrails.carbs.status === "low")
+    ) {
+      coachNotesRu.push(buildPreLongDeficitCoachNote(row.day, row.carbsG, carbsGPerKg));
     }
 
     const canonicalRelevance: NutritionCanonicalRelevance =
@@ -2201,6 +2265,7 @@ function analyzeDailyTrainingNutrition(input: {
       relevance,
       findings,
       trainingNutritionLinks,
+      coachNotesRu,
       duringRunFuelPlanned,
       fuelingEvidence,
       canonicalDailyAnalysis,
@@ -2251,6 +2316,7 @@ export function buildNutritionMethodologyContext(input: {
     bodyweightKg,
     sex,
     trainingCacheStatus: context.tpPastWeek.cacheStatus,
+    goalType: context.nutritionGoalType,
   });
   // Weekly averages EXCLUDE broken-input days (rowLooksUnrealistic — a 17454-kcal item,
   // a >7000 day, impossible macros) so one mis-entered product never poisons the stored
