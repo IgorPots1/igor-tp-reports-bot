@@ -25,7 +25,7 @@ export default async function ClubQueuePage({ searchParams }: { searchParams: Pr
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Очередь заявок</h1>
-        <p className="admin-section-subtitle">Старты, выходные, пожелания. Подтверждение меняет статус в Supabase. Исполнение в TrainingPeaks — отдельная фаза.</p>
+        <p className="admin-section-subtitle">Старты, выходные, пожелания. Подтверждение меняет статус в Supabase. Исполнение в TrainingPeaks - отдельная фаза.</p>
       </div>
 
       {notice ? <div className="admin-alert admin-alert-success">{notice}</div> : null}
@@ -81,7 +81,7 @@ export default async function ClubQueuePage({ searchParams }: { searchParams: Pr
                         <FormActionButton className="admin-button admin-button-danger admin-button-small" confirmMessage="Отклонить заявку?" pendingText="…">Отклонить</FormActionButton>
                       </form>
                     </div>
-                  ) : <span className="admin-badge admin-badge-muted">—</span>}
+                  ) : <span className="admin-badge admin-badge-muted">-</span>}
                 </td>
               </tr>
             ))}

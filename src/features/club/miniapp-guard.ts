@@ -102,7 +102,7 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
     return {
       ok: false,
       httpStatus: 401,
-      error: "Подпись Telegram не сошлась. Переоткрой клуб; если повторяется — сообщи тренеру.",
+      error: "Подпись Telegram не сошлась. Переоткрой клуб; если повторяется - сообщи тренеру.",
       code: "bad_signature",
     };
   }
@@ -190,7 +190,7 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
   return {
     ok: false,
     httpStatus: 403,
-    error: "Заявка отправлена — тренер подтвердит доступ.",
+    error: "Заявка отправлена - тренер подтвердит доступ.",
     code: "needs_request",
   };
 }

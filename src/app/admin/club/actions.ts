@@ -309,7 +309,7 @@ export async function approveClubAccessRequestAction(formData: FormData): Promis
     await logClubLinkEvent({ telegramUserId: tgId, telegramUsername: null, studentId, result: "confirmed", reason: "access_request_approved" });
     const sum = await getBoundStudentSummary(studentId);
     revalidateClub();
-    redirect(withNotice(redirectTo, "notice", `Привязано: ${sum.name}. Последняя тренировка: ${sum.lastWorkoutDate ?? "нет"}, за 7 дней: ${sum.count7d}.${sum.count7d === 0 ? " ⚠ пусто — проверь, та ли строка." : ""}`));
+    redirect(withNotice(redirectTo, "notice", `Привязано: ${sum.name}. Последняя тренировка: ${sum.lastWorkoutDate ?? "нет"}, за 7 дней: ${sum.count7d}.${sum.count7d === 0 ? " ⚠ пусто - проверь, та ли строка." : ""}`));
   } catch (e) {
     revalidateClub();
     redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));

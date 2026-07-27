@@ -32,14 +32,14 @@ export default async function ClubManagePage() {
           <p className="admin-summary-label" style={{ marginTop: 6 }}>
             Вкладка «Результаты» и рекорды в профиле читают материализованные снапшоты. Пересчёт (materializeClubRecords)
             вшит в run-workout-cache-scan.sh и run-fit-ingest-scan.sh, но гейтится <code>CLUB_MATERIALIZE_ENABLED=true</code>.
-            Если старше суток — пересчёт на раннере не запускается: проверь флаг и логи сканов.
+            Если старше суток - пересчёт на раннере не запускается: проверь флаг и логи сканов.
           </p>
         </div>
       ) : null}
 
       <div className="admin-card" style={{ marginTop: 12 }}>
         <div className="admin-badge-row"><strong>Режим цели челленджа</strong><span className="admin-badge admin-badge-accent">{d.goalMode}</span></div>
-        <p className="admin-summary-label" style={{ marginTop: 6 }}>Управляется переменной окружения CLUB_CHALLENGE_GOAL_MODE (auto / manual / fixture). auto = среднее клубного км за 4 недели. manual — из таблицы club_challenges.</p>
+        <p className="admin-summary-label" style={{ marginTop: 6 }}>Управляется переменной окружения CLUB_CHALLENGE_GOAL_MODE (auto / manual / fixture). auto = среднее клубного км за 4 недели. manual - из таблицы club_challenges.</p>
       </div>
 
       <div className="admin-card" style={{ marginTop: 12 }}>
@@ -61,11 +61,11 @@ export default async function ClubManagePage() {
             </div>
             {bad.length > 0 ? (
               <div className="admin-alert admin-alert-error" style={{ marginTop: 8 }}>
-                Ошибка доступа — вкладки клуба покажут ПУСТО, пока не починить (гранты/миграция):
+                Ошибка доступа - вкладки клуба покажут ПУСТО, пока не починить (гранты/миграция):
                 <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
                   {bad.map((t) => (
                     <li key={t.table}>
-                      <code>{t.table}</code> — {t.code === "42501" ? "нет прав (42501): применить гранты" : t.code === "42P01" ? "таблицы нет (42P01): применить миграцию" : `${t.code ?? "ошибка"}: ${t.message ?? ""}`}
+                      <code>{t.table}</code> - {t.code === "42501" ? "нет прав (42501): применить гранты" : t.code === "42P01" ? "таблицы нет (42P01): применить миграцию" : `${t.code ?? "ошибка"}: ${t.message ?? ""}`}
                     </li>
                   ))}
                 </ul>

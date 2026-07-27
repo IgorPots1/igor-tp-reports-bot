@@ -14,7 +14,7 @@ function candLabel(c: {
   if (c.service) tags.push("СЕРВИС");
   if (c.boundTelegramUserId) tags.push("ЗАНЯТ");
   if (c.duplicateTp) tags.push("ДУБЛЬ-TP");
-  return `${c.name} · TP${c.tpAthleteId ?? "—"} · посл ${c.lastWorkoutDate ?? "нет"} · 30д ${c.count30d}${tags.length ? " · " + tags.join(",") : ""}`;
+  return `${c.name} · TP${c.tpAthleteId ?? "-"} · посл ${c.lastWorkoutDate ?? "нет"} · 30д ${c.count30d}${tags.length ? " · " + tags.join(",") : ""}`;
 }
 
 export default async function ClubRequestsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -38,7 +38,7 @@ export default async function ClubRequestsPage({ searchParams }: { searchParams:
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Заявки на доступ</h1>
-        <p className="admin-section-subtitle">Непривязанный открыл клуб → заявка. Сопоставь с учеником (один Telegram = один ученик). Автоподсказка по имени — не привязывает сама. Архивные/сервисные не предлагаются.</p>
+        <p className="admin-section-subtitle">Непривязанный открыл клуб → заявка. Сопоставь с учеником (один Telegram = один ученик). Автоподсказка по имени - не привязывает сама. Архивные/сервисные не предлагаются.</p>
       </div>
 
       {notice ? <div className="admin-alert admin-alert-success">{notice}</div> : null}
@@ -49,12 +49,12 @@ export default async function ClubRequestsPage({ searchParams }: { searchParams:
       ) : null}
 
       {requests.map(({ request: r, suggestions }) => {
-        const tgName = [r.firstName, r.lastName].filter(Boolean).join(" ") || "—";
+        const tgName = [r.firstName, r.lastName].filter(Boolean).join(" ") || "-";
         return (
           <div className="admin-card" key={r.id} style={{ marginTop: 12 }}>
             <div className="admin-badge-row">
               <strong>{tgName}</strong>
-              <span className="admin-summary-label">@{r.telegramUsername ?? "—"} · id {r.telegramUserId} · {new Date(r.createdAt).toLocaleString("ru-RU")}</span>
+              <span className="admin-summary-label">@{r.telegramUsername ?? "-"} · id {r.telegramUserId} · {new Date(r.createdAt).toLocaleString("ru-RU")}</span>
             </div>
 
             {suggestions.length > 0 ? (
@@ -77,7 +77,7 @@ export default async function ClubRequestsPage({ searchParams }: { searchParams:
               <input type="hidden" name="requestId" value={r.id} />
               <input type="hidden" name="telegramUserId" value={r.telegramUserId} />
               <select className="admin-input" name="studentId" defaultValue={suggestions[0]?.studentId ?? ""} style={{ minWidth: 380 }}>
-                <option value="" disabled>— выбери ученика —</option>
+                <option value="" disabled>- выбери ученика -</option>
                 {ordered.map((c) => (
                   <option key={c.studentId} value={c.studentId}>{candLabel(byId.get(c.studentId)!)}</option>
                 ))}

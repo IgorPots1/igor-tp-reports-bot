@@ -39,7 +39,7 @@ export default async function ClubCalendarAdminPage({ searchParams }: { searchPa
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Календарь клуба · 45 дней</h1>
-        <p className="admin-section-subtitle">Заявки учеников по дням: выходные, пожелания по типу, заметки, забеги. Подтверждение здесь; в TrainingPeaks запись — отдельной фазой (Phase 11).</p>
+        <p className="admin-section-subtitle">Заявки учеников по дням: выходные, пожелания по типу, заметки, забеги. Подтверждение здесь; в TrainingPeaks запись - отдельной фазой (Phase 11).</p>
       </div>
       {notice ? <div className="admin-alert admin-alert-success">{notice}</div> : null}
       {error ? <div className="admin-alert admin-alert-warning">{error}</div> : null}
@@ -85,7 +85,7 @@ export default async function ClubCalendarAdminPage({ searchParams }: { searchPa
                               <FormActionButton className="admin-button admin-button-danger admin-button-small" pendingText="…">✕</FormActionButton>
                             </form>
                           </div>
-                        ) : "—"}
+                        ) : "-"}
                       </td>
                     </tr>
                   ))}

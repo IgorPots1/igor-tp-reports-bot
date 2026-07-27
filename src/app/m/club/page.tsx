@@ -341,7 +341,7 @@ export default function ClubPage() {
     let cancelled = false;
     let applied = false;
     let tries = 0;
-    const MAX_TRIES = 100; // ~5s at 50ms — tolerate a slow webview loading the SDK
+    const MAX_TRIES = 100; // ~5s at 50ms - tolerate a slow webview loading the SDK
 
     const apply = (tg: TelegramWebApp | null, id: string, source: "sdk" | "recovered" | "none") => {
       if (applied || cancelled) return;
@@ -816,7 +816,7 @@ function ChallengeTab(props: { status: Status; view: ClubChallengeView | null; o
         <div style={S.progressTrack}><div style={{ ...S.progressFill, width: `${v.progressPct}%` }} /></div>
         <div style={S.cardMeta}>{v.weekLabel}</div>
         {v.goalMode === "auto" ? <div style={S.okNote}>Цель авто: среднее клуба за 4 недели</div> : null}
-        {v.goalMode === "fixture" ? <div style={S.fixtureNote}>Демо-цель. Прогресс — реальный.</div> : null}
+        {v.goalMode === "fixture" ? <div style={S.fixtureNote}>Демо-цель. Прогресс - реальный.</div> : null}
       </div>
 
       {v.personal ? (
@@ -930,9 +930,9 @@ function RecordsTab(props: {
             </div>
           ))
         ) : (
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет гонок в данных — топ появится, когда забеги подтянутся в TrainingPeaks</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет гонок в данных - топ появится, когда забеги подтянутся в TrainingPeaks</div>
         )}
-        {clubTop?.alwaysPreliminary ? <div style={S.fixtureNote}>5 км — только предварительно по методике, в клубный топ не идёт</div> : null}
+        {clubTop?.alwaysPreliminary ? <div style={S.fixtureNote}>5 км - только предварительно по методике, в клубный топ не идёт</div> : null}
       </div>
     </div>
   );
@@ -1142,7 +1142,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
       <div style={S.card}>
         <div style={S.secHead}>Календарь на 45 дней</div>
         <button style={{ ...S.saveBtn, marginTop: 10 }} type="button" onClick={props.onOpenCalendar}>📅 Открыть календарь</button>
-        <div style={S.hint}>Отметь выходные, добавь забеги, пожелания по типу тренировки и заметки на конкретные дни. Всё уйдёт тренеру на подтверждение — в TrainingPeaks ничего не пишется автоматически.</div>
+        <div style={S.hint}>Отметь выходные, добавь забеги, пожелания по типу тренировки и заметки на конкретные дни. Всё уйдёт тренеру на подтверждение - в TrainingPeaks ничего не пишется автоматически.</div>
       </div>
 
       <div style={S.card}>
@@ -1373,10 +1373,10 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
                   {view.laps.map((l) => (
                     <div key={l.index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: l.index > 1 ? `1px solid ${C.line}` : "none" }}>
                       <span style={{ width: 22, color: C.faint, fontFamily: HEAD, fontSize: 13 }}>{l.index}</span>
-                      <span style={{ width: 58, color: C.ink, fontSize: 13 }}>{l.distanceKm ? fmtKm(l.distanceKm) : "—"}</span>
-                      <span style={{ width: 52, color: C.sub, fontSize: 13 }}>{fmtDuration(l.durationSeconds) ?? "—"}</span>
-                      <span style={{ flex: 1, color: C.ink, fontSize: 13 }}>{fmtPace(l.paceSecPerKm)?.replace(" /км", "") ?? "—"}</span>
-                      <span style={{ width: 44, textAlign: "right", color: C.sub, fontSize: 13 }}>{l.avgHr ? `${l.avgHr}` : "—"}</span>
+                      <span style={{ width: 58, color: C.ink, fontSize: 13 }}>{l.distanceKm ? fmtKm(l.distanceKm) : "-"}</span>
+                      <span style={{ width: 52, color: C.sub, fontSize: 13 }}>{fmtDuration(l.durationSeconds) ?? "-"}</span>
+                      <span style={{ flex: 1, color: C.ink, fontSize: 13 }}>{fmtPace(l.paceSecPerKm)?.replace(" /км", "") ?? "-"}</span>
+                      <span style={{ width: 44, textAlign: "right", color: C.sub, fontSize: 13 }}>{l.avgHr ? `${l.avgHr}` : "-"}</span>
                     </div>
                   ))}
                 </div>
@@ -1722,7 +1722,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
             {requests.map((r) => (
               <div key={r.id} style={S.listRow}>
                 <div style={{ flex: 1 }}>
-                  <div style={S.cardName}>{r.fromDate === r.toDate ? r.fromDate : `${r.fromDate} — ${r.toDate}`}</div>
+                  <div style={S.cardName}>{r.fromDate === r.toDate ? r.fromDate : `${r.fromDate} - ${r.toDate}`}</div>
                   {r.reason ? <div style={S.cardMeta}>{r.reason}</div> : null}
                 </div>
                 <span style={S.statusChip}>{DAYOFF_STATUS_LABEL[r.status] ?? r.status}</span>
@@ -1737,7 +1737,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
             <div style={S.formCard}>
               {[["load", "Нагрузка"], ["wellbeing", "Самочувствие"], ["schedule", "Удобство расписания"]].map(([k, label]) => (
                 <div key={k} style={{ marginBottom: 10 }}>
-                  <div style={S.cardMeta}>{label}: {form[k] ?? "—"}</div>
+                  <div style={S.cardMeta}>{label}: {form[k] ?? "-"}</div>
                   <input type="range" min={1} max={10} value={form[k] ?? "5"} onChange={(e) => set(k, e.target.value)} style={{ width: "100%", accentColor: C.accent }} />
                 </div>
               ))}
@@ -1750,7 +1750,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
             {wishes.map((w) => (
               <div key={w.id} style={S.listRow}>
                 <div style={{ flex: 1 }}>
-                  <div style={S.cardMeta}>{w.dateLabel} · нагрузка {w.loadScale ?? "—"} · самочувствие {w.wellbeingScale ?? "—"} · расписание {w.scheduleScale ?? "—"}</div>
+                  <div style={S.cardMeta}>{w.dateLabel} · нагрузка {w.loadScale ?? "-"} · самочувствие {w.wellbeingScale ?? "-"} · расписание {w.scheduleScale ?? "-"}</div>
                   {w.note ? <div style={{ ...S.cardName, whiteSpace: "normal" }}>{w.note}</div> : null}
                 </div>
               </div>
@@ -1778,7 +1778,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
               <div>
                 <div style={S.cardMeta}>{prediction.raceName} · {prediction.distanceLabel}</div>
                 <div style={{ ...S.bigNumber, marginTop: 8 }}>
-                  {fmtDuration(prediction.low)}–{fmtDuration(prediction.high)}
+                  {fmtDuration(prediction.low)}-{fmtDuration(prediction.high)}
                 </div>
                 <div style={S.cardMeta}>Пересчитано: {prediction.recomputedLabel} · {prediction.basedOn}</div>
                 <div style={S.hint}>Это диапазон-оценка по твоим результатам, не гарантия.</div>
@@ -1880,7 +1880,7 @@ function RequestSentScreen() {
         <div style={{ fontSize: 40, marginBottom: 10 }}>⏳</div>
         <div style={{ fontFamily: HEAD, fontSize: 22, color: C.ink, marginBottom: 10 }}>Заявка отправлена</div>
         <div style={{ color: C.sub, fontSize: 14, lineHeight: 1.5 }}>
-          Тренер подтвердит доступ. Когда он привяжет твой аккаунт — открой клуб снова, и всё появится.
+          Тренер подтвердит доступ. Когда он привяжет твой аккаунт - открой клуб снова, и всё появится.
         </div>
       </div>
     </div>

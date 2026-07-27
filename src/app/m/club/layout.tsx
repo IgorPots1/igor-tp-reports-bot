@@ -23,7 +23,7 @@ export default function ClubLayout({ children }: { children: ReactNode }) {
     <div className={oswald.variable}>
       {/* Load the Telegram SDK EXPLICITLY on the club branch too (not only via the
           parent /m/layout beforeInteractive, which Next only honours in the ROOT
-          layout). Idempotent — Telegram's script is safe to include twice. The
+          layout). Idempotent - Telegram's script is safe to include twice. The
           client also polls, so a slow load still resolves. */}
       <Script src="https://telegram.org/js/telegram-web-app.js" strategy="afterInteractive" />
       {children}

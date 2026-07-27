@@ -2544,7 +2544,7 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
   const race = raceRow as { name: string; distance_meters: number | null; distance_label: string | null };
   const targetM = race.distance_meters && race.distance_meters > 0 ? race.distance_meters : null;
   if (!targetM) {
-    return none("У старта не указана дистанция — прогноз недоступен.");
+    return none("У старта не указана дистанция - прогноз недоступен.");
   }
 
   const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
@@ -2554,7 +2554,7 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
   // E-Predictor anchors on RACES only — a training-run segment corrupts the anchor.
   const records = allRecords.filter((r) => r.recordType === "race");
   if (records.length === 0) {
-    return none("Прогноз строится по результатам гонок — их пока нет в данных. Заяви старт или дождись синка забега.");
+    return none("Прогноз строится по результатам гонок - их пока нет в данных. Заяви старт или дождись синка забега.");
   }
 
   // Pick the record whose distance is closest (log-ratio) to the target — most reliable base.

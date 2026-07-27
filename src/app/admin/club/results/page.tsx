@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 const KEYS: RecordDistanceKey[] = ["5k", "10k", "21k", "42k"];
 
 function fmt(sec: number | null): string {
-  if (!sec || sec <= 0) return "—";
+  if (!sec || sec <= 0) return "-";
   const t = Math.round(sec);
   const h = Math.floor(t / 3600);
   const m = Math.floor((t % 3600) / 60);
@@ -58,7 +58,7 @@ export default async function ClubResultsPage({ searchParams }: { searchParams: 
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Ревизия результатов</h1>
-        <p className="admin-section-subtitle">Гонки = coach_confirmed, дата из календаря TP (race_events) или заявленный старт. Остальное — отрезки тренировок. Наведи на ячейку — происхождение записи. Гонки идут в топы и якорь прогноза.</p>
+        <p className="admin-section-subtitle">Гонки = coach_confirmed, дата из календаря TP (race_events) или заявленный старт. Остальное - отрезки тренировок. Наведи на ячейку - происхождение записи. Гонки идут в топы и якорь прогноза.</p>
       </div>
 
       {notice ? <div className="admin-alert admin-alert-success">{notice}</div> : null}
@@ -72,7 +72,7 @@ export default async function ClubResultsPage({ searchParams }: { searchParams: 
       </div>
 
       <div className="admin-actions" style={{ marginBottom: 12 }}>
-        {firstStudent ? <Link className="admin-button admin-button-primary" href={`/admin/club/results/${firstStudent}`}>Массовый ввод — начать</Link> : null}
+        {firstStudent ? <Link className="admin-button admin-button-primary" href={`/admin/club/results/${firstStudent}`}>Массовый ввод - начать</Link> : null}
       </div>
 
       <div className="admin-table-wrap">
@@ -94,7 +94,7 @@ export default async function ClubResultsPage({ searchParams }: { searchParams: 
                   const origin = r?.source ? SOURCE_LABEL[r.source] ?? r.source : undefined;
                   return (
                     <td key={k} title={origin}>
-                      {r?.durationSeconds ? `${badge} ${fmt(r.durationSeconds)}` : r?.trust === "hidden" ? "🚫" : "—"}
+                      {r?.durationSeconds ? `${badge} ${fmt(r.durationSeconds)}` : r?.trust === "hidden" ? "🚫" : "-"}
                     </td>
                   );
                 })}

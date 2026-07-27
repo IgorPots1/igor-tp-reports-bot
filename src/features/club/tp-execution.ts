@@ -85,7 +85,7 @@ export function planClubRaceAction(row: ClubRaceRow, athleteId: number | null): 
   const description = [row.distanceLabel, row.city, row.country].filter((x) => x && x.trim()).join(", ") || null;
   const unresolved: string[] = [];
   if (row.targetResultSeconds && row.targetResultSeconds > 0) {
-    unresolved.push("totalTimePlanned (единица totalTimePlanned на write-payload не подтверждена — целевое время НЕ проставлено)");
+    unresolved.push("totalTimePlanned (единица totalTimePlanned на write-payload не подтверждена - целевое время НЕ проставлено)");
   }
   const payload: CreateWorkoutPayload = {
     athleteId,
@@ -127,7 +127,7 @@ export function planClubDayoffAction(row: ClubDayoffRow): ClubActionPlan {
     kind: "dayoff",
     reason:
       "выходной не имеет ПРОВЕРЕННОГО TP-представления (нет type-id отдыха; деструктивная " +
-      "трактовка «снять сессии» не фабрикуется) — ручной review-case, тренер применяет в TP. См. questions.md §26",
+      "трактовка «снять сессии» не фабрикуется) - ручной review-case, тренер применяет в TP. См. questions.md §26",
   };
 }
 
@@ -173,7 +173,7 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
     return { ok: false, requestId: row.id, kind: kindTag, reason: `status=${row.status} (нужно approved)` };
   }
   if (row.appliedTpWorkoutId) {
-    return { ok: false, requestId: row.id, kind: kindTag, reason: `уже применено (tp_workout_id=${row.appliedTpWorkoutId}) — идемпотентно пропущено` };
+    return { ok: false, requestId: row.id, kind: kindTag, reason: `уже применено (tp_workout_id=${row.appliedTpWorkoutId}) - идемпотентно пропущено` };
   }
   if (!athleteId || !Number.isFinite(athleteId)) {
     return { ok: false, requestId: row.id, kind: kindTag, reason: "нет trainingpeaks_athlete_id у ученика" };
@@ -196,13 +196,13 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
     workoutTypeValueId = CLUB_RUN_WORKOUT_TYPE_VALUE_ID;
     distancePlanned = row.raceDistanceMeters && row.raceDistanceMeters > 0 ? row.raceDistanceMeters : null;
     if (row.raceTargetSeconds && row.raceTargetSeconds > 0) {
-      unresolved.push("targetTime (единица totalTimePlanned не подтверждена — целевое время в описании, не в поле)");
+      unresolved.push("targetTime (единица totalTimePlanned не подтверждена - целевое время в описании, не в поле)");
       description += ` · цель ${row.raceTargetSeconds}s`;
     }
   } else {
     // Non-race markers → description-only "Other" (type 100) workout, coexists with plan.
     workoutTypeValueId = CLUB_MARKER_WORKOUT_TYPE_VALUE_ID;
-    unresolved.push("workoutTypeValueId=100 (Other) — создание типа Other не подтверждено end-to-end, проверить одну запись перед массовым исполнением");
+    unresolved.push("workoutTypeValueId=100 (Other) - создание типа Other не подтверждено end-to-end, проверить одну запись перед массовым исполнением");
     if (row.kind === "day_off") {
       title = "🛌 Выходной день (заявка ученика)";
       description = row.note && row.note.trim() ? row.note.trim() : "Выходной, запрошен учеником через клуб. План на день не тронут.";

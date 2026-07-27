@@ -41,7 +41,7 @@ export default async function ClubLinksPage({ searchParams }: { searchParams: Pr
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Ссылки на клуб</h1>
-        <p className="admin-section-subtitle">Одноразовые токены привязки. Ученику НИЧЕГО не отправляется — только генерация и копирование. Привязка одноразовая, отвязка — тренером.</p>
+        <p className="admin-section-subtitle">Одноразовые токены привязки. Ученику НИЧЕГО не отправляется - только генерация и копирование. Привязка одноразовая, отвязка - тренером.</p>
       </div>
 
       {notice ? <div className="admin-alert admin-alert-success">{notice}</div> : null}
@@ -75,7 +75,7 @@ export default async function ClubLinksPage({ searchParams }: { searchParams: Pr
         ) : <p className="admin-summary-label" style={{ marginTop: 8 }}>Активных токенов у непривязанных пока нет.</p>}
       </div>
 
-      <h2 className="admin-section-subtitle">Не привязанные — сгенерировать личную ссылку</h2>
+      <h2 className="admin-section-subtitle">Не привязанные - сгенерировать личную ссылку</h2>
       <div className="admin-table-wrap">
         <table className="admin-table admin-table-compact">
           <thead><tr><th>Ученик</th><th>Активные ссылки</th><th>Действия</th></tr></thead>
@@ -125,7 +125,7 @@ export default async function ClubLinksPage({ searchParams }: { searchParams: Pr
           <tbody>
             {bound.map((l) => (
               <tr key={l.studentId}>
-                <td>{l.name}</td><td>{l.telegramUserId}</td><td>{l.username ?? "—"}</td>
+                <td>{l.name}</td><td>{l.telegramUserId}</td><td>{l.username ?? "-"}</td>
                 <td>
                   <form action={setClubDisplayNameAction} className="admin-form-inline" style={{ gap: 6 }}>
                     <input type="hidden" name="redirectTo" value={selfPath} />
@@ -157,8 +157,8 @@ export default async function ClubLinksPage({ searchParams }: { searchParams: Pr
               <tr key={e.id}>
                 <td>{new Date(e.createdAt).toLocaleString("ru-RU")}</td>
                 <td><span className={`admin-badge ${e.result === "confirmed" || e.result === "relinked" ? "admin-badge-success" : e.result === "conflict" ? "admin-badge-danger" : "admin-badge-warning"}`}>{e.result}</span></td>
-                <td>{e.telegramUserId ?? "—"}{e.username ? ` · ${e.username}` : ""}</td>
-                <td>{e.reason ?? "—"}</td>
+                <td>{e.telegramUserId ?? "-"}{e.username ? ` · ${e.username}` : ""}</td>
+                <td>{e.reason ?? "-"}</td>
               </tr>
             ))}
           </tbody>
