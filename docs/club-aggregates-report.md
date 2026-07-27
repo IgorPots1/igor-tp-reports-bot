@@ -78,6 +78,22 @@ JS-классификации бег/тип на каждую строку (в �
   включить флаг.
 - Миграция: `20260731000000_club_daily_aggregates.sql` (не применена).
 
+## P.S. Баг, пойманный на РЕАЛЬНОЙ БД (после первого materialize)
+In-memory parity (`check-club-aggregates-parity`) показал 0, но проверка на РЕАЛЬНОЙ
+записанной таблице (`check-club-aggregates-parity-realdb`) нашла 3 расхождения: agg-путь
+занижал **planned**-счётчики (personal plannedCount 4→0, noPlan flip, rank 4→30).
+- **Причина:** `materializeClubRecords` читал окно `to: today`, а потребители (челлендж/
+  статистика/ранг) считают planned до `range.to` — КОНЦА недели. Запланированные на будущие
+  дни этой недели тренировки не попадали в агрегаты.
+- **Почему in-memory не поймал:** его override кормит агрегаты из окна ПОТРЕБИТЕЛЯ (до range.to),
+  а не из окна materialize — материализационный баг он структурно увидеть не мог.
+- **Фикс (источник):** materialize читает до конца текущей недели (`readTo = max(today, weekEnd)`).
+  Для рекордов безопасно — плановые is_completed=false, в кандидаты не идут.
+- **После фикса + re-materialize:** `check-club-aggregates-parity-realdb` = **0** (13685 строк).
+- **Вывод:** авторитетная проверка перед включением флага — `check-club-aggregates-parity-realdb`
+  (читает реальную таблицу), а не in-memory. Обе оставлены; realdb — обязательная после materialize.
+
 ## Проверки
-`check-initdata-auth`, `check-club-aggregates-parity`, `smoke-feedback-sweep`, `tsc`, `eslint`, `build` — см. ops-log.
+`check-initdata-auth`, `check-club-aggregates-parity`, `check-club-aggregates-parity-realdb`,
+`smoke-feedback-sweep`, `tsc`, `eslint`, `build` — см. ops-log.
 Общие модули (валидатор initData, резолверы desk/n) НЕ тронуты.

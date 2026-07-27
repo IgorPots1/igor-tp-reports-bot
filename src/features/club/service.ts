@@ -2444,6 +2444,14 @@ export async function materializeClubRecords(opts?: {
   const dryRun = opts?.dryRun ?? false;
   const today = clubTodayIso();
   const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
+  // Read through the END of the current week, not just `today`: the daily aggregates
+  // must include this week's PLANNED-but-future workouts, because the challenge /
+  // statistics / profile-rank consumers count planned running to range.to (week end).
+  // Reading only to `today` under-counted planned → parity broke on the real DB.
+  // Harmless for records: future planned rows are is_completed=false, so they never
+  // become record candidates.
+  const weekEnd = currentWeekRange().to;
+  const readTo = weekEnd > today ? weekEnd : today;
 
   const students = await loadClubStudents();
   const visible = students.filter(isVisible);
@@ -2460,7 +2468,7 @@ export async function materializeClubRecords(opts?: {
   // Incremental read restricts to the target students; full recompute reads the club.
   const rows = await loadClubWorkoutRows({
     from,
-    to: today,
+    to: readTo,
     studentIds: explicit ? targetIds : undefined,
   });
   const visibleRows = rows.filter((r) => visibleIds.has(r.studentId));
