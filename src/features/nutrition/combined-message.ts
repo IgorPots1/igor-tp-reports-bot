@@ -30,6 +30,8 @@ import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-polic
 
 type CanonicalDailyFact = {
   date?: unknown;
+  /** Каноническая значимость дня: "low_confidence" = цифрам этого дня верить нельзя. */
+  relevance?: unknown;
   weekday_ru?: unknown;
   weekdayRu?: unknown;
   date_label?: unknown;
@@ -1409,6 +1411,9 @@ function getReviewWeekSummaryLine(review: NutritionWeeklyAnalysis): string {
       trainingType,
       trainingLabel,
       nutritionStatus,
+      // Значимость дня: suspect / low_confidence не должны попадать в недельные
+      // счётчики (фильтр — в buildNutritionWeeklySummary, одна точка на всех).
+      relevance: typeof day.relevance === "string" ? day.relevance : null,
       findings,
       macro,
       hasEnergyIssue: hasDayEnergyIssue({ nutritionStatus, findings }),

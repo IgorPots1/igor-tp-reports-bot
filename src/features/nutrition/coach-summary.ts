@@ -10,6 +10,7 @@ import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import {
   buildNutritionWeeklySummary,
   EVENING_SECTIONS,
+  isNutritionDayJudgeable,
   formatNutritionWorkoutLabelForCoach,
   isCombinedLoadLabel,
   pickNotableFoods,
@@ -31,6 +32,7 @@ type CanonicalDailyFact = {
   trainingLabel?: string;
   nutrition_status?: string | null;
   nutritionStatus?: string | null;
+  relevance?: string | null;
   findings?: unknown;
   macro_guardrails?: unknown;
   macroGuardrails?: unknown;
@@ -345,6 +347,8 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
       typeof day.training_label === "string" ? day.training_label : typeof day.trainingLabel === "string" ? day.trainingLabel : "день недели";
     const nutritionStatus =
       typeof day.nutrition_status === "string" ? day.nutrition_status : typeof day.nutritionStatus === "string" ? day.nutritionStatus : null;
+    const relevance =
+      typeof day.relevance === "string" ? day.relevance : null;
     const findings = asStringArray(day.findings);
     const macroRaw = extractMacroGuardrailStatuses(day.macro_guardrails ?? day.macroGuardrails);
     const embedded = asObject(day.canonical_daily_analysis ?? day.canonicalDailyAnalysis);
@@ -383,6 +387,7 @@ function buildWeeklySummaryDays(review: NutritionWeeklyAnalysis): NutritionWeekl
       trainingType,
       trainingLabel,
       nutritionStatus,
+      relevance,
       findings,
       macro,
       hasEnergyIssue: hasDayEnergyIssue({ nutritionStatus, findings }),
@@ -405,7 +410,9 @@ function formatCoachWorkoutLine(prefix: string, label: string, date: string): st
 
 function buildKeyWorkoutLines(days: NutritionWeeklySummaryDayFact[]): string[] {
   const lines: string[] = [];
-  for (const day of days) {
+  // Наряд 2.3: список ключевых тренировок недели не тянет suspect-дни — он стоит рядом
+  // с недельным итогом, и день с нераспознанным дневником в нём читается как разобранный.
+  for (const day of days.filter((item) => isNutritionDayJudgeable(item))) {
     const label = formatNutritionWorkoutLabelForCoach({
       trainingLabel: day.trainingLabel,
       trainingType: day.trainingType,

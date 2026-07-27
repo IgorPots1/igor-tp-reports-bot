@@ -1788,6 +1788,13 @@ export type NutritionWeeklySummaryDayFact = {
   trainingType: string;
   trainingLabel: string;
   nutritionStatus: string | null;
+  /**
+   * Каноническая значимость дня. Нужна, чтобы отличить ОЦЕНИМЫЙ день от дня с
+   * негодными данными: "low_confidence" = цифрам этого дня верить нельзя.
+   * Необязательное: старые сохранённые разборы поля не несут — тогда день считается
+   * оценимым, как и было до правки.
+   */
+  relevance?: string | null;
   findings: string[];
   macro: MacroGuardrailStatuses;
   hasEnergyIssue: boolean;
@@ -1801,6 +1808,27 @@ export type NutritionWeeklySummaryDayFact = {
    */
   specificWorkoutLabel?: string | null;
 };
+
+/**
+ * Оценим ли день недели, то есть можно ли считать его цифры фактом.
+ *
+ * suspect / relevance="low_confidence" — это день, чьи макросы система сама признала
+ * негодными (нераспознанный дневник, битые значения). До этой правки такие дни всё
+ * равно попадали в недельные счётчики (carbsBorderlineLoadDays, fatLowOrBorderlineDays
+ * и производный carbsLowOrBorderlineLoadDays росли по ЛЮБОМУ строковому статусу), и
+ * итог недели мог сказать «дни низкие по углеводам» про день, который просто не
+ * распознался.
+ *
+ * ОДНА функция на все потребители сознательно: тот же счёт делают и сводка тренера
+ * (coach-summary), и сообщение ученице (combined-message). Раньше по такому же поводу
+ * уже расщепляли расчёт коридора на три копии и чинили не ту.
+ */
+export function isNutritionDayJudgeable(day: {
+  nutritionStatus: string | null;
+  relevance?: string | null;
+}): boolean {
+  return day.nutritionStatus !== "suspect" && day.relevance !== "low_confidence";
+}
 
 // ─── Пул формулировок недельного итога ────────────────────────────────────────────────────────
 // The summary is 100% deterministic code (no model), so every fixed sentence used to read
@@ -2039,7 +2067,13 @@ export function buildNutritionWeeklySummary(input: {
   let hardestDayLabels: string[] = [];
   let carbRichDayLabels: string[] = [];
 
-  for (const day of input.days) {
+  // Недельный итог считаем ТОЛЬКО по оценимым дням. Единственная точка фильтрации:
+  // сюда приходят дни и от сводки тренера, и от сообщения ученице, поэтому третьей
+  // копии правила не появляется. Ключевые тренировки недели (keyWorkoutEntries ниже)
+  // собираются в этом же цикле и тоже перестают тянуть suspect-дни.
+  const judgeableDays = input.days.filter((day) => isNutritionDayJudgeable(day));
+
+  for (const day of judgeableDays) {
     const loadDay = day.roleInfo.role !== "rest";
     if (day.macro.proteinStatus === "ok") {
       proteinOkDays += 1;
@@ -2104,7 +2138,10 @@ export function buildNutritionWeeklySummary(input: {
     }
   }
 
-  const hardestDays = input.days.filter(
+  // И «самые тяжёлые дни», и «углеводные дни» — это утверждения о ПИТАНИИ в этот день,
+  // поэтому оба списка тоже идут по оценимым дням: назвать углеводным день, чей дневник
+  // не распознался, значит соврать числом.
+  const hardestDays = judgeableDays.filter(
     (day) =>
       day.roleInfo.role === "key_interval" ||
       day.roleInfo.role === "key_tempo" ||
@@ -2113,7 +2150,7 @@ export function buildNutritionWeeklySummary(input: {
       day.roleInfo.role === "combined_load"
   );
   hardestDayLabels = hardestDays.map((day) => formatNutritionWorkoutLabelForAthlete(day));
-  const macroDaysWithCarbs = input.days.filter(
+  const macroDaysWithCarbs = judgeableDays.filter(
     (day) => day.macro.carbsG != null || day.macro.carbsGPerKg != null || typeof day.macro.carbsStatus === "string"
   );
   const sortedByCarbs = [...macroDaysWithCarbs].sort((left, right) => {
