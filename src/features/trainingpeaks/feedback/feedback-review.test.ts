@@ -271,6 +271,12 @@ describe("buildReportCardView — channel", () => {
     const card = buildReportCardView(makeJob(), "Мария", null, {});
     assert.equal(card.channel, "none");
   });
+  test("reportsViaGroup wins over dm even without a threads-table row (Kristina/Semeshina)", () => {
+    // She reports in the group (reportsViaGroup, computed from a recent group_topic message) but has
+    // no linked thread row and is dm-capable → must go to the GROUP, not DM.
+    const card = buildReportCardView(makeJob(), "Кристина", "kris", { dmCapable: true, hasGroupThread: false, reportsViaGroup: true });
+    assert.equal(card.channel, "group");
+  });
 });
 
 describe("stripLongDash — the model still slips «—» in despite the prompt ban", () => {

@@ -170,7 +170,10 @@ function resolveChannel(opts: { dmCapable?: boolean; hasGroupThread?: boolean; d
   windowOpen: boolean | null;
 } {
   const mention = opts.telegramUsername ? `@${opts.telegramUsername.replace(/^@/u, "")}` : opts.studentName;
-  if (opts.reportsViaGroup && opts.hasGroupThread) return { channel: "group", mention, windowOpen: null };
+  // reportsViaGroup already means "reachable in the group AND their latest message came there", so it
+  // no longer requires a threads-table row — a student can report in the group without a linked thread
+  // (that table is incomplete). Group send is a manual share sheet, so no thread id is needed to route.
+  if (opts.reportsViaGroup) return { channel: "group", mention, windowOpen: null };
   if (opts.dmCapable) return { channel: "dm", mention, windowOpen: opts.dmWindowOpen ?? false };
   if (opts.hasGroupThread) return { channel: "group", mention, windowOpen: null };
   return { channel: "none", mention: null, windowOpen: null };

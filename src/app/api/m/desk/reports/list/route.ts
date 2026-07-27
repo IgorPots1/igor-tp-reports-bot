@@ -67,15 +67,19 @@ export async function POST(request: NextRequest): Promise<Response> {
     const now = Date.now();
     const byId = new Map(
       students.map((s) => {
-        const hasGroupThread = (threadCounts.get(s.id) ?? 0) > 0;
+        const hasGroupThreadRow = (threadCounts.get(s.id) ?? 0) > 0;
         const rec = inboundRecency.get(s.id);
         const lastDm = rec?.lastBusinessDmAt ?? null;
         const lastGroup = rec?.lastGroupAt ?? null;
         // Business API can deliver only within 24h of the student's last DM message.
         const dmWindowOpen = lastDm !== null && now - new Date(lastDm).getTime() <= 24 * 60 * 60 * 1000;
-        // The student's conversation actually lives in the group when they have a group thread AND
-        // their latest message came via the group (or they have no business-DM history at all).
-        const reportsViaGroup = hasGroupThread && (lastDm === null || (lastGroup !== null && lastGroup > lastDm));
+        // Group is reachable if there's a linked thread OR the student actually sent a recent group
+        // message — the threads table is incomplete (Kristina/Semeshina report in the group with no
+        // thread row, so a thread-only check wrongly sent them to DM).
+        const groupReachable = hasGroupThreadRow || lastGroup !== null;
+        // Their conversation actually lives in the group when it's reachable AND their latest message
+        // came via the group (or they have no business-DM history at all).
+        const reportsViaGroup = groupReachable && (lastDm === null || (lastGroup !== null && lastGroup > lastDm));
         return [
           s.id,
           {
@@ -83,7 +87,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             telegramUsername: s.telegramUsername ?? null,
             // DM-reachable = chat linked AND delivery enabled (mirrors the send gates).
             dmCapable: Boolean(s.telegramChatId) && s.telegramDeliveryEnabled,
-            hasGroupThread,
+            hasGroupThread: groupReachable,
             dmWindowOpen,
             reportsViaGroup,
           },
