@@ -58,6 +58,28 @@ describe("feedback fact-check", () => {
     const r = validateFeedbackDraft({ draft: "Молодец 👍 пульс ровный", packet: basePacket({ hrTrusted: false }) });
     assert.equal(r.ok, false);
   });
+
+  // Block 2 — register: body must not drift to "ты" for a formal ("вы") student.
+  test("«ты»-pronoun body for register=vy → fail (Grushevskaya «Ты написала»)", () => {
+    const r = validateFeedbackDraft({ draft: "Здравствуйте! Длительная прошла хорошо. Ты написала «полегче»", packet: basePacket({ register: "vy", sex: "female" }) });
+    assert.equal(r.ok, false);
+  });
+  test("2sg verb «держишь» for register=vy → fail", () => {
+    const r = validateFeedbackDraft({ draft: "Здравствуйте! ты слишком быстро начинаешь", packet: basePacket({ register: "vy", sex: "female" }) });
+    assert.equal(r.ok, false);
+  });
+  test("proper «вы» body → ok", () => {
+    const r = validateFeedbackDraft({ draft: "Здравствуйте! Вы держались ровно, постарайтесь и дальше так", packet: basePacket({ register: "vy", sex: "female" }) });
+    assert.equal(r.ok, true);
+  });
+  test("workout-subject «прошла» is NOT a ты-marker for vy → ok", () => {
+    const r = validateFeedbackDraft({ draft: "Здравствуйте! Длительная прошла отлично, пульс держался ровно", packet: basePacket({ register: "vy", sex: "female" }) });
+    assert.equal(r.ok, true);
+  });
+  test("«ты» body for register=ty → ok (unchanged)", () => {
+    const r = validateFeedbackDraft({ draft: "Привет! ты держался ровно, молодец", packet: basePacket({ register: "ty", sex: "male" }) });
+    assert.equal(r.ok, true);
+  });
 });
 
 function plannerInput(current: Partial<PlannerDerivedMetrics>): ContextPacket {

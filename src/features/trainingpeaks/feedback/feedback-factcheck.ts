@@ -15,6 +15,11 @@ export type FeedbackFactCheckResult = { ok: true } | { ok: false; reason: string
 const MASC_MARKERS = ["пробежал", "сделал", "справился", "выполнил", "начинал", "заканчивал", "разложил", "поднял", "держал", "отбегал", "просел", "разогнал", "устал", "восстанавливал", "отработал", "прошёл", "поплыл", "шёл"];
 const FEM_MARKERS = ["пробежала", "сделала", "справилась", "выполнила", "начинала", "заканчивала", "разложила", "подняла", "держала", "отбегала", "просела", "разогналась", "устала", "восстанавливалась", "отработала", "прошла", "шла", "поплыла"];
 const PULSE_WORDS = ["пульс", "чсс"];
+// Unambiguous "ты"-address markers for the register check: the pronouns ты/тебя/тебе/тобой, the
+// possessive твой/твоя/твоё/твои/твоего/… (тво + й/я/и/е/ю/ё), and 2nd-person-singular verbs ending
+// -ешь/-ишь (держишь, пишешь). Cyrillic-safe boundaries (JS \b is ASCII-only). Deliberately NOT the
+// past-tense -ла number case ("дождалась") — it collides with workout-subject verbs ("прошла").
+const TY_ADDRESS_MARKERS = /(?<![а-яё])(?:ты|тебя|тебе|тобой|тво[йяиеюё][а-яё]*)(?![а-яё])|[а-яё](?:ешь|ишь)(?![а-яё])/iu;
 
 function extractNumbers(text: string): { paces: string[]; nums: number[] } {
   const paces = [...text.matchAll(/\d+:\d\d/g)].map((m) => m[0]);
@@ -53,6 +58,16 @@ export function validateFeedbackDraft(input: { draft: string; packet: FeedbackCo
   } else {
     const bad = MASC_MARKERS.filter(wordMatch);
     if (bad.length) return { ok: false, reason: `мужской род при sex=${packet.sex ?? "null(→жен)"} (${bad.join(", ")})` };
+  }
+
+  // Register must match a formal ("вы") student. The greeting is already forced deterministically
+  // (enforceGreeting), but the BODY drifts to "ты" ("Здравствуйте! …Ты написала…") and the prompt
+  // alone doesn't hold it. Flag only UNAMBIGUOUS ты-address: the pronouns ты/тебя/тебе/тобой/твой and
+  // 2nd-person-singular verbs on -ешь/-ишь (держишь, пишешь). The number/род case ("дождалась" vs
+  // "дождались") is NOT flagged here — its -ла singular collides with workout-subject verbs
+  // ("тренировка прошла", correct), so it can't be told apart deterministically; the prompt covers it.
+  if (packet.register === "vy" && TY_ADDRESS_MARKERS.test(low)) {
+    return { ok: false, reason: `обращение на «ты» при регистре «вы» (тело: ${(low.match(TY_ADDRESS_MARKERS) ?? []).slice(0, 1).join("")})` };
   }
 
   // C7: untrusted HR → the draft must not discuss pulse at all.
