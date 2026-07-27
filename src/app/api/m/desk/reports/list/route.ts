@@ -69,17 +69,26 @@ export async function POST(request: NextRequest): Promise<Response> {
       students.map((s) => {
         const hasGroupThreadRow = (threadCounts.get(s.id) ?? 0) > 0;
         const rec = inboundRecency.get(s.id);
-        const lastDm = rec?.lastBusinessDmAt ?? null;
-        const lastGroup = rec?.lastGroupAt ?? null;
+        const lastDm = rec?.lastBusinessDmAt ?? null; // any DM message — for the 24h window
+        const lastGroup = rec?.lastGroupAt ?? null; // any group message — for reachability
+        const lastReportGroup = rec?.lastReportGroupAt ?? null; // last REPORT in the group
+        const lastReportDm = rec?.lastReportDmAt ?? null; // last REPORT in a DM
         // Business API can deliver only within 24h of the student's last DM message.
         const dmWindowOpen = lastDm !== null && now - new Date(lastDm).getTime() <= 24 * 60 * 60 * 1000;
         // Group is reachable if there's a linked thread OR the student actually sent a recent group
         // message — the threads table is incomplete (Kristina/Semeshina report in the group with no
         // thread row, so a thread-only check wrongly sent them to DM).
         const groupReachable = hasGroupThreadRow || lastGroup !== null;
-        // Their conversation actually lives in the group when it's reachable AND their latest message
-        // came via the group (or they have no business-DM history at all).
-        const reportsViaGroup = groupReachable && (lastDm === null || (lastGroup !== null && lastGroup > lastDm));
+        // Channel by where the student REPORTS, not by their last message of any kind: a group report
+        // plus a later DM «спасибо»/question must keep the card in the group (Viktoria/Nadya were sent
+        // to DM because their last DM message was newer than their group REPORT). Fall back to last-
+        // message recency only when there are no reports in either channel yet.
+        const hasAnyReport = lastReportGroup !== null || lastReportDm !== null;
+        const reportsViaGroup =
+          groupReachable &&
+          (hasAnyReport
+            ? lastReportDm === null || (lastReportGroup !== null && lastReportGroup > lastReportDm)
+            : lastDm === null || (lastGroup !== null && lastGroup > lastDm));
         return [
           s.id,
           {

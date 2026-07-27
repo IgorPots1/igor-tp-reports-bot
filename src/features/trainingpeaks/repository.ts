@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
+import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import type { ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
 import {
   buildTelegramContextTextPreview,
@@ -3263,10 +3264,17 @@ export async function countTrainingPeaksStudentThreadsByStudentIds(
  * Drives the send-channel decision: the Business API 24h window (last business-DM ≤24h) and whether
  * the student actually converses in the group (their latest message is a group one). Last 45 days.
  */
+export type TrainingPeaksStudentInboundRecency = {
+  lastBusinessDmAt: string | null; // last DM message of ANY kind — drives the Business API 24h window
+  lastGroupAt: string | null; // last group message of ANY kind
+  lastReportGroupAt: string | null; // last REPORT (report_like / weak «готово») via the group
+  lastReportDmAt: string | null; // last REPORT via a DM
+};
+
 export async function getTrainingPeaksStudentInboundRecency(
   studentIds: string[]
-): Promise<Map<string, { lastBusinessDmAt: string | null; lastGroupAt: string | null }>> {
-  const out = new Map<string, { lastBusinessDmAt: string | null; lastGroupAt: string | null }>();
+): Promise<Map<string, TrainingPeaksStudentInboundRecency>> {
+  const out = new Map<string, TrainingPeaksStudentInboundRecency>();
   const ids = Array.from(new Set(studentIds.filter(Boolean)));
   if (ids.length === 0) return out;
 
@@ -3277,28 +3285,41 @@ export async function getTrainingPeaksStudentInboundRecency(
   // ACROSS the chunk, so a student whose latest DM/group message sat below that row
   // got null recency → wrong send-channel decision. Ordered newest-first (with `id`
   // as the stable tiebreaker) so the first business_dm / group_topic per student is
-  // still their most recent.
-  const rows = await fetchAllInChunks<{ student_id: string; observed_at: string; source_type: string | null }>(
+  // still their most recent. labels/text_preview are read too so the channel can be
+  // decided by where the student REPORTS, not by their last message of any kind (a
+  // group report + a later DM "спасибо" must not flip the card to DM).
+  const rows = await fetchAllInChunks<{ student_id: string; observed_at: string; source_type: string | null; labels: unknown; text_preview: string | null }>(
     ids,
     150,
     (part, from, to) =>
       withSupabaseNetworkRetry(() =>
         supabase
           .from("trainingpeaks_telegram_context_observations")
-          .select("student_id, observed_at, source_type")
+          .select("student_id, observed_at, source_type, labels, text_preview")
           .in("student_id", part)
           .gte("observed_at", since)
           .order("observed_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to)
-      ) as Promise<{ data: Array<{ student_id: string; observed_at: string; source_type: string | null }> | null; error: { message: string } | null }>,
+      ) as Promise<{ data: Array<{ student_id: string; observed_at: string; source_type: string | null; labels: unknown; text_preview: string | null }> | null; error: { message: string } | null }>,
     { label: "inbound-recency:observations" }
   );
+  const isReport = (labels: unknown, text: string | null): boolean => {
+    const list = Array.isArray(labels) ? labels.map(String) : [];
+    if (list.includes("report_like")) return true;
+    return detectWeakConfirmation(normalizeObserverText(text ?? ""));
+  };
   for (const row of rows) {
-    const cur = out.get(row.student_id) ?? { lastBusinessDmAt: null, lastGroupAt: null };
+    const cur = out.get(row.student_id) ?? { lastBusinessDmAt: null, lastGroupAt: null, lastReportGroupAt: null, lastReportDmAt: null };
     const src = row.source_type ?? "";
+    const dm = src === "business_dm" || src === "private_dm";
+    const grp = src === "group_topic";
     if (src === "business_dm" && !cur.lastBusinessDmAt) cur.lastBusinessDmAt = row.observed_at;
-    else if (src === "group_topic" && !cur.lastGroupAt) cur.lastGroupAt = row.observed_at;
+    if (grp && !cur.lastGroupAt) cur.lastGroupAt = row.observed_at;
+    if (isReport(row.labels, row.text_preview)) {
+      if (grp && !cur.lastReportGroupAt) cur.lastReportGroupAt = row.observed_at;
+      if (dm && !cur.lastReportDmAt) cur.lastReportDmAt = row.observed_at;
+    }
     out.set(row.student_id, cur);
   }
   return out;
