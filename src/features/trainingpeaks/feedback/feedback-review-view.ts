@@ -29,6 +29,11 @@ export type ReportCardView = {
   telegramUsername: string | null;
   workoutDate: string | null; // ISO 'YYYY-MM-DD' or null (blocked job with empty packet)
   dateLabel: string;
+  // Non-null when the workout is OLDER than the day the card surfaced (a late-synced report:
+  // the student wrote about a past run, so the card appears a day+ after it). «за вчерашний бег» /
+  // «за позавчерашний бег» / «бег 24 июля». null for a same-day card. Warns Igor not to read a late
+  // card as fresh (Slastnaya: real report, surfaced a day late — legit, just flagged).
+  lateSyncLabel: string | null;
   sessionTypeLabel: string;
   status: FeedbackJobStatus;
   // Text to show / edit: Igor's edit wins over the machine draft.
@@ -87,6 +92,23 @@ function formatRuDate(iso: string | null | undefined): string {
   const day = Number.parseInt(m[3], 10);
   const month = RU_MONTHS[Number.parseInt(m[2], 10) - 1] ?? "";
   return `${day} ${month}`;
+}
+
+// A report can surface a day+ after the run it's about (the student writes late, or the sweep
+// matches the report to yesterday's run). When the workout DATE precedes the day the card was
+// created, flag it so Igor doesn't mistake a late card for a fresh one. Compares calendar days in
+// UTC (both are day-granular anyway); a same-day or future workout returns null (normal fresh card).
+function lateSyncLabelFor(workoutDate: string | null, createdAtIso: string | null | undefined): string | null {
+  const wm = workoutDate?.match(/^(\d{4})-(\d{2})-(\d{2})/u);
+  const cm = createdAtIso?.match(/^(\d{4})-(\d{2})-(\d{2})/u);
+  if (!wm || !cm) return null;
+  const wd = Date.UTC(Number(wm[1]), Number(wm[2]) - 1, Number(wm[3]));
+  const cd = Date.UTC(Number(cm[1]), Number(cm[2]) - 1, Number(cm[3]));
+  const diffDays = Math.round((cd - wd) / 86_400_000);
+  if (diffDays <= 0) return null; // same day (or clock skew) — a normal fresh card
+  if (diffDays === 1) return "за вчерашний бег";
+  if (diffDays === 2) return "за позавчерашний бег";
+  return `бег ${formatRuDate(workoutDate)}`; // ≥3 days old — name the date outright
 }
 
 function sessionTypeLabel(sessionType: FeedbackContextPacket["sessionType"] | undefined): string {
@@ -203,6 +225,7 @@ export function buildReportCardView(
     telegramUsername,
     workoutDate,
     dateLabel: formatRuDate(workoutDate),
+    lateSyncLabel: lateSyncLabelFor(workoutDate, job.createdAt),
     sessionTypeLabel: sessionTypeLabel(packet?.sessionType),
     status: job.status,
     draftText: job.coachEditedText ?? job.draftText,

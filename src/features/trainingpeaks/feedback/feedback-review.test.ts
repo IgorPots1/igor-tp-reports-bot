@@ -135,6 +135,24 @@ describe("buildReportCardView", () => {
     assert.equal(card.coachEdited, true);
   });
 
+  // late-sync flag — a card about a run from a previous day (Slastnaya: legit late report).
+  test("late-sync: same-day card → no label", () => {
+    const card = buildReportCardView(makeJob({ createdAt: "2026-07-14T20:00:00Z" }), "Мария", null);
+    assert.equal(card.lateSyncLabel, null);
+  });
+  test("late-sync: run one day before card → «за вчерашний бег»", () => {
+    const card = buildReportCardView(makeJob({ createdAt: "2026-07-15T08:00:00Z" }), "Мария", null);
+    assert.equal(card.lateSyncLabel, "за вчерашний бег");
+  });
+  test("late-sync: two days before → «за позавчерашний бег»", () => {
+    const card = buildReportCardView(makeJob({ createdAt: "2026-07-16T08:00:00Z" }), "Мария", null);
+    assert.equal(card.lateSyncLabel, "за позавчерашний бег");
+  });
+  test("late-sync: ≥3 days before → names the date «бег 14 июля»", () => {
+    const card = buildReportCardView(makeJob({ createdAt: "2026-07-18T08:00:00Z" }), "Мария", null);
+    assert.equal(card.lateSyncLabel, "бег 14 июля");
+  });
+
   test("blocked job → attentionReason, NO draft text leaked, NO transparency", () => {
     const card = buildReportCardView(makeJob({ status: "blocked", draftText: null, blockedReason: "нет FIT-файла", contextPacket: {} as FeedbackContextPacket }), "Оля", null);
     assert.equal(card.draftText, null);

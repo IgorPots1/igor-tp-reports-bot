@@ -19,6 +19,7 @@ export type ReportCardModel = {
   telegramUsername: string | null;
   workoutDate: string | null;
   dateLabel: string;
+  lateSyncLabel: string | null; // «за вчерашний бег» when the run predates the card's day; else null
   sessionTypeLabel: string;
   status: "pending" | "generating" | "done" | "failed" | "blocked" | "sent" | "shared" | "shared_confirmed" | "dismissed";
   draftText: string | null;
@@ -77,6 +78,9 @@ const R = {
   meta: { flex: "0 0 auto", fontSize: 12.5, fontWeight: 700, color: C.faint, whiteSpace: "nowrap" } as CSSProperties,
   draft: { margin: "11px 0 0", padding: "13px 15px", borderRadius: 12, background: C.draftBg, border: `1px solid ${C.line}`, fontSize: 16.5, fontWeight: 500, lineHeight: 1.5, color: C.ink, whiteSpace: "pre-wrap" } as CSSProperties,
   editedTag: { fontSize: 11, fontWeight: 700, color: C.teal, marginLeft: 6 } as CSSProperties,
+  // Late-sync pill — a card about a run from a previous day. Amber so it reads as "look here",
+  // sits under the name/date row on its own line, full-width feel without stretching.
+  lateBadge: { display: "inline-block", marginTop: 5, padding: "3px 9px", borderRadius: 999, background: C.warnBg, border: `1px solid ${C.warnLine}`, color: C.warn, fontSize: 12, fontWeight: 800, letterSpacing: "0.01em" } as CSSProperties,
   area: { width: "100%", boxSizing: "border-box", margin: "11px 0 0", padding: "13px 15px", borderRadius: 12, border: `1.5px solid ${C.teal}`, fontSize: 16.5, fontWeight: 500, lineHeight: 1.5, color: C.ink, fontFamily: "inherit", background: "#fff", minHeight: 130, resize: "vertical" } as CSSProperties,
   why: { marginTop: 12, borderTop: `1px dashed ${C.line}`, paddingTop: 10 } as CSSProperties,
   whyHead: { fontSize: 11.5, fontWeight: 800, color: C.faint, letterSpacing: "0.04em", textTransform: "uppercase" as const, margin: "0 0 8px" } as CSSProperties,
@@ -148,21 +152,29 @@ function openStudentChat(username: string | null) {
   else window.open(url, "_blank");
 }
 
+function LateBadge(props: { label: string | null }) {
+  if (!props.label) return null;
+  return <div style={R.lateBadge}>🕐 {props.label}</div>;
+}
+
 function CardHead(props: { card: ReportCardModel }) {
   const c = props.card;
   const tappable = Boolean(c.telegramUsername);
   return (
-    <div style={R.top}>
-      <span
-        style={{ ...R.nameRow, cursor: tappable ? "pointer" : "default" }}
-        onClick={tappable ? () => openStudentChat(c.telegramUsername) : undefined}
-      >
-        <span style={R.name}>{c.studentName}</span>
-        {tappable ? <span style={R.chatDot}>💬</span> : null}
-        {c.coachEdited ? <span style={R.editedTag}>правлено</span> : null}
-      </span>
-      <span style={R.meta}>{[c.dateLabel, c.sessionTypeLabel].filter(Boolean).join(" · ")}</span>
-    </div>
+    <>
+      <div style={R.top}>
+        <span
+          style={{ ...R.nameRow, cursor: tappable ? "pointer" : "default" }}
+          onClick={tappable ? () => openStudentChat(c.telegramUsername) : undefined}
+        >
+          <span style={R.name}>{c.studentName}</span>
+          {tappable ? <span style={R.chatDot}>💬</span> : null}
+          {c.coachEdited ? <span style={R.editedTag}>правлено</span> : null}
+        </span>
+        <span style={R.meta}>{[c.dateLabel, c.sessionTypeLabel].filter(Boolean).join(" · ")}</span>
+      </div>
+      <LateBadge label={c.lateSyncLabel} />
+    </>
   );
 }
 
@@ -219,6 +231,7 @@ export function ReportQueueCard(props: {
         </span>
         <span style={R.meta}>{[c.dateLabel, c.sessionTypeLabel].filter(Boolean).join(" · ")}</span>
       </div>
+      <LateBadge label={c.lateSyncLabel} />
       {essence ? <p style={R.essence}>{essence}</p> : null}
       <div style={R.queueActions}>
         <button type="button" style={R.gen} disabled={generating} onClick={() => props.onGenerate(c)}>
