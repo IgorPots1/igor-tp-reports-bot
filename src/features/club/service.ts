@@ -124,6 +124,36 @@ async function loadClubStudents(): Promise<ClubStudent[]> {
   return mapClubStudentRows(data);
 }
 
+/**
+ * Perf (UI-polish item 6): one student by id with the same club fields as
+ * loadClubStudents — so the workout-detail owner + visibility check does not load the
+ * whole roster (~113 rows) just to find one row. Tolerant of the display-name column
+ * being absent (migration pending) via a retry, like loadClubStudents.
+ */
+async function loadClubStudentById(id: string): Promise<ClubStudent | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_students")
+      .select("id, student_name, club_display_name, is_active, is_service_account, club_visible")
+      .eq("id", id)
+      .maybeSingle()
+  );
+  if (error) {
+    const retry = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_students")
+        .select("id, student_name, is_active, is_service_account, club_visible")
+        .eq("id", id)
+        .maybeSingle()
+    );
+    if (retry.error || !retry.data) return null;
+    return mapClubStudentRows([retry.data])[0] ?? null;
+  }
+  if (!data) return null;
+  return mapClubStudentRows([data])[0] ?? null;
+}
+
 function mapClubStudentRows(data: unknown): ClubStudent[] {
   return (
     (data as Array<{
@@ -2399,9 +2429,13 @@ export async function getClubPublicProfile(input: {
   const from = addDaysIso(today, -C.CLUB_RECORDS_WINDOW_DAYS);
   const week = currentWeekRange();
   const month = currentMonthRange();
+  // Perf (UI-polish item 7): the member profile only ever uses THIS student's rows —
+  // every consumer below filters to targetStudentId. Loading the whole club's window
+  // (~20k rows) to then throw all-but-one away made the profile 6-12 s. Restrict the
+  // read to the target student (studentIds) — same result, a fraction of the rows.
   const [students, rows] = await Promise.all([
     loadClubStudents(),
-    loadClubWorkoutRows({ from, to: today }),
+    loadClubWorkoutRows({ from, to: today, studentIds: [input.targetStudentId] }),
   ]);
   const target = students.find((s) => s.id === input.targetStudentId);
   const isSelf = input.targetStudentId === input.currentStudentId;
@@ -2549,29 +2583,31 @@ export async function getClubWorkoutDetail(input: {
 
   // Authorization: the workout owner must be visible in the club, OR it is the
   // caller's own workout. Never expose a hidden student's workout via a guessed id.
-  const students = await loadClubStudents();
-  const owner = students.find((s) => s.id === row.studentId) ?? null;
+  // Perf (item 6): fetch only the owner row, not the whole roster.
+  const owner = await loadClubStudentById(row.studentId);
   const isSelf = row.studentId === input.currentStudentId;
   if (!isSelf && !(owner && isVisible(owner))) {
     return null;
   }
 
-  // Laps for THIS workout only (not a window). Ordered by lap index.
-  const { data: lapData } = await supabase
-    .from("trainingpeaks_workout_laps")
-    .select("lap_index, distance_m, timer_time_s, elapsed_time_s, pace_sec_per_km, avg_hr, max_hr, avg_cadence, total_ascent_m")
-    .eq("workout_cache_id", input.workoutId)
-    .order("lap_index", { ascending: true });
-  const lapRows = (lapData as DetailLapRow[] | null) ?? [];
-
-  const { data: derivedData } = await supabase
-    .from("trainingpeaks_workout_derived_metrics")
-    .select("avg_hr, hr_trusted, time_in_zones, zone_basis")
-    .eq("workout_cache_id", input.workoutId)
-    .maybeSingle();
-  const derived = (derivedData as { avg_hr: number | null; hr_trusted: boolean | null; time_in_zones: unknown; zone_basis: "threshold_hr" | "max_hr_pct" | null } | null) ?? null;
-
-  const track = (await loadTracksForWorkouts([input.workoutId])).get(input.workoutId) ?? null;
+  // Perf (item 6): the three per-workout reads (laps, derived metrics, track) are
+  // independent — fire them together instead of three sequential round-trips.
+  const [lapResult, derivedResult, trackMap] = await Promise.all([
+    supabase
+      .from("trainingpeaks_workout_laps")
+      .select("lap_index, distance_m, timer_time_s, elapsed_time_s, pace_sec_per_km, avg_hr, max_hr, avg_cadence, total_ascent_m")
+      .eq("workout_cache_id", input.workoutId)
+      .order("lap_index", { ascending: true }),
+    supabase
+      .from("trainingpeaks_workout_derived_metrics")
+      .select("avg_hr, hr_trusted, time_in_zones, zone_basis")
+      .eq("workout_cache_id", input.workoutId)
+      .maybeSingle(),
+    loadTracksForWorkouts([input.workoutId]),
+  ]);
+  const lapRows = (lapResult.data as DetailLapRow[] | null) ?? [];
+  const derived = (derivedResult.data as { avg_hr: number | null; hr_trusted: boolean | null; time_in_zones: unknown; zone_basis: "threshold_hr" | "max_hr_pct" | null } | null) ?? null;
+  const track = trackMap.get(input.workoutId) ?? null;
 
   const laps: ClubWorkoutLap[] = lapRows.map((l) => ({
     index: l.lap_index,
@@ -2605,7 +2641,10 @@ export async function getClubWorkoutDetail(input: {
     paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
     avgHr,
     maxHr: maxHrFromLaps != null ? Math.round(maxHrFromLaps) : null,
-    avgCadence,
+    // Device cadence is single-leg rpm; for RUNNING the readable metric is steps/min
+    // (both feet) = x2. Cycling cadence stays rpm. Verified against real lap data
+    // (median ~85 rpm, not ~170 spm) — Phase UI-polish item 2.
+    avgCadence: row.isRunning && avgCadence ? avgCadence * 2 : avgCadence,
     ascentM: ascentSum != null && ascentSum > 0 ? Math.round(ascentSum) : null,
     laps,
     zones,

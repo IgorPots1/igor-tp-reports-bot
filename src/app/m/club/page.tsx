@@ -651,15 +651,15 @@ export default function ClubPage() {
 // Shared bits
 // ---------------------------------------------------------------------------
 
-function Monogram({ text, tone, onClick }: { text: string; tone?: string; onClick?: () => void }) {
+function Monogram({ text, tone, onClick, size = 40 }: { text: string; tone?: string; onClick?: () => void; size?: number }) {
   return (
     <div
       onClick={onClick}
       style={{
-        width: 40, height: 40, borderRadius: 999,
+        width: size, height: size, borderRadius: 999,
         background: tone ?? C.cardAlt, color: tone ? C.accentInk : C.accent,
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontFamily: HEAD, fontWeight: 600, fontSize: 15, flexShrink: 0,
+        fontFamily: HEAD, fontWeight: 600, fontSize: Math.round(size * 0.375), flexShrink: 0,
         border: `1px solid ${C.line}`, cursor: onClick ? "pointer" : "default",
       }}
     >
@@ -684,8 +684,26 @@ function Empty({ text }: { text: string }) {
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink, fontWeight: 600 }}>{value}</div>
-      <div style={{ color: C.sub, fontSize: 12 }}>{label}</div>
+      <div style={{ fontFamily: HEAD, fontSize: 18, color: C.ink, fontWeight: 600 }}>{value}</div>
+      <div style={{ color: C.sub, fontSize: 11.5 }}>{label}</div>
+    </div>
+  );
+}
+// Club statistics tile (item 11): a boxed number + caption, laid out in a grid.
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={S.statTile}>
+      <div style={{ fontFamily: HEAD, fontSize: 22, fontWeight: 700, color: C.ink, lineHeight: 1.1 }}>{value}</div>
+      <div style={{ color: C.sub, fontSize: 11.5, marginTop: 3 }}>{label}</div>
+    </div>
+  );
+}
+// Primary metric (distance / time / pace) — large value with a small caption below.
+function MetricBig({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontFamily: HEAD, fontSize: 26, color: C.ink, fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
+      <div style={{ color: C.sub, fontSize: 12, marginTop: 2 }}>{label}</div>
     </div>
   );
 }
@@ -994,23 +1012,30 @@ function RecordsTab(props: {
 // ---------------------------------------------------------------------------
 
 function TopList({ title, rows, onOpenStudent }: { title: string; rows: ClubTopRow[]; onOpenStudent: (id: string) => void }) {
+  // Collapsed by default (item 10): the club tab opens compact; tap a top to expand it.
+  const [open, setOpen] = useState(false);
   return (
-    <div style={S.card}>
-      <div style={S.secHead}>{title}</div>
-      {rows.length === 0 ? (
-        <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Нет данных</div>
-      ) : (
-        rows.map((r, i) => (
-          <div key={r.studentId} style={S.rankRow(r.isCurrentStudent)}>
-            <span style={S.rankBadge(i)}>{i + 1}</span>
-            <Monogram text={r.monogram} onClick={() => onOpenStudent(r.studentId)} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={S.cardName}>{r.displayName}{r.isCurrentStudent ? " · ты" : ""}</div>
+    <div style={{ ...S.card, padding: 12 }}>
+      <button type="button" onClick={() => setOpen((o) => !o)} style={S.collapseHead}>
+        <span style={S.secHead}>{title}{rows.length > 0 ? ` · ${Math.min(rows.length, 10)}` : ""}</span>
+        <span style={{ ...S.chevron, transform: open ? "rotate(90deg)" : "rotate(0deg)" }} />
+      </button>
+      {open ? (
+        rows.length === 0 ? (
+          <div style={{ color: C.sub, fontSize: 13, marginTop: 8 }}>Нет данных</div>
+        ) : (
+          rows.slice(0, 10).map((r, i) => (
+            <div key={r.studentId} style={S.rankRowSm(r.isCurrentStudent)}>
+              <span style={S.rankBadgeSm(i)}>{i + 1}</span>
+              <Monogram text={r.monogram} size={26} onClick={() => onOpenStudent(r.studentId)} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={S.cardNameSm}>{r.displayName}{r.isCurrentStudent ? " · ты" : ""}</div>
+              </div>
+              <span style={S.timeSm}>{r.value}</span>
             </div>
-            <span style={S.timeBig}>{r.value}</span>
-          </div>
-        ))
-      )}
+          ))
+        )
+      ) : null}
     </div>
   );
 }
@@ -1021,15 +1046,15 @@ function ClubTab(props: { status: Status; data: { stats: ClubStatisticsView; top
   const { stats, tops } = props.data;
   return (
     <div>
-      <div style={S.card}>
+      <div style={{ ...S.card, padding: 12 }}>
         <div style={S.secHead}>Статистика клуба · неделя</div>
-        <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
-          <Metric label="км клуба" value={fmtKm(stats.clubKm)} />
-          <Metric label="активных" value={String(stats.activeCount)} />
-          <Metric label="тренировок" value={String(stats.workoutsCount)} />
-          <Metric label="средн. выполнение" value={pct(stats.avgCompletionPct)} />
+        <div style={S.statTiles}>
+          <StatTile label="км клуба" value={fmtKm(stats.clubKm)} />
+          <StatTile label="активных" value={String(stats.activeCount)} />
+          <StatTile label="тренировок" value={String(stats.workoutsCount)} />
+          <StatTile label="выполнение" value={pct(stats.avgCompletionPct)} />
         </div>
-        <div style={S.cardMeta}>
+        <div style={{ ...S.cardMeta, marginTop: 10 }}>
           {stats.weekLabel}
           {stats.weekOverWeekPct !== null ? ` · неделя к неделе ${stats.weekOverWeekPct > 0 ? "+" : ""}${stats.weekOverWeekPct}%` : ""}
         </div>
@@ -1373,11 +1398,6 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
     };
   }, [workoutId, initData]);
 
-  const metric = (label: string, value: string | null) =>
-    value ? <Metric key={label} label={label} value={value} /> : null;
-
-  const zoneTotal = view?.zones.reduce((a, z) => a + z.seconds, 0) ?? 0;
-
   return (
     <div style={S.overlay} onClick={onClose}>
       <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
@@ -1406,20 +1426,24 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
             ) : null}
 
             <div style={S.card}>
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", rowGap: 12 }}>
-                {metric("дистанция", view.distanceKm ? fmtKm(view.distanceKm) : null)}
-                {metric("время", fmtDuration(view.durationSeconds))}
-                {metric("темп", fmtPace(view.paceSecPerKm))}
-                {metric("ср. пульс", view.avgHr ? `${view.avgHr}` : null)}
-                {metric("макс. пульс", view.maxHr ? `${view.maxHr}` : null)}
-                {metric("каденс", view.avgCadence ? `${view.avgCadence}` : null)}
-                {metric("набор", view.ascentM ? `${view.ascentM} м` : null)}
+              <div style={S.metricPrimary}>
+                <MetricBig label="дистанция" value={view.distanceKm ? fmtKm(view.distanceKm) : "-"} />
+                <MetricBig label="время" value={fmtDuration(view.durationSeconds) ?? "-"} />
+                <MetricBig label="темп" value={fmtPace(view.paceSecPerKm) ?? "-"} />
               </div>
+              {view.avgHr || view.maxHr || view.avgCadence || view.ascentM ? (
+                <div style={S.metricSecondary}>
+                  {view.avgHr ? <Metric label="ср. пульс" value={`${view.avgHr}`} /> : null}
+                  {view.maxHr ? <Metric label="макс. пульс" value={`${view.maxHr}`} /> : null}
+                  {view.avgCadence ? <Metric label={view.isRunning ? "каденс, шаг/мин" : "каденс, об/мин"} value={`${view.avgCadence}`} /> : null}
+                  {view.ascentM ? <Metric label="набор" value={`${view.ascentM} м`} /> : null}
+                </div>
+              ) : null}
             </div>
 
             {view.laps.length > 0 ? (
               <div style={S.card}>
-                <div style={S.secHead}>Разбивка по лапам</div>
+                <div style={S.secHead}>Разбивка по кругам</div>
                 <div style={{ marginTop: 8 }}>
                   {view.laps.map((l) => (
                     <div key={l.index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: l.index > 1 ? `1px solid ${C.line}` : "none" }}>
@@ -1432,38 +1456,15 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
                   ))}
                 </div>
                 <div style={{ marginTop: 12 }}>
-                  <div style={S.cardMeta}>Темп по лапам</div>
+                  <div style={S.cardMeta}>Темп по кругам</div>
                   <LapBars values={view.laps.map((l) => (l.paceSecPerKm ? -l.paceSecPerKm : null))} />
                 </div>
                 {view.laps.some((l) => l.avgHr) ? (
                   <div style={{ marginTop: 10 }}>
-                    <div style={S.cardMeta}>Пульс по лапам</div>
+                    <div style={S.cardMeta}>Пульс по кругам</div>
                     <LapBars values={view.laps.map((l) => l.avgHr)} />
                   </div>
                 ) : null}
-                {view.laps.some((l) => l.avgCadence) ? (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={S.cardMeta}>Каденс по лапам</div>
-                    <LapBars values={view.laps.map((l) => l.avgCadence)} />
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {view.zones.length > 0 ? (
-              <div style={S.card}>
-                <div style={S.secHead}>Зоны пульса{view.zoneBasisLabel ? ` · ${view.zoneBasisLabel}` : ""}</div>
-                <div style={{ marginTop: 8 }}>
-                  {view.zones.map((z) => (
-                    <div key={z.zone} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                      <span style={{ width: 60, color: C.sub, fontSize: 13 }}>{z.label}</span>
-                      <div style={{ flex: 1, height: 8, background: C.cardAlt, borderRadius: 999, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${zoneTotal > 0 ? Math.round((z.seconds / zoneTotal) * 100) : 0}%`, background: C.accent }} />
-                      </div>
-                      <span style={{ width: 52, textAlign: "right", color: C.ink, fontSize: 12 }}>{fmtDuration(z.seconds)}</span>
-                    </div>
-                  ))}
-                </div>
               </div>
             ) : null}
 
@@ -2156,6 +2157,16 @@ const S = {
   formCard: { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12 } as React.CSSProperties,
   input: { display: "block", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginBottom: 8, borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, fontSize: 14, fontFamily: BODY } as React.CSSProperties,
   saveBtn: { width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 14, cursor: "pointer" } as React.CSSProperties,
+  metricPrimary: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 } as React.CSSProperties,
+  metricSecondary: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(78px, 1fr))", gap: 12, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.line}` } as React.CSSProperties,
+  statTiles: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginTop: 10 } as React.CSSProperties,
+  statTile: { background: C.cardAlt, borderRadius: 10, padding: "10px 12px", border: `1px solid ${C.line}` } as React.CSSProperties,
+  collapseHead: { display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", background: "transparent", border: "none", padding: 0, cursor: "pointer" } as React.CSSProperties,
+  chevron: { width: 7, height: 7, borderRight: `2px solid ${C.sub}`, borderBottom: `2px solid ${C.sub}`, transform: "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0, marginRight: 3 } as React.CSSProperties,
+  rankRowSm: (me: boolean): React.CSSProperties => ({ display: "flex", alignItems: "center", gap: 8, padding: "6px 6px", marginTop: 4, borderRadius: 8, background: me ? "rgba(245,197,24,0.08)" : "transparent", border: me ? `1px solid ${C.accent}` : "1px solid transparent" }),
+  rankBadgeSm: (i: number): React.CSSProperties => ({ width: 18, textAlign: "center", fontFamily: HEAD, fontWeight: 700, fontSize: 13, color: i === 0 ? C.gold : i === 1 ? C.silver : i === 2 ? C.bronze : C.faint, flexShrink: 0 }),
+  cardNameSm: { fontSize: 13, fontWeight: 600, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } as React.CSSProperties,
+  timeSm: { fontFamily: HEAD, fontSize: 13, fontWeight: 600, color: C.ink, flexShrink: 0 } as React.CSSProperties,
   smallPrimaryBtn: { padding: "7px 16px", borderRadius: 999, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 13, cursor: "pointer" } as React.CSSProperties,
   smallBtn: { padding: "7px 14px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.sub, fontFamily: HEAD, fontWeight: 600, fontSize: 13, cursor: "pointer" } as React.CSSProperties,
   linkAction: { fontSize: 12.5, color: C.sub, cursor: "pointer", textDecoration: "underline" } as React.CSSProperties,
