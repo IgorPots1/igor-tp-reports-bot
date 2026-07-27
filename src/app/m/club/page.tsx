@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { ClubIcon, type ClubIconName } from "@/features/club/icons";
 import type {
   ClubBillingView,
   ClubCalendarEntry,
@@ -27,12 +28,12 @@ import type {
 } from "@/features/club/types";
 
 type CabinetSection = "races" | "dayoff" | "wishes" | "billing" | "prediction";
-const CABINET_META: Record<CabinetSection, { icon: string; title: string; path: string }> = {
-  races: { icon: "🏁", title: "Старты", path: "/api/m/club/races" },
-  dayoff: { icon: "🛌", title: "Выходные", path: "/api/m/club/dayoff" },
-  wishes: { icon: "💬", title: "Пожелания", path: "/api/m/club/wishes" },
-  billing: { icon: "💳", title: "Оплата", path: "/api/m/club/billing" },
-  prediction: { icon: "🎯", title: "Прогноз старта", path: "/api/m/club/prediction" },
+const CABINET_META: Record<CabinetSection, { icon: ClubIconName; title: string; path: string }> = {
+  races: { icon: "flag", title: "Старты", path: "/api/m/club/races" },
+  dayoff: { icon: "moon", title: "Выходные", path: "/api/m/club/dayoff" },
+  wishes: { icon: "messageCircle", title: "Пожелания", path: "/api/m/club/wishes" },
+  billing: { icon: "creditCard", title: "Оплата", path: "/api/m/club/billing" },
+  prediction: { icon: "target", title: "Прогноз старта", path: "/api/m/club/prediction" },
 };
 
 // --- Telegram WebApp handle (isolated; does not clash with /m/desk or /m/n) ---
@@ -194,12 +195,12 @@ const BODY = "var(--font-montserrat), system-ui, sans-serif";
 
 type Tab = "profile" | "feed" | "challenge" | "records" | "club";
 // Phase 3.3 — Profile first, then Лента, Челлендж, Результаты, Клуб.
-const TABS: Array<{ key: Tab; icon: string; label: string }> = [
-  { key: "profile", icon: "👤", label: "Профиль" },
-  { key: "feed", icon: "📻", label: "Лента" },
-  { key: "challenge", icon: "🔥", label: "Челлендж" },
-  { key: "records", icon: "🏅", label: "Результаты" },
-  { key: "club", icon: "📊", label: "Клуб" },
+const TABS: Array<{ key: Tab; icon: ClubIconName; label: string }> = [
+  { key: "profile", icon: "user", label: "Профиль" },
+  { key: "feed", icon: "newspaper", label: "Лента" },
+  { key: "challenge", icon: "flame", label: "Челлендж" },
+  { key: "records", icon: "medal", label: "Результаты" },
+  { key: "club", icon: "users", label: "Клуб" },
 ];
 
 type Status = "idle" | "loading" | "ready" | "error";
@@ -637,7 +638,7 @@ export default function ClubPage() {
           const active = t.key === tab;
           return (
             <button key={t.key} style={S.tab(active)} onClick={() => setTab(t.key)} type="button">
-              <span style={{ fontSize: 19, lineHeight: "19px" }}>{t.icon}</span>
+              <ClubIcon name={t.icon} size={21} strokeWidth={active ? 2.4 : 2} />
               <span style={{ fontSize: 10.5, fontWeight: active ? 700 : 500 }}>{t.label}</span>
             </button>
           );
@@ -834,8 +835,8 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
         <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>Тапни, чтобы открыть тренировку →</div>
       </div>
       <div style={{ ...S.reactRow, opacity: item.reactionsEnabled ? 1 : 0.35 }} aria-hidden={!item.reactionsEnabled}>
-        <span style={{ ...S.reactChip, color: reacted.like ? C.accent : C.sub }} onClick={() => react("like")}>👍 {countOf("like")}</span>
-        <span style={{ ...S.reactChip, color: reacted.fire ? C.accent : C.sub }} onClick={() => react("fire")}>🔥 {countOf("fire")}</span>
+        <span style={{ ...S.reactChip, display: "inline-flex", alignItems: "center", gap: 5, color: reacted.like ? C.accent : C.sub }} onClick={() => react("like")}><ClubIcon name="thumbsUp" size={15} /> {countOf("like")}</span>
+        <span style={{ ...S.reactChip, display: "inline-flex", alignItems: "center", gap: 5, color: reacted.fire ? C.accent : C.sub }} onClick={() => react("fire")}><ClubIcon name="flame" size={15} /> {countOf("fire")}</span>
       </div>
     </div>
   );
@@ -964,7 +965,7 @@ function RecordsTab(props: {
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>🏁 Гонки · {clubTop?.distanceLabel}</div>
+        <div style={{ ...S.secHead, display: "flex", alignItems: "center", gap: 6 }}><ClubIcon name="flag" size={14} />Гонки · {clubTop?.distanceLabel}</div>
         {mineRace ? (
           recordBlock(mineRace, "Подтверждённая гонка")
         ) : (
@@ -973,7 +974,7 @@ function RecordsTab(props: {
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>🏃 Лучшие отрезки тренировок · {clubTop?.distanceLabel}</div>
+        <div style={{ ...S.secHead, display: "flex", alignItems: "center", gap: 6 }}><ClubIcon name="footprints" size={14} />Лучшие отрезки тренировок · {clubTop?.distanceLabel}</div>
         {mineTraining ? (
           <>
             {recordBlock(mineTraining, "Быстрый отрезок из тренировки")}
@@ -1093,6 +1094,20 @@ function VolumeChart({ series }: { series: ClubVolumePoint[] }) {
   );
 }
 
+// One entry card in «Мои разделы» / «Кабинет»: icon badge + title + subtitle + chevron.
+function SectionCard({ icon, title, subtitle, onClick }: { icon: ClubIconName; title: string; subtitle: string; onClick: () => void }) {
+  return (
+    <button type="button" style={S.sectionCard} onClick={onClick}>
+      <span style={S.sectionIconWrap}><ClubIcon name={icon} size={20} color={C.accent} /></span>
+      <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+        <span style={{ display: "block", fontFamily: HEAD, fontSize: 15, fontWeight: 600, color: C.ink }}>{title}</span>
+        <span style={{ display: "block", fontSize: 12, color: C.sub, whiteSpace: "normal" }}>{subtitle}</span>
+      </span>
+      <ClubIcon name="chevronRight" size={18} color={C.faint} />
+    </button>
+  );
+}
+
 function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string; onOpenSection: (s: CabinetSection) => void; onOpenCalendar: () => void; theme: Theme; onTheme: (t: Theme) => void }) {
   const [privacyMsg, setPrivacyMsg] = useState<string | null>(null);
   const [visible, setVisibleState] = useState<boolean | null>(null);
@@ -1183,7 +1198,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
             return (
               <div key={a.code} style={{ padding: "10px 0", borderTop: `1px solid ${C.line}` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 16 }}>{a.earned ? "🏅" : "🔒"}</span>
+                  <span style={{ display: "inline-flex" }}><ClubIcon name={a.earned ? "medal" : "lock"} size={16} color={a.earned ? C.accent : C.faint} /></span>
                   <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: a.earned ? C.ink : C.sub }}>{a.title}</span>
                   {a.progress ? <span style={{ fontFamily: HEAD, fontSize: 13, color: a.earned ? C.accent : C.sub }}>{a.progress.current}/{a.progress.target} {a.progress.unit}</span> : (a.earned ? <span style={{ fontSize: 12, color: C.good }}>получено</span> : null)}
                 </div>
@@ -1206,7 +1221,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
         ) : (
           v.records.map((r) => (
             <div key={`${r.distanceKey}-${r.recordType}`} style={S.recRow}>
-              <span style={{ fontSize: 13, width: 18 }}>{r.recordType === "race" ? "🏁" : "🏃"}</span>
+              <span style={{ width: 18, display: "inline-flex" }}><ClubIcon name={r.recordType === "race" ? "flag" : "footprints"} size={13} color={C.sub} /></span>
               <span style={{ fontFamily: HEAD, fontSize: 15, color: C.ink, width: 64 }}>{r.distanceLabel}</span>
               <span style={{ flex: 1, fontFamily: HEAD, fontSize: 17, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
               <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>
@@ -1216,28 +1231,28 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>Календарь на 45 дней</div>
-        <button style={{ ...S.saveBtn, marginTop: 10 }} type="button" onClick={props.onOpenCalendar}>📅 Открыть календарь</button>
-        <div style={S.hint}>Отметь выходные, добавь забеги, пожелания по типу тренировки и заметки на конкретные дни. Всё уйдёт тренеру на подтверждение - в TrainingPeaks ничего не пишется автоматически.</div>
+        <div style={S.secHead}>Мои разделы</div>
+        <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+          <SectionCard icon="flag" title="Старты" subtitle="Добавить забег и посмотреть свои" onClick={() => props.onOpenSection("races")} />
+          <SectionCard icon="calendar" title="Расписание" subtitle="Дни без тренировок и пожелания по типу" onClick={props.onOpenCalendar} />
+          <SectionCard icon="messageCircle" title="Пожелания" subtitle="Свободный фидбек тренеру" onClick={() => props.onOpenSection("wishes")} />
+        </div>
+        <div style={S.hint}>Всё уходит тренеру на подтверждение - в TrainingPeaks ничего не пишется автоматически.</div>
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>Мои разделы</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-          {(Object.keys(CABINET_META) as CabinetSection[]).map((key) => (
-            <button key={key} style={S.sectionBtn} type="button" onClick={() => props.onOpenSection(key)}>
-              <span style={{ fontSize: 16 }}>{CABINET_META[key].icon}</span>
-              <span>{CABINET_META[key].title}</span>
-            </button>
-          ))}
+        <div style={S.secHead}>Кабинет</div>
+        <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+          <SectionCard icon="target" title="Прогноз старта" subtitle="Ожидаемый результат на ближайший старт" onClick={() => props.onOpenSection("prediction")} />
+          <SectionCard icon="creditCard" title="Оплата" subtitle="Статус, история и оплата" onClick={() => props.onOpenSection("billing")} />
         </div>
       </div>
 
       <div style={S.card}>
         <div style={S.secHead}>Тема</div>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          <button style={S.pill(props.theme === "light")} type="button" onClick={() => props.onTheme("light")}>☀️ Светлая</button>
-          <button style={S.pill(props.theme === "dark")} type="button" onClick={() => props.onTheme("dark")}>🌙 Тёмная</button>
+          <button style={S.pill(props.theme === "light")} type="button" onClick={() => props.onTheme("light")}><span style={S.pillInner}><ClubIcon name="sun" size={16} />Светлая</span></button>
+          <button style={S.pill(props.theme === "dark")} type="button" onClick={() => props.onTheme("dark")}><span style={S.pillInner}><ClubIcon name="moon" size={16} />Тёмная</span></button>
         </div>
       </div>
 
@@ -1299,7 +1314,7 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
       <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <span style={{ fontFamily: HEAD, fontSize: 18, color: C.ink }}>Профиль</span>
-          <button style={S.closeBtn} onClick={onClose} type="button">✕</button>
+          <button style={S.closeBtn} onClick={onClose} type="button" aria-label="Закрыть"><ClubIcon name="x" size={15} /></button>
         </div>
         {status === "loading" ? <Loading /> : null}
         {status === "error" ? <Empty text="Не удалось загрузить профиль" /> : null}
@@ -1328,7 +1343,7 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
                   <div style={S.secHead}>Личные результаты</div>
                   {view.records.map((r) => (
                     <div key={`${r.distanceKey}-${r.recordType}`} style={S.recRow}>
-                      <span style={{ fontSize: 12, width: 16 }}>{r.recordType === "race" ? "🏁" : "🏃"}</span>
+                      <span style={{ width: 16, display: "inline-flex" }}><ClubIcon name={r.recordType === "race" ? "flag" : "footprints"} size={12} color={C.sub} /></span>
                       <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink, width: 60 }}>{r.distanceLabel}</span>
                       <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
                       <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>
@@ -1403,7 +1418,7 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
       <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <span style={{ fontFamily: HEAD, fontSize: 18, color: C.ink }}>Тренировка</span>
-          <button style={S.closeBtn} onClick={onClose} type="button">✕</button>
+          <button style={S.closeBtn} onClick={onClose} type="button" aria-label="Закрыть"><ClubIcon name="x" size={15} /></button>
         </div>
         {status === "loading" ? <Loading /> : null}
         {status === "error" ? <Empty text="Тренировка недоступна" /> : null}
@@ -1593,13 +1608,13 @@ function WorkoutComments({ workoutId, initData }: { workoutId: string; initData:
 const PREF_LABEL: Record<string, string> = { long: "Длительная", intervals: "Интервальная", rest: "Отдых" };
 const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
-function entryMarks(entries: ClubCalendarEntry[]): string {
-  const marks: string[] = [];
-  if (entries.some((e) => e.kind === "day_off")) marks.push("🛌");
-  if (entries.some((e) => e.kind === "preference")) marks.push("🎯");
-  if (entries.some((e) => e.kind === "note")) marks.push("📝");
-  if (entries.some((e) => e.kind === "race")) marks.push("🏁");
-  return marks.join("");
+function entryMarks(entries: ClubCalendarEntry[]): ClubIconName[] {
+  const marks: ClubIconName[] = [];
+  if (entries.some((e) => e.kind === "day_off")) marks.push("moon");
+  if (entries.some((e) => e.kind === "preference")) marks.push("target");
+  if (entries.some((e) => e.kind === "note")) marks.push("stickyNote");
+  if (entries.some((e) => e.kind === "race")) marks.push("flag");
+  return marks;
 }
 
 function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () => void }) {
@@ -1668,8 +1683,8 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
     <div style={S.overlay} onClick={onClose}>
       <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <span style={{ fontFamily: HEAD, fontSize: 18, color: C.ink }}>📅 Календарь · 45 дней</span>
-          <button style={S.closeBtn} onClick={onClose} type="button">✕</button>
+          <span style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: HEAD, fontSize: 18, color: C.ink }}><ClubIcon name="calendar" size={19} />Расписание · 45 дней</span>
+          <button style={S.closeBtn} onClick={onClose} type="button" aria-label="Закрыть"><ClubIcon name="x" size={15} /></button>
         </div>
         {status === "loading" ? <Loading /> : null}
         {status === "error" ? <Empty text={msg ?? "Не удалось загрузить"} /> : null}
@@ -1696,7 +1711,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                     }}
                   >
                     <span style={{ fontSize: 13, fontFamily: HEAD, fontWeight: d.isToday ? 700 : 500, color: d.isToday ? C.accent : C.ink }}>{d.date.slice(8)}</span>
-                    <span style={{ fontSize: 9, height: 10, lineHeight: "10px" }}>{marks}</span>
+                    <span style={{ display: "flex", gap: 1, height: 10, alignItems: "center", color: C.sub }}>{marks.map((m, i) => <ClubIcon key={i} name={m} size={9} />)}</span>
                   </button>
                 );
               })}
@@ -1710,14 +1725,14 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                     <button
                       key={`${sug.date}-${i}`}
                       type="button"
-                      style={S.sectionBtn}
+                      style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }}
                       onClick={() => {
                         setSelected(sug.date);
                         setForm({ rname: sug.title, rdist: sug.distanceLabel ?? "" });
                         setMsg(null);
                       }}
                     >
-                      🏁 {sug.title} · {sug.dateLabel}{sug.distanceLabel ? ` · ${sug.distanceLabel}` : ""}
+                      <ClubIcon name="flag" size={14} /> {sug.title} · {sug.dateLabel}{sug.distanceLabel ? ` · ${sug.distanceLabel}` : ""}
                     </button>
                   ))}
                 </div>
@@ -1733,17 +1748,20 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                   <div style={{ marginBottom: 10 }}>
                     {selDay.entries.map((e) => (
                       <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: `1px solid ${C.line}` }}>
-                        <span style={{ flex: 1, fontSize: 13, color: C.ink }}>
-                          {e.kind === "day_off" ? "🛌 Выходной" : null}
-                          {e.kind === "preference" ? `🎯 ${PREF_LABEL[e.preferredType ?? ""] ?? e.preferredType}` : null}
-                          {e.kind === "note" ? `📝 ${e.note}` : null}
-                          {e.kind === "race" ? `🏁 ${e.raceName}${e.raceCity ? ` · ${e.raceCity}` : ""}${e.raceDistanceLabel ? ` · ${e.raceDistanceLabel}` : ""}` : null}
+                        <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.ink }}>
+                          <ClubIcon name={e.kind === "day_off" ? "moon" : e.kind === "preference" ? "target" : e.kind === "note" ? "stickyNote" : "flag"} size={13} color={C.sub} />
+                          <span style={{ minWidth: 0 }}>
+                            {e.kind === "day_off" ? "Выходной" : null}
+                            {e.kind === "preference" ? (PREF_LABEL[e.preferredType ?? ""] ?? e.preferredType) : null}
+                            {e.kind === "note" ? e.note : null}
+                            {e.kind === "race" ? `${e.raceName}${e.raceCity ? ` · ${e.raceCity}` : ""}${e.raceDistanceLabel ? ` · ${e.raceDistanceLabel}` : ""}` : null}
+                          </span>
                         </span>
                         <span style={{ fontSize: 10.5, color: e.status === "approved" || e.status === "applied" ? C.good : C.sub }}>
                           {e.status === "pending" ? "на подтв." : e.status === "approved" ? "подтв." : e.status === "applied" ? "в TP" : "отклонён"}
                         </span>
                         {e.status === "pending" ? (
-                          <button type="button" style={{ ...S.reactChip, cursor: "pointer" }} onClick={() => remove(e.id)}>✕</button>
+                          <button type="button" style={{ ...S.reactChip, cursor: "pointer", display: "inline-flex", alignItems: "center" }} onClick={() => remove(e.id)} aria-label="Удалить"><ClubIcon name="x" size={13} /></button>
                         ) : null}
                       </div>
                     ))}
@@ -1751,9 +1769,9 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                 ) : null}
 
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                  <button type="button" style={S.sectionBtn} disabled={saving} onClick={() => create({ date: selDay.date, kind: "day_off" })}>🛌 Выходной</button>
+                  <button type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "day_off" })}><ClubIcon name="moon" size={14} />Выходной</button>
                   {(["long", "intervals", "rest"] as const).map((p) => (
-                    <button key={p} type="button" style={S.sectionBtn} disabled={saving} onClick={() => create({ date: selDay.date, kind: "preference", preferredType: p })}>🎯 {PREF_LABEL[p]}</button>
+                    <button key={p} type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "preference", preferredType: p })}><ClubIcon name="target" size={14} />{PREF_LABEL[p]}</button>
                   ))}
                 </div>
 
@@ -1877,8 +1895,8 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
     <div style={S.overlay} onClick={onClose}>
       <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <span style={{ fontFamily: HEAD, fontSize: 18, color: C.ink }}>{meta.icon} {meta.title}</span>
-          <button style={S.closeBtn} onClick={onClose} type="button">✕</button>
+          <span style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: HEAD, fontSize: 18, color: C.ink }}><ClubIcon name={meta.icon} size={20} />{meta.title}</span>
+          <button style={S.closeBtn} onClick={onClose} type="button" aria-label="Закрыть"><ClubIcon name="x" size={16} /></button>
         </div>
         {status === "loading" ? <Loading /> : null}
         {status === "error" ? <Empty text="Не удалось загрузить" /> : null}
@@ -2088,7 +2106,7 @@ function NoInitDataScreen() {
   return (
     <div style={{ ...S.overlay, alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div style={{ ...S.card, maxWidth: 340, width: "100%", textAlign: "center", marginBottom: 0 }}>
-        <div style={{ fontSize: 40, marginBottom: 10 }}>📲</div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10, color: C.accent }}><ClubIcon name="smartphone" size={40} /></div>
         <div style={{ fontFamily: HEAD, fontSize: 22, color: C.ink, marginBottom: 10 }}>Открой внутри Telegram</div>
         <div style={{ color: C.sub, fontSize: 14, lineHeight: 1.5 }}>
           Клуб открывается только по ссылке <b style={{ color: C.accent }}>t.me/igorp_coach_bot/XOclub</b> в приложении Telegram (не в браузере). Нажми ссылку от тренера ещё раз.
@@ -2154,6 +2172,9 @@ const S = {
   sheet: { background: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderTop: `1px solid ${C.line}`, padding: 16, width: "100%", maxHeight: "82vh", overflowY: "auto", paddingBottom: "calc(16px + env(safe-area-inset-bottom))" } as React.CSSProperties,
   closeBtn: { background: C.cardAlt, border: `1px solid ${C.line}`, color: C.sub, borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontSize: 14 } as React.CSSProperties,
   sectionBtn: { display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.ink, fontSize: 13, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" } as React.CSSProperties,
+  sectionCard: { display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 14px", borderRadius: 12, border: `1px solid ${C.line}`, background: C.cardAlt, cursor: "pointer" } as React.CSSProperties,
+  sectionIconWrap: { display: "flex", alignItems: "center", justifyContent: "center", width: 38, height: 38, borderRadius: 10, background: "rgba(245,197,24,0.10)", border: `1px solid ${C.line}`, flexShrink: 0 } as React.CSSProperties,
+  pillInner: { display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "center" } as React.CSSProperties,
   formCard: { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12 } as React.CSSProperties,
   input: { display: "block", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginBottom: 8, borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, fontSize: 14, fontFamily: BODY } as React.CSSProperties,
   saveBtn: { width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 14, cursor: "pointer" } as React.CSSProperties,

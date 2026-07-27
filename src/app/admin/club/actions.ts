@@ -57,6 +57,21 @@ function parseHms(v: string): number | null {
 
 // ── 1. Records revision ──────────────────────────────────────────────────────
 
+export async function applyRaceFillRecoveryAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const { applyRaceFillRecovery } = await import("@/features/club-admin/repository");
+  let res = { written: 0, skipped: 0 };
+  try {
+    res = await applyRaceFillRecovery(COACH);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", `Восстановлено гонок: ${res.written} (пропущено уже существующих: ${res.skipped}). Откат в «Ревизии результатов».`));
+}
+
 export async function confirmRaceResultAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);

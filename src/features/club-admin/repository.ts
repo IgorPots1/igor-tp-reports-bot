@@ -660,6 +660,96 @@ export async function getRaceFillSuggestions(studentId: string): Promise<RaceFil
 }
 
 // ---------------------------------------------------------------------------
+// 2f. Race-fill recovery (Phase F continuation). Recover races the reconstruction
+// hid, by writing the workout SUMMARY time as a coach_confirmed record. Coach-triggered
+// (admin button), idempotent (never overwrites an existing coach record), reversible.
+// Also lists the events that stay unreachable for manual entry.
+// ---------------------------------------------------------------------------
+
+export type RaceFillPlanRow = { studentId: string; name: string; date: string; distanceKey: RecordDistanceKey; timeSeconds: number; timeLabel: string; raceName: string; alreadyHasCoach: boolean };
+export type UnreachableRaceRow = { studentId: string; name: string; date: string; title: string; distanceRaw: string | null; reason: "no_workout" | "nonstandard_distance" };
+export type RaceFillPlan = { fillable: RaceFillPlanRow[]; unreachable: UnreachableRaceRow[] };
+
+async function loadRaceFillContext(): Promise<{ events: Array<RaceFillEvent & { distanceRaw: string | null }>; byStudentDate: Map<string, RaceFillWorkout[]>; nameById: Map<string, string>; today: string }> {
+  const supabase = createSupabaseServerClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("student_id, event_date, title, distance_raw")
+    .order("event_date", { ascending: true });
+  if (error || !data) return { events: [], byStudentDate: new Map(), nameById: new Map(), today };
+  const events = (data as Array<{ student_id: string; event_date: string; title: string | null; distance_raw: string | null }>)
+    .filter((e) => e.student_id && e.event_date)
+    .map((e) => ({ studentId: e.student_id, eventDate: e.event_date.slice(0, 10), title: e.title, distanceRaw: e.distance_raw }));
+
+  const dates = events.map((e) => e.eventDate).sort();
+  const rows = dates.length > 0 ? await loadClubWorkoutRows({ from: dates[0], to: today }) : [];
+  const byStudentDate = new Map<string, RaceFillWorkout[]>();
+  for (const r of rows) {
+    const k = `${r.studentId}|${r.workoutDate}`;
+    const arr = byStudentDate.get(k) ?? [];
+    arr.push({ studentId: r.studentId, workoutDate: r.workoutDate, distanceKm: r.distanceKm, durationSeconds: r.durationSeconds, isCompleted: r.isCompleted, isRunning: r.isRunning });
+    byStudentDate.set(k, arr);
+  }
+  const ids = [...new Set(events.map((e) => e.studentId))];
+  const { data: students } = await supabase.from("trainingpeaks_students").select("id, student_name, club_display_name").in("id", ids);
+  const nameById = new Map(((students as Array<{ id: string; student_name: string; club_display_name: string | null }> | null) ?? []).map((s) => [s.id, (s.club_display_name ?? "").trim() || s.student_name || "Ученик"] as const));
+  return { events, byStudentDate, nameById, today };
+}
+
+/** Compute the recovery plan: fillable (best per student+distance) + unreachable list. */
+export async function getClubRaceFillPlan(): Promise<RaceFillPlan> {
+  const { events, byStudentDate, nameById, today } = await loadRaceFillContext();
+  const coach = await loadCoachRecords().catch(() => new Map<string, unknown>());
+
+  const bestBySlot = new Map<string, RaceFillPlanRow>();
+  const unreachable: UnreachableRaceRow[] = [];
+  const seenDay = new Set<string>();
+  for (const ev of events) {
+    const dayKey = `${ev.studentId}|${ev.eventDate}`;
+    if (seenDay.has(dayKey)) continue;
+    seenDay.add(dayKey);
+    const out = classifyRaceEventFill(ev, byStudentDate.get(dayKey) ?? [], today);
+    if (out.reason === "fillable" && out.candidate) {
+      const slot = `${out.candidate.studentId}|${out.candidate.distanceKey}`;
+      const prev = bestBySlot.get(slot);
+      if (!prev || out.candidate.timeSeconds < prev.timeSeconds) {
+        bestBySlot.set(slot, {
+          studentId: out.candidate.studentId,
+          name: nameById.get(ev.studentId) ?? "Ученик",
+          date: out.candidate.date,
+          distanceKey: out.candidate.distanceKey,
+          timeSeconds: out.candidate.timeSeconds,
+          timeLabel: hms(out.candidate.timeSeconds),
+          raceName: out.candidate.raceName,
+          alreadyHasCoach: (coach as Map<string, unknown>).has(slot),
+        });
+      }
+    } else if (out.reason === "no_workout" || out.reason === "nonstandard_distance") {
+      unreachable.push({ studentId: ev.studentId, name: nameById.get(ev.studentId) ?? "Ученик", date: ev.eventDate, title: (ev.title ?? "").trim() || "Гонка", distanceRaw: ev.distanceRaw, reason: out.reason });
+    }
+  }
+  return { fillable: [...bestBySlot.values()], unreachable };
+}
+
+/** Write the recovered races as coach_confirmed. Skips slots that already have a coach
+ *  record (no clobber). Reversible in /admin/club/results. Returns how many were written. */
+export async function applyRaceFillRecovery(coach: string): Promise<{ written: number; skipped: number }> {
+  const plan = await getClubRaceFillPlan();
+  const toWrite = plan.fillable.filter((r) => !r.alreadyHasCoach);
+  let written = 0;
+  for (const r of toWrite) {
+    try {
+      await upsertCoachConfirmedResult({ studentId: r.studentId, distanceKey: r.distanceKey, durationSeconds: r.timeSeconds, recordDate: r.date, raceName: r.raceName, enteredBy: coach });
+      written += 1;
+    } catch {
+      /* skip failures, continue */
+    }
+  }
+  return { written, skipped: plan.fillable.length - toWrite.length };
+}
+
+// ---------------------------------------------------------------------------
 // 3. Telegram links
 // ---------------------------------------------------------------------------
 
