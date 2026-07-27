@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- FIT-ingest scan + feedback-enqueue — считает derived_metrics ИЗ скачанного кэша
      и СРАЗУ САМ кладёт новые тренировки в «Новые» (enqueue на маке, ноль кронов Vercel).
-     Идёт СЛЕДОМ за workout-cache-scan (КАЖДЫЙ ЧАС на :05, cache-scan на :00 — новому
+     Идёт СЛЕДОМ за workout-cache-scan (КАЖДЫЕ 30 МИН на :05 и :35, cache-scan на :00/:30 — новому
      fetch-пути хватает ~26с). Окно последних 5 дней. Кладётся в ~/Library/LaunchAgents/. Ставит Игорь:
        cp .../com.igor.trainingpeaks.fit-ingest-scan.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.fit-ingest-scan.plist -->
@@ -22,11 +22,14 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- КАЖДЫЙ ЧАС на :05 — на 5 мин ПОЗЖЕ cache-scan (:00), чтобы тренировки уже были в
-       кэше, когда считаем из них метрики (Minute без Hour = каждый час).
+  <!-- КАЖДЫЕ 30 МИН на :05 и :35 — на 5 мин ПОЗЖЕ cache-scan (:00/:30), чтобы тренировки уже были
+       в кэше, когда считаем из них метрики (массив интервалов; Minute без Hour = каждый час на эту минуту).
        Пропущенные во сне прогоны launchd докручивает при пробуждении. -->
   <key>StartCalendarInterval</key>
-  <dict><key>Minute</key><integer>5</integer></dict>
+  <array>
+    <dict><key>Minute</key><integer>5</integer></dict>
+    <dict><key>Minute</key><integer>35</integer></dict>
+  </array>
 
   <key>StandardOutPath</key>
   <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/fit-ingest-scan.launchd.out.log</string>
