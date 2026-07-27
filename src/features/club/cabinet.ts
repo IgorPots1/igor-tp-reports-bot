@@ -244,3 +244,34 @@ export async function getClubBilling(studentId: string): Promise<ClubBillingView
     payUrl,
   };
 }
+
+/**
+ * "Я оплатил" (Phase E) — records a self-scoped payment claim into the coach inbox.
+ * NEVER auto-matches to billing and NEVER confirms a payment; the coach reconciles it
+ * manually. Rate-guarded: at most one open (pending) claim per student at a time, so a
+ * double-tap or repeat visit does not flood the inbox. Nothing is sent to anyone.
+ */
+export async function createPaymentClaim(
+  studentId: string,
+  note?: unknown
+): Promise<{ ok: boolean; error?: string; duplicate?: boolean }> {
+  const supabase = createSupabaseServerClient();
+  const { data: open } = await supabase
+    .from("club_payment_claims")
+    .select("id")
+    .eq("student_id", studentId)
+    .eq("status", "pending")
+    .limit(1)
+    .maybeSingle();
+  if (open) {
+    return { ok: true, duplicate: true };
+  }
+  const text = typeof note === "string" ? note.trim().slice(0, 300) || null : null;
+  const { error } = await supabase
+    .from("club_payment_claims")
+    .insert({ student_id: studentId, note: text, status: "pending" });
+  if (error) {
+    return { ok: false, error: "Раздел оплаты пока не активен." };
+  }
+  return { ok: true };
+}

@@ -42,12 +42,25 @@ type TelegramWebApp = {
   expand: () => void;
   setBackgroundColor?: (c: string) => void;
   setHeaderColor?: (c: string) => void;
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
   platform?: string;
   version?: string;
   colorScheme?: "light" | "dark";
   themeParams?: { bg_color?: string };
   initDataUnsafe?: { user?: { id?: number }; start_param?: string };
 };
+
+/** Open an external URL in Telegram's in-app browser (falls back to a new tab). */
+function openExternalLink(url: string): void {
+  const tg = getTelegramWebApp();
+  if (tg?.openLink) {
+    tg.openLink(url);
+    return;
+  }
+  if (typeof window !== "undefined") {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
 
 function getTelegramWebApp(): TelegramWebApp | null {
   const tg = (globalThis as { Telegram?: { WebApp?: TelegramWebApp } }).Telegram?.WebApp;
@@ -197,6 +210,11 @@ function fmtKm(km: number | null): string {
     return "0 км";
   }
   return `${km.toFixed(1).replace(".", ",")} км`;
+}
+const RU_MON = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+function fmtIsoDate(iso: string | null): string {
+  const m = (iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/u);
+  return m ? `${Number(m[3])} ${RU_MON[Number(m[2]) - 1] ?? ""}` : (iso ?? "");
 }
 function fmtDuration(sec: number | null): string | null {
   if (!sec || sec <= 0) {
@@ -1798,7 +1816,22 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
   const [prediction, setPrediction] = useState<ClubPrediction | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
+  const [claim, setClaim] = useState<"idle" | "sending" | "sent">("idle");
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function submitPaymentClaim() {
+    setClaim("sending");
+    try {
+      await fetch("/api/m/club/payment-claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData }),
+      });
+    } catch {
+      /* swallow — claim is best-effort; coach reconciles manually */
+    }
+    setClaim("sent");
+  }
 
   const load = useCallback(
     async (extra?: Record<string, unknown>) => {
@@ -1929,14 +1962,37 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
 
         {status === "ready" && !inactive && section === "billing" && billing ? (
           <div style={S.formCard}>
-            <div style={S.cardMeta}>{billing.note}</div>
+            {billing.note ? <div style={S.cardMeta}>{billing.note}</div> : null}
             {billing.status ? <div style={{ ...S.bigNumber, fontSize: 22, marginTop: 8 }}>{billing.status}</div> : null}
+            {billing.amountLabel || billing.nextDueDate ? (
+              <div style={{ ...S.cardMeta, marginTop: 4 }}>
+                {billing.amountLabel ? `Сумма: ${billing.amountLabel}` : ""}
+                {billing.amountLabel && billing.nextDueDate ? " · " : ""}
+                {billing.nextDueDate ? `След. платёж: ${fmtIsoDate(billing.nextDueDate)}` : ""}
+              </div>
+            ) : null}
+            {billing.history.length > 0 ? <div style={{ ...S.secHead, marginTop: 12 }}>История</div> : null}
             {billing.history.map((h, i) => (
               <div key={i} style={S.listRow}>
                 <span style={{ flex: 1, color: C.ink, fontSize: 14 }}>{h.label}</span>
                 <span style={{ color: C.sub, fontSize: 13 }}>{h.amount ?? ""}</span>
               </div>
             ))}
+            {billing.available ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
+                {billing.payUrl ? (
+                  <button type="button" style={S.saveBtn} onClick={() => openExternalLink(billing.payUrl!)}>Оплатить</button>
+                ) : null}
+                {claim === "sent" ? (
+                  <div style={{ ...S.hint, textAlign: "center" }}>Заявка отправлена тренеру. Он сверит платёж вручную.</div>
+                ) : (
+                  <button type="button" style={S.smallBtn} disabled={claim === "sending"} onClick={submitPaymentClaim}>
+                    {claim === "sending" ? "Отправляю…" : "Я оплатил"}
+                  </button>
+                )}
+                <div style={S.hint}>Оплата открывается на защищённой странице Т-Банка. Реквизитов и карт в приложении нет. Ничего не списывается автоматически.</div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

@@ -2743,6 +2743,18 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
 
   const today = clubTodayIso();
   const supabase = createSupabaseServerClient();
+
+  // Coach visibility toggle (Phase E): a coach may hide the forecast for a given
+  // student. Tolerant of a missing column (migration 20260808 not applied) -> visible.
+  const { data: visRow } = await supabase
+    .from("trainingpeaks_students")
+    .select("club_prediction_visible")
+    .eq("id", input.currentStudentId)
+    .maybeSingle();
+  if (visRow && (visRow as { club_prediction_visible?: boolean | null }).club_prediction_visible === false) {
+    return none("Прогноз пока недоступен.");
+  }
+
   const { data: raceRow } = await supabase
     .from("club_races")
     .select("name, race_date, distance_meters, distance_label")

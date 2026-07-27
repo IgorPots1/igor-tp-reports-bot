@@ -28,6 +28,8 @@ export default function ClubHubPage() {
         <Link className="admin-button admin-button-secondary" href="/admin/club/calendar">Календарь клуба</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/challenges">Челленджи</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/comments">Комментарии</Link>
+        <Link className="admin-button admin-button-secondary" href="/admin/club/billing">Оплата клуба</Link>
+        <Link className="admin-button admin-button-secondary" href="/admin/club/prediction">Видимость прогноза</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/links">Ссылки на клуб</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/manage">Управление клубом</Link>
       </div>

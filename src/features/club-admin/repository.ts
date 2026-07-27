@@ -459,6 +459,147 @@ export async function deleteClubCommentAdmin(id: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// 2c. Prediction visibility (Phase E). Coach toggle per student; default visible.
+// ---------------------------------------------------------------------------
+
+export type ClubPredictionRosterRow = { studentId: string; name: string; predictionVisible: boolean };
+
+export async function listClubPredictionRoster(): Promise<ClubPredictionRosterRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_students")
+    .select("id, student_name, club_display_name, club_prediction_visible")
+    .eq("is_active", true)
+    .order("student_name", { ascending: true });
+  if (error || !data) return [];
+  return (data as Array<{ id: string; student_name: string; club_display_name: string | null; club_prediction_visible: boolean | null }>).map((r) => ({
+    studentId: r.id,
+    name: (r.club_display_name ?? "").trim() || r.student_name || "Ученик",
+    predictionVisible: r.club_prediction_visible !== false,
+  }));
+}
+
+export async function setClubPredictionVisible(studentId: string, visible: boolean): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("trainingpeaks_students").update({ club_prediction_visible: visible }).eq("id", studentId);
+  if (error) throw new Error(`club-admin: prediction visibility: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// 2d. Billing: payment claims inbox + reminder drafts (Phase E). Read-only over the
+// Coach OS billing module; never mutates billing allocation. Tolerant of missing
+// tables (migration 20260808 not applied) and of billing not being wired -> empty.
+// ---------------------------------------------------------------------------
+
+export type ClubPaymentClaimRow = { id: string; studentName: string; note: string | null; status: string; createdAtLabel: string };
+
+export async function listClubPaymentClaims(includeReviewed = false): Promise<ClubPaymentClaimRow[]> {
+  const supabase = createSupabaseServerClient();
+  let query = supabase
+    .from("club_payment_claims")
+    .select("id, student_id, note, status, created_at")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (!includeReviewed) query = query.eq("status", "pending");
+  const { data, error } = await query;
+  if (error || !data) return [];
+  const rows = data as Array<{ id: string; student_id: string; note: string | null; status: string; created_at: string }>;
+  if (rows.length === 0) return [];
+  const ids = [...new Set(rows.map((r) => r.student_id))];
+  const { data: students } = await supabase.from("trainingpeaks_students").select("id, student_name, club_display_name").in("id", ids);
+  const nameById = new Map(
+    ((students as Array<{ id: string; student_name: string; club_display_name: string | null }> | null) ?? []).map((s) => [s.id, (s.club_display_name ?? "").trim() || s.student_name || "Ученик"] as const)
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    studentName: nameById.get(r.student_id) ?? "Ученик",
+    note: r.note,
+    status: r.status,
+    createdAtLabel: r.created_at.replace("T", " ").slice(0, 16),
+  }));
+}
+
+export async function reviewClubPaymentClaim(id: string, coach: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("club_payment_claims").update({ status: "reviewed", reviewed_at: new Date().toISOString(), reviewed_by: coach }).eq("id", id);
+  if (error) throw new Error(`club-admin: review claim: ${error.message}`);
+}
+
+export type ClubDebtorRow = { studentId: string; name: string; daysOverdue: number | null; amountLabel: string | null };
+
+/** Overdue students for the current billing month (read-only over the billing module). */
+export async function listClubDebtors(): Promise<{ billingMonth: string; debtors: ClubDebtorRow[] }> {
+  const { getAdminBillingMonthOverview } = await import("@/features/billing/admin");
+  let overview;
+  try {
+    overview = await getAdminBillingMonthOverview(undefined, "overdue");
+  } catch {
+    return { billingMonth: "", debtors: [] };
+  }
+  const debtors: ClubDebtorRow[] = overview.rows
+    .filter((r) => r.studentId)
+    .map((r) => ({
+      studentId: r.studentId as string,
+      name: r.clientName || "Ученик",
+      daysOverdue: r.daysOverdue,
+      amountLabel: Number.isFinite(r.plannedAmount) ? `${Math.round(r.plannedAmount)} ${r.currency === "RUB" ? "₽" : r.currency}` : null,
+    }));
+  return { billingMonth: overview.billingMonth, debtors };
+}
+
+export type ClubReminderRow = { id: string; studentName: string; billingMonth: string; draftText: string; status: string };
+
+export async function listClubPaymentReminders(billingMonth: string): Promise<ClubReminderRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_payment_reminders")
+    .select("id, student_id, billing_month, draft_text, status")
+    .eq("billing_month", billingMonth)
+    .order("created_at", { ascending: false })
+    .limit(300);
+  if (error || !data) return [];
+  const rows = data as Array<{ id: string; student_id: string; billing_month: string; draft_text: string; status: string }>;
+  if (rows.length === 0) return [];
+  const ids = [...new Set(rows.map((r) => r.student_id))];
+  const { data: students } = await supabase.from("trainingpeaks_students").select("id, student_name, club_display_name").in("id", ids);
+  const nameById = new Map(
+    ((students as Array<{ id: string; student_name: string; club_display_name: string | null }> | null) ?? []).map((s) => [s.id, (s.club_display_name ?? "").trim() || s.student_name || "Ученик"] as const)
+  );
+  return rows.map((r) => ({ id: r.id, studentName: nameById.get(r.student_id) ?? "Ученик", billingMonth: r.billing_month, draftText: r.draft_text, status: r.status }));
+}
+
+/** Generate one draft reminder per current overdue student (idempotent per month). */
+export async function createReminderDrafts(coach: string): Promise<number> {
+  const { billingMonth, debtors } = await listClubDebtors();
+  if (!billingMonth || debtors.length === 0) return 0;
+  const supabase = createSupabaseServerClient();
+  let created = 0;
+  for (const d of debtors) {
+    const amount = d.amountLabel ? ` на сумму ${d.amountLabel}` : "";
+    const draft = `Напоминание об оплате за ${billingMonth}${amount}. Оплатить можно в мини-аппе клуба, кнопка «Оплатить».`;
+    // Upsert-by-unique: skip if a draft already exists for this (student, month).
+    const { error } = await supabase
+      .from("club_payment_reminders")
+      .insert({ student_id: d.studentId, billing_month: billingMonth, draft_text: draft, status: "draft", created_by: coach });
+    if (!error) created += 1;
+  }
+  return created;
+}
+
+export async function confirmReminderDrafts(ids: string[], coach: string): Promise<number> {
+  if (ids.length === 0) return 0;
+  const supabase = createSupabaseServerClient();
+  void coach; // confirmation keeps the original created_by; coach is the shared admin token
+  const { error, count } = await supabase
+    .from("club_payment_reminders")
+    .update({ status: "confirmed", confirmed_at: new Date().toISOString() }, { count: "exact" })
+    .in("id", ids)
+    .eq("status", "draft");
+  if (error) throw new Error(`club-admin: confirm reminders: ${error.message}`);
+  return count ?? 0;
+}
+
+// ---------------------------------------------------------------------------
 // 3. Telegram links
 // ---------------------------------------------------------------------------
 

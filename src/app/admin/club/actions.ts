@@ -278,6 +278,70 @@ export async function deleteClubCommentAction(formData: FormData): Promise<void>
   redirect(withNotice(redirectTo, "notice", "Комментарий удалён."));
 }
 
+// ── Phase E: prediction visibility + billing claims/reminders ────────────────
+
+export async function setClubPredictionVisibleAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = req(formData, "studentId");
+  const visible = req(formData, "visible") === "true";
+  const { setClubPredictionVisible } = await import("@/features/club-admin/repository");
+  try {
+    await setClubPredictionVisible(studentId, visible);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", visible ? "Прогноз показан." : "Прогноз скрыт."));
+}
+
+export async function reviewPaymentClaimAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const id = req(formData, "claimId");
+  const { reviewClubPaymentClaim } = await import("@/features/club-admin/repository");
+  try {
+    await reviewClubPaymentClaim(id, COACH);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", "Заявка обработана."));
+}
+
+export async function createReminderDraftsAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const { createReminderDrafts } = await import("@/features/club-admin/repository");
+  let n = 0;
+  try {
+    n = await createReminderDrafts(COACH);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", `Черновиков создано: ${n}. Ничего не отправлено.`));
+}
+
+export async function confirmRemindersAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const ids = formData.getAll("reminderIds").filter((v): v is string => typeof v === "string");
+  const { confirmReminderDrafts } = await import("@/features/club-admin/repository");
+  let n = 0;
+  try {
+    n = await confirmReminderDrafts(ids, COACH);
+  } catch (e) {
+    revalidateClub();
+    redirect(withNotice(redirectTo, "error", e instanceof Error ? e.message : "Ошибка."));
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, "notice", `Подтверждено: ${n}. Автоотправка выключена - ничего не ушло.`));
+}
+
 export async function setClubDisplayNameAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);
