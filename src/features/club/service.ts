@@ -19,6 +19,7 @@ import {
 } from "@/features/trainingpeaks/workout-activity-classification";
 
 import * as C from "./constants";
+import { CLUB_MARKER_TITLE_SENTINEL } from "./cache-guard";
 import {
   evaluateCandidate,
   referenceVdotForAthlete,
@@ -365,7 +366,13 @@ export async function loadClubWorkoutRows(input: {
         .from("trainingpeaks_workout_cache")
         .select(WORKOUT_CACHE_COLUMNS)
         .gte("workout_date", input.from)
-        .lte("workout_date", input.to);
+        .lte("workout_date", input.to)
+        // Phase A: club marker workouts (day_off/preference/note pometki created in TP by
+        // Phase 11) return via cache and would pollute completion counting / aggregates /
+        // records. Excluded here at the SINGLE club load chokepoint, at the DB, by their
+        // title sentinel — so every club consumer (performers, daily/week aggregates,
+        // materialize, records) is clean in one place. Races carry no sentinel (real runs).
+        .not("title", "ilike", `%${CLUB_MARKER_TITLE_SENTINEL}%`);
       if (input.studentIds && input.studentIds.length > 0) {
         q = q.in("student_id", input.studentIds);
       }

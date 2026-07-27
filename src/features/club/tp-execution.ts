@@ -10,6 +10,8 @@
 
 import type { CreateWorkoutPayload } from "@/features/trainingpeaks/tp-write-action-types";
 
+import { CLUB_MARKER_TITLE_SENTINEL } from "./cache-guard";
+
 export { isClubTpExecutionEnabled } from "./constants";
 
 /**
@@ -211,6 +213,12 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
       title = "📝 Заметка ученика";
       description = row.note && row.note.trim() ? row.note.trim() : "Заметка ученика на день (через клуб).";
     }
+    // Phase A: mark every non-race marker title with the sentinel so the cache-guard can
+    // exclude it from feed/completion/missed-signal/nutrition when it returns via cache
+    // (these markers are type Other=100 and a running-keyword title like "интервальная"
+    // would otherwise be misclassified as a run). Race markers are real planned runs —
+    // no sentinel. See src/features/club/cache-guard.ts.
+    title = `${title} · ${CLUB_MARKER_TITLE_SENTINEL}`;
   }
 
   const payload: CreateWorkoutPayload = {

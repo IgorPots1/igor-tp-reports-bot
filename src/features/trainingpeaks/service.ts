@@ -179,6 +179,10 @@ import {
   type SignalZombieCleanupMode,
 } from "@/features/trainingpeaks/signal-zombie-cleanup";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
+// Phase A: pure title-sentinel detector for club marker workouts (leaf module — imports
+// only supabase, no trainingpeaks, so no cycle). Used to skip club pometki in the
+// missed-workout signal so they don't create false attention/digest entries.
+import { isClubMarkerTitle } from "@/features/club/cache-guard";
 import {
   parseMoveWorkoutWithAiFallback,
   selectMoveSourceWorkoutWithAi,
@@ -5963,6 +5967,13 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     let missedRunningPlannedCount = 0;
     for (const row of studentRows) {
       if (!row.isPlanned || row.isCompleted) {
+        continue;
+      }
+      // Phase A (club): a club marker workout (day_off/preference/note pometka created in
+      // TP by Phase 11, type Other=100) is planned+not-completed and a running-keyword
+      // title ("интервальная"/"длительная") would misclassify as a run → false
+      // "missed_workout" signal in the coach desk + morning digest. Skip club markers.
+      if (isClubMarkerTitle(row.title)) {
         continue;
       }
 

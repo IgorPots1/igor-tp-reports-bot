@@ -4,6 +4,8 @@ import {
   type ResolvedStudentCommunicationProfile,
 } from "@/features/trainingpeaks/communication-profile";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
+// Phase A: pure detector to drop club marker workouts from nutrition plan-week context.
+import { isClubMarkerTitle } from "@/features/club/cache-guard";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
 import { getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCoveringDate } from "@/features/trainingpeaks/repository";
 import type {
@@ -1112,7 +1114,12 @@ export async function buildNutritionTrainingPeaksWeekContext(
     from: weekFrom,
     to: weekTo,
   });
-  const plannedRows = options?.plannedOnly ? allRows.filter((row) => row.isPlanned) : allRows;
+  // Phase A: drop club marker workouts (day_off/preference/note pometki created in TP by
+  // Phase 11, type Other=100) — they are not real training. Without this, when a student's
+  // excludeOtherActivities profile flag is OFF, a marker leaks into totalSessions /
+  // plannedSessions / runningSessions / keyWorkouts of the nutrition plan-week context.
+  const baseRows = allRows.filter((row) => !isClubMarkerTitle(row.title));
+  const plannedRows = options?.plannedOnly ? baseRows.filter((row) => row.isPlanned) : baseRows;
   const rows = options?.excludeOtherActivities
     ? plannedRows.filter(
         (row) =>
