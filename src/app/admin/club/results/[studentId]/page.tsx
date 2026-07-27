@@ -5,6 +5,7 @@ import FormActionButton from "@/app/admin/FormActionButton";
 import {
   isClubAdminEnabled,
   getStudentRevisionCard,
+  getRaceFillSuggestions,
   listActiveStudentsForRevision,
   DISTANCE_LABELS,
 } from "@/features/club-admin/repository";
@@ -42,7 +43,12 @@ export default async function ClubResultBulkPage({
   const notice = getSingleSearchParam(sp.notice);
   const error = getSingleSearchParam(sp.error);
 
-  const [card, active] = await Promise.all([getStudentRevisionCard(studentId), listActiveStudentsForRevision()]);
+  const [card, active, suggestions] = await Promise.all([
+    getStudentRevisionCard(studentId),
+    listActiveStudentsForRevision(),
+    getRaceFillSuggestions(studentId),
+  ]);
+  const suggestionByKey = new Map(suggestions.map((s) => [s.distanceKey, s]));
   const idx = active.findIndex((s) => s.id === studentId);
   const next = idx >= 0 && idx + 1 < active.length ? active[idx + 1] : null;
   const selfPath = `/admin/club/results/${studentId}`;
@@ -65,6 +71,7 @@ export default async function ClubResultBulkPage({
 
       {KEYS.map((key) => {
         const override = card.coach.get(key);
+        const suggestion = suggestionByKey.get(key);
         return (
           <div className="admin-card" key={key} style={{ marginBottom: 10 }}>
             <div className="admin-badge-row">
@@ -74,15 +81,20 @@ export default async function ClubResultBulkPage({
                   ? <span className="admin-badge admin-badge-danger">скрыто тренером</span>
                   : <span className="admin-badge admin-badge-success">🏁 гонка {fmt(override.durationSeconds)}{override.raceName ? ` · ${override.raceName}` : ""}</span>
               ) : <span className="admin-badge admin-badge-muted">нет подтверждённой гонки</span>}
+              {!override && suggestion ? <span className="admin-badge admin-badge-accent">из календаря: {suggestion.timeLabel} · {suggestion.date}</span> : null}
             </div>
+
+            {!override && suggestion ? (
+              <p className="admin-section-subtitle" style={{ margin: "6px 0 0" }}>Подставлено из race_events (время из сводки тренировки того дня). Проверь и подтверди.</p>
+            ) : null}
 
             <form action={confirmRaceResultAction} className="admin-form-inline" style={{ marginTop: 8, gap: 8, flexWrap: "wrap" }}>
               <input type="hidden" name="redirectTo" value={selfPath} />
               <input type="hidden" name="studentId" value={studentId} />
               <input type="hidden" name="distanceKey" value={key} />
-              <input className="admin-input" name="time" placeholder="чч:мм:сс" style={{ width: 110 }} />
-              <input className="admin-input" name="date" type="date" style={{ width: 150 }} />
-              <input className="admin-input" name="raceName" placeholder="Название забега" style={{ width: 200 }} />
+              <input className="admin-input" name="time" placeholder="чч:мм:сс" defaultValue={suggestion?.timeLabel ?? ""} style={{ width: 110 }} />
+              <input className="admin-input" name="date" type="date" defaultValue={suggestion?.date ?? ""} style={{ width: 150 }} />
+              <input className="admin-input" name="raceName" placeholder="Название забега" defaultValue={suggestion?.raceName ?? ""} style={{ width: 200 }} />
               <FormActionButton className="admin-button admin-button-primary admin-button-small" pendingText="…">Подтвердить гонку</FormActionButton>
             </form>
 

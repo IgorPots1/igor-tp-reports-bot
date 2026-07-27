@@ -7,10 +7,12 @@ import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/
 import {
   classifyRecordType,
   evaluateAllRecordsForValidation,
+  loadClubWorkoutRows,
   loadCoachRecords,
   loadRaceDatesWithSource,
   type CoachRecord,
 } from "@/features/club/service";
+import { classifyRaceEventFill, type RaceFillEvent, type RaceFillWorkout } from "@/features/club/race-fill";
 import { CLUB_RECORD_DISTANCES } from "@/features/club/constants";
 import type { RecordDistanceKey } from "@/features/club/records";
 import { resolveClubBotUsername } from "@/features/club/entry-links";
@@ -597,6 +599,64 @@ export async function confirmReminderDrafts(ids: string[], coach: string): Promi
     .eq("status", "draft");
   if (error) throw new Error(`club-admin: confirm reminders: ${error.message}`);
   return count ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// 2e. Race-fill suggestions (Phase F). For the mass-entry pass: pre-fill the coach's
+// "confirm race" form from a race_events row whose date matches a completed run, taking
+// the finish time from the workout SUMMARY. Read-only; the coach still confirms each.
+// ---------------------------------------------------------------------------
+
+export type RaceFillSuggestion = { distanceKey: RecordDistanceKey; timeSeconds: number; timeLabel: string; date: string; raceName: string };
+
+function hms(sec: number): string {
+  const t = Math.round(sec);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const s = t % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+export async function getRaceFillSuggestions(studentId: string): Promise<RaceFillSuggestion[]> {
+  const supabase = createSupabaseServerClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("event_date, title")
+    .eq("student_id", studentId)
+    .lte("event_date", today)
+    .order("event_date", { ascending: false })
+    .limit(50);
+  if (error || !data) return [];
+  const events: RaceFillEvent[] = (data as Array<{ event_date: string; title: string | null }>)
+    .filter((e) => e.event_date)
+    .map((e) => ({ studentId, eventDate: e.event_date.slice(0, 10), title: e.title }));
+  if (events.length === 0) return [];
+
+  const dates = events.map((e) => e.eventDate).sort();
+  const rows = await loadClubWorkoutRows({ from: dates[0], to: today, studentIds: [studentId] });
+  const byDate = new Map<string, RaceFillWorkout[]>();
+  for (const r of rows) {
+    const arr = byDate.get(r.workoutDate) ?? [];
+    arr.push({ studentId: r.studentId, workoutDate: r.workoutDate, distanceKm: r.distanceKm, durationSeconds: r.durationSeconds, isCompleted: r.isCompleted, isRunning: r.isRunning });
+    byDate.set(r.workoutDate, arr);
+  }
+
+  // Keep at most one suggestion per distance (the most recent, since events are date-desc).
+  const byDist = new Map<RecordDistanceKey, RaceFillSuggestion>();
+  for (const ev of events) {
+    const outcome = classifyRaceEventFill(ev, byDate.get(ev.eventDate) ?? [], today);
+    if (outcome.reason === "fillable" && outcome.candidate && !byDist.has(outcome.candidate.distanceKey)) {
+      byDist.set(outcome.candidate.distanceKey, {
+        distanceKey: outcome.candidate.distanceKey,
+        timeSeconds: outcome.candidate.timeSeconds,
+        timeLabel: hms(outcome.candidate.timeSeconds),
+        date: outcome.candidate.date,
+        raceName: outcome.candidate.raceName,
+      });
+    }
+  }
+  return [...byDist.values()];
 }
 
 // ---------------------------------------------------------------------------
