@@ -202,6 +202,14 @@ export const CLUB_ACHIEVEMENT_RULES: ClubAchievementRule[] = [
 export function isReactionsEnabled(): boolean {
   return process.env.CLUB_REACTIONS_ENABLED === "true";
 }
+/**
+ * Phase 1.4: read challenge / statistics / tops / profile-rank from the precomputed
+ * club_daily_aggregates table instead of the raw whole-club window. Default OFF so the
+ * proven raw path stays live until parity is confirmed (see docs/club-aggregates-parity.md).
+ */
+export function isAggregatesEnabled(): boolean {
+  return process.env.CLUB_AGGREGATES_ENABLED === "true";
+}
 export function isPrivacyEnabled(): boolean {
   return process.env.CLUB_PRIVACY_ENABLED === "true";
 }

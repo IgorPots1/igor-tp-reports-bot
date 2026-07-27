@@ -262,7 +262,7 @@ function mapWorkoutCacheRow(row: Record<string, unknown>): ClubWorkoutRow {
   };
 }
 
-async function loadClubWorkoutRows(input: {
+export async function loadClubWorkoutRows(input: {
   from: string;
   to: string;
   /** Incremental recompute: restrict to these students (materialize). Omit = whole club. */
@@ -1001,33 +1001,48 @@ type PerformerAccum = {
   completed: number;
 };
 
-function buildWeekPerformers(
-  rows: ClubWorkoutRow[],
-  visibleById: Map<string, ClubStudent>
-): ClubTopPerformer[] {
+/** Per-student running planned/completed counts — the ONLY input performers need. */
+type PerfCounts = Map<string, { planned: number; completed: number }>;
+
+function performerCountsFromRows(rows: ClubWorkoutRow[]): PerfCounts {
+  const counts: PerfCounts = new Map();
+  for (const row of rows) {
+    if (!row.isRunning) continue;
+    const e = counts.get(row.studentId) ?? { planned: 0, completed: 0 };
+    if (row.isPlanned) e.planned += 1;
+    if (row.isCompleted) e.completed += 1;
+    counts.set(row.studentId, e);
+  }
+  return counts;
+}
+
+function performerCountsFromAgg(aggRows: DailyAgg[]): PerfCounts {
+  const counts: PerfCounts = new Map();
+  for (const a of aggRows) {
+    const e = counts.get(a.studentId) ?? { planned: 0, completed: 0 };
+    e.planned += a.plannedRunning;
+    e.completed += a.completedRunning;
+    counts.set(a.studentId, e);
+  }
+  return counts;
+}
+
+/**
+ * Turn per-student counts into the ranked performer list. Seeds EVERY visible student
+ * (0/0) in visibleById order, then applies counts — so tie-breaking (equal completion%
+ * + completed) is by that order, identical whether the counts came from raw rows or
+ * aggregates. This is the shared tail that guarantees identical «красавчики» ordering.
+ */
+function finalizePerformers(counts: PerfCounts, visibleById: Map<string, ClubStudent>): ClubTopPerformer[] {
   const accum = new Map<string, PerformerAccum>();
   for (const student of visibleById.values()) {
+    const c = counts.get(student.id);
     accum.set(student.id, {
       studentId: student.id,
       displayName: firstWord(student.name),
-      planned: 0,
-      completed: 0,
+      planned: c?.planned ?? 0,
+      completed: c?.completed ?? 0,
     });
-  }
-  for (const row of rows) {
-    if (!row.isRunning) {
-      continue;
-    }
-    const entry = accum.get(row.studentId);
-    if (!entry) {
-      continue;
-    }
-    if (row.isPlanned) {
-      entry.planned += 1;
-    }
-    if (row.isCompleted) {
-      entry.completed += 1;
-    }
   }
   const performers: ClubTopPerformer[] = [...accum.values()].map((entry) => {
     const noPlan = entry.planned === 0;
@@ -1058,6 +1073,110 @@ function buildWeekPerformers(
     return b.completedCount - a.completedCount;
   });
   return performers;
+}
+
+/** Raw-path performers (unchanged behaviour): count rows → finalize. */
+function buildWeekPerformers(rows: ClubWorkoutRow[], visibleById: Map<string, ClubStudent>): ClubTopPerformer[] {
+  return finalizePerformers(performerCountsFromRows(rows), visibleById);
+}
+
+// ---------------------------------------------------------------------------
+// Daily aggregates (Phase 1.4) — precomputed per-student per-day RUNNING numbers
+// behind CLUB_AGGREGATES_ENABLED. computeDailyAggregates is the SINGLE source of
+// aggregation truth: materialize writes exactly what it returns, and the parity
+// harness feeds the same output into the same reducers as the DB path — so in-memory
+// parity == DB-path parity.
+// ---------------------------------------------------------------------------
+
+export type DailyAgg = {
+  studentId: string;
+  day: string; // ISO date (YYYY-MM-DD)
+  runningKm: number; // completed running km that day, FULL precision
+  completedRunning: number;
+  plannedRunning: number;
+};
+
+/** Pure: raw club rows → per-(student,day) running aggregates (rows with any activity). */
+export function computeDailyAggregates(rows: ClubWorkoutRow[]): DailyAgg[] {
+  const byKey = new Map<string, DailyAgg>();
+  for (const row of rows) {
+    if (!row.isRunning) continue;
+    if (!row.isPlanned && !row.isCompleted) continue; // nothing to count
+    const key = `${row.studentId}|${row.workoutDate}`;
+    const agg = byKey.get(key) ?? { studentId: row.studentId, day: row.workoutDate, runningKm: 0, completedRunning: 0, plannedRunning: 0 };
+    if (row.isPlanned) agg.plannedRunning += 1;
+    if (row.isCompleted) {
+      agg.completedRunning += 1;
+      agg.runningKm += row.distanceKm ?? 0;
+    }
+    byKey.set(key, agg);
+  }
+  return [...byKey.values()];
+}
+
+// Test-only source override: lets the parity harness feed IN-MEMORY aggregates into
+// the REAL consumer code paths (so the parity check exercises the actual reducers, not
+// a re-implementation). null in production → always reads the DB.
+let _dailyAggSourceForTest: ((input: { from: string; to: string; studentIds?: string[] }) => Promise<DailyAgg[]>) | null = null;
+export function __setDailyAggregatesSourceForTest(
+  fn: ((input: { from: string; to: string; studentIds?: string[] }) => Promise<DailyAgg[]>) | null
+): void {
+  _dailyAggSourceForTest = fn;
+}
+
+/** Read materialized daily aggregates for a date window (optionally a subset of students). */
+async function loadDailyAggregates(input: { from: string; to: string; studentIds?: string[] }): Promise<DailyAgg[]> {
+  if (_dailyAggSourceForTest) return _dailyAggSourceForTest(input);
+  const supabase = createSupabaseServerClient();
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (fromRow, toRow) => {
+      let q = supabase
+        .from("club_daily_aggregates")
+        .select("student_id, day, running_km, completed_running, planned_running")
+        .gte("day", input.from)
+        .lte("day", input.to);
+      if (input.studentIds && input.studentIds.length > 0) q = q.in("student_id", input.studentIds);
+      return withSupabaseNetworkRetry(() => q.order("day", { ascending: true }).order("student_id", { ascending: true }).range(fromRow, toRow));
+    },
+    { label: `club:daily_agg ${input.from}..${input.to}` }
+  );
+  return data.map((r) => ({
+    studentId: r.student_id as string,
+    day: r.day as string,
+    runningKm: Number(r.running_km ?? 0),
+    completedRunning: Number(r.completed_running ?? 0),
+    plannedRunning: Number(r.planned_running ?? 0),
+  }));
+}
+
+/** Club running km over visible students within [from,to] — aggregate mirror of clubKmInRange. */
+function clubKmFromAgg(aggRows: DailyAgg[], visibleIds: Set<string>, from: string, to: string): number {
+  let km = 0;
+  for (const a of aggRows) {
+    if (!visibleIds.has(a.studentId)) continue;
+    if (a.day >= from && a.day <= to) km += a.runningKm;
+  }
+  return km;
+}
+
+/** Auto challenge goal from aggregates — same algebra as computeAutoGoalKm, agg source. */
+function computeAutoGoalKmFromAgg(aggRows: DailyAgg[], visibleIds: Set<string>, currentWeekFrom: string): number | null {
+  const kmForWeekBack = (i: number): number => {
+    const from = addDaysIso(currentWeekFrom, -7 * i);
+    return clubKmFromAgg(aggRows, visibleIds, from, addDaysIso(from, 6));
+  };
+  const km = [1, 2, 3, 4, 5].map(kmForWeekBack);
+  const n = C.CLUB_CHALLENGE_ROLLING_WEEKS;
+  const baseWeeks = km.slice(0, n).filter((k) => k > 0);
+  if (baseWeeks.length === 0) return null;
+  const baseAvg = baseWeeks.reduce((a, b) => a + b, 0) / baseWeeks.length;
+  const prevWeeks = km.slice(1, n + 1).filter((k) => k > 0);
+  const prevAvg = prevWeeks.length ? prevWeeks.reduce((a, b) => a + b, 0) / prevWeeks.length : 0;
+  const prevActual = km[0];
+  const beatPrevious = prevActual > 0 && prevAvg > 0 && prevActual >= prevAvg;
+  const raw = beatPrevious ? baseAvg * (1 + C.CLUB_CHALLENGE_RAISE_STEP) : baseAvg;
+  const step = C.CLUB_CHALLENGE_AUTO_ROUND_STEP;
+  return Math.max(step, Math.ceil(raw / step) * step);
 }
 
 // ---------------------------------------------------------------------------
@@ -1232,33 +1351,42 @@ export async function getClubChallenge(input: {
   const range = currentWeekRange();
   // Load enough history for the rolling-average goal (up to 5 completed weeks back).
   const historyFrom = addDaysIso(range.from, -7 * 5);
-  const [students, rows, freshness] = await Promise.all([
-    loadClubStudents(),
-    loadClubWorkoutRows({ from: historyFrom, to: range.to }),
-    buildFreshness(),
-  ]);
+  const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visible = students.filter(isVisible);
   const visibleById = new Map(visible.map((s) => [s.id, s]));
   const visibleIds = new Set(visibleById.keys());
 
-  const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
+  let clubKmRaw = 0;
+  let personalKmRaw = 0;
+  let performersBase: ClubTopPerformer[];
+  let autoGoal: number | null;
 
-  let clubKm = 0;
-  let personalKm = 0;
-  for (const row of weekRows) {
-    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
-      continue;
+  if (C.isAggregatesEnabled()) {
+    const agg = await loadDailyAggregates({ from: historyFrom, to: range.to, studentIds: [...visibleIds] });
+    const weekAgg = agg.filter((a) => a.day >= range.from && a.day <= range.to);
+    for (const a of weekAgg) {
+      if (!visibleIds.has(a.studentId)) continue;
+      clubKmRaw += a.runningKm;
+      if (a.studentId === input.currentStudentId) personalKmRaw += a.runningKm;
     }
-    const km = row.distanceKm ?? 0;
-    clubKm += km;
-    if (row.studentId === input.currentStudentId) {
-      personalKm += km;
+    performersBase = finalizePerformers(performerCountsFromAgg(weekAgg), visibleById);
+    autoGoal = computeAutoGoalKmFromAgg(agg, visibleIds, range.from);
+  } else {
+    const rows = await loadClubWorkoutRows({ from: historyFrom, to: range.to });
+    const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
+    for (const row of weekRows) {
+      if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) continue;
+      const km = row.distanceKm ?? 0;
+      clubKmRaw += km;
+      if (row.studentId === input.currentStudentId) personalKmRaw += km;
     }
+    performersBase = buildWeekPerformers(weekRows, visibleById);
+    autoGoal = computeAutoGoalKm(rows, visibleIds, range.from);
   }
-  clubKm = Number(clubKm.toFixed(1));
-  personalKm = Number(personalKm.toFixed(1));
+  const clubKm = Number(clubKmRaw.toFixed(1));
+  const personalKm = Number(personalKmRaw.toFixed(1));
 
-  const performers = buildWeekPerformers(weekRows, visibleById).map((p) => ({
+  const performers = performersBase.map((p) => ({
     ...p,
     isCurrentStudent: p.studentId === input.currentStudentId,
   }));
@@ -1275,9 +1403,8 @@ export async function getClubChallenge(input: {
       goalMode = "manual";
     }
   } else if (mode === "auto") {
-    const auto = computeAutoGoalKm(rows, visibleIds, range.from);
-    if (auto !== null) {
-      goalKm = auto;
+    if (autoGoal !== null) {
+      goalKm = autoGoal;
       goalMode = "auto";
     }
   }
@@ -1542,13 +1669,13 @@ export async function getClubProfileDetail(input: {
   const yearFrom = `${today.slice(0, 4)}-01-01`;
   // Two NARROW reads instead of one 365-day whole-club scan (Phase 1):
   //  - ownRows: this student's 365-day rows only (volumes, series, type, achievements);
-  //  - weekAllRows: the WHOLE club but only the current week (challenge rank via performers).
+  //  - challenge rank: the WHOLE club but only the current week (performers). Under
+  //    CLUB_AGGREGATES_ENABLED that comes from club_daily_aggregates, else raw rows.
   // The old path loaded all students × 365 days just to use one student's slice + the
   // current week — that whole-club-year read was the profile's dominant cost.
-  const [students, ownRows, weekAllRows, snapshots, coach, freshness] = await Promise.all([
+  const [students, ownRows, snapshots, coach, freshness] = await Promise.all([
     loadClubStudents(),
     loadClubWorkoutRows({ from, to: today, studentIds: [input.currentStudentId] }),
-    loadClubWorkoutRows({ from: week.from, to: week.to }),
     loadRecordSnapshots(),
     loadCoachRecords(),
     buildFreshness(),
@@ -1618,8 +1745,15 @@ export async function getClubProfileDetail(input: {
     (a) => !a.stub || C.isStubsEnabled()
   );
 
-  // Challenge rank this week (whole club, current week only).
-  const performers = buildWeekPerformers(weekAllRows, visibleById);
+  // Challenge rank this week (whole club, current week only) — aggregates or raw rows.
+  let performers: ClubTopPerformer[];
+  if (C.isAggregatesEnabled()) {
+    const weekAgg = await loadDailyAggregates({ from: week.from, to: week.to, studentIds: [...visibleById.keys()] });
+    performers = finalizePerformers(performerCountsFromAgg(weekAgg), visibleById);
+  } else {
+    const weekAllRows = await loadClubWorkoutRows({ from: week.from, to: week.to });
+    performers = buildWeekPerformers(weekAllRows, visibleById);
+  }
   const rankIndex = performers.findIndex((p) => p.studentId === input.currentStudentId);
   const current = rankIndex >= 0 ? performers[rankIndex] : null;
 
@@ -1650,31 +1784,45 @@ export async function getClubStatistics(): Promise<ClubStatisticsView> {
   const range = currentWeekRange();
   const prevFrom = addDaysIso(range.from, -7);
   const prevTo = addDaysIso(range.to, -7);
-  const [students, rows, freshness] = await Promise.all([
-    loadClubStudents(),
-    loadClubWorkoutRows({ from: prevFrom, to: range.to }),
-    buildFreshness(),
-  ]);
+  const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visible = students.filter(isVisible);
   const visibleById = new Map(visible.map((s) => [s.id, s]));
   const visibleIds = new Set(visibleById.keys());
 
-  const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
   const active = new Set<string>();
   let workoutsCount = 0;
-  let clubKm = 0;
-  for (const row of weekRows) {
-    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
-      continue;
-    }
-    active.add(row.studentId);
-    workoutsCount += 1;
-    clubKm += row.distanceKm ?? 0;
-  }
-  clubKm = Number(clubKm.toFixed(1));
-  const prevClubKm = Number(clubKmInRange(rows, visibleIds, prevFrom, prevTo).toFixed(1));
+  let clubKmRaw = 0;
+  let prevClubKmRaw = 0;
+  let performersAll: ClubTopPerformer[];
 
-  const performers = buildWeekPerformers(weekRows, visibleById).filter((p) => !p.noPlan);
+  if (C.isAggregatesEnabled()) {
+    // Aggregate path: read precomputed daily rows for this + previous week.
+    const agg = await loadDailyAggregates({ from: prevFrom, to: range.to, studentIds: [...visibleIds] });
+    const weekAgg = agg.filter((a) => a.day >= range.from && a.day <= range.to);
+    for (const a of weekAgg) {
+      if (!visibleIds.has(a.studentId)) continue;
+      if (a.completedRunning > 0) active.add(a.studentId);
+      workoutsCount += a.completedRunning;
+      clubKmRaw += a.runningKm;
+    }
+    prevClubKmRaw = clubKmFromAgg(agg, visibleIds, prevFrom, prevTo);
+    performersAll = finalizePerformers(performerCountsFromAgg(weekAgg), visibleById);
+  } else {
+    const rows = await loadClubWorkoutRows({ from: prevFrom, to: range.to });
+    const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
+    for (const row of weekRows) {
+      if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) continue;
+      active.add(row.studentId);
+      workoutsCount += 1;
+      clubKmRaw += row.distanceKm ?? 0;
+    }
+    prevClubKmRaw = clubKmInRange(rows, visibleIds, prevFrom, prevTo);
+    performersAll = buildWeekPerformers(weekRows, visibleById);
+  }
+  const clubKm = Number(clubKmRaw.toFixed(1));
+  const prevClubKm = Number(prevClubKmRaw.toFixed(1));
+
+  const performers = performersAll.filter((p) => !p.noPlan);
   const avgCompletionPct =
     performers.length > 0
       ? performers.reduce((a, p) => a + p.completionPct, 0) / performers.length
@@ -1698,34 +1846,46 @@ export async function getClubExtendedTops(input: {
   const today = clubTodayIso();
   const range = currentWeekRange();
   const from = addDaysIso(today, -60); // wide enough for streaks
-  const [students, rows, freshness] = await Promise.all([
-    loadClubStudents(),
-    loadClubWorkoutRows({ from, to: today }),
-    buildFreshness(),
-  ]);
+  const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visible = students.filter(isVisible);
   const visibleById = new Map(visible.map((s) => [s.id, s]));
   const visibleIds = new Set(visibleById.keys());
 
-  const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
-
   const volume = new Map<string, number>();
   const count = new Map<string, number>();
   const activeDaysByStudent = new Map<string, Set<string>>();
-  for (const row of rows) {
-    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
-      continue;
+  let performersAll: ClubTopPerformer[];
+
+  if (C.isAggregatesEnabled()) {
+    const agg = await loadDailyAggregates({ from, to: today, studentIds: [...visibleIds] });
+    const weekAgg = agg.filter((a) => a.day >= range.from && a.day <= range.to);
+    for (const a of agg) {
+      if (!visibleIds.has(a.studentId) || a.completedRunning <= 0) continue;
+      const days = activeDaysByStudent.get(a.studentId) ?? new Set<string>();
+      days.add(a.day);
+      activeDaysByStudent.set(a.studentId, days);
     }
-    const days = activeDaysByStudent.get(row.studentId) ?? new Set<string>();
-    days.add(row.workoutDate);
-    activeDaysByStudent.set(row.studentId, days);
-  }
-  for (const row of weekRows) {
-    if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) {
-      continue;
+    for (const a of weekAgg) {
+      if (!visibleIds.has(a.studentId) || a.completedRunning <= 0) continue;
+      volume.set(a.studentId, (volume.get(a.studentId) ?? 0) + a.runningKm);
+      count.set(a.studentId, (count.get(a.studentId) ?? 0) + a.completedRunning);
     }
-    volume.set(row.studentId, (volume.get(row.studentId) ?? 0) + (row.distanceKm ?? 0));
-    count.set(row.studentId, (count.get(row.studentId) ?? 0) + 1);
+    performersAll = finalizePerformers(performerCountsFromAgg(weekAgg), visibleById);
+  } else {
+    const rows = await loadClubWorkoutRows({ from, to: today });
+    const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
+    for (const row of rows) {
+      if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) continue;
+      const days = activeDaysByStudent.get(row.studentId) ?? new Set<string>();
+      days.add(row.workoutDate);
+      activeDaysByStudent.set(row.studentId, days);
+    }
+    for (const row of weekRows) {
+      if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) continue;
+      volume.set(row.studentId, (volume.get(row.studentId) ?? 0) + (row.distanceKm ?? 0));
+      count.set(row.studentId, (count.get(row.studentId) ?? 0) + 1);
+    }
+    performersAll = buildWeekPerformers(weekRows, visibleById);
   }
 
   const nameOf = (id: string) => firstWord(visibleById.get(id)?.name ?? "");
@@ -1738,17 +1898,23 @@ export async function getClubExtendedTops(input: {
     isCurrentStudent: id === input.currentStudentId,
   });
 
+  // Secondary key studentId asc makes tie order DETERMINISTIC and independent of Map
+  // insertion order — so the raw path and the aggregate path (which iterate in different
+  // orders) produce identical leaderboards. Applied to both paths (shared tail).
+  const byStudentId = (a: readonly [string, number], b: readonly [string, number]) =>
+    b[1] !== a[1] ? b[1] - a[1] : a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+
   const byVolume = [...volume.entries()]
-    .sort((a, b) => b[1] - a[1])
+    .sort(byStudentId)
     .slice(0, C.CLUB_EXTENDED_TOP_N)
     .map(([id, km]) => mkRow(id, `${km.toFixed(1).replace(".", ",")} км`));
 
   const byCount = [...count.entries()]
-    .sort((a, b) => b[1] - a[1])
+    .sort(byStudentId)
     .slice(0, C.CLUB_EXTENDED_TOP_N)
     .map(([id, n]) => mkRow(id, `${n} трен.`));
 
-  const performers = buildWeekPerformers(weekRows, visibleById).filter((p) => !p.noPlan);
+  const performers = performersAll.filter((p) => !p.noPlan);
   const byCompletion = performers
     .slice(0, C.CLUB_EXTENDED_TOP_N)
     .map((p) => mkRow(p.studentId, `${Math.round(p.completionPct * 100)}%`));
@@ -1756,7 +1922,7 @@ export async function getClubExtendedTops(input: {
   const streaks = [...activeDaysByStudent.entries()]
     .map(([id, days]) => [id, computeStreakDays(days, today)] as const)
     .filter(([, s]) => s > 0)
-    .sort((a, b) => b[1] - a[1])
+    .sort(byStudentId)
     .slice(0, C.CLUB_EXTENDED_TOP_N)
     .map(([id, s]) => mkRow(id, `${s} дн`));
 
@@ -2339,6 +2505,19 @@ export async function materializeClubRecords(opts?: {
     }
   }
 
+  // Phase 1.4 daily aggregates — same incremental pass, scoped to the target students.
+  // computeDailyAggregates is the single source of aggregation truth (also used by the
+  // parity harness). Written unconditionally (read is gated by CLUB_AGGREGATES_ENABLED),
+  // so the table is warm before the flag is flipped.
+  const aggDbRows = computeDailyAggregates(visibleRows.filter((r) => targetSet.has(r.studentId))).map((a) => ({
+    student_id: a.studentId,
+    day: a.day,
+    running_km: a.runningKm,
+    completed_running: a.completedRunning,
+    planned_running: a.plannedRunning,
+    active_day: a.completedRunning > 0,
+  }));
+
   if (dryRun) {
     return { studentsProcessed: targetIds.length, rowsWritten: snapshotRows.length, dryRun: true };
   }
@@ -2358,6 +2537,23 @@ export async function materializeClubRecords(opts?: {
       throw new Error(`materializeClubRecords: insert failed: ${error.message}`);
     }
   }
+
+  // Daily aggregates: scoped replace by the SAME target set. Additive + tolerant — if
+  // the migration is not applied yet, log and continue (never break the records path
+  // or the scan; the aggregates read is flag-gated and simply stays empty until then).
+  try {
+    for (const idChunk of chunkIds([...targetSet], 100)) {
+      const { error } = await supabase.from("club_daily_aggregates").delete().in("student_id", idChunk);
+      if (error) throw new Error(error.message);
+    }
+    for (const batch of chunkIds(aggDbRows, 500)) {
+      const { error } = await supabase.from("club_daily_aggregates").insert(batch);
+      if (error) throw new Error(error.message);
+    }
+  } catch (e) {
+    console.warn(`materializeClubRecords: daily aggregates write skipped: ${(e as Error).message}`);
+  }
+
   return { studentsProcessed: targetIds.length, rowsWritten: snapshotRows.length, dryRun: false };
 }
 
