@@ -133,7 +133,9 @@ export async function POST(request: NextRequest): Promise<Response> {
           studentId: student.id,
           weightKg,
           // Athlete-reported → auto-accepted but NOT coach-confirmed (coach reviews; an
-          // anomaly alert fires separately). The targets resolver prefers confirmed logs.
+          // anomaly alert fires separately). Coach decision (наряд «вес из лога»): the
+          // resolver takes the NEWEST log regardless of confirmed_by_coach, so this row
+          // is what the review will actually compute on — see weight-resolution.ts.
           source: "athlete_report",
           confirmedByCoach: false,
         }).catch((err) => {

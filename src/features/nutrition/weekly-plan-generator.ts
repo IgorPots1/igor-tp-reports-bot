@@ -2,6 +2,7 @@ import { buildNutritionTrainingPeaksWeekContext } from "@/features/nutrition/con
 import { isNutritionLongRunWorkout } from "@/features/nutrition/long-run";
 import { NUTRITION_PLAN_NARRATIVE_PROMPT_LINES } from "@/features/nutrition/narrative-guardrails";
 import { detectWorkoutFuelingInstructions } from "@/features/nutrition/methodology";
+import { resolveNutritionWeight } from "@/features/nutrition/weight-resolution";
 import {
   getNutritionPlanTargetWeekToday,
   resolveNutritionPlanTargetWeek,
@@ -648,10 +649,15 @@ async function buildNutritionWeeklyPlanFactsInternal(input: {
     telegramContextNotes: student.telegramContextNotes,
     activeMemoryItems: essentials.activeMemoryItems,
   });
-  const latestConfirmedWeight =
-    essentials.weightLogs.find((item) => item.confirmedByCoach)?.weightKg ?? null;
-  const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
-  const weightKg = essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null;
+  // Тот же резолвер и та же дата, что у разбора (weekTo исходного разбора), а не
+  // «сегодня»: план строится ПО разбору, и его вес обязан совпадать с весом, на котором
+  // посчитан разбор. Раньше план брал живой вес, разбор — свой, и они расходились.
+  const weightResolution = resolveNutritionWeight({
+    weightLogs: essentials.weightLogs,
+    profileWeightKg: essentials.profile?.currentWeightKg ?? null,
+    asOfDate: input.sourceAnalysis.weekTo,
+  });
+  const weightKg = weightResolution.weightKg;
 
   const targetPlanWeek = resolveFactsTargetPlanWeek({ todayLocalDate: input.todayLocalDate });
   const planWeek = { from: targetPlanWeek.from, to: targetPlanWeek.to };

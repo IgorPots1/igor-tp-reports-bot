@@ -20,6 +20,7 @@ import {
   type NutritionLongRunSource,
 } from "@/features/nutrition/long-run";
 import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
+import { resolveNutritionWeight, type NutritionResolvedWeight } from "@/features/nutrition/weight-resolution";
 import {
   emptyNutritionStudentMemory,
   getNutritionCheckinForWeek,
@@ -423,6 +424,13 @@ export type NutritionStudentContext = {
   nutritionContextItems: NutritionContextItem[];
   weightLogs: NutritionWeightLog[];
   currentWeightKg: number | null;
+  /**
+   * Как именно получился currentWeightKg (лог/профиль/ничего) + пометки тренеру.
+   * Опционально: контекст собирают вручную десятки check-скриптов — обязательное поле
+   * сломало бы их все ради диагностики, которую они не проверяют. В продовом пути
+   * (buildNutritionStudentContext) поле есть всегда.
+   */
+  weightResolution?: NutritionResolvedWeight;
   nutritionGoal: string | null;
   coachContextRu: string | null;
   /** Наряд 2: student on her own eating regime — don't treat calories/fat as a problem (layer A). */
@@ -1347,9 +1355,15 @@ export async function buildNutritionStudentContext(input: {
   injectRaceEventsIntoWeekContext(tpPastWeek, raceEvents);
   injectRaceEventsIntoWeekContext(tpNextWeek, raceEvents);
 
-  const latestConfirmedWeight =
-    essentials.weightLogs.find((item) => item.confirmedByCoach)?.weightKg ?? null;
-  const latestWeight = essentials.weightLogs[0]?.weightKg ?? null;
+  // Вес — через единый резолвер (см. weight-resolution.ts): новейший лог НА ДАТУ
+  // РАЗБОРА (independent of confirmed) → профиль → null, с саните-гардом и пометками
+  // тренеру. asOfDate = weekTo, чтобы перегенерация старой недели считала её по весу
+  // той недели, а не по сегодняшнему.
+  const weightResolution = resolveNutritionWeight({
+    weightLogs: essentials.weightLogs,
+    profileWeightKg: essentials.profile?.currentWeightKg ?? null,
+    asOfDate: input.weekTo,
+  });
 
   // No-training-week detection (Task 5b). An empty past week is ambiguous: it can
   // be a genuine rest week OR a missing TP sync (both leave the cache empty). If
@@ -1446,7 +1460,8 @@ export async function buildNutritionStudentContext(input: {
     ),
     nutritionContextItems: essentials.contextItems,
     weightLogs: essentials.weightLogs,
-    currentWeightKg: essentials.profile?.currentWeightKg ?? latestConfirmedWeight ?? latestWeight ?? null,
+    currentWeightKg: weightResolution.weightKg,
+    weightResolution,
     nutritionGoal: essentials.profile?.goal ?? null,
     coachContextRu: essentials.profile?.coachContextRu ?? null,
     ownRegime: essentials.profile?.ownRegime ?? false,

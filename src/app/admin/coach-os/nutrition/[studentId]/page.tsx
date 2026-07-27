@@ -84,6 +84,7 @@ import {
   hasStaleReviewIssues,
 } from "@/features/nutrition/page-consistency";
 import { formatNutritionReportDateMismatchCardNotice } from "@/features/nutrition/report-date-coverage";
+import { formatNutritionWeightNotesRu } from "@/features/nutrition/weight-resolution";
 import type { NutritionAthleteReportSignal } from "@/features/nutrition/athlete-signals";
 import type { NutritionContextItemType, NutritionWeeklyPlan } from "@/features/nutrition/repository";
 
@@ -555,10 +556,17 @@ export default async function CoachOsNutritionStudentCardPage({
     typeof weeklyNutritionSummary.prompt_version === "string"
       ? weeklyNutritionSummary.prompt_version
       : card.weeklyAnalysis?.promptHash ?? "—";
+  // Снапшот остаётся первым: это ФАКТ того, на каком весе посчитан сохранённый разбор.
+  // Живой резолв — запасной (разбора ещё нет) и источник пометок ниже.
   const bodyweightKg =
     typeof weeklyNutritionSummary.bodyweight_kg === "number"
       ? weeklyNutritionSummary.bodyweight_kg
       : card.context.currentWeightKg;
+  // Пометки тренеру по весу: гард не пропустил лог / лог расходится с профилем / веса нет.
+  // Канал выбран здесь, в блоке «Вес (кг)», — тренер смотрит за весом именно сюда;
+  // safety soft_flags в UI не рендерятся вовсе, а per-day notes размножили бы недельный
+  // факт на семь строк таблицы.
+  const weightNotes = formatNutritionWeightNotesRu(card.context.weightResolution);
   const carbStrategy =
     typeof weeklyNutritionSummary.carb_progression_strategy === "string"
       ? weeklyNutritionSummary.carb_progression_strategy
@@ -588,7 +596,9 @@ export default async function CoachOsNutritionStudentCardPage({
   const hardSafetyFlags = asStringArray(card.weeklyAnalysis?.safetyFlags?.hard_flags);
   const hasSafetyFlags = hardSafetyFlags.length > 0;
   const reviewSelectedById = Boolean(reviewIdFromQuery && card.weeklyAnalysis?.id === reviewIdFromQuery);
-  const profileWeightKg = card.profile?.currentWeightKg ?? card.weightLogs[0]?.weightKg ?? null;
+  // Шапка карточки — то же число, что пошло в расчёт выбранной недели (единый резолвер),
+  // а не свой третий порядок «профиль → лог», который расходился и с расчётом, и со списком.
+  const profileWeightKg = card.context.currentWeightKg;
   const profileFormality = formatNutritionFormality(card.context.resolvedCommunicationProfile.formality);
   const recentReports = [...card.reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const visibleReports = recentReports.slice(0, 5);
@@ -1638,8 +1648,32 @@ export default async function CoachOsNutritionStudentCardPage({
             )}
             <div>
               <dt>Вес (кг)</dt>
-              <dd>{bodyweightKg ?? "—"}</dd>
+              <dd>
+                {bodyweightKg ?? "—"}
+                {card.context.weightResolution?.source === "log" &&
+                card.context.weightResolution.logLoggedAt ? (
+                  <span className="admin-muted">
+                    {" "}
+                    · взвешивание {card.context.weightResolution.logLoggedAt.slice(0, 10)}
+                  </span>
+                ) : null}
+                {card.context.weightResolution?.source === "profile" ? (
+                  <span className="admin-muted"> · из профиля</span>
+                ) : null}
+              </dd>
             </div>
+            {weightNotes.length > 0 && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <dt>Вес — проверить</dt>
+                <dd>
+                  {weightNotes.map((note, idx) => (
+                    <p key={`weight-note-${idx}`} className="admin-alert admin-alert-warning admin-nutrition-helper">
+                      {note}
+                    </p>
+                  ))}
+                </dd>
+              </div>
+            )}
           </dl>
           {!card.weeklyAnalysis ? (
             <p className="admin-muted">Обзор ещё не сгенерирован.</p>

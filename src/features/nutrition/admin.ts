@@ -535,6 +535,20 @@ export async function generateNutritionWeeklyReview(input: {
       one_focus: generated.one_focus,
       methodology_signals: generated.methodology_signals,
       bodyweight_kg: context.currentWeightKg,
+      // Откуда взялся этот вес (лог/профиль/ничего) + пометки — вместе с числом, чтобы
+      // через месяц было видно, на чём считали и почему, а не только «56».
+      weight_resolution: context.weightResolution
+        ? {
+            source: context.weightResolution.source,
+            log_weight_kg: context.weightResolution.logWeightKg,
+            log_logged_at: context.weightResolution.logLoggedAt,
+            log_confirmed_by_coach: context.weightResolution.logConfirmedByCoach,
+            profile_weight_kg: context.weightResolution.profileWeightKg,
+            as_of_date: context.weightResolution.asOfDate,
+            notes: context.weightResolution.notes.map((note) => note.code),
+            notes_ru: context.weightResolution.notes.map((note) => note.textRu),
+          }
+        : null,
       carb_progression_strategy: generated.one_focus.progression_strategy,
       coach_summary_text: generated.coach_summary_text,
       day_by_day_analysis_text: generated.day_by_day_analysis_text,

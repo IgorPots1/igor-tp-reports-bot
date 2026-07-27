@@ -34,7 +34,33 @@ assert.match(reportDateCoverageSource, /resolveNutritionEffectiveReportWeek/, "r
 const draftGeneratorSource = readFileSync(join(root, "src/features/nutrition/draft-generator.ts"), "utf8");
 assert.match(draftGeneratorSource, /date_range_mismatch_detected/, "draft generator must flag macro/review week mismatch");
 const contextSource = readFileSync(join(root, "src/features/nutrition/context.ts"), "utf8");
-assert.match(contextSource, /currentWeightKg:\s*essentials\.profile\?\.currentWeightKg\s*\?\?\s*latestConfirmedWeight\s*\?\?\s*latestWeight\s*\?\?\s*null/, "weight resolution must include profile -> latest confirmed log -> latest log");
+// Вес резолвится ТОЛЬКО единым хелпером (новейший лог на дату разбора -> профиль -> null).
+// Копипаста порядка обратно в context.ts / weekly-plan-generator.ts — регресс: раньше их
+// было три разных варианта в четырёх местах.
+assert.match(
+  contextSource,
+  /const weightResolution = resolveNutritionWeight\(\{[\s\S]*asOfDate: input\.weekTo,/,
+  "context must resolve weight via resolveNutritionWeight anchored to weekTo"
+);
+assert.match(contextSource, /currentWeightKg:\s*weightResolution\.weightKg/, "context weight must come from the resolver");
+assert.doesNotMatch(
+  contextSource,
+  /currentWeightKg:\s*essentials\.profile\?\.currentWeightKg\s*\?\?/,
+  "context must NOT fall back to the old profile-first weight order"
+);
+const planGeneratorSource = readFileSync(join(root, "src/features/nutrition/weekly-plan-generator.ts"), "utf8");
+assert.match(
+  planGeneratorSource,
+  /const weightResolution = resolveNutritionWeight\(\{[\s\S]*asOfDate: input\.sourceAnalysis\.weekTo,/,
+  "plan must resolve weight via resolveNutritionWeight anchored to the source review week"
+);
+assert.doesNotMatch(
+  planGeneratorSource,
+  /essentials\.profile\?\.currentWeightKg\s*\?\?\s*latestConfirmedWeight/,
+  "plan must NOT keep its own copy of the old weight order"
+);
+const dashboardSource = readFileSync(join(root, "src/features/nutrition/repository.ts"), "utf8");
+assert.match(dashboardSource, /currentWeightKg: resolveNutritionWeight\(\{/, "dashboard list must show the resolved weight");
 
 const methodologySource = readFileSync(join(root, "src/features/nutrition/methodology.ts"), "utf8");
 assert.match(methodologySource, /isNutritionLongRunWorkout/, "methodology must classify long_run via shared helper");

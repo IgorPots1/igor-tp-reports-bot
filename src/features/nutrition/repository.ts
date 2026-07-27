@@ -16,6 +16,7 @@ import {
 } from "@/features/trainingpeaks/repository";
 import { listTrainingPeaksAdminStudents } from "@/features/trainingpeaks/admin";
 import { buildNutritionNextActionHref } from "@/features/nutrition/admin-labels";
+import { resolveNutritionWeight } from "@/features/nutrition/weight-resolution";
 import {
   sanitizeNutritionFoodItems,
   stripControlCharsForDb,
@@ -2011,6 +2012,39 @@ export async function getNutritionProfilesByStudent(studentIds: string[]): Promi
   );
 }
 
+/**
+ * Логи веса пачкой для дашборда: один SELECT вместо N, чтобы в списке учениц стояло то
+ * же число, что пошло в расчёт (раньше список показывал только профиль и расходился и с
+ * карточкой, и с разбором). Порядок — новейший первым, как в getNutritionWeightLogs.
+ */
+export async function getNutritionWeightLogsByStudent(
+  studentIds: string[]
+): Promise<Map<string, NutritionWeightLog[]>> {
+  const result = new Map<string, NutritionWeightLog[]>();
+  if (studentIds.length === 0) {
+    return result;
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("nutrition_weight_logs")
+    .select("*")
+    .in("student_id", studentIds)
+    .order("logged_at", { ascending: false });
+  if (error) {
+    throw new Error(`Failed to load nutrition weight logs for dashboard: ${error.message}`);
+  }
+  for (const row of (data as NutritionWeightLogRow[]) ?? []) {
+    const mapped = mapNutritionWeightLogRow(row);
+    const bucket = result.get(mapped.studentId);
+    if (bucket) {
+      bucket.push(mapped);
+    } else {
+      result.set(mapped.studentId, [mapped]);
+    }
+  }
+  return result;
+}
+
 function hasHardSafetyFlag(analysis: NutritionWeeklyAnalysis | null): boolean {
   if (!analysis) {
     return false;
@@ -2064,13 +2098,19 @@ export async function listNutritionDashboardRows(
   const chatIds = adminStudents
     .map((student) => student.telegramChatId)
     .filter((id): id is string => Boolean(id));
-  const [profilesByStudent, latestReportsByStudent, latestAnalysesByStudent, dailyMacroCounts] =
-    await Promise.all([
-      getNutritionProfilesByStudent(studentIds),
-      getLatestReportsByStudent(studentIds),
-      getLatestAnalysesByStudent(studentIds),
-      getDailyMacroCountsByStudent(studentIds),
-    ]);
+  const [
+    profilesByStudent,
+    latestReportsByStudent,
+    latestAnalysesByStudent,
+    dailyMacroCounts,
+    weightLogsByStudent,
+  ] = await Promise.all([
+    getNutritionProfilesByStudent(studentIds),
+    getLatestReportsByStudent(studentIds),
+    getLatestAnalysesByStudent(studentIds),
+    getDailyMacroCountsByStudent(studentIds),
+    getNutritionWeightLogsByStudent(studentIds),
+  ]);
 
   // The 24h-window badge is non-critical: its lookup must NEVER take down the
   // whole dashboard. On failure, degrade to no badges (empty map).
@@ -2095,7 +2135,11 @@ export async function listNutritionDashboardRows(
       weeklyReportEnabled: student.weeklyReportEnabled,
       telegramDeliveryEnabled: student.telegramDeliveryEnabled,
       nutritionEnabled: profile?.enabled ?? false,
-      currentWeightKg: profile?.currentWeightKg ?? null,
+      // Список — про «сейчас», поэтому asOfDate не задаём (новейший лог вообще).
+      currentWeightKg: resolveNutritionWeight({
+        weightLogs: weightLogsByStudent.get(student.id) ?? [],
+        profileWeightKg: profile?.currentWeightKg ?? null,
+      }).weightKg,
       trackingApp: profile?.trackingApp ?? null,
       lastReportStatus: report?.status ?? null,
       lastReportCreatedAt: report?.createdAt ?? null,
