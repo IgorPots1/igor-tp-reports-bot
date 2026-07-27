@@ -37,6 +37,10 @@ describe("detectTrainingReport — recall (must be reports)", () => {
     "Ноги ватные после вчерашней длительной",
     "Тяжело далось сегодня, спалось трудно ночью",
     "Легко пошло, прям в удовольствие",
+    // 1.2 — colloquial «длинная» (not «длительная») was missed
+    "Привет всем 🙌 длинная готова Жарко 🥵 В целом хорошо",
+    "длинная прошла отлично",
+    "лонг готов, ноги живые",
   ];
   for (const text of reports) {
     test(`report: ${text.slice(0, 40)}`, () => assert.equal(isReport(text), true));
