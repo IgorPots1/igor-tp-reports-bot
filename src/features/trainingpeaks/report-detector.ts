@@ -179,3 +179,21 @@ export function detectTrainingReport(normalizedInput: string): number | null {
   if (hasSoft) return 0.74;
   return 0.72;
 }
+
+// A WEAK confirmation: the WHOLE message is just an acknowledgement ("готово", "сделала", "✅").
+// On its own this is NOT a report — too many "готово" answer a schedule move ("перенеси" → "готово").
+// It becomes a report ONLY when the sweep finds a run time-correlated to it (run exists on [D-1,D]
+// AND the message came after the run started). So this returns a boolean; the correlation lives in
+// the sweep, which alone has the workout data. Whole-message only: an ack embedded in a longer
+// sentence is either a real report (caught above) or genuinely not one.
+const WEAK_CONFIRMATION_RE = new RegExp(
+  `^(?:вс[её]\\s+)?(?:готово|сделал[ао]?|выполнил[ао]?|выполнено|закончил[ао]?|отработал[ао]?|отбегал[ао]?|финишировал[ао]?|финиш|есть|done|ок|окей|ok|плюс|\\+|✅|👍|🏃[\\u200d\\u2640\\u2642\\ufe0f]*)[\\s!.,)✅👍🙌🔥💪🏃\\u200d\\u2640\\u2642\\ufe0f]*$`,
+  "u"
+);
+export function detectWeakConfirmation(normalizedInput: string): boolean {
+  const normalized = normalizeObserverText(normalizedInput.replace(/https?:\/\/\S+/g, " "));
+  if (!normalized) return false;
+  // A weak ack that is actually a FULL report ("отбегала" hits the -л verb) is already report_like —
+  // the caller only uses this when detectTrainingReport returned null, so no double-labelling.
+  return WEAK_CONFIRMATION_RE.test(normalized);
+}

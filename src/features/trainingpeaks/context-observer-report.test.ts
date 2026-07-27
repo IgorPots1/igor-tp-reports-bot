@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { detectTrainingReport, normalizeObserverText } from "./report-detector.ts";
+import { detectTrainingReport, detectWeakConfirmation, normalizeObserverText } from "./report-detector.ts";
 
 // The report_like detector is the load-bearing gate for message-triggered feedback generation:
 // a missed report = the coach never sees the student's words. These cases pin the recall fixes
@@ -67,4 +67,28 @@ describe("detectTrainingReport — precision (must NOT be reports)", () => {
   for (const text of nonReports) {
     test(`not: ${text.slice(0, 40)}`, () => assert.equal(isReport(text), false));
   }
+});
+
+// ── weak confirmations (Block 1.1) — bare acks; a report only via a time-correlated run in the sweep ──
+const isWeak = (text: string): boolean => detectWeakConfirmation(normalizeObserverText(text));
+
+describe("detectWeakConfirmation — whole-message acks", () => {
+  const weak = ["Готово", "готово ✅", "Сделала", "Сделал", "Выполнила", "Выполнено", "Закончила", "Отработала", "Ок", "Окей", "ok", "Done", "Есть", "✅", "👍", "+", "Всё готово", "готово!", "Финиш"];
+  for (const t of weak) test(`weak: «${t}»`, () => assert.equal(isWeak(t), true));
+
+  // NOT weak: has real content (a real report OR just not an ack). Those go the normal path.
+  const notWeak = [
+    "Готово, но темп не удержала",       // more than an ack → not a bare confirmation
+    "Отбегала, всё хорошо",              // a full report (detectTrainingReport handles it)
+    "Сделала интервалы 6х800",           // full report
+    "Когда следующая?",                  // a question
+    "Спасибо большое",                   // gratitude, not a training ack
+    "Готово? когда бежать",              // a question, not a confirmation
+  ];
+  for (const t of notWeak) test(`not weak: «${t}»`, () => assert.equal(isWeak(t), false));
+
+  test("a full report is NOT double-counted as weak (сweak used only when detect==null)", () => {
+    // 'отбегала' is a full report; the observer calls detectWeakConfirmation only in the else-branch.
+    assert.notEqual(detectTrainingReport(normalizeObserverText("Отбегала, всё хорошо")), null);
+  });
 });

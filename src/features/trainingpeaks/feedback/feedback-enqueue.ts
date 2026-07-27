@@ -10,6 +10,7 @@
 
 import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
 import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
+import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-extraction-ai";
 import { hasDeviceGlitch } from "@/features/trainingpeaks/feedback/stated-factors";
 import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
@@ -376,9 +377,11 @@ export async function sweepAndEnqueueFeedbackJobs(input: { sinceUpdatedAt: strin
 
 export type FeedbackReportSweepSummary = {
   reports: number; // report_like observations scanned in the lookback (active students)
+  weakReports: number; // weak_report_confirmation ("готово"/"✅") scanned — promoted only via a time-correlated run
   studentsReporting: number;
   reportsMatchedRun: number; // reports that found a fresh run in [D-1, D]
   reportsNoRunYet: number; // report present, run not synced yet → waits for next sweep
+  reportsWeakBeforeRun: number; // a weak ack whose window run started AFTER the message → a pre-run "готово", not a report
   reportsRunAlreadyHandled: number; // the window run already has a job (or was chosen this sweep)
   reportsRunIsRace: number; // the window run is a race (calendar) → not drafted; coach answers it personally
   reportsRunTooOld: number; // the matched run is older than the freshness cap → not queued (keeps the queue to today/yesterday)
@@ -398,6 +401,11 @@ const REPORT_MATCH_WINDOW_DAYS = 1;
 // run is counted (reportsRunTooOld) and skipped. Metrics still recompute over 5d; only the QUEUE
 // stays fresh, so a 5-day recompute never resurrects old cards to hand-clean.
 const ENQUEUE_MAX_WORKOUT_AGE_DAYS = 1;
+// A weak ack ("готово") counts as a report only if it came AFTER the run started. cache.start_time is
+// naive local while observed_at is UTC, so a fixed tolerance absorbs the timezone skew (Belgrade ~+2h,
+// wider for others) — enough to still reject a clearly pre-run "поехали" hours before an evening run.
+// Block 4 (timezone recon) decides whether to tighten this or drop the time check for date-only.
+const WEAK_AFTER_START_TOLERANCE_MS = 6 * 60 * 60 * 1000;
 // How far back to scan reports each sweep. Wider than the match window so a report whose run
 // syncs late (TP lag) still binds on a later sweep; past this a report stops trying (the daily
 // safety-net digest catches a genuine report whose run never arrived).
@@ -444,25 +452,37 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       withSupabaseNetworkRetry(() =>
         supabase
           .from("trainingpeaks_telegram_context_observations")
-          .select("student_id, observed_at, labels")
+          .select("student_id, observed_at, labels, text_preview")
           .gte("observed_at", sinceIso)
           .order("id", { ascending: true })
           .range(from, to)
       ) as Promise<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
     { label: "report-sweep:observations" }
   );
+  // report_like → a full report. weak_report_confirmation → a bare "готово"/"сделала"/"✅": promoted
+  // to a report ONLY when a run is time-correlated (has a run on [D-1,D] AND the message came after it
+  // started — see the loop). Both flow through the same matching; `weak` marks the extra gate.
   const reports = (obsRows ?? [])
-    .filter((o) => {
+    .map((o) => {
+      if (!o.student_id || !activeIds.has(o.student_id as string)) return null;
       const labels = Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [];
-      return labels.includes("report_like") && o.student_id && activeIds.has(o.student_id as string);
+      const isReport = labels.includes("report_like");
+      // Weak = the stored label OR a fresh on-the-fly detection, so messages ingested BEFORE this
+      // feature (Elvira's «Готово») are caught too, without a re-classification backfill.
+      const text = (o.text_preview as string | null) ?? "";
+      const isWeak = !isReport && (labels.includes("weak_report_confirmation") || detectWeakConfirmation(normalizeObserverText(text)));
+      if (!isReport && !isWeak) return null;
+      return { studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10), observedAt: o.observed_at as string, weak: isWeak };
     })
-    .map((o) => ({ studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10), observedAt: o.observed_at as string }));
+    .filter((r): r is { studentId: string; date: string; observedAt: string; weak: boolean } => r !== null);
 
   const summary: FeedbackReportSweepSummary = {
-    reports: reports.length,
+    reports: reports.filter((r) => !r.weak).length,
+    weakReports: reports.filter((r) => r.weak).length,
     studentsReporting: new Set(reports.map((r) => r.studentId)).size,
     reportsMatchedRun: 0,
     reportsNoRunYet: 0,
+    reportsWeakBeforeRun: 0,
     reportsRunAlreadyHandled: 0,
     reportsRunIsRace: 0,
     reportsRunTooOld: 0,
@@ -486,6 +506,18 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     runsByStudent.set(r.student_id as string, list);
   }
 
+  // Workout START times (cache.start_time, e.g. "2026-07-26T06:58:04", naive local) — needed only to
+  // gate WEAK acks: a "готово" is a report only if it came AFTER the run started. Naive-vs-UTC skew is
+  // absorbed by a tolerance (WEAK_AFTER_START_TOLERANCE_MS); Block 4 (timezone recon) will tighten it.
+  const runCacheIds = [...new Set(runRows.map((r) => r.workout_cache_id as string))];
+  const cacheStartRows = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_workout_cache", "id, start_time", "id", runCacheIds);
+  const startMsByCacheId = new Map<string, number | null>();
+  for (const c of cacheStartRows) {
+    const st = c.start_time as string | null;
+    const ms = st ? Date.parse(`${st}Z`) : NaN;
+    startMsByCacheId.set(c.id as string, Number.isFinite(ms) ? ms : null);
+  }
+
   // 3. block-state guard: a run with an active/done/sent/shared job is never re-enqueued; a run
   // whose only job is DISMISSED is re-enqueued only when THIS report is newer than the dismissal
   // (a fresh report after the coach cleared the card resurrects it; the same report doesn't loop).
@@ -500,10 +532,26 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   const chosen = new Map<string, { row: DerivedRow; reportDate: string }>();
   for (const rep of reports) {
     const prevDay = shiftYmd(rep.date, -REPORT_MATCH_WINDOW_DAYS);
-    const inWindow = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
+    let inWindow = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
       const wd = r.workout_date as string;
       return wd === rep.date || wd === prevDay;
     });
+    // Weak ack: promote to a report only if a window run STARTED before the message (a report follows
+    // the run). No run yet → wait for the sync (reportsNoRunYet, like Elvira's «Готово»). A run exists
+    // but all started after the message → a pre-run "готово/поехали", not a report → dropped.
+    if (rep.weak) {
+      const observedMs = Date.parse(rep.observedAt);
+      const afterStart = inWindow.filter((r) => {
+        const st = startMsByCacheId.get(r.workout_cache_id as string);
+        return st === null || st === undefined || observedMs > st - WEAK_AFTER_START_TOLERANCE_MS;
+      });
+      if (afterStart.length === 0) {
+        if (inWindow.length === 0) summary.reportsNoRunYet += 1;
+        else summary.reportsWeakBeforeRun += 1;
+        continue;
+      }
+      inWindow = afterStart;
+    }
     if (inWindow.length === 0) {
       summary.reportsNoRunYet += 1; // run not synced yet → next sweep will bind it
       continue;

@@ -21,7 +21,7 @@ import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/train
 import { logTrainingPeaksPrivateMessageIntent } from "@/features/trainingpeaks/message-intent-log";
 import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
 import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
-import { detectTrainingReport, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
+import { detectTrainingReport, detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import type { TelegramMessage } from "@/features/telegram/types";
 
 export type TrainingPeaksObserverLabel =
@@ -29,6 +29,7 @@ export type TrainingPeaksObserverLabel =
   | "move_workout_candidate"
   | "question_to_coach"
   | "possibly_training_report"
+  | "weak_confirmation"
   | "possibly_pain_or_health"
   | "unclassified"
   | "third_party_in_linked_topic";
@@ -43,6 +44,7 @@ type PersistedObservationLabel =
   | "race_context"
   | "schedule_context"
   | "report_like"
+  | "weak_report_confirmation"
   | "ack_or_noise"
   | "unknown"
   | "third_party_in_linked_topic";
@@ -527,6 +529,9 @@ export function mapObserverLabelsToPersistedLabels(labels: TrainingPeaksObserver
       case "possibly_training_report":
         mapped.add("report_like");
         break;
+      case "weak_confirmation":
+        mapped.add("weak_report_confirmation");
+        break;
       case "possibly_pain_or_health":
         mapped.add("pain_or_health");
         break;
@@ -588,6 +593,12 @@ export function classifyObserverText(text: string | null): {
   if (reportScore !== null) {
     labels.push("possibly_training_report");
     scores.possibly_training_report = reportScore;
+  } else if (detectWeakConfirmation(normalized)) {
+    // A bare "готово"/"сделала"/"✅" — NOT a report on its own (also gets noise_or_ack above). The
+    // sweep promotes it to a report only when a run is time-correlated (exists on [D-1,D] AND the
+    // message came after the run started). So it needs its own label to reach the sweep at all.
+    labels.push("weak_confirmation");
+    scores.weak_confirmation = 0.5;
   }
 
   if (PAIN_OR_HEALTH_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
