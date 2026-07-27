@@ -17,6 +17,7 @@ import type {
   ClubRecordsView,
   ClubStatisticsView,
   ClubTopRow,
+  ClubTrack,
   ClubVolumePoint,
   ClubWish,
   ClubWorkoutDetailView,
@@ -655,6 +656,34 @@ function Metric({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+// Phase 4 — SVG route silhouette from a simplified polyline. No map tiles/keys:
+// coordinates are normalised into the bbox and drawn as a stroke, aspect-corrected
+// for latitude. Renders nothing when there is no track.
+function TrackSilhouette({ track, height }: { track: ClubTrack; height: number }) {
+  const { polyline, bbox } = track;
+  if (!polyline || polyline.length < 2) return null;
+  const midLat = (bbox.minLat + bbox.maxLat) / 2;
+  const cosLat = Math.max(0.01, Math.cos((midLat * Math.PI) / 180));
+  const spanLng = Math.max(1e-6, (bbox.maxLng - bbox.minLng) * cosLat);
+  const spanLat = Math.max(1e-6, bbox.maxLat - bbox.minLat);
+  const aspect = spanLng / spanLat; // width / height
+  const VH = 100;
+  const VW = Math.max(24, Math.min(400, Math.round(VH * aspect)));
+  const pad = 6;
+  const pts = polyline
+    .map(([lat, lng]) => {
+      const x = pad + (((lng - bbox.minLng) * cosLat) / spanLng) * (VW - 2 * pad);
+      const y = pad + (1 - (lat - bbox.minLat) / spanLat) * (VH - 2 * pad); // flip: lat up
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height={height} preserveAspectRatio="xMidYMid meet" style={{ display: "block" }}>
+      <polyline points={pts} fill="none" style={{ stroke: C.accent, strokeWidth: 2, strokeLinejoin: "round", strokeLinecap: "round" }} />
+    </svg>
+  );
+}
+
 function TrustBadge({ trust }: { trust: "verified" | "preliminary" | "hidden" }) {
   if (trust === "verified") {
     return <span style={{ ...S.badge, color: C.good, borderColor: C.line }}>подтверждён</span>;
@@ -739,6 +768,11 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
         </div>
       </div>
       <div style={{ cursor: "pointer" }} onClick={() => onOpenWorkout(item.id)}>
+        {item.track ? (
+          <div style={{ marginTop: 10, background: C.cardAlt, borderRadius: 10, padding: 6 }}>
+            <TrackSilhouette track={item.track} height={72} />
+          </div>
+        ) : null}
         {item.title ? <div style={{ ...S.cardName, whiteSpace: "normal", marginTop: 10, fontSize: 14, color: C.ink }}>{item.title}</div> : null}
         {cells.length > 0 ? (
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${cells.length}, 1fr)`, gap: 10, marginTop: 10 }}>
@@ -1299,6 +1333,13 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
               </div>
             </div>
             {view.title ? <div style={{ ...S.cardName, whiteSpace: "normal", marginTop: 8, marginBottom: 4 }}>{view.title}</div> : null}
+
+            {view.track ? (
+              <div style={{ ...S.card, padding: 12 }}>
+                <div style={S.secHead}>Маршрут</div>
+                <TrackSilhouette track={view.track} height={180} />
+              </div>
+            ) : null}
 
             <div style={S.card}>
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap", rowGap: 12 }}>

@@ -49,6 +49,7 @@ import type {
   ClubStatisticsView,
   ClubTopPerformer,
   ClubTopRow,
+  ClubTrack,
   ClubTypeBreakdown,
   ClubVolumePoint,
   ClubWorkoutDetailView,
@@ -143,6 +144,34 @@ function mapClubStudentRows(data: unknown): ClubStudent[] {
       clubVisible: row.club_visible !== false,
     };
   });
+}
+
+/**
+ * Phase 4 — batched read of GPS tracks (simplified polylines) for a set of workouts.
+ * Empty unless CLUB_TRACKS_ENABLED. Tolerant of a missing table (feature off / migration
+ * not applied) → returns empty so the feed/detail simply render no silhouette.
+ */
+async function loadTracksForWorkouts(workoutIds: string[]): Promise<Map<string, ClubTrack>> {
+  const out = new Map<string, ClubTrack>();
+  if (!C.isClubTracksEnabled() || workoutIds.length === 0) {
+    return out;
+  }
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_tracks")
+    .select("workout_cache_id, polyline, bbox, point_count")
+    .in("workout_cache_id", workoutIds);
+  if (error) {
+    return out;
+  }
+  for (const row of (data as Array<{ workout_cache_id: string; polyline: unknown; bbox: unknown; point_count: number | null }> | null) ?? []) {
+    const polyline = Array.isArray(row.polyline) ? (row.polyline as Array<[number, number]>) : null;
+    const bbox = row.bbox as ClubTrack["bbox"] | null;
+    if (polyline && polyline.length >= 2 && bbox) {
+      out.set(row.workout_cache_id, { polyline, bbox, pointCount: row.point_count ?? polyline.length });
+    }
+  }
+  return out;
 }
 
 /**
@@ -1476,11 +1505,12 @@ export async function getClubFeed(input: {
   const nextCursor =
     pageRows.length === pageSize && !exhausted ? encodeFeedCursor(pageRows[pageRows.length - 1]) : null;
 
-  // Single reactions + avg-HR query each for the whole page (no N+1).
+  // Single reactions + avg-HR + track query each for the whole page (no N+1).
   const pageIds = pageRows.map((r) => r.id);
-  const [reactions, avgHrById] = await Promise.all([
+  const [reactions, avgHrById, tracksById] = await Promise.all([
     loadReactionsForWorkouts(pageIds, input.currentStudentId),
     loadAvgHrForWorkouts(pageIds),
+    loadTracksForWorkouts(pageIds),
   ]);
 
   const items: ClubFeedItem[] = pageRows.map((row) => {
@@ -1501,6 +1531,7 @@ export async function getClubFeed(input: {
       avgHr: avgHrById.get(row.id) ?? null,
       title: cleanTitle(row.title),
       caption: sanitizeCaption(row.title, label),
+      track: tracksById.get(row.id) ?? null,
       reactionsEnabled: C.isReactionsEnabled(),
       reactions: { like: agg?.like ?? 0, fire: agg?.fire ?? 0 },
       mine: { like: agg?.mineLike ?? false, fire: agg?.mineFire ?? false },
@@ -2322,6 +2353,7 @@ export async function getClubPublicProfile(input: {
       avgHr: null,
       title: cleanTitle(row.title),
       caption: sanitizeCaption(row.title, label),
+      track: null,
       reactionsEnabled: C.isReactionsEnabled(),
       reactions: { like: 0, fire: 0 },
       mine: { like: false, fire: false },
@@ -2421,6 +2453,8 @@ export async function getClubWorkoutDetail(input: {
     .maybeSingle();
   const derived = (derivedData as { avg_hr: number | null; hr_trusted: boolean | null; time_in_zones: unknown; zone_basis: "threshold_hr" | "max_hr_pct" | null } | null) ?? null;
 
+  const track = (await loadTracksForWorkouts([input.workoutId])).get(input.workoutId) ?? null;
+
   const laps: ClubWorkoutLap[] = lapRows.map((l) => ({
     index: l.lap_index,
     distanceKm: l.distance_m != null && l.distance_m > 0 ? Number((l.distance_m / 1000).toFixed(2)) : null,
@@ -2458,6 +2492,7 @@ export async function getClubWorkoutDetail(input: {
     laps,
     zones,
     zoneBasisLabel,
+    track,
   };
 }
 

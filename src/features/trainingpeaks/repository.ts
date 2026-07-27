@@ -2620,6 +2620,34 @@ export async function upsertTrainingPeaksWorkoutDerivedMetricsRows(
   }
 }
 
+// Club Phase 4 — GPS track (simplified polyline) per workout. One row per
+// workout_cache_id; upsert (no delete — rows cascade with the cache row).
+export type TrainingPeaksWorkoutTrackUpsertRow = {
+  student_id: string;
+  trainingpeaks_athlete_id: number | null;
+  trainingpeaks_workout_id: number | null;
+  workout_cache_id: string;
+  workout_date: string | null;
+  polyline: Array<[number, number]>;
+  point_count: number;
+  bbox: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+  source?: "fit";
+  scanned_at?: string;
+  scan_job_id?: string | null;
+};
+
+export async function upsertTrainingPeaksWorkoutTrack(
+  row: TrainingPeaksWorkoutTrackUpsertRow
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await withSupabaseNetworkRetry(() => supabase
+    .from("trainingpeaks_workout_tracks")
+    .upsert({ ...row, source: row.source ?? "fit", updated_at: new Date().toISOString() }, { onConflict: "workout_cache_id" }));
+  if (error) {
+    throw new Error(`Failed to upsert TrainingPeaks workout track: ${error.message}`);
+  }
+}
+
 export async function listTrainingPeaksHealthMetricsForStudentDateRange(input: {
   studentId: string;
   from: string;

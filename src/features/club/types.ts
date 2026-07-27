@@ -8,6 +8,15 @@ export type ClubFreshness = {
   label: string | null;
 };
 
+// Phase 4 — GPS route silhouette (simplified polyline + bbox). Optional everywhere
+// so nothing changes when CLUB_TRACKS_ENABLED is off (always null then).
+export type ClubTrack = {
+  /** [lat, lng] pairs, 50–150 points. */
+  polyline: Array<[number, number]>;
+  bbox: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+  pointCount: number;
+};
+
 export type ClubFeedItem = {
   id: string;
   /** Owner student id — enables tap-through to a public profile (respecting privacy). */
@@ -29,6 +38,8 @@ export type ClubFeedItem = {
   title: string | null;
   /** Short neutral caption derived from the workout title (safe subset). */
   caption: string | null;
+  /** Phase 4: GPS route silhouette (null when no track / feature off). */
+  track: ClubTrack | null;
   /** Whether the reactions row is interactive (CLUB_REACTIONS_ENABLED). */
   reactionsEnabled: boolean;
   /** Aggregate reaction counts (real when reactions enabled, else zero). */
@@ -312,4 +323,6 @@ export type ClubWorkoutDetailView = {
   /** HR zones (empty when time_in_zones absent). */
   zones: ClubZoneSlice[];
   zoneBasisLabel: string | null;
+  /** Phase 4: GPS route silhouette (null when no track / feature off). */
+  track: ClubTrack | null;
 };

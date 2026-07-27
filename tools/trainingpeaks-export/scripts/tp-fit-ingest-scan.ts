@@ -53,16 +53,19 @@ import type {
   TrainingPeaksWorkoutCacheRow,
   TrainingPeaksWorkoutDerivedMetricsUpsertRow,
   TrainingPeaksWorkoutLapUpsertRow,
+  TrainingPeaksWorkoutTrackUpsertRow,
 } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
 import * as workoutActivityClassificationModule from "../../../src/features/trainingpeaks/workout-activity-classification.ts";
 import * as comparisonKeyModule from "../../../src/features/trainingpeaks/comparison/comparison-key.ts";
+import * as trackSimplifyModule from "../../../src/features/trainingpeaks/track-simplify.ts";
 import {
   getWorkoutDetailsRecord,
   getWorkoutFilesExport,
 } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { toolRoot } from "./lib/paths.ts";
 import {
+  extractTrackPoints,
   findWorkoutStartMs,
   lapDurationSeconds,
   lapPaceSecPerKm,
@@ -109,6 +112,12 @@ const replaceTrainingPeaksWorkoutLaps =
 const upsertTrainingPeaksWorkoutDerivedMetricsRows =
   trainingPeaksRepositoryCompat.upsertTrainingPeaksWorkoutDerivedMetricsRows ??
   trainingPeaksRepositoryCompat.default?.upsertTrainingPeaksWorkoutDerivedMetricsRows;
+const upsertTrainingPeaksWorkoutTrack =
+  trainingPeaksRepositoryCompat.upsertTrainingPeaksWorkoutTrack ??
+  trainingPeaksRepositoryCompat.default?.upsertTrainingPeaksWorkoutTrack;
+const trackSimplifyCompat =
+  trackSimplifyModule as NamespaceWithOptionalDefault<typeof trackSimplifyModule>;
+const simplifyTrack = trackSimplifyCompat.simplifyTrack ?? trackSimplifyCompat.default?.simplifyTrack;
 const classifyTrainingPeaksWorkoutActivity =
   workoutActivityClassificationModuleCompat.classifyTrainingPeaksWorkoutActivity ??
   workoutActivityClassificationModuleCompat.default?.classifyTrainingPeaksWorkoutActivity;
@@ -371,6 +380,8 @@ type IngestOneWorkoutResult = {
   lapRows: TrainingPeaksWorkoutLapUpsertRow[];
   derivedRow: TrainingPeaksWorkoutDerivedMetricsUpsertRow;
   warnings: string[];
+  /** Phase 4: GPS route polyline row (null when no GPS or CLUB_TRACKS_ENABLED off). */
+  trackRow?: TrainingPeaksWorkoutTrackUpsertRow | null;
 };
 
 async function ingestOneWorkoutFit(input: {
@@ -421,6 +432,7 @@ async function ingestOneWorkoutFit(input: {
       normalization_warnings: warnings,
     },
     warnings,
+    trackRow: null, // no FIT → no GPS track
   });
 
   let detailsBody: Record<string, unknown> | null = null;
@@ -481,6 +493,33 @@ async function ingestOneWorkoutFit(input: {
     }
     const workoutStartMs = findWorkoutStartMs(downloaded.records);
     const normalizedLaps = normalizeFitLaps(downloaded.laps, workoutStartMs);
+
+    // Phase 4 — GPS route silhouette. Flag-gated + best-effort: extract the ordered
+    // [lat,lng] points, simplify to a 50–150-point polyline, and carry it out for the
+    // (try/catch) upsert in main(). Skipped entirely when the flag is off or the
+    // workout has no GPS (treadmill/indoor → simplifyTrack returns null).
+    let trackRow: TrainingPeaksWorkoutTrackUpsertRow | null = null;
+    if (process.env.CLUB_TRACKS_ENABLED === "true" && typeof simplifyTrack === "function") {
+      try {
+        const simplified = simplifyTrack(extractTrackPoints(downloaded.records));
+        if (simplified) {
+          trackRow = {
+            student_id: input.cacheRow.studentId,
+            trainingpeaks_athlete_id: input.athleteId,
+            trainingpeaks_workout_id: input.cacheRow.trainingPeaksWorkoutId,
+            workout_cache_id: input.cacheRow.id,
+            workout_date: input.cacheRow.workoutDate,
+            polyline: simplified.polyline,
+            point_count: simplified.pointCount,
+            bbox: simplified.bbox,
+            source: "fit",
+            scanned_at: input.scannedAt,
+          };
+        }
+      } catch (error) {
+        warnings.push(`track extraction failed: ${toCompactErrorMessage(error)}`);
+      }
+    }
 
     const cleaning = cleanHeartRateSeries({ records: normalizedRecords, observedMaxHr: input.observedMaxHr });
     const avgHr = computeCleanedMovingAverageHr(cleaning.records);
@@ -658,6 +697,7 @@ async function ingestOneWorkoutFit(input: {
         normalization_warnings: warnings,
       },
       warnings,
+      trackRow,
     };
   }
 
@@ -739,6 +779,7 @@ async function main(): Promise<void> {
         let fitMatched = 0;
         let detailsOnly = 0;
         let summaryOnly = 0;
+        let tracksWritten = 0; // Phase 4: workouts that got a GPS track this run
         const perWorkoutWarnings: string[] = [];
 
         for (const cacheRow of cacheRows) {
@@ -762,6 +803,17 @@ async function main(): Promise<void> {
           }
           await upsertTrainingPeaksWorkoutDerivedMetricsRows([result.derivedRow]);
 
+          // Phase 4 — persist the GPS track (best-effort). Wrapped so a missing/
+          // unapplied trainingpeaks_workout_tracks table never fails the scan.
+          if (result.trackRow && typeof upsertTrainingPeaksWorkoutTrack === "function") {
+            try {
+              await upsertTrainingPeaksWorkoutTrack(result.trackRow);
+              tracksWritten += 1;
+            } catch (error) {
+              console.warn(`[fit-ingest] track upsert skipped for ${cacheRow.id}: ${toCompactErrorMessage(error)}`);
+            }
+          }
+
           if (result.derivedRow.fallback_level === "fit_full") fitMatched += 1;
           else if (result.derivedRow.fallback_level === "details_only") detailsOnly += 1;
           else summaryOnly += 1;
@@ -769,6 +821,10 @@ async function main(): Promise<void> {
           if (result.warnings.length > 0) {
             perWorkoutWarnings.push(`workout ${cacheRow.trainingPeaksWorkoutId}: ${result.warnings.join("; ")}`);
           }
+        }
+
+        if (tracksWritten > 0) {
+          console.log(`[fit-ingest] ${target.student.studentName}: GPS-треков записано ${tracksWritten}`);
         }
 
         summaries.push({

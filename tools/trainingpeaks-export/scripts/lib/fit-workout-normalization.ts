@@ -139,6 +139,34 @@ export function normalizeFitRecords(rawRecords: unknown[]): NormalizedFitRecord[
   }));
 }
 
+// Extra record fields for the GPS track (Phase 4). Kept separate from
+// RawFitRecordLike so the HR/pace normalization path stays byte-for-byte unchanged.
+type RawFitRecordWithPos = { timestamp?: unknown; position_lat?: unknown; position_long?: unknown };
+
+/**
+ * Phase 4 — extract the GPS route as ordered [lat, lng] points from FIT records.
+ * fit-file-parser converts position_lat/position_long to degrees. Records are
+ * time-sorted so the sequence is in route order. Returns [] when the workout has no
+ * GPS (treadmill/indoor). Coordinate sanity (range, 0/0, semicircle) is enforced
+ * downstream by simplifyTrack — here we only collect finite pairs.
+ */
+export function extractTrackPoints(rawRecords: unknown[]): Array<[number, number]> {
+  const withTimestamp = rawRecords
+    .filter((entry): entry is RawFitRecordWithPos => Boolean(entry) && typeof entry === "object")
+    .map((record) => ({ record, tsMs: toTimestampMs(record.timestamp) }))
+    .filter((entry): entry is { record: RawFitRecordWithPos; tsMs: number } => entry.tsMs !== null)
+    .sort((a, b) => a.tsMs - b.tsMs);
+  const out: Array<[number, number]> = [];
+  for (const { record } of withTimestamp) {
+    const lat = toFiniteNumber(record.position_lat);
+    const lng = toFiniteNumber(record.position_long);
+    if (lat !== null && lng !== null) {
+      out.push([lat, lng]);
+    }
+  }
+  return out;
+}
+
 export function normalizeFitLaps(rawLaps: unknown[], workoutStartMs: number | null): NormalizedFitLap[] {
   return rawLaps
     .filter((entry): entry is RawFitLapLike => Boolean(entry) && typeof entry === "object")
