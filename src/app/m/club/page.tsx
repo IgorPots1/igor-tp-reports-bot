@@ -1538,6 +1538,29 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
               })}
             </div>
 
+            {view.raceSuggestions.length > 0 ? (
+              <div style={{ ...S.formCard, marginTop: 12 }}>
+                <div style={S.secHead}>Известные забеги - тапни, чтобы заявить</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {view.raceSuggestions.map((sug, i) => (
+                    <button
+                      key={`${sug.date}-${i}`}
+                      type="button"
+                      style={S.sectionBtn}
+                      onClick={() => {
+                        setSelected(sug.date);
+                        setForm({ rname: sug.title, rdist: sug.distanceLabel ?? "" });
+                        setMsg(null);
+                      }}
+                    >
+                      🏁 {sug.title} · {sug.dateLabel}{sug.distanceLabel ? ` · ${sug.distanceLabel}` : ""}
+                    </button>
+                  ))}
+                </div>
+                <div style={S.hint}>Подставит название и дистанцию в форму забега выбранного дня — останется подтвердить.</div>
+              </div>
+            ) : null}
+
             {selDay ? (
               <div style={{ ...S.formCard, marginTop: 12 }}>
                 <div style={{ fontFamily: HEAD, fontSize: 16, color: C.ink, marginBottom: 8 }}>{selDay.dateLabel}</div>

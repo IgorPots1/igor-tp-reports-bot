@@ -269,11 +269,22 @@ export type ClubCalendarDay = {
   entries: ClubCalendarEntry[];
 };
 
+// Phase B — a known upcoming race (from trainingpeaks_race_events) offered as autofill
+// in the calendar race form, so the student taps instead of retyping.
+export type ClubRaceSuggestion = {
+  date: string;
+  dateLabel: string;
+  title: string;
+  distanceLabel: string | null;
+};
+
 export type ClubCalendarView = {
   active: boolean;
   fromDate: string;
   toDate: string;
   days: ClubCalendarDay[];
+  /** Phase B: this student's known upcoming races for the race-form autofill. */
+  raceSuggestions: ClubRaceSuggestion[];
 };
 
 export type ClubBillingView = {

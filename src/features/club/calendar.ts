@@ -100,9 +100,43 @@ export async function getClubCalendar(studentId: string): Promise<ClubCalendarVi
       entries: byDate.get(date) ?? [],
     });
   }
+  const raceSuggestions = await loadRaceSuggestions(studentId, from, to);
   // active=false only when the table is missing (migration unapplied) → the client
   // shows a "not active yet" hint instead of an empty calendar it can't write to.
-  return { active: !error, fromDate: from, toDate: to, days };
+  return { active: !error, fromDate: from, toDate: to, days, raceSuggestions };
+}
+
+/**
+ * Phase B — this student's known upcoming races (trainingpeaks_race_events) inside the
+ * 45-day window, for the race-form autofill. Read-only, tolerant of a missing table /
+ * errors (returns []). distance_raw is shown as-is (distance_km is unreliable — the TP
+ * repository intentionally omits it). No new races section: this feeds the calendar form.
+ */
+async function loadRaceSuggestions(
+  studentId: string,
+  from: string,
+  to: string
+): Promise<ClubCalendarView["raceSuggestions"]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("event_date, title, distance_raw")
+    .eq("student_id", studentId)
+    .gte("event_date", from)
+    .lte("event_date", to)
+    .order("event_date", { ascending: true })
+    .limit(20);
+  if (error || !data) {
+    return [];
+  }
+  return (data as Array<{ event_date: string; title: string | null; distance_raw: string | null }>)
+    .filter((r) => r.event_date && (r.title ?? "").trim())
+    .map((r) => ({
+      date: r.event_date,
+      dateLabel: formatRuDate(r.event_date),
+      title: (r.title as string).trim(),
+      distanceLabel: r.distance_raw && r.distance_raw.trim() ? r.distance_raw.trim() : null,
+    }));
 }
 
 function hms(v: unknown): number | null {
