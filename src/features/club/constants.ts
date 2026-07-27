@@ -210,6 +210,17 @@ export function isReactionsEnabled(): boolean {
 export function isAggregatesEnabled(): boolean {
   return process.env.CLUB_AGGREGATES_ENABLED === "true";
 }
+/**
+ * Phase 1.4 follow-up: within the aggregate path, read WEEKLY rollups (club_week_rollup
+ * + club_student_rollup) instead of daily rows — a single-page read, gets tops/challenge
+ * to hundreds of ms. Separate flag so it layers safely on the already-live daily path:
+ * OFF → daily path (proven, live); ON → rollups. Only meaningful when isAggregatesEnabled().
+ * The consumer falls back to the daily path if the rollup tables are empty (not yet
+ * materialized), so flipping this on can never show zeros.
+ */
+export function isWeekRollupEnabled(): boolean {
+  return process.env.CLUB_WEEK_ROLLUP_ENABLED === "true";
+}
 export function isPrivacyEnabled(): boolean {
   return process.env.CLUB_PRIVACY_ENABLED === "true";
 }

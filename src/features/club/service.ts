@@ -610,6 +610,10 @@ function isoInTz(date: Date): string {
 function clubTodayIso(): string {
   return isoInTz(new Date());
 }
+/** Test-only: club "today" (Europe/Belgrade) so a harness can match the streak anchor. */
+export function __clubTodayIsoForTest(): string {
+  return clubTodayIso();
+}
 
 function addDaysIso(iso: string, days: number): string {
   const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})/u);
@@ -1180,6 +1184,141 @@ function computeAutoGoalKmFromAgg(aggRows: DailyAgg[], visibleIds: Set<string>, 
 }
 
 // ---------------------------------------------------------------------------
+// Weekly rollups (Phase 1.4 follow-up) — one row per (student, ISO week) + per-student
+// current streak, so tops/challenge/stats/rank read a single page. computeWeekRollups /
+// computeStudentStreaks are the aggregation truth (materialize writes exactly them; the
+// parity harness feeds them into the same reducers). Behind CLUB_WEEK_ROLLUP_ENABLED,
+// with a daily-path fallback when the tables are empty (never shows zeros).
+// ---------------------------------------------------------------------------
+
+export type WeekRollup = { studentId: string; weekStart: string; runningKm: number; completedRunning: number; plannedRunning: number };
+export type StudentStreak = { studentId: string; currentStreak: number };
+
+/** Pure: raw club rows → per-(student, ISO-week) running rollups (weeks with any activity). */
+export function computeWeekRollups(rows: ClubWorkoutRow[]): WeekRollup[] {
+  const byKey = new Map<string, WeekRollup>();
+  for (const row of rows) {
+    if (!row.isRunning) continue;
+    if (!row.isPlanned && !row.isCompleted) continue;
+    const wk = weekStartIso(row.workoutDate);
+    const key = `${row.studentId}|${wk}`;
+    const r = byKey.get(key) ?? { studentId: row.studentId, weekStart: wk, runningKm: 0, completedRunning: 0, plannedRunning: 0 };
+    if (row.isPlanned) r.plannedRunning += 1;
+    if (row.isCompleted) {
+      r.completedRunning += 1;
+      r.runningKm += row.distanceKm ?? 0;
+    }
+    byKey.set(key, r);
+  }
+  return [...byKey.values()];
+}
+
+/** Pure: raw club rows → per-student current streak (consecutive active days ending `today`). */
+export function computeStudentStreaks(rows: ClubWorkoutRow[], today: string): StudentStreak[] {
+  const daysByStudent = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (!row.isCompleted || !row.isRunning) continue;
+    const s = daysByStudent.get(row.studentId) ?? new Set<string>();
+    s.add(row.workoutDate);
+    daysByStudent.set(row.studentId, s);
+  }
+  const out: StudentStreak[] = [];
+  for (const [studentId, days] of daysByStudent) {
+    const streak = computeStreakDays(days, today);
+    if (streak > 0) out.push({ studentId, currentStreak: streak });
+  }
+  return out;
+}
+
+// Test overrides (parity harness feeds in-memory rollups into the real consumer code).
+let _weekRollupSourceForTest: ((input: { fromWeek: string; toWeek: string; studentIds?: string[] }) => Promise<WeekRollup[]>) | null = null;
+let _studentStreakSourceForTest: ((studentIds?: string[]) => Promise<StudentStreak[]>) | null = null;
+export function __setWeekRollupSourcesForTest(
+  weekFn: ((input: { fromWeek: string; toWeek: string; studentIds?: string[] }) => Promise<WeekRollup[]>) | null,
+  streakFn: ((studentIds?: string[]) => Promise<StudentStreak[]>) | null
+): void {
+  _weekRollupSourceForTest = weekFn;
+  _studentStreakSourceForTest = streakFn;
+}
+
+/** Read weekly rollups for a week_start range (inclusive), optionally a subset of students. */
+async function loadWeekRollups(input: { fromWeek: string; toWeek: string; studentIds?: string[] }): Promise<WeekRollup[]> {
+  if (_weekRollupSourceForTest) return _weekRollupSourceForTest(input);
+  const supabase = createSupabaseServerClient();
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (from, to) => {
+      let q = supabase
+        .from("club_week_rollup")
+        .select("student_id, week_start, running_km, completed_running, planned_running")
+        .gte("week_start", input.fromWeek)
+        .lte("week_start", input.toWeek);
+      if (input.studentIds && input.studentIds.length > 0) q = q.in("student_id", input.studentIds);
+      return withSupabaseNetworkRetry(() => q.order("week_start", { ascending: true }).order("student_id", { ascending: true }).range(from, to));
+    },
+    { label: `club:week_rollup ${input.fromWeek}..${input.toWeek}` }
+  );
+  return data.map((r) => ({
+    studentId: r.student_id as string,
+    weekStart: r.week_start as string,
+    runningKm: Number(r.running_km ?? 0),
+    completedRunning: Number(r.completed_running ?? 0),
+    plannedRunning: Number(r.planned_running ?? 0),
+  }));
+}
+
+/** Read per-student current streaks (optionally a subset). */
+async function loadStudentStreaks(studentIds?: string[]): Promise<StudentStreak[]> {
+  if (_studentStreakSourceForTest) return _studentStreakSourceForTest(studentIds);
+  const supabase = createSupabaseServerClient();
+  const data = await fetchAllRows<Record<string, unknown>>(
+    (from, to) => {
+      let q = supabase.from("club_student_rollup").select("student_id, current_streak");
+      if (studentIds && studentIds.length > 0) q = q.in("student_id", studentIds);
+      return withSupabaseNetworkRetry(() => q.order("student_id", { ascending: true }).range(from, to));
+    },
+    { label: "club:student_rollup" }
+  );
+  return data.map((r) => ({ studentId: r.student_id as string, currentStreak: Number(r.current_streak ?? 0) }));
+}
+
+/** Per-student running counts from weekly rollup rows (for finalizePerformers). */
+function performerCountsFromRollup(rows: WeekRollup[]): PerfCounts {
+  const counts: PerfCounts = new Map();
+  for (const r of rows) {
+    const e = counts.get(r.studentId) ?? { planned: 0, completed: 0 };
+    e.planned += r.plannedRunning;
+    e.completed += r.completedRunning;
+    counts.set(r.studentId, e);
+  }
+  return counts;
+}
+
+/** Club running km for ONE week_start over visible students (rollup mirror of clubKmInRange). */
+function clubKmForWeekRollup(rows: WeekRollup[], visibleIds: Set<string>, weekStart: string): number {
+  let km = 0;
+  for (const r of rows) {
+    if (r.weekStart === weekStart && visibleIds.has(r.studentId)) km += r.runningKm;
+  }
+  return km;
+}
+
+/** Auto goal from weekly rollups — same algebra as computeAutoGoalKm, rollup source. */
+function computeAutoGoalKmFromRollup(rows: WeekRollup[], visibleIds: Set<string>, currentWeekFrom: string): number | null {
+  const km = [1, 2, 3, 4, 5].map((i) => clubKmForWeekRollup(rows, visibleIds, addDaysIso(currentWeekFrom, -7 * i)));
+  const n = C.CLUB_CHALLENGE_ROLLING_WEEKS;
+  const baseWeeks = km.slice(0, n).filter((k) => k > 0);
+  if (baseWeeks.length === 0) return null;
+  const baseAvg = baseWeeks.reduce((a, b) => a + b, 0) / baseWeeks.length;
+  const prevWeeks = km.slice(1, n + 1).filter((k) => k > 0);
+  const prevAvg = prevWeeks.length ? prevWeeks.reduce((a, b) => a + b, 0) / prevWeeks.length : 0;
+  const prevActual = km[0];
+  const beatPrevious = prevActual > 0 && prevAvg > 0 && prevActual >= prevAvg;
+  const raw = beatPrevious ? baseAvg * (1 + C.CLUB_CHALLENGE_RAISE_STEP) : baseAvg;
+  const step = C.CLUB_CHALLENGE_AUTO_ROUND_STEP;
+  return Math.max(step, Math.ceil(raw / step) * step);
+}
+
+// ---------------------------------------------------------------------------
 // Public view builders
 // ---------------------------------------------------------------------------
 
@@ -1361,7 +1500,20 @@ export async function getClubChallenge(input: {
   let performersBase: ClubTopPerformer[];
   let autoGoal: number | null;
 
-  if (C.isAggregatesEnabled()) {
+  const chRollup = C.isAggregatesEnabled() && C.isWeekRollupEnabled()
+    ? await loadWeekRollups({ fromWeek: historyFrom, toWeek: range.from, studentIds: [...visibleIds] })
+    : [];
+  if (chRollup.length > 0) {
+    // Weekly rollup path.
+    const thisWeek = chRollup.filter((r) => r.weekStart === range.from);
+    for (const r of thisWeek) {
+      if (!visibleIds.has(r.studentId)) continue;
+      clubKmRaw += r.runningKm;
+      if (r.studentId === input.currentStudentId) personalKmRaw += r.runningKm;
+    }
+    performersBase = finalizePerformers(performerCountsFromRollup(thisWeek), visibleById);
+    autoGoal = computeAutoGoalKmFromRollup(chRollup, visibleIds, range.from);
+  } else if (C.isAggregatesEnabled()) {
     const agg = await loadDailyAggregates({ from: historyFrom, to: range.to, studentIds: [...visibleIds] });
     const weekAgg = agg.filter((a) => a.day >= range.from && a.day <= range.to);
     for (const a of weekAgg) {
@@ -1748,8 +1900,14 @@ export async function getClubProfileDetail(input: {
   // Challenge rank this week (whole club, current week only) — aggregates or raw rows.
   let performers: ClubTopPerformer[];
   if (C.isAggregatesEnabled()) {
-    const weekAgg = await loadDailyAggregates({ from: week.from, to: week.to, studentIds: [...visibleById.keys()] });
-    performers = finalizePerformers(performerCountsFromAgg(weekAgg), visibleById);
+    const ids = [...visibleById.keys()];
+    const rollup = C.isWeekRollupEnabled() ? await loadWeekRollups({ fromWeek: week.from, toWeek: week.from, studentIds: ids }) : [];
+    if (rollup.length > 0) {
+      performers = finalizePerformers(performerCountsFromRollup(rollup), visibleById);
+    } else {
+      const weekAgg = await loadDailyAggregates({ from: week.from, to: week.to, studentIds: ids });
+      performers = finalizePerformers(performerCountsFromAgg(weekAgg), visibleById);
+    }
   } else {
     const weekAllRows = await loadClubWorkoutRows({ from: week.from, to: week.to });
     performers = buildWeekPerformers(weekAllRows, visibleById);
@@ -1795,8 +1953,22 @@ export async function getClubStatistics(): Promise<ClubStatisticsView> {
   let prevClubKmRaw = 0;
   let performersAll: ClubTopPerformer[];
 
-  if (C.isAggregatesEnabled()) {
-    // Aggregate path: read precomputed daily rows for this + previous week.
+  const rollup = C.isAggregatesEnabled() && C.isWeekRollupEnabled()
+    ? await loadWeekRollups({ fromWeek: prevFrom, toWeek: range.from, studentIds: [...visibleIds] })
+    : [];
+  if (rollup.length > 0) {
+    // Weekly rollup path (single-page read).
+    const thisWeek = rollup.filter((r) => r.weekStart === range.from);
+    for (const r of thisWeek) {
+      if (!visibleIds.has(r.studentId)) continue;
+      if (r.completedRunning > 0) active.add(r.studentId);
+      workoutsCount += r.completedRunning;
+      clubKmRaw += r.runningKm;
+    }
+    prevClubKmRaw = clubKmForWeekRollup(rollup, visibleIds, prevFrom);
+    performersAll = finalizePerformers(performerCountsFromRollup(thisWeek), visibleById);
+  } else if (C.isAggregatesEnabled()) {
+    // Daily-aggregate path (fallback when rollups not yet materialized).
     const agg = await loadDailyAggregates({ from: prevFrom, to: range.to, studentIds: [...visibleIds] });
     const weekAgg = agg.filter((a) => a.day >= range.from && a.day <= range.to);
     for (const a of weekAgg) {
@@ -1846,6 +2018,10 @@ export async function getClubExtendedTops(input: {
   const today = clubTodayIso();
   const range = currentWeekRange();
   const from = addDaysIso(today, -60); // wide enough for streaks
+  // Read through the END of the current week (like statistics/challenge), so byCompletion
+  // counts this week's PLANNED-but-future sessions consistently across all tabs. Planned
+  // future rows are is_completed=false → they don't affect volume/count/streaks.
+  const toTops = range.to > today ? range.to : today;
   const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visible = students.filter(isVisible);
   const visibleById = new Map(visible.map((s) => [s.id, s]));
@@ -1854,10 +2030,25 @@ export async function getClubExtendedTops(input: {
   const volume = new Map<string, number>();
   const count = new Map<string, number>();
   const activeDaysByStudent = new Map<string, Set<string>>();
+  const streakByStudent = new Map<string, number>();
   let performersAll: ClubTopPerformer[];
 
-  if (C.isAggregatesEnabled()) {
-    const agg = await loadDailyAggregates({ from, to: today, studentIds: [...visibleIds] });
+  const topsRollup = C.isAggregatesEnabled() && C.isWeekRollupEnabled()
+    ? await loadWeekRollups({ fromWeek: range.from, toWeek: range.from, studentIds: [...visibleIds] })
+    : [];
+  if (topsRollup.length > 0) {
+    // Weekly rollup path: current-week volume/count + performers + precomputed streaks.
+    for (const r of topsRollup) {
+      if (!visibleIds.has(r.studentId) || r.completedRunning <= 0) continue;
+      volume.set(r.studentId, (volume.get(r.studentId) ?? 0) + r.runningKm);
+      count.set(r.studentId, (count.get(r.studentId) ?? 0) + r.completedRunning);
+    }
+    performersAll = finalizePerformers(performerCountsFromRollup(topsRollup), visibleById);
+    for (const s of await loadStudentStreaks([...visibleIds])) {
+      if (visibleIds.has(s.studentId)) streakByStudent.set(s.studentId, s.currentStreak);
+    }
+  } else if (C.isAggregatesEnabled()) {
+    const agg = await loadDailyAggregates({ from, to: toTops, studentIds: [...visibleIds] });
     const weekAgg = agg.filter((a) => a.day >= range.from && a.day <= range.to);
     for (const a of agg) {
       if (!visibleIds.has(a.studentId) || a.completedRunning <= 0) continue;
@@ -1871,8 +2062,9 @@ export async function getClubExtendedTops(input: {
       count.set(a.studentId, (count.get(a.studentId) ?? 0) + a.completedRunning);
     }
     performersAll = finalizePerformers(performerCountsFromAgg(weekAgg), visibleById);
+    for (const [id, days] of activeDaysByStudent) streakByStudent.set(id, computeStreakDays(days, today));
   } else {
-    const rows = await loadClubWorkoutRows({ from, to: today });
+    const rows = await loadClubWorkoutRows({ from, to: toTops });
     const weekRows = rows.filter((r) => r.workoutDate >= range.from && r.workoutDate <= range.to);
     for (const row of rows) {
       if (!row.isCompleted || !row.isRunning || !visibleIds.has(row.studentId)) continue;
@@ -1886,6 +2078,7 @@ export async function getClubExtendedTops(input: {
       count.set(row.studentId, (count.get(row.studentId) ?? 0) + 1);
     }
     performersAll = buildWeekPerformers(weekRows, visibleById);
+    for (const [id, days] of activeDaysByStudent) streakByStudent.set(id, computeStreakDays(days, today));
   }
 
   const nameOf = (id: string) => firstWord(visibleById.get(id)?.name ?? "");
@@ -1919,8 +2112,7 @@ export async function getClubExtendedTops(input: {
     .slice(0, C.CLUB_EXTENDED_TOP_N)
     .map((p) => mkRow(p.studentId, `${Math.round(p.completionPct * 100)}%`));
 
-  const streaks = [...activeDaysByStudent.entries()]
-    .map(([id, days]) => [id, computeStreakDays(days, today)] as const)
+  const streaks = [...streakByStudent.entries()]
     .filter(([, s]) => s > 0)
     .sort(byStudentId)
     .slice(0, C.CLUB_EXTENDED_TOP_N)
@@ -2517,13 +2709,26 @@ export async function materializeClubRecords(opts?: {
   // computeDailyAggregates is the single source of aggregation truth (also used by the
   // parity harness). Written unconditionally (read is gated by CLUB_AGGREGATES_ENABLED),
   // so the table is warm before the flag is flipped.
-  const aggDbRows = computeDailyAggregates(visibleRows.filter((r) => targetSet.has(r.studentId))).map((a) => ({
+  const targetRows = visibleRows.filter((r) => targetSet.has(r.studentId));
+  const aggDbRows = computeDailyAggregates(targetRows).map((a) => ({
     student_id: a.studentId,
     day: a.day,
     running_km: a.runningKm,
     completed_running: a.completedRunning,
     planned_running: a.plannedRunning,
     active_day: a.completedRunning > 0,
+  }));
+  // Phase 1.4 follow-up: weekly rollups + per-student streak (same pass, same targets).
+  const weekRollupDbRows = computeWeekRollups(targetRows).map((r) => ({
+    student_id: r.studentId,
+    week_start: r.weekStart,
+    running_km: r.runningKm,
+    completed_running: r.completedRunning,
+    planned_running: r.plannedRunning,
+  }));
+  const streakDbRows = computeStudentStreaks(targetRows, today).map((s) => ({
+    student_id: s.studentId,
+    current_streak: s.currentStreak,
   }));
 
   if (dryRun) {
@@ -2560,6 +2765,27 @@ export async function materializeClubRecords(opts?: {
     }
   } catch (e) {
     console.warn(`materializeClubRecords: daily aggregates write skipped: ${(e as Error).message}`);
+  }
+
+  // Weekly rollups + streaks: scoped replace by the SAME target set. Tolerant — if the
+  // migration is not applied yet, log and continue (read is flag-gated + daily fallback).
+  try {
+    for (const idChunk of chunkIds([...targetSet], 100)) {
+      const { error: e1 } = await supabase.from("club_week_rollup").delete().in("student_id", idChunk);
+      if (e1) throw new Error(e1.message);
+      const { error: e2 } = await supabase.from("club_student_rollup").delete().in("student_id", idChunk);
+      if (e2) throw new Error(e2.message);
+    }
+    for (const batch of chunkIds(weekRollupDbRows, 500)) {
+      const { error } = await supabase.from("club_week_rollup").insert(batch);
+      if (error) throw new Error(error.message);
+    }
+    for (const batch of chunkIds(streakDbRows, 500)) {
+      const { error } = await supabase.from("club_student_rollup").insert(batch);
+      if (error) throw new Error(error.message);
+    }
+  } catch (e) {
+    console.warn(`materializeClubRecords: week rollups write skipped: ${(e as Error).message}`);
   }
 
   return { studentsProcessed: targetIds.length, rowsWritten: snapshotRows.length, dryRun: false };

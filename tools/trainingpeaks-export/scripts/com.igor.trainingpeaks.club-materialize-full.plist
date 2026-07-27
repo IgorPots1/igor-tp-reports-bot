@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Суточный ПОЛНЫЙ пересчёт клубных снапшотов/агрегатов (materialize --all) —
+     закрывает пробел с удалёнными из TP тренировками (не бьют updated_at).
+     Кладётся в ~/Library/LaunchAgents/. Гейтится CLUB_MATERIALIZE_ENABLED внутри скрипта. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.club-materialize-full</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-club-materialize-full-daily.sh"</string>
+  </array>
+
+  <!-- ловит пропуск, накопившийся пока Mac был выключен -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- раз в сутки в 04:20 (off-peak, не совпадает со сканами :00/:10) -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>20</integer></dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-materialize-full.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-materialize-full.launchd.err.log</string>
+</dict>
+</plist>
