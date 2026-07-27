@@ -147,11 +147,14 @@ export type ClubVolumePoint = { label: string; km: number };
 export type ClubAchievement = {
   code: string;
   title: string;
+  /** The rule, in plain words (Phase 3.5) — always shown so the badge is never cryptic. */
   hint: string;
   earned: boolean;
   earnedDateLabel: string | null;
   /** demo card (data not available yet) — only surfaced under CLUB_STUBS_ENABLED. */
   stub: boolean;
+  /** Progress toward earning (Phase 3.5). null for binary/one-off achievements. */
+  progress: { current: number; target: number; unit: string } | null;
 };
 
 export type ClubProfileDetailView = ClubProfileView & {

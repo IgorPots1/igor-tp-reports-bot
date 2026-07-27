@@ -971,10 +971,11 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
         <div style={S.card}>
           <div style={S.secHead}>По типам тренировок</div>
           {v.typeBreakdown.map((t) => (
-            <div key={t.family} style={S.recRow}>
-              <span style={{ flex: 1, color: C.ink, fontSize: 14 }}>{t.label}</span>
-              <span style={{ color: C.sub, fontSize: 13, marginRight: 10 }}>{t.count} трен.</span>
-              <span style={{ fontFamily: HEAD, fontSize: 15, color: C.ink }}>{t.km > 0 ? fmtKm(t.km) : ""}</span>
+            <div key={t.family} style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "12px 0", borderTop: `1px solid ${C.line}` }}>
+              <span style={{ flex: 1, color: C.ink, fontSize: 17, fontWeight: 600, fontFamily: HEAD }}>{t.label}</span>
+              <span style={{ fontFamily: HEAD, fontSize: 20, fontWeight: 700, color: C.accent }}>{t.count}</span>
+              <span style={{ color: C.sub, fontSize: 12 }}>трен.</span>
+              {t.km > 0 ? <span style={{ fontFamily: HEAD, fontSize: 16, color: C.ink, marginLeft: 8 }}>{fmtKm(t.km)}</span> : null}
             </div>
           ))}
         </div>
@@ -987,14 +988,25 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
 
       <div style={S.card}>
         <div style={S.secHead}>Достижения</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-          {v.achievements.map((a) => (
-            <div key={a.code} style={S.badgeCard(a.earned)} title={a.hint}>
-              <span style={{ fontSize: 16 }}>{a.earned ? "🏅" : "🔒"}</span>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{a.title}</span>
-              {a.stub ? <span style={{ fontSize: 10, color: C.warn }}>демо</span> : null}
-            </div>
-          ))}
+        <div style={{ marginTop: 8 }}>
+          {v.achievements.map((a) => {
+            const pctDone = a.progress && a.progress.target > 0 ? Math.min(100, Math.round((a.progress.current / a.progress.target) * 100)) : (a.earned ? 100 : 0);
+            return (
+              <div key={a.code} style={{ padding: "10px 0", borderTop: `1px solid ${C.line}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 16 }}>{a.earned ? "🏅" : "🔒"}</span>
+                  <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: a.earned ? C.ink : C.sub }}>{a.title}</span>
+                  {a.progress ? <span style={{ fontFamily: HEAD, fontSize: 13, color: a.earned ? C.accent : C.sub }}>{a.progress.current}/{a.progress.target} {a.progress.unit}</span> : (a.earned ? <span style={{ fontSize: 12, color: C.good }}>получено</span> : null)}
+                </div>
+                <div style={{ fontSize: 12, color: C.faint, marginTop: 3 }}>{a.hint}</div>
+                {!a.earned ? (
+                  <div style={{ height: 5, background: C.cardAlt, borderRadius: 999, marginTop: 6, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${pctDone}%`, background: C.accent }} />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
 

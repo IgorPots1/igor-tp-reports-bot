@@ -613,6 +613,22 @@ function typeLabel(family: TrainingPeaksWorkoutActivityFamily): string {
   return FAMILY_LABEL[family] ?? "Тренировка";
 }
 
+/** Phase 3.6: collapse raw families into a few big buckets for the profile breakdown. */
+function typeBucket(family: TrainingPeaksWorkoutActivityFamily): { key: string; label: string } {
+  switch (family) {
+    case "run":
+      return { key: "run", label: "Бег" };
+    case "strength":
+      return { key: "strength", label: "Силовая" };
+    case "bike":
+      return { key: "bike", label: "Вело" };
+    case "swim":
+      return { key: "swim", label: "Плавание" };
+    default:
+      return { key: "other", label: "Другое" };
+  }
+}
+
 /** Strip long dashes (naryad rule) and trim a title into a safe short caption. */
 function sanitizeCaption(title: string | null, label: string): string | null {
   if (!title) {
@@ -1838,7 +1854,11 @@ function buildAchievements(
   const maxStreak = longestStreak(activeDays);
   const monthMap = kmByMonth(studentRunningRows);
   const totalKm = studentRunningRows.reduce((a, r) => a + (r.distanceKm ?? 0), 0);
+  const bestMonthKm = Math.max(0, ...monthMap.values());
+  const longestRunKm = Math.max(0, ...studentRunningRows.map((r) => r.distanceKm ?? 0));
   const haveDistance = new Set(records.map((r) => r.distanceKey));
+  // Target distance (km) per first_distance rule, for the progress bar.
+  const DIST_TARGET_KM: Record<string, number> = { "10k": 10, "21k": 21.1, "42k": 42.2 };
 
   // week completion 100%: any ISO week with >=1 planned run and completed>=planned
   const weekPlanned = new Map<string, number>();
@@ -1866,28 +1886,38 @@ function buildAchievements(
   const out: ClubAchievement[] = [];
   for (const rule of C.CLUB_ACHIEVEMENT_RULES) {
     if (rule.stub) {
-      out.push({ code: rule.code, title: rule.title, hint: rule.hint, earned: false, earnedDateLabel: null, stub: true });
+      // Phase 3.5: undisplayable / demo badges are dropped entirely (never shown as
+      // a cryptic locked card). Only kept when CLUB_STUBS_ENABLED for local preview.
+      if (!C.isStubsEnabled()) continue;
+      out.push({ code: rule.code, title: rule.title, hint: rule.hint, earned: false, earnedDateLabel: null, stub: true, progress: null });
       continue;
     }
     let earned = false;
+    let progress: ClubAchievement["progress"] = null;
     switch (rule.kind) {
-      case "first_distance":
+      case "first_distance": {
         earned = rule.distanceKey ? haveDistance.has(rule.distanceKey) : false;
+        const target = rule.distanceKey ? DIST_TARGET_KM[rule.distanceKey] ?? 0 : 0;
+        if (target > 0) progress = { current: Number(Math.min(longestRunKm, target).toFixed(1)), target, unit: "км" };
         break;
+      }
       case "month_volume":
-        earned = [...monthMap.values()].some((km) => km >= (rule.param ?? Infinity));
+        earned = bestMonthKm >= (rule.param ?? Infinity);
+        progress = { current: Math.round(Math.min(bestMonthKm, rule.param ?? 0)), target: rule.param ?? 0, unit: "км" };
         break;
       case "streak":
         earned = maxStreak >= (rule.param ?? Infinity);
+        progress = { current: Math.min(maxStreak, rule.param ?? 0), target: rule.param ?? 0, unit: "дн" };
         break;
       case "week_full_completion":
         earned = hadPerfectWeek;
         break;
       case "total_volume":
         earned = totalKm >= (rule.param ?? Infinity);
+        progress = { current: Math.round(Math.min(totalKm, rule.param ?? 0)), target: rule.param ?? 0, unit: "км" };
         break;
     }
-    out.push({ code: rule.code, title: rule.title, hint: rule.hint, earned, earnedDateLabel: null, stub: false });
+    out.push({ code: rule.code, title: rule.title, hint: rule.hint, earned, earnedDateLabel: null, stub: false, progress });
   }
   return out;
 }
@@ -1962,14 +1992,16 @@ export async function getClubProfileDetail(input: {
     }
   }
 
-  // Type breakdown over all completed workouts.
+  // Type breakdown over all completed workouts. Phase 3.6: collapse the ~11 raw
+  // families into a few big, clear buckets (Бег / Силовая / Вело / Плавание / Другое)
+  // — less fragmentation, bigger rows in the UI.
   const typeAgg = new Map<string, { label: string; count: number; km: number }>();
   for (const row of ownCompleted) {
-    const label = typeLabel(row.family);
-    const agg = typeAgg.get(row.family) ?? { label, count: 0, km: 0 };
+    const bucket = typeBucket(row.family);
+    const agg = typeAgg.get(bucket.key) ?? { label: bucket.label, count: 0, km: 0 };
     agg.count += 1;
     agg.km += row.distanceKm ?? 0;
-    typeAgg.set(row.family, agg);
+    typeAgg.set(bucket.key, agg);
   }
   const typeBreakdown: ClubTypeBreakdown[] = [...typeAgg.entries()]
     .map(([family, v]) => ({ family, label: v.label, count: v.count, km: Number(v.km.toFixed(1)) }))
