@@ -41,6 +41,11 @@ describe("detectTrainingReport — recall (must be reports)", () => {
     "Привет всем 🙌 длинная готова Жарко 🥵 В целом хорошо",
     "длинная прошла отлично",
     "лонг готов, ноги живые",
+    // metric-first-person cut: a number IS a report with self-reference OR corroboration
+    "Сегодня 12 км, полёт нормальный",       // temporal-self "сегодня"
+    "12 км, тяжело далось",                    // corroboration: feeling
+    "10 км за 55 мин 👍",                       // corroboration: time + ack
+    "я осилила 15 км",                          // first-person "я" + метрика
   ];
   for (const text of reports) {
     test(`report: ${text.slice(0, 40)}`, () => assert.equal(isReport(text), true));
@@ -67,6 +72,11 @@ describe("detectTrainingReport — precision (must NOT be reports)", () => {
     "В следующий раз первые 500 метров не гони",
     "Попробую первые 600 метров быстрее",
     "Ноги будут ватные, если рано вставать",
+    // metric-first-person cut: a number about SOMEONE ELSE or a general norm is NOT a report
+    "Это хорошо) а то мне сегодня попался рилс, там девушка 80 км бегает и у нее 2 тренировки в неделю",
+    "норма 40 км в неделю для любителя",
+    "Обычно на 70 км ем два геля",
+    "у подруги пульс 165 на этом темпе",
   ];
   for (const text of nonReports) {
     test(`not: ${text.slice(0, 40)}`, () => assert.equal(isReport(text), false));

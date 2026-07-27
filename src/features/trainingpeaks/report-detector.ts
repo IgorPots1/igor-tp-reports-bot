@@ -130,6 +130,17 @@ const TRAINING_INTENT_PATTERNS: RegExp[] = [
   /на этой неделе/,
 ];
 
+// A weak signal is a REPORT only if the number/keyword is about the STUDENT. First-person markers:
+// the "я/мне/мой" pronouns and temporal-self words ("сегодня 12 км" = I did 12 km today). Loose on
+// purpose — the third-party veto below is what stops "мне сегодня попался рилс, девушка 80 км".
+const FIRST_PERSON_MARKERS = new RegExp(`${CYR_WS}(я|мне|меня|мо[йяеиюг][а-яё]*)(?![а-яёa-z])|сегодня|с утра|${CYR_WS}утром|вечером|наконец|только что`, "u");
+// Corroboration: a number that co-occurs with another report signal is a report even without "я"
+// ("12 км, тяжело" / "10 км за 55 мин" / "5 км ✅"): a feeling/eval word, an ack/emoji, a time or a pace.
+const REPORT_CORROBORATION = /тяжел|тяжко|легк|легч|устал|вымота|измота|норм|хорош|отличн|классн|бодр|кайф|изжар|дал[оаи]сь|трудно|непрост|терп[её]ж|духот|✅|👍|👌|🔥|💪|готов|\d{1,2}[:.]\d{2}|(?:мин|час|сек)[а-яё]*\s*\d|\d+\s*(?:мин|час|сек)/u;
+// Third-party / media / general-norm veto for WEAK signals only (verb/phrase reports are decided
+// above, untouched): a number about SOMEONE ELSE or a weekly norm, not this student's run.
+const THIRD_PARTY_OR_NORM = new RegExp(`рилс|reels|ролик|видео|блогер|марафонец|девушк|подруг|парн[ияюе]|парень|у не[ёе](?![а-яё])|${CYR_WS}норм[аы](?![а-яё])|в недел`, "u");
+
 /**
  * Decide if a NORMALIZED message (see normalizeObserverText) is a completed-training report, and
  * how confident. Returns a score in [0,1] or null. Precedence: a past-tense run VERB is decisive;
@@ -175,9 +186,16 @@ export function detectTrainingReport(normalizedInput: string): number | null {
   // ("давай первые 2 км помедленнее в следующий раз") is a plan, not a report. Verb/phrase reports
   // are decided above and untouched by this.
   if (TRAINING_SOFT_PLAN_VETO.test(normalized)) return null;
-  if (hasMetric) return 0.76;
-  if (hasSoft) return 0.74;
-  return 0.72;
+  // A bare number can be about someone else ("девушка 80 км бегает") or a general norm ("40 км в
+  // неделю"). A metric/keyword counts as a report only when it's about the STUDENT: first-person
+  // self-reference OR corroboration (feeling/ack/time/pace). And a third-party/media/norm context
+  // vetoes it outright, even if a first-person word ("мне сегодня попался рилс") appears elsewhere.
+  if (THIRD_PARTY_OR_NORM.test(normalized)) return null;
+  const selfOrCorroboration = FIRST_PERSON_MARKERS.test(normalized) || REPORT_CORROBORATION.test(normalized) || hasSoft;
+  if (hasMetric && selfOrCorroboration) return 0.76;
+  if (hasSoft) return 0.74; // a felt-execution report ("ноги ватные") is self by nature
+  if (hasKeyword && selfOrCorroboration) return 0.72;
+  return null;
 }
 
 // A WEAK confirmation: the WHOLE message is just an acknowledgement ("готово", "сделала", "✅").
