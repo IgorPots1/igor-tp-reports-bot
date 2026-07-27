@@ -46,7 +46,7 @@ export function evaluateComparisonSlot(packet: ContextPacket): ComparisonSlotRes
       return {
         adviceKey: "signal_pulse_sensor_suspect",
         numbers: { shortfallBpm: flag.shortfallBpm, currentHr: flag.currentHr, normHr: flag.normHr, baseN: flag.baseN },
-        reason: `pulse ${flag.shortfallBpm}bpm below the class norm (${flag.currentHr} vs ${flag.normHr}, n=${flag.baseN}) — mid-band, flagged not asked`,
+        reason: `пульс на ${flag.shortfallBpm} уд ниже нормы класса (${flag.currentHr} против ${flag.normHr}, n=${flag.baseN}) — средняя зона, помечаю тренеру, не спрашиваю`,
       };
     }
     const numbers: Record<string, number> = { delta: flag.delta };
@@ -55,7 +55,7 @@ export function evaluateComparisonSlot(packet: ContextPacket): ComparisonSlotRes
     return {
       adviceKey: "signal_unusual_shift",
       numbers,
-      reason: `unusually large shift in ${flag.metric} (Δ${flag.delta}) — possible artefact, flagged for review`,
+      reason: `необычно большой сдвиг по ${flag.metric} (Δ${flag.delta}) — возможно артефакт, помечаю на проверку`,
     };
   }
 
@@ -71,7 +71,7 @@ export function evaluateComparisonSlot(packet: ContextPacket): ComparisonSlotRes
       praise: null,
       hrSensorQuestion: {
         numbers: line ? { current: line.after ?? 0, norm: line.before ?? 0, baseN: line.baseN } : {},
-        reason: "comparison base's sensor detector: pulse well below the class norm at a comparable pace — asking the student, not the coach",
+        reason: "детектор датчика по базе сравнения: пульс заметно ниже нормы класса на сопоставимом темпе — спрашиваю ученика, не тренера",
       },
       coachSignals,
     };

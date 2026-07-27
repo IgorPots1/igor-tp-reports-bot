@@ -23,12 +23,12 @@ export function evaluateTrustGate(current: PlannerDerivedMetrics): TrustGate {
     paceDistanceTrusted,
     hrUntrustedSignal: hrTrusted
       ? null
-      : { numbers: {}, reason: `hr_trusted=false${current.hrQuality ? ` (hr_quality=${current.hrQuality})` : ""} — no HR conclusions drawn, coach-only` },
+      : { numbers: {}, reason: `пульс недостоверный${current.hrQuality ? ` (hr_quality=${current.hrQuality})` : ""} — выводов по пульсу не делаем, только тренеру` },
     paceDistanceUntrustedSignal: paceDistanceTrusted
       ? null
       : {
           numbers: {},
-          reason: `${current.paceTrusted === false ? "pace_trusted=false " : ""}${current.distanceTrusted === false ? "distance_trusted=false" : ""}`.trim() + " — no pace/distance conclusions drawn, coach-only",
+          reason: `${current.paceTrusted === false ? "темп недостоверный " : ""}${current.distanceTrusted === false ? "дистанция недостоверная" : ""}`.trim() + " — выводов по темпу/дистанции не делаем, только тренеру",
         },
   };
 }
