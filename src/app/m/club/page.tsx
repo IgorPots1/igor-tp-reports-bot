@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ClubIcon, type ClubIconName } from "@/features/club/icons";
 import type {
@@ -285,6 +285,9 @@ export default function ClubPage() {
   const [challenge, setChallenge] = useState<ClubChallengeView | null>(null);
   const [challengeStatus, setChallengeStatus] = useState<Status>("idle");
   const [challengePeriod, setChallengePeriod] = useState<"week" | "month">("week");
+  // Item 3: cache both periods so the week/month toggle is an instant client swap,
+  // never a reload. The non-selected period is prefetched right after the first load.
+  const challengeCacheRef = useRef<Record<"week" | "month", ClubChallengeView | null>>({ week: null, month: null });
 
   const [records, setRecords] = useState<ClubRecordsView | null>(null);
   const [recordsStatus, setRecordsStatus] = useState<Status>("idle");
@@ -487,21 +490,42 @@ export default function ClubPage() {
     }
   }, [initData, feed]);
 
+  const fetchChallengePeriod = useCallback(async (period: "week" | "month"): Promise<ClubChallengeView | "confirm" | null> => {
+    if (initData === null) return null;
+    const r = await apiPost<ClubChallengeView>("/api/m/club/challenge", initData, { period });
+    if (!r.ok || !r.view) {
+      if (maybeConfirm(r)) return "confirm";
+      setError(r.error ?? null);
+      return null;
+    }
+    return r.view;
+  }, [initData, maybeConfirm]);
+
   const loadChallenge = useCallback(async (periodArg?: "week" | "month") => {
     if (initData === null) return;
     const period = periodArg ?? challengePeriod;
-    setChallengeStatus("loading");
-    const r = await apiPost<ClubChallengeView>("/api/m/club/challenge", initData, { period });
-    if (!r.ok || !r.view) {
-      if (maybeConfirm(r)) return;
-      setError(r.error ?? null);
-      setChallengeStatus("error");
-      return;
+    // Instant swap when the period is already cached (a prior load prefetched it).
+    const cached = challengeCacheRef.current[period];
+    if (cached) {
+      setChallenge(cached);
+      setFreshness(cached.freshness);
+      setChallengeStatus("ready");
+    } else {
+      setChallengeStatus("loading");
+      const view = await fetchChallengePeriod(period);
+      if (view === "confirm") return;
+      if (!view) { setChallengeStatus("error"); return; }
+      challengeCacheRef.current[period] = view;
+      setChallenge(view);
+      setFreshness(view.freshness);
+      setChallengeStatus("ready");
     }
-    setChallenge(r.view);
-    setFreshness(r.view.freshness);
-    setChallengeStatus("ready");
-  }, [initData, maybeConfirm, challengePeriod]);
+    // Prefetch the OTHER period in the background so the toggle never reloads.
+    const other = period === "week" ? "month" : "week";
+    if (!challengeCacheRef.current[other]) {
+      void fetchChallengePeriod(other).then((v) => { if (v && v !== "confirm") challengeCacheRef.current[other] = v; });
+    }
+  }, [initData, challengePeriod, fetchChallengePeriod]);
 
   const onChallengePeriod = useCallback((p: "week" | "month") => {
     setChallengePeriod(p);
@@ -1072,25 +1096,93 @@ function ClubTab(props: { status: Status; data: { stats: ClubStatisticsView; top
 // Profile / personal cabinet
 // ---------------------------------------------------------------------------
 
+// Weekly volume bars. Interactive (item 5): drag a finger across to read the week
+// under it (km + week date). Pure touch/pointer maths, no chart library.
 function VolumeChart({ series }: { series: ClubVolumePoint[] }) {
   const w = 320;
   const h = 90;
   const pad = 4;
   const max = Math.max(1, ...series.map((p) => p.km));
   const barW = (w - pad * 2) / Math.max(1, series.length);
+  const [sel, setSel] = useState<number | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const pick = useCallback((clientX: number) => {
+    const el = boxRef.current;
+    if (!el || series.length === 0) return;
+    const rect = el.getBoundingClientRect();
+    const rel = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+    const idx = Math.max(0, Math.min(series.length - 1, Math.floor(rel * series.length)));
+    setSel(idx);
+  }, [series.length]);
+
+  const selPoint = sel != null ? series[sel] : null;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} style={{ marginTop: 10 }}>
-      {series.map((p, i) => {
-        const bh = Math.round((p.km / max) * (h - 16));
-        const x = pad + i * barW;
-        const y = h - bh - 2;
-        return (
-          <g key={i}>
-            <rect x={x + 1} y={y} width={Math.max(2, barW - 3)} height={Math.max(1, bh)} rx={2} style={{ fill: i === series.length - 1 ? C.accent : C.cardAlt, stroke: C.line, strokeWidth: 0.5 }} />
-          </g>
-        );
-      })}
-    </svg>
+    <div
+      ref={boxRef}
+      style={{ marginTop: 10, touchAction: "pan-y", userSelect: "none" }}
+      onTouchStart={(e) => pick(e.touches[0].clientX)}
+      onTouchMove={(e) => { e.preventDefault(); pick(e.touches[0].clientX); }}
+      onTouchEnd={() => setSel(null)}
+      onPointerDown={(e) => pick(e.clientX)}
+      onPointerMove={(e) => { if (e.buttons) pick(e.clientX); }}
+      onPointerUp={() => setSel(null)}
+      onPointerLeave={() => setSel(null)}
+    >
+      <div style={{ height: 18, fontSize: 12, color: selPoint ? C.ink : C.faint, textAlign: "center", fontFamily: HEAD }}>
+        {selPoint ? `${selPoint.label} · ${fmtKm(selPoint.km)}` : "Проведи по графику, чтобы увидеть неделю"}
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} style={{ display: "block" }}>
+        {series.map((p, i) => {
+          const bh = Math.round((p.km / max) * (h - 16));
+          const x = pad + i * barW;
+          const y = h - bh - 2;
+          const isSel = i === sel;
+          const isLast = i === series.length - 1;
+          return (
+            <rect key={i} x={x + 1} y={y} width={Math.max(2, barW - 3)} height={Math.max(1, bh)} rx={2}
+              style={{ fill: isSel || (sel == null && isLast) ? C.accent : C.cardAlt, stroke: isSel ? C.accent : C.line, strokeWidth: isSel ? 1 : 0.5 }} />
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// Achievements card (item 1): collapsed by default with a compact "получено X из Y"
+// line; tap the header to expand the full list. Saves vertical space on the profile.
+function AchievementsCard({ achievements }: { achievements: ClubProfileDetailView["achievements"] }) {
+  const [open, setOpen] = useState(false);
+  const earned = achievements.filter((a) => a.earned).length;
+  return (
+    <div style={S.card}>
+      <button type="button" onClick={() => setOpen((o) => !o)} style={S.collapseHead}>
+        <span style={S.secHead}>Достижения · получено {earned} из {achievements.length}</span>
+        <span style={{ ...S.chevron, transform: open ? "rotate(90deg)" : "rotate(0deg)" }} />
+      </button>
+      {open ? (
+        <div style={{ marginTop: 8 }}>
+          {achievements.map((a) => {
+            const pctDone = a.progress && a.progress.target > 0 ? Math.min(100, Math.round((a.progress.current / a.progress.target) * 100)) : (a.earned ? 100 : 0);
+            return (
+              <div key={a.code} style={{ padding: "10px 0", borderTop: `1px solid ${C.line}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ display: "inline-flex" }}><ClubIcon name={a.earned ? "medal" : "lock"} size={16} color={a.earned ? C.accent : C.faint} /></span>
+                  <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: a.earned ? C.ink : C.sub }}>{a.title}</span>
+                  {a.progress ? <span style={{ fontFamily: HEAD, fontSize: 13, color: a.earned ? C.accent : C.sub }}>{a.progress.current}/{a.progress.target} {a.progress.unit}</span> : (a.earned ? <span style={{ fontSize: 12, color: C.good }}>получено</span> : null)}
+                </div>
+                <div style={{ fontSize: 12, color: C.faint, marginTop: 3 }}>{a.hint}</div>
+                {!a.earned ? (
+                  <div style={{ height: 5, background: C.cardAlt, borderRadius: 999, marginTop: 6, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${pctDone}%`, background: C.accent }} />
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1190,29 +1282,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
         <div style={{ marginTop: 6 }}><span style={S.bigNumber}>{v.noPlan ? "нет плана" : pct(v.completionPct)}</span></div>
       </div>
 
-      <div style={S.card}>
-        <div style={S.secHead}>Достижения</div>
-        <div style={{ marginTop: 8 }}>
-          {v.achievements.map((a) => {
-            const pctDone = a.progress && a.progress.target > 0 ? Math.min(100, Math.round((a.progress.current / a.progress.target) * 100)) : (a.earned ? 100 : 0);
-            return (
-              <div key={a.code} style={{ padding: "10px 0", borderTop: `1px solid ${C.line}` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ display: "inline-flex" }}><ClubIcon name={a.earned ? "medal" : "lock"} size={16} color={a.earned ? C.accent : C.faint} /></span>
-                  <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: a.earned ? C.ink : C.sub }}>{a.title}</span>
-                  {a.progress ? <span style={{ fontFamily: HEAD, fontSize: 13, color: a.earned ? C.accent : C.sub }}>{a.progress.current}/{a.progress.target} {a.progress.unit}</span> : (a.earned ? <span style={{ fontSize: 12, color: C.good }}>получено</span> : null)}
-                </div>
-                <div style={{ fontSize: 12, color: C.faint, marginTop: 3 }}>{a.hint}</div>
-                {!a.earned ? (
-                  <div style={{ height: 5, background: C.cardAlt, borderRadius: 999, marginTop: 6, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${pctDone}%`, background: C.accent }} />
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <AchievementsCard achievements={v.achievements} />
 
       <div style={S.card}>
         <div style={S.secHead}>Личные результаты</div>
@@ -1433,55 +1503,68 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
             </div>
             {view.title ? <div style={{ ...S.cardName, whiteSpace: "normal", marginTop: 8, marginBottom: 4 }}>{view.title}</div> : null}
 
-            {view.track ? (
-              <div style={{ ...S.card, padding: 12 }}>
-                <div style={S.secHead}>Маршрут</div>
-                <TrackSilhouette track={view.track} height={180} />
-              </div>
-            ) : null}
-
-            <div style={S.card}>
-              <div style={S.metricPrimary}>
-                <MetricBig label="дистанция" value={view.distanceKm ? fmtKm(view.distanceKm) : "-"} />
-                <MetricBig label="время" value={fmtDuration(view.durationSeconds) ?? "-"} />
-                <MetricBig label="темп" value={fmtPace(view.paceSecPerKm) ?? "-"} />
-              </div>
-              {view.avgHr || view.maxHr || view.avgCadence || view.ascentM ? (
-                <div style={S.metricSecondary}>
-                  {view.avgHr ? <Metric label="ср. пульс" value={`${view.avgHr}`} /> : null}
-                  {view.maxHr ? <Metric label="макс. пульс" value={`${view.maxHr}`} /> : null}
-                  {view.avgCadence ? <Metric label={view.isRunning ? "каденс, шаг/мин" : "каденс, об/мин"} value={`${view.avgCadence}`} /> : null}
-                  {view.ascentM ? <Metric label="набор" value={`${view.ascentM} м`} /> : null}
-                </div>
-              ) : null}
-            </div>
-
-            {view.laps.length > 0 ? (
-              <div style={S.card}>
-                <div style={S.secHead}>Разбивка по кругам</div>
-                <div style={{ marginTop: 8 }}>
-                  {view.laps.map((l) => (
-                    <div key={l.index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: l.index > 1 ? `1px solid ${C.line}` : "none" }}>
-                      <span style={{ width: 22, color: C.faint, fontFamily: HEAD, fontSize: 13 }}>{l.index}</span>
-                      <span style={{ width: 58, color: C.ink, fontSize: 13 }}>{l.distanceKm ? fmtKm(l.distanceKm) : "-"}</span>
-                      <span style={{ width: 52, color: C.sub, fontSize: 13 }}>{fmtDuration(l.durationSeconds) ?? "-"}</span>
-                      <span style={{ flex: 1, color: C.ink, fontSize: 13 }}>{fmtPace(l.paceSecPerKm)?.replace(" /км", "") ?? "-"}</span>
-                      <span style={{ width: 44, textAlign: "right", color: C.sub, fontSize: 13 }}>{l.avgHr ? `${l.avgHr}` : "-"}</span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ marginTop: 12 }}>
-                  <div style={S.cardMeta}>Темп по кругам</div>
-                  <LapBars values={view.laps.map((l) => (l.paceSecPerKm ? -l.paceSecPerKm : null))} />
-                </div>
-                {view.laps.some((l) => l.avgHr) ? (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={S.cardMeta}>Пульс по кругам</div>
-                    <LapBars values={view.laps.map((l) => l.avgHr)} />
+            {view.isRunning ? (
+              <>
+                {view.track ? (
+                  <div style={{ ...S.card, padding: 12 }}>
+                    <div style={S.secHead}>Маршрут</div>
+                    <TrackSilhouette track={view.track} height={180} />
                   </div>
                 ) : null}
+
+                <div style={S.card}>
+                  <div style={S.metricPrimary}>
+                    <MetricBig label="дистанция" value={view.distanceKm ? fmtKm(view.distanceKm) : "-"} />
+                    <MetricBig label="время" value={fmtDuration(view.durationSeconds) ?? "-"} />
+                    <MetricBig label="темп" value={fmtPace(view.paceSecPerKm) ?? "-"} />
+                  </div>
+                  {view.avgHr || view.maxHr || view.avgCadence || view.ascentM ? (
+                    <div style={S.metricSecondary}>
+                      {view.avgHr ? <Metric label="ср. пульс" value={`${view.avgHr}`} /> : null}
+                      {view.maxHr ? <Metric label="макс. пульс" value={`${view.maxHr}`} /> : null}
+                      {view.avgCadence ? <Metric label="каденс, шаг/мин" value={`${view.avgCadence}`} /> : null}
+                      {view.ascentM ? <Metric label="набор" value={`${view.ascentM} м`} /> : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                {view.laps.length > 0 ? (
+                  <div style={S.card}>
+                    <div style={S.secHead}>Разбивка по кругам</div>
+                    <div style={{ marginTop: 8 }}>
+                      {view.laps.map((l) => (
+                        <div key={l.index} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: l.index > 1 ? `1px solid ${C.line}` : "none" }}>
+                          <span style={{ width: 22, color: C.faint, fontFamily: HEAD, fontSize: 13 }}>{l.index}</span>
+                          <span style={{ width: 58, color: C.ink, fontSize: 13 }}>{l.distanceKm ? fmtKm(l.distanceKm) : "-"}</span>
+                          <span style={{ width: 52, color: C.sub, fontSize: 13 }}>{fmtDuration(l.durationSeconds) ?? "-"}</span>
+                          <span style={{ flex: 1, color: C.ink, fontSize: 13 }}>{fmtPace(l.paceSecPerKm)?.replace(" /км", "") ?? "-"}</span>
+                          <span style={{ width: 44, textAlign: "right", color: C.sub, fontSize: 13 }}>{l.avgHr ? `${l.avgHr}` : "-"}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <div style={S.cardMeta}>Темп по кругам</div>
+                      <LapBars values={view.laps.map((l) => (l.paceSecPerKm ? -l.paceSecPerKm : null))} />
+                    </div>
+                    {view.laps.some((l) => l.avgHr) ? (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={S.cardMeta}>Пульс по кругам</div>
+                        <LapBars values={view.laps.map((l) => l.avgHr)} />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div style={S.card}>
+                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                  {view.distanceKm ? <MetricBig label="дистанция" value={fmtKm(view.distanceKm)} /> : null}
+                  {view.durationSeconds ? <MetricBig label="время" value={fmtDuration(view.durationSeconds) ?? "-"} /> : null}
+                  {view.avgHr ? <MetricBig label="ср. пульс" value={`${view.avgHr}`} /> : null}
+                </div>
+                <div style={S.hint}>Небеговая тренировка - краткая сводка. Круги, темп и каденс для неё не показываем.</div>
               </div>
-            ) : null}
+            )}
 
             {view.commentsEnabled ? <WorkoutComments workoutId={view.id} initData={initData} /> : null}
           </div>

@@ -144,8 +144,9 @@ export const CLUB_CHALLENGE_GOAL_KM_FIXTURE = 500;
 /** How many "красавчики недели" rows to surface. */
 export const CLUB_TOP_PERFORMERS_N = 5;
 
-/** How many rows per extended top (volume / count / completion / streak). */
-export const CLUB_EXTENDED_TOP_N = 5;
+/** How many rows per extended top (volume / count / completion / streak). Клуб-вкладка
+ *  показывает по 10 (клиентский TopList рендерит до 10). */
+export const CLUB_EXTENDED_TOP_N = 10;
 
 /**
  * Challenge goal source. Default `auto` (last completed week's club km * factor)
