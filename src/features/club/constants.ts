@@ -289,6 +289,18 @@ export function isClubTpExecutionEnabled(): boolean {
 export function isClubRaceAsEventEnabled(): boolean {
   return process.env.CLUB_RACE_AS_EVENT === "true";
 }
+/**
+ * Free student notes as a native TP calendar Note (POST /calendarNote) instead of a
+ * fake Other(100) workout. OFF by default → note stays an Other(100) marker (guarded).
+ * ON → note is created as a real calendar Note. A Note does NOT enter the workout cache
+ * (verified — it never reaches the /workouts feed), so it needs no guard. Applies ONLY
+ * to kind="note" (a free note); kind="preference" is unaffected (it will move to a
+ * native Availability, not a Note). Revertible by flipping this flag back off.
+ * See docs/tp-write-payloads.md §3.
+ */
+export function isClubNotesAsNoteEnabled(): boolean {
+  return process.env.CLUB_NOTES_AS_NOTE === "true";
+}
 /** Phase 4 — coach-facing payment-reminder drafts screen. OFF by default. */
 export function isClubBillingRemindersEnabled(): boolean {
   return process.env.CLUB_BILLING_REMINDERS_ENABLED === "true";

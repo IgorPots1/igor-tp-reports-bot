@@ -133,6 +133,102 @@ known-good contract; trim optional fields only with a live capture, not by guess
 
 ---
 
+## 3. Calendar Note create (a free note pinned to a day)
+
+**Endpoint:**
+```
+POST https://tpapi.trainingpeaks.com/fitness/v1/athletes/{athleteId}/calendarNote
+```
+`/calendarNote` is **singular** and lives under **`/fitness/v1`** (not v6). The athlete id
+is the field **`athleteId`** (unlike Event's `personId`).
+
+**Body (captured working request):**
+```jsonc
+{
+  "athleteId": 3102415,
+  "title": "gif",
+  "noteDate": "2027-01-20T00:00:00",  // YYYY-MM-DDT00:00:00
+  "description": "",
+  "isHidden": false,
+  "attachments": []
+}
+```
+
+**Response:** the created note object; `id` is the numeric note id (observed `93278873`).
+Full read-back shape (`GET /calendarNote/{start}/{end}`):
+```jsonc
+{ "id": 93278873, "title": "gif", "description": "", "noteDate": "2027-01-20T00:00:00",
+  "createdDate": "...", "modifiedDate": "...", "athleteId": 3102415, "isHidden": false,
+  "ownerId": 5457637, "appliedPlanId": 0, "parentPlanNoteId": 0, "attachments": [] }
+```
+
+**Read:** `GET /fitness/v1/athletes/{id}/calendarNote/{startDate}/{endDate}` → `200` array
+(SINGULAR `/calendarNote` with a date range; the plural `/calendarNotes` 404s).
+Sub-resource `GET /calendarNote/{id}/comments` → `204` (empty).
+
+**Delete (rollback):** `DELETE /fitness/v1/athletes/{id}/calendarNote/{noteId}`. The
+single-resource `GET /calendarNote/{id}` returns `200` (confirmed by read), so DELETE
+mirrors that path. The DELETE verb itself is **unverified** — confirm on first rollback.
+
+**Cache:** a Note does **NOT** appear in the `/workouts/{start}/{end}` feed (verified by
+reading the same date range), so it never enters `trainingpeaks_workout_cache`. Therefore
+a club note created as a native Note needs **no guard sentinel** — unlike the Other(100)
+fake-workout marker it replaces. Used by `createNote`/`deleteNote`, gated by
+`CLUB_NOTES_AS_NOTE` (kind="note" only).
+
+---
+
+## 4. Availability create (unavailable / limited-availability on a date range)
+
+**Endpoint:**
+```
+POST https://tpapi.trainingpeaks.com/fitness/v1/athletes/{athleteId}/availability
+```
+`/fitness/v1`, singular `/availability`. The athlete id is the field **`personId`**.
+**Takes a DATE RANGE** (`startDate`..`endDate`), not a single day — consecutive days are
+one record.
+
+**Body (captured working request — "unavailable" mode):**
+```jsonc
+{
+  "personId": 3102415,
+  "startDate": "2027-01-22",           // YYYY-MM-DD
+  "endDate": "2027-01-26",
+  "limitedAvailability": false,
+  "reason": "",
+  "availableSportTypes": [],
+  "description": "",
+  "type": 1
+}
+```
+
+**Response / read-back** (`GET /fitness/v1/athletes/{id}/availability/{start}/{end}` → 200
+array; single `GET /availability/{id}` → 200):
+```jsonc
+{ "id": 2435682, "personId": 3102415, "startDate": "2027-01-22T00:00:00",
+  "endDate": "2027-01-26T00:00:00", "type": 1, "limitedAvailability": false,
+  "reason": "", "description": "", "availableSportTypes": [] }
+```
+
+**Delete (rollback):** `DELETE /fitness/v1/athletes/{id}/availability/{availabilityId}`
+(single-resource `GET /availability/{id}` returns 200; DELETE mirrors it — unverified verb).
+
+**Fields — what is known vs pending a second capture:**
+- `type` — the captured "unavailable" mode = **`1`**. The UI has a second mode
+  ("ограниченная доступность"/limited); its `type` value + how `limitedAvailability`,
+  `availableSportTypes`, `reason` populate are **pending a second UI capture** — do not
+  guess them.
+- `availableSportTypes` — empty for full-unavailable. In limited mode it is expected to
+  carry sport-type identifiers (map against TP workout types: Run=3, Bike=2, Swim=1, …),
+  which would make "only running that day" expressible — **to be confirmed by capture**.
+- `reason` / `description` — free text; coach-visibility not yet confirmed.
+
+**Cache:** availability does **NOT** appear in the `/workouts` feed (verified), so it never
+enters `trainingpeaks_workout_cache` — no guard needed. NOT YET IMPLEMENTED as a client
+method (awaiting the limited-mode capture); this section is the recon record.
+
+---
+
 ## Safety / provenance
 - All mutations were performed by Igor by hand in the UI; the capture tool only
   observed traffic to `tpapi.trainingpeaks.com` / `api.peakswaresb.com`.

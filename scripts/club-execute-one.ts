@@ -21,9 +21,9 @@
  */
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { planCalendarEntryAction, type ClubCalendarEntryRow } from "@/features/club/tp-execution";
-import { isClubRaceAsEventEnabled } from "@/features/club/constants";
+import { isClubRaceAsEventEnabled, isClubNotesAsNoteEnabled } from "@/features/club/constants";
 import { markCalendarEntryApplied, rollbackCalendarEntryApplied } from "@/features/club/calendar";
-import { createWorkout, deleteWorkout, createEvent, deleteEvent } from "@/features/trainingpeaks/tp-api-client";
+import { createWorkout, deleteWorkout, createEvent, deleteEvent, createNote, deleteNote } from "@/features/trainingpeaks/tp-api-client";
 import { parseAthleteIdFromUrl } from "@/features/trainingpeaks/athlete-roster-import";
 
 const entryId = process.argv[2];
@@ -72,29 +72,35 @@ async function main(): Promise<void> {
   const { row, athleteId } = loaded;
 
   const raceAsEvent = isClubRaceAsEventEnabled();
+  const notesAsNote = isClubNotesAsNoteEnabled();
 
   if (ROLLBACK) {
     if (!row.appliedTpWorkoutId) { console.error("у записи нет applied_tp_workout_id — нечего откатывать"); process.exit(1); }
-    // Determine event-vs-workout by re-planning a clone (applied guard cleared).
-    const probe = planCalendarEntryAction({ ...row, appliedTpWorkoutId: null, status: "approved" }, athleteId, { raceAsEvent });
+    // Determine entity kind (event / note / workout) by re-planning a clone (applied guard cleared).
+    const probe = planCalendarEntryAction({ ...row, appliedTpWorkoutId: null, status: "approved" }, athleteId, { raceAsEvent, notesAsNote });
     const isEvent = probe.ok && probe.actionType === "create_event";
+    const isNote = probe.ok && probe.actionType === "create_note";
+    const entity = isEvent ? "event" : isNote ? "note" : "workout";
     if (!APPLY || process.env.CLUB_TP_EXECUTION_ENABLED !== "true") {
-      console.log(`DRY-RUN rollback: удалил бы TP ${isEvent ? "event" : "workout"} ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката: --apply + CLUB_TP_EXECUTION_ENABLED=true.`);
+      console.log(`DRY-RUN rollback: удалил бы TP ${entity} ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката: --apply + CLUB_TP_EXECUTION_ENABLED=true.`);
       process.exit(0);
     }
     const del = isEvent
       ? await deleteEvent(athleteId as number, row.appliedTpWorkoutId)
+      : isNote
+      ? await deleteNote(athleteId as number, row.appliedTpWorkoutId)
       : await deleteWorkout("tpapi", athleteId as number, row.appliedTpWorkoutId);
-    console.log(`delete${isEvent ? "Event" : "Workout"} status=${del.status}`);
+    console.log(`delete ${entity} status=${del.status}`);
     const rb = await rollbackCalendarEntryApplied(entryId);
     console.log(rb.ok ? `откат БД ok: статус approved, ссылка очищена (был tp=${rb.tpWorkoutId})` : `откат БД ошибка: ${rb.error}`);
     process.exit(rb.ok ? 0 : 1);
   }
 
-  const plan = planCalendarEntryAction(row, athleteId, { raceAsEvent });
+  const plan = planCalendarEntryAction(row, athleteId, { raceAsEvent, notesAsNote });
   if (!plan.ok) { console.error(`не планируется: ${plan.reason}`); process.exit(1); }
   console.log(`== ПЛАН (${plan.actionType}) ==`);
-  console.log(JSON.stringify(plan.actionType === "create_event" ? plan.eventPayload : plan.payload, null, 2));
+  const printable = plan.actionType === "create_event" ? plan.eventPayload : plan.actionType === "create_note" ? plan.notePayload : plan.payload;
+  console.log(JSON.stringify(printable, null, 2));
   if (plan.unresolved.length) console.log("unresolved:", plan.unresolved.join("; "));
 
   const gated = APPLY && process.env.CLUB_TP_EXECUTION_ENABLED === "true";
@@ -109,6 +115,10 @@ async function main(): Promise<void> {
     const res = await createEvent(athleteId as number, plan.eventPayload as unknown as Record<string, unknown>);
     createdId = res.eventId;
     console.log(`создан TP event id=${createdId} (гонка как Event, в кэш тренировок НЕ попадёт)`);
+  } else if (plan.actionType === "create_note") {
+    const res = await createNote(athleteId as number, plan.notePayload as unknown as Record<string, unknown>);
+    createdId = res.noteId;
+    console.log(`создан TP note id=${createdId} (заметка, в кэш тренировок НЕ попадёт)`);
   } else {
     const res = await createWorkout(plan.payload);
     createdId = res.workoutId;

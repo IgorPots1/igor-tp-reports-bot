@@ -555,6 +555,34 @@ export async function deleteEvent(athleteId: number, eventId: number): Promise<{
   return fetchJsonWithRetry(`${TP_API_HOST}${endpoint}`, { method: "DELETE" });
 }
 
+// ─── calendar notes (native TP note pinned to a day) ─────────────────────────────
+
+/**
+ * Create a native TP calendar Note. Endpoint POST /fitness/v1/athletes/{id}/calendarNote
+ * (SINGULAR); the athlete id is the field `athleteId`. Body contract from a verified UI
+ * capture (docs/tp-write-payloads.md §3). Response is the created note object; `id` is the
+ * numeric note id. A Note does NOT appear in the /workouts feed, so it never enters the
+ * workout cache. Capability only — the caller decides when.
+ */
+export async function createNote(athleteId: number, body: Record<string, unknown>): Promise<{ noteId: number; raw: Record<string, unknown> }> {
+  const endpoint = `/fitness/v1/athletes/${athleteId}/calendarNote`;
+  const responseBody = await writeJsonOrThrow(`${TP_API_HOST}${endpoint}`, "POST", body);
+  const record = assertRecord(responseBody, endpoint);
+  const noteId = assertNumber(record.id, "id", endpoint);
+  return { noteId, raw: record };
+}
+
+/**
+ * DELETE a TP calendar Note by id (rollback of a created note). The single-resource path
+ * GET /calendarNote/{id} returns 200 (confirmed by read), so DELETE mirrors it. Returns
+ * raw {status, body} without throwing so the caller can interpret it. NOTE: the DELETE
+ * verb itself is unverified end-to-end — confirm on the first real rollback.
+ */
+export async function deleteNote(athleteId: number, noteId: number): Promise<{ status: number; body: unknown }> {
+  const endpoint = `/fitness/v1/athletes/${athleteId}/calendarNote/${noteId}`;
+  return fetchJsonWithRetry(`${TP_API_HOST}${endpoint}`, { method: "DELETE" });
+}
+
 // ─── athlete settings (zones + thresholds live here) ─────────────────────────────
 
 /**

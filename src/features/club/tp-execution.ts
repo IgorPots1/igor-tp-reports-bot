@@ -125,6 +125,21 @@ export type ClubEventPayload = {
   results: Array<{ resultType: string }>;
 };
 
+/**
+ * Native TP calendar Note payload (a free note pinned to a day). Contract from a
+ * verified UI network capture — docs/tp-write-payloads.md §3. Endpoint is
+ * POST /fitness/v1/athletes/{id}/calendarNote (SINGULAR); the athlete id is the field
+ * `athleteId`. A Note does NOT enter the workout cache, so it needs no guard sentinel.
+ */
+export type ClubNotePayload = {
+  athleteId: number;
+  title: string;
+  noteDate: string; // "YYYY-MM-DDT00:00:00"
+  description: string;
+  isHidden: boolean;
+  attachments: unknown[];
+};
+
 export type ClubActionPlan =
   | {
       ok: true;
@@ -142,6 +157,15 @@ export type ClubActionPlan =
       kind: "start" | "dayoff";
       actionType: "create_event";
       eventPayload: ClubEventPayload;
+      label: string;
+      unresolved: string[];
+    }
+  | {
+      ok: true;
+      requestId: string;
+      kind: "start" | "dayoff";
+      actionType: "create_note";
+      notePayload: ClubNotePayload;
       label: string;
       unresolved: string[];
     }
@@ -257,7 +281,7 @@ const PREF_RU: Record<string, string> = { long: "длительная", interval
 export function planCalendarEntryAction(
   row: ClubCalendarEntryRow,
   athleteId: number | null,
-  options?: { raceAsEvent?: boolean }
+  options?: { raceAsEvent?: boolean; notesAsNote?: boolean }
 ): ClubActionPlan {
   const kindTag = row.kind === "race" ? "start" : "dayoff"; // reuse the existing ClubActionPlan kind union
   if (row.status !== "approved") {
@@ -308,6 +332,28 @@ export function planCalendarEntryAction(
       results: [{ resultType: "Division" }, { resultType: "Gender" }, { resultType: "Overall" }],
     };
     return { ok: true, requestId: row.id, kind: kindTag, actionType: "create_event", eventPayload, label: `Старт (Event): ${name} -> ${row.date}`, unresolved: evUnresolved };
+  }
+
+  // Free note as a native TP calendar Note (CLUB_NOTES_AS_NOTE) — a real Note, not a
+  // fake Other(100) workout. A Note never reaches the /workouts feed (verified), so it
+  // never enters the workout cache and needs NO guard sentinel. Applies ONLY to a free
+  // note; a preference is a workout-type wish and will move to a native Availability, not
+  // a Note. See docs/tp-write-payloads.md §3.
+  if (row.kind === "note" && options?.notesAsNote) {
+    const noteText = row.note && row.note.trim() ? row.note.trim() : "Заметка ученика на день (через клуб).";
+    // Title = single-line "[Клуб] <text>" so the coach sees the note on the calendar tile;
+    // a multi-line note keeps its full body in description (title collapses whitespace).
+    const title = `${markerPrefix("note")} ${noteText.replace(/\s+/gu, " ")}`.trim();
+    const description = noteText.includes("\n") ? noteText : "";
+    const notePayload: ClubNotePayload = {
+      athleteId,
+      title,
+      noteDate: `${row.date}T00:00:00`,
+      description,
+      isHidden: false,
+      attachments: [],
+    };
+    return { ok: true, requestId: row.id, kind: kindTag, actionType: "create_note", notePayload, label: `Заметка (Note): ${row.date}`, unresolved: [] };
   }
 
   // Race stays a run-typed planned workout (distance kept); the rest are description-
