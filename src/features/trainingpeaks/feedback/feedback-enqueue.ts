@@ -14,6 +14,7 @@ import { detectWeakConfirmation, normalizeObserverText } from "@/features/traini
 import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-extraction-ai";
 import { classifyReport, isReportCandidate, resolveArbiterDecision, type ReportVerdict } from "@/features/trainingpeaks/feedback/report-arbiter-ai";
 import { deviceGlitchScope } from "@/features/trainingpeaks/feedback/stated-factors";
+import { isDataFragment } from "@/features/trainingpeaks/feedback/session-type";
 import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
@@ -244,8 +245,14 @@ export async function assemblePlannerInputsForWorkouts(
     rawLapAgg.set(cacheId, a);
   }
   const titleByCacheId = new Map<string, string | null>();
-  const cacheRows = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_workout_cache", "id, title", "id", allCacheIds);
-  for (const c of cacheRows) titleByCacheId.set(c.id as string, (c.title as string | null) ?? null);
+  // planned_time_raw is in HOURS (verified: 1.25 → 75 min); ×3600 → planned seconds, for the fragment gate.
+  const plannedSecByCacheId = new Map<string, number | null>();
+  const cacheRows = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_workout_cache", "id, title, planned_time_raw", "id", allCacheIds);
+  for (const c of cacheRows) {
+    titleByCacheId.set(c.id as string, (c.title as string | null) ?? null);
+    const ph = c.planned_time_raw as number | null;
+    plannedSecByCacheId.set(c.id as string, typeof ph === "number" && ph > 0 ? ph * 3600 : null);
+  }
 
   const aggFor = (cacheId: string) => {
     const a = rawLapAgg.get(cacheId) ?? { distanceM: 0, timeS: 0 };
@@ -289,7 +296,13 @@ export async function assemblePlannerInputsForWorkouts(
   // fallback). Parallel across packets; only packets with in-window messages call the model, so the
   // cost tracks the enqueue rate (a handful/day). Never throws — degrades to [] / deterministic.
   await Promise.all(
-    [...result.values()].map(async (packet) => {
+    [...result.entries()].map(async ([cacheId, packet]) => {
+      // Блок 6 — data-fragment gate, BEFORE the planner/type classification. A «Длительный бег» that
+      // ran 5 min at 80 min planned is a broken record, not a short run: treat as untrusted data so it
+      // gets a warm words-only draft (never «для длительной пульс подрос нормально» on 5 min).
+      if (isDataFragment(packet.current.durationS, plannedSecByCacheId.get(cacheId) ?? null, packet.workout.title)) {
+        packet.current = { ...packet.current, paceTrusted: false, distanceTrusted: false };
+      }
       packet.statedFactors = await extractStatedFactors(packet.studentMessages, packet.workout.workoutDate);
       // If the student flagged their device as off, drop trust for the metric THEY pointed at,
       // BEFORE the planner runs — otherwise the arc asserts conclusions on data they distrust.

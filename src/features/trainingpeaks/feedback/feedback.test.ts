@@ -97,9 +97,9 @@ describe("session-type", () => {
     assert.equal(result.confidence, "medium");
     assert.match(result.reason, /without comparison_key/);
   });
-  test("reps=2 without key stays NOT interval (tempo 2-block, not a series)", () => {
+  test("reps=2 without key stays NOT interval; «темп»-title 35 мин → easy (Блок 6: «темп» больше не длинная)", () => {
     const result = classifySessionType({ current: baseCurrent({ comparisonKey: null, repsDetectedCount: 2, durationS: 2100 }), title: "35 мин темп" });
-    assert.equal(result.sessionType, "long_tempo");
+    assert.equal(result.sessionType, "easy");
   });
   test("keyed path still wins and reads high confidence", () => {
     const result = classifySessionType({ current: baseCurrent({ comparisonKey: "5x[400meter]", repsDetectedCount: 5 }), title: null });

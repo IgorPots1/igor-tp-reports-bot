@@ -14,7 +14,19 @@
 
 import type { PlannerDerivedMetrics, SessionType } from "./types.ts";
 
-export const LONG_RUN_FALLBACK_DURATION_S = 4500; // 75 min
+export const LONG_RUN_FALLBACK_DURATION_S = 4800; // 80 min (Igor's rule: длительная = «длительный бег» ИЛИ ≥80мин)
+
+// Data-fragment gate (Блок 6). A «Длительный бег» that lasted 5 min at 80 min planned is not a short
+// run — it's a broken record (watch died / accidental stop / sync glitch). The physical-sanity gate
+// (pace_trusted) misses it: the recorded snippet can be perfectly plausible pace. Detect via plan:
+// actual < half planned. When there's no plan, fall back to "длительн-titled but tiny" or an absolute
+// floor. A fragment is treated as UNTRUSTED data (like a device glitch) → warm words-only draft.
+export const FRAGMENT_PLAN_RATIO = 0.5; // actual < 50% of planned …
+export const FRAGMENT_ABS_FLOOR_S = 15 * 60; // …AND absolutely tiny (<15 min). BOTH required: a broken
+// record is a few minutes; a 54-min run at 110 planned is a real (partial) run, not a fragment — it
+// still has analysable pace/HR. Without the floor the ratio wrongly words-only'd substantial runs.
+export const FRAGMENT_NOPLAN_LONG_MAX_S = 25 * 60; // no plan: a длительн-titled run under 25 min
+export const FRAGMENT_NOPLAN_ABS_MIN_S = 8 * 60; // no plan: any run under 8 min (a real run is rarely shorter)
 
 // A run with no comparison_key but this many FIT-detected work reps is treated
 // as an interval session anyway. The plan structure of ~1120 legacy rows was
@@ -26,8 +38,24 @@ export const LONG_RUN_FALLBACK_DURATION_S = 4500; // 75 min
 // Threshold 3 (not 2) keeps a tempo "2 active blocks" run out of intervals.
 export const INTERVAL_REPS_FALLBACK_MIN = 3;
 
-const LONG_TEMPO_TITLE_TOKENS = ["длительн", "темп", "tempo", "long run"];
+// «темп»/«tempo» REMOVED (Igor: «Бег по темпу» = «беги по заданному темпу», NOT a tempo session and
+// NOT длительная — the title is a poor signal, so tempo-titled runs fall through to duration/easy).
+const LONG_TITLE_TOKENS = ["длительн", "длинн", "лонг", "long run", "long"];
 const EASY_TITLE_TOKENS = ["легк", "восстанов", "easy", "recovery"];
+
+/** A broken/partial record, decided BEFORE type classification. `plannedDurationS` from the plan
+ *  (workout_cache.planned_time_raw, hours→seconds). Pure/deterministic. */
+export function isDataFragment(durationS: number | null, plannedDurationS: number | null, title: string | null): boolean {
+  if (durationS === null || durationS <= 0) return false; // no actual metrics → the FIT-missing gate handles it
+  if (plannedDurationS !== null && plannedDurationS > 0) {
+    // way under plan AND absolutely tiny — a broken record, not a shorter-than-planned real run
+    return durationS < FRAGMENT_PLAN_RATIO * plannedDurationS && durationS < FRAGMENT_ABS_FLOOR_S;
+  }
+  // no reliable plan (~14%): a длительн-titled run that's tiny, or any run under the absolute floor
+  const t = normalize(title);
+  const longTitled = includesAny(t, LONG_TITLE_TOKENS) !== null;
+  return (longTitled && durationS < FRAGMENT_NOPLAN_LONG_MAX_S) || durationS < FRAGMENT_NOPLAN_ABS_MIN_S;
+}
 
 // A rep-count in the title ("7x5", "24 х 1", "10×600 м") — the coach's own
 // signal that this is a series. Used only to VETO the reps-fallback below: the
@@ -87,9 +115,9 @@ export function classifySessionType(input: { current: PlannerDerivedMetrics; tit
   }
 
   const title = normalize(input.title);
-  const longTempoToken = includesAny(title, LONG_TEMPO_TITLE_TOKENS);
-  if (longTempoToken) {
-    return { sessionType: "long_tempo", confidence: "high", reason: `title matched "${longTempoToken}"` };
+  const longToken = includesAny(title, LONG_TITLE_TOKENS);
+  if (longToken) {
+    return { sessionType: "long_tempo", confidence: "high", reason: `title matched "${longToken}"` };
   }
   const easyToken = includesAny(title, EASY_TITLE_TOKENS);
   if (easyToken) {

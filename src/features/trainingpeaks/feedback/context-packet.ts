@@ -246,7 +246,7 @@ function buildComparison(observations: Observation[]): { block: string; allowedI
 }
 
 function workoutHeader(sessionType: SessionType | null): string {
-  const t = sessionType === "interval" ? "интервалы" : sessionType === "long_tempo" ? "длительная / темповая" : "лёгкая";
+  const t = sessionType === "interval" ? "интервалы" : sessionType === "long_tempo" ? "длительная" : "лёгкая";
   return `Тип: ${t}. (Числа этой тренировки НЕ называй, только словами.)`;
 }
 
