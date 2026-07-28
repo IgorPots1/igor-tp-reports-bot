@@ -19,7 +19,7 @@ import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention
 import { persistOperationalSignalsForObservation } from "@/features/trainingpeaks/operational-signals-inline";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
 import { logTrainingPeaksPrivateMessageIntent } from "@/features/trainingpeaks/message-intent-log";
-import { buildTelegramContextTextPreview, sha256TelegramContextText } from "@/features/trainingpeaks/telegram-context";
+import { buildTelegramContextTextPreview, sha256TelegramContextText, TELEGRAM_CONTEXT_OBSERVATION_MAX_LENGTH } from "@/features/trainingpeaks/telegram-context";
 import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
 import { detectTrainingReport, detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import type { TelegramMessage } from "@/features/telegram/types";
@@ -512,7 +512,9 @@ export function buildObservationLogPayload(input: BuildObservationLogPayloadInpu
     messageLength: input.messageLength,
     hasAttachment: input.hasAttachment,
     textSha256: sha256TelegramContextText(input.text),
-    textPreview: buildTelegramContextTextPreview(input.text),
+    // Store up to 500 chars: this preview IS the content the feedback pipeline reads (words → prompt,
+    // factors). 120 cut the tail of long reports where food/water/«тяжело» live. Display/logs keep 120.
+    textPreview: buildTelegramContextTextPreview(input.text, TELEGRAM_CONTEXT_OBSERVATION_MAX_LENGTH),
     senderRole: input.senderRole ?? null,
     senderMatchMethod: input.senderMatchMethod ?? null,
   };

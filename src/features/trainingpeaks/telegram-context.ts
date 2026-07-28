@@ -9,7 +9,13 @@ import {
 } from "@/features/trainingpeaks/repository";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
 
+// 120 = the SHORT preview for admin lists / logs (display only).
 export const TELEGRAM_CONTEXT_TEXT_PREVIEW_MAX_LENGTH = 120;
+// The stored context OBSERVATION doubles as the content the AI pipeline reads (studentWords → prompt,
+// factor extraction). 120 silently dropped the tail of long reports — exactly where students mention
+// food/water/«тяжело» (Кукушкина/Надя/Антон). The column is `text`, so there is no DB reason for 120;
+// 500 keeps a full report while still bounding a pathological paste. Only the OBSERVATION path uses this.
+export const TELEGRAM_CONTEXT_OBSERVATION_MAX_LENGTH = 500;
 
 export type TrainingPeaksTelegramContextLabel =
   | "question_to_coach"
@@ -145,17 +151,20 @@ export function sha256TelegramContextText(value: string | null | undefined): str
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-export function buildTelegramContextTextPreview(value: string | null | undefined): string | null {
+export function buildTelegramContextTextPreview(
+  value: string | null | undefined,
+  maxLength: number = TELEGRAM_CONTEXT_TEXT_PREVIEW_MAX_LENGTH
+): string | null {
   const normalized = value?.replace(/\s+/g, " ").trim();
   if (!normalized) {
     return null;
   }
 
-  if (normalized.length <= TELEGRAM_CONTEXT_TEXT_PREVIEW_MAX_LENGTH) {
+  if (normalized.length <= maxLength) {
     return normalized;
   }
 
-  return `${normalized.slice(0, TELEGRAM_CONTEXT_TEXT_PREVIEW_MAX_LENGTH - 1)}…`;
+  return `${normalized.slice(0, maxLength - 1)}…`;
 }
 
 export function classifyTelegramContextLabels(text: string | null | undefined): TrainingPeaksTelegramContextLabel[] {
