@@ -13,7 +13,7 @@ import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/co
 import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-extraction-ai";
 import { classifyReport, isReportCandidate, resolveArbiterDecision, type ReportVerdict } from "@/features/trainingpeaks/feedback/report-arbiter-ai";
-import { hasDeviceGlitch } from "@/features/trainingpeaks/feedback/stated-factors";
+import { deviceGlitchScope } from "@/features/trainingpeaks/feedback/stated-factors";
 import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
@@ -291,12 +291,18 @@ export async function assemblePlannerInputsForWorkouts(
   await Promise.all(
     [...result.values()].map(async (packet) => {
       packet.statedFactors = await extractStatedFactors(packet.studentMessages, packet.workout.workoutDate);
-      // If the student flagged their watch/sensor as off ("часы странно себя ведут"), drop HR trust
-      // for this workout BEFORE the planner runs — otherwise the arc asserts "пульс подрос" on data
-      // the student themselves distrusts (a factual error). Downstream trustGate/arc/fact-check then
-      // treat pulse as unreliable and lean on pace + the student's words.
-      if (hasDeviceGlitch(packet.statedFactors)) {
-        packet.current = { ...packet.current, hrTrusted: false };
+      // If the student flagged their device as off, drop trust for the metric THEY pointed at,
+      // BEFORE the planner runs — otherwise the arc asserts conclusions on data they distrust.
+      // «часы/пульс странно» → drop HR (unchanged). «GPS/трек/дистанция врёт» → drop pace+distance
+      // (Karnaukh: GPS glitch, yet we advised «разогнались, бегите медленнее» — pace was never gated).
+      // Dropping pace/distance routes the run to the warm words-only draft (buildSensorGlitchPacket).
+      const glitch = deviceGlitchScope(packet.statedFactors);
+      if (glitch.hr || glitch.paceDistance) {
+        packet.current = {
+          ...packet.current,
+          ...(glitch.hr ? { hrTrusted: false } : {}),
+          ...(glitch.paceDistance ? { paceTrusted: false, distanceTrusted: false } : {}),
+        };
       }
     })
   );

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { extractStatedFactorsDeterministic, resolveStatedCause, hasDeviceGlitch } from "./stated-factors.ts";
+import { extractStatedFactorsDeterministic, resolveStatedCause, hasDeviceGlitch, deviceGlitchScope } from "./stated-factors.ts";
 import { planObservations } from "./observation-planner.ts";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerStudentMessage, StatedFactor } from "./types.ts";
 
@@ -188,5 +188,21 @@ describe("muscle_doms vs soreness (крепатура ≠ травма, Блок
     const packet = { statedFactors: [{ factor: "muscle_doms", quote: "мышцы забиты", date: WD, recurring: false }] } as unknown as ContextPacket;
     const cause = resolveStatedCause(packet);
     assert.equal(cause?.adviceKey, "cause_confirmed_muscle_doms");
+  });
+});
+
+describe("deviceGlitchScope — GPS gates pace/distance, watch gates HR (Блок 5)", () => {
+  const scope = (text: string) => deviceGlitchScope(extractStatedFactorsDeterministic([msg(text)], WD));
+  test("GPS glitch → pace/distance untrusted, HR left alone (Карнаух)", () => {
+    assert.deepEqual(scope("GPS не поймал, темп непонятный"), { hr: false, paceDistance: true });
+  });
+  test("watch «странно себя ведут» → HR only (прежнее поведение, Бучкина)", () => {
+    assert.deepEqual(scope("часы странно себя ведут"), { hr: true, paceDistance: false });
+  });
+  test("pulse-specific → HR only", () => {
+    assert.deepEqual(scope("пульс завышен, датчик врёт"), { hr: true, paceDistance: false });
+  });
+  test("нет глюка → ничего не гасим", () => {
+    assert.deepEqual(deviceGlitchScope([]), { hr: false, paceDistance: false });
   });
 });

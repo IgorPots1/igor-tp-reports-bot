@@ -52,7 +52,9 @@ const FACTOR_PATTERNS: Array<{ factor: StatedFactorKind; re: RegExp; neg?: RegEx
   { factor: "conditions", re: /горк|в гору|рельеф|подъём|подъем|дорожк|манеж|тредмил|бегов[а-яё]* дорож|ветер|встречный ветер|против ветра|грязь|снег|гололёд|гололед/iu },
   // Device distrust — NOT a fatigue cause, a signal to stop trusting pulse this workout. Allows one
   // intervening word ("часы СЕГОДНЯ глючат", "пульс НАВЕРНОЕ кривой") since the stemmer is blind to it.
-  { factor: "device_glitch", re: /час[ыои][а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|стран|сбо|подвис|туп|врал)|глюч[а-яё]*\s+час|датчик[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|сбо|отвал|потерял|врал)|пульс[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|завыш|занижен|кривой|не\s+тот|странн|врал)|странно\s+себя\s+вед[а-яё]т|сбой\s+(?:часов|датчика|пульса)|потерял[а-яё]*\s+сигнал|неверн[а-яё]*\s+пульс/iu },
+  // Watch/pulse OR GPS/track/distance unreliability. The GPS branches matter for the SCOPE
+  // (deviceGlitchScope): a GPS/track/distance glitch must gate pace+distance, not just pulse.
+  { factor: "device_glitch", re: /час[ыои][а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|стран|сбо|подвис|туп|врал)|глюч[а-яё]*\s+час|датчик[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|сбо|отвал|потерял|врал)|пульс[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|завыш|занижен|кривой|не\s+тот|странн|врал)|странно\s+себя\s+вед[а-яё]т|сбой\s+(?:часов|датчика|пульса|gps|джипиэс)|потерял[а-яё]*\s+сигнал|неверн[а-яё]*\s+пульс|(?:gps|джипиэс|спутник[а-яё]*|навигац[а-яё]*)\s+(?:[а-яё]+\s+)?(?:не\s+(?:пойм|нашл|виде|слови|раб|подключ)|глюч|сбо|потерял|пропал|отвал|вр[ёе]т|врал|крив)|трек[а-яё]*\s+(?:крив|сбил|наврал|поехал|непра|порва|битый)|дистанц[а-яё]*\s+(?:вр[ёе]т|крив|наврал|неточн|завыш|занижен|не\s+та|неправ)/iu },
 ];
 
 function daysFrom(date: string, workoutDate: string): number {
@@ -130,6 +132,24 @@ const FACTOR_ADVICE_KEY: Record<CauseFactorKind, AdviceKey> = {
   life_stress: "cause_confirmed_life_stress",
   conditions: "cause_confirmed_conditions",
 };
+
+/** WHAT the student said glitched, so the caller gates the RIGHT metric. A GPS/track/distance glitch
+ *  breaks pace + distance (not pulse); a pulse/watch glitch breaks HR. A generic or unspecified glitch
+ *  («часы странно себя ведут») keeps the prior behaviour — HR only — since a watch commonly means the
+ *  HR sensor. Reading the quotes, not just presence: «GPS не поймал» must NOT leave pace trusted. */
+export function deviceGlitchScope(factors: StatedFactor[] | undefined): { hr: boolean; paceDistance: boolean } {
+  const quotes = (factors ?? []).filter((f) => f.factor === "device_glitch").map((f) => f.quote.toLowerCase()).join("  ");
+  if (!quotes) return { hr: false, paceDistance: false };
+  const gps = /gps|джипиэс|спутник|навигац|трек|дистанц|расстоян|км\s+навр|путь/u.test(quotes);
+  const pulse = /пульс|сердц|чсс|hr\b/u.test(quotes);
+  const watch = /час[ыои]|датчик|устройств|прибор|секундомер/u.test(quotes);
+  return {
+    // any non-GPS-specific glitch keeps gating HR (unchanged); a pure GPS glitch leaves HR alone
+    hr: pulse || watch || (!gps && !pulse && !watch),
+    // pace + distance gated ONLY when the student pointed at GPS/track/distance
+    paceDistance: gps,
+  };
+}
 
 /** True when the student flagged their watch/sensor as unreliable this workout. The caller then
  *  drops HR trust so the arc/fact-check stop asserting pulse on data the student themselves distrusts. */
