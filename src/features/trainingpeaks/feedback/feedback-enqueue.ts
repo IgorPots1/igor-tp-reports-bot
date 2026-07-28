@@ -12,8 +12,9 @@ import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features
 import { buildFeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
 import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-extraction-ai";
+import { classifyReport, isReportCandidate, resolveArbiterDecision, type ReportVerdict } from "@/features/trainingpeaks/feedback/report-arbiter-ai";
 import { hasDeviceGlitch } from "@/features/trainingpeaks/feedback/stated-factors";
-import { enqueueTrainingPeaksFeedbackJob, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
+import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
 
@@ -389,6 +390,8 @@ export type FeedbackReportSweepSummary = {
   runsBlocked: number;
   runsSkipped: number;
   runsWithWords: number; // of enqueued, how many packets carry student words (expected == enqueued)
+  runsEnriched?: number; // clarification follow-ups that added words to an existing pre-generation card
+  enrichmentsCount?: number; // dryRun only: how many clarification enrichments were queued
   // Populated only on a dryRun — the runs that WOULD be enqueued, for proof/inspection.
   details?: Array<{ studentId: string; workoutCacheId: string; workoutDate: string; reportDate: string; wordsCount: number; blocked: boolean }>;
 };
@@ -414,6 +417,48 @@ const DEFAULT_REPORT_LOOKBACK_MS = 48 * 60 * 60 * 1000;
 
 function shiftYmd(ymd: string, deltaDays: number): string {
   return new Date(new Date(`${ymd}T00:00:00Z`).getTime() + deltaDays * 86_400_000).toISOString().slice(0, 10);
+}
+
+// Bounded-concurrency map — the arbiter classifies a batch of new messages per sweep without firing
+// all requests at once (mirrors the eval harness's pool).
+async function runConcurrent<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(Math.max(limit, 1), items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i;
+      i += 1;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+}
+
+// Persist the arbiter verdict on the observation so later sweeps reuse it (classify-once). Best-effort:
+// a failed write just means the message is re-classified next sweep — never blocks the sweep.
+async function cacheReportAiVerdicts(supabase: SupabaseLike, verdicts: Array<{ id: string; label: ReportVerdict }>): Promise<void> {
+  const at = new Date().toISOString();
+  for (const v of verdicts) {
+    await withSupabaseNetworkRetry(() =>
+      supabase.from("trainingpeaks_telegram_context_observations").update({ report_ai_label: v.label, report_ai_at: at }).eq("id", v.id)
+    ).catch(() => {});
+  }
+}
+
+// The run a report/clarification is about: latest non-race run in [date-1, date] (same rule as the
+// enqueue matching loop). Used to point a clarification at the card to enrich.
+function matchRunCacheId(studentId: string, date: string, runsByStudent: Map<string, DerivedRow[]>, raceKeys: Set<string>): string | null {
+  const prev = shiftYmd(date, -REPORT_MATCH_WINDOW_DAYS);
+  const inWindow = (runsByStudent.get(studentId) ?? []).filter((r) => {
+    const wd = r.workout_date as string;
+    return (wd === date || wd === prev) && !raceKeys.has(`${r.student_id as string}|${wd}`);
+  });
+  if (inWindow.length === 0) return null;
+  inWindow.sort((a, b) => {
+    const byDate = (b.workout_date as string).localeCompare(a.workout_date as string);
+    if (byDate !== 0) return byDate;
+    return String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? ""));
+  });
+  return inWindow[0].workout_cache_id as string;
 }
 
 /**
@@ -453,7 +498,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       withSupabaseNetworkRetry(() =>
         supabase
           .from("trainingpeaks_telegram_context_observations")
-          .select("student_id, observed_at, labels, text_preview")
+          .select("id, student_id, observed_at, labels, text_preview, report_ai_label")
           .gte("observed_at", sinceIso)
           .order("id", { ascending: true })
           .range(from, to)
@@ -463,24 +508,29 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   // report_like → a full report. weak_report_confirmation → a bare "готово"/"сделала"/"✅": promoted
   // to a report ONLY when a run is time-correlated (has a run on [D-1,D] AND the message came after it
   // started — see the loop). Both flow through the same matching; `weak` marks the extra gate.
-  const reports = (obsRows ?? [])
-    .map((o) => {
+  // GENEROUS prefilter: forward anything that MIGHT be a report (misses are often keyword-less — the
+  // AI arbiter below makes the final call). report_like/weak always qualify. `report_ai_label` carries
+  // the cached arbiter verdict so each message is classified once, not every sweep.
+  type ReportCandidate = { id: string; studentId: string; date: string; observedAt: string; text: string; isReportLike: boolean; isWeak: boolean; aiLabel: ReportVerdict | null };
+  const candidates: ReportCandidate[] = (obsRows ?? [])
+    .map((o): ReportCandidate | null => {
       if (!o.student_id || !activeIds.has(o.student_id as string)) return null;
       const labels = Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [];
-      const isReport = labels.includes("report_like");
-      // Weak = the stored label OR a fresh on-the-fly detection, so messages ingested BEFORE this
-      // feature (Elvira's «Готово») are caught too, without a re-classification backfill.
       const text = (o.text_preview as string | null) ?? "";
-      const isWeak = !isReport && (labels.includes("weak_report_confirmation") || detectWeakConfirmation(normalizeObserverText(text)));
-      if (!isReport && !isWeak) return null;
-      return { studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10), observedAt: o.observed_at as string, weak: isWeak };
+      const isReportLike = labels.includes("report_like");
+      // Weak = stored label OR fresh detection (catches messages ingested before that feature).
+      const isWeak = !isReportLike && (labels.includes("weak_report_confirmation") || detectWeakConfirmation(normalizeObserverText(text)));
+      if (!isReportLike && !isWeak && !isReportCandidate(text, labels)) return null;
+      const cached = o.report_ai_label as string | null;
+      const aiLabel = cached === "report" || cached === "clarification" || cached === "not_report" ? (cached as ReportVerdict) : null;
+      return { id: o.id as string, studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10), observedAt: o.observed_at as string, text, isReportLike, isWeak, aiLabel };
     })
-    .filter((r): r is { studentId: string; date: string; observedAt: string; weak: boolean } => r !== null);
+    .filter((c): c is ReportCandidate => c !== null);
 
   const summary: FeedbackReportSweepSummary = {
-    reports: reports.filter((r) => !r.weak).length,
-    weakReports: reports.filter((r) => r.weak).length,
-    studentsReporting: new Set(reports.map((r) => r.studentId)).size,
+    reports: 0,
+    weakReports: 0,
+    studentsReporting: 0,
     reportsMatchedRun: 0,
     reportsNoRunYet: 0,
     reportsWeakBeforeRun: 0,
@@ -492,10 +542,10 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     runsSkipped: 0,
     runsWithWords: 0,
   };
-  if (reports.length === 0) return summary;
+  if (candidates.length === 0) return summary;
 
-  // 2. recent RUN rows for the reporting students (run-only gate here).
-  const reportingIds = [...new Set(reports.map((r) => r.studentId))];
+  // 2. recent RUN rows for the candidate students (run-only gate here).
+  const reportingIds = [...new Set(candidates.map((c) => c.studentId))];
   const runFloor = shiftYmd(new Date(Date.now() - lookbackMs).toISOString().slice(0, 10), -(REPORT_MATCH_WINDOW_DAYS + 1));
   const runRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", reportingIds, (q) =>
     q.eq("workout_type", "run").gte("workout_date", runFloor)
@@ -506,6 +556,42 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     list.push(r);
     runsByStudent.set(r.student_id as string, list);
   }
+
+  // 2b. AI arbiter — classify each candidate once (report / clarification / not_report) with the
+  // "was there a run in [D-1,D]" context the sweep now knows. Cached verdicts are reused; fresh ones
+  // are classified (concurrency-limited) and written back. classifyReport returns null on ANY failure
+  // → resolveArbiterDecision falls back to the regex report_like/weak label, so a disabled or dead
+  // model degrades softly (identical to the pre-arbiter sweep).
+  const hadRunInWindow = (studentId: string, date: string): boolean => {
+    const prev = shiftYmd(date, -REPORT_MATCH_WINDOW_DAYS);
+    return (runsByStudent.get(studentId) ?? []).some((r) => {
+      const wd = r.workout_date as string;
+      return wd === date || wd === prev;
+    });
+  };
+  const uncached = candidates.filter((c) => c.aiLabel === null);
+  const freshVerdicts: Array<{ id: string; label: ReportVerdict }> = [];
+  await runConcurrent(uncached, 5, async (c) => {
+    const label = await classifyReport(c.text, hadRunInWindow(c.studentId, c.date));
+    if (label) {
+      c.aiLabel = label;
+      freshVerdicts.push({ id: c.id, label });
+    }
+  });
+  if (!dryRun && freshVerdicts.length > 0) await cacheReportAiVerdicts(supabase, freshVerdicts);
+
+  // Split candidates: reports (create/refresh a card) vs enrichments (clarification → add words to an
+  // EXISTING card, never create one). The decision is pure with the regex fallback baked in.
+  const reports: Array<{ studentId: string; date: string; observedAt: string; weak: boolean }> = [];
+  const enrichments: Array<{ studentId: string; date: string; text: string }> = [];
+  for (const c of candidates) {
+    const decision = resolveArbiterDecision({ aiLabel: c.aiLabel, isReportLike: c.isReportLike, isWeak: c.isWeak });
+    if (decision.kind === "report") reports.push({ studentId: c.studentId, date: c.date, observedAt: c.observedAt, weak: decision.weak });
+    else if (decision.kind === "clarification") enrichments.push({ studentId: c.studentId, date: c.date, text: c.text });
+  }
+  summary.reports = reports.filter((r) => !r.weak).length;
+  summary.weakReports = reports.filter((r) => r.weak).length;
+  summary.studentsReporting = new Set(reports.map((r) => r.studentId)).size;
 
   // Workout START times (cache.start_time, e.g. "2026-07-26T06:58:04", naive local) — needed only to
   // gate WEAK acks: a "готово" is a report only if it came AFTER the run started. Naive-vs-UTC skew is
@@ -592,39 +678,54 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     chosen.set(available[0].workout_cache_id as string, { row: available[0], reportDate: rep.date, triggerObservedAt: rep.observedAt });
     summary.reportsMatchedRun += 1;
   }
-  if (chosen.size === 0) return summary;
-
-  // 5. build packets (windowStudentWords attaches the report as words) and enqueue.
-  const chosenList = [...chosen.values()];
-  const packets = await assemblePlannerInputsForWorkouts(supabase, chosenList.map((c) => c.row));
+  // 5. build packets (windowStudentWords attaches the report as words) and enqueue — only when a run
+  // matched. Even with zero matched runs we still fall through to clarification enrichment below.
   const details: NonNullable<FeedbackReportSweepSummary["details"]> = [];
-  for (const { row, reportDate, triggerObservedAt } of chosenList) {
-    const cacheId = row.workout_cache_id as string;
-    const studentId = row.student_id as string;
-    const plannerInput = packets.get(cacheId);
-    if (!plannerInput) {
-      summary.runsSkipped += 1;
-      continue;
-    }
-    // Anchor the student-words window to the TRIGGER (the report that matched this run), so yesterday's
-    // report about a DIFFERENT run can't bleed in — see windowStudentWords.
-    plannerInput.triggerObservedAt = triggerObservedAt;
-    const built = buildFeedbackContextPacket(plannerInput);
-    const wordsCount = built.blocked ? 0 : built.packet.studentWords.length;
-    if (!built.blocked && wordsCount > 0) summary.runsWithWords += 1;
-    if (dryRun) {
-      details.push({ studentId, workoutCacheId: cacheId, workoutDate: row.workout_date as string, reportDate, wordsCount, blocked: built.blocked });
-      if (built.blocked) summary.runsBlocked += 1;
+  if (chosen.size > 0) {
+    const chosenList = [...chosen.values()];
+    const packets = await assemblePlannerInputsForWorkouts(supabase, chosenList.map((c) => c.row));
+    for (const { row, reportDate, triggerObservedAt } of chosenList) {
+      const cacheId = row.workout_cache_id as string;
+      const studentId = row.student_id as string;
+      const plannerInput = packets.get(cacheId);
+      if (!plannerInput) {
+        summary.runsSkipped += 1;
+        continue;
+      }
+      // Anchor the student-words window to the TRIGGER (the report that matched this run), so yesterday's
+      // report about a DIFFERENT run can't bleed in — see windowStudentWords.
+      plannerInput.triggerObservedAt = triggerObservedAt;
+      const built = buildFeedbackContextPacket(plannerInput);
+      const wordsCount = built.blocked ? 0 : built.packet.studentWords.length;
+      if (!built.blocked && wordsCount > 0) summary.runsWithWords += 1;
+      if (dryRun) {
+        details.push({ studentId, workoutCacheId: cacheId, workoutDate: row.workout_date as string, reportDate, wordsCount, blocked: built.blocked });
+        if (built.blocked) summary.runsBlocked += 1;
+        else summary.runsEnqueued += 1;
+        continue;
+      }
+      const res = built.blocked
+        ? await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: built.reason })
+        : await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, packet: built.packet });
+      if (res.skipped) summary.runsSkipped += 1;
+      else if (built.blocked) summary.runsBlocked += 1;
       else summary.runsEnqueued += 1;
-      continue;
     }
-    const res = built.blocked
-      ? await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: built.reason })
-      : await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, packet: built.packet });
-    if (res.skipped) summary.runsSkipped += 1;
-    else if (built.blocked) summary.runsBlocked += 1;
-    else summary.runsEnqueued += 1;
   }
-  if (dryRun) summary.details = details;
+
+  // 6. clarification enrichment — a follow-up to an already-reported run adds its words to that run's
+  // EXISTING pre-generation card, never creates a new one. Match the run the same way (latest in the
+  // window, skip races); the queue helper no-ops when there's no pending/generating card for it.
+  if (!dryRun) {
+    for (const e of enrichments) {
+      const cacheId = matchRunCacheId(e.studentId, e.date, runsByStudent, raceKeys);
+      if (cacheId && (await enrichPendingCardStudentWords(cacheId, e.text))) summary.runsEnriched = (summary.runsEnriched ?? 0) + 1;
+    }
+  }
+
+  if (dryRun) {
+    summary.details = details;
+    summary.enrichmentsCount = enrichments.length;
+  }
   return summary;
 }

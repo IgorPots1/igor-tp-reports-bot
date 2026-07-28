@@ -130,6 +130,33 @@ export async function enqueueTrainingPeaksFeedbackJob(input: {
 }
 
 /**
+ * Arbiter clarification enrichment: the student added a follow-up detail to a run they'd already
+ * reported ("забыла отписать про интервалы, GPS не работал"). It must NOT create a new card — it
+ * enriches the words on the EXISTING one. Only a card still BEFORE generation (pending/generating)
+ * is touched: a done/sent draft is already written and must not silently change under Igor. Verbatim
+ * text is appended to context_packet.studentWords (deduped, capped). No-op (returns false) when there
+ * is no pre-generation card for this run or the text is already there.
+ */
+export async function enrichPendingCardStudentWords(workoutCacheId: string, text: string): Promise<boolean> {
+  const t = (text ?? "").trim();
+  if (!t) return false;
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase.from(TABLE).select("id, context_packet").eq("workout_cache_id", workoutCacheId).in("status", ["pending", "generating"]).order("created_at", { ascending: false }).limit(1)
+  );
+  if (error || !data || data.length === 0) return false;
+  const row = data[0] as { id: string; context_packet: FeedbackContextPacket | Record<string, unknown> };
+  const packet = (row.context_packet ?? {}) as { studentWords?: unknown };
+  const words = Array.isArray(packet.studentWords) ? (packet.studentWords as string[]) : [];
+  if (words.some((w) => w.trim() === t)) return false; // already present (e.g. re-scan)
+  const updated = [...words, t].slice(0, 8); // cap — the coach panel doesn't need a wall of text
+  const { error: updateError } = await withSupabaseNetworkRetry(() =>
+    supabase.from(TABLE).update({ context_packet: { ...(row.context_packet as Record<string, unknown>), studentWords: updated } }).eq("id", row.id)
+  );
+  return !updateError;
+}
+
+/**
  * Which of these workouts already have a HANDLED job (done/dismissed/sent/shared): a
  * draft was generated and is awaiting review, was sent/shared, or the coach dismissed
  * it. The enqueue sweep skips these so an hourly metrics recompute can't resurrect a
