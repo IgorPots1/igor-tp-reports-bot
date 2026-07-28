@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { extractStatedFactorsDeterministic, resolveStatedCause, hasDeviceGlitch, deviceGlitchScope } from "./stated-factors.ts";
+import { extractStatedFactorsDeterministic, resolveStatedCause, hasDeviceGlitch, deviceGlitchScope, quoteSupportsFactor, validateFactorHits } from "./stated-factors.ts";
 import { planObservations } from "./observation-planner.ts";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerStudentMessage, StatedFactor } from "./types.ts";
 
@@ -77,6 +77,57 @@ describe("stated-factors — deterministic extractor (fallback, paraphrase cover
   test("negation: «выспалась, спала отлично» → NOT undersleep", () => {
     const factors = extractStatedFactorsDeterministic([msg("выспалась, спала отлично")], WD);
     assert.ok(!factors.some((f) => f.factor === "undersleep"));
+  });
+});
+
+describe("factor quote grounding (Anastasia: не приписывать слов, которых нет)", () => {
+  test("breakfast note labeled dehydration → quote lacks water basis → rejected", () => {
+    // The exact failure: она писала ТОЛЬКО про завтрак, а система приписала «мало пил / не брал воду».
+    assert.equal(quoteSupportsFactor("dehydration", "утром только два тоста с джемом"), false);
+  });
+  test("real dehydration paraphrase still grounds", () => {
+    assert.equal(quoteSupportsFactor("dehydration", "воды не было ни глотка"), true);
+    assert.equal(quoteSupportsFactor("dehydration", "забыла попить перед стартом"), true);
+  });
+  test("factor-appropriate quotes ground; cross-topic quotes don't", () => {
+    assert.equal(quoteSupportsFactor("heat", "на улице пекло, духота"), true);
+    assert.equal(quoteSupportsFactor("heat", "съел мало на завтрак"), false);
+    assert.equal(quoteSupportsFactor("undersleep", "почти не спал ночью"), true);
+    assert.equal(quoteSupportsFactor("soreness", "болит колено после вчерашнего"), true);
+  });
+  test("open-ended factors ground on real paraphrases (data-tuned, no false reject)", () => {
+    assert.equal(quoteSupportsFactor("heat", "там было +30 и я думала что умру"), true); // bare +30
+    assert.equal(quoteSupportsFactor("conditions", "побегала в дождь первый раз"), true);
+    assert.equal(quoteSupportsFactor("life_stress", "выгорание ко всему из-за предстоящей операции"), true);
+    // but a race-slot remark is NOT life-stress, a navigation glitch is NOT a running condition:
+    assert.equal(quoteSupportsFactor("life_stress", "у меня нет времени на этой дистанции"), false);
+    assert.equal(quoteSupportsFactor("muscle_doms", "таких тяжёлых ног ещё не было"), false);
+  });
+
+  test("validateFactorHits drops the ungrounded dehydration hit, keeps a grounded one", () => {
+    const windowed = [msg("утром только два тоста с джемом"), msg("и колено побаливает")];
+    const { valid, rejected } = validateFactorHits(
+      [
+        { factor: "dehydration", quote: "утром только два тоста с джемом", date: WD },
+        { factor: "soreness", quote: "колено побаливает", date: WD },
+      ],
+      windowed
+    );
+    assert.deepEqual(valid.map((h) => h.factor), ["soreness"]);
+    assert.ok(rejected.some((r) => r.hit.factor === "dehydration" && r.reason === "quote_lacks_basis"));
+  });
+
+  test("validateFactorHits drops an invented quote (not in any message)", () => {
+    const windowed = [msg("отбегала спокойно, всё ок")];
+    const { valid, rejected } = validateFactorHits([{ factor: "heat", quote: "было очень жарко", date: WD }], windowed);
+    assert.equal(valid.length, 0);
+    assert.ok(rejected.some((r) => r.reason === "quote_not_in_message"));
+  });
+
+  test("provenance is tolerant to punctuation/casing", () => {
+    const windowed = [msg("Ох, воду НЕ брала сегодня…")];
+    const { valid } = validateFactorHits([{ factor: "dehydration", quote: "воду не брала", date: WD }], windowed);
+    assert.deepEqual(valid.map((h) => h.factor), ["dehydration"]);
   });
 });
 

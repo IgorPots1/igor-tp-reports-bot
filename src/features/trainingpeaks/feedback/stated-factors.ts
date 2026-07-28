@@ -57,6 +57,72 @@ const FACTOR_PATTERNS: Array<{ factor: StatedFactorKind; re: RegExp; neg?: RegEx
   { factor: "device_glitch", re: /час[ыои][а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|стран|сбо|подвис|туп|врал)|глюч[а-яё]*\s+час|датчик[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|сбо|отвал|потерял|врал)|пульс[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|завыш|занижен|кривой|не\s+тот|странн|врал)|странно\s+себя\s+вед[а-яё]т|сбой\s+(?:часов|датчика|пульса|gps|джипиэс)|потерял[а-яё]*\s+сигнал|неверн[а-яё]*\s+пульс|(?:gps|джипиэс|спутник[а-яё]*|навигац[а-яё]*)\s+(?:[а-яё]+\s+)?(?:не\s+(?:пойм|нашл|виде|слови|раб|подключ)|глюч|сбо|потерял|пропал|отвал|вр[ёе]т|врал|крив)|трек[а-яё]*\s+(?:крив|сбил|наврал|поехал|непра|порва|битый)|дистанц[а-яё]*\s+(?:вр[ёе]т|крив|наврал|неточн|завыш|занижен|не\s+та|неправ)/iu },
 ];
 
+// "Цитата должна СОДЕРЖАТЬ основание, а не просто быть прикреплена" (Anastasia case). A factor is
+// kept only when its captured quote actually carries that factor's own vocabulary — the guard
+// against the model labeling a breakfast note («утром только два тоста с джемом») as `dehydration`
+// because it confused under-fuelling with not drinking. Deliberately BROADER than FACTOR_PATTERNS
+// (it must pass the genuine paraphrase Haiku is there to catch), but factor-specific enough to reject
+// cross-topic bleed: the dehydration lexicon has NO eating words, so a food-only sentence fails it.
+const FACTOR_GROUNDING: Record<StatedFactorKind, RegExp> = {
+  illness: /бол(е|ь|и)|прост(ы|у)|температур|горло|насморк|сопл|недомог|подхват|орви|орз|грипп|кашел|озноб|вирус|инфекц/iu,
+  soreness: /бол|ноет|ноют|тянет|потянул|надорвал|надрыв|мозол|прострел|колен|сустав|стоп|голеностоп|ахилл|спин|икр|бедр|травм|защемил/iu,
+  muscle_doms: /крепатур|заб(и|ъ)т|забил|мышц|присед|силов|качал|выпад|штанг|станов|планк|зал\b|тренаж/iu,
+  undersleep: /сп(ал|ать|лю|ит)|недосып|высп|бессонн|л[её]г|уснул|прос(нул|ыпал)|сон\b|ноч[ьи]|разбуд/iu,
+  dehydration: /вод|пил|попи|напи|обезвож|жажд|глоток|пить|питьё|сушняк|пересохл|фляг|гидрат/iu,
+  heat: /жар|пекл|духот|парил|тепло|градус|солнц|зно(й|е)|[+][23]\d|[23]\d\s*(?:°|градус|[сc]\b)/iu,
+  // life_stress & conditions are open-ended (life events / outdoor reality have no finite keyword
+  // list), so these two lexicons are deliberately GENEROUS — tuned against real reports (rain,
+  // burnout, an upcoming operation, shift work, road works, a route, sick kids). They still reject
+  // clear off-topic bleed (a race-slot remark, a bare "устала") that carries none of these.
+  life_stress: /работ|ремонт|переезд|аврал|завал|стресс|нерв|вымота|замота|запар|дедлайн|напряж|выгора|операц|смен[аеыу]|переработ|кручус|невпроворот|ухажив|устал[а-яё]* по жизни|(?:дет|реб[её]н|сын|доч|мам|родител)[а-яё\s]{0,20}(?:болел|лежал|заболел|температур|откачив)/iu,
+  conditions: /горк|гору|рельеф|подъ[её]м|подъем|дорожк|манеж|тредмил|ветер|грязь|снег|голол|асфальт|песок|трав(а|е|у)|набор высот|спуск|дожд|ливень|погод|слякот|лужа|мороз|холод|скольз|покрыт|тропинк|маршрут|трасс|стадион/iu,
+  device_glitch: /час[ыои]|датчик|пульс|чсс|hr\b|gps|джипиэс|спутник|навигац|трек|дистанц|сигнал|прибор|устройств|секундомер|сбой|глюч|вр[её]т|барах/iu,
+};
+
+/** True when the quote itself carries the factor's basis (not just the model's assertion). */
+export function quoteSupportsFactor(factor: StatedFactorKind, quote: string): boolean {
+  const re = FACTOR_GROUNDING[factor];
+  return re ? re.test(quote) : false;
+}
+
+/** Normalize for provenance matching: lowercase, ё→е, non-alphanumerics → single spaces. Tolerant to
+ *  punctuation/casing/spacing so a genuine verbatim span still matches its source message. */
+function normalizeForProvenance(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/ё/gu, "е")
+    .replace(/[^0-9a-zа-я]+/giu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export type FactorHit = { factor: StatedFactorKind; quote: string; date: string };
+export type FactorHitRejection = { hit: FactorHit; reason: "quote_not_in_message" | "quote_lacks_basis" };
+
+/** Trust gate for extracted factors (primarily the Haiku path). A hit survives only when its quote
+ *  (1) is really present in one of the student's messages — not invented — and (2) contains lexical
+ *  grounding for the claimed factor. Rejections are returned too, so the caller can log/inspect them.
+ *  The deterministic fallback needs no gate: it fires FROM the message text, so its quote is grounded
+ *  by construction. */
+export function validateFactorHits(hits: FactorHit[], windowed: PlannerStudentMessage[]): { valid: FactorHit[]; rejected: FactorHitRejection[] } {
+  const corpus = windowed.map((m) => normalizeForProvenance(m.text)).join("  ");
+  const valid: FactorHit[] = [];
+  const rejected: FactorHitRejection[] = [];
+  for (const h of hits) {
+    const norm = normalizeForProvenance(h.quote);
+    if (norm.length === 0 || !corpus.includes(norm)) {
+      rejected.push({ hit: h, reason: "quote_not_in_message" });
+      continue;
+    }
+    if (!quoteSupportsFactor(h.factor, h.quote)) {
+      rejected.push({ hit: h, reason: "quote_lacks_basis" });
+      continue;
+    }
+    valid.push(h);
+  }
+  return { valid, rejected };
+}
+
 function daysFrom(date: string, workoutDate: string): number {
   return (new Date(`${date}T00:00:00Z`).getTime() - new Date(`${workoutDate}T00:00:00Z`).getTime()) / 86_400_000;
 }

@@ -6,7 +6,7 @@
 // messages to read, and falls back (never throws) when the model is disabled/unavailable/errors.
 
 import { logAiCall } from "@/features/trainingpeaks/ai-call-log";
-import { assembleFactorsFromHits, extractStatedFactorsDeterministic, FACTOR_WINDOW_BACK_DAYS, FACTOR_WINDOW_FWD_DAYS } from "./stated-factors.ts";
+import { assembleFactorsFromHits, extractStatedFactorsDeterministic, validateFactorHits, FACTOR_WINDOW_BACK_DAYS, FACTOR_WINDOW_FWD_DAYS } from "./stated-factors.ts";
 import type { PlannerStudentMessage, StatedFactor, StatedFactorKind } from "./types.ts";
 
 const CLAUDE_MODEL = process.env.FEEDBACK_FACTOR_MODEL?.trim() || "claude-haiku-4-5-20251001";
@@ -115,7 +115,14 @@ export async function extractStatedFactors(messages: PlannerStudentMessage[], wo
       studentRef: null,
     });
 
-    return assembleFactorsFromHits(hits, workoutDate);
+    // Trust gate: never attach a factor whose quote isn't really in the student's message OR doesn't
+    // carry the factor's own basis. This is the Anastasia guard — the model labeled a breakfast note
+    // as `dehydration`; the quote had no water/drink word, so it's dropped and no «мало пил» is asserted.
+    const { valid } = validateFactorHits(hits, windowed);
+    // If the model produced factors but ALL failed the gate (likely a hallucination), fall back to the
+    // deterministic extractor — it fires FROM the words, so anything it returns is grounded by design.
+    if (valid.length === 0 && hits.length > 0) return extractStatedFactorsDeterministic(messages, workoutDate);
+    return assembleFactorsFromHits(valid, workoutDate);
   } catch {
     return extractStatedFactorsDeterministic(messages, workoutDate);
   }
