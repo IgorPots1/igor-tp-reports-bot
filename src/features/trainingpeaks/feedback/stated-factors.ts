@@ -59,6 +59,44 @@ const FACTOR_PATTERNS: Array<{ factor: StatedFactorKind; re: RegExp; neg?: RegEx
   { factor: "device_glitch", re: /час[ыои][а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|стран|сбо|подвис|туп|врал)|глюч[а-яё]*\s+час|датчик[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|глюч|бар?ах|сбо|отвал|потерял|врал)|пульс[а-яё]*\s+(?:[а-яё]+\s+)?(?:вр[ёе]т|завыш|занижен|кривой|не\s+тот|странн|врал)|странно\s+себя\s+вед[а-яё]т|сбой\s+(?:часов|датчика|пульса|gps|джипиэс)|потерял[а-яё]*\s+сигнал|неверн[а-яё]*\s+пульс|(?:gps|джипиэс|спутник[а-яё]*|навигац[а-яё]*)\s+(?:[а-яё]+\s+)?(?:не\s+(?:пойм|нашл|виде|слови|раб|подключ)|глюч|сбо|потерял|пропал|отвал|вр[ёе]т|врал|крив)|трек[а-яё]*\s+(?:крив|сбил|наврал|поехал|непра|порва|битый)|дистанц[а-яё]*\s+(?:вр[ёе]т|крив|наврал|неточн|завыш|занижен|не\s+та|неправ)/iu },
 ];
 
+// Quote-grounding vocabulary (Block #3). Haiku returns {factor, quote}; before we trust the label we
+// require the QUOTE it cited to contain a word from that factor's domain. This is the defensive layer
+// against misattribution — Haiku sometimes forces a food line («два тоста с джемом») into `dehydration`
+// and the gloss then invents words the student never said («мало пил»). Reading the cited evidence, not
+// just the label, kills that class of fabrication.
+//
+// DELIBERATELY LOOSER than FACTOR_PATTERNS: Haiku paraphrases and cites a narrow snippet, so this must
+// tolerate phrasing the strict fallback would miss — it only needs ONE domain word present, not the full
+// combo/lookahead. Measured on 30 days of real resolved causes: 8/38 (21%) dropped, and every dropped
+// one was a genuine cross-domain misattribution (живот→soreness, «два тоста»→dehydration, «нет времени»→
+// life_stress) — zero correct causes lost. Dropping a factor does NOT erase the student's words: they
+// still reach the draft via studentWords; only the false CAUSE LABEL is suppressed. Fail-OPEN: a factor
+// with no vocab here is kept (we never silently drop something we can't judge).
+const FACTOR_GROUNDING: Partial<Record<StatedFactorKind, RegExp>> = {
+  illness: /бол(е|ь)|температ|горло|горл|прост|насморк|сопл|кашл|чиха|орви|орз|грипп|недомог|подхват|знобит|ломит|заболел|вирус|ковид|болезн|желуд|живот|тошнот|отрав/iu,
+  soreness: /болит|колен|стоп|голеностоп|ахилл|сустав|спин|поясниц|бедр|икр|потянул|надорв|надрыв|мозол|прострел|ноет|ноют|тянет|травм|ушиб|растяж|заболел[аио]?\s+(?:колен|стоп|спин|ног|бедр|икр|сустав)/iu,
+  muscle_doms: /мышц|крепат|заб(и|ъ)т|забились|присед|силов|качал|выпад|штанг|станов|планк|зал\b|налит|деревян|дом[сc]|doms|ног[аиуе]?\s+(?:ноют|налит|налил|тяжёл|тяжел|деревян|ват)|тяжёл[а-яё]*\s+ног|тяжел[а-яё]*\s+ног/iu,
+  undersleep: /спал|сон\b|сна\b|сну|высп|недосып|недоспал|бессон|уснул|засып|поздно\s+(?:лёг|лег|легл)|мало\s+спал|не\s+спал|ночь\s+без\s+сна|глаза\s+слипал|разбит(?:ый|ая|о)?\s+с\s+утра/iu,
+  dehydration: /вод[аыуе]|воды|пил|попи|питьё|пить\b|напи|жажд|обезвож|сушняк|сухо\s+во\s+рту|пересох/iu,
+  nutrition: /гел[ья]|еда|поел|не\s+ел|ел\b|съел|каш|банан|батончик|финик|изотоник|углевод|натощак|голод|сыт|завтрак|позавтрак|перекус|тост|джем|булк|подкреп|подпит|не\s+поел|загрузк|перед\s+(?:стартом|бегом|пробеж)/iu,
+  heat: /жар|пекл|духот|парил|очень\s+тепло|тепл[оа]|солнц|зно[йя]|солнцепёк|[+][12345]\d|[23]\d\s*(?:°|градус|[сcC]\b)|градус/iu,
+  life_stress: /работ|ремонт|переезд|аврал|завал|стресс|нерв|вымот|измотан|замот|запар|напряж|дедлайн|выгоран|операц|перегруз|устал|устаю|не\s+высыпаюсь|детьми|дети\s+(?:бол|леж)|откачива|командиров|смен[аеуы]\b/iu,
+  conditions: /горк|в\s+гору|рельеф|подъём|подъем|дорожк|манеж|тредмил|бегов[а-яё]*\s+дорож|ветер|ветр|грязь|снег|гололёд|гололед|трасс|тропа|тропинк|асфальт|песок|набор\s+высот|горн|дожд|ливень|слякот|маршрут|дорог[аиуео]|обочин|набережн|лес\b|парк\b/iu,
+  device_glitch: /час[ыои]|датчик|пульс|сердц|чсс|gps|джипиэс|спутник|навигац|трек|дистанц|расстоян|сигнал|глюч|вр[ёе]т|врал|сбо|кривой|крив|завыш|занижен|бар?ах|подвис|потерял/iu,
+};
+
+/** Block #3 — does the cited quote actually contain domain evidence for this factor? Guards the Haiku
+ *  path (where the model picks a narrow snippet and can mislabel it) against cross-domain misattribution.
+ *  Fail-OPEN: unknown factor or empty quote → grounded (we only drop when we CAN judge and the evidence
+ *  is absent). The deterministic fallback needs no grounding — its quote is the whole matched message. */
+export function isFactorGrounded(factor: StatedFactorKind, quote: string): boolean {
+  const re = FACTOR_GROUNDING[factor];
+  if (!re) return true;
+  const q = quote?.trim();
+  if (!q) return true;
+  return re.test(q.toLowerCase());
+}
+
 function daysFrom(date: string, workoutDate: string): number {
   return (new Date(`${date}T00:00:00Z`).getTime() - new Date(`${workoutDate}T00:00:00Z`).getTime()) / 86_400_000;
 }

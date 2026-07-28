@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { extractStatedFactorsDeterministic, resolveStatedCause, hasDeviceGlitch, deviceGlitchScope } from "./stated-factors.ts";
+import { extractStatedFactorsDeterministic, resolveStatedCause, hasDeviceGlitch, deviceGlitchScope, isFactorGrounded } from "./stated-factors.ts";
 import { planObservations } from "./observation-planner.ts";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerStudentMessage, StatedFactor } from "./types.ts";
 
@@ -225,5 +225,48 @@ describe("nutrition — еда как контекст (Кукушкина/На�
   });
   test("«всё отлично, пульс ровный» → без фактора еды", () => {
     assert.ok(!f("всё отлично, пульс ровный").includes("nutrition"));
+  });
+});
+
+// Block #3 — quote-grounding. Haiku returns {factor, quote}; the quote must carry a domain word for
+// that factor or the label is dropped as misattribution. Cases below are drawn from real drops/keeps
+// measured on 30 days of resolved causes.
+describe("isFactorGrounded — цитата должна нести слово из домена фактора", () => {
+  test("кейс Анастасии: еда, приписанная к обезвоживанию, отваливается; та же цитата под nutrition — остаётся", () => {
+    const q = "утром только два тоста с джемом съела";
+    assert.equal(isFactorGrounded("dehydration", q), false, "«два тоста» не про воду — отвал");
+    assert.equal(isFactorGrounded("nutrition", q), true, "«тост/джем/съела» — это еда, остаётся");
+  });
+  test("крепатура мышц после приседаний грунтуется как muscle_doms", () => {
+    assert.equal(isFactorGrounded("muscle_doms", "мышцы бедра забиты, вчера были приседания"), true);
+  });
+  test("боль в животе/желудке НЕ грунтуется как суставная травма", () => {
+    assert.equal(isFactorGrounded("soreness", "живот так же болел"), false);
+    assert.equal(isFactorGrounded("soreness", "разболелся желудок и еле добежала"), false);
+  });
+  test("реальная суставная жалоба грунтуется как soreness", () => {
+    assert.equal(isFactorGrounded("soreness", "колено ноет после спуска"), true);
+    assert.equal(isFactorGrounded("soreness", "нога иногда тянет"), true);
+  });
+  test("«+30» без значка градуса всё равно жара", () => {
+    assert.equal(isFactorGrounded("heat", "там было +30 и я думала что умру"), true);
+    assert.equal(isFactorGrounded("heat", "было жарковато"), true);
+  });
+  test("дождь и маршрут/дороги грунтуются как conditions", () => {
+    assert.equal(isFactorGrounded("conditions", "побегала в дождь первый раз"), true);
+    assert.equal(isFactorGrounded("conditions", "маршрут с учётом ремонта дорог"), true);
+  });
+  test("выгорание/операция и «устала» грунтуются как жизненный стресс", () => {
+    assert.equal(isFactorGrounded("life_stress", "реальное выгорание из-за предстоящей операции"), true);
+    assert.equal(isFactorGrounded("life_stress", "Устала"), true);
+  });
+  test("ночь без сна грунтуется как недосып", () => {
+    assert.equal(isFactorGrounded("undersleep", "у меня сегодня была ночь без сна"), true);
+  });
+  test("пустая цитата и неизвестный фактор — fail-open (не отваливаем то, что не можем судить)", () => {
+    assert.equal(isFactorGrounded("dehydration", ""), true);
+    assert.equal(isFactorGrounded("dehydration", "   "), true);
+    // @ts-expect-error — фактор вне карты грунта → fail-open
+    assert.equal(isFactorGrounded("unknown_kind", "любой текст"), true);
   });
 });

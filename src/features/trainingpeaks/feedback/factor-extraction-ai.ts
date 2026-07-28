@@ -6,7 +6,7 @@
 // messages to read, and falls back (never throws) when the model is disabled/unavailable/errors.
 
 import { logAiCall } from "@/features/trainingpeaks/ai-call-log";
-import { assembleFactorsFromHits, extractStatedFactorsDeterministic, FACTOR_WINDOW_BACK_DAYS, FACTOR_WINDOW_FWD_DAYS } from "./stated-factors.ts";
+import { assembleFactorsFromHits, extractStatedFactorsDeterministic, FACTOR_WINDOW_BACK_DAYS, FACTOR_WINDOW_FWD_DAYS, isFactorGrounded } from "./stated-factors.ts";
 import type { PlannerStudentMessage, StatedFactor, StatedFactorKind } from "./types.ts";
 
 const CLAUDE_MODEL = process.env.FEEDBACK_FACTOR_MODEL?.trim() || "claude-haiku-4-5-20251001";
@@ -101,6 +101,11 @@ export async function extractStatedFactors(messages: PlannerStudentMessage[], wo
       const date = (r as { date?: unknown }).date;
       if (typeof factor !== "string" || !ALLOWED_FACTORS.has(factor as StatedFactorKind)) continue;
       if (typeof quote !== "string" || quote.trim().length === 0) continue;
+      // Block #3 grounding: the quote Haiku cited must carry a domain word for this factor. Kills
+      // cross-domain misattribution (food line labeled dehydration → invented «мало пил»). Fail-open
+      // for unknown factors. The student's words still reach the draft via studentWords — we drop only
+      // the false cause label, not the report.
+      if (!isFactorGrounded(factor as StatedFactorKind, quote.trim())) continue;
       // Trust the message dates we actually sent; a hallucinated date falls back to the newest.
       const safeDate = typeof date === "string" && windowDates.has(date) ? date : windowed[0]!.date;
       hits.push({ factor: factor as StatedFactorKind, quote: quote.trim(), date: safeDate });
