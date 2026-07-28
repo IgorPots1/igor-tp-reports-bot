@@ -75,7 +75,8 @@ export type PlannerHealthProfile = {
  *  number source (the quote is for tone/coach-panel; the fact-check still forbids stray digits). */
 export type StatedFactorKind =
   | "illness" // болел, простыл, горло, температура, недомогание
-  | "soreness" // болит/тянет/забиты (колено, стопа, спина)
+  | "soreness" // болит колено/стопа/спина/сустав, потянул, ноет, острая боль — ТРАВМА/сигнал (забота, показаться)
+  | "muscle_doms" // крепатура/забитость мышц после силовой (присед/зал) — НОРМА после нагрузки, НЕ травма
   | "undersleep" // мало спал, недосып, не выспался
   | "dehydration" // не пил, забыл попить, воду не брал, пил мало
   | "heat" // жара, духота, пекло (перекрывает существующий HEAT_RE)

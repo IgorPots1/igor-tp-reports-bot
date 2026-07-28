@@ -36,7 +36,13 @@ const PERSISTENT_FACTORS = new Set<StatedFactorKind>(["life_stress", "undersleep
 // the negation itself; the fallback needs this). Kept narrow: only the common denials.
 const FACTOR_PATTERNS: Array<{ factor: StatedFactorKind; re: RegExp; neg?: RegExp }> = [
   { factor: "illness", re: /бол(е|ь)ю|болел|заболел|просты|прострыл|температур|горло|насморк|сопл|недомога|подхватил|орви|орз|грипп/iu, neg: /не\s+болел|уже\s+не\s+бол|не\s+заболел/iu },
-  { factor: "soreness", re: /болит|заболел[аои]? (колен|стоп|спин|ног|бедр|икр)|тянет|забиты|забились|ноет|потянул|надорвал|мозол/iu, neg: /ничего\s+не\s+болит|не\s+болит|боли\s+не\s+чувству|не\s+беспоко/iu },
+  // Крепатура/забитость мышц после силовой — НОРМА, НЕ травма. СТОИТ ПЕРЕД soreness, чтобы «мышцы
+  // забиты/ноют после приседаний» не ушли в травму-сигнал (Надя: «мышцы бедра, вчера приседания»).
+  // neg: суставно-острое (колено/сустав/потянул) — это уже soreness, отдаём ему.
+  { factor: "muscle_doms", re: /крепатур|заб(и|ъ)т[ыао]|забились|мышц[а-яё]*\s+(?:ноют|болят|тянут|наливш|налит|деревян|чувству)|(?=[\s\S]*мышц)(?=[\s\S]*(?:присед|силов|качал|выпад|штанг|становая|планк|в\s+зал))/iu, neg: /колен|сустав|голеностоп|ахилл|надрыв|надорвал|потянул|прострел|остр(ая|ую)\s+бол/iu },
+  // soreness = ТРАВМА/сигнал: сустав/колено/стопа/спина болит, потянул, острое. Бытовое «забиты/
+  // ноют мышцы» ушло в muscle_doms выше; здесь только суставно-болевое.
+  { factor: "soreness", re: /болит|заболел[аои]? (колен|стоп|спин|ног|бедр|икр)|потянул|надорвал|мозол|прострел|(?:колен|сустав|стоп|голеностоп|ахилл|спин)[а-яё]*\s+(?:ноет|тянет|беспоко)/iu, neg: /ничего\s+не\s+болит|не\s+болит|боли\s+не\s+чувству|не\s+беспоко/iu },
   // No neg needed: every alternative here is already a negative-sleep phrasing (мало/не выспал/плохо/
   // недосып). "выспалась/спал хорошо" simply don't match the pattern.
   { factor: "undersleep", re: /недоспал|недосып|мало спал|не выспал|плохо спал|поздно лёг|поздно лег|не спал|бессонниц/iu },
@@ -106,6 +112,7 @@ type CauseFactorKind = Exclude<StatedFactorKind, "device_glitch">;
 const FACTOR_PRIORITY: Record<CauseFactorKind, number> = {
   illness: 7,
   soreness: 6,
+  muscle_doms: 2, // benign — real injury (soreness) or fatigue outrank it; still honored over bare conditions
   undersleep: 5,
   dehydration: 4,
   heat: 4,
@@ -116,6 +123,7 @@ const FACTOR_PRIORITY: Record<CauseFactorKind, number> = {
 const FACTOR_ADVICE_KEY: Record<CauseFactorKind, AdviceKey> = {
   illness: "cause_confirmed_illness",
   soreness: "cause_confirmed_soreness",
+  muscle_doms: "cause_confirmed_muscle_doms",
   undersleep: "cause_confirmed_undersleep",
   dehydration: "cause_confirmed_dehydration",
   heat: "cause_confirmed_heat",

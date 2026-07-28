@@ -36,6 +36,7 @@ export type AdviceKey =
   | "cause_confirmed_illness"
   | "cause_confirmed_life_stress"
   | "cause_confirmed_soreness"
+  | "cause_confirmed_muscle_doms"
   | "cause_confirmed_conditions"
   // Questions (corpus category C)
   | "question_high_pulse_unknown"

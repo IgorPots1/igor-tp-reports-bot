@@ -165,3 +165,28 @@ describe("stated-factors — planner integration + regression", () => {
     assert.ok(obs.some((o) => o.adviceKey === "question_high_pulse_unknown"));
   });
 });
+
+describe("muscle_doms vs soreness (крепатура ≠ травма, Блок 4)", () => {
+  const f = (text: string) => extractStatedFactorsDeterministic([msg(text)], WD).map((x) => x.factor);
+  test("Надя: мышцы бедра + вчера приседания → muscle_doms, НЕ soreness", () => {
+    const got = f("чувствовала мышцы передней части бедра, вчера были приседания");
+    assert.ok(got.includes("muscle_doms"), `ждём muscle_doms, получили ${JSON.stringify(got)}`);
+    assert.ok(!got.includes("soreness"), "не должно быть soreness (это не травма)");
+  });
+  test("«мышцы забиты после силовой» → muscle_doms", () => {
+    assert.deepEqual(f("мышцы забиты после силовой"), ["muscle_doms"]);
+  });
+  test("«крепатура» → muscle_doms", () => {
+    assert.deepEqual(f("сильная крепатура сегодня"), ["muscle_doms"]);
+  });
+  test("«болит колено, потянул» → soreness (травма-сигнал остаётся)", () => {
+    const got = f("болит колено, наверное потянул");
+    assert.ok(got.includes("soreness"));
+    assert.ok(!got.includes("muscle_doms"));
+  });
+  test("muscle_doms маппится на не-алармовый совет (не soreness)", () => {
+    const packet = { statedFactors: [{ factor: "muscle_doms", quote: "мышцы забиты", date: WD, recurring: false }] } as unknown as ContextPacket;
+    const cause = resolveStatedCause(packet);
+    assert.equal(cause?.adviceKey, "cause_confirmed_muscle_doms");
+  });
+});

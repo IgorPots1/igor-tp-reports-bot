@@ -13,7 +13,7 @@ const CLAUDE_MODEL = process.env.FEEDBACK_FACTOR_MODEL?.trim() || "claude-haiku-
 const ANTHROPIC_API_URL = process.env.ANTHROPIC_API_URL?.trim() || "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
-const ALLOWED_FACTORS = new Set<StatedFactorKind>(["illness", "soreness", "undersleep", "dehydration", "heat", "life_stress", "conditions", "device_glitch"]);
+const ALLOWED_FACTORS = new Set<StatedFactorKind>(["illness", "soreness", "muscle_doms", "undersleep", "dehydration", "heat", "life_stress", "conditions", "device_glitch"]);
 
 function extractJsonOnly(content: string): string {
   const trimmed = content.trim();
@@ -40,7 +40,8 @@ function buildPrompt(windowed: PlannerStudentMessage[]): string {
     "Верни СТРОГО JSON: {\"factors\":[{\"factor\":\"...\",\"quote\":\"дословный кусок сообщения\",\"date\":\"YYYY-MM-DD\"}]}.",
     "factor — ТОЛЬКО из набора:",
     "- illness (болел/простыл/горло/температура/недомогание)",
-    "- soreness (что-то болит/тянет/забиты — колено, стопа, спина)",
+    "- soreness — ТРАВМА/сигнал: болит СУСТАВ/колено/стопа/спина, потянул, надорвал, острая боль, ноет сустав. Только суставно-болевое.",
+    "- muscle_doms — КРЕПАТУРА/забитость МЫШЦ после силовой/приседаний/зала (напр. «мышцы бедра забиты, вчера были приседания»). Это НОРМА после нагрузки, НЕ травма. Если ученик пишет про мышцы/крепатуру И упоминает силовую/присед/зал — это muscle_doms, НЕ soreness.",
     "- undersleep (мало спал/недосып/не выспался)",
     "- dehydration (не пил/забыл попить/воду не брал/пил мало) — сюда же любые перефразы",
     "- heat (жара/духота/пекло/высокая температура воздуха)",
