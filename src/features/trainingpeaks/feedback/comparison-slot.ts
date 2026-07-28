@@ -13,7 +13,7 @@ import type { ContextPacket } from "./types.ts";
 export type ComparisonSlotResult = {
   praise: { numbers: Record<string, number>; reason: string; weight: PraiseWeight } | null;
   hrSensorQuestion: { numbers: Record<string, number>; reason: string } | null;
-  coachSignals: Array<{ adviceKey: Extract<AdviceKey, "signal_pulse_sensor_suspect" | "signal_unusual_shift">; numbers: Record<string, number>; reason: string }>;
+  coachSignals: Array<{ adviceKey: Extract<AdviceKey, "signal_pulse_sensor_suspect" | "signal_unusual_shift" | "signal_comparison_preliminary">; numbers: Record<string, number>; reason: string }>;
 };
 
 function metricsToNumbers(metrics: Array<{ metric: string; before: number | null; after: number | null; delta: number | null; baseN: number }>): Record<string, number> {
@@ -47,6 +47,19 @@ export function evaluateComparisonSlot(packet: ContextPacket): ComparisonSlotRes
         adviceKey: "signal_pulse_sensor_suspect",
         numbers: { shortfallBpm: flag.shortfallBpm, currentHr: flag.currentHr, normHr: flag.normHr, baseN: flag.baseN },
         reason: `пульс на ${flag.shortfallBpm} уд ниже нормы класса (${flag.currentHr} против ${flag.normHr}, n=${flag.baseN}) — средняя зона, помечаю тренеру, не спрашиваю`,
+      };
+    }
+    if (flag.kind === "comparison_preliminary") {
+      const unit = flag.metric.includes("hr") ? "уд" : flag.metric === "rep_count" ? "отрезков" : "с/км";
+      const period = flag.mode === "old" ? "месяц-плюс назад" : "последние ~8 недель";
+      const numbers: Record<string, number> = { delta: flag.delta, baseN: flag.baseN, comparisonModeOld: flag.mode === "old" ? 1 : 0 };
+      if (flag.before !== null) numbers.before = flag.before;
+      if (flag.after !== null) numbers.after = flag.after;
+      const beforeAfter = flag.before !== null && flag.after !== null ? `, было ~${Math.round(flag.before)}, стало ~${Math.round(flag.after)} ${unit}` : "";
+      return {
+        adviceKey: "signal_comparison_preliminary",
+        numbers,
+        reason: `сравнение предварительное: всего ~${flag.baseN} похож${flag.baseN === 1 ? "ая" : "их"} (${period})${beforeAfter} — мало данных (нужно ≥3 точек), ученику про прогресс НЕ сказано`,
       };
     }
     const numbers: Record<string, number> = { delta: flag.delta };

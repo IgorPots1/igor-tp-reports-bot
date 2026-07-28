@@ -11,6 +11,7 @@
 // "unusually large shift" — are DATA signals to Igor and bypass the pause.
 
 import { shouldEmitPraise } from "./pause.ts";
+import { MIN_BASE_N_FOR_STUDENT } from "./metric-shift.ts";
 import type { MatchResult } from "./match-result.ts";
 import type { PulseAnomalyResult } from "./pulse-anomaly.ts";
 import type {
@@ -58,6 +59,27 @@ function toObservation(c: PraiseCandidate, context: ComparisonContextItem[]): Co
     metrics: c.metrics.map((m) => ({ metric: m.metric, before: m.before, after: m.after, delta: m.delta, baseN: m.baseN, spread: m.spread })),
     composite: c.composite,
     context,
+  };
+}
+
+// The claim's evidence base = the thinnest metric it leans on (the "~N похожих"
+// the coach panel shows). A composite/mechanism-B that rests on one comparable
+// session is n=1 no matter how many metrics agree.
+function candidateBaseN(c: PraiseCandidate): number {
+  return c.metrics.length === 0 ? 0 : Math.min(...c.metrics.map((m) => m.baseN));
+}
+
+function preliminaryFlag(c: PraiseCandidate, baseN: number, workoutDate: string): CoachFlag {
+  const line = c.metrics[0];
+  return {
+    kind: "comparison_preliminary",
+    metric: c.primaryMetric,
+    before: line?.before ?? null,
+    after: line?.after ?? null,
+    delta: c.primaryDelta,
+    baseN,
+    mode: c.mode,
+    workoutDate,
   };
 }
 
@@ -125,6 +147,14 @@ export function selectFocus(input: {
   // silenced), regardless of whether the pause later suppresses the praise.
   const unusual = unusualShiftFlag(winner, workoutDate);
   if (unusual) coachFlags.push(unusual);
+
+  // Стабильность базы: сравнение на 1–2 точках ученику не показываем — это шум,
+  // а MAD-гард (n≥3) на такой базе молчать не умеет. Тренеру отдаём предварительно.
+  const baseN = candidateBaseN(winner);
+  if (baseN < MIN_BASE_N_FOR_STUDENT) {
+    coachFlags.push(preliminaryFlag(winner, baseN, workoutDate));
+    return { observation: null, coachFlags, winningCandidate: winner, suppressedByPause: null };
+  }
 
   const emit = shouldEmitPraise({ candidateWeight: winner.weight, last: lastPraise, workoutDate });
   return {

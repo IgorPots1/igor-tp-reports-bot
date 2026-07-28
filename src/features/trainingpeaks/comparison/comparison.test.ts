@@ -186,7 +186,12 @@ describe("mechanism A vs B", () => {
 
 describe("composite progress (priority)", () => {
   test("count up + pace not worse → composite (weight 3), wins focus", () => {
-    const history = [run({ workoutId: 1, workoutDate: "2026-06-10", comparisonKey: "6x[300second]", repPaces: [300] })];
+    // n≥3 comparable base so the student-facing gate lets it through (below-3 = preliminary).
+    const history = [
+      run({ workoutId: 1, workoutDate: "2026-06-10", comparisonKey: "6x[300second]", repPaces: [300] }),
+      run({ workoutId: 2, workoutDate: "2026-06-17", comparisonKey: "6x[300second]", repPaces: [300] }),
+      run({ workoutId: 3, workoutDate: "2026-06-24", comparisonKey: "6x[300second]", repPaces: [300] }),
+    ];
     const current = run({ workoutId: 99, workoutDate: "2026-07-01", comparisonKey: "8x[300second]", repPaces: [298] });
     const result = compareWorkout({ current, history });
     assert.equal(result.observation?.kind, "composite");
@@ -195,9 +200,38 @@ describe("composite progress (priority)", () => {
   });
 });
 
+describe("min base-N for a STUDENT claim (Anastasia: n=1 сравнение = шум)", () => {
+  test("n=1 would-be praise → student silence + coach 'предварительно' flag", () => {
+    const history = [run({ workoutId: 1, workoutDate: "2026-06-10", repPaces: [345] })]; // one point, Δ-45
+    const current = run({ workoutId: 99, workoutDate: "2026-07-01", repPaces: [300] });
+    const result = compareWorkout({ current, history });
+    assert.equal(result.observation, null); // never reaches the student
+    assert.ok(result.winningCandidate && result.winningCandidate.kind === "mechanism_a"); // it DID fire at the matcher
+    const prelim = result.coachFlags.find((f) => f.kind === "comparison_preliminary");
+    assert.ok(prelim, "coach still sees it as preliminary");
+    assert.equal(prelim!.kind === "comparison_preliminary" && prelim!.baseN, 1);
+  });
+  test("n=2 also preliminary (below 3), n=3 speaks to the student", () => {
+    const two = [run({ workoutId: 1, workoutDate: "2026-06-01", repPaces: [345] }), run({ workoutId: 2, workoutDate: "2026-06-10", repPaces: [345] })];
+    const r2 = compareWorkout({ current: run({ workoutId: 99, workoutDate: "2026-07-01", repPaces: [300] }), history: two });
+    assert.equal(r2.observation, null);
+    assert.ok(r2.coachFlags.some((f) => f.kind === "comparison_preliminary"));
+
+    const three = [...two, run({ workoutId: 3, workoutDate: "2026-06-20", repPaces: [345] })];
+    const r3 = compareWorkout({ current: run({ workoutId: 99, workoutDate: "2026-07-01", repPaces: [300] }), history: three });
+    assert.equal(r3.observation?.kind, "mechanism_a"); // 3 tight points → speaks
+    assert.ok(!r3.coachFlags.some((f) => f.kind === "comparison_preliminary"));
+  });
+});
+
 describe("pause integration + artifact flag", () => {
   test("weak B suppressed by a fresh composite; the praise is still recorded", () => {
-    const history = [run({ workoutId: 1, workoutDate: "2026-06-10", repPaces: [300], repPeakHrs: [160], repRecoveryDrops: [20] })];
+    // n≥3 so the base-N gate is satisfied and the PAUSE is what suppresses (the mechanism under test).
+    const history = [
+      run({ workoutId: 1, workoutDate: "2026-06-05", repPaces: [300], repPeakHrs: [160], repRecoveryDrops: [20] }),
+      run({ workoutId: 2, workoutDate: "2026-06-12", repPaces: [300], repPeakHrs: [160], repRecoveryDrops: [20] }),
+      run({ workoutId: 3, workoutDate: "2026-06-19", repPaces: [300], repPeakHrs: [160], repRecoveryDrops: [20] }),
+    ];
     const current = run({ workoutId: 99, workoutDate: "2026-07-01", repPaces: [294], repPeakHrs: [160], repRecoveryDrops: [23] });
     const result = compareWorkout({ current, history, lastPraise: { weight: 3, date: "2026-06-29" } });
     assert.equal(result.observation, null);

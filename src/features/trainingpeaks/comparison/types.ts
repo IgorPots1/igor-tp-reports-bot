@@ -128,6 +128,19 @@ export type CoachFlag =
       after: number | null;
       delta: number;
       workoutDate: string;
+    }
+  // A would-be praise that fired on too thin a base (< MIN_BASE_N_FOR_STUDENT
+  // comparable points) — NOT shown to the student, surfaced to the coach as
+  // "предварительно" so Igor can still eyeball it and decide.
+  | {
+      kind: "comparison_preliminary";
+      metric: ComparisonMetric;
+      before: number | null;
+      after: number | null;
+      delta: number;
+      baseN: number;
+      mode: NormMode;
+      workoutDate: string;
     };
 
 /** The last praise emitted for a student — the pause's cross-workout state. */

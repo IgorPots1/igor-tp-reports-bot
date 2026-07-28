@@ -21,6 +21,7 @@ export const PRIORITY: Record<AdviceKey, number> = {
   signal_pace_distance_untrusted: 100,
   signal_pulse_sensor_suspect: 100,
   signal_unusual_shift: 100,
+  signal_comparison_preliminary: 100,
 
   // жёсткая аномалия — data-integrity question, draft-facing
   question_hr_sensor: 90,

@@ -10,6 +10,13 @@ import type { ComparisonMetric, MetricShift } from "./types.ts";
 
 export const MIN_POINTS = 1;
 export const MIN_MAD_POINTS = 3;
+// A norm may FORM from a single point (MIN_POINTS), and the coach may see that as
+// "предварительно" — but a claim of PROGRESS to the STUDENT needs a stable base.
+// One month-old session ("~1 похожих, было ~192, стало ~187") is a single noisy
+// point with no measurable spread, so the MAD guard (n≥3) can't silence it; the
+// flat threshold alone lets it fire. Igor's rule: n=1/2 is preliminary (coach-only),
+// speak to the student only from 3 comparable points. Matches the MAD-points floor.
+export const MIN_BASE_N_FOR_STUDENT = 3;
 
 /** +1 when a larger value is better (recovery drop, rep count), −1 when smaller
  *  is better (pace, HR, fade, decoupling). */

@@ -47,4 +47,5 @@ export type AdviceKey =
   | "signal_hr_untrusted"
   | "signal_pace_distance_untrusted"
   | "signal_pulse_sensor_suspect"
-  | "signal_unusual_shift";
+  | "signal_unusual_shift"
+  | "signal_comparison_preliminary";
