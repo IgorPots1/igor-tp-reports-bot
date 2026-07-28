@@ -6,6 +6,7 @@
 
 import { GLOSS } from "./feedback-corpus.ts";
 import { scoreFeedbackSignificance, type FeedbackSignificanceBadge } from "./feedback-significance.ts";
+import { checkDraftVocabulary } from "./lexicon/draft-lexicon.ts";
 import type { AdviceKey } from "./advice-keys.ts";
 import type { FeedbackContextPacket } from "./context-packet.ts";
 import type { FeedbackJobStatus, TrainingPeaksFeedbackJob } from "./feedback-queue.ts";
@@ -218,6 +219,17 @@ export function buildReportCardView(
   const workoutDate = packet?.workoutDate ?? null;
   const isAttention = job.status === "blocked" || job.status === "failed";
   const isQueue = job.status === "pending" || job.status === "generating";
+  const reviewDraft = job.coachEditedText ?? job.draftText;
+  // Блок 2+3 — soft voice-lexicon flag. Only the JARGON channel is surfaced (high precision: «аэробно»,
+  // «декаплинг», «частил»); the noisier out-of-voice channel stays out of the panel until the sent_text
+  // corpus matures via living-growth. A NOTE, never a gate — the coach decides.
+  const transparency = isAttention ? [] : buildTransparency(packet);
+  if (!isAttention && !isQueue && reviewDraft) {
+    const jargon = checkDraftVocabulary(reviewDraft).findings.filter((f) => f.reason === "jargon");
+    if (jargon.length > 0) {
+      transparency.push({ kind: "words", text: `жаргон в черновике (упростить, не для ученика): ${jargon.map((f) => `«${f.word}»`).join(", ")}` });
+    }
+  }
   const { channel, mention, windowOpen } = resolveChannel({
     dmCapable: opts?.dmCapable,
     hasGroupThread: opts?.hasGroupThread,
@@ -235,11 +247,11 @@ export function buildReportCardView(
     lateSyncLabel: lateSyncLabelFor(workoutDate, job.createdAt),
     sessionTypeLabel: sessionTypeLabel(packet?.sessionType),
     status: job.status,
-    draftText: job.coachEditedText ?? job.draftText,
+    draftText: reviewDraft,
     coachEdited: job.coachEditedText !== null,
     // Queue cards show the "суть" (transparency) too — it's the only thing on a
     // card without a draft; attention cards stay text-free (coach signal only).
-    transparency: isAttention ? [] : buildTransparency(packet),
+    transparency,
     attentionReason: isAttention ? (job.blockedReason ?? job.errorReason ?? "нужно разобраться") : null,
     significanceBadge: isQueue ? scoreFeedbackSignificance(packet).badge : null,
     channel,
