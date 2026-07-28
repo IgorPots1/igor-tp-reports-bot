@@ -142,3 +142,53 @@ tsc 0, eslint 0, build OK, auth 8/8, тире/эмодзи в интерфейс
 Засеяна свежая approved day_off запись (2027-01-15, id 1c38952a-f2c2-42cd-bde6-8b92f67d8dd0). execute-one dry-run
 даёт payload: type 7, title «[Клуб] Выходной · клубная пометка». Реальную запись НЕ делал. Команды - в ответе/чате.
 Старую запись Игоря (Other 100, 11 янв, id ba1428e4…, статус applied) откатить отдельной командой.
+
+---
+
+# Гонка как Event + разведка Events API (после ручной проверки)
+
+Ручная проверка: забег создался как Run 21.1 км. Но у TP есть родная сущность Event («Add Event»),
+и забег должен быть ею. Разобрался с Events API и перевёл race на Event за флагом.
+
+## Task 1 - почему probe вернул 500 (разведка)
+Старый probe бил `POST .../events` (МНОЖЕСТВЕННОЕ) с телом `{athleteId, name, eventDate, eventType:"Other", description}`.
+Причины 500 (все сразу):
+- **Эндпоинт**: надо `POST /fitness/v6/athletes/{id}/event` (ЕДИНСТВЕННОЕ `/event`).
+- **Поле**: `personId` (id атлета), НЕ `athleteId`.
+- **eventType**: реальный тип `"RunningRoad"`, НЕ `"Other"`.
+- **Не хватало полей**: distance/distanceUnits/goals/legs/workouts/results.
+Правильный контракт - `docs/tp-write-payloads.md §2` (из UI-захвата, ответ 200, event id 39611915).
+
+**Проверено фактом (read-only):** `getEvents(3102415, ...)` прочитал событие 39611915 (RunningRoad, 2026-07-25,
+dist=5000). Ключи события: id, personId, eventDate, name, eventType, description, comment, results, legs,
+workouts, goals, atpPriority, atpId, atpWeekId, raceTypeDuration, isHidden, isLocked, externalEventSource,
+externalEventId, ctlTarget, distance, distanceUnits.
+- **Type**: `RunningRoad` (в данных только он). Приоритет A/B/C - отдельное поле `atpPriority` (int|null).
+- **Goals**: объект с полями `{distance, time, place, finish, pr, written, ...}` → **целевое время идёт в `goals.time`**
+  (поле ЕСТЬ). Но приём `goals.time` на CREATE не проверен (в захвате было `goals:{}`).
+
+## Task 2 - race → Event за флагом CLUB_RACE_AS_EVENT
+- Флаг `CLUB_RACE_AS_EVENT` (ВЫКЛ по умолчанию → Run как сейчас; ВКЛ → Event). Откат = флаг обратно.
+- Планировщик: при флаге строит `create_event` c payload из §2 (name, eventType RunningRoad, eventDate,
+  personId, distance/units, atpPriority=null, description=[дистанция·город·цель], goals, results). Цель времени -
+  в описании; в `goals.time` только при CLUB_RACE_SET_PLANNED_TIME (поле есть, приём на create не проверен).
+- `createEvent`/`deleteEvent` в tp-api-client (POST/DELETE `/event`). execute-one диспетчит create_event vs
+  create_workout; откат - deleteEvent vs deleteWorkout (определяет пере-планированием).
+- Проверено фактом (dry-run, в TP не писал): при CLUB_RACE_AS_EVENT=true payload = create_event RunningRoad
+  distance=42200 personId=3102415; при флаге OFF - create_workout type 3. Оба чисто.
+- КАВЕАТ отката: deleteEvent endpoint (`DELETE /event/{id}`) не проверен end-to-end - подтвердить первым откатом.
+
+## Task 3 - Event НЕ попадает в кэш тренировок (факт)
+Событие 39611915 в `trainingpeaks_workout_cache` - **0 строк** (скан читает /workouts, события - отдельный
+ресурс). Значит гонка-Event НЕ считается тренировкой нигде, а клуб всё равно видит старт из
+`club_calendar_entries` (источник истины). Это лучший вариант: ни фиктивной тренировки, ни риска подсчётов.
+
+## Task 4 - родной сущности для заметки НЕТ (разведка)
+В событиях только тип RunningRoad; отдельного «note»-типа события не видно - events API про ГОНКИ/события,
+не про заметки на день. Раздел «Add Other» в диалоге я захватить не могу (нужен браузер-захват сети у тебя).
+Без подтверждённого контракта note/preference ОСТАЮТСЯ Other(100) + guard (guard проверен на реальных данных -
+отсекается везде). Если сделаешь UI-захват «Add Other» - переведу.
+
+## Проверки
+tsc 0, eslint 0, build OK, auth 8/8, тире/эмодзи чисто. Events read - фактом (getEvents OK). Реальную запись в TP
+не делал. Свежая approved race-запись для теста Event: 2027-01-16, id a79d5500-e538-4429-8bc0-032087219c7b.

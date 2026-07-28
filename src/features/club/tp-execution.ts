@@ -103,6 +103,28 @@ export type ClubDayoffRow = {
   status: string;
 };
 
+/**
+ * Native TP Event payload (a race as a real Event, not a workout). Contract from a
+ * verified UI network capture — docs/tp-write-payloads.md §2. Endpoint is
+ * POST /fitness/v6/athletes/{id}/event (SINGULAR /event); the athlete id is `personId`,
+ * NOT `athleteId`; eventType is a real type like "RunningRoad", NOT "Other".
+ */
+export type ClubEventPayload = {
+  name: string;
+  eventType: string;
+  eventDate: string; // YYYY-MM-DD
+  personId: number; // the athlete id
+  distance: number | null;
+  distanceUnits: string;
+  atpPriority: number | null;
+  raceTypeDuration: null;
+  description: string | null;
+  goals: Record<string, unknown>;
+  legs: unknown[];
+  workouts: unknown[];
+  results: Array<{ resultType: string }>;
+};
+
 export type ClubActionPlan =
   | {
       ok: true;
@@ -112,6 +134,15 @@ export type ClubActionPlan =
       payload: CreateWorkoutPayload;
       label: string;
       /** Fields we could NOT resolve from a proven source — left unset, never guessed. */
+      unresolved: string[];
+    }
+  | {
+      ok: true;
+      requestId: string;
+      kind: "start" | "dayoff";
+      actionType: "create_event";
+      eventPayload: ClubEventPayload;
+      label: string;
       unresolved: string[];
     }
   | { ok: false; requestId: string; kind: "start" | "dayoff"; reason: string };
@@ -223,7 +254,11 @@ const PREF_RU: Record<string, string> = { long: "длительная", interval
  * title is uniform and recognizable so it's obvious in the TP calendar the marker
  * came from the club. Nothing here queues or executes — pure planning.
  */
-export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: number | null): ClubActionPlan {
+export function planCalendarEntryAction(
+  row: ClubCalendarEntryRow,
+  athleteId: number | null,
+  options?: { raceAsEvent?: boolean }
+): ClubActionPlan {
   const kindTag = row.kind === "race" ? "start" : "dayoff"; // reuse the existing ClubActionPlan kind union
   if (row.status !== "approved") {
     return { ok: false, requestId: row.id, kind: kindTag, reason: `status=${row.status} (нужно approved)` };
@@ -236,6 +271,43 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
   }
   if (!row.date) {
     return { ok: false, requestId: row.id, kind: kindTag, reason: "нет даты записи" };
+  }
+
+  // Race as a native TP Event (CLUB_RACE_AS_EVENT) — a real Event, not a workout. Does
+  // not enter the workout cache (verified), so it never counts as training; the club
+  // still sees the race from club_calendar_entries. See docs/tp-write-payloads.md §2.
+  if (row.kind === "race" && options?.raceAsEvent) {
+    const name = (row.raceName && row.raceName.trim()) || `Забег ${row.raceDistanceLabel ?? ""}`.trim();
+    const descParts = [row.raceDistanceLabel, row.raceCity].filter((x): x is string => Boolean(x && x.trim()));
+    const evUnresolved: string[] = [];
+    let goals: Record<string, unknown> = {};
+    if (row.raceTargetSeconds && row.raceTargetSeconds > 0) {
+      descParts.push(`цель ${row.raceTargetSeconds}s`);
+      // goals.time is a REAL field on the event (confirmed by read), but whether CREATE
+      // accepts it is unverified, so gate it behind CLUB_RACE_SET_PLANNED_TIME. Default:
+      // goals {} (the verified-working shape) + target time in the description.
+      if (racePlannedTimeHours(row.raceTargetSeconds) !== null) {
+        goals = { time: row.raceTargetSeconds };
+      } else {
+        evUnresolved.push("goals.time не задан (CLUB_RACE_SET_PLANNED_TIME=false; поле есть, приём на create не проверен) - цель в описании");
+      }
+    }
+    const eventPayload: ClubEventPayload = {
+      name,
+      eventType: "RunningRoad",
+      eventDate: row.date,
+      personId: athleteId,
+      distance: row.raceDistanceMeters && row.raceDistanceMeters > 0 ? row.raceDistanceMeters : null,
+      distanceUnits: "meters",
+      atpPriority: null, // клубные старты без A/B/C приоритета
+      raceTypeDuration: null,
+      description: descParts.length ? descParts.join(" · ") : null,
+      goals,
+      legs: [],
+      workouts: [],
+      results: [{ resultType: "Division" }, { resultType: "Gender" }, { resultType: "Overall" }],
+    };
+    return { ok: true, requestId: row.id, kind: kindTag, actionType: "create_event", eventPayload, label: `Старт (Event): ${name} -> ${row.date}`, unresolved: evUnresolved };
   }
 
   // Race stays a run-typed planned workout (distance kept); the rest are description-

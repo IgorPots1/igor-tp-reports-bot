@@ -280,6 +280,15 @@ export function isClubLinkTokensEnabled(): boolean {
 export function isClubTpExecutionEnabled(): boolean {
   return process.env.CLUB_TP_EXECUTION_ENABLED === "true";
 }
+/**
+ * Race markers as a native TP Event (POST /event) instead of a Run workout. OFF by
+ * default → race stays a planned Run (proven). ON → race is created as a RunningRoad
+ * Event (does not enter the workout cache, so it never counts as training). Revertible
+ * by flipping this flag back off. See docs/tp-write-payloads.md §2.
+ */
+export function isClubRaceAsEventEnabled(): boolean {
+  return process.env.CLUB_RACE_AS_EVENT === "true";
+}
 /** Phase 4 — coach-facing payment-reminder drafts screen. OFF by default. */
 export function isClubBillingRemindersEnabled(): boolean {
   return process.env.CLUB_BILLING_REMINDERS_ENABLED === "true";

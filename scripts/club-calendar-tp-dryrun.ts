@@ -25,7 +25,10 @@ import {
   type ClubActionPlan,
   type ClubCalendarEntryRow,
 } from "@/features/club/tp-execution";
+import { isClubRaceAsEventEnabled } from "@/features/club/constants";
 import { parseAthleteIdFromUrl } from "@/features/trainingpeaks/athlete-roster-import";
+
+const RACE_AS_EVENT = isClubRaceAsEventEnabled();
 
 // Rough distance-label → meters for the planned-workout distance (best-effort; the
 // marker workout is fine without it — distance is only useful for a race).
@@ -74,8 +77,11 @@ function planLine(p: ClubActionPlan, conflict: boolean): string {
   const flag = conflict ? " [КОНФЛИКТ]: на этот день уже есть запланированная тренировка (НЕ трогаем, ручной просмотр)" : "";
   if (p.ok) {
     const u = p.unresolved.length ? ` · unresolved: ${p.unresolved.join("; ")}` : "";
+    const what = p.actionType === "create_event"
+      ? `create_event (Event) name="${p.eventPayload.name}" type=${p.eventPayload.eventType}`
+      : `create_workout title="${p.payload.title}"`;
     // Full entry id так, чтобы можно было сразу запустить execute-one <id> --apply.
-    return `- [план] id=${p.requestId} · ${p.label} -> create_workout title="${p.payload.title}"${u}${flag}`;
+    return `- [план] id=${p.requestId} · ${p.label} -> ${what}${u}${flag}`;
   }
   return `- [skip] id=${p.requestId} - не планируется: ${p.reason}${flag}`;
 }
@@ -112,7 +118,7 @@ async function main(): Promise<void> {
   }));
 
   const planned = rows.map((row) => {
-    const plan = planCalendarEntryAction(row, athleteIds.get(row.studentId) ?? null);
+    const plan = planCalendarEntryAction(row, athleteIds.get(row.studentId) ?? null, { raceAsEvent: RACE_AS_EVENT });
     const conflict = row.kind === "day_off" && plannedSet.has(`${row.studentId}|${row.date}`);
     return { row, plan, conflict };
   });
@@ -131,7 +137,8 @@ async function main(): Promise<void> {
         raceTargetSeconds: kind === "race" ? 5400 : null,
         status: "approved", appliedTpWorkoutId: null,
       },
-      123456
+      123456,
+      { raceAsEvent: RACE_AS_EVENT }
     )
   );
 
@@ -169,7 +176,9 @@ async function main(): Promise<void> {
   L.push("- day_off → РОДНОЙ тип TP «Day off» (value_id=7, подтверждён фактом), заголовок «[Клуб] Выходной · клубная пометка»; is_planned=false, план на день не тронут.");
   L.push("- preference → тип Other(100), «[Клуб] Пожелание: длительная/интервальная/отдых · клубная пометка».");
   L.push("- note → тип Other(100), «[Клуб] Заметка · клубная пометка».");
-  L.push(`- race → запланированный бег с названием забега, дистанцией; целевое время ${CLUB_RACE_SET_PLANNED_TIME ? "в поле totalTimePlanned + дублем в описании" : "в описании (поле totalTimePlanned выключено до capability probe)"}.`);
+  L.push(`- race → ${RACE_AS_EVENT
+    ? "РОДНОЙ TP Event (RunningRoad, POST /event); в кэш тренировок НЕ попадает, не считается тренировкой; клуб видит старт из club_calendar_entries. Цель " + (CLUB_RACE_SET_PLANNED_TIME ? "в goals.time + описании" : "в описании (goals.time за CLUB_RACE_SET_PLANNED_TIME)")
+    : "запланированный бег (Run) с названием и дистанцией; цель " + (CLUB_RACE_SET_PLANNED_TIME ? "в поле totalTimePlanned + описании" : "в описании") + ". Включи CLUB_RACE_AS_EVENT=true, чтобы создавать как Event"}.`);
   L.push("");
   L.push("## Идемпотентность и отмена");
   L.push("- После успеха id созданной тренировки пишется в club_calendar_entries.applied_tp_workout_id;");

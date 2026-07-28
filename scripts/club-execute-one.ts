@@ -21,8 +21,9 @@
  */
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { planCalendarEntryAction, type ClubCalendarEntryRow } from "@/features/club/tp-execution";
+import { isClubRaceAsEventEnabled } from "@/features/club/constants";
 import { markCalendarEntryApplied, rollbackCalendarEntryApplied } from "@/features/club/calendar";
-import { createWorkout, deleteWorkout } from "@/features/trainingpeaks/tp-api-client";
+import { createWorkout, deleteWorkout, createEvent, deleteEvent } from "@/features/trainingpeaks/tp-api-client";
 import { parseAthleteIdFromUrl } from "@/features/trainingpeaks/athlete-roster-import";
 
 const entryId = process.argv[2];
@@ -70,23 +71,30 @@ async function main(): Promise<void> {
   if (!loaded) { console.error(`entry ${entryId} не найдена`); process.exit(1); }
   const { row, athleteId } = loaded;
 
+  const raceAsEvent = isClubRaceAsEventEnabled();
+
   if (ROLLBACK) {
     if (!row.appliedTpWorkoutId) { console.error("у записи нет applied_tp_workout_id — нечего откатывать"); process.exit(1); }
+    // Determine event-vs-workout by re-planning a clone (applied guard cleared).
+    const probe = planCalendarEntryAction({ ...row, appliedTpWorkoutId: null, status: "approved" }, athleteId, { raceAsEvent });
+    const isEvent = probe.ok && probe.actionType === "create_event";
     if (!APPLY || process.env.CLUB_TP_EXECUTION_ENABLED !== "true") {
-      console.log(`DRY-RUN rollback: удалил бы TP workout ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката: --apply + CLUB_TP_EXECUTION_ENABLED=true.`);
+      console.log(`DRY-RUN rollback: удалил бы TP ${isEvent ? "event" : "workout"} ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката: --apply + CLUB_TP_EXECUTION_ENABLED=true.`);
       process.exit(0);
     }
-    const del = await deleteWorkout("tpapi", athleteId as number, row.appliedTpWorkoutId);
-    console.log(`deleteWorkout status=${del.status}`);
+    const del = isEvent
+      ? await deleteEvent(athleteId as number, row.appliedTpWorkoutId)
+      : await deleteWorkout("tpapi", athleteId as number, row.appliedTpWorkoutId);
+    console.log(`delete${isEvent ? "Event" : "Workout"} status=${del.status}`);
     const rb = await rollbackCalendarEntryApplied(entryId);
     console.log(rb.ok ? `откат БД ok: статус approved, ссылка очищена (был tp=${rb.tpWorkoutId})` : `откат БД ошибка: ${rb.error}`);
     process.exit(rb.ok ? 0 : 1);
   }
 
-  const plan = planCalendarEntryAction(row, athleteId);
+  const plan = planCalendarEntryAction(row, athleteId, { raceAsEvent });
   if (!plan.ok) { console.error(`не планируется: ${plan.reason}`); process.exit(1); }
-  console.log("== ПЛАН (payload) ==");
-  console.log(JSON.stringify(plan.payload, null, 2));
+  console.log(`== ПЛАН (${plan.actionType}) ==`);
+  console.log(JSON.stringify(plan.actionType === "create_event" ? plan.eventPayload : plan.payload, null, 2));
   if (plan.unresolved.length) console.log("unresolved:", plan.unresolved.join("; "));
 
   const gated = APPLY && process.env.CLUB_TP_EXECUTION_ENABLED === "true";
@@ -96,11 +104,19 @@ async function main(): Promise<void> {
   }
 
   console.log("\n== ИСПОЛНЕНИЕ (CLUB_TP_EXECUTION_ENABLED=true, --apply) ==");
-  const res = await createWorkout(plan.payload);
-  console.log(`создан TP workout id=${res.workoutId}`);
-  const mark = await markCalendarEntryApplied(entryId, res.workoutId);
-  console.log(mark.ok ? `записан applied_tp_workout_id=${res.workoutId}, статус applied` : `write-back ошибка: ${mark.error}`);
-  console.log("проверь в TP-календаре ученика; на следующем скане guard отсечёт эту строку из ленты/подсчётов.");
+  let createdId: number;
+  if (plan.actionType === "create_event") {
+    const res = await createEvent(athleteId as number, plan.eventPayload as unknown as Record<string, unknown>);
+    createdId = res.eventId;
+    console.log(`создан TP event id=${createdId} (гонка как Event, в кэш тренировок НЕ попадёт)`);
+  } else {
+    const res = await createWorkout(plan.payload);
+    createdId = res.workoutId;
+    console.log(`создан TP workout id=${createdId}`);
+  }
+  const mark = await markCalendarEntryApplied(entryId, createdId);
+  console.log(mark.ok ? `записан applied_tp_workout_id=${createdId}, статус applied` : `write-back ошибка: ${mark.error}`);
+  console.log("проверь в TP-календаре ученика.");
   process.exit(mark.ok ? 0 : 1);
 }
 

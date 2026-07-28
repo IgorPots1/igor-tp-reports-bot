@@ -530,6 +530,31 @@ export async function getEvents(athleteId: number, startIso: string, endIso: str
   return assertRecordArray(body, endpoint);
 }
 
+/**
+ * Create a native TP Event (a race). SINGULAR `/event` endpoint; the request body's
+ * `personId` is the athlete id (NOT a field named athleteId). Body contract from a
+ * verified UI capture (docs/tp-write-payloads.md §2). Response is the created event
+ * object; `id` is the numeric event id. Capability only — the caller decides when.
+ */
+export async function createEvent(athleteId: number, body: Record<string, unknown>): Promise<{ eventId: number; raw: Record<string, unknown> }> {
+  const endpoint = `/fitness/v6/athletes/${athleteId}/event`;
+  const responseBody = await writeJsonOrThrow(`${TP_API_HOST}${endpoint}`, "POST", body);
+  const record = assertRecord(responseBody, endpoint);
+  const eventId = assertNumber(record.id, "id", endpoint);
+  return { eventId, raw: record };
+}
+
+/**
+ * DELETE a TP Event by id (rollback of a created race Event). Endpoint mirrors the
+ * singular create resource; returns raw {status, body} without throwing so the caller
+ * can interpret it. NOTE: delete endpoint shape is unverified end-to-end — confirm on
+ * the first real rollback.
+ */
+export async function deleteEvent(athleteId: number, eventId: number): Promise<{ status: number; body: unknown }> {
+  const endpoint = `/fitness/v6/athletes/${athleteId}/event/${eventId}`;
+  return fetchJsonWithRetry(`${TP_API_HOST}${endpoint}`, { method: "DELETE" });
+}
+
 // ─── athlete settings (zones + thresholds live here) ─────────────────────────────
 
 /**
