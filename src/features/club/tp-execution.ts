@@ -30,6 +30,48 @@ export const CLUB_RUN_WORKOUT_TYPE_VALUE_ID = 3;
  */
 export const CLUB_MARKER_WORKOUT_TYPE_VALUE_ID = 100;
 
+/**
+ * 1.3 — marker title style. Two variants, switchable with THIS ONE constant:
+ *   "text"  → prefix "[Клуб]" (default). Portable and robust: no emoji to be mangled by
+ *             the TP API / calendar exports / some clients, consistent with the club
+ *             mini-app no-emoji convention, and the coach still sees at a glance that the
+ *             workout came from the club. The cache-guard anchors on the text sentinel
+ *             "клубная пометка", so detection is unaffected either way.
+ *   "emoji" → prefix 🛌/🎯/📝/🏁 (a coloured visual marker in the coach's TP calendar).
+ * Default is "text"; flip to "emoji" here if the coach prefers the glyphs.
+ */
+export type ClubMarkerTitleStyle = "text" | "emoji";
+export const CLUB_MARKER_TITLE_STYLE: ClubMarkerTitleStyle = "text";
+
+const MARKER_EMOJI: Record<"day_off" | "preference" | "note" | "race", string> = {
+  day_off: "🛌",
+  preference: "🎯",
+  note: "📝",
+  race: "🏁",
+};
+
+/** Title/description prefix for a marker of the given kind, per CLUB_MARKER_TITLE_STYLE. */
+function markerPrefix(kind: "day_off" | "preference" | "note" | "race"): string {
+  return CLUB_MARKER_TITLE_STYLE === "emoji" ? MARKER_EMOJI[kind] : "[Клуб]";
+}
+
+/**
+ * 1.4 — whether to write a race's target time into the TP field `totalTimePlanned`.
+ * TP time fields are HOURS (confirmed by fact: the cache's completed_time_raw is hours,
+ * see rawHoursToSeconds in service.ts), so the value sent is targetSeconds / 3600.
+ * DEFAULT false: the write must be confirmed by a capability probe (a real create + read
+ * back, which is Igor's hand) before we send a value on the first real execution. Until
+ * then the target time stays only in the description. Flip to true AFTER the probe
+ * confirms TP stores/returns totalTimePlanned on a race.
+ */
+export const CLUB_RACE_SET_PLANNED_TIME = false;
+
+/** Race target seconds → the value for totalTimePlanned (TP hours), or null when disabled. */
+function racePlannedTimeHours(targetSeconds: number | null): number | null {
+  if (!CLUB_RACE_SET_PLANNED_TIME || !targetSeconds || targetSeconds <= 0) return null;
+  return Math.round((targetSeconds / 3600) * 1000) / 1000; // hours, 3 dp
+}
+
 export type ClubRaceRow = {
   id: string;
   studentId: string;
@@ -82,10 +124,15 @@ export function planClubRaceAction(row: ClubRaceRow, athleteId: number | null): 
     return { ok: false, requestId: row.id, kind: "start", reason: "нет даты старта" };
   }
   const title = (row.name && row.name.trim()) || `Гонка ${row.distanceLabel ?? ""}`.trim();
-  const description = [row.distanceLabel, row.city, row.country].filter((x) => x && x.trim()).join(", ") || null;
+  const plannedTime = racePlannedTimeHours(row.targetResultSeconds);
+  const baseDesc = [row.distanceLabel, row.city, row.country].filter((x) => x && x.trim()).join(", ");
+  // Keep the target time in the description as a human-readable dup regardless of the field.
+  const description = row.targetResultSeconds && row.targetResultSeconds > 0
+    ? [baseDesc, `цель ${row.targetResultSeconds}s`].filter(Boolean).join(" · ")
+    : (baseDesc || null);
   const unresolved: string[] = [];
-  if (row.targetResultSeconds && row.targetResultSeconds > 0) {
-    unresolved.push("totalTimePlanned (единица totalTimePlanned на write-payload не подтверждена - целевое время НЕ проставлено)");
+  if (row.targetResultSeconds && row.targetResultSeconds > 0 && plannedTime === null) {
+    unresolved.push("totalTimePlanned не проставлено (CLUB_RACE_SET_PLANNED_TIME=false до capability probe) - целевое время в описании");
   }
   const payload: CreateWorkoutPayload = {
     athleteId,
@@ -96,7 +143,7 @@ export function planClubRaceAction(row: ClubRaceRow, athleteId: number | null): 
     description,
     coachComments: null,
     distancePlanned: row.distanceMeters && row.distanceMeters > 0 ? row.distanceMeters : null,
-    totalTimePlanned: null,
+    totalTimePlanned: plannedTime,
     structure: null,
   };
   return {
@@ -192,11 +239,16 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
 
   if (row.kind === "race") {
     title = (row.raceName && row.raceName.trim()) || `Забег ${row.raceDistanceLabel ?? ""}`.trim();
-    description = ["🏁 Забег (заявка ученика)", row.raceDistanceLabel, row.raceCity].filter((x) => x && x.trim()).join(" · ") || "🏁 Забег (заявка ученика)";
+    const raceTag = `${markerPrefix("race")} Забег (заявка ученика)`;
+    description = [raceTag, row.raceDistanceLabel, row.raceCity].filter((x) => x && x.trim()).join(" · ") || raceTag;
     workoutTypeValueId = CLUB_RUN_WORKOUT_TYPE_VALUE_ID;
     distancePlanned = row.raceDistanceMeters && row.raceDistanceMeters > 0 ? row.raceDistanceMeters : null;
     if (row.raceTargetSeconds && row.raceTargetSeconds > 0) {
-      unresolved.push("targetTime (единица totalTimePlanned не подтверждена - целевое время в описании, не в поле)");
+      // Target time always kept in the description; written to the field only when the
+      // capability probe has confirmed it (CLUB_RACE_SET_PLANNED_TIME).
+      if (racePlannedTimeHours(row.raceTargetSeconds) === null) {
+        unresolved.push("targetTime не в поле (CLUB_RACE_SET_PLANNED_TIME=false до capability probe) - целевое время в описании");
+      }
       description += ` · цель ${row.raceTargetSeconds}s`;
     }
   } else {
@@ -204,13 +256,13 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
     workoutTypeValueId = CLUB_MARKER_WORKOUT_TYPE_VALUE_ID;
     unresolved.push("workoutTypeValueId=100 (Other) - создание типа Other не подтверждено end-to-end, проверить одну запись перед массовым исполнением");
     if (row.kind === "day_off") {
-      title = "🛌 Выходной день (заявка ученика)";
+      title = `${markerPrefix("day_off")} Выходной день (заявка ученика)`;
       description = row.note && row.note.trim() ? row.note.trim() : "Выходной, запрошен учеником через клуб. План на день не тронут.";
     } else if (row.kind === "preference") {
-      title = `🎯 Пожелание: ${PREF_RU[row.preferredType ?? ""] ?? row.preferredType ?? "тип тренировки"}`;
+      title = `${markerPrefix("preference")} Пожелание: ${PREF_RU[row.preferredType ?? ""] ?? row.preferredType ?? "тип тренировки"}`;
       description = "Пожелание ученика по типу тренировки на день (через клуб). План не тронут.";
     } else {
-      title = "📝 Заметка ученика";
+      title = `${markerPrefix("note")} Заметка ученика`;
       description = row.note && row.note.trim() ? row.note.trim() : "Заметка ученика на день (через клуб).";
     }
     // Phase A: mark every non-race marker title with the sentinel so the cache-guard can

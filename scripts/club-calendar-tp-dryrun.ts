@@ -20,6 +20,8 @@ import { resolve } from "node:path";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
   planCalendarEntryAction,
+  CLUB_MARKER_TITLE_STYLE,
+  CLUB_RACE_SET_PLANNED_TIME,
   type ClubActionPlan,
   type ClubCalendarEntryRow,
 } from "@/features/club/tp-execution";
@@ -158,10 +160,11 @@ async function main(): Promise<void> {
   L.push(examples.map((e) => planLine(e, false)).join("\n"));
   L.push("");
   L.push("## Что увидит ученик в своём календаре TP");
-  L.push("- day_off → тренировка-пометка «🛌 Выходной день (заявка ученика)» на дату; его план на день — на месте.");
-  L.push("- preference → «🎯 Пожелание: длительная/интервальная/отдых» — описательная пометка.");
-  L.push("- note → «📝 Заметка ученика» с текстом.");
-  L.push("- race → запланированный бег с названием забега, дистанцией; целевое время — в описании.");
+  L.push(`- Стиль заголовка пометки: ${CLUB_MARKER_TITLE_STYLE} (константа CLUB_MARKER_TITLE_STYLE в tp-execution.ts; "text" = префикс [Клуб], "emoji" = 🛌/🎯/📝/🏁).`);
+  L.push("- day_off → тренировка-пометка «[Клуб] Выходной день (заявка ученика)» на дату; его план на день на месте.");
+  L.push("- preference → «[Клуб] Пожелание: длительная/интервальная/отдых» - описательная пометка.");
+  L.push("- note → «[Клуб] Заметка ученика» с текстом.");
+  L.push(`- race → запланированный бег с названием забега, дистанцией; целевое время ${CLUB_RACE_SET_PLANNED_TIME ? "в поле totalTimePlanned + дублем в описании" : "в описании (поле totalTimePlanned выключено до capability probe)"}.`);
   L.push("");
   L.push("## Идемпотентность и отмена");
   L.push("- После успеха id созданной тренировки пишется в club_calendar_entries.applied_tp_workout_id;");

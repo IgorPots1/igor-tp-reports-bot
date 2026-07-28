@@ -436,7 +436,11 @@ async function loadFeedCandidates(input: {
     .select(WORKOUT_CACHE_COLUMNS)
     .gte("workout_date", input.from)
     .lte("workout_date", input.to)
-    .eq("is_completed", true);
+    .eq("is_completed", true)
+    // Phase A defense-in-depth: club markers are planned Other(100), so is_completed=true
+    // already excludes them from the feed; still filter the sentinel here so a marker can
+    // never surface in the feed even if a future path marks one completed.
+    .not("title", "ilike", `%${CLUB_MARKER_TITLE_SENTINEL}%`);
   if (input.beforeDate && input.beforeId) {
     // (workout_date, id) < (beforeDate, beforeId) in DESC order — keyset, no offset.
     q = q.or(

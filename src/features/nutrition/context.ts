@@ -1377,7 +1377,9 @@ export async function buildNutritionStudentContext(input: {
       from: addDays(input.weekFrom, -28),
       to: addDays(input.weekTo, 28),
     });
-    noTrainingWeek = neighborRows.length > 0;
+    // Phase A: a club marker (day_off/preference/note pometka) is not real training —
+    // exclude it so a nearby marker does not fake "rest week" for a genuine data gap.
+    noTrainingWeek = neighborRows.some((row) => !isClubMarkerTitle(row.title));
   }
 
   // Scan health for the PLAN week (the week after the reviewed one). Read only when

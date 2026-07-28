@@ -253,6 +253,57 @@ export async function deleteCalendarEntry(studentId: string, entryId: string): P
 }
 
 /**
+ * Phase 11 execution write-back (naryad 1.6). After the TP create for a calendar entry
+ * SUCCEEDS, persist the link + advance status to 'applied'. This is the piece that makes
+ * idempotency real: the planner skips entries whose applied_tp_workout_id is set (see
+ * planCalendarEntryAction), and rollback deletes the TP workout by this id. DB-only —
+ * nothing here talks to TrainingPeaks. The caller (the executor, Igor's hand) passes the
+ * server-assigned TP workout id from the create response.
+ */
+export async function markCalendarEntryApplied(entryId: string, tpWorkoutId: number): Promise<{ ok: boolean; error?: string }> {
+  if (!entryId || !Number.isFinite(tpWorkoutId)) {
+    return { ok: false, error: "Нужны entryId и числовой tpWorkoutId." };
+  }
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("club_calendar_entries")
+    .update({ applied_tp_workout_id: tpWorkoutId, applied_at: new Date().toISOString(), status: "applied" })
+    .eq("id", entryId)
+    .eq("status", "approved"); // only an approved entry may transition to applied
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
+/**
+ * Rollback the DB half after the TP workout was deleted (delete_workout by
+ * applied_tp_workout_id). Clears the link and returns the entry to 'approved' so it can be
+ * re-executed or re-reviewed. Pairs with markCalendarEntryApplied.
+ */
+export async function rollbackCalendarEntryApplied(entryId: string): Promise<{ ok: boolean; error?: string; tpWorkoutId?: number | null }> {
+  if (!entryId) {
+    return { ok: false, error: "Нет записи." };
+  }
+  const supabase = createSupabaseServerClient();
+  const { data: before } = await supabase
+    .from("club_calendar_entries")
+    .select("applied_tp_workout_id")
+    .eq("id", entryId)
+    .maybeSingle();
+  const tpWorkoutId = (before as { applied_tp_workout_id: number | null } | null)?.applied_tp_workout_id ?? null;
+  const { error } = await supabase
+    .from("club_calendar_entries")
+    .update({ applied_tp_workout_id: null, applied_at: null, status: "approved" })
+    .eq("id", entryId)
+    .eq("status", "applied");
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, tpWorkoutId };
+}
+
+/**
  * Auto-planner interface (Phase 11.2): the approved constraints for a student on a
  * given date, as one machine-readable object. Answers "what did this student ask for
  * on date X?" in a single query, for a future planner to consume.
