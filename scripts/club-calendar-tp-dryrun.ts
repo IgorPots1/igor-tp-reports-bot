@@ -25,6 +25,7 @@ import {
   type ClubActionPlan,
   type ClubCalendarEntryRow,
 } from "@/features/club/tp-execution";
+import { parseAthleteIdFromUrl } from "@/features/trainingpeaks/athlete-roster-import";
 
 // Rough distance-label → meters for the planned-workout distance (best-effort; the
 // marker workout is fine without it — distance is only useful for a race).
@@ -41,10 +42,11 @@ async function loadAthleteIds(studentIds: string[]): Promise<Map<string, number 
   const map = new Map<string, number | null>();
   if (studentIds.length === 0) return map;
   const supabase = createSupabaseServerClient();
-  const { data } = await supabase.from("trainingpeaks_students").select("id, trainingpeaks_athlete_id").in("id", studentIds);
-  for (const r of (data as Array<{ id: string; trainingpeaks_athlete_id: number | string | null }> | null) ?? []) {
-    const raw = r.trainingpeaks_athlete_id;
-    map.set(r.id, raw != null && Number.isFinite(Number(raw)) ? Number(raw) : null);
+  // The numeric TP athlete id lives only inside trainingpeaks_athlete_url
+  // (".../athletes/{id}") — there is no trainingpeaks_athlete_id column.
+  const { data } = await supabase.from("trainingpeaks_students").select("id, trainingpeaks_athlete_url").in("id", studentIds);
+  for (const r of (data as Array<{ id: string; trainingpeaks_athlete_url: string | null }> | null) ?? []) {
+    map.set(r.id, r.trainingpeaks_athlete_url ? parseAthleteIdFromUrl(r.trainingpeaks_athlete_url) : null);
   }
   return map;
 }

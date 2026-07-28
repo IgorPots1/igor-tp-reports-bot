@@ -23,6 +23,7 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import { planCalendarEntryAction, type ClubCalendarEntryRow } from "@/features/club/tp-execution";
 import { markCalendarEntryApplied, rollbackCalendarEntryApplied } from "@/features/club/calendar";
 import { createWorkout, deleteWorkout } from "@/features/trainingpeaks/tp-api-client";
+import { parseAthleteIdFromUrl } from "@/features/trainingpeaks/athlete-roster-import";
 
 const entryId = process.argv[2];
 const APPLY = process.argv.includes("--apply");
@@ -43,8 +44,8 @@ async function loadEntry(id: string): Promise<{ row: ClubCalendarEntryRow; athle
     .maybeSingle();
   if (!data) return null;
   const r = data as Record<string, unknown>;
-  const { data: st } = await supabase.from("trainingpeaks_students").select("trainingpeaks_athlete_id").eq("id", r.student_id as string).maybeSingle();
-  const rawAth = (st as { trainingpeaks_athlete_id: number | string | null } | null)?.trainingpeaks_athlete_id ?? null;
+  const { data: st } = await supabase.from("trainingpeaks_students").select("trainingpeaks_athlete_url").eq("id", r.student_id as string).maybeSingle();
+  const athUrl = (st as { trainingpeaks_athlete_url: string | null } | null)?.trainingpeaks_athlete_url ?? null;
   const row: ClubCalendarEntryRow = {
     id: r.id as string,
     studentId: r.student_id as string,
@@ -60,7 +61,7 @@ async function loadEntry(id: string): Promise<{ row: ClubCalendarEntryRow; athle
     status: (r.status as string) ?? "",
     appliedTpWorkoutId: (r.applied_tp_workout_id as number | null) ?? null,
   };
-  return { row, athleteId: rawAth != null && Number.isFinite(Number(rawAth)) ? Number(rawAth) : null };
+  return { row, athleteId: athUrl ? parseAthleteIdFromUrl(athUrl) : null };
 }
 
 async function main(): Promise<void> {
