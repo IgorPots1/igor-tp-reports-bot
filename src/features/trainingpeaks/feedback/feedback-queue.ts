@@ -12,8 +12,19 @@ import { validateFeedbackDraft } from "@/features/trainingpeaks/feedback/feedbac
 import type { FeedbackContextPacket } from "@/features/trainingpeaks/feedback/context-packet";
 import type { FeedbackGeneratorBackend } from "@/features/trainingpeaks/feedback/feedback-generator";
 import { enforceGreeting, normalizeDraftFormat, stripLongDash } from "@/features/trainingpeaks/feedback/draft-text";
+import { computeDraftEditDiff, type DraftEditDiff } from "@/features/trainingpeaks/feedback/draft-edit-diff";
 
 const TABLE = "trainingpeaks_workout_feedback_jobs";
+
+// Compute + persist the draft→sent word diff on a job. Best-effort: the row already carries
+// draft_text and sent_text, so a failed diff write just leaves edit_diff null — never blocks the
+// send/edit. Called AFTER the main CAS update returns the row (so draft_text is in hand).
+async function persistEditDiff(jobId: string, draftText: string | null, finalText: string): Promise<DraftEditDiff> {
+  const diff = computeDraftEditDiff(draftText, finalText);
+  const supabase = createSupabaseServerClient();
+  await withSupabaseNetworkRetry(() => supabase.from(TABLE).update({ edit_diff: diff }).eq("id", jobId)).catch(() => {});
+  return diff;
+}
 
 // pending/generating/done/failed/blocked come from the bridge (part 1). sent/shared/
 // dismissed are the review terminal states the Mini App writes:
@@ -41,6 +52,7 @@ export type TrainingPeaksFeedbackJob = {
   // Review fields (Mini App «Отчёты», migration 20260723120000).
   coachEditedText: string | null;
   sentText: string | null;
+  editDiff: DraftEditDiff | null;
   sentAt: string | null;
   dismissedAt: string | null;
   reviewedByChatId: string | null;
@@ -63,6 +75,7 @@ type FeedbackJobRow = {
   blocked_reason: string | null;
   coach_edited_text: string | null;
   sent_text: string | null;
+  edit_diff: DraftEditDiff | null;
   sent_at: string | null;
   dismissed_at: string | null;
   reviewed_by_chat_id: string | null;
@@ -88,6 +101,7 @@ function mapRow(row: FeedbackJobRow): TrainingPeaksFeedbackJob {
     // pre-migration read still maps cleanly (proof runs against would-be rows).
     coachEditedText: row.coach_edited_text ?? null,
     sentText: row.sent_text ?? null,
+    editDiff: row.edit_diff ?? null,
     sentAt: row.sent_at ?? null,
     dismissedAt: row.dismissed_at ?? null,
     reviewedByChatId: row.reviewed_by_chat_id ?? null,
@@ -391,7 +405,11 @@ export async function saveFeedbackDraftCoachEdit(input: {
       .maybeSingle()
   );
   if (error) throw new Error(`save coach edit failed: ${error.message}`);
-  return data ? mapRow(data as FeedbackJobRow) : null;
+  if (!data) return null;
+  // Freeze the draft→edit diff (what Igor rewrote). Intermediate — the send path re-diffs against
+  // the FINAL sent_text below, which is authoritative.
+  const editDiff = await persistEditDiff(input.jobId, (data as FeedbackJobRow).draft_text, coachEditedText);
+  return mapRow({ ...(data as FeedbackJobRow), edit_diff: editDiff });
 }
 
 /**
@@ -466,7 +484,9 @@ export async function markFeedbackJobShared(input: {
       .maybeSingle()
   );
   if (error) throw new Error(`mark feedback job shared failed: ${error.message}`);
-  return data ? mapRow(data as FeedbackJobRow) : null;
+  if (!data) return null;
+  const editDiff = await persistEditDiff(input.jobId, (data as FeedbackJobRow).draft_text, input.sharedText);
+  return mapRow({ ...(data as FeedbackJobRow), edit_diff: editDiff });
 }
 
 /**
@@ -511,7 +531,10 @@ export async function claimFeedbackJobForSend(input: {
       .maybeSingle()
   );
   if (error) throw new Error(`claim feedback job for send failed: ${error.message}`);
-  return data ? mapRow(data as FeedbackJobRow) : null;
+  if (!data) return null;
+  // Authoritative diff: generated draft vs the exact text delivered to the student.
+  const editDiff = await persistEditDiff(input.jobId, (data as FeedbackJobRow).draft_text, input.sentText);
+  return mapRow({ ...(data as FeedbackJobRow), edit_diff: editDiff });
 }
 
 /** Roll a claimed send back to 'done' after a delivery failure, recording the reason. */

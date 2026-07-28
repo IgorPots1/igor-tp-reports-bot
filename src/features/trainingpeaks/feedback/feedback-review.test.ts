@@ -45,6 +45,7 @@ function makeJob(overrides: Partial<TrainingPeaksFeedbackJob> = {}): TrainingPea
     blockedReason: null,
     coachEditedText: null,
     sentText: null,
+    editDiff: null,
     sentAt: null,
     dismissedAt: null,
     reviewedByChatId: null,
