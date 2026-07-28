@@ -47,6 +47,8 @@ const FACTOR_PATTERNS: Array<{ factor: StatedFactorKind; re: RegExp; neg?: RegEx
   // недосып). "выспалась/спал хорошо" simply don't match the pattern.
   { factor: "undersleep", re: /недоспал|недосып|мало спал|не выспал|плохо спал|поздно лёг|поздно лег|не спал|бессонниц/iu },
   { factor: "dehydration", re: /(не|забыл[а-яё]*)\s+(пил|попи|брал[а-яё]*\s+вод)|воду?\s+не\s+(брал|взял|пил)|без\s+воды|мало\s+(пил|воды)|пил[а-яё]*\s+мало|обезвож/iu, neg: /воды\s+хватил|пил[а-яё]*\s+достаточно|воды\s+достаточно|напил/iu },
+  // ЕДА/гели как контекст (не вода, не диета). «поел/не поел/без гелей/натощак/съел кашу-банан/не хватило углеводов».
+  { factor: "nutrition", re: /гел[ья]|без\s+гел|натощак|голодн|не\s+поел|не\s+ел|мало\s+(?:поел|ел|еды)|плохо\s+поел|(?:съел|поел|ел|позавтракал|перекусил)[а-яё]*\s|каш[иуа]|банан|батончик|финик|изотоник|энергетическ[а-яё]*\s+гел|углевод|не\s+хватило\s+(?:сил|энерги|углевод)|подкрепи|перед\s+(?:стартом|бегом|пробежк)[а-яё]*\s+(?:съел|поел|ел|каш|банан)/iu, neg: /не\s+про\s+еду|воды/iu },
   { factor: "heat", re: /жар|пекл|духот|парил|очень тепло|[+]?[23]\d\s*(?:°|градус|[сc]\b)/iu, neg: /не\s+жарк|без\s+жар|не\s+душно|прохладн|свеж|не\s+пекл/iu },
   { factor: "life_stress", re: /ремонт|переезд|аврал|завал на работе|работ[а-яё]* (много|завал|запар)|нервотрёп|стресс|устаю по жизни|вымотал|замотал|не высыпаюсь из-за|напряжённ[а-яё]* недел/iu },
   { factor: "conditions", re: /горк|в гору|рельеф|подъём|подъем|дорожк|манеж|тредмил|бегов[а-яё]* дорож|ветер|встречный ветер|против ветра|грязь|снег|гололёд|гололед/iu },
@@ -117,6 +119,7 @@ const FACTOR_PRIORITY: Record<CauseFactorKind, number> = {
   muscle_doms: 2, // benign — real injury (soreness) or fatigue outrank it; still honored over bare conditions
   undersleep: 5,
   dehydration: 4,
+  nutrition: 4,
   heat: 4,
   life_stress: 3,
   conditions: 2,
@@ -128,6 +131,7 @@ const FACTOR_ADVICE_KEY: Record<CauseFactorKind, AdviceKey> = {
   muscle_doms: "cause_confirmed_muscle_doms",
   undersleep: "cause_confirmed_undersleep",
   dehydration: "cause_confirmed_dehydration",
+  nutrition: "cause_confirmed_nutrition",
   heat: "cause_confirmed_heat",
   life_stress: "cause_confirmed_life_stress",
   conditions: "cause_confirmed_conditions",

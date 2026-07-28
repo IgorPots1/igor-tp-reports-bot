@@ -35,6 +35,7 @@ export const PRIORITY: Record<AdviceKey, number> = {
   cause_confirmed_soreness: 66,
   cause_confirmed_undersleep: 65,
   cause_confirmed_dehydration: 64,
+  cause_confirmed_nutrition: 64,
   cause_confirmed_heat: 64,
   cause_confirmed_life_stress: 63,
   cause_confirmed_conditions: 63,

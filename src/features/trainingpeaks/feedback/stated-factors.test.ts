@@ -206,3 +206,24 @@ describe("deviceGlitchScope — GPS gates pace/distance, watch gates HR (Бло�
     assert.deepEqual(deviceGlitchScope([]), { hr: false, paceDistance: false });
   });
 });
+
+describe("nutrition — еда как контекст (Кукушкина/Надя)", () => {
+  const f = (text: string) => extractStatedFactorsDeterministic([msg(text)], WD).map((x) => x.factor);
+  test("«съела овсянку с бананом перед бегом» → nutrition", () => {
+    assert.ok(f("Перед бегом съела овсянку с бананом и кленовый сироп").includes("nutrition"));
+  });
+  test("«без гелей на длинной тяжело» → nutrition", () => {
+    assert.ok(f("без гелей на длинной под конец совсем тяжело").includes("nutrition"));
+  });
+  test("«натощак, сил не хватило» → nutrition", () => {
+    assert.ok(f("побежала натощак, сил не хватило").includes("nutrition"));
+  });
+  test("вода остаётся dehydration, НЕ nutrition", () => {
+    const got = f("не пил воду, забыл взять");
+    assert.ok(got.includes("dehydration"));
+    assert.ok(!got.includes("nutrition"));
+  });
+  test("«всё отлично, пульс ровный» → без фактора еды", () => {
+    assert.ok(!f("всё отлично, пульс ровный").includes("nutrition"));
+  });
+});

@@ -32,6 +32,7 @@ export type AdviceKey =
   // Same "причина, не вина" category D; honored over a mechanical question.
   | "cause_confirmed_heat"
   | "cause_confirmed_dehydration"
+  | "cause_confirmed_nutrition"
   | "cause_confirmed_undersleep"
   | "cause_confirmed_illness"
   | "cause_confirmed_life_stress"
