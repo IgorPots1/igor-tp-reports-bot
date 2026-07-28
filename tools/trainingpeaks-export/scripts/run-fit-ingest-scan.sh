@@ -33,7 +33,9 @@ cd "$REPO" || { echo "[$(date '+%F %T')] нет папки $REPO"; exit 1; }
 # 1) FIT-ingest — считаем метрики. Ловим вывод (для детекта сессии + мониторинга).
 echo "[$(date '+%F %T')] tp-fit-ingest-scan --from=${FROM} --to=${TO} (все активные)"
 FIT_LOG="$(mktemp -t fit-ingest-out)"
-npm run --silent tp-fit-ingest-scan -- --from="${FROM}" --to="${TO}" >"$FIT_LOG" 2>&1
+# caffeinate -i: держим мак бодрым, пока идёт ingest (не заснуть посреди прогона на батарее).
+# Спанье МЕЖДУ прогонами — это `sudo pmset -c sleep 0` (AC), не caffeinate.
+caffeinate -i npm run --silent tp-fit-ingest-scan -- --from="${FROM}" --to="${TO}" >"$FIT_LOG" 2>&1
 FIT_CODE=$?
 cat "$FIT_LOG"
 

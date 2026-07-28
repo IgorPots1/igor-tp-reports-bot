@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Батарейный сторож: каждые 10 мин проверяет заряд; на батарее <20%/<10% шлёт Telegram-алерт,
+     чтобы Игорь воткнул зарядку до того, как мак уснёт и пайплайн встанет.
+     Установка: cp в ~/Library/LaunchAgents/ и launchctl bootstrap (см. хендофф). -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.battery-guard</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-battery-guard.sh"</string>
+  </array>
+
+  <!-- проверить сразу при загрузке (напр. после ребута/релогина) -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- каждые 10 минут; пропущенные во сне launchd докрутит на пробуждении -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/battery-guard.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/battery-guard.launchd.err.log</string>
+</dict>
+</plist>

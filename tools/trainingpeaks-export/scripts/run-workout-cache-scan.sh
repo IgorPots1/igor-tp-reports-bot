@@ -18,7 +18,9 @@ echo "[$(date '+%F %T')] tp-workouts-cache-scan --all-active --from=${FROM} --to
 # Capture the scan's exit code (no more `exec`, so the heartbeat runs after) and record a SUCCESS
 # heartbeat only when it actually succeeded — the pipeline monitor uses this to spot silent stalls.
 set +e
-npm run tp-workouts-cache-scan -- --all-active --from="${FROM}" --to="${TO}"
+# caffeinate -i: не давать маку уйти в idle-sleep ПОКА скан идёт (защита от засыпания посреди
+# прогона на батарее). Спанье МЕЖДУ прогонами лечит `sudo pmset -c sleep 0` (на AC), не это.
+caffeinate -i npm run tp-workouts-cache-scan -- --all-active --from="${FROM}" --to="${TO}"
 CODE=$?
 set -e
 npm --prefix "$TOOLS" run --silent tp-heartbeat -- --job=workout_cache_scan --status="$([ "$CODE" -eq 0 ] && echo sent || echo failed)" || true

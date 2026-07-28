@@ -24,7 +24,8 @@ CODE=1
   printf '[%s] Starting health metrics scan from=%s to=%s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')" "${FROM_DATE}" "${TO_DATE}"
   cd "${WORK_DIR}"
   set +e
-  npm run tp-health-metrics-scan -- --from="${FROM_DATE}" --to="${TO_DATE}" --eligible-only
+  # caffeinate -i: не заснуть посреди скана на батарее. Спанье между прогонами — `pmset -c sleep 0`.
+  caffeinate -i npm run tp-health-metrics-scan -- --from="${FROM_DATE}" --to="${TO_DATE}" --eligible-only
   CODE=$?
   set -e
   printf '[%s] Finished health metrics scan (exit %s) from=%s to=%s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')" "${CODE}" "${FROM_DATE}" "${TO_DATE}"
