@@ -71,12 +71,12 @@ async function loadPlannedByDate(pairs: Array<{ studentId: string; date: string 
 }
 
 function planLine(p: ClubActionPlan, conflict: boolean): string {
-  const flag = conflict ? " ⚠️ КОНФЛИКТ: на этот день уже есть запланированная тренировка (НЕ трогаем, ручной просмотр)" : "";
+  const flag = conflict ? " [КОНФЛИКТ]: на этот день уже есть запланированная тренировка (НЕ трогаем, ручной просмотр)" : "";
   if (p.ok) {
     const u = p.unresolved.length ? ` · unresolved: ${p.unresolved.join("; ")}` : "";
-    return `- ✅ ${p.label} → create_workout title="${p.payload.title}"${u}${flag}`;
+    return `- [план] ${p.label} -> create_workout title="${p.payload.title}"${u}${flag}`;
   }
-  return `- ⏭️ запись ${p.requestId.slice(0, 8)} — не планируется: ${p.reason}${flag}`;
+  return `- [skip] запись ${p.requestId.slice(0, 8)} - не планируется: ${p.reason}${flag}`;
 }
 
 async function main(): Promise<void> {
@@ -163,9 +163,9 @@ async function main(): Promise<void> {
   L.push("");
   L.push("## Что увидит ученик в своём календаре TP");
   L.push(`- Стиль заголовка пометки: ${CLUB_MARKER_TITLE_STYLE} (константа CLUB_MARKER_TITLE_STYLE в tp-execution.ts; "text" = префикс [Клуб], "emoji" = 🛌/🎯/📝/🏁).`);
-  L.push("- day_off → тренировка-пометка «[Клуб] Выходной день (заявка ученика)» на дату; его план на день на месте.");
-  L.push("- preference → «[Клуб] Пожелание: длительная/интервальная/отдых» - описательная пометка.");
-  L.push("- note → «[Клуб] Заметка ученика» с текстом.");
+  L.push("- day_off → РОДНОЙ тип TP «Day off» (value_id=7, подтверждён фактом), заголовок «[Клуб] Выходной · клубная пометка»; is_planned=false, план на день не тронут.");
+  L.push("- preference → тип Other(100), «[Клуб] Пожелание: длительная/интервальная/отдых · клубная пометка».");
+  L.push("- note → тип Other(100), «[Клуб] Заметка · клубная пометка».");
   L.push(`- race → запланированный бег с названием забега, дистанцией; целевое время ${CLUB_RACE_SET_PLANNED_TIME ? "в поле totalTimePlanned + дублем в описании" : "в описании (поле totalTimePlanned выключено до capability probe)"}.`);
   L.push("");
   L.push("## Идемпотентность и отмена");

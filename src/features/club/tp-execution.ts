@@ -31,6 +31,15 @@ export const CLUB_RUN_WORKOUT_TYPE_VALUE_ID = 3;
 export const CLUB_MARKER_WORKOUT_TYPE_VALUE_ID = 100;
 
 /**
+ * "Day Off" workout type. CONFIRMED BY FACT from the real cache: a row with
+ * workout_type_value_id=7 carries a custom title ("Отдых", "Работа") and is
+ * is_planned=false / is_completed=false. So a day-off marker uses TP's NATIVE Day Off
+ * type (not the generic Other=100), keeps its title (guard sentinel survives), and is
+ * naturally excluded from planned/completion/feed counting by its flags.
+ */
+export const CLUB_DAYOFF_WORKOUT_TYPE_VALUE_ID = 7;
+
+/**
  * 1.3 — marker title style. Two variants, switchable with THIS ONE constant:
  *   "text"  → prefix "[Клуб]" (default). Portable and robust: no emoji to be mangled by
  *             the TP API / calendar exports / some clients, consistent with the club
@@ -239,7 +248,7 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
 
   if (row.kind === "race") {
     title = (row.raceName && row.raceName.trim()) || `Забег ${row.raceDistanceLabel ?? ""}`.trim();
-    const raceTag = `${markerPrefix("race")} Забег (заявка ученика)`;
+    const raceTag = `${markerPrefix("race")} Забег`;
     description = [raceTag, row.raceDistanceLabel, row.raceCity].filter((x) => x && x.trim()).join(" · ") || raceTag;
     workoutTypeValueId = CLUB_RUN_WORKOUT_TYPE_VALUE_ID;
     distancePlanned = row.raceDistanceMeters && row.raceDistanceMeters > 0 ? row.raceDistanceMeters : null;
@@ -251,25 +260,27 @@ export function planCalendarEntryAction(row: ClubCalendarEntryRow, athleteId: nu
       }
       description += ` · цель ${row.raceTargetSeconds}s`;
     }
+  } else if (row.kind === "day_off") {
+    // day_off → TP NATIVE Day Off type (7), not the generic Other. Keeps a custom title
+    // (proven), is is_planned=false so it never counts as a planned/missed workout.
+    workoutTypeValueId = CLUB_DAYOFF_WORKOUT_TYPE_VALUE_ID;
+    unresolved.push("workoutTypeValueId=7 (Day off) - создание типа Day off проверить ОДНОЙ записью перед массовым исполнением");
+    title = `${markerPrefix("day_off")} Выходной`;
+    description = row.note && row.note.trim() ? row.note.trim() : "Выходной, запрошен учеником через клуб. План на день не тронут.";
+    title = `${title} · ${CLUB_MARKER_TITLE_SENTINEL}`;
   } else {
-    // Non-race markers → description-only "Other" (type 100) workout, coexists with plan.
+    // preference / note → "Other" (type 100). Create of type 100 CONFIRMED end-to-end
+    // (ручной тест Игоря). These carry a running-keyword risk ("интервальная") so the
+    // sentinel is essential - the guard excludes them from feed/counts/missed/nutrition.
     workoutTypeValueId = CLUB_MARKER_WORKOUT_TYPE_VALUE_ID;
-    unresolved.push("workoutTypeValueId=100 (Other) - создание типа Other не подтверждено end-to-end, проверить одну запись перед массовым исполнением");
-    if (row.kind === "day_off") {
-      title = `${markerPrefix("day_off")} Выходной день (заявка ученика)`;
-      description = row.note && row.note.trim() ? row.note.trim() : "Выходной, запрошен учеником через клуб. План на день не тронут.";
-    } else if (row.kind === "preference") {
-      title = `${markerPrefix("preference")} Пожелание: ${PREF_RU[row.preferredType ?? ""] ?? row.preferredType ?? "тип тренировки"}`;
+    if (row.kind === "preference") {
+      title = `${markerPrefix("preference")} Пожелание: ${PREF_RU[row.preferredType ?? ""] ?? row.preferredType ?? "тип"}`;
       description = "Пожелание ученика по типу тренировки на день (через клуб). План не тронут.";
     } else {
-      title = `${markerPrefix("note")} Заметка ученика`;
+      title = `${markerPrefix("note")} Заметка`;
       description = row.note && row.note.trim() ? row.note.trim() : "Заметка ученика на день (через клуб).";
     }
-    // Phase A: mark every non-race marker title with the sentinel so the cache-guard can
-    // exclude it from feed/completion/missed-signal/nutrition when it returns via cache
-    // (these markers are type Other=100 and a running-keyword title like "интервальная"
-    // would otherwise be misclassified as a run). Race markers are real planned runs —
-    // no sentinel. See src/features/club/cache-guard.ts.
+    // Phase A sentinel: guard excludes the row when it returns via cache. See cache-guard.ts.
     title = `${title} · ${CLUB_MARKER_TITLE_SENTINEL}`;
   }
 
