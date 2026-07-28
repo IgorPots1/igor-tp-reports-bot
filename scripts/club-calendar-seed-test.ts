@@ -44,8 +44,18 @@ async function main(): Promise<void> {
   ];
   const { error, data } = await supabase.from("club_calendar_entries").insert(rows).select("id, kind, entry_date");
   if (error) { console.error("seed failed:", error.message); process.exit(1); }
-  console.log(`seeded ${(data as unknown[])?.length ?? 0} approved test entries on student ${studentId.slice(0, 8)}… (dates ${TEST_DATES.join(", ")})`);
-  console.log("теперь: dry-run покажет их; после проверки — этот же скрипт с --clean удалит.");
+  const seeded = ((data as Array<{ id: string; kind: string; entry_date: string }> | null) ?? [])
+    .sort((a, b) => a.entry_date.localeCompare(b.entry_date));
+  console.log(`seeded ${seeded.length} approved test entries on student ${studentId.slice(0, 8)}...\n`);
+  // Print each entry id + a ready-to-run execute-one command (dry-run form). Without this
+  // the ids were unknowable and the whole verify procedure broke.
+  const RUN = "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/club-execute-one.ts";
+  for (const r of seeded) {
+    console.log(`  ${r.entry_date}  ${r.kind.padEnd(11)} id=${r.id}`);
+    console.log(`      dry-run: ${RUN} ${r.id}`);
+    console.log(`      apply:   CLUB_TP_EXECUTION_ENABLED=true ${RUN} ${r.id} --apply\n`);
+  }
+  console.log("после проверки: этот же скрипт с --clean удалит записи.");
   process.exit(0);
 }
 

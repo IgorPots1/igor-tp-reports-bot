@@ -15,17 +15,19 @@
 
 ## Записи (club_calendar_entries, approved, ещё не применённые)
 
-- [план] [Клуб] Пожелание: интервальная · клубная пометка → 2027-01-12 -> create_workout title="[Клуб] Пожелание: интервальная · клубная пометка"
-- [план] [Клуб] Заметка · клубная пометка → 2027-01-13 -> create_workout title="[Клуб] Заметка · клубная пометка"
-- [план] ТЕСТ Клуб Полумарафон → 2027-01-14 -> create_workout title="ТЕСТ Клуб Полумарафон" · unresolved: targetTime не в поле (CLUB_RACE_SET_PLANNED_TIME=false до capability probe) - целевое время в описании
-- [план] [Клуб] Выходной · клубная пометка → 2027-01-15 -> create_workout title="[Клуб] Выходной · клубная пометка" · unresolved: workoutTypeValueId=7 (Day off) - создание типа Day off проверить ОДНОЙ записью перед массовым исполнением
+`id=` - это club_calendar_entries.id для команды `scripts/club-execute-one.ts <id> --apply`.
+
+- [план] id=cf45a649-d7d1-4b21-94c1-76dc6dec9dc6 · [Клуб] Выходной · клубная пометка → 2027-01-11 -> create_workout title="[Клуб] Выходной · клубная пометка" · unresolved: workoutTypeValueId=7 (Day off) - создание типа Day off проверить ОДНОЙ записью перед массовым исполнением
+- [план] id=a8ac7bc3-c05f-4a5f-8cd9-e59ea9d4059e · [Клуб] Пожелание: интервальная · клубная пометка → 2027-01-12 -> create_workout title="[Клуб] Пожелание: интервальная · клубная пометка"
+- [план] id=4293fcea-bcb7-4279-aa16-b1ae105c78b8 · [Клуб] Заметка · клубная пометка → 2027-01-13 -> create_workout title="[Клуб] Заметка · клубная пометка"
+- [план] id=49629f6d-2919-4d06-995b-5152f8d5eaf8 · ТЕСТ Клуб Полумарафон → 2027-01-14 -> create_workout title="ТЕСТ Клуб Полумарафон" · unresolved: targetTime не в поле (CLUB_RACE_SET_PLANNED_TIME=false до capability probe) - целевое время в описании
 
 ## Примеры форм по каждому типу (синтетические)
 
-- [план] [Клуб] Выходной · клубная пометка → 2026-08-15 -> create_workout title="[Клуб] Выходной · клубная пометка" · unresolved: workoutTypeValueId=7 (Day off) - создание типа Day off проверить ОДНОЙ записью перед массовым исполнением
-- [план] [Клуб] Пожелание: интервальная · клубная пометка → 2026-08-15 -> create_workout title="[Клуб] Пожелание: интервальная · клубная пометка"
-- [план] [Клуб] Заметка · клубная пометка → 2026-08-15 -> create_workout title="[Клуб] Заметка · клубная пометка"
-- [план] Сочи Полумарафон → 2026-08-15 -> create_workout title="Сочи Полумарафон" · unresolved: targetTime не в поле (CLUB_RACE_SET_PLANNED_TIME=false до capability probe) - целевое время в описании
+- [план] id=example-day_off · [Клуб] Выходной · клубная пометка → 2026-08-15 -> create_workout title="[Клуб] Выходной · клубная пометка" · unresolved: workoutTypeValueId=7 (Day off) - создание типа Day off проверить ОДНОЙ записью перед массовым исполнением
+- [план] id=example-preference · [Клуб] Пожелание: интервальная · клубная пометка → 2026-08-15 -> create_workout title="[Клуб] Пожелание: интервальная · клубная пометка"
+- [план] id=example-note · [Клуб] Заметка · клубная пометка → 2026-08-15 -> create_workout title="[Клуб] Заметка · клубная пометка"
+- [план] id=example-race · Сочи Полумарафон → 2026-08-15 -> create_workout title="Сочи Полумарафон" · unresolved: targetTime не в поле (CLUB_RACE_SET_PLANNED_TIME=false до capability probe) - целевое время в описании
 
 ## Что увидит ученик в своём календаре TP
 - Стиль заголовка пометки: text (константа CLUB_MARKER_TITLE_STYLE в tp-execution.ts; "text" = префикс [Клуб], "emoji" = 🛌/🎯/📝/🏁).

@@ -74,9 +74,10 @@ function planLine(p: ClubActionPlan, conflict: boolean): string {
   const flag = conflict ? " [КОНФЛИКТ]: на этот день уже есть запланированная тренировка (НЕ трогаем, ручной просмотр)" : "";
   if (p.ok) {
     const u = p.unresolved.length ? ` · unresolved: ${p.unresolved.join("; ")}` : "";
-    return `- [план] ${p.label} -> create_workout title="${p.payload.title}"${u}${flag}`;
+    // Full entry id так, чтобы можно было сразу запустить execute-one <id> --apply.
+    return `- [план] id=${p.requestId} · ${p.label} -> create_workout title="${p.payload.title}"${u}${flag}`;
   }
-  return `- [skip] запись ${p.requestId.slice(0, 8)} - не планируется: ${p.reason}${flag}`;
+  return `- [skip] id=${p.requestId} - не планируется: ${p.reason}${flag}`;
 }
 
 async function main(): Promise<void> {
@@ -154,6 +155,8 @@ async function main(): Promise<void> {
   L.push(`- Конфликтов (day_off на дне с планом — не трогаем, ручной просмотр): ${conflictCount}`);
   L.push("");
   L.push("## Записи (club_calendar_entries, approved, ещё не применённые)");
+  L.push("");
+  L.push("`id=` - это club_calendar_entries.id для команды `scripts/club-execute-one.ts <id> --apply`.");
   L.push("");
   L.push(rows.length ? planned.map((p) => planLine(p.plan, p.conflict)).join("\n") : "_нет одобренных записей (календарь ещё не наполнен / миграция не применена)_");
   L.push("");
