@@ -165,17 +165,24 @@ function buildTransparency(packet: FeedbackContextPacket | undefined): ReportTra
     items.push({ kind: transparencyKindFor(o.type, o.adviceKey), text: glossOf(o.adviceKey, o.reason) });
   }
 
-  const hasComparison = packet.observations.some((o) => o.adviceKey === "praise_comparison_progress");
-  if (hasComparison && typeof packet.comparisonBlock === "string") {
-    const text = cleanComparison(packet.comparisonBlock);
-    if (text) items.push({ kind: "comparison", text });
+  const compObs = packet.observations.find((o) => o.adviceKey === "praise_comparison_progress");
+  // #2 — a provisional comparison (n<3) is emitted as a coach_signal: the student got no comparison,
+  // so DON'T show the student block here; only the flagged «предварительно» baseline reaches the coach.
+  const comparisonProvisional = compObs?.type === "coach_signal";
+  if (compObs && typeof packet.comparisonBlock === "string") {
+    if (!comparisonProvisional) {
+      const text = cleanComparison(packet.comparisonBlock);
+      if (text) items.push({ kind: "comparison", text });
+    }
     // Coach-only raw baseline so Igor can verify the delta (never shown to the student).
     if (typeof packet.comparisonBaseline === "string" && packet.comparisonBaseline) {
       items.push({ kind: "signal", text: `сверка: ${packet.comparisonBaseline}` });
     }
   }
 
-  for (const o of packet.observations.filter((o) => o.type === "coach_signal")) {
+  // The provisional comparison is already shown via its «сверка» baseline above; skip it here so the
+  // coach doesn't see it twice.
+  for (const o of packet.observations.filter((o) => o.type === "coach_signal" && o.adviceKey !== "praise_comparison_progress")) {
     items.push({ kind: "signal", text: `тренеру (не ученику): ${glossOf(o.adviceKey, o.reason)}` });
   }
 

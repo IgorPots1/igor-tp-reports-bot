@@ -9,6 +9,7 @@ import { evaluateFatigueCause } from "./fatigue-cause.ts";
 import { resolveRecentMetricValue, computeHrvTrend, computeHealthBaseline } from "./health-baseline.ts";
 import { FOCUS_CAP } from "./focus.ts";
 import { planObservations } from "./observation-planner.ts";
+import { buildFeedbackContextPacket } from "./context-packet.ts";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "./types.ts";
 
 function baseCurrent(overrides: Partial<PlannerDerivedMetrics> = {}): PlannerDerivedMetrics {
@@ -335,5 +336,80 @@ describe("planObservations — orchestrator", () => {
     assert.ok(focused.length <= FOCUS_CAP);
     assert.ok(!focused.some((o) => o.type === "coach_signal"));
     assert.ok(observations.length >= focused.length);
+  });
+});
+
+// #2 (gate n≤2) + #4 (words beat number) — the comparison slot's trust gate.
+describe("comparison trust gate (#2 n≤2, #4 words)", () => {
+  const KEY = "7x[300second]";
+  function intervalCurrent(pace: number) {
+    return baseCurrent({ workoutId: 1, workoutDate: "2026-07-15", comparisonKey: KEY, repsDetectedCount: 7, repPaces: [pace], repPeakHrs: [160] });
+  }
+  function historyRows(count: number, pace = 300): PlannerDerivedMetrics[] {
+    return Array.from({ length: count }, (_, i) =>
+      baseCurrent({ workoutId: 100 + i, workoutDate: `2026-06-${String(10 + i).padStart(2, "0")}`, comparisonKey: KEY, repsDetectedCount: 7, repPaces: [pace], repPeakHrs: [160] })
+    );
+  }
+  const comp = (obs: ReturnType<typeof planObservations>) => obs.find((o) => o.adviceKey === "praise_comparison_progress");
+
+  test("n≥3, no complaint → student-facing praise; provisional flag 0", () => {
+    const obs = planObservations(basePacket({ current: intervalCurrent(280), history: historyRows(3) }));
+    const c = comp(obs);
+    assert.ok(c, "comparison fired");
+    assert.equal(c!.type, "praise");
+    assert.equal(c!.numbers.comparisonProvisional, 0);
+    assert.ok((c!.numbers.comparisonBaseN ?? 0) >= 3);
+  });
+
+  test("n=1 → coach-only «предварительно», student loses the digit, warm opener fills in", () => {
+    const packet = basePacket({ current: intervalCurrent(280), history: historyRows(1) });
+    const obs = planObservations(packet);
+    const c = comp(obs);
+    assert.ok(c, "comparison still evaluated");
+    assert.equal(c!.type, "coach_signal");
+    assert.equal(c!.numbers.comparisonProvisional, 1);
+    // student draft: no comparison digit, default warm opener present
+    const built = buildFeedbackContextPacket(packet);
+    assert.equal(built.blocked, false);
+    if (!built.blocked) {
+      assert.match(built.packet.comparisonBlock, /Сравнения с прошлым нет/);
+      assert.equal(built.packet.allowedNumbers.length, 0);
+      assert.match(built.packet.comparisonBaseline ?? "", /предварительно/i);
+    }
+    // student is not left empty — another praise (here full_structure; the default opener when nothing
+    // else fires) still opens the draft, just never the shaky one-point comparison.
+    assert.ok(obs.some((o) => o.type === "praise"));
+  });
+
+  test("#4 n≥3 BUT student wrote «еле добежала» → coach-only, pace not praised to student", () => {
+    const packet = basePacket({
+      current: intervalCurrent(280),
+      history: historyRows(3),
+      studentMessages: [{ text: "Еле добежала, ноги тяжёлые", date: "2026-07-15", labels: ["report_like"] }],
+    });
+    const obs = planObservations(packet);
+    const c = comp(obs);
+    assert.ok(c);
+    assert.equal(c!.type, "coach_signal");
+    assert.equal(c!.numbers.comparisonWordsSuppressed, 1);
+    const built = buildFeedbackContextPacket(packet);
+    if (!built.blocked) {
+      assert.match(built.packet.comparisonBlock, /Сравнения с прошлым нет/);
+      assert.match(built.packet.comparisonBaseline ?? "", /тяжело/i);
+    }
+  });
+
+  test("#4 regression: n≥3 with a NORMAL report keeps the student praise", () => {
+    const packet = basePacket({
+      current: intervalCurrent(280),
+      history: historyRows(3),
+      studentMessages: [{ text: "Отбегала, всё нормально, бежалось легко", date: "2026-07-15", labels: ["report_like"] }],
+    });
+    const c = comp(planObservations(packet));
+    assert.ok(c);
+    assert.equal(c!.type, "praise");
+    assert.equal(c!.numbers.comparisonWordsSuppressed ?? 0, 0);
+    const built = buildFeedbackContextPacket(packet);
+    if (!built.blocked) assert.doesNotMatch(built.packet.comparisonBlock, /Сравнения с прошлым нет/);
   });
 });

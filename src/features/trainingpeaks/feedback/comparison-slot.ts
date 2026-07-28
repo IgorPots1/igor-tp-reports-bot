@@ -6,12 +6,16 @@
 // planner's Observation vocabulary — no new decision logic.
 
 import { compareWorkout } from "../comparison/index.ts";
+import { MIN_RECENT_FOR_STABLE_NORM } from "../comparison/resolve-window.ts";
 import type { PraiseWeight } from "../comparison/types.ts";
 import type { AdviceKey } from "./advice-keys.ts";
 import type { ContextPacket } from "./types.ts";
 
 export type ComparisonSlotResult = {
-  praise: { numbers: Record<string, number>; reason: string; weight: PraiseWeight } | null;
+  // provisional = the norm rests on < MIN_RECENT_FOR_STABLE_NORM comparable sessions (#2). Still a
+  // real signal, but too thin to show a student as a confident «прогресс» — the planner routes it to
+  // the coach only, marked «предварительно, N точек».
+  praise: { numbers: Record<string, number>; reason: string; weight: PraiseWeight; provisional: boolean } | null;
   hrSensorQuestion: { numbers: Record<string, number>; reason: string } | null;
   coachSignals: Array<{ adviceKey: Extract<AdviceKey, "signal_pulse_sensor_suspect" | "signal_unusual_shift">; numbers: Record<string, number>; reason: string }>;
 };
@@ -83,11 +87,22 @@ export function evaluateComparisonSlot(packet: ContextPacket): ComparisonSlotRes
   const praiseNumbers = metricsToNumbers(result.observation.metrics);
   praiseNumbers.comparisonModeOld = result.observation.mode === "old" ? 1 : 0;
 
+  // #2 — trust gate by pool size. The norm's N comparable sessions = the largest baseN across the
+  // cited metrics (pace is present on every run, so its baseN ≈ the pool size; a metric missing on
+  // some rows only lowers ITS own baseN). Both recent- AND old-mode land here, so old-mode is no
+  // longer exempt from the floor a fresh norm should meet — a single old anchor (n=1) can't produce a
+  // confident student «прогресс» (Anton/Elena: old 383→369 from ~1 point read as +14). n<3 → coach-only.
+  const effectiveBaseN = result.observation.metrics.reduce((mx, m) => (Number.isFinite(m.baseN) && m.baseN > mx ? m.baseN : mx), 0);
+  praiseNumbers.comparisonBaseN = effectiveBaseN;
+  const provisional = effectiveBaseN < MIN_RECENT_FOR_STABLE_NORM;
+  praiseNumbers.comparisonProvisional = provisional ? 1 : 0;
+
   return {
     praise: {
       numbers: praiseNumbers,
-      reason: `comparison base progress (${result.observation.kind}, weight ${result.observation.weight}, mode ${result.observation.mode})`,
+      reason: `comparison base progress (${result.observation.kind}, weight ${result.observation.weight}, mode ${result.observation.mode}, n=${effectiveBaseN}${provisional ? ", ПРЕДВАРИТЕЛЬНО n<3 → тренеру" : ""})`,
       weight: result.observation.weight as PraiseWeight,
+      provisional,
     },
     hrSensorQuestion: null,
     coachSignals,

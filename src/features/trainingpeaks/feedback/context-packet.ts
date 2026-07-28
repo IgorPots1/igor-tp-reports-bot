@@ -222,10 +222,30 @@ function comparisonBaselineNote(metric: string, n: Record<string, number>): stri
   return `сравнение: ~${Math.round(baseN)} похожих (${period})${beforeAfter}`;
 }
 
+const NO_STUDENT_COMPARISON = "Сравнения с прошлым нет, пиши только качественные наблюдения, без цифр.";
+
 function buildComparison(observations: Observation[]): { block: string; allowedInts: number[]; baseline: string | null } {
   const comp = observations.find((o) => o.adviceKey === "praise_comparison_progress");
-  if (!comp) return { block: "Сравнения с прошлым нет, пиши только качественные наблюдения, без цифр.", allowedInts: [], baseline: null };
+  if (!comp) return { block: NO_STUDENT_COMPARISON, allowedInts: [], baseline: null };
   const n = comp.numbers;
+  // The comparison is COACH-ONLY when either (#2) the norm rests on <3 comparable sessions, or (#4) the
+  // student's own words for THIS run were negative («тяжело»/«еле добежал»). In both cases the student
+  // gets NO comparison (no digit, no «прогресс»); the coach still sees the raw baseline, flagged with
+  // the reason. Must run BEFORE the deltaKey branch below, else the "есть прогресс (общо)" line leaks.
+  if (n.comparisonProvisional === 1 || n.comparisonWordsSuppressed === 1) {
+    const dk = Object.keys(n).find((k) => k.endsWith("Delta"));
+    const m = dk ? dk.slice(0, -"Delta".length) : null;
+    const strip = m ? comparisonBaselineNote(m, n)?.replace(/^сравнение:\s*/u, "") ?? null : null;
+    let baseline: string;
+    if (n.comparisonWordsSuppressed === 1) {
+      baseline = strip ? `ученик написал, что тяжело — темп/прогресс не показан ученику: ${strip}` : "ученик написал, что тяжело — сравнение не показано ученику";
+    } else {
+      const bn = Math.round(n.comparisonBaseN ?? 0);
+      const word = bn === 1 ? "точка" : "точки"; // n is only 1 or 2 here (n≥3 goes to the student)
+      baseline = strip ? `предварительно (${bn} ${word}, n<3, ученику не показано): ${strip}` : `предварительно: норма всего из ${bn} ${word} (n<3), ученику не показано`;
+    }
+    return { block: NO_STUDENT_COMPARISON, allowedInts: [], baseline };
+  }
   const deltaKey = Object.keys(n).find((k) => k.endsWith("Delta"));
   if (!deltaKey) return { block: "Есть прогресс относительно прошлых таких же тренировок (общо, без конкретной цифры).", allowedInts: [], baseline: null };
   const metric = deltaKey.slice(0, -"Delta".length);

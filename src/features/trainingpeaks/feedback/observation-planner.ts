@@ -10,6 +10,7 @@ import { evaluateFatigueCause } from "./fatigue-cause.ts";
 import { resolveStatedCause } from "./stated-factors.ts";
 import { PRIORITY, priorityForComparisonWeight, selectFocus } from "./focus.ts";
 import { evaluateTrustGate } from "./hr-trust-gate.ts";
+import { detectNegativeSelfReport } from "./negative-self-report.ts";
 import { evaluateNegativeSplit } from "./negative-split.ts";
 import { collectPositiveSignals } from "./positive-dictionary.ts";
 import { evaluateAccumulationQuestion, evaluateContradictionQuestion } from "./questions.ts";
@@ -156,7 +157,18 @@ export function planObservations(packet: ContextPacket): Observation[] {
   // C8 — comparison base (already gates its own pulse-sensor detector on hr_trusted internally).
   const comparison = evaluateComparisonSlot(packet);
   if (comparison.praise) {
-    observations.push(makeObservation({ type: "praise", metric: "comparison_progress", numbers: comparison.praise.numbers, sessionType, adviceKey: "praise_comparison_progress", reason: comparison.praise.reason, priorityOverride: priorityForComparisonWeight(comparison.praise.weight) }));
+    // #2 — a norm on <3 comparable sessions is too thin to show a student as confident «прогресс».
+    // #4 — "слова бьют цифру": if the student called THIS run hard/bad in their own words, don't praise
+    // them for a faster pace. Either way the comparison becomes a COACH_SIGNAL (never in the student
+    // prompt — renderObservations drops coach_signal, and the default warm opener fires instead); the
+    // coach still sees it, flagged with the reason. Only n≥3 AND no complaint stays a student praise.
+    const negReport = detectNegativeSelfReport(packet);
+    if (negReport.negative) comparison.praise.numbers.comparisonWordsSuppressed = 1;
+    const coachOnly = comparison.praise.provisional || negReport.negative;
+    const reason = negReport.negative
+      ? `${comparison.praise.reason} — ученик написал, что тяжело («${negReport.quote}»): темп/прогресс тренеру, не хвалю ученика цифрой (#4)`
+      : comparison.praise.reason;
+    observations.push(makeObservation({ type: coachOnly ? "coach_signal" : "praise", metric: "comparison_progress", numbers: comparison.praise.numbers, sessionType, adviceKey: "praise_comparison_progress", reason, priorityOverride: priorityForComparisonWeight(comparison.praise.weight) }));
   }
   if (comparison.hrSensorQuestion) {
     observations.push(makeObservation({ type: "question", metric: "hr_sensor", numbers: comparison.hrSensorQuestion.numbers, sessionType, adviceKey: "question_hr_sensor", reason: comparison.hrSensorQuestion.reason }));
