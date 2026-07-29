@@ -13,7 +13,7 @@
 // There is no scheduled auto-broadcast.
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
+import { sendTelegramUrlButton } from "@/features/telegram/telegram-client";
 import { isClubFormsBroadcastEnabled } from "@/features/club/constants";
 import { clubMiniAppShortName, resolveClubBotUsername } from "@/features/club/entry-links";
 
@@ -36,9 +36,6 @@ export const CLUB_FORM_DEFAULT_TEXT: Record<ClubFormType, string> = {
 const SEND_PAUSE_MS = 90;
 const MINIAPP_ENABLED = (): boolean => process.env.MINIAPP_ENABLED === "true";
 
-function escapeHtml(v: string): string {
-  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -69,12 +66,6 @@ async function buildDeepLink(section: string): Promise<string> {
   if (!shortName) throw new Error("CLUB_MINIAPP_SHORT_NAME не задан (короткое имя клубного мини-аппа, напр. XOclub).");
   const username = await resolveClubBotUsername();
   return `https://t.me/${username}/${shortName}?startapp=${section}`;
-}
-
-/** Message body (coach text) + the deep link as an HTML <a> (link preview off). No emoji. */
-function buildMessage(bodyText: string, deepLink: string, formType: ClubFormType): string {
-  const link = `<a href="${escapeHtml(deepLink)}">${escapeHtml(FORM_LINK_LABEL[formType])}</a>`;
-  return `${escapeHtml(bodyText.trim())}\n${link}`;
 }
 
 // ── recipients ────────────────────────────────────────────────────────────────
@@ -171,7 +162,8 @@ export async function broadcastClubForm(input: {
   } catch (err) {
     return { ...base, ok: false, disabledReason: err instanceof Error ? err.message : "Не настроена ссылка mini app." };
   }
-  const message = buildMessage(input.messageText, deepLink, formType);
+  const body = input.messageText.trim();
+  const buttonLabel = FORM_LINK_LABEL[formType];
 
   const result: BroadcastResult = { ...base, ok: true };
   for (const studentId of studentIds) {
@@ -188,7 +180,9 @@ export async function broadcastClubForm(input: {
     let status: "sent" | "failed" = "sent";
     let error: string | null = null;
     try {
-      await sendTelegramMessageStrict(String(info.uid), message, { parseMode: "HTML", disableLinkPreview: true });
+      // Inline URL button in the keyboard (same shape as the /start greeting), NOT a text
+      // link: Telegram opens a mini-app only from a button, not a blue link in the body.
+      await sendTelegramUrlButton({ chatId: String(info.uid), text: body, buttonLabel, url: deepLink });
     } catch (err) {
       status = "failed";
       error = err instanceof Error ? err.message : "Ошибка отправки.";

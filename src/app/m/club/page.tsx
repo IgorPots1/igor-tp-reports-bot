@@ -1706,18 +1706,19 @@ function WorkoutComments({ workoutId, initData }: { workoutId: string; initData:
 // ---------------------------------------------------------------------------
 
 const PREF_LABEL: Record<string, string> = { long: "Длительная", intervals: "Интервальная", rest: "Отдых" };
-// Day-off reason: value = TP Availability reason enum (goes verbatim to TP), label = RU.
-// Mirrors CLUB_DAYOFF_REASONS server-side (kept local so this client file imports no
-// server constants). Injury/Sick are the future health-signal triggers.
-const DAYOFF_REASONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "Без причины" },
-  { value: "Appointment", label: "Дела/приём" },
-  { value: "Injury", label: "Травма" },
+// Day-off reason shown as VISIBLE buttons after tapping «Выходной» (not a tiny dropdown).
+// value = TP Availability reason enum (goes verbatim to TP), label = RU; "" = no reason
+// (stored null). Injury/Sick are the health-signal triggers. Mirrors CLUB_DAYOFF_REASONS.
+const DAYOFF_REASON_CHOICES: Array<{ value: string; label: string }> = [
   { value: "Sick", label: "Болезнь" },
+  { value: "Injury", label: "Травма" },
   { value: "Vacation", label: "Отпуск" },
   { value: "Work", label: "Работа" },
-  { value: "Other", label: "Другое" },
+  { value: "Appointment", label: "Дела" },
+  { value: "", label: "Без причины" },
 ];
+// Display label for a stored reason value (covers Other from older entries too).
+const DAYOFF_REASON_LABEL: Record<string, string> = { Sick: "Болезнь", Injury: "Травма", Vacation: "Отпуск", Work: "Работа", Appointment: "Дела", Other: "Другое" };
 const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 function entryMarks(entries: ClubCalendarEntry[]): ClubIconName[] {
@@ -1736,8 +1737,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
-  const [wishNote, setWishNote] = useState("");
-  const [wishMsg, setWishMsg] = useState<string | null>(null);
+  const [dayoffOpen, setDayoffOpen] = useState(false); // reveal reason choices after «Выходной»
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const reload = useCallback(async (extra?: Record<string, unknown>) => {
@@ -1775,18 +1775,6 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
     await reload({ action: "delete", entryId });
     setSaving(false);
   }
-  async function sendWish() {
-    if (!wishNote.trim()) return;
-    setSaving(true);
-    const res = await fetch("/api/m/club/wishes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData, action: "create", wish: { note: wishNote } }),
-    }).then((r) => r.json()).catch(() => ({ ok: false }));
-    setSaving(false);
-    setWishMsg(res.ok ? "Пожелание отправлено тренеру" : "Раздел пожеланий пока не активен");
-    if (res.ok) setWishNote("");
-  }
 
   const selDay = view?.days.find((d) => d.date === selected) ?? null;
   const pad = view && view.days.length > 0 ? view.days[0].weekday : 0;
@@ -1814,7 +1802,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                   <button
                     key={d.date}
                     type="button"
-                    onClick={() => { setSelected(d.date); setForm({}); setMsg(null); }}
+                    onClick={() => { setSelected(d.date); setForm({}); setMsg(null); setDayoffOpen(false); }}
                     style={{
                       aspectRatio: "1", borderRadius: 8, border: `1px solid ${active ? C.accent : C.line}`,
                       background: active ? "rgba(245,197,24,0.12)" : d.isToday ? C.cardAlt : C.card,
@@ -1829,28 +1817,6 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
               })}
             </div>
 
-            {view.raceSuggestions.length > 0 ? (
-              <div style={{ ...S.formCard, marginTop: 12 }}>
-                <div style={S.secHead}>Известные забеги - тапни, чтобы заявить</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                  {view.raceSuggestions.map((sug, i) => (
-                    <button
-                      key={`${sug.date}-${i}`}
-                      type="button"
-                      style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }}
-                      onClick={() => {
-                        setSelected(sug.date);
-                        setForm({ rname: sug.title, rdist: sug.distanceLabel ?? "" });
-                        setMsg(null);
-                      }}
-                    >
-                      <ClubIcon name="flag" size={14} /> {sug.title} · {sug.dateLabel}{sug.distanceLabel ? ` · ${sug.distanceLabel}` : ""}
-                    </button>
-                  ))}
-                </div>
-                <div style={S.hint}>Подставит название и дистанцию в форму забега выбранного дня — останется подтвердить.</div>
-              </div>
-            ) : null}
 
             {selDay ? (
               <div style={{ ...S.formCard, marginTop: 12 }}>
@@ -1863,7 +1829,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                         <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.ink }}>
                           <ClubIcon name={e.kind === "day_off" ? "moon" : e.kind === "preference" ? "target" : e.kind === "note" ? "stickyNote" : "flag"} size={13} color={C.sub} />
                           <span style={{ minWidth: 0 }}>
-                            {e.kind === "day_off" ? (e.dayOffReason ? `Выходной · ${DAYOFF_REASONS.find((r) => r.value === e.dayOffReason)?.label ?? e.dayOffReason}` : "Выходной") : null}
+                            {e.kind === "day_off" ? (e.dayOffReason ? `Выходной · ${DAYOFF_REASON_LABEL[e.dayOffReason] ?? e.dayOffReason}` : "Выходной") : null}
                             {e.kind === "preference" ? (PREF_LABEL[e.preferredType ?? ""] ?? e.preferredType) : null}
                             {e.kind === "note" ? e.note : null}
                             {e.kind === "race" ? `${e.raceName}${e.raceCity ? ` · ${e.raceCity}` : ""}${e.raceDistanceLabel ? ` · ${e.raceDistanceLabel}` : ""}` : null}
@@ -1880,39 +1846,35 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                   </div>
                 ) : null}
 
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10, alignItems: "center" }}>
-                  <button type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "day_off", dayOffReason: form.doReason || undefined })}><ClubIcon name="moon" size={14} />Выходной</button>
-                  <select style={{ ...S.input, width: "auto", marginBottom: 0, padding: "8px 10px" }} value={form.doReason ?? ""} onChange={(e) => set("doReason", e.target.value)} aria-label="Причина выходного">
-                    {DAYOFF_REASONS.map((r) => (<option key={r.value} value={r.value}>{r.label}</option>))}
-                  </select>
-                  {(["long", "intervals", "rest"] as const).map((p) => (
-                    <button key={p} type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "preference", preferredType: p })}><ClubIcon name="target" size={14} />{PREF_LABEL[p]}</button>
-                  ))}
-                </div>
+                {dayoffOpen ? (
+                  <div style={{ marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, color: C.sub, marginBottom: 6 }}>Почему выходной?</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {DAYOFF_REASON_CHOICES.map((r) => (
+                        <button key={r.value || "none"} type="button" style={S.sectionBtn} disabled={saving} onClick={() => { void create({ date: selDay.date, kind: "day_off", dayOffReason: r.value || undefined }); setDayoffOpen(false); }}>
+                          {r.label}
+                        </button>
+                      ))}
+                      <button type="button" style={{ ...S.sectionBtn, color: C.sub }} onClick={() => setDayoffOpen(false)}>Отмена</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                    <button type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => setDayoffOpen(true)}><ClubIcon name="moon" size={14} />Выходной</button>
+                    {(["long", "intervals"] as const).map((p) => (
+                      <button key={p} type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "preference", preferredType: p })}><ClubIcon name="target" size={14} />{PREF_LABEL[p]}</button>
+                    ))}
+                  </div>
+                )}
 
-                <textarea style={{ ...S.input, minHeight: 44 }} placeholder="Заметка на этот день" value={form.note ?? ""} onChange={(e) => set("note", e.target.value)} />
-                <button type="button" style={{ ...S.saveBtn, marginBottom: 10 }} disabled={saving || !(form.note ?? "").trim()} onClick={() => create({ date: selDay.date, kind: "note", note: form.note })}>Добавить заметку</button>
-
-                <div style={{ fontSize: 12, color: C.faint, margin: "6px 0" }}>Забег на этот день:</div>
-                <input style={S.input} placeholder="Точное название забега *" value={form.rname ?? ""} onChange={(e) => set("rname", e.target.value)} />
-                <input style={S.input} placeholder="Город" value={form.rcity ?? ""} onChange={(e) => set("rcity", e.target.value)} />
-                <input style={S.input} placeholder="Дистанция (напр. 21.1 км)" value={form.rdist ?? ""} onChange={(e) => set("rdist", e.target.value)} />
-                <input style={S.input} placeholder="Целевое время чч:мм:сс" value={form.rtarget ?? ""} onChange={(e) => set("rtarget", e.target.value)} />
-                <input style={S.input} placeholder="Пожелания к забегу" value={form.rnote ?? ""} onChange={(e) => set("rnote", e.target.value)} />
-                <button type="button" style={S.saveBtn} disabled={saving || !(form.rname ?? "").trim()} onClick={() => create({ date: selDay.date, kind: "race", raceName: form.rname, raceCity: form.rcity, raceDistanceLabel: form.rdist, raceTarget: form.rtarget, note: form.rnote })}>Заявить забег</button>
+                <textarea style={{ ...S.input, minHeight: 44 }} placeholder="Заметка на этот день (необязательно)" value={form.note ?? ""} onChange={(e) => set("note", e.target.value)} />
+                <button type="button" style={S.saveBtn} disabled={saving || !(form.note ?? "").trim()} onClick={() => create({ date: selDay.date, kind: "note", note: form.note })}>Добавить заметку</button>
 
                 {msg ? <div style={{ ...S.cardMeta, color: C.warn }}>{msg}</div> : null}
               </div>
             ) : (
-              <div style={{ ...S.cardMeta, marginTop: 10 }}>Тапни день, чтобы отметить выходной, пожелание, заметку или забег.</div>
+              <div style={{ ...S.cardMeta, marginTop: 10 }}>Тапни день, чтобы отметить выходной или удобный тип тренировки.</div>
             )}
-
-            <div style={{ ...S.formCard, marginTop: 12 }}>
-              <div style={S.secHead}>Общие пожелания по процессу</div>
-              <textarea style={{ ...S.input, minHeight: 56, marginTop: 8 }} placeholder="Что хочется поменять в тренировках в целом?" value={wishNote} onChange={(e) => setWishNote(e.target.value)} />
-              <button type="button" style={S.saveBtn} disabled={saving || !wishNote.trim()} onClick={sendWish}>Отправить пожелание</button>
-              {wishMsg ? <div style={S.cardMeta}>{wishMsg}</div> : null}
-            </div>
           </div>
         ) : null}
       </div>
