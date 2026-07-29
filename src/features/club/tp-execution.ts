@@ -158,6 +158,60 @@ export type ClubAvailabilityPayload = {
   description: string;
 };
 
+/**
+ * A run of consecutive day_off days that becomes ONE Availability record. Availability takes
+ * a startDate..endDate range, so 22-26 marked as five day_off entries → one record, not five.
+ * entryIds are ALL the club_calendar_entries in the run — each is linked to the one record's
+ * id (and rolled back together). reason is the shared reason (a run breaks on a reason change).
+ */
+export type ClubDayoffGroup = { startDate: string; endDate: string; entryIds: string[]; reason: string | null };
+
+function normReason(r: string | null): string | null {
+  return r && r.trim() ? r.trim() : null;
+}
+
+/** True when `b` (YYYY-MM-DD) is exactly the calendar day after `a`. */
+function isNextDay(a: string, b: string): boolean {
+  const [ay, am, ad] = a.split("-").map((n) => Number.parseInt(n, 10));
+  const d = new Date(Date.UTC(ay, am - 1, ad));
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10) === b;
+}
+
+/**
+ * Group approved day_off entries into consecutive-date runs of the SAME reason. Input need not
+ * be sorted. A run breaks on a date gap OR a reason change — so an Injury day never merges into
+ * a Vacation range (the reason, and its health signal, stays precise). PURE.
+ */
+export function groupConsecutiveDayoffs(entries: Array<{ id: string; date: string | null; reason: string | null }>): ClubDayoffGroup[] {
+  const sorted = entries.filter((e): e is { id: string; date: string; reason: string | null } => Boolean(e.date)).sort((a, b) => a.date.localeCompare(b.date));
+  const groups: ClubDayoffGroup[] = [];
+  for (const e of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && normReason(last.reason) === normReason(e.reason) && isNextDay(last.endDate, e.date)) {
+      last.endDate = e.date;
+      last.entryIds.push(e.id);
+    } else {
+      groups.push({ startDate: e.date, endDate: e.date, entryIds: [e.id], reason: normReason(e.reason) });
+    }
+  }
+  return groups;
+}
+
+/** Build the one Availability payload (type 1) for a grouped day_off run. PURE. */
+export function buildDayoffGroupAvailability(group: ClubDayoffGroup, athleteId: number): ClubAvailabilityPayload {
+  return {
+    personId: athleteId,
+    startDate: group.startDate,
+    endDate: group.endDate,
+    type: 1,
+    limitedAvailability: false,
+    reason: group.reason ?? "",
+    availableSportTypes: [],
+    description: "",
+  };
+}
+
 export type ClubActionPlan =
   | {
       ok: true;
