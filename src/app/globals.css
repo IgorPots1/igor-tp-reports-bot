@@ -52,6 +52,12 @@ code {
   justify-content: space-between;
 }
 
+/* Let a badge row's label + meta/actions wrap on narrow screens instead of
+   forcing the card wider than the viewport. */
+.admin-badge-row {
+  flex-wrap: wrap;
+}
+
 .admin-topbar {
   margin-bottom: 20px;
 }
@@ -148,7 +154,7 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
+  min-height: 40px;
   padding: 0 12px;
   border-radius: 10px;
   border: 0;
@@ -170,6 +176,14 @@ code {
 .admin-button-secondary {
   background: #e2e8f0;
   color: #0f172a;
+}
+
+/* Emphasized CTA - deeper than the base blue so a selected/primary action is
+   visibly distinct from a plain button (e.g. the chosen form type in the club
+   broadcast panel, where unselected buttons use admin-button-secondary). */
+.admin-button-primary {
+  background: #1d4ed8;
+  color: #fff;
 }
 
 .admin-button-danger {
@@ -326,6 +340,9 @@ code {
 }
 
 .admin-inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
   justify-content: flex-start;
 }
 

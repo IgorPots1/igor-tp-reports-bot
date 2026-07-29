@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import FormActionButton from "@/app/admin/FormActionButton";
 
 type Recipient = { studentId: string; name: string };
 type FormType = "starts" | "schedule";
@@ -38,7 +39,7 @@ export default function BroadcastPanel(props: {
             <button
               key={t}
               type="button"
-              className={`admin-button admin-button-small ${formType === t ? "admin-button-primary" : ""}`}
+              className={`admin-button admin-button-small ${formType === t ? "admin-button-primary" : "admin-button-secondary"}`}
               onClick={() => setFormType(t)}
             >
               {props.titles[t]}
@@ -95,9 +96,9 @@ export default function BroadcastPanel(props: {
           {checkedIds.map((id) => (
             <input key={id} type="hidden" name="studentIds" value={id} />
           ))}
-          <button type="submit" className="admin-button admin-button-primary" disabled={count === 0}>
+          <FormActionButton className="admin-button admin-button-primary" disabled={count === 0} pendingText="Отправляю…">
             Отправить {count} ученикам
-          </button>
+          </FormActionButton>
         </form>
       </div>
 
@@ -136,9 +137,9 @@ export default function BroadcastPanel(props: {
             >
               <input type="hidden" name="redirectTo" value={props.selfPath} />
               <input type="hidden" name="messageText" value={texts.schedule} />
-              <button type="submit" className="admin-button admin-button-primary">
+              <FormActionButton className="admin-button admin-button-primary" pendingText="Отправляю…">
                 Напомнить {props.nonResponders.names.length} не ответившим
-              </button>
+              </FormActionButton>
             </form>
           </>
         )}

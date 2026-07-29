@@ -155,6 +155,9 @@ const C = {
   faint: "var(--c-faint)",
   accent: "var(--c-accent)",
   accentInk: "var(--c-accent-ink)",
+  // Accent used as TEXT: dark amber on light (legible), same yellow on dark.
+  // Yellow (`accent`) stays for fills / accent badges / active-on-dark only.
+  accentText: "var(--c-accent-text)",
   line: "var(--c-line)",
   good: "var(--c-good)",
   warn: "var(--c-warn)",
@@ -170,12 +173,12 @@ type Theme = "light" | "dark";
 const THEME_HEX: Record<Theme, Record<string, string>> = {
   light: {
     bg: "#f4f6f9", card: "#ffffff", cardAlt: "#eef1f5", ink: "#131820", sub: "#5b6472",
-    faint: "#9aa4b2", accent: "#f5c518", accentInk: "#151a1f", line: "#e3e7ec",
+    faint: "#7d8794", accent: "#f5c518", accentInk: "#151a1f", accentText: "#8f6200", line: "#e3e7ec",
     good: "#1f9e78", warn: "#b57d1c", gold: "#e0a800", silver: "#8b95a3", bronze: "#b0743f",
   },
   dark: {
     bg: "#0e1116", card: "#171b22", cardAlt: "#1e232c", ink: "#f2f4f7", sub: "#9aa4b2",
-    faint: "#5b6472", accent: "#f5c518", accentInk: "#0e1116", line: "#252b35",
+    faint: "#5b6472", accent: "#f5c518", accentInk: "#0e1116", accentText: "#f5c518", line: "#252b35",
     good: "#4ec9a5", warn: "#e0a13a", gold: "#f5c518", silver: "#c3ccd8", bronze: "#cd8a54",
   },
 };
@@ -185,6 +188,7 @@ function themeVars(theme: Theme): React.CSSProperties {
   return {
     "--c-bg": h.bg, "--c-card": h.card, "--c-card-alt": h.cardAlt, "--c-ink": h.ink,
     "--c-sub": h.sub, "--c-faint": h.faint, "--c-accent": h.accent, "--c-accent-ink": h.accentInk,
+    "--c-accent-text": h.accentText,
     "--c-line": h.line, "--c-good": h.good, "--c-warn": h.warn, "--c-gold": h.gold,
     "--c-silver": h.silver, "--c-bronze": h.bronze,
   } as React.CSSProperties;
@@ -699,7 +703,7 @@ function Monogram({ text, tone, onClick, size = 40 }: { text: string; tone?: str
       onClick={onClick}
       style={{
         width: size, height: size, borderRadius: 999,
-        background: tone ?? C.cardAlt, color: tone ? C.accentInk : C.accent,
+        background: tone ?? C.cardAlt, color: tone ? C.accentInk : C.accentText,
         display: "flex", alignItems: "center", justifyContent: "center",
         fontFamily: HEAD, fontWeight: 600, fontSize: Math.round(size * 0.375), flexShrink: 0,
         border: `1px solid ${C.line}`, cursor: onClick ? "pointer" : "default",
@@ -841,14 +845,22 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
   if (pace) cells.push({ label: "темп", value: pace.replace(" /км", "") });
   if (item.avgHr) cells.push({ label: "ср. пульс", value: `${item.avgHr}` });
 
+  const reactingRef = useRef(false);
   async function react(kind: "like" | "fire") {
-    if (!item.reactionsEnabled) return;
+    if (!item.reactionsEnabled || reactingRef.current) return; // ignore rapid double-taps in flight
+    reactingRef.current = true;
     setReacted((r) => ({ ...r, [kind]: !r[kind] }));
-    await fetch("/api/m/club/react", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ initData, workoutId: item.id, kind }),
-    }).catch(() => undefined);
+    try {
+      await fetch("/api/m/club/react", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, workoutId: item.id, kind }),
+      });
+    } catch {
+      // network error: optimistic state stays; next tap re-syncs
+    } finally {
+      reactingRef.current = false;
+    }
   }
 
   return (
@@ -876,8 +888,8 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
         <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>Тапни, чтобы открыть тренировку →</div>
       </div>
       <div style={{ ...S.reactRow, opacity: item.reactionsEnabled ? 1 : 0.35 }} aria-hidden={!item.reactionsEnabled}>
-        <span style={{ ...S.reactChip, display: "inline-flex", alignItems: "center", gap: 5, color: reacted.like ? C.accent : C.sub }} onClick={() => react("like")}><ClubIcon name="thumbsUp" size={15} /> {countOf("like")}</span>
-        <span style={{ ...S.reactChip, display: "inline-flex", alignItems: "center", gap: 5, color: reacted.fire ? C.accent : C.sub }} onClick={() => react("fire")}><ClubIcon name="flame" size={15} /> {countOf("fire")}</span>
+        <span style={{ ...S.reactChip, display: "inline-flex", alignItems: "center", gap: 5, color: reacted.like ? C.accentText : C.sub }} onClick={() => react("like")}><ClubIcon name="thumbsUp" size={15} /> {countOf("like")}</span>
+        <span style={{ ...S.reactChip, display: "inline-flex", alignItems: "center", gap: 5, color: reacted.fire ? C.accentText : C.sub }} onClick={() => react("fire")}><ClubIcon name="flame" size={15} /> {countOf("fire")}</span>
       </div>
     </div>
   );
@@ -1186,7 +1198,7 @@ function AchievementsCard({ achievements }: { achievements: ClubProfileDetailVie
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ display: "inline-flex" }}><ClubIcon name={a.earned ? "medal" : "lock"} size={16} color={a.earned ? C.accent : C.faint} /></span>
                   <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: a.earned ? C.ink : C.sub }}>{a.title}</span>
-                  {a.progress ? <span style={{ fontFamily: HEAD, fontSize: 13, color: a.earned ? C.accent : C.sub }}>{a.progress.current}/{a.progress.target} {a.progress.unit}</span> : (a.earned ? <span style={{ fontSize: 12, color: C.good }}>получено</span> : null)}
+                  {a.progress ? <span style={{ fontFamily: HEAD, fontSize: 13, color: a.earned ? C.accentText : C.sub }}>{a.progress.current}/{a.progress.target} {a.progress.unit}</span> : (a.earned ? <span style={{ fontSize: 12, color: C.good }}>получено</span> : null)}
                 </div>
                 <div style={{ fontSize: 12, color: C.faint, marginTop: 3 }}>{a.hint}</div>
                 {!a.earned ? (
@@ -1223,6 +1235,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [nameSaving, setNameSaving] = useState(false);
   const [nameMsg, setNameMsg] = useState<string | null>(null);
+  const privacyBusyRef = useRef(false);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
@@ -1241,6 +1254,8 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
   }
 
   async function setVisibility(next: boolean) {
+    if (privacyBusyRef.current) return; // ignore rapid double-taps while a request is in flight
+    privacyBusyRef.current = true;
     setVisibleState(next);
     const res = await fetch("/api/m/club/privacy", {
       method: "POST",
@@ -1251,6 +1266,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
       setVisibleState(v.clubVisible); // revert optimistic toggle
     }
     setPrivacyMsg(res.ok ? (next ? "Ты в клубной ленте" : "Скрыт из клубной ленты") : (res.error ?? "Недоступно"));
+    privacyBusyRef.current = false;
   }
 
   return (
@@ -1286,7 +1302,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
           {v.typeBreakdown.map((t) => (
             <div key={t.family} style={{ display: "flex", alignItems: "baseline", gap: 10, padding: "12px 0", borderTop: `1px solid ${C.line}` }}>
               <span style={{ flex: 1, color: C.ink, fontSize: 17, fontWeight: 600, fontFamily: HEAD }}>{t.label}</span>
-              <span style={{ fontFamily: HEAD, fontSize: 20, fontWeight: 700, color: C.accent }}>{t.count}</span>
+              <span style={{ fontFamily: HEAD, fontSize: 20, fontWeight: 700, color: C.accentText }}>{t.count}</span>
               <span style={{ color: C.sub, fontSize: 12 }}>трен.</span>
               {t.km > 0 ? <span style={{ fontFamily: HEAD, fontSize: 16, color: C.ink, marginLeft: 8 }}>{fmtKm(t.km)}</span> : null}
             </div>
@@ -1350,6 +1366,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
           value={nameValue}
           maxLength={40}
           onChange={(e) => setNameDraft(e.target.value)}
+          onFocus={scrollFieldIntoView}
           placeholder="Как показывать тебя в клубе"
         />
         <button style={{ ...S.saveBtn, opacity: nameSaving ? 0.6 : 1 }} type="button" disabled={nameSaving} onClick={saveName}>
@@ -1445,6 +1462,7 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
                   <span style={{ color: C.sub, fontSize: 13 }}>{it.distanceKm ? fmtKm(it.distanceKm) : (fmtDuration(it.durationSeconds) ?? "")}</span>
                 </div>
               ))}
+              {view.recentFeed.length === 0 ? <div style={{ ...S.cardMeta, marginTop: 4 }}>Пока нет тренировок.</div> : null}
             </div>
           )
         ) : null}
@@ -1661,6 +1679,7 @@ function WorkoutComments({ workoutId, initData }: { workoutId: string; initData:
     <div style={S.card}>
       <div style={S.secHead}>Комментарии{comments.length > 0 ? ` · ${comments.length}` : ""}</div>
       <div style={{ marginTop: 8 }}>
+        {!loaded ? <div style={{ ...S.cardMeta, marginTop: 4 }}>Загрузка…</div> : null}
         {loaded && comments.length === 0 ? <div style={{ ...S.cardMeta, marginTop: 4 }}>Пока нет комментариев.</div> : null}
         {comments.map((c) => (
           <div key={c.id} style={{ padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
@@ -1670,7 +1689,7 @@ function WorkoutComments({ workoutId, initData }: { workoutId: string; initData:
             </div>
             {editingId === c.id ? (
               <div style={{ marginTop: 6 }}>
-                <textarea style={{ ...S.input, minHeight: 44 }} value={editText} maxLength={500} onChange={(e) => setEditText(e.target.value)} />
+                <textarea style={{ ...S.input, minHeight: 44 }} value={editText} maxLength={500} onChange={(e) => setEditText(e.target.value)} onFocus={scrollFieldIntoView} />
                 <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
                   <button type="button" style={S.smallPrimaryBtn} disabled={busy} onClick={() => saveEdit(c.id)}>Сохранить</button>
                   <button type="button" style={S.smallBtn} onClick={() => { setEditingId(null); setEditText(""); }}>Отмена</button>
@@ -1691,7 +1710,7 @@ function WorkoutComments({ workoutId, initData }: { workoutId: string; initData:
         ))}
       </div>
       <div style={{ marginTop: 10 }}>
-        <textarea style={{ ...S.input, minHeight: 44 }} placeholder="Написать комментарий" value={draft} maxLength={500} onChange={(e) => setDraft(e.target.value)} />
+        <textarea style={{ ...S.input, minHeight: 44 }} placeholder="Написать комментарий" value={draft} maxLength={500} onChange={(e) => setDraft(e.target.value)} onFocus={scrollFieldIntoView} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
           {err ? <span style={{ fontSize: 12, color: "#d9534f" }}>{err}</span> : <span />}
           <button type="button" style={S.smallPrimaryBtn} disabled={busy || !draft.trim()} onClick={add}>Отправить</button>
@@ -1811,7 +1830,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                       alignItems: "center", justifyContent: "center", gap: 1, padding: 0,
                     }}
                   >
-                    <span style={{ fontSize: 13, fontFamily: HEAD, fontWeight: d.isToday ? 700 : 500, color: d.isToday ? C.accent : C.ink }}>{d.date.slice(8)}</span>
+                    <span style={{ fontSize: 13, fontFamily: HEAD, fontWeight: d.isToday ? 700 : 500, color: d.isToday ? C.accentText : C.ink }}>{d.date.slice(8)}</span>
                     <span style={{ display: "flex", gap: 1, height: 10, alignItems: "center", color: C.sub }}>{marks.map((m, i) => <ClubIcon key={i} name={m} size={9} />)}</span>
                   </button>
                 );
@@ -2030,7 +2049,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
             </div>
             {races.map((r) => (
               <div key={r.id} style={S.listRow}>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={S.cardName}>{r.name}</div>
                   <div style={S.cardMeta}>{r.dateLabel}{r.distanceLabel ? ` · ${r.distanceLabel}` : ""}{r.city ? ` · ${r.city}` : ""}</div>
                 </div>
@@ -2057,7 +2076,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
             </div>
             {requests.map((r) => (
               <div key={r.id} style={S.listRow}>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={S.cardName}>{r.fromDate === r.toDate ? r.fromDate : `${r.fromDate} - ${r.toDate}`}</div>
                   {r.reason ? <div style={S.cardMeta}>{r.reason}</div> : null}
                 </div>
@@ -2085,7 +2104,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
             </div>
             {wishes.map((w) => (
               <div key={w.id} style={S.listRow}>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={S.cardMeta}>{w.dateLabel} · нагрузка {w.loadScale ?? "-"} · самочувствие {w.wellbeingScale ?? "-"} · расписание {w.scheduleScale ?? "-"}</div>
                   {w.note ? <div style={{ ...S.cardName, whiteSpace: "normal" }}>{w.note}</div> : null}
                 </div>
@@ -2095,6 +2114,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
           </div>
         ) : null}
 
+        {status === "ready" && !inactive && section === "billing" && !billing ? <Empty text="Нет данных по оплате" /> : null}
         {status === "ready" && !inactive && section === "billing" && billing ? (
           <div style={S.formCard}>
             {billing.note ? <div style={S.cardMeta}>{billing.note}</div> : null}
@@ -2197,7 +2217,7 @@ function ConfirmScreen({
     <>
       <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink, marginBottom: 8 }}>Привязка аккаунта</div>
       <div style={{ color: C.sub, fontSize: 14, marginBottom: 12 }}>Похоже, это твой аккаунт в клубе.</div>
-      <div style={{ fontFamily: HEAD, fontSize: 24, color: C.accent, marginBottom: 14 }}>{candidate.displayName}</div>
+      <div style={{ fontFamily: HEAD, fontSize: 24, color: C.accentText, marginBottom: 14 }}>{candidate.displayName}</div>
       <div style={{ color: C.faint, fontSize: 12.5, lineHeight: 1.5, marginBottom: 20 }}>
         После подтверждения этот Telegram будет привязан к твоему профилю. Изменить привязку можно только через тренера.
       </div>
@@ -2222,10 +2242,10 @@ function NoInitDataScreen() {
   return (
     <div style={{ ...S.overlay, alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div style={{ ...S.card, maxWidth: 340, width: "100%", textAlign: "center", marginBottom: 0 }}>
-        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10, color: C.accent }}><ClubIcon name="smartphone" size={40} /></div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 10, color: C.accentText }}><ClubIcon name="smartphone" size={40} /></div>
         <div style={{ fontFamily: HEAD, fontSize: 22, color: C.ink, marginBottom: 10 }}>Открой внутри Telegram</div>
         <div style={{ color: C.sub, fontSize: 14, lineHeight: 1.5 }}>
-          Клуб открывается только по ссылке <b style={{ color: C.accent }}>t.me/igorp_coach_bot/XOclub</b> в приложении Telegram (не в браузере). Нажми ссылку от тренера ещё раз.
+          Клуб открывается только по ссылке <b style={{ color: C.accentText }}>t.me/igorp_coach_bot/XOclub</b> в приложении Telegram (не в браузере). Нажми ссылку от тренера ещё раз.
         </div>
       </div>
     </div>
@@ -2251,7 +2271,7 @@ function RequestSentScreen() {
 // ---------------------------------------------------------------------------
 
 const S = {
-  shell: { minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: BODY, paddingBottom: 78 } as React.CSSProperties,
+  shell: { minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: BODY, paddingBottom: "calc(78px + env(safe-area-inset-bottom))" } as React.CSSProperties,
   header: { padding: "16px 16px 8px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 } as React.CSSProperties,
   h1: { fontFamily: HEAD, fontSize: 26, fontWeight: 700, letterSpacing: "0.06em", margin: 0, color: C.ink } as React.CSSProperties,
   fresh: { color: C.faint, fontSize: 12 } as React.CSSProperties,
@@ -2264,9 +2284,9 @@ const S = {
   stat: { background: C.cardAlt, borderRadius: 999, padding: "5px 12px", fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: HEAD } as React.CSSProperties,
   caption: { marginTop: 10, fontSize: 13.5, color: C.sub, lineHeight: 1.4 } as React.CSSProperties,
   reactRow: { display: "flex", gap: 10, marginTop: 12 } as React.CSSProperties,
-  reactChip: { fontSize: 13, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 12px", cursor: "pointer" } as React.CSSProperties,
+  reactChip: { fontSize: 13, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "0 13px", minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box", cursor: "pointer" } as React.CSSProperties,
   secHead: { fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" as const, color: C.faint } as React.CSSProperties,
-  bigNumber: { fontFamily: HEAD, fontSize: 32, fontWeight: 700, color: C.accent, lineHeight: "34px" } as React.CSSProperties,
+  bigNumber: { fontFamily: HEAD, fontSize: 32, fontWeight: 700, color: C.accentText, lineHeight: "34px" } as React.CSSProperties,
   progressTrack: { height: 10, background: C.cardAlt, borderRadius: 999, marginTop: 12, overflow: "hidden" } as React.CSSProperties,
   progressFill: { height: "100%", background: C.accent, borderRadius: 999, transition: "width 0.3s" } as React.CSSProperties,
   fixtureNote: { marginTop: 8, fontSize: 12, color: C.warn } as React.CSSProperties,
@@ -2280,13 +2300,13 @@ const S = {
   pill: (active: boolean): React.CSSProperties => ({ flex: 1, padding: "8px 0", borderRadius: 999, border: `1px solid ${active ? C.accent : C.line}`, background: active ? C.accent : C.card, color: active ? C.accentInk : C.sub, fontSize: 13, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" }),
   recRow: { display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderTop: `1px solid ${C.line}`, marginTop: 2 } as React.CSSProperties,
   badgeCard: (earned: boolean): React.CSSProperties => ({ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, width: "calc(33% - 6px)", padding: "10px 4px", borderRadius: 10, background: earned ? "rgba(245,197,24,0.10)" : C.cardAlt, border: `1px solid ${earned ? C.accent : C.line}`, color: earned ? C.ink : C.sub, textAlign: "center" }),
-  more: { width: "100%", padding: "12px 0", borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, color: C.accent, fontFamily: HEAD, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 } as React.CSSProperties,
+  more: { width: "100%", padding: "12px 0", borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, color: C.accentText, fontFamily: HEAD, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 } as React.CSSProperties,
   endHint: { textAlign: "center", color: C.faint, fontSize: 12, padding: "12px 0" } as React.CSSProperties,
   state: { textAlign: "center", color: C.sub, fontSize: 14, padding: "48px 16px" } as React.CSSProperties,
   retry: { padding: "10px 20px", borderRadius: 10, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 14, cursor: "pointer" } as React.CSSProperties,
   overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", zIndex: 50 } as React.CSSProperties,
   sheet: { background: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderTop: `1px solid ${C.line}`, padding: 16, width: "100%", boxSizing: "border-box", maxHeight: "82vh", overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(16px + env(safe-area-inset-bottom))" } as React.CSSProperties,
-  closeBtn: { background: C.cardAlt, border: `1px solid ${C.line}`, color: C.sub, borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontSize: 14 } as React.CSSProperties,
+  closeBtn: { background: C.cardAlt, border: `1px solid ${C.line}`, color: C.sub, borderRadius: 999, width: 38, height: 38, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 14, flexShrink: 0 } as React.CSSProperties,
   sectionBtn: { display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.ink, fontSize: 13, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" } as React.CSSProperties,
   fieldLabel: { display: "block", fontSize: 12.5, color: C.sub, margin: "2px 0 5px", fontFamily: HEAD, fontWeight: 600 } as React.CSSProperties,
   chipOff: { padding: "9px 14px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.ink, fontSize: 14, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" } as React.CSSProperties,
@@ -2317,5 +2337,5 @@ const S = {
   listRow: { display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderTop: `1px solid ${C.line}` } as React.CSSProperties,
   statusChip: { fontSize: 11.5, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" } as React.CSSProperties,
   tabBar: { position: "fixed", left: 0, right: 0, bottom: 0, display: "flex", background: C.card, borderTop: `1px solid ${C.line}`, paddingBottom: "env(safe-area-inset-bottom)" } as React.CSSProperties,
-  tab: (active: boolean): React.CSSProperties => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 0 6px", background: "transparent", border: "none", color: active ? C.accent : C.faint, cursor: "pointer", fontFamily: BODY }),
+  tab: (active: boolean): React.CSSProperties => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 0 6px", background: "transparent", border: "none", color: active ? C.accentText : C.faint, cursor: "pointer", fontFamily: BODY }),
 };

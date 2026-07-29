@@ -14,7 +14,9 @@ function candLabel(c: {
   if (c.service) tags.push("СЕРВИС");
   if (c.boundTelegramUserId) tags.push("ЗАНЯТ");
   if (c.duplicateTp) tags.push("ДУБЛЬ-TP");
-  return `${c.name} · TP${c.tpAthleteId ?? "-"} · посл ${c.lastWorkoutDate ?? "нет"} · 30д ${c.count30d}${tags.length ? " · " + tags.join(",") : ""}`;
+  // Name + key marker first (never cut by the select box), then a short activity
+  // signal to tell active homonyms apart. TP id / last-workout date dropped as noise.
+  return `${c.name}${tags.length ? " · " + tags.join(",") : ""} · 30д ${c.count30d}`;
 }
 
 export default async function ClubRequestsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -76,7 +78,7 @@ export default async function ClubRequestsPage({ searchParams }: { searchParams:
               <input type="hidden" name="redirectTo" value={selfPath} />
               <input type="hidden" name="requestId" value={r.id} />
               <input type="hidden" name="telegramUserId" value={r.telegramUserId} />
-              <select className="admin-input" name="studentId" defaultValue={suggestions[0]?.studentId ?? ""} style={{ minWidth: 380 }}>
+              <select className="admin-input" name="studentId" defaultValue={suggestions[0]?.studentId ?? ""} style={{ flex: "1 1 240px", minWidth: 0, maxWidth: "100%" }}>
                 <option value="" disabled>- выбери ученика -</option>
                 {ordered.map((c) => (
                   <option key={c.studentId} value={c.studentId}>{candLabel(byId.get(c.studentId)!)}</option>
