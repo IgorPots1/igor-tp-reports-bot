@@ -38,6 +38,23 @@ import { getCoveredScheme } from "./lib/tp-zone-formulas.ts";
 
 const LONG_REP_MIN_DURATION_S = 360; // 6 minutes
 const MIN_REP_BLOCK_DURATION_S_INGEST = 45; // matches fit-lap-work-detection
+const TEMPO_MIN_STEADY_S = 1200; // 20 min continuous
+
+// Duration-dependent threshold adjustment for a CONTINUOUS tempo (sec/km, ADDED to the
+// observed tempo pace — negative makes the estimate FASTER). Source: Daniels' Running
+// Formula — a 20–30 min tempo IS run at Threshold (T) pace; longer continuous efforts
+// drift toward Marathon (M) pace, which is slower than threshold, so the true threshold
+// is FASTER than the observed pace by a growing margin (Daniels' T↔M gap ≈ 15–20 s/km
+// for recreational runners). Apportioned by how long the steady effort lasted — NOT one
+// flat number, per Igor:  20–30 min → 0 (already T-pace) · 30–45 min → −8 · 45+ min → −18.
+function tempoOffsetSecPerKm(steadyS: number): number {
+  const m = steadyS / 60;
+  return m < 30 ? 0 : m < 45 ? -8 : -18;
+}
+function tempoBand(steadyS: number): string {
+  const m = steadyS / 60;
+  return m < 30 ? "20–30мин" : m < 45 ? "30–45мин" : "45+мин";
+}
 
 function loadEnv(p: string): void {
   if (!existsSync(p)) return;
@@ -72,6 +89,13 @@ function median(xs: number[]): number {
   const s = [...xs].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+/** p-th percentile (0..1) of ascending-sorted values. For pace (sec/km), a LOW
+ *  percentile = the FASTER efforts. Used to pull the tempo/threshold efforts out
+ *  of a pile of continuous runs that is mostly easy running. */
+function percentile(xs: number[], p: number): number {
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.max(0, Math.min(s.length - 1, Math.floor(p * (s.length - 1))))];
 }
 function fmtPace(sec: number | null): string {
   if (sec === null || !Number.isFinite(sec) || sec <= 0) return "—";
@@ -180,6 +204,45 @@ async function main(): Promise<void> {
     if (!prev || e.rank < prev.rank || (e.rank === prev.rank && e.date > prev.date)) evidenceByAthlete.set(id, e);
   };
 
+  // HR is intentionally NOT turned into a proposal (Igor: pace first, HR handled
+  // separately). We only RECORD whatever HR exists, per athlete, into a separate file.
+  const hrNotes = new Map<number, string[]>();
+  const addHr = (id: number, note: string): void => {
+    const arr = hrNotes.get(id) ?? [];
+    arr.push(note);
+    hrNotes.set(id, arr);
+  };
+
+  // Per-athlete baseline training pace (median of their run-like workouts) — used to GATE
+  // races: a real race is FASTER than the athlete's typical pace, so a "race" that is
+  // SLOWER than the median is not a competition (a walk / social run mislabelled by the
+  // scanner) and is dropped. (Panina's 77:51 "10k" → threshold 7:14 was exactly this.)
+  const baselinePace = new Map<number, number>();
+  {
+    const perAthlete = new Map<number, number[]>();
+    for (let fromIdx = 0; ; fromIdx += 1000) {
+      const { data } = await supabase.from("trainingpeaks_workout_cache")
+        .select("trainingpeaks_athlete_id, completed_distance_raw, completed_time_raw")
+        .gte("workout_date", fromIso).lte("workout_date", today)
+        .range(fromIdx, fromIdx + 999);
+      if (!data || data.length === 0) break;
+      for (const w of data) {
+        const m = typeof w.completed_distance_raw === "number" ? (w.completed_distance_raw as number) : 0;
+        const tH = typeof w.completed_time_raw === "number" ? (w.completed_time_raw as number) : 0;
+        if (m < 800 || tH <= 0) continue;
+        const pace = (tH * 3600) / (m / 1000);
+        if (pace < 210 || pace > 540) continue; // 3:30–9:00/km → run-like; drops bike/swim/walk
+        const id = Number(w.trainingpeaks_athlete_id);
+        const arr = perAthlete.get(id) ?? [];
+        arr.push(pace);
+        perAthlete.set(id, arr);
+      }
+      if (data.length < 1000) break;
+    }
+    for (const [id, ps] of perAthlete) if (ps.length >= 3) baselinePace.set(id, median(ps));
+  }
+  console.log(`baseline training pace computed for ${baselinePace.size} athletes`);
+
   // ── RACES (tier A/B) ──────────────────────────────────────────────────────
   const { data: raceRows } = await supabase
     .from("trainingpeaks_race_events")
@@ -195,6 +258,7 @@ async function main(): Promise<void> {
     return { tier: `${km}км забег`, rank: 2 };
   };
   let raceMatched = 0;
+  let racesDroppedSlow = 0;
   for (const r of races) {
     const id = Number(r.trainingpeaks_athlete_id);
     const officialM = (r.distance_km as number) * 1000;
@@ -211,22 +275,30 @@ async function main(): Promise<void> {
     }
     if (!best) continue;
     const measuredPace = best.timeSec / (best.measM / 1000);
+    if (!(measuredPace > 120 && measuredPace < 600)) continue;
+    // GATE: a race must be faster than the athlete's typical training pace. A "race"
+    // slower than the median is not a competition — drop it (not a real result).
+    const base = baselinePace.get(id);
+    if (base !== undefined && measuredPace >= base) {
+      racesDroppedSlow += 1;
+      continue;
+    }
     const proposed = ftpaSecPerKm(vdotFromRace(best.measM, best.timeSec));
-    if (!(proposed > 150 && proposed < 540) || !(measuredPace > 120 && measuredPace < 600)) continue;
-    let hr: number | null = null;
+    if (!(proposed > 150 && proposed < 540)) continue;
+    // HR recorded separately (not a proposal)
     const { data: dm } = await supabase.from("trainingpeaks_workout_derived_metrics").select("avg_hr, hr_trusted").eq("workout_cache_id", best.cacheId).limit(1);
     const d0 = (dm ?? [])[0];
-    if (d0 && d0.hr_trusted === true && typeof d0.avg_hr === "number") hr = Math.round(d0.avg_hr as number);
+    if (d0 && d0.hr_trusted === true && typeof d0.avg_hr === "number") addHr(id, `забег ${r.event_date} (${r.distance_km}км): ср.пульс ${Math.round(d0.avg_hr as number)}`);
     const cls = classify(r.distance_km as number);
     raceMatched += 1;
     consider(id, {
       tier: cls.tier, rank: cls.rank, confidence: cls.rank === 0 ? "high" : "medium",
-      proposedPace: proposed, proposedHr: hr,
+      proposedPace: proposed, proposedHr: null,
       basis: `${r.event_date} · ${r.distance_km}км · ${fmtClock(best.timeSec)} (изм. темп ${fmtPace(measuredPace)})`,
       date: r.event_date as string,
     });
   }
-  console.log(`races matched to a workout time: ${raceMatched}/${races.length}`);
+  console.log(`races matched: ${raceMatched}/${races.length} · dropped as too-slow (not a race): ${racesDroppedSlow}`);
 
   // ── LONG INTERVALS (tier D) ──────────────────────────────────────────────
   type DmRow = { trainingpeaks_athlete_id: number; workout_cache_id: string; workout_date: string; hr_trusted: boolean | null; reps_detected_count: number | null; rep_paces: number[] | null; rep_peak_hrs: number[] | null };
@@ -293,18 +365,112 @@ async function main(): Promise<void> {
     const nSessions = acc.sessions.size;
     // confidence by evidence volume; a single rep is "very-low" (flagged, editable)
     const confidence: Evidence["confidence"] = nReps >= 6 && nSessions >= 3 ? "medium" : nReps >= 3 ? "low" : "very-low";
+    if (acc.hrs.length) addHr(id, `интервалы ≥6мин: медиана пика репов ${Math.round(median(acc.hrs))}`);
     consider(id, {
       tier: "интервалы ≥6мин",
-      rank: 5,
+      rank: 4,
       confidence,
       proposedPace: median(acc.paces),
-      proposedHr: acc.hrs.length ? Math.round(median(acc.hrs)) : null,
+      proposedHr: null,
       basis: `${nReps} реп(ов) ≥6мин в ${nSessions} трен. (медиана темпа), последняя ${acc.latest}`,
       date: acc.latest,
       nReps,
     });
   }
   console.log(`interval workouts usable: ${intervalUsable}; athletes with interval evidence: ${pool.size}`);
+
+  // ── CONTINUOUS TEMPO (tier C — structural, NOT title-based) ────────────────
+  // reps=0 & steady≥20min. Title search gave 1 point roster-wide last time, so this is
+  // purely structural. To avoid warm-up drag we keep only runs whose steady effort is the
+  // MAJORITY of the workout, use the whole-workout pace as the tempo pace, and adjust to
+  // threshold by the DURATION band (tempoOffsetSecPerKm). Pooled per athlete like intervals.
+  type TempoDm = { trainingpeaks_athlete_id: number; workout_cache_id: string; workout_date: string; steady_duration_s: number | null; hr_trusted: boolean | null; avg_hr: number | null };
+  const tempoRows: TempoDm[] = [];
+  for (let fromIdx = 0; ; fromIdx += 1000) {
+    const { data, error } = await supabase.from("trainingpeaks_workout_derived_metrics")
+      .select("trainingpeaks_athlete_id, workout_cache_id, workout_date, steady_duration_s, hr_trusted, avg_hr")
+      .eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0)
+      .gte("steady_duration_s", TEMPO_MIN_STEADY_S)
+      .gte("workout_date", fromIso).lte("workout_date", today)
+      .range(fromIdx, fromIdx + 999);
+    if (error) throw new Error(`tempo dm: ${error.message}`);
+    if (!data || data.length === 0) break;
+    tempoRows.push(...(data as TempoDm[]));
+    if (data.length < 1000) break;
+  }
+  // laps for tempo workouts — we take the EFFORT pace (the fast 60% of distance),
+  // NOT the whole-workout pace, so warm-up/cool-down/jog don't drag the estimate slow.
+  const tempoLaps = new Map<string, { d: number; t: number }[]>();
+  {
+    const ids = [...new Set(tempoRows.map((r) => r.workout_cache_id))];
+    for (let i = 0; i < ids.length; i += 150) {
+      const chunk = ids.slice(i, i + 150);
+      const { data } = await supabase.from("trainingpeaks_workout_laps").select("workout_cache_id, distance_m, timer_time_s").in("workout_cache_id", chunk);
+      for (const l of data ?? []) {
+        const d = typeof l.distance_m === "number" ? (l.distance_m as number) : 0;
+        const t = typeof l.timer_time_s === "number" ? (l.timer_time_s as number) : 0;
+        if (d <= 0 || t <= 0) continue;
+        const key = l.workout_cache_id as string;
+        const arr = tempoLaps.get(key) ?? [];
+        arr.push({ d, t });
+        tempoLaps.set(key, arr);
+      }
+    }
+  }
+  const effortPaceFromLaps = (laps: { d: number; t: number }[], frac: number): number | null => {
+    if (laps.length < 2) return null;
+    const total = laps.reduce((s, l) => s + l.d, 0);
+    const sorted = [...laps].sort((a, b) => a.t / a.d - b.t / b.d); // fastest laps first
+    let accD = 0;
+    let accT = 0;
+    for (const l of sorted) {
+      if (accD >= frac * total) break;
+      accD += l.d;
+      accT += l.t;
+    }
+    return accD > 0 ? accT / (accD / 1000) : null;
+  };
+  const tempoPool = new Map<number, { paces: number[]; sessions: Set<string>; latest: string; bands: Set<string> }>();
+  let tempoUsable = 0;
+  for (const t of tempoRows) {
+    const laps = tempoLaps.get(t.workout_cache_id);
+    if (!laps) continue;
+    const steadyS = t.steady_duration_s ?? 0;
+    const tempoPace = effortPaceFromLaps(laps, 0.6); // pace of the fast 60% (the effort)
+    if (tempoPace === null || !(tempoPace > 150 && tempoPace < 540)) continue;
+    const est = tempoPace + tempoOffsetSecPerKm(steadyS);
+    tempoUsable += 1;
+    const id = Number(t.trainingpeaks_athlete_id);
+    const acc = tempoPool.get(id) ?? { paces: [], sessions: new Set<string>(), latest: "", bands: new Set<string>() };
+    acc.paces.push(est);
+    acc.sessions.add(t.workout_date);
+    acc.bands.add(tempoBand(steadyS));
+    if (t.workout_date > acc.latest) acc.latest = t.workout_date;
+    tempoPool.set(id, acc);
+    if (t.hr_trusted === true && typeof t.avg_hr === "number") addHr(id, `темпо ${t.workout_date}: ср.пульс ${Math.round(t.avg_hr)}`);
+  }
+  // "steady ≥20min" alone catches EASY runs too, so the median would read easy pace.
+  // The tempo/threshold efforts are the FAST tail: take p20 of the duration-adjusted
+  // estimates (the faster ~20% of sustained runs). Need ≥3 runs for a stable percentile.
+  let tempoAthletes = 0;
+  for (const [id, acc] of tempoPool) {
+    const n = acc.paces.length;
+    const ns = acc.sessions.size;
+    if (n < 3) continue; // too few sustained runs to isolate a fast tail — skip
+    tempoAthletes += 1;
+    const confidence: Evidence["confidence"] = n >= 15 ? "medium" : n >= 6 ? "low" : "very-low";
+    consider(id, {
+      tier: "темпо ≥20мин",
+      rank: 5,
+      confidence,
+      proposedPace: percentile(acc.paces, 0.2),
+      proposedHr: null,
+      basis: `${n} непрерывн. ≥20мин в ${ns} трен. — оценка по быстрым усилиям (p20) + поправка по длит. (${[...acc.bands].join("/")}); последняя ${acc.latest}`,
+      date: acc.latest,
+      nReps: n,
+    });
+  }
+  console.log(`tempo workouts usable: ${tempoUsable}; athletes with tempo evidence (≥3 runs): ${tempoAthletes}`);
 
   // ── assemble every roster athlete ─────────────────────────────────────────
   const rows: AthleteRow[] = [];
@@ -329,12 +495,11 @@ async function main(): Promise<void> {
   });
 
   const withRace = rows.filter((r) => r.evidence && r.evidence.rank <= 2);
-  // intervals: strongest evidence (most reps) first, then most recent
-  const withInterval = rows
-    .filter((r) => r.evidence && r.evidence.rank === 5)
-    .sort((a, b) => (b.evidence!.nReps ?? 0) - (a.evidence!.nReps ?? 0) || (b.evidence!.date).localeCompare(a.evidence!.date));
+  const byVolThenDate = (a: AthleteRow, b: AthleteRow) => (b.evidence!.nReps ?? 0) - (a.evidence!.nReps ?? 0) || b.evidence!.date.localeCompare(a.evidence!.date);
+  const withInterval = rows.filter((r) => r.evidence && r.evidence.rank === 4).sort(byVolThenDate);
+  const withTempo = rows.filter((r) => r.evidence && r.evidence.rank === 5).sort(byVolThenDate);
   const noData = rows.filter((r) => !r.evidence);
-  console.log(`\n── aggregates ──\nrace-based: ${withRace.length} · interval-based: ${withInterval.length} · no-data: ${noData.length} · total roster: ${rows.length}`);
+  console.log(`\n── aggregates ──\nrace-based: ${withRace.length} · interval-based: ${withInterval.length} · tempo-based: ${withTempo.length} · no-data: ${noData.length} · total roster: ${rows.length}`);
 
   // ── JSON for the artifact ─────────────────────────────────────────────────
   const outDir = path.join(toolRoot, "action-artifacts", "threshold-candidates");
@@ -370,26 +535,42 @@ async function main(): Promise<void> {
     return `${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d)}с`;
   };
   const rowMd = (r: AthleteRow): string =>
-    `| ${r.name} | ${fmtPace(r.currentPace)} | ${r.evidence ? `**${fmtPace(r.evidence.proposedPace)}**` : "—"} | ${delta(r)} | ${r.currentHr ?? "—"} | ${r.evidence?.proposedHr ?? "—"} | ${r.evidence?.basis ?? "—"} | ${r.evidence?.tier ?? "—"} | ${r.evidence?.confidence ?? "—"} | ${r.speedCovered ? "✅" : `❌ м${r.speedMethod ?? "?"}`} |`;
-  md.push(`# Полный скан кандидатов на порог (read-only, ${today})`);
-  md.push(`Забеги (тир A/B, движок vdot.ts FTPa) + длинные интервалы ≥6мин (тир D, темп репов ≈ порог, ниже надёжность). Пульс — где надёжен. Темп в мин/км. Текущий порог из tp_zone_snapshots (на запись CLI читает живой TP).`);
+    `| ${r.name} | ${fmtPace(r.currentPace)} | ${r.evidence ? `**${fmtPace(r.evidence.proposedPace)}**` : "—"} | ${delta(r)} | ${r.evidence?.basis ?? "—"} | ${r.evidence?.tier ?? "—"} | ${r.evidence?.confidence ?? "—"} | ${r.speedCovered ? "✅" : `❌ м${r.speedMethod ?? "?"}`} |`;
+  const head = `| имя | тек.темп | предлаг | Δ | на чём | тир | надёжность | метод |\n|---|---|---|---|---|---|---|---|`;
+  md.push(`# Полный скан кандидатов на порог — ТЕМП (read-only, ${today})`);
+  md.push(`Только темп (пульс вынесен в hr-reference.md). Тиры по надёжности: забег (vdot.ts FTPa) > темпо ≥20мин (структурно, поправка по длительности: 20–30→0, 30–45→−8, 45+→−18 сек/км, Daniels T↔M) > интервалы ≥6мин (темп репов). Забеги медленнее обычного тренировочного темпа атлета отсеяны (${racesDroppedSlow} шт). Темп в мин/км; текущий порог из tp_zone_snapshots.`);
   md.push("");
   md.push(`## 1. По забегу (свежие 10к/полумарафон сверху) — ${withRace.length}`);
-  md.push(`| имя | тек.темп | предлаг | Δ | тек.пульс | предлаг.пульс | на чём | тир | надёжность | метод |`);
-  md.push(`|---|---|---|---|---|---|---|---|---|---|`);
+  md.push(head);
   for (const r of withRace) md.push(rowMd(r));
   md.push("");
-  md.push(`## 2. По интервалам (нет пригодного забега) — ${withInterval.length}`);
-  md.push(`| имя | тек.темп | предлаг | Δ | тек.пульс | предлаг.пульс | на чём | тир | надёжность | метод |`);
-  md.push(`|---|---|---|---|---|---|---|---|---|---|`);
+  md.push(`## 2. По интервалам ≥6мин (нет пригодного забега) — ${withInterval.length}`);
+  md.push(head);
   for (const r of withInterval) md.push(rowMd(r));
   md.push("");
-  md.push(`## 3. Совсем нет данных (ни забега, ни длинных интервалов) — ${noData.length}`);
-  md.push(`| имя | тек.темп | метод |`);
-  md.push(`|---|---|---|`);
+  md.push(`## 3. По темпо ≥20мин (нет забега/интервалов) — ${withTempo.length}`);
+  md.push(head);
+  for (const r of withTempo) md.push(rowMd(r));
+  md.push("");
+  md.push(`## 4. Совсем нет данных — ${noData.length}`);
+  md.push(`| имя | тек.темп | метод |\n|---|---|---|`);
   for (const r of noData) md.push(`| ${r.name} | ${fmtPace(r.currentPace)} | ${r.speedCovered ? "✅" : `❌ м${r.speedMethod ?? "?"}`} |`);
   writeFileSync(path.join(outDir, "fullscan.md"), `${md.join("\n")}\n`, "utf8");
   console.log(`MD: ${path.join(outDir, "fullscan.md")}`);
+
+  // ── HR reference (SEPARATE — recorded, not proposed) ──────────────────────
+  const hr: string[] = [];
+  hr.push(`# Пульс — справочно (read-only, ${today})`);
+  hr.push(`Пороговый пульс НЕ рассчитывался (по решению Игоря — темп в приоритете). Здесь только сырой пульс с забегов/темпо/интервалов, где FIT-пульс надёжен, чтобы решить позже. Имя · заметки.`);
+  hr.push("");
+  const named = [...hrNotes.entries()].map(([id, notes]) => ({ name: nameById.get(id) ?? `id ${id}`, notes })).sort((a, b) => a.name.localeCompare(b.name));
+  for (const a of named) {
+    hr.push(`- **${a.name}** — ${a.notes.join(" · ")}`);
+  }
+  hr.push("");
+  hr.push(`Атлетов с каким-либо надёжным пульсом: ${named.length}.`);
+  writeFileSync(path.join(outDir, "hr-reference.md"), `${hr.join("\n")}\n`, "utf8");
+  console.log(`HR: ${path.join(outDir, "hr-reference.md")}`);
 }
 
 main().catch((e: unknown) => {
