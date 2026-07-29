@@ -62,6 +62,21 @@ const norm = (w: string) => w.toLowerCase().replace(/ё/g, "е");
 const BL = blacklist as Blacklist;
 const BLACKLIST_WORDS: Set<string> = new Set<string>([...(BL.seed ?? []), ...(BL.candidates ?? []).map((c) => c.word)].map(norm));
 
+// The ban-list for the GENERATION prompt (Задача: "чтобы модель перестала писать частил, а не только
+// подсвечивала"). Same source as the blacklist (seed jargon + words Igor systematically cuts, from the
+// draft↔sent diff), collapsed to one representative form per stem so the prompt line stays short
+// («частил/частила/частит» → one «частил»). The prompt tells the model NOT to use these AND not to
+// invent a replacement term — just plain words.
+export function bannedWordsForPrompt(): string[] {
+  const byStem = new Map<string, string>();
+  for (const w of BLACKLIST_WORDS) {
+    const s = stemRu(w);
+    const cur = byStem.get(s);
+    if (!cur || w.length < cur.length) byStem.set(s, w);
+  }
+  return [...byStem.values()].sort();
+}
+
 export type LexiconFinding = { word: string; stem: string; reason: "jargon" | "out_of_voice" };
 
 export type LexiconCheck = {

@@ -4,7 +4,11 @@
 // exactly the prompt that produced its draft.
 
 import { FEEDBACK_PROMPT_TEMPLATE, registerWord, sexRuleText } from "./feedback-corpus.ts";
+import { bannedWordsForPrompt } from "./lexicon/draft-lexicon.ts";
 import type { FeedbackContextPacket } from "./context-packet.ts";
+
+// Static across packets (from the lexicon files), computed once.
+const BANNED_WORDS_LINE = bannedWordsForPrompt().join(", ");
 
 // Render the verbatim student messages for the {{STUDENT_WORDS}} section. This is CONTEXT
 // (tone + cause), not a number source — the prompt rules tell the model to translate any
@@ -22,5 +26,6 @@ export function assembleFeedbackPrompt(packet: FeedbackContextPacket): string {
     .replaceAll("{{WORKOUT}}", packet.workoutHeader)
     .replaceAll("{{OBSERVATIONS}}", packet.observationsBlock)
     .replaceAll("{{COMPARISON}}", packet.comparisonBlock)
+    .replaceAll("{{BANNED_WORDS}}", BANNED_WORDS_LINE)
     .replaceAll("{{STUDENT_WORDS}}", renderStudentWords(packet.studentWords));
 }
