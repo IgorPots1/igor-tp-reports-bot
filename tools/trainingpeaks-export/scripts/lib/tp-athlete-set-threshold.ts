@@ -49,7 +49,7 @@ export type SetThresholdArgs = {
   tier?: string; // logged to tp_threshold_applications.tier
 };
 
-type PlannedChange = {
+export type PlannedChange = {
   type: ZoneType;
   putPath: string;
   newThresholdNative: number;
@@ -72,8 +72,9 @@ function asZoneArray(v: unknown): ZoneBoundary[] {
   });
 }
 
-/** Build the RMW payload for one zone type, or throw a refusal Error with a clear message. */
-function planType(
+/** Build the RMW payload for one zone type, or throw a refusal Error with a clear message.
+ *  Exported so the batch rollback tool reuses the EXACT same RMW/covered-scheme logic. */
+export function planType(
   type: ZoneType,
   fullArray: unknown,
   newThresholdNative: number,
