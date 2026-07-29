@@ -136,6 +136,23 @@ describe("split-half + negative-split", () => {
   test("single lap can't split", () => {
     assert.equal(computeSplitHalf([{ lapIndex: 1, distanceM: 5000, timerTimeS: 1500, paceSecPerKm: 300, avgHr: 140, isWork: null }]), null);
   });
+  test("degenerate split (one big lap + tiny final sprint) is NOT a surge (Эрикенова)", () => {
+    // 8.8km @ 407 then 337m @ 360, pulse up 8 — the old code called this a 46 s/km surge.
+    const laps = [
+      { lapIndex: 0, distanceM: 8844, timerTimeS: 3600, paceSecPerKm: 407, avgHr: 158, isWork: null },
+      { lapIndex: 1, distanceM: 337, timerTimeS: 121, paceSecPerKm: 360, avgHr: 166, isWork: null },
+    ];
+    assert.equal(evaluateNegativeSplit({ laps, sessionType: "easy" }).kind, "none");
+  });
+  test("second half < 25% of distance → guarded even with 4+ laps", () => {
+    const laps = [
+      { lapIndex: 0, distanceM: 3000, timerTimeS: 1200, paceSecPerKm: 400, avgHr: 150, isWork: null },
+      { lapIndex: 1, distanceM: 3000, timerTimeS: 1200, paceSecPerKm: 400, avgHr: 150, isWork: null },
+      { lapIndex: 2, distanceM: 3000, timerTimeS: 1200, paceSecPerKm: 400, avgHr: 150, isWork: null },
+      { lapIndex: 3, distanceM: 300, timerTimeS: 105, paceSecPerKm: 350, avgHr: 160, isWork: null },
+    ];
+    assert.equal(evaluateNegativeSplit({ laps, sessionType: "easy" }).kind, "none");
+  });
 });
 
 describe("positive-dictionary", () => {

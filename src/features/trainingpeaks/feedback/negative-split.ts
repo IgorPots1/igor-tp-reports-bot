@@ -22,6 +22,12 @@ export const NEGATIVE_SPLIT_MIN_DELTA_SEC_PER_KM = 12;
 export const PULSE_STABLE_MAX_RISE_BPM = 7;
 // Need >=4 laps so that after dropping the warmup lap there are still >=3 for a stable two-half split.
 const MIN_LAPS_TO_DROP_WARMUP = 4;
+// Degenerate-split guard (Igor, Эрикенова): don't call it a surge/split when the "second half" isn't a
+// real half. She ran ONE 8.8km lap + a 337m final lap → the "second half" was the last 3.7% (a sprint
+// home), read as a 46 s/km surge. Require the run to have >=4 laps AND the second half to be >=25% of the
+// distance. Финальные 300 м к дому — не разгон.
+const MIN_LAPS_FOR_SPLIT = 4;
+const MIN_SECOND_HALF_FRACTION = 0.25;
 
 export type NegativeSplitOutcome =
   | { kind: "none" }
@@ -52,8 +58,18 @@ function dropWarmupLap(laps: PlannerLap[]): PlannerLap[] {
 export function evaluateNegativeSplit(input: { laps: PlannerLap[]; sessionType: SessionType }): NegativeSplitOutcome {
   if (input.sessionType === "interval") return { kind: "none" };
 
+  // Count the RUN's own valid laps (BEFORE the warmup drop) — "кругов меньше 4" is about the record,
+  // not the post-drop split.
+  const runValidLaps = input.laps.filter((l) => l.isWork !== false && l.distanceM !== null && l.distanceM > 0 && l.timerTimeS !== null && l.timerTimeS > 0).length;
+
   const split = computeSplitHalf(dropWarmupLap(input.laps));
   if (split === null) return { kind: "none" };
+
+  // Degenerate-split guard: too few laps, or the "second half" is really just a short final segment
+  // (e.g. a 337m sprint home on a one-big-lap record) → the split is meaningless, say nothing.
+  if (runValidLaps < MIN_LAPS_FOR_SPLIT || split.secondHalfDistanceM < MIN_SECOND_HALF_FRACTION * split.totalDistanceM) {
+    return { kind: "none" };
+  }
 
   const deltaSecPerKm = split.firstHalfPaceSecPerKm - split.secondHalfPaceSecPerKm; // positive = 2nd half faster
   if (deltaSecPerKm < NEGATIVE_SPLIT_MIN_DELTA_SEC_PER_KM) return { kind: "none" };

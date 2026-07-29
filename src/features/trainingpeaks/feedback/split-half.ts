@@ -18,8 +18,10 @@ export type SplitHalfResult = {
   firstHalfAvgHr: number | null;
   secondHalfAvgHr: number | null;
   totalDistanceM: number;
+  secondHalfDistanceM: number; // for the degenerate-split guard (a tiny final lap ≠ a real "second half")
   firstHalfLapCount: number;
   secondHalfLapCount: number;
+  validLapCount: number; // laps that survived the validity filter — the split rests on these
 };
 
 function validLaps(laps: PlannerLap[]): PlannerLap[] {
@@ -73,7 +75,9 @@ export function computeSplitHalf(laps: PlannerLap[]): SplitHalfResult | null {
     firstHalfAvgHr: first.avgHr,
     secondHalfAvgHr: second.avgHr,
     totalDistanceM,
+    secondHalfDistanceM: second.distanceM,
     firstHalfLapCount: firstHalf.length,
     secondHalfLapCount: secondHalf.length,
+    validLapCount: valid.length,
   };
 }
