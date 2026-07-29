@@ -318,8 +318,16 @@ export function isClubDayoffAsAvailabilityEnabled(): boolean {
  */
 export const CLUB_DAYOFF_REASONS = ["Appointment", "Injury", "Sick", "Vacation", "Work", "Other"] as const;
 export type ClubDayoffReason = (typeof CLUB_DAYOFF_REASONS)[number];
-/** Reasons that should raise a Coach OS health signal (plan only, not yet wired). */
+/** Reasons that raise a Coach OS health signal (see health-signal.ts, gated by the flag below). */
 export const CLUB_DAYOFF_HEALTH_REASONS: readonly ClubDayoffReason[] = ["Injury", "Sick"];
+/**
+ * On approving a day_off with reason Injury/Sick, raise a Coach OS operational health signal
+ * (Injury → pain_injury, closes by coach; Sick → health_issue_started, auto-closes via the
+ * recovery-bridge). OFF by default. See docs/club-health-signal-from-availability.md.
+ */
+export function isClubHealthSignalsEnabled(): boolean {
+  return process.env.CLUB_HEALTH_SIGNALS_ENABLED === "true";
+}
 /** RU labels for the student calendar form; the VALUE stored/sent to TP stays English. */
 export const CLUB_DAYOFF_REASON_LABELS_RU: Record<ClubDayoffReason, string> = {
   Appointment: "Дела/приём",

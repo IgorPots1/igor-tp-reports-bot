@@ -4,6 +4,7 @@
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
+import { raiseClubDayoffHealthSignal } from "@/features/club/health-signal";
 import {
   classifyRecordType,
   evaluateAllRecordsForValidation,
@@ -302,6 +303,38 @@ export async function setCalendarEntryStatus(id: string, status: "approved" | "r
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.from("club_calendar_entries").update({ status }).eq("id", id);
   if (error) throw new Error(`club-admin: calendar status: ${error.message}`);
+  if (status === "approved") await raiseHealthSignalsForApproved([id]);
+}
+
+/**
+ * For the given just-approved entry ids, raise a Coach OS health signal for any that are a
+ * day_off with an Injury/Sick reason (gated inside raiseClubDayoffHealthSignal by
+ * CLUB_HEALTH_SIGNALS_ENABLED; idempotent by dedupe_key). NEVER throws — a signal failure must
+ * not fail the approval. Tolerant of the day_off_reason column being absent (migration lag).
+ */
+async function raiseHealthSignalsForApproved(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("club_calendar_entries")
+      .select("id, student_id, entry_date, kind, day_off_reason")
+      .in("id", ids)
+      .eq("kind", "day_off");
+    if (error || !data) return;
+    for (const r of data as Array<Record<string, unknown>>) {
+      const date = (r.entry_date as string | null) ?? "";
+      await raiseClubDayoffHealthSignal({
+        entryId: r.id as string,
+        studentId: r.student_id as string,
+        startDate: date,
+        endDate: date,
+        reason: (r.day_off_reason as string | null) ?? null,
+      });
+    }
+  } catch {
+    // health signals are best-effort; approval already succeeded
+  }
 }
 
 /** Batch-approve every currently pending calendar entry in the 45-day window. */
@@ -317,7 +350,9 @@ export async function approveAllPendingCalendar(): Promise<number> {
     .lte("entry_date", to)
     .select("id");
   if (error) throw new Error(`club-admin: calendar batch approve: ${error.message}`);
-  return (data as Array<unknown> | null)?.length ?? 0;
+  const ids = ((data as Array<{ id: string }> | null) ?? []).map((r) => r.id);
+  await raiseHealthSignalsForApproved(ids);
+  return ids.length;
 }
 
 // ---------------------------------------------------------------------------
