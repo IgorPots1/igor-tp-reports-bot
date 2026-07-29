@@ -19,7 +19,16 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const PAGE = 1000;
 const SUSPECT_PACE_SEC_PER_KM = 150; // ~2:30/km — faster than a human road PR => broken GPS
+const KM_BY_KEY: Record<string, number> = { "5k": 5, "10k": 10, "21k": 21.097, "42k": 42.195 };
 type SupabaseClient = ReturnType<typeof createSupabaseServerClient>;
+
+/** raw distance string; >1000 => meters. */
+function parseKm(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const n = Number(String(raw).replace(",", ".").match(/-?\d+(?:\.\d+)?/)?.[0] ?? "");
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n > 1000 ? n / 1000 : n;
+}
 
 function argLimit(): number {
   const a = process.argv.slice(2).find((x) => x.startsWith("--limit="));
@@ -102,18 +111,22 @@ async function main(): Promise<void> {
     notes
   );
 
-  // event name by (student, date): race_events.title, then club_calendar_entries.race_name
-  const raceEvents = await fetchAll<{ student_id: string; event_date: string | null; title: string | null }>(
+  // events by (student, date): keep ALL of the day's events with their distances so we
+  // can attach the one NEAREST to the record distance (a day can hold 5/10/21k at once).
+  const raceEvents = await fetchAll<{ student_id: string; event_date: string | null; title: string | null; distance_km: number | null; distance_raw: string | null }>(
     supabase,
     "trainingpeaks_race_events",
-    "student_id, event_date, title",
+    "student_id, event_date, title, distance_km, distance_raw",
     undefined,
     notes
   );
-  const titleByKey = new Map<string, string>();
+  const eventsByKey = new Map<string, Array<{ title: string | null; km: number | null }>>();
   for (const r of raceEvents) {
     const d = (r.event_date ?? "").slice(0, 10);
-    if (r.student_id && d && r.title) titleByKey.set(`${r.student_id}|${d}`, r.title);
+    if (!r.student_id || !d) continue;
+    const arr = eventsByKey.get(`${r.student_id}|${d}`) ?? [];
+    arr.push({ title: r.title, km: r.distance_km ?? parseKm(r.distance_raw) });
+    eventsByKey.set(`${r.student_id}|${d}`, arr);
   }
   const calendar = await fetchAll<{ student_id: string; entry_date: string | null; race_name: string | null }>(
     supabase,
@@ -140,7 +153,20 @@ async function main(): Promise<void> {
     .map((s) => {
       const d = (s.record_date ?? "").slice(0, 10);
       const key = `${s.student_id}|${d}`;
-      const event = titleByKey.get(key) ?? declaredByKey.get(key) ?? "(нет названия)";
+      // Attach the day's event by NEAREST distance to the record distance; a day with
+      // several distances is flagged multi_event (name/km may be from another distance).
+      const recordKm = KM_BY_KEY[s.distance_key] ?? s.distance_km ?? null;
+      const dayEvents = eventsByKey.get(key) ?? [];
+      const withKm = dayEvents.filter((e) => e.km != null);
+      const multiEvent = new Set(withKm.map((e) => e.km)).size > 1;
+      let chosen: { title: string | null; km: number | null } | null = null;
+      if (recordKm != null && withKm.length) {
+        chosen = withKm.reduce((best, e) => (Math.abs((e.km as number) - recordKm) < Math.abs((best.km as number) - recordKm) ? e : best));
+      } else {
+        chosen = dayEvents[0] ?? null;
+      }
+      const event = chosen?.title ?? declaredByKey.get(key) ?? "(нет названия)";
+      const eventKm = chosen?.km ?? null;
       const suspect =
         (s.pace_sec_per_km !== null && s.pace_sec_per_km > 0 && s.pace_sec_per_km < SUSPECT_PACE_SEC_PER_KM) ||
         s.distance_km === null ||
@@ -153,6 +179,8 @@ async function main(): Promise<void> {
         pace_sec: s.pace_sec_per_km,
         date: d || "n/a",
         event,
+        event_km: eventKm,
+        multi_event: multiEvent,
         distance_km: s.distance_km,
         slot: s.slot,
         source: s.source ?? "",
@@ -171,9 +199,10 @@ async function main(): Promise<void> {
   console.log("SUSPECT = темп < 2:30/км (битый GPS) ИЛИ дистанция события 0/нет.");
   console.log("=".repeat(96));
   console.log(
-    ["#", "ученик", "дист", "время", "темп", "дата", "событие", "км", "src", "флаг"].join(" | ")
+    ["#", "ученик", "дист", "время", "темп", "дата", "событие", "соб.км", "src", "флаг"].join(" | ")
   );
   rows.forEach((r, i) => {
+    const flags = [r.suspect ? "SUSPECT" : "", r.multi_event ? "MULTI-DIST-DAY" : ""].filter(Boolean).join(",");
     console.log(
       [
         String(i + 1).padStart(2),
@@ -183,9 +212,9 @@ async function main(): Promise<void> {
         r.pace,
         r.date,
         r.event,
-        r.distance_km ?? "—",
+        r.event_km ?? "—",
         r.source,
-        r.suspect ? "SUSPECT" : "",
+        flags,
       ].join(" | ")
     );
   });
