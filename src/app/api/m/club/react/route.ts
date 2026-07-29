@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
 import { isReactionsEnabled } from "@/features/club/constants";
+import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "@/features/club/db-errors";
 import { countRecentReactions, isWorkoutReactable } from "@/features/club/service";
 
 export const runtime = "nodejs";
@@ -66,7 +67,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     if (existing) {
       const { error } = await supabase.from("club_reactions").delete().eq("id", (existing as { id: string }).id);
       if (error) {
-        return jsonResponse(503, { ok: false, error: "Реакции пока не активны." });
+        logClubDbError("react.delete", error);
+        return jsonResponse(500, { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE });
       }
       return jsonResponse(200, { ok: true, active: false });
     }
@@ -75,7 +77,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       .from("club_reactions")
       .insert({ workout_cache_id: workoutId, student_id: studentId, kind });
     if (error) {
-      return jsonResponse(503, { ok: false, error: "Реакции пока не активны." });
+      logClubDbError("react.insert", error);
+      return jsonResponse(500, { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE });
     }
     return jsonResponse(200, { ok: true, active: true });
   } catch (error) {

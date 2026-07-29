@@ -307,6 +307,9 @@ export type ClubRaceSuggestion = {
 
 export type ClubCalendarView = {
   active: boolean;
+  /** True when the calendar READ failed with a REAL DB error (permission/column/other) rather
+   * than an absent table — the client shows a generic "напиши тренеру", not an empty calendar. */
+  loadError?: boolean;
   fromDate: string;
   toDate: string;
   days: ClubCalendarDay[];

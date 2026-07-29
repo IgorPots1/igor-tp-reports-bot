@@ -12,6 +12,7 @@ import {
   withSupabaseNetworkRetry,
 } from "@/features/supabase/server";
 import { fetchAllRows, fetchAllInChunks, chunkIds } from "@/features/supabase/paginate";
+import { logClubDbError } from "./db-errors";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
 import {
   classifyTrainingPeaksWorkoutActivity,
@@ -2789,16 +2790,17 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
 
   // Coach visibility toggle (Phase E): a coach may hide the forecast for a given
   // student. Tolerant of a missing column (migration 20260808 not applied) -> visible.
-  const { data: visRow } = await supabase
+  const { data: visRow, error: visErr } = await supabase
     .from("trainingpeaks_students")
     .select("club_prediction_visible")
     .eq("id", input.currentStudentId)
     .maybeSingle();
+  logClubDbError("getClubPrediction.visibility", visErr);
   if (visRow && (visRow as { club_prediction_visible?: boolean | null }).club_prediction_visible === false) {
     return none("Прогноз пока недоступен.");
   }
 
-  const { data: raceRow } = await supabase
+  const { data: raceRow, error: raceErr } = await supabase
     .from("club_races")
     .select("name, race_date, distance_meters, distance_label")
     .eq("student_id", input.currentStudentId)
@@ -2807,6 +2809,7 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
     .order("race_date", { ascending: true })
     .limit(1)
     .maybeSingle();
+  logClubDbError("getClubPrediction.race", raceErr);
   if (!raceRow) {
     return none("Прогноз появится, когда объявишь предстоящий старт.");
   }

@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
 import { isPrivacyEnabled } from "@/features/club/constants";
+import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "@/features/club/db-errors";
 
 export const runtime = "nodejs";
 
@@ -40,7 +41,10 @@ export async function POST(request: NextRequest): Promise<Response> {
       .update({ club_visible: visible })
       .eq("id", auth.student.id);
     if (error) {
-      return jsonResponse(503, { ok: false, error: "Настройка видимости пока не активна." });
+      // A real DB error (permission/column) is NOT the flag-off 503 — log the cause and
+      // answer with a distinct 500 + generic line, so the states never look identical.
+      logClubDbError("privacy.update", error);
+      return jsonResponse(500, { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE });
     }
     return jsonResponse(200, { ok: true, visible });
   } catch (error) {

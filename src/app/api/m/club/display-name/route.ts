@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
+import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "@/features/club/db-errors";
 
 export const runtime = "nodejs";
 
@@ -49,7 +50,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       .update({ club_display_name: value })
       .eq("id", auth.student.id);
     if (error) {
-      return jsonResponse(503, { ok: false, error: "Изменение имени пока недоступно." });
+      logClubDbError("displayName.update", error);
+      return jsonResponse(500, { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE });
     }
     return jsonResponse(200, { ok: true, name: value });
   } catch (error) {

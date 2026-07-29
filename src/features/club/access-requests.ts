@@ -4,6 +4,7 @@
 // Nothing is sent to students. See migration 20260729000000_club_access_requests.sql.
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { logClubDbError } from "./db-errors";
 
 export type ClubAccessRequestStatus = "pending" | "approved" | "rejected";
 
@@ -41,8 +42,10 @@ export async function recordClubAccessRequest(user: TgUserLite): Promise<"ok" | 
         },
         { onConflict: "telegram_user_id" }
       );
+    if (error) logClubDbError("recordClubAccessRequest", error);
     return error ? "unavailable" : "ok";
-  } catch {
+  } catch (e) {
+    logClubDbError("recordClubAccessRequest.throw", e as { code?: string; message?: string });
     return "unavailable";
   }
 }
@@ -69,9 +72,14 @@ export async function listPendingClubAccessRequests(): Promise<ClubAccessRequest
       .select("id, telegram_user_id, telegram_username, first_name, last_name, status, student_id, created_at")
       .eq("status", "pending")
       .order("created_at", { ascending: true });
-    if (error || !data) return [];
+    if (error || !data) {
+      // Coach-facing: a permission/schema error here means the join-request inbox looks EMPTY.
+      logClubDbError("listPendingClubAccessRequests", error);
+      return [];
+    }
     return (data as Array<Record<string, unknown>>).map(mapRow);
-  } catch {
+  } catch (e) {
+    logClubDbError("listPendingClubAccessRequests.throw", e as { code?: string; message?: string });
     return [];
   }
 }

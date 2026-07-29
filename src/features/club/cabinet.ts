@@ -5,6 +5,7 @@
 // files (not applied) — reads/writes are inert until applied.
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "./db-errors";
 import { getBillingClientForStudent, getBillingClientDetail, getEffectiveBillingRowStatus } from "@/features/billing/admin";
 import type { BillingMonthStatusRow } from "@/features/billing/types";
 
@@ -55,7 +56,8 @@ export async function createClubRace(
     status: "declared",
   });
   if (error) {
-    return { ok: false, error: "Раздел стартов пока не активен." };
+    const kind = logClubDbError("createClubRace", error);
+    return { ok: false, error: kind === "missing_table" ? "Раздел стартов ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
   }
   return { ok: true };
 }
@@ -107,7 +109,8 @@ export async function createDayoffRequest(
     status: "pending",
   });
   if (error) {
-    return { ok: false, error: "Раздел выходных пока не активен." };
+    const kind = logClubDbError("createDayoffRequest", error);
+    return { ok: false, error: kind === "missing_table" ? "Раздел выходных ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
   }
   return { ok: true };
 }
@@ -156,7 +159,8 @@ export async function createWish(
     note,
   });
   if (error) {
-    return { ok: false, error: "Раздел пожеланий пока не активен." };
+    const kind = logClubDbError("createWish", error);
+    return { ok: false, error: kind === "missing_table" ? "Раздел пожеланий ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
   }
   return { ok: true };
 }
@@ -271,7 +275,8 @@ export async function createPaymentClaim(
     .from("club_payment_claims")
     .insert({ student_id: studentId, note: text, status: "pending" });
   if (error) {
-    return { ok: false, error: "Раздел оплаты пока не активен." };
+    const kind = logClubDbError("createPaymentClaim", error);
+    return { ok: false, error: kind === "missing_table" ? "Раздел оплаты ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
   }
   return { ok: true };
 }

@@ -6,6 +6,7 @@
 import { randomBytes } from "node:crypto";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { logClubDbError } from "./db-errors";
 
 /** Token TTL in days (config, default 7). */
 export function clubLinkTokenTtlDays(): number {
@@ -36,7 +37,11 @@ export async function resolveClubLinkToken(token: string): Promise<ClubTokenReso
     .select("student_id, expires_at, used_at, revoked_at")
     .eq("token", clean)
     .maybeSingle();
-  if (error || !data) return { ok: false, reason: "not_found" };
+  if (error || !data) {
+    // A real DB error (permission/schema) must not read as "invalid link" to the student.
+    logClubDbError("resolveClubLinkToken", error);
+    return { ok: false, reason: "not_found" };
+  }
   const row = data as { student_id: string; expires_at: string; used_at: string | null; revoked_at: string | null };
   if (row.revoked_at) return { ok: false, reason: "revoked" };
   if (row.used_at) return { ok: false, reason: "used" };
@@ -70,7 +75,10 @@ export async function burnClubLinkToken(token: string, telegramUserId: number | 
     .is("revoked_at", null)
     .gt("expires_at", nowIso)
     .select("id");
-  if (error) return false;
+  if (error) {
+    logClubDbError("burnClubLinkToken", error);
+    return false;
+  }
   return Array.isArray(data) && data.length > 0;
 }
 
@@ -117,7 +125,7 @@ export async function listActiveClubLinkTokens(studentId: string): Promise<Activ
     .is("revoked_at", null)
     .gt("expires_at", nowIso)
     .order("created_at", { ascending: false });
-  if (error) return [];
+  if (error) { logClubDbError("listActiveClubLinkTokens", error); return []; }
   return ((data as Array<{ id: string; token: string; expires_at: string }>) ?? []).map((r) => ({
     id: r.id,
     token: r.token,
@@ -137,7 +145,7 @@ export async function listAllActiveClubLinkTokens(): Promise<Map<string, ActiveT
     .is("revoked_at", null)
     .gt("expires_at", nowIso)
     .order("created_at", { ascending: false });
-  if (error) return out;
+  if (error) { logClubDbError("listAllActiveClubLinkTokens", error); return out; }
   for (const r of (data as Array<{ id: string; token: string; expires_at: string; student_id: string }>) ?? []) {
     const list = out.get(r.student_id) ?? [];
     list.push({ id: r.id, token: r.token, expiresAt: r.expires_at });

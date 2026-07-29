@@ -65,7 +65,7 @@ export default async function ClubManagePage() {
                 <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
                   {bad.map((t) => (
                     <li key={t.table}>
-                      <code>{t.table}</code> - {t.code === "42501" ? "нет прав (42501): применить гранты" : t.code === "42P01" ? "таблицы нет (42P01): применить миграцию" : `${t.code ?? "ошибка"}: ${t.message ?? ""}`}
+                      <code>{t.table}</code> - {t.code === "42501" ? "нет прав (42501): применить гранты" : t.code === "42P01" ? "таблицы нет (42P01): применить миграцию" : t.code === "42703" ? `нет колонки (42703): применить миграцию - ${t.message ?? ""}` : `${t.code ?? "ошибка"}: ${t.message ?? ""}`}
                     </li>
                   ))}
                 </ul>

@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
 import { isCommentsEnabled } from "@/features/club/constants";
+import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "@/features/club/db-errors";
 import {
   countRecentComments,
   getCommentOwner,
@@ -85,7 +86,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         .from("club_comments")
         .insert({ workout_cache_id: workoutId, student_id: studentId, body: text });
       if (error) {
-        return jsonResponse(503, { ok: false, error: "Комментарии пока не активны." });
+        logClubDbError("comments.write", error);
+        return jsonResponse(500, { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE });
       }
       const comments = await loadWorkoutComments(workoutId, studentId);
       return jsonResponse(200, { ok: true, comments });
@@ -120,7 +122,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         .eq("id", commentId)
         .eq("student_id", studentId); // belt-and-braces ownership scope
       if (error) {
-        return jsonResponse(503, { ok: false, error: "Комментарии пока не активны." });
+        logClubDbError("comments.write", error);
+        return jsonResponse(500, { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE });
       }
       const comments = await loadWorkoutComments(owner.workoutId, studentId);
       return jsonResponse(200, { ok: true, comments });
@@ -149,7 +152,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         .eq("id", commentId)
         .eq("student_id", studentId);
       if (error) {
-        return jsonResponse(503, { ok: false, error: "Комментарии пока не активны." });
+        logClubDbError("comments.write", error);
+        return jsonResponse(500, { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE });
       }
       const comments = await loadWorkoutComments(owner.workoutId, studentId);
       return jsonResponse(200, { ok: true, comments });

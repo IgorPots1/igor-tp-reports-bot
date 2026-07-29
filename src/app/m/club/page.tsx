@@ -1790,6 +1790,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
         {status === "error" ? <Empty text={msg ?? "Не удалось загрузить"} /> : null}
         {status === "ready" && view ? (
           <div>
+            {view.loadError ? <div style={{ ...S.cardMeta, color: C.warn, marginBottom: 8 }}>Не получилось загрузить расписание. Напиши тренеру.</div> : null}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
               {WEEKDAY_LABELS.map((w) => (<div key={w} style={{ textAlign: "center", fontSize: 10, color: C.faint }}>{w}</div>))}
             </div>

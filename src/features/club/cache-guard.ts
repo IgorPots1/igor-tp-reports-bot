@@ -19,6 +19,7 @@
 // (type 3) the student intends to do, so it counts like any real planned workout.
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { logClubDbError } from "./db-errors";
 
 /**
  * Uniform suffix on every club MARKER title (day_off / preference / note). Distinctive
@@ -47,6 +48,10 @@ export async function loadClubMarkerWorkoutIds(): Promise<Set<number>> {
     .select("applied_tp_workout_id")
     .not("applied_tp_workout_id", "is", null);
   if (error || !data) {
+    // Data-integrity read: if this fails (permission/column), club markers stop being excluded
+    // and pollute feed/красавчики/challenge/records. A missing TABLE is benign; anything else
+    // must be seen, not silently degrade counting.
+    logClubDbError("loadClubMarkerWorkoutIds", error);
     return out;
   }
   for (const row of data as Array<{ applied_tp_workout_id: number | string | null }>) {

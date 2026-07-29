@@ -6,6 +6,7 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 import { CLUB_CALENDAR_DAYS, CLUB_DAYOFF_REASONS, CLUB_TIMEZONE, type ClubDayoffReason } from "./constants";
+import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "./db-errors";
 import type {
   ClubCalendarDay,
   ClubCalendarEntry,
@@ -102,9 +103,14 @@ export async function getClubCalendar(studentId: string): Promise<ClubCalendarVi
     });
   }
   const raceSuggestions = await loadRaceSuggestions(studentId, from, to);
-  // active=false only when the table is missing (migration unapplied) → the client
-  // shows a "not active yet" hint instead of an empty calendar it can't write to.
-  return { active: !error, fromDate: from, toDate: to, days, raceSuggestions };
+  // Distinguish three failure shapes so they never look identical:
+  //  - absent TABLE (migration unapplied) → active:false, the benign "not set up yet" hint;
+  //  - missing column / permission / other → active:true + loadError:true (a REAL failure the
+  //    student sees as "напиши тренеру", logged with its cause) — NOT an empty calendar;
+  //  - no error → active:true, loadError:false.
+  const kind = logClubDbError("getClubCalendar.select", error);
+  const benignMissingTable = kind === "missing_table";
+  return { active: !benignMissingTable, loadError: kind !== null && !benignMissingTable, fromDate: from, toDate: to, days, raceSuggestions };
 }
 
 /**
@@ -128,6 +134,7 @@ async function loadRaceSuggestions(
     .order("event_date", { ascending: true })
     .limit(20);
   if (error || !data) {
+    logClubDbError("loadRaceSuggestions", error);
     return [];
   }
   return (data as Array<{ event_date: string; title: string | null; distance_raw: string | null }>)
@@ -238,7 +245,12 @@ export async function createCalendarEntry(
     ? await supabase.from("club_calendar_entries").upsert(row, { onConflict: "student_id,entry_date,kind" })
     : await supabase.from("club_calendar_entries").insert(row);
   if (error) {
-    return { ok: false, error: "Календарь пока не активен." };
+    // Log the REAL cause (this is where a missing column masqueraded as «Календарь пока не
+    // активен»). Only an absent TABLE is the benign "not set up" case; a missing column /
+    // permission / other is a real failure and the student gets a generic line, not a flag-off
+    // one, so the two states never look identical.
+    const kind = logClubDbError("createCalendarEntry", error);
+    return { ok: false, error: kind === "missing_table" ? "Календарь ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
   }
   return { ok: true };
 }
@@ -256,7 +268,8 @@ export async function deleteCalendarEntry(studentId: string, entryId: string): P
     .eq("student_id", studentId)
     .eq("status", "pending");
   if (error) {
-    return { ok: false, error: "Не удалось удалить." };
+    logClubDbError("deleteCalendarEntry", error);
+    return { ok: false, error: CLUB_DB_ERROR_STUDENT_MESSAGE };
   }
   return { ok: true };
 }

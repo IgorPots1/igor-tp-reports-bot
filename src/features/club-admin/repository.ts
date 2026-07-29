@@ -1026,38 +1026,47 @@ export async function setClubDisplayName(studentId: string, displayName: string 
 /** Access health of a club table — surfaces 42501 (permission denied) / 42P01 (missing) LOUDLY. */
 export type ClubTableHealth = { table: string; ok: boolean; code: string | null; message: string | null };
 
-const CLUB_TABLES = [
-  "club_records",
-  "club_record_snapshots",
-  "club_races",
-  "club_tp_peaks",
-  "club_reactions",
-  "club_wishes",
-  "club_dayoff_requests",
-  "club_link_events",
-  "club_challenges",
-] as const;
+// Each probe reads specific COLUMNS (not just the table), so a missing COLUMN (42703) is
+// caught too — not only a missing table (42P01). The calendar probe names the columns that
+// have burned us (day_off_reason, applied_entity_type): a read that references a column absent
+// from the DB is exactly what surfaced as "Календарь пока не активен".
+const CLUB_TABLE_PROBES: Array<{ table: string; columns: string }> = [
+  { table: "club_records", columns: "id" },
+  { table: "club_record_snapshots", columns: "id" },
+  { table: "club_races", columns: "id" },
+  { table: "club_tp_peaks", columns: "id" },
+  { table: "club_reactions", columns: "id" },
+  { table: "club_wishes", columns: "id" },
+  { table: "club_dayoff_requests", columns: "id" },
+  { table: "club_link_events", columns: "id" },
+  { table: "club_challenges", columns: "id" },
+  { table: "club_calendar_entries", columns: "id, day_off_reason, applied_entity_type" },
+  { table: "club_form_sends", columns: "id" },
+  { table: "club_open_events", columns: "student_id" },
+  { table: "club_link_tokens", columns: "id" },
+  { table: "club_access_requests", columns: "id" },
+];
 
 /**
- * Probe every club table with a HEAD count. A read that hits a missing GRANT
- * returns Postgres 42501 (permission denied) — WITHOUT this the mini-app tab would
- * just render EMPTY and hide the misconfiguration. Here it becomes a loud red row
- * in /admin/club/manage. 42P01 = table not created (migration not applied).
+ * Probe every club table + its critical columns with a HEAD count. A read that hits a missing
+ * GRANT returns Postgres 42501 (permission denied), a missing table 42P01, a missing column
+ * 42703 — WITHOUT this the mini-app tab would just render EMPTY and hide the misconfiguration.
+ * Here each becomes a loud red row in /admin/club/manage with its real code.
  */
 export async function probeClubTablesHealth(): Promise<ClubTableHealth[]> {
   const supabase = createSupabaseServerClient();
   const out: ClubTableHealth[] = [];
-  for (const table of CLUB_TABLES) {
-    const { error } = await supabase.from(table).select("id", { count: "exact", head: true });
+  for (const probe of CLUB_TABLE_PROBES) {
+    const { error } = await supabase.from(probe.table).select(probe.columns, { count: "exact", head: true });
     if (error) {
       out.push({
-        table,
+        table: probe.table,
         ok: false,
         code: (error as { code?: string }).code ?? null,
         message: error.message,
       });
     } else {
-      out.push({ table, ok: true, code: null, message: null });
+      out.push({ table: probe.table, ok: true, code: null, message: null });
     }
   }
   return out;
