@@ -53,6 +53,8 @@ import type {
   ClubTopPerformer,
   ClubTopRow,
   ClubTrack,
+  ClubActivityDay,
+  ClubMonthSummary,
   ClubTypeBreakdown,
   ClubVolumePoint,
   ClubWorkoutDetailView,
@@ -450,6 +452,58 @@ function computeFeedInsight(
   const faster = (avg - item.paceSecPerKm) / avg; // >0 → this run's pace is smaller = faster
   if (faster < INSIGHT_MIN_FASTER) return null;
   return `На ${Math.round(faster * 100)}% быстрее обычного`;
+}
+
+// --- Participant profile enrichment (Stage 2, screen 2) -----------------------
+
+/** Earliest cached workout date for a student ("в клубе с …"), UNBOUNDED by the profile
+ *  window (the profile only loads the recent window, which can miss the true first date).
+ *  Index-aligned: (student_id, workout_date) → ascending limit 1 is a cheap scan. */
+async function loadFirstWorkoutDate(studentId: string): Promise<string | null> {
+  const supabase = createSupabaseServerClient();
+  const { data } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_workout_cache")
+      .select("workout_date")
+      .eq("student_id", studentId)
+      .order("workout_date", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+  );
+  return (data as { workout_date: string } | null)?.workout_date ?? null;
+}
+
+/** Sum of per-lap total_ascent_m over a set of workouts (null when no lap ascent at all).
+ *  Chunked AND paged: an interval workout can carry >1000 lap rows, so a bare .in() would
+ *  truncate silently. */
+async function loadAscentForWorkouts(workoutIds: string[]): Promise<number | null> {
+  if (workoutIds.length === 0) return null;
+  const supabase = createSupabaseServerClient();
+  const rows = await fetchAllInChunks<{ total_ascent_m: number | null }>(
+    workoutIds,
+    IN_CHUNK,
+    (ids0, fromRow, toRow) =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_workout_laps")
+          .select("total_ascent_m")
+          .in("workout_cache_id", ids0)
+          .order("workout_cache_id", { ascending: true })
+          .order("lap_index", { ascending: true })
+          .range(fromRow, toRow)
+      ),
+    { label: "club:profile_ascent" }
+  );
+  let sum: number | null = null;
+  for (const r of rows) {
+    if (r.total_ascent_m != null) sum = (sum ?? 0) + r.total_ascent_m;
+  }
+  return sum != null ? Math.round(sum) : null;
+}
+
+/** Weekday for an ISO date as 0=Mon..6=Sun (matches ClubCalendarDay.weekday). */
+function weekdayMon0(iso: string): number {
+  return (new Date(`${iso}T00:00:00Z`).getUTCDay() + 6) % 7;
 }
 
 export async function loadClubWorkoutRows(input: {
@@ -2521,9 +2575,10 @@ export async function getClubPublicProfile(input: {
   // every consumer below filters to targetStudentId. Loading the whole club's window
   // (~20k rows) to then throw all-but-one away made the profile 6-12 s. Restrict the
   // read to the target student (studentIds) — same result, a fraction of the rows.
-  const [students, rows] = await Promise.all([
+  const [students, rows, firstDate] = await Promise.all([
     loadClubStudents(),
     loadClubWorkoutRows({ from, to: today, studentIds: [input.targetStudentId] }),
+    loadFirstWorkoutDate(input.targetStudentId),
   ]);
   const target = students.find((s) => s.id === input.targetStudentId);
   const isSelf = input.targetStudentId === input.currentStudentId;
@@ -2539,7 +2594,12 @@ export async function getClubPublicProfile(input: {
       weekKm: 0,
       monthKm: 0,
       streakDays: 0,
+      joinDateLabel: null,
+      last7Days: [],
+      month30: { runs: 0, km: 0, movingSeconds: 0, avgPaceSecPerKm: null, ascentM: null },
       records: [],
+      pastRaces: [],
+      achievements: [],
       recentFeed: [],
       weeklySeries: [],
     };
@@ -2556,6 +2616,36 @@ export async function getClubPublicProfile(input: {
     activeDays.add(row.workoutDate);
   }
   const records = await studentRecordsFromRows(ownRunning, input.targetStudentId);
+
+  // Screen 2 enrichment. Last-7-days activity strip (oldest → newest).
+  const last7Days: ClubActivityDay[] = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    const d = addDaysIso(today, -i);
+    const dayRuns = ownRunning.filter((r) => r.workoutDate === d);
+    const km = dayRuns.reduce((a, r) => a + (r.distanceKm ?? 0), 0);
+    last7Days.push({ date: d, weekday: weekdayMon0(d), active: dayRuns.length > 0, km: Number(km.toFixed(1)) });
+  }
+
+  // Rolling 30-day running summary. Cache stores one duration (not moving-vs-elapsed), so
+  // movingSeconds ≈ total workout time; ascent is summed from per-lap total_ascent_m.
+  const m30From = addDaysIso(today, -29);
+  const m30Rows = ownRunning.filter((r) => r.workoutDate >= m30From && r.workoutDate <= today);
+  const m30Km = m30Rows.reduce((a, r) => a + (r.distanceKm ?? 0), 0);
+  const m30Seconds = m30Rows.reduce((a, r) => a + (r.durationSeconds ?? 0), 0);
+  const month30: ClubMonthSummary = {
+    runs: m30Rows.length,
+    km: Number(m30Km.toFixed(1)),
+    movingSeconds: m30Seconds,
+    avgPaceSecPerKm: m30Km > 0 && m30Seconds > 0 ? Math.round(m30Seconds / m30Km) : null,
+    ascentM: await loadAscentForWorkouts(m30Rows.map((r) => r.id)),
+  };
+
+  // Achievements (rule + earned state): shown to everyone (club social layer, per Igor).
+  const achievements = buildAchievements(ownRunning, rows, records).filter((a) => !a.stub || C.isStubsEnabled());
+  // Past races with a real result = race-type records (date + distance + finish time).
+  // Upcoming DECLARED races are intentionally NOT exposed on another member's profile.
+  const pastRaces = records.filter((r) => r.recordType === "race");
+  const joinDateLabel = firstDate ? formatRuDate(firstDate) : null;
 
   // Phase 3.9 weekly trend: last 12 ISO weeks of running volume (same shape as the
   // own-profile chart) so a member profile shows a trend, not just current totals.
@@ -2610,7 +2700,12 @@ export async function getClubPublicProfile(input: {
     weekKm: Number(weekKm.toFixed(1)),
     monthKm: Number(monthKm.toFixed(1)),
     streakDays: computeStreakDays(activeDays, today),
+    joinDateLabel,
+    last7Days,
+    month30,
     records,
+    pastRaces,
+    achievements,
     recentFeed,
     weeklySeries,
   };

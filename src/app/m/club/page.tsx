@@ -1430,28 +1430,82 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
             <div>
               <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
                 <div style={{ width: 48, height: 48, borderRadius: 999, background: C.accent, color: C.accentInk, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: HEAD, fontWeight: 700, fontSize: 17 }}>{view.monogram}</div>
-                <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink }}>{view.displayName}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink }}>{view.displayName}</div>
+                  {view.joinDateLabel ? <div style={{ fontSize: 12, color: C.faint, marginTop: 2 }}>в клубе с {view.joinDateLabel}</div> : null}
+                </div>
               </div>
               <div style={{ display: "flex", gap: 16, marginBottom: 14 }}>
                 <Metric label="км за неделю" value={fmtKm(view.weekKm)} />
                 <Metric label="км за месяц" value={fmtKm(view.monthKm)} />
                 <Metric label="серия дней" value={String(view.streakDays)} />
               </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={S.secHead}>Активность за 7 дней</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6, marginTop: 8 }}>
+                  {view.last7Days.map((d) => (
+                    <div key={d.date} style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 10, color: C.faint, marginBottom: 4 }}>{WEEKDAY_LABELS[d.weekday]}</div>
+                      <div style={{ height: 34, borderRadius: 8, border: `1px solid ${C.line}`, background: d.active ? "rgba(245,197,24,0.16)" : C.card, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontFamily: HEAD, fontWeight: 600, color: d.active ? C.accentText : C.faint }}>{d.active ? fmtKm(d.km) : "·"}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {view.month30.runs > 0 ? (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={S.secHead}>За 30 дней</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginTop: 8 }}>
+                    <Metric label="пробежек" value={String(view.month30.runs)} />
+                    <Metric label="км" value={fmtKm(view.month30.km)} />
+                    {view.month30.movingSeconds > 0 ? <Metric label="время в движении" value={fmtDuration(view.month30.movingSeconds) ?? ""} /> : null}
+                    {view.month30.avgPaceSecPerKm ? <Metric label="средний темп" value={fmtPace(view.month30.avgPaceSecPerKm) ?? ""} /> : null}
+                    {view.month30.ascentM != null ? <Metric label="набор высоты, м" value={String(view.month30.ascentM)} /> : null}
+                  </div>
+                </div>
+              ) : null}
               {view.weeklySeries.some((p) => p.km > 0) ? (
                 <div style={{ marginBottom: 14 }}>
                   <div style={S.secHead}>Объём по неделям</div>
                   <VolumeChart series={view.weeklySeries} />
                 </div>
               ) : null}
-              {view.records.length > 0 ? (
+              {view.pastRaces.length > 0 ? (
                 <div style={{ marginBottom: 14 }}>
-                  <div style={S.secHead}>Личные результаты</div>
-                  {view.records.map((r) => (
-                    <div key={`${r.distanceKey}-${r.recordType}`} style={S.recRow}>
-                      <span style={{ width: 16, display: "inline-flex" }}><ClubIcon name={r.recordType === "race" ? "flag" : "footprints"} size={12} color={C.sub} /></span>
+                  <div style={S.secHead}>Прошедшие старты</div>
+                  {view.pastRaces.map((r) => (
+                    <div key={`race-${r.distanceKey}`} style={S.recRow}>
+                      <span style={{ width: 16, display: "inline-flex" }}><ClubIcon name="flag" size={12} color={C.sub} /></span>
                       <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink, width: 60 }}>{r.distanceLabel}</span>
                       <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
-                      <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>
+                      <span style={{ fontSize: 12, color: C.faint, whiteSpace: "nowrap" }}>{r.dateLabel}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {view.records.filter((r) => r.recordType !== "race").length > 0 ? (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={S.secHead}>Личные результаты</div>
+                  {view.records.filter((r) => r.recordType !== "race").map((r) => (
+                    <div key={`pr-${r.distanceKey}`} style={S.recRow}>
+                      <span style={{ width: 16, display: "inline-flex" }}><ClubIcon name="footprints" size={12} color={C.sub} /></span>
+                      <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink, width: 60 }}>{r.distanceLabel}</span>
+                      <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
+                      <span style={{ fontSize: 12, color: C.faint, whiteSpace: "nowrap" }}>{r.dateLabel}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {view.achievements.length > 0 ? (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={S.secHead}>Достижения</div>
+                  {view.achievements.map((a) => (
+                    <div key={a.code} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 0", borderTop: `1px solid ${C.line}` }}>
+                      <span style={{ display: "inline-flex", marginTop: 1 }}><ClubIcon name={a.earned ? "medal" : "lock"} size={16} color={a.earned ? C.accentText : C.faint} /></span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 14, fontWeight: 600, color: a.earned ? C.ink : C.sub }}>{a.title}</span>
+                        <span style={{ display: "block", fontSize: 11.5, color: C.faint }}>{a.hint}</span>
+                      </span>
+                      {a.earned ? <span style={{ fontSize: 12, color: C.good, whiteSpace: "nowrap" }}>{a.earnedDateLabel ?? "получено"}</span> : (a.progress ? <span style={{ fontFamily: HEAD, fontSize: 13, color: C.accentText, whiteSpace: "nowrap" }}>{a.progress.current}/{a.progress.target}</span> : null)}
                     </div>
                   ))}
                 </div>

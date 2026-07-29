@@ -353,6 +353,23 @@ export type ClubPrediction = {
   basedOn: string | null;
 };
 
+/** One day in the last-7-days activity strip on a participant profile. */
+export type ClubActivityDay = {
+  date: string;
+  weekday: number; // 0=Mon..6=Sun
+  active: boolean; // had a completed running workout
+  km: number;
+};
+
+/** Rolling 30-day running summary on a participant profile. */
+export type ClubMonthSummary = {
+  runs: number;
+  km: number;
+  movingSeconds: number; // sum of workout durations (cache has one time, not moving-vs-elapsed)
+  avgPaceSecPerKm: number | null;
+  ascentM: number | null; // sum of per-lap total_ascent_m over the window (null when no lap data)
+};
+
 export type ClubPublicProfileView = {
   studentId: string;
   displayName: string;
@@ -361,7 +378,17 @@ export type ClubPublicProfileView = {
   weekKm: number;
   monthKm: number;
   streakDays: number;
+  /** First cached workout date "в клубе с …" (member-since). null when unknown. */
+  joinDateLabel: string | null;
+  /** Last 7 days activity strip (oldest → newest). */
+  last7Days: ClubActivityDay[];
+  /** Rolling 30-day running summary. */
+  month30: ClubMonthSummary;
   records: ClubRecordEntry[];
+  /** Past races with a real result (race-type records: date + distance + finish time). */
+  pastRaces: ClubRecordEntry[];
+  /** Achievements with rule + earned state (shown to everyone: club social layer). */
+  achievements: ClubAchievement[];
   recentFeed: ClubFeedItem[];
   /** Phase 3.9: last ~12 ISO weeks of running volume (weekly trend). */
   weeklySeries: ClubVolumePoint[];
