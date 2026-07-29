@@ -395,7 +395,7 @@ function mapWorkoutCacheRow(row: Record<string, unknown>): ClubWorkoutRow {
  * for a UTC "Z" value - its local time is unknown without a per-athlete timezone, and a
  * wrong time is worse than none. Timeless / unparseable → null (block not drawn).
  */
-function localStartHm(startTime: string | null): string | null {
+export function localStartHm(startTime: string | null): string | null {
   if (!startTime) return null;
   const s = startTime.trim();
   if (/z$/iu.test(s)) return null; // UTC (FIT path): local wall-clock unknown, don't show
@@ -415,6 +415,16 @@ const INSIGHT_BAND = 0.4; // comparable = ±40% of this run's distance
 const INSIGHT_MIN_SAMPLES = 3; // need at least this many comparable prior runs
 const INSIGHT_MIN_FASTER = 0.04; // ≥4% faster than the athlete's usual pace at this distance
 const INSIGHT_BASELINE_DAYS = 120; // how far back to build the per-athlete baseline
+
+/**
+ * Structured-interval detection: the SAME signal the record reconstruction uses to
+ * exclude interval/fartlek sessions (loadWorkoutQualityIndex). It detects lap STRUCTURE
+ * (>=2 repeated work reps), NOT day intensity: a continuous tempo (hard) and an easy jog
+ * both have 0 reps. Single source of truth so the feed gate can never drift from records.
+ */
+export function isStructuredInterval(reps: number | null | undefined, method: string | null | undefined): boolean {
+  return (reps ?? 0) >= 2 && (method === "structure" || method === "lap_trigger");
+}
 
 type PaceSample = { id: string; date: string; km: number; pace: number };
 
@@ -452,6 +462,33 @@ function computeFeedInsight(
   const faster = (avg - item.paceSecPerKm) / avg; // >0 → this run's pace is smaller = faster
   if (faster < INSIGHT_MIN_FASTER) return null;
   return `На ${Math.round(faster * 100)}% быстрее обычного`;
+}
+
+/** Workout ids on the page that are structured interval sessions (same signal records use).
+ *  Used to suppress the "faster than usual" insight: an interval session's whole-workout
+ *  average is skewed by fast work reps, so "faster than usual" there is misleading. */
+async function loadIntervalWorkoutIds(workoutIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (workoutIds.length === 0) return out;
+  const supabase = createSupabaseServerClient();
+  const rows = await fetchAllInChunks<{ workout_cache_id: string; reps_detected_count: number | null; rep_detection_method: string | null }>(
+    workoutIds,
+    IN_CHUNK,
+    (ids0, fromRow, toRow) =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_workout_derived_metrics")
+          .select("workout_cache_id, reps_detected_count, rep_detection_method")
+          .in("workout_cache_id", ids0)
+          .order("workout_cache_id", { ascending: true })
+          .range(fromRow, toRow)
+      ),
+    { label: "club:feed_intervals" }
+  );
+  for (const r of rows) {
+    if (isStructuredInterval(r.reps_detected_count, r.rep_detection_method)) out.add(r.workout_cache_id);
+  }
+  return out;
 }
 
 // --- Participant profile enrichment (Stage 2, screen 2) -----------------------
@@ -679,9 +716,7 @@ async function loadWorkoutQualityIndex(idsRaw: string[]): Promise<Map<string, Wo
   const derivedByWorkout = new Map<string, { isInterval: boolean; hasFit: boolean; workoutType: string | null }>();
   {
     for (const row of derivedData) {
-      const reps = toFiniteNumber(row.reps_detected_count) ?? 0;
-      const method = row.rep_detection_method ?? "none";
-      const isInterval = reps >= 2 && (method === "structure" || method === "lap_trigger");
+      const isInterval = isStructuredInterval(toFiniteNumber(row.reps_detected_count), row.rep_detection_method);
       derivedByWorkout.set(row.workout_cache_id, {
         isInterval,
         hasFit: row.has_fit === true,
@@ -1677,13 +1712,14 @@ export async function getClubFeed(input: {
   const pageIds = pageRows.map((r) => r.id);
   const uniqueAthletes = [...new Set(pageRows.map((r) => r.studentId))];
   const baselineFrom = addDaysIso(today, -INSIGHT_BASELINE_DAYS);
-  const [reactions, avgHrById, tracksById, baselineRows] = await Promise.all([
+  const [reactions, avgHrById, tracksById, baselineRows, intervalIds] = await Promise.all([
     loadReactionsForWorkouts(pageIds, input.currentStudentId),
     loadAvgHrForWorkouts(pageIds),
     loadTracksForWorkouts(pageIds),
     uniqueAthletes.length > 0
       ? loadClubWorkoutRows({ from: baselineFrom, to: today, studentIds: uniqueAthletes })
       : Promise.resolve([] as ClubWorkoutRow[]),
+    loadIntervalWorkoutIds(pageIds),
   ]);
   const insightBaseline = buildInsightBaseline(baselineRows);
 
@@ -1705,10 +1741,12 @@ export async function getClubFeed(input: {
       paceSecPerKm: pace,
       avgHr: avgHrById.get(row.id) ?? null,
       timeLabel: localStartHm(row.startTime),
-      insight: computeFeedInsight(
-        { id: row.id, date: row.workoutDate, distanceKm: row.distanceKm, paceSecPerKm: pace, isRunning: row.isRunning },
-        insightBaseline.get(row.studentId) ?? []
-      ),
+      insight: intervalIds.has(row.id)
+        ? null // structured interval session: whole-workout "faster than usual" is misleading
+        : computeFeedInsight(
+            { id: row.id, date: row.workoutDate, distanceKm: row.distanceKm, paceSecPerKm: pace, isRunning: row.isRunning },
+            insightBaseline.get(row.studentId) ?? []
+          ),
       title: cleanTitle(row.title),
       caption: sanitizeCaption(row.title, label),
       track: tracksById.get(row.id) ?? null,
