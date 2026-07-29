@@ -337,6 +337,26 @@ function formatDistanceKm(rawDistance: unknown): { distance: string | null; raw:
   return { distance: `${rendered} км`, raw };
 }
 
+/** Render one `written` goal entry. TP returns these as objects (e.g. { text, ... }),
+ *  so String(item) produced "[object Object]". Pull a human field, else compact JSON. */
+function renderWrittenGoal(item: unknown): string {
+  if (item === null || item === undefined) return "";
+  if (typeof item === "string") return item.trim();
+  if (typeof item === "number" || typeof item === "boolean") return String(item);
+  if (isRecord(item)) {
+    for (const key of ["text", "value", "note", "statement", "description", "goal", "content", "name"]) {
+      const v = item[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    try {
+      return JSON.stringify(item);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 function sanitizeGoalValue(rawGoal: unknown): string | null {
   if (rawGoal === null || rawGoal === undefined) return null;
 
@@ -375,7 +395,7 @@ function sanitizeGoalValue(rawGoal: unknown): string | null {
   if (typeof pr === "boolean") parts.push(`pr=${pr ? "yes" : "no"}`);
   if (Array.isArray(written) && written.length > 0) {
     const renderedWritten = written
-      .map((item) => (typeof item === "string" ? item.trim() : String(item)))
+      .map((item) => renderWrittenGoal(item))
       .filter((item) => item.length > 0)
       .join(" | ");
     if (renderedWritten) parts.push(`written=${renderedWritten}`);
@@ -573,6 +593,20 @@ function parseRacesFromPayload(input: {
     }
 
     const sportType = pickFirstString(eventObj, ["SportType", "sportType", "EventType", "eventType"]);
+    // Quality gate: the events feed also carries non-running starts (triathlon, walking,
+    // bike/swim). Those are not running races and must not reach race_events. A present,
+    // non-"Running*" sport type is dropped; a missing sport type is kept (ambiguous → do
+    // not over-filter a real race). Running surfaces (RunningRoad/Trail/Track/Other/...) pass.
+    if (sportType && !/^running/i.test(sportType.trim())) {
+      skippedItems.push({
+        index,
+        reason: `non_running_event_type (${sportType})`,
+        event_date: eventDate,
+        event_title: title,
+        keys: Object.keys(eventObj).slice(0, 20),
+      });
+      continue;
+    }
     const distanceValue = pickFirstNonEmpty(eventObj, ["Distance", "distance"]);
     const goalValue = pickFirstNonEmpty(eventObj, ["Goals", "goals", "Goal", "goal"]);
     const descriptionValue = pickFirstNonEmpty(eventObj, ["Description", "description", "Notes", "notes"]);
@@ -1052,24 +1086,6 @@ async function main(): Promise<void> {
         logEntry.error = (error as Error).message;
         logEntry.request_finished_at = new Date().toISOString();
         logEntry.total_ms = Date.now() - athleteTotalStartedAtMs;
-        // #region agent log
-        fetch("http://127.0.0.1:7521/ingest/adcbf755-c5c9-4a78-9e7d-4a590fbeae5c", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "819926" },
-          body: JSON.stringify({
-            sessionId: "819926",
-            runId: `${student.student_id}:${athleteId}:${args.from}:${args.to}`,
-            hypothesisId: "H4",
-            location: "tp-scan-events.ts:request-error",
-            message: "Events request failed before parser",
-            data: {
-              athleteId,
-              error: (error as Error).message,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
       }
       // Throttle: space out requests so a large backward scan does not burst TP into
       // TLS socket disconnects (observed 62/113 failures at concurrency 3, 400-day window).
