@@ -1868,7 +1868,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                   </div>
                 )}
 
-                <textarea style={{ ...S.input, minHeight: 44 }} placeholder="Заметка на этот день (необязательно)" value={form.note ?? ""} onChange={(e) => set("note", e.target.value)} />
+                <textarea style={{ ...S.input, minHeight: 44 }} placeholder="Заметка на этот день (необязательно)" value={form.note ?? ""} onChange={(e) => set("note", e.target.value)} onFocus={scrollFieldIntoView} />
                 <button type="button" style={S.saveBtn} disabled={saving || !(form.note ?? "").trim()} onClick={() => create({ date: selDay.date, kind: "note", note: form.note })}>Добавить заметку</button>
 
                 {msg ? <div style={{ ...S.cardMeta, color: C.warn }}>{msg}</div> : null}
@@ -1886,21 +1886,32 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
 // ---------------------------------------------------------------------------
 // Cabinet sections (races / day-off / wishes / billing / prediction)
 // ---------------------------------------------------------------------------
-
-function parseHms(v: string): number | null {
-  const parts = v.trim().split(":").map((x) => Number(x));
-  if (parts.some((n) => !Number.isFinite(n))) return null;
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 1) return parts[0];
-  return null;
-}
 const RACE_STATUS_LABEL: Record<string, string> = {
   declared: "на подтверждении", approved: "подтверждён", synced_to_tp: "в TP", rejected: "отклонён",
 };
 const DAYOFF_STATUS_LABEL: Record<string, string> = {
   pending: "на подтверждении", approved: "подтверждён", rejected: "отклонён", applied: "применён",
 };
+
+// Preset race distances (label sent to the coach). "Своя" reveals a decimal input.
+const RACE_DISTANCE_PRESETS = ["5 км", "10 км", "21.1 км", "42.2 км"] as const;
+
+/** iOS: after the keyboard animates up, pull the focused field into the middle of the scroll
+ *  area so it (and the submit button below) is not hidden under the keyboard. */
+function scrollFieldIntoView(e: React.FocusEvent<HTMLElement>): void {
+  const el = e.currentTarget;
+  setTimeout(() => {
+    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* older WebView */ }
+  }, 250);
+}
+
+/** h/m/s strings -> total seconds, or null when empty/invalid. */
+function combineHms(h?: string, m?: string, s?: string): number | null {
+  const hh = Number(h || 0), mm = Number(m || 0), ss = Number(s || 0);
+  if (![hh, mm, ss].every((n) => Number.isFinite(n) && n >= 0)) return null;
+  const total = Math.round(hh * 3600 + mm * 60 + ss);
+  return total > 0 ? total : null;
+}
 
 function CabinetOverlay({ section, initData, onClose }: { section: CabinetSection; initData: string; onClose: () => void }) {
   const meta = CABINET_META[section];
@@ -1914,6 +1925,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
   const [claim, setClaim] = useState<"idle" | "sending" | "sent">("idle");
+  const [customDist, setCustomDist] = useState(false);
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   async function submitPaymentClaim() {
@@ -1983,12 +1995,35 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
         {status === "ready" && !inactive && section === "races" ? (
           <div>
             <div style={S.formCard}>
-              <input style={S.input} placeholder="Название старта" value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} />
-              <input style={S.input} type="date" value={form.date ?? ""} onChange={(e) => set("date", e.target.value)} />
-              <input style={S.input} placeholder="Дистанция (напр. 21.1 км)" value={form.dist ?? ""} onChange={(e) => set("dist", e.target.value)} />
-              <input style={S.input} placeholder="Город (необязательно)" value={form.city ?? ""} onChange={(e) => set("city", e.target.value)} />
-              <input style={S.input} placeholder="Цель, чч:мм:сс (необязательно)" value={form.target ?? ""} onChange={(e) => set("target", e.target.value)} />
-              <button style={S.saveBtn} type="button" disabled={saving} onClick={() => submit({ race: { name: form.name, raceDate: form.date, distanceLabel: form.dist, city: form.city, targetResultSeconds: form.target ? parseHms(form.target) : null } })}>
+              <label style={S.fieldLabel}>Название старта</label>
+              <input style={S.input} placeholder="Например, Московский марафон" value={form.name ?? ""} onChange={(e) => set("name", e.target.value)} onFocus={scrollFieldIntoView} />
+
+              <label style={S.fieldLabel}>Дата забега</label>
+              <input style={S.input} type="date" value={form.date ?? ""} onChange={(e) => set("date", e.target.value)} onFocus={scrollFieldIntoView} aria-label="Дата забега" />
+
+              <label style={S.fieldLabel}>Дистанция</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                {RACE_DISTANCE_PRESETS.map((d) => (
+                  <button key={d} type="button" style={!customDist && form.dist === d ? S.chipOn : S.chipOff} onClick={() => { set("dist", d); setCustomDist(false); }}>{d}</button>
+                ))}
+                <button type="button" style={customDist ? S.chipOn : S.chipOff} onClick={() => { setCustomDist(true); set("dist", ""); }}>Своя</button>
+              </div>
+              {customDist ? (
+                <input style={S.input} inputMode="decimal" placeholder="Дистанция в км, напр. 42.2" value={form.dist ?? ""} onChange={(e) => set("dist", e.target.value.replace(",", ".").replace(/[^\d.]/g, ""))} onFocus={scrollFieldIntoView} aria-label="Своя дистанция" />
+              ) : null}
+
+              <label style={S.fieldLabel}>Целевое время (необязательно)</label>
+              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                <input style={{ ...S.input, marginBottom: 0, textAlign: "center" }} inputMode="numeric" pattern="[0-9]*" maxLength={2} placeholder="чч" value={form.th ?? ""} onChange={(e) => set("th", e.target.value.replace(/\D/g, "").slice(0, 2))} onFocus={scrollFieldIntoView} aria-label="часы" />
+                <input style={{ ...S.input, marginBottom: 0, textAlign: "center" }} inputMode="numeric" pattern="[0-9]*" maxLength={2} placeholder="мм" value={form.tm ?? ""} onChange={(e) => set("tm", e.target.value.replace(/\D/g, "").slice(0, 2))} onFocus={scrollFieldIntoView} aria-label="минуты" />
+                <input style={{ ...S.input, marginBottom: 0, textAlign: "center" }} inputMode="numeric" pattern="[0-9]*" maxLength={2} placeholder="сс" value={form.ts ?? ""} onChange={(e) => set("ts", e.target.value.replace(/\D/g, "").slice(0, 2))} onFocus={scrollFieldIntoView} aria-label="секунды" />
+              </div>
+              <div style={S.hint}>Часы можно не заполнять на коротких дистанциях.</div>
+
+              <label style={{ ...S.fieldLabel, marginTop: 8 }}>Город (необязательно)</label>
+              <input style={S.input} placeholder="Например, Москва" value={form.city ?? ""} onChange={(e) => set("city", e.target.value)} onFocus={scrollFieldIntoView} />
+
+              <button style={{ ...S.saveBtn, marginTop: 4 }} type="button" disabled={saving} onClick={() => submit({ race: { name: form.name, raceDate: form.date, distanceLabel: customDist ? (form.dist?.trim() ? `${form.dist.trim()} км` : "") : form.dist, city: form.city, targetResultSeconds: combineHms(form.th, form.tm, form.ts) } })}>
                 {saving ? "Отправляю…" : "Заявить старт"}
               </button>
               <div style={S.hint}>Заявка уйдёт тренеру на подтверждение. В TrainingPeaks ничего не пишется.</div>
@@ -2009,9 +2044,12 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
         {status === "ready" && !inactive && section === "dayoff" ? (
           <div>
             <div style={S.formCard}>
-              <input style={S.input} type="date" value={form.from ?? ""} onChange={(e) => set("from", e.target.value)} />
-              <input style={S.input} type="date" placeholder="по (необязательно)" value={form.to ?? ""} onChange={(e) => set("to", e.target.value)} />
-              <input style={S.input} placeholder="Причина (необязательно)" value={form.reason ?? ""} onChange={(e) => set("reason", e.target.value)} />
+              <label style={S.fieldLabel}>С какого дня</label>
+              <input style={S.input} type="date" value={form.from ?? ""} onChange={(e) => set("from", e.target.value)} onFocus={scrollFieldIntoView} aria-label="С какого дня" />
+              <label style={S.fieldLabel}>По какой день (необязательно)</label>
+              <input style={S.input} type="date" value={form.to ?? ""} onChange={(e) => set("to", e.target.value)} onFocus={scrollFieldIntoView} aria-label="По какой день" />
+              <label style={S.fieldLabel}>Причина (необязательно)</label>
+              <input style={S.input} placeholder="Например, отпуск" value={form.reason ?? ""} onChange={(e) => set("reason", e.target.value)} onFocus={scrollFieldIntoView} />
               <button style={S.saveBtn} type="button" disabled={saving} onClick={() => submit({ request: { fromDate: form.from, toDate: form.to || form.from, reason: form.reason } })}>
                 {saving ? "Отправляю…" : "Запросить выходной"}
               </button>
@@ -2039,7 +2077,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
                   <input type="range" min={1} max={10} value={form[k] ?? "5"} onChange={(e) => set(k, e.target.value)} style={{ width: "100%", accentColor: C.accent }} />
                 </div>
               ))}
-              <textarea style={{ ...S.input, minHeight: 60 }} placeholder="Что хочется поменять в тренировках?" value={form.note ?? ""} onChange={(e) => set("note", e.target.value)} />
+              <textarea style={{ ...S.input, minHeight: 60 }} placeholder="Что хочется поменять в тренировках?" value={form.note ?? ""} onChange={(e) => set("note", e.target.value)} onFocus={scrollFieldIntoView} />
               <button style={S.saveBtn} type="button" disabled={saving} onClick={() => submit({ wish: { load: form.load ? Number(form.load) : null, wellbeing: form.wellbeing ? Number(form.wellbeing) : null, schedule: form.schedule ? Number(form.schedule) : null, note: form.note } })}>
                 {saving ? "Отправляю…" : "Отправить пожелание"}
               </button>
@@ -2247,14 +2285,20 @@ const S = {
   state: { textAlign: "center", color: C.sub, fontSize: 14, padding: "48px 16px" } as React.CSSProperties,
   retry: { padding: "10px 20px", borderRadius: 10, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 14, cursor: "pointer" } as React.CSSProperties,
   overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", zIndex: 50 } as React.CSSProperties,
-  sheet: { background: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderTop: `1px solid ${C.line}`, padding: 16, width: "100%", maxHeight: "82vh", overflowY: "auto", paddingBottom: "calc(16px + env(safe-area-inset-bottom))" } as React.CSSProperties,
+  sheet: { background: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, borderTop: `1px solid ${C.line}`, padding: 16, width: "100%", boxSizing: "border-box", maxHeight: "82vh", overflowY: "auto", overflowX: "hidden", paddingBottom: "calc(16px + env(safe-area-inset-bottom))" } as React.CSSProperties,
   closeBtn: { background: C.cardAlt, border: `1px solid ${C.line}`, color: C.sub, borderRadius: 999, width: 30, height: 30, cursor: "pointer", fontSize: 14 } as React.CSSProperties,
   sectionBtn: { display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.ink, fontSize: 13, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" } as React.CSSProperties,
+  fieldLabel: { display: "block", fontSize: 12.5, color: C.sub, margin: "2px 0 5px", fontFamily: HEAD, fontWeight: 600 } as React.CSSProperties,
+  chipOff: { padding: "9px 14px", borderRadius: 999, border: `1px solid ${C.line}`, background: C.cardAlt, color: C.ink, fontSize: 14, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" } as React.CSSProperties,
+  chipOn: { padding: "9px 14px", borderRadius: 999, border: `1px solid ${C.accent}`, background: C.accent, color: C.accentInk, fontSize: 14, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" } as React.CSSProperties,
   sectionCard: { display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "12px 14px", borderRadius: 12, border: `1px solid ${C.line}`, background: C.cardAlt, cursor: "pointer" } as React.CSSProperties,
   sectionIconWrap: { display: "flex", alignItems: "center", justifyContent: "center", width: 38, height: 38, borderRadius: 10, background: "rgba(245,197,24,0.10)", border: `1px solid ${C.line}`, flexShrink: 0 } as React.CSSProperties,
   pillInner: { display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "center" } as React.CSSProperties,
   formCard: { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12, marginBottom: 12 } as React.CSSProperties,
-  input: { display: "block", width: "100%", boxSizing: "border-box", padding: "10px 12px", marginBottom: 8, borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, fontSize: 14, fontFamily: BODY } as React.CSSProperties,
+  // fontSize 16: below 16px iOS auto-zooms the page on focus (the field-tap jump). minWidth 0 +
+  // maxWidth 100%: a native type=date input has a min intrinsic width that otherwise overflows a
+  // flex/narrow container and shoves the sheet sideways.
+  input: { display: "block", width: "100%", minWidth: 0, maxWidth: "100%", boxSizing: "border-box", padding: "11px 12px", marginBottom: 8, borderRadius: 10, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, fontSize: 16, fontFamily: BODY } as React.CSSProperties,
   saveBtn: { width: "100%", padding: "11px 0", borderRadius: 10, border: "none", background: C.accent, color: C.accentInk, fontFamily: HEAD, fontWeight: 600, fontSize: 14, cursor: "pointer" } as React.CSSProperties,
   metricPrimary: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 } as React.CSSProperties,
   metricSecondary: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(78px, 1fr))", gap: 12, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.line}` } as React.CSSProperties,
