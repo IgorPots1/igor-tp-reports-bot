@@ -82,12 +82,26 @@ const FACTOR_GROUNDING: Partial<Record<StatedFactorKind, RegExp>> = {
   undersleep: /спал|сон\b|сна\b|сну|высп|недосып|недоспал|бессон|уснул|засып|поздно\s+(?:лёг|лег|легл)|мало\s+спал|не\s+спал|ночь\s+без\s+сна|глаза\s+слипал|разбит(?:ый|ая|о)?\s+с\s+утра/iu,
   dehydration: /вод[аыуе]|воды|пил|попи|питьё|пить\b|напи|жажд|обезвож|сушняк|сухо\s+во\s+рту|пересох/iu,
   nutrition: /гел[ья]|еда|поел|не\s+ел|ел\b|съел|каш|банан|батончик|финик|изотоник|углевод|натощак|голод|сыт|завтрак|позавтрак|перекус|тост|джем|булк|подкреп|подпит|не\s+поел|загрузк|перед\s+(?:стартом|бегом|пробеж)/iu,
-  heat: /жар|пекл|духот|парил|очень\s+тепло|тепл[оа]|солнц|зно[йя]|солнцепёк|[+][12345]\d|[23]\d\s*(?:°|градус|[сcC]\b)|градус/iu,
+  heat: /жар|пекл|духот|парил|очень\s+тепло|солнцепёк|зно[йя]|[+][12345]\d|[23]\d\s*(?:°|градус|[сcC]\b)|градус/iu,
   humidity: /влажн|духот|парн|парит|парилк|нет\s+ветра|воздух\s+сто|не\s+продува|нечем\s+дышать|сп[ёе]рт|как\s+в\s+бане|марев/iu,
   life_stress: /работ|ремонт|переезд|аврал|завал|стресс|нерв|вымот|измотан|замот|запар|напряж|дедлайн|выгоран|операц|перегруз|устал|устаю|не\s+высыпаюсь|детьми|дети\s+(?:бол|леж)|откачива|командиров|смен[аеуы]\b/iu,
   conditions: /горк|в\s+гору|рельеф|подъём|подъем|дорожк|манеж|тредмил|бегов[а-яё]*\s+дорож|ветер|ветр|грязь|снег|гололёд|гололед|трасс|тропа|тропинк|асфальт|песок|набор\s+высот|горн|дожд|ливень|слякот|маршрут|дорог[аиуео]|обочин|набережн|лес\b|парк\b/iu,
   device_glitch: /час[ыои]|датчик|пульс|сердц|чсс|gps|джипиэс|спутник|навигац|трек|дистанц|расстоян|сигнал|глюч|вр[ёе]т|врал|сбо|кривой|крив|завыш|занижен|бар?ах|подвис|потерял/iu,
 };
+
+/** Align stated factors to the TRIGGER day so a factor matches the SAME window as studentWords (which
+ *  are trigger-anchored). Bug caught (Эрикенова 29.07): heat came from «Поцелованная солнцем» posted the
+ *  DAY BEFORE (the tight −1..+1 date window caught yesterday), while studentWords showed only today's
+ *  report — the model then wrote a heat paragraph the student never asked for. Measured 8/23 (35%) cards
+ *  had a factor whose quote isn't in studentWords. Fix: a NON-persistent factor (heat/dehydration/
+ *  nutrition/soreness/muscle_doms/conditions/humidity/device_glitch — about THIS run) is kept only if it
+ *  was named on the trigger day. life_stress/undersleep KEEP their multi-day accumulation window (design:
+ *  «несколько дней подряд про усталость = накопление»). No trigger (tests/rebuilds) → unchanged. */
+export function alignFactorsToTriggerDay(factors: StatedFactor[], triggerObservedAt: string | undefined): StatedFactor[] {
+  if (!triggerObservedAt) return factors;
+  const triggerDay = triggerObservedAt.slice(0, 10);
+  return factors.filter((f) => PERSISTENT_FACTORS.has(f.factor) || f.date === triggerDay);
+}
 
 /** Block #3 — does the cited quote actually contain domain evidence for this factor? Guards the Haiku
  *  path (where the model picks a narrow snippet and can mislabel it) against cross-domain misattribution.

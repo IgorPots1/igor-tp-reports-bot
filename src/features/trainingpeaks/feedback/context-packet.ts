@@ -10,6 +10,7 @@
 
 import { computeSplitHalf } from "./split-half.ts";
 import { planObservations } from "./observation-planner.ts";
+import { alignFactorsToTriggerDay } from "./stated-factors.ts";
 import { FEWSHOTS, GLOSS, ordinalWord, registerWord, sexRuleText } from "./feedback-corpus.ts";
 import type { ContextPacket, Observation, PlannerDerivedMetrics, PlannerLap, PlannerStudentMessage, SessionType } from "./types.ts";
 
@@ -440,6 +441,11 @@ function buildSensorGlitchPacket(input: ContextPacket, reason: string): Feedback
 }
 
 export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackContextPacketResult {
+  // Align factors to the trigger day (same window as studentWords). Done HERE, not at extraction, because
+  // the trigger is only known when the sweep matches the report to the run — extraction runs earlier.
+  if (input.triggerObservedAt && Array.isArray(input.statedFactors)) {
+    input.statedFactors = alignFactorsToTriggerDay(input.statedFactors, input.triggerObservedAt);
+  }
   const blockReason = resolveBlock(input.current);
   if (blockReason !== null) {
     // Данные недостоверны, НЕ молчим: словесный черновик по словам ученика (правка 2).
