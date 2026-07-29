@@ -507,13 +507,32 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   const studRows = await fetchAllRows<Record<string, unknown>>(
     (from, to) =>
       withSupabaseNetworkRetry(() =>
-        supabase.from("trainingpeaks_students").select("id, is_active, is_service_account").order("id", { ascending: true }).range(from, to)
+        supabase.from("trainingpeaks_students").select("id, is_active, is_service_account, telegram_chat_id, telegram_delivery_enabled").order("id", { ascending: true }).range(from, to)
       ) as Promise<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
     { label: "report-sweep:students" }
   );
   const activeIds = new Set(
     (studRows ?? []).filter((s) => s.is_active && !s.is_service_account).map((s) => s.id as string)
   );
+  // DM-reachable = linked chat AND delivery on (mirrors the send gate in reports/list). Group-reachable
+  // is derived below from recent group_topic observations. A student reachable by NEITHER can't receive a
+  // draft — we enqueue such runs as BLOCKED with a clear reason instead of piling up undeliverable cards
+  // (Игорь: «хочу видеть в списке 'этому не могу написать', а не гадать»). Measured safe: 3/112 students
+  // unreachable, 0 of 23 recently-delivered students falsely flagged.
+  const dmCapableIds = new Set(
+    (studRows ?? []).filter((s) => Boolean(s.telegram_chat_id) && s.telegram_delivery_enabled).map((s) => s.id as string)
+  );
+  // Group-reachable = has any group_topic message in the last 30d (the send path can share there even
+  // without a linked-thread row). dmCapable OR group-reachable = can receive a draft.
+  const groupTopicRows = await fetchIn<Record<string, unknown>>(
+    supabase,
+    "trainingpeaks_telegram_context_observations",
+    "student_id",
+    "student_id",
+    [...activeIds],
+    (q) => q.eq("source_type", "group_topic").gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+  );
+  const groupReachableIds = new Set((groupTopicRows ?? []).map((o) => o.student_id as string));
 
   // 1. recognised reports in the lookback, attributed to an active student.
   // Paginated: a busy 48h window can exceed 1000 observations; the old .limit(5000)
@@ -716,6 +735,21 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       const plannerInput = packets.get(cacheId);
       if (!plannerInput) {
         summary.runsSkipped += 1;
+        continue;
+      }
+      // Reachability gate: a student with NO channel (not DM-capable AND no recent group topic) can't
+      // receive a draft — enqueue BLOCKED with a clear reason so it surfaces as «этому не могу написать»
+      // instead of a pending card that silently never sends. Only runs where a report was matched reach
+      // here, so we never block a run the student didn't report on.
+      if (!dmCapableIds.has(studentId) && !groupReachableIds.has(studentId)) {
+        if (dryRun) {
+          details.push({ studentId, workoutCacheId: cacheId, workoutDate: row.workout_date as string, reportDate, wordsCount: 0, blocked: true });
+          summary.runsBlocked += 1;
+        } else {
+          const res = await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: "нет канала (Business-DM/группа) — не могу написать этому ученику" });
+          if (res.skipped) summary.runsSkipped += 1;
+          else summary.runsBlocked += 1;
+        }
         continue;
       }
       // Anchor the student-words window to the TRIGGER (the report that matched this run), so yesterday's
