@@ -2130,7 +2130,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
               <button style={{ ...S.saveBtn, marginTop: 4 }} type="button" disabled={saving} onClick={() => submit({ race: { name: form.name, raceDate: form.date, distanceLabel: customDist ? (form.dist?.trim() ? `${form.dist.trim()} км` : "") : form.dist, city: form.city, targetResultSeconds: combineHms(form.th, form.tm, form.ts) } })}>
                 {saving ? "Отправляю…" : "Заявить старт"}
               </button>
-              <div style={S.hint}>Заявка уйдёт тренеру на подтверждение. В TrainingPeaks ничего не пишется.</div>
+              <div style={S.hint}>Старт сохранится сразу, без ожидания тренера. Он появится в списке ниже.</div>
             </div>
             {races.map((r) => (
               <div key={r.id} style={S.listRow}>

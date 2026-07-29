@@ -34,16 +34,35 @@ function clampScale(v: unknown): number | null {
 // Races (Block 6)
 // ---------------------------------------------------------------------------
 
+/** Normalized race name for dedup: trimmed, lower-cased, collapsed whitespace. */
+function normRaceName(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/gu, " ");
+}
+
 export async function createClubRace(
   studentId: string,
   input: { name?: unknown; raceDate?: unknown; distanceLabel?: unknown; distanceMeters?: unknown; city?: unknown; country?: unknown; targetResultSeconds?: unknown }
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; duplicate?: boolean }> {
   const name = typeof input.name === "string" ? input.name.trim() : "";
   const raceDate = ymd(input.raceDate);
   if (!name || !raceDate) {
     return { ok: false, error: "Укажи название и дату старта." };
   }
   const supabase = createSupabaseServerClient();
+  // Dedup: the SAME student + date + name (case/space-insensitive) must not create a
+  // second row. Pre-check for a friendly no-op; the DB unique index (migration
+  // 20260815000000) is the concurrency-safe backstop (23505 handled below). Similar (not
+  // identical) names on the same date are allowed and flagged for the coach in the admin list.
+  const { data: sameDay } = await supabase
+    .from("club_races")
+    .select("id, name")
+    .eq("student_id", studentId)
+    .eq("race_date", raceDate);
+  if (Array.isArray(sameDay) && sameDay.some((r) => normRaceName(String((r as { name?: unknown }).name ?? "")) === normRaceName(name))) {
+    return { ok: true, duplicate: true }; // idempotent: already declared, no second record
+  }
+  // Races are auto-approved: the student's declaration is trusted, no coach-approval wait.
+  // Only the STATUS is automated here; the TP enqueue/execution stays a separate, gated step.
   const { error } = await supabase.from("club_races").insert({
     student_id: studentId,
     name,
@@ -53,9 +72,14 @@ export async function createClubRace(
     city: typeof input.city === "string" ? input.city.trim() || null : null,
     country: typeof input.country === "string" ? input.country.trim() || null : null,
     target_result_seconds: intOrNull(input.targetResultSeconds),
-    status: "declared",
+    status: "approved",
+    approved_by: "student_self",
+    approved_at: new Date().toISOString(),
   });
   if (error) {
+    if (error.code === "23505") {
+      return { ok: true, duplicate: true }; // unique index caught a concurrent duplicate
+    }
     const kind = logClubDbError("createClubRace", error);
     return { ok: false, error: kind === "missing_table" ? "Раздел стартов ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
   }
