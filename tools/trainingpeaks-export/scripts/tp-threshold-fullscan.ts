@@ -151,6 +151,7 @@ type AthleteRow = {
   speedMethod: number | null;
   speedCovered: boolean;
   evidence: Evidence | null;
+  applied: { display: string; at: string } | null; // already applied & threshold unchanged since
 };
 
 async function main(): Promise<void> {
@@ -472,9 +473,33 @@ async function main(): Promise<void> {
   }
   console.log(`tempo workouts usable: ${tempoUsable}; athletes with tempo evidence (≥3 runs): ${tempoAthletes}`);
 
+  // ── already-applied log: drop athletes we've already handled, UNLESS the live
+  //    threshold no longer matches value_after (i.e. it was changed again). ──────
+  const appliedPace = new Map<number, { valueAfter: number; display: string; at: string }>();
+  {
+    const { data } = await supabase
+      .from("tp_threshold_applications")
+      .select("trainingpeaks_athlete_id, value_after, value_after_display, applied_at")
+      .eq("kind", "pace")
+      .order("applied_at", { ascending: false });
+    for (const r of data ?? []) {
+      const id = Number(r.trainingpeaks_athlete_id);
+      if (!appliedPace.has(id) && typeof r.value_after === "number") {
+        appliedPace.set(id, { valueAfter: r.value_after as number, display: (r.value_after_display as string) ?? "", at: r.applied_at as string });
+      }
+    }
+  }
+
   // ── assemble every roster athlete ─────────────────────────────────────────
   const rows: AthleteRow[] = [];
   for (const [id, cur] of current) {
+    // "applied & unchanged" = a pace application exists AND the current (post-apply,
+    // freshly-snapshotted) speed threshold still equals value_after. If Igor later
+    // edits the threshold by hand in TP and re-snapshots, they no longer match → the
+    // athlete returns to the candidate list.
+    const app = appliedPace.get(id);
+    const curMps = cur.pace !== null && cur.pace > 0 ? 1000 / cur.pace : null;
+    const applied = app && curMps !== null && Math.abs(curMps - app.valueAfter) < 5e-3 ? { display: app.display, at: app.at } : null;
     rows.push({
       athleteId: id,
       name: nameById.get(id) ?? `id ${id}`,
@@ -483,6 +508,7 @@ async function main(): Promise<void> {
       speedMethod: cur.method,
       speedCovered: cur.method !== null && getCoveredScheme("speed", cur.method) !== null,
       evidence: evidenceByAthlete.get(id) ?? null,
+      applied,
     });
   }
   rows.sort((a, b) => {
@@ -494,12 +520,15 @@ async function main(): Promise<void> {
     return db.localeCompare(da);
   });
 
-  const withRace = rows.filter((r) => r.evidence && r.evidence.rank <= 2);
+  const appliedRows = rows.filter((r) => r.applied);
+  const candidate = rows.filter((r) => !r.applied); // not yet applied → still needs a decision
+  const withRace = candidate.filter((r) => r.evidence && r.evidence.rank <= 2);
   const byVolThenDate = (a: AthleteRow, b: AthleteRow) => (b.evidence!.nReps ?? 0) - (a.evidence!.nReps ?? 0) || b.evidence!.date.localeCompare(a.evidence!.date);
-  const withInterval = rows.filter((r) => r.evidence && r.evidence.rank === 4).sort(byVolThenDate);
-  const withTempo = rows.filter((r) => r.evidence && r.evidence.rank === 5).sort(byVolThenDate);
-  const noData = rows.filter((r) => !r.evidence);
-  console.log(`\n── aggregates ──\nrace-based: ${withRace.length} · interval-based: ${withInterval.length} · tempo-based: ${withTempo.length} · no-data: ${noData.length} · total roster: ${rows.length}`);
+  const withInterval = candidate.filter((r) => r.evidence && r.evidence.rank === 4).sort(byVolThenDate);
+  const withTempo = candidate.filter((r) => r.evidence && r.evidence.rank === 5).sort(byVolThenDate);
+  const noData = candidate.filter((r) => !r.evidence);
+  const remaining = withRace.length + withInterval.length + withTempo.length; // have evidence, not yet applied
+  console.log(`\n── aggregates ──\nПРИМЕНЕНО: ${appliedRows.length} · ОСТАЛОСЬ кандидатов: ${remaining} (забег ${withRace.length} · интервалы ${withInterval.length} · темпо ${withTempo.length}) · без данных ${noData.length} · всего ${rows.length}`);
 
   // ── JSON for the artifact ─────────────────────────────────────────────────
   const outDir = path.join(toolRoot, "action-artifacts", "threshold-candidates");
@@ -522,7 +551,11 @@ async function main(): Promise<void> {
       proposed_hr: r.evidence?.proposedHr ?? null,
       basis: r.evidence?.basis ?? null,
       evidence_date: r.evidence?.date ?? null,
+      applied: r.applied != null,
+      applied_display: r.applied?.display ?? null,
+      applied_at: r.applied?.at ?? null,
     })),
+    aggregates: { applied: appliedRows.length, remaining, no_data: noData.length, total: rows.length },
   };
   writeFileSync(path.join(outDir, "fullscan.json"), `${JSON.stringify(json, null, 2)}\n`, "utf8");
   console.log(`JSON: ${path.join(outDir, "fullscan.json")}`);
@@ -538,8 +571,15 @@ async function main(): Promise<void> {
     `| ${r.name} | ${fmtPace(r.currentPace)} | ${r.evidence ? `**${fmtPace(r.evidence.proposedPace)}**` : "—"} | ${delta(r)} | ${r.evidence?.basis ?? "—"} | ${r.evidence?.tier ?? "—"} | ${r.evidence?.confidence ?? "—"} | ${r.speedCovered ? "✅" : `❌ м${r.speedMethod ?? "?"}`} |`;
   const head = `| имя | тек.темп | предлаг | Δ | на чём | тир | надёжность | метод |\n|---|---|---|---|---|---|---|---|`;
   md.push(`# Полный скан кандидатов на порог — ТЕМП (read-only, ${today})`);
-  md.push(`Только темп (пульс вынесен в hr-reference.md). Тиры по надёжности: забег (vdot.ts FTPa) > темпо ≥20мин (структурно, поправка по длительности: 20–30→0, 30–45→−8, 45+→−18 сек/км, Daniels T↔M) > интервалы ≥6мин (темп репов). Забеги медленнее обычного тренировочного темпа атлета отсеяны (${racesDroppedSlow} шт). Темп в мин/км; текущий порог из tp_zone_snapshots.`);
+  md.push(`**ПРИМЕНЕНО: ${appliedRows.length} · ОСТАЛОСЬ кандидатов с доказательством: ${remaining} · без данных: ${noData.length} · всего: ${rows.length}.**`);
+  md.push(`Применённые (порог уже выставлен и с тех пор не менялся) исключены из списков ниже; вручную поправишь порог в TP и пере-снимешь снапшот — человек вернётся. Только темп (пульс — hr-reference.md). Тиры по надёжности: забег (vdot.ts FTPa) > интервалы ≥6мин > темпо ≥20мин (структурно, поправка по длительности 20–30→0, 30–45→−8, 45+→−18 сек/км, Daniels T↔M). Забеги медленнее обычного тренировочного темпа отсеяны (${racesDroppedSlow} шт). Текущий порог из tp_zone_snapshots.`);
   md.push("");
+  if (appliedRows.length) {
+    md.push(`## ✓ Применено — ${appliedRows.length}`);
+    md.push(`| имя | порог | когда |\n|---|---|---|`);
+    for (const r of appliedRows) md.push(`| ${r.name} | ${r.applied?.display ?? fmtPace(r.currentPace)} | ${(r.applied?.at ?? "").slice(0, 10)} |`);
+    md.push("");
+  }
   md.push(`## 1. По забегу (свежие 10к/полумарафон сверху) — ${withRace.length}`);
   md.push(head);
   for (const r of withRace) md.push(rowMd(r));
