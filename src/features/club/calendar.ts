@@ -269,14 +269,20 @@ export async function deleteCalendarEntry(studentId: string, entryId: string): P
  * nothing here talks to TrainingPeaks. The caller (the executor, Igor's hand) passes the
  * server-assigned TP workout id from the create response.
  */
-export async function markCalendarEntryApplied(entryId: string, tpWorkoutId: number): Promise<{ ok: boolean; error?: string }> {
+export async function markCalendarEntryApplied(
+  entryId: string,
+  tpWorkoutId: number,
+  entityType: "workout" | "event" | "note" | "availability",
+): Promise<{ ok: boolean; error?: string }> {
   if (!entryId || !Number.isFinite(tpWorkoutId)) {
     return { ok: false, error: "Нужны entryId и числовой tpWorkoutId." };
   }
   const supabase = createSupabaseServerClient();
   const { error } = await supabase
     .from("club_calendar_entries")
-    .update({ applied_tp_workout_id: tpWorkoutId, applied_at: new Date().toISOString(), status: "applied" })
+    // applied_entity_type is written so rollback deletes the right TP resource without
+    // re-planning by (possibly different) current flags. See the 2026-08-10 migration.
+    .update({ applied_tp_workout_id: tpWorkoutId, applied_entity_type: entityType, applied_at: new Date().toISOString(), status: "applied" })
     .eq("id", entryId)
     .eq("status", "approved"); // only an approved entry may transition to applied
   if (error) {
@@ -303,7 +309,7 @@ export async function rollbackCalendarEntryApplied(entryId: string): Promise<{ o
   const tpWorkoutId = (before as { applied_tp_workout_id: number | null } | null)?.applied_tp_workout_id ?? null;
   const { error } = await supabase
     .from("club_calendar_entries")
-    .update({ applied_tp_workout_id: null, applied_at: null, status: "approved" })
+    .update({ applied_tp_workout_id: null, applied_entity_type: null, applied_at: null, status: "approved" })
     .eq("id", entryId)
     .eq("status", "applied");
   if (error) {

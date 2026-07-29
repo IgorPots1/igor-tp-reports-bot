@@ -36,11 +36,13 @@ function distanceLabelToMeters(label: string | null): number | null {
   return m ? Math.round(Number(m[1]) * 1000) : null;
 }
 
-async function loadEntry(id: string): Promise<{ row: ClubCalendarEntryRow; athleteId: number | null } | null> {
+type EntityType = "workout" | "event" | "note" | "availability";
+
+async function loadEntry(id: string): Promise<{ row: ClubCalendarEntryRow; athleteId: number | null; appliedEntityType: EntityType | null } | null> {
   const supabase = createSupabaseServerClient();
   const { data } = await supabase
     .from("club_calendar_entries")
-    .select("id, student_id, entry_date, kind, preferred_workout_type, note, day_off_reason, race_name, race_city, race_distance_label, race_target_seconds, status, applied_tp_workout_id")
+    .select("id, student_id, entry_date, kind, preferred_workout_type, note, day_off_reason, race_name, race_city, race_distance_label, race_target_seconds, status, applied_tp_workout_id, applied_entity_type")
     .eq("id", id)
     .maybeSingle();
   if (!data) return null;
@@ -63,14 +65,19 @@ async function loadEntry(id: string): Promise<{ row: ClubCalendarEntryRow; athle
     status: (r.status as string) ?? "",
     appliedTpWorkoutId: (r.applied_tp_workout_id as number | null) ?? null,
   };
-  return { row, athleteId: athUrl ? parseAthleteIdFromUrl(athUrl) : null };
+  return { row, athleteId: athUrl ? parseAthleteIdFromUrl(athUrl) : null, appliedEntityType: (r.applied_entity_type as EntityType | null) ?? null };
+}
+
+/** plan.actionType → the DB entity-type tag persisted at apply time. */
+function entityTypeOf(actionType: "create_workout" | "create_event" | "create_note" | "create_availability"): EntityType {
+  return actionType === "create_event" ? "event" : actionType === "create_note" ? "note" : actionType === "create_availability" ? "availability" : "workout";
 }
 
 async function main(): Promise<void> {
   if (!entryId) { console.error("usage: club-execute-one.ts <entryId> [--apply|--rollback]"); process.exit(1); }
   const loaded = await loadEntry(entryId);
   if (!loaded) { console.error(`entry ${entryId} не найдена`); process.exit(1); }
-  const { row, athleteId } = loaded;
+  const { row, athleteId, appliedEntityType } = loaded;
 
   const raceAsEvent = isClubRaceAsEventEnabled();
   const notesAsNote = isClubNotesAsNoteEnabled();
@@ -79,22 +86,27 @@ async function main(): Promise<void> {
 
   if (ROLLBACK) {
     if (!row.appliedTpWorkoutId) { console.error("у записи нет applied_tp_workout_id — нечего откатывать"); process.exit(1); }
-    // Determine entity kind (event / note / availability / workout) by re-planning a clone
-    // (applied guard cleared). Roll back with the SAME flags you applied with.
-    const probe = planCalendarEntryAction({ ...row, appliedTpWorkoutId: null, status: "approved" }, athleteId, planOptions);
-    const isEvent = probe.ok && probe.actionType === "create_event";
-    const isNote = probe.ok && probe.actionType === "create_note";
-    const isAvailability = probe.ok && probe.actionType === "create_availability";
-    const entity = isEvent ? "event" : isNote ? "note" : isAvailability ? "availability" : "workout";
+    // Entity kind is READ FROM THE RECORD (applied_entity_type), so the right delete endpoint
+    // is chosen regardless of current flags. Fallback (null = applied before the column
+    // existed): re-plan with current flags and WARN that flags must match how it was applied.
+    let entity: EntityType;
+    if (appliedEntityType) {
+      entity = appliedEntityType;
+      console.log(`тип из записи: applied_entity_type=${entity} (флаги для отката не важны)`);
+    } else {
+      const probe = planCalendarEntryAction({ ...row, appliedTpWorkoutId: null, status: "approved" }, athleteId, planOptions);
+      entity = probe.ok ? entityTypeOf(probe.actionType) : "workout";
+      console.log(`applied_entity_type ПУСТ (старая запись) → тип угадан по флагам: ${entity}. ВАЖНО: откатывай с теми же флагами, что при apply.`);
+    }
     if (!APPLY || process.env.CLUB_TP_EXECUTION_ENABLED !== "true") {
       console.log(`DRY-RUN rollback: удалил бы TP ${entity} ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката: --apply + CLUB_TP_EXECUTION_ENABLED=true.`);
       process.exit(0);
     }
-    const del = isEvent
+    const del = entity === "event"
       ? await deleteEvent(athleteId as number, row.appliedTpWorkoutId)
-      : isNote
+      : entity === "note"
       ? await deleteNote(athleteId as number, row.appliedTpWorkoutId)
-      : isAvailability
+      : entity === "availability"
       ? await deleteAvailability(athleteId as number, row.appliedTpWorkoutId)
       : await deleteWorkout("tpapi", athleteId as number, row.appliedTpWorkoutId);
     console.log(`delete ${entity} status=${del.status}`);
@@ -139,8 +151,9 @@ async function main(): Promise<void> {
     createdId = res.workoutId;
     console.log(`создан TP workout id=${createdId}`);
   }
-  const mark = await markCalendarEntryApplied(entryId, createdId);
-  console.log(mark.ok ? `записан applied_tp_workout_id=${createdId}, статус applied` : `write-back ошибка: ${mark.error}`);
+  const entityType = entityTypeOf(plan.actionType);
+  const mark = await markCalendarEntryApplied(entryId, createdId, entityType);
+  console.log(mark.ok ? `записан applied_tp_workout_id=${createdId}, applied_entity_type=${entityType}, статус applied` : `write-back ошибка: ${mark.error}`);
   console.log("проверь в TP-календаре ученика.");
   process.exit(mark.ok ? 0 : 1);
 }
