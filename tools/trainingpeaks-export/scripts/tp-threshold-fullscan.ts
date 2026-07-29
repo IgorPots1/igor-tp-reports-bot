@@ -32,6 +32,7 @@ import process from "node:process";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { parseAthleteIdFromUrl } from "../../../src/features/trainingpeaks/athlete-roster-import.ts";
+import { getAthleteSettings } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { ftpaSecPerKm, vdotFromRace } from "../../../src/app/tools/plan/vdot.ts";
 import { toolRoot } from "./lib/paths.ts";
 import { getCoveredScheme } from "./lib/tp-zone-formulas.ts";
@@ -473,8 +474,7 @@ async function main(): Promise<void> {
   }
   console.log(`tempo workouts usable: ${tempoUsable}; athletes with tempo evidence (≥3 runs): ${tempoAthletes}`);
 
-  // ── already-applied log: drop athletes we've already handled, UNLESS the live
-  //    threshold no longer matches value_after (i.e. it was changed again). ──────
+  // ── already-applied log ───────────────────────────────────────────────────
   const appliedPace = new Map<number, { valueAfter: number; display: string; at: string }>();
   {
     const { data } = await supabase
@@ -490,20 +490,41 @@ async function main(): Promise<void> {
     }
   }
 
+  // For each logged athlete read the LIVE TP threshold — the ONLY source of truth.
+  // The snapshot is written at apply time so it always equals value_after and would
+  // hide a later hand-edit in the web forever. A live GET catches that edit: if the
+  // live threshold no longer equals value_after, the athlete returns to the list (and
+  // we show the live value as their current). Live check only for logged athletes (few).
+  const liveThreshold = new Map<number, number>(); // athleteId → live wt0 speed threshold (m/s)
+  if (appliedPace.size > 0) {
+    console.log(`live threshold check (GET /settings) for ${appliedPace.size} applied athletes…`);
+    for (const id of appliedPace.keys()) {
+      try {
+        const settings = await getAthleteSettings(id);
+        const sp = wt0(settings.speedZones);
+        if (sp && typeof sp.threshold === "number") liveThreshold.set(id, sp.threshold);
+      } catch (e) {
+        // dead cookie / error → can't verify live: do NOT hide (safer to show them).
+        console.warn(`  live check failed for ${id} — will NOT hide: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
   // ── assemble every roster athlete ─────────────────────────────────────────
   const rows: AthleteRow[] = [];
   for (const [id, cur] of current) {
-    // "applied & unchanged" = a pace application exists AND the current (post-apply,
-    // freshly-snapshotted) speed threshold still equals value_after. If Igor later
-    // edits the threshold by hand in TP and re-snapshots, they no longer match → the
-    // athlete returns to the candidate list.
     const app = appliedPace.get(id);
-    const curMps = cur.pace !== null && cur.pace > 0 ? 1000 / cur.pace : null;
-    const applied = app && curMps !== null && Math.abs(curMps - app.valueAfter) < 5e-3 ? { display: app.display, at: app.at } : null;
+    const live = liveThreshold.get(id); // m/s, live from TP (logged athletes only)
+    // applied & unchanged = a pace application exists AND the LIVE TP threshold still
+    // equals value_after. Hand-edit in TP (live ≠ value_after) → not applied → returns.
+    const applied = app && live !== undefined && Math.abs(live - app.valueAfter) < 5e-3 ? { display: app.display, at: app.at } : null;
+    // For a logged athlete, prefer the LIVE threshold as their displayed current pace
+    // (reflects a hand-edit); everyone else uses the snapshot value.
+    const currentPace = live !== undefined && live > 0 ? 1000 / live : cur.pace;
     rows.push({
       athleteId: id,
       name: nameById.get(id) ?? `id ${id}`,
-      currentPace: cur.pace,
+      currentPace,
       currentHr: cur.hr,
       speedMethod: cur.method,
       speedCovered: cur.method !== null && getCoveredScheme("speed", cur.method) !== null,
@@ -572,7 +593,7 @@ async function main(): Promise<void> {
   const head = `| имя | тек.темп | предлаг | Δ | на чём | тир | надёжность | метод |\n|---|---|---|---|---|---|---|---|`;
   md.push(`# Полный скан кандидатов на порог — ТЕМП (read-only, ${today})`);
   md.push(`**ПРИМЕНЕНО: ${appliedRows.length} · ОСТАЛОСЬ кандидатов с доказательством: ${remaining} · без данных: ${noData.length} · всего: ${rows.length}.**`);
-  md.push(`Применённые (порог уже выставлен и с тех пор не менялся) исключены из списков ниже; вручную поправишь порог в TP и пере-снимешь снапшот — человек вернётся. Только темп (пульс — hr-reference.md). Тиры по надёжности: забег (vdot.ts FTPa) > интервалы ≥6мин > темпо ≥20мин (структурно, поправка по длительности 20–30→0, 30–45→−8, 45+→−18 сек/км, Daniels T↔M). Забеги медленнее обычного тренировочного темпа отсеяны (${racesDroppedSlow} шт). Текущий порог из tp_zone_snapshots.`);
+  md.push(`Применённые (порог уже выставлен и с тех пор не менялся) исключены из списков ниже; поправишь порог руками в TP — человек вернётся (скан сверяет с ЖИВЫМ порогом из GET /settings, не со снапшотом). Только темп (пульс — hr-reference.md). Тиры по надёжности: забег (vdot.ts FTPa) > интервалы ≥6мин > темпо ≥20мин (структурно, поправка по длительности 20–30→0, 30–45→−8, 45+→−18 сек/км, Daniels T↔M). Забеги медленнее обычного тренировочного темпа отсеяны (${racesDroppedSlow} шт). Текущий порог из tp_zone_snapshots.`);
   md.push("");
   if (appliedRows.length) {
     md.push(`## ✓ Применено — ${appliedRows.length}`);
