@@ -25,11 +25,13 @@ import {
   type ClubActionPlan,
   type ClubCalendarEntryRow,
 } from "@/features/club/tp-execution";
-import { isClubRaceAsEventEnabled, isClubNotesAsNoteEnabled } from "@/features/club/constants";
+import { isClubRaceAsEventEnabled, isClubNotesAsNoteEnabled, isClubDayoffAsAvailabilityEnabled } from "@/features/club/constants";
 import { parseAthleteIdFromUrl } from "@/features/trainingpeaks/athlete-roster-import";
 
 const RACE_AS_EVENT = isClubRaceAsEventEnabled();
 const NOTES_AS_NOTE = isClubNotesAsNoteEnabled();
+const DAYOFF_AS_AVAILABILITY = isClubDayoffAsAvailabilityEnabled();
+const PLAN_OPTIONS = { raceAsEvent: RACE_AS_EVENT, notesAsNote: NOTES_AS_NOTE, dayoffAsAvailability: DAYOFF_AS_AVAILABILITY };
 
 // Rough distance-label → meters for the planned-workout distance (best-effort; the
 // marker workout is fine without it — distance is only useful for a race).
@@ -82,6 +84,8 @@ function planLine(p: ClubActionPlan, conflict: boolean): string {
       ? `create_event (Event) name="${p.eventPayload.name}" type=${p.eventPayload.eventType}`
       : p.actionType === "create_note"
       ? `create_note (Note) title="${p.notePayload.title}" date=${p.notePayload.noteDate}`
+      : p.actionType === "create_availability"
+      ? `create_availability (Availability type ${p.availabilityPayload.type}) ${p.availabilityPayload.startDate}..${p.availabilityPayload.endDate} reason="${p.availabilityPayload.reason}"`
       : `create_workout title="${p.payload.title}"`;
     // Full entry id так, чтобы можно было сразу запустить execute-one <id> --apply.
     return `- [план] id=${p.requestId} · ${p.label} -> ${what}${u}${flag}`;
@@ -93,7 +97,7 @@ async function main(): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { data: entryData, error } = await supabase
     .from("club_calendar_entries")
-    .select("id, student_id, entry_date, kind, preferred_workout_type, note, race_name, race_city, race_distance_label, race_target_seconds, status, applied_tp_workout_id")
+    .select("id, student_id, entry_date, kind, preferred_workout_type, note, day_off_reason, race_name, race_city, race_distance_label, race_target_seconds, status, applied_tp_workout_id")
     .eq("status", "approved")
     .is("applied_tp_workout_id", null)
     .order("entry_date", { ascending: true });
@@ -111,6 +115,7 @@ async function main(): Promise<void> {
     kind: (r.kind as ClubCalendarEntryRow["kind"]) ?? "note",
     preferredType: (r.preferred_workout_type as ClubCalendarEntryRow["preferredType"]) ?? null,
     note: (r.note as string | null) ?? null,
+    dayOffReason: (r.day_off_reason as string | null) ?? null,
     raceName: (r.race_name as string | null) ?? null,
     raceCity: (r.race_city as string | null) ?? null,
     raceDistanceLabel: (r.race_distance_label as string | null) ?? null,
@@ -121,7 +126,7 @@ async function main(): Promise<void> {
   }));
 
   const planned = rows.map((row) => {
-    const plan = planCalendarEntryAction(row, athleteIds.get(row.studentId) ?? null, { raceAsEvent: RACE_AS_EVENT, notesAsNote: NOTES_AS_NOTE });
+    const plan = planCalendarEntryAction(row, athleteIds.get(row.studentId) ?? null, PLAN_OPTIONS);
     const conflict = row.kind === "day_off" && plannedSet.has(`${row.studentId}|${row.date}`);
     return { row, plan, conflict };
   });
@@ -133,6 +138,7 @@ async function main(): Promise<void> {
         id: `example-${kind}`, studentId: "example", date: "2026-08-15", kind,
         preferredType: kind === "preference" ? "intervals" : null,
         note: kind === "note" ? "Утром совещание, лучше вечерняя тренировка" : null,
+        dayOffReason: kind === "day_off" ? "Injury" : null,
         raceName: kind === "race" ? "Сочи Полумарафон" : null,
         raceCity: kind === "race" ? "Сочи" : null,
         raceDistanceLabel: kind === "race" ? "21.1 км" : null,
@@ -141,7 +147,7 @@ async function main(): Promise<void> {
         status: "approved", appliedTpWorkoutId: null,
       },
       123456,
-      { raceAsEvent: RACE_AS_EVENT, notesAsNote: NOTES_AS_NOTE }
+      PLAN_OPTIONS
     )
   );
 
@@ -176,9 +182,13 @@ async function main(): Promise<void> {
   L.push("");
   L.push("## Что увидит ученик в своём календаре TP");
   L.push(`- Стиль заголовка пометки: ${CLUB_MARKER_TITLE_STYLE} (константа CLUB_MARKER_TITLE_STYLE в tp-execution.ts; "text" = префикс [Клуб], "emoji" = 🛌/🎯/📝/🏁).`);
-  L.push("- day_off → РОДНОЙ тип TP «Day off» (value_id=7, подтверждён фактом), заголовок «[Клуб] Выходной · клубная пометка»; is_planned=false, план на день не тронут.");
-  L.push("- preference → тип Other(100), «[Клуб] Пожелание: длительная/интервальная/отдых · клубная пометка» (позже уедет в родную Availability «ограниченная доступность»).");
-  L.push(`- note → ${NOTES_AS_NOTE
+  L.push(`- day_off → ${DAYOFF_AS_AVAILABILITY
+    ? "РОДНАЯ Availability TP (POST /availability, type 1 «unable to train»), диапазон дат, причина из заявки ученика (Appointment/Injury/Sick/Vacation/Work/Other); в кэш тренировок НЕ попадает (guard не нужен)"
+    : "РОДНОЙ тип TP «Day off» (value_id=7, подтверждён фактом), «[Клуб] Выходной · клубная пометка», is_planned=false. Включи CLUB_DAYOFF_AS_AVAILABILITY=true для Availability"}.`);
+  L.push(`- preference (тип занятия) → ${NOTES_AS_NOTE
+    ? "РОДНАЯ заметка TP (Note), «[Клуб] Пожелание: длительная/интервальная/отдых»; в кэш НЕ попадает (guard не нужен). Availability не подходит — availableSportTypes это ВИДЫ СПОРТА, не типы тренировки"
+    : "тип Other(100), «[Клуб] Пожелание: … · клубная пометка». Включи CLUB_NOTES_AS_NOTE=true для Note"}.`);
+  L.push(`- note (свободная) → ${NOTES_AS_NOTE
     ? "РОДНАЯ заметка TP (POST /calendarNote), заголовок «[Клуб] <текст>»; в кэш тренировок НЕ попадает (guard не нужен)"
     : "тип Other(100), «[Клуб] Заметка · клубная пометка». Включи CLUB_NOTES_AS_NOTE=true, чтобы создавать как родную заметку"}.`);
   L.push(`- race → ${RACE_AS_EVENT

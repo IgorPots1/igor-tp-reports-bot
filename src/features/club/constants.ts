@@ -301,6 +301,34 @@ export function isClubRaceAsEventEnabled(): boolean {
 export function isClubNotesAsNoteEnabled(): boolean {
   return process.env.CLUB_NOTES_AS_NOTE === "true";
 }
+/**
+ * day_off as a native TP Availability (type 1 "unable to train") instead of a fake
+ * Day-off(7) workout. OFF by default → day_off stays a native Day off workout (proven).
+ * ON → day_off is a real Availability record on a date range (does NOT enter the workout
+ * cache — verified — so no guard). Revertible by flipping this flag back off.
+ * See docs/tp-write-payloads.md §4.
+ */
+export function isClubDayoffAsAvailabilityEnabled(): boolean {
+  return process.env.CLUB_DAYOFF_AS_AVAILABILITY === "true";
+}
+/**
+ * Day-off reasons — the TP Availability `reason` enum, stored verbatim (they go straight
+ * to TP). "No reason selected" = null/empty (no reason). Injury/Sick are the health-signal
+ * triggers (see docs/club-health-signal-from-availability.md — plan only, not wired).
+ */
+export const CLUB_DAYOFF_REASONS = ["Appointment", "Injury", "Sick", "Vacation", "Work", "Other"] as const;
+export type ClubDayoffReason = (typeof CLUB_DAYOFF_REASONS)[number];
+/** Reasons that should raise a Coach OS health signal (plan only, not yet wired). */
+export const CLUB_DAYOFF_HEALTH_REASONS: readonly ClubDayoffReason[] = ["Injury", "Sick"];
+/** RU labels for the student calendar form; the VALUE stored/sent to TP stays English. */
+export const CLUB_DAYOFF_REASON_LABELS_RU: Record<ClubDayoffReason, string> = {
+  Appointment: "Дела/приём",
+  Injury: "Травма",
+  Sick: "Болезнь",
+  Vacation: "Отпуск",
+  Work: "Работа",
+  Other: "Другое",
+};
 /** Phase 4 — coach-facing payment-reminder drafts screen. OFF by default. */
 export function isClubBillingRemindersEnabled(): boolean {
   return process.env.CLUB_BILLING_REMINDERS_ENABLED === "true";

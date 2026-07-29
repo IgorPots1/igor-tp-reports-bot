@@ -140,6 +140,24 @@ export type ClubNotePayload = {
   attachments: unknown[];
 };
 
+/**
+ * Native TP Availability payload (a day-off as "unable to train"). Contract from two
+ * verified UI captures — docs/tp-write-payloads.md §4. Endpoint is
+ * POST /fitness/v1/athletes/{id}/availability (SINGULAR); the athlete id is `personId`.
+ * `type` carries the mode: 1 = unable to train (what a club day_off is), 2 = limited.
+ * Takes a date RANGE. Does NOT enter the workout cache, so it needs no guard sentinel.
+ */
+export type ClubAvailabilityPayload = {
+  personId: number;
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  type: number; // 1 = unable to train
+  limitedAvailability: boolean; // false in BOTH captured modes — mode is carried by `type`
+  reason: string; // TP reason enum verbatim, or "" (no reason)
+  availableSportTypes: number[]; // [] for full unavailability
+  description: string;
+};
+
 export type ClubActionPlan =
   | {
       ok: true;
@@ -166,6 +184,15 @@ export type ClubActionPlan =
       kind: "start" | "dayoff";
       actionType: "create_note";
       notePayload: ClubNotePayload;
+      label: string;
+      unresolved: string[];
+    }
+  | {
+      ok: true;
+      requestId: string;
+      kind: "start" | "dayoff";
+      actionType: "create_availability";
+      availabilityPayload: ClubAvailabilityPayload;
       label: string;
       unresolved: string[];
     }
@@ -260,6 +287,8 @@ export type ClubCalendarEntryRow = {
   kind: "day_off" | "preference" | "note" | "race";
   preferredType: "long" | "intervals" | "rest" | null;
   note: string | null;
+  /** day_off reason from the student's request (TP Availability `reason` enum), or null. */
+  dayOffReason: string | null;
   raceName: string | null;
   raceCity: string | null;
   raceDistanceLabel: string | null;
@@ -281,7 +310,7 @@ const PREF_RU: Record<string, string> = { long: "длительная", interval
 export function planCalendarEntryAction(
   row: ClubCalendarEntryRow,
   athleteId: number | null,
-  options?: { raceAsEvent?: boolean; notesAsNote?: boolean }
+  options?: { raceAsEvent?: boolean; notesAsNote?: boolean; dayoffAsAvailability?: boolean }
 ): ClubActionPlan {
   const kindTag = row.kind === "race" ? "start" : "dayoff"; // reuse the existing ClubActionPlan kind union
   if (row.status !== "approved") {
@@ -334,16 +363,19 @@ export function planCalendarEntryAction(
     return { ok: true, requestId: row.id, kind: kindTag, actionType: "create_event", eventPayload, label: `Старт (Event): ${name} -> ${row.date}`, unresolved: evUnresolved };
   }
 
-  // Free note as a native TP calendar Note (CLUB_NOTES_AS_NOTE) — a real Note, not a
-  // fake Other(100) workout. A Note never reaches the /workouts feed (verified), so it
-  // never enters the workout cache and needs NO guard sentinel. Applies ONLY to a free
-  // note; a preference is a workout-type wish and will move to a native Availability, not
-  // a Note. See docs/tp-write-payloads.md §3.
-  if (row.kind === "note" && options?.notesAsNote) {
-    const noteText = row.note && row.note.trim() ? row.note.trim() : "Заметка ученика на день (через клуб).";
-    // Title = single-line "[Клуб] <text>" so the coach sees the note on the calendar tile;
+  // Free note (kind="note") OR a workout-type preference (kind="preference") as a native
+  // TP calendar Note (CLUB_NOTES_AS_NOTE) — a real Note, not a fake Other(100) workout. A
+  // Note never reaches the /workouts feed (verified), so it never enters the workout cache
+  // and needs NO guard sentinel. A preference is a workout-TYPE wish (длительная/интервальная/
+  // отдых); TP Availability cannot express it (availableSportTypes are SPORTS, not types), so
+  // a preference belongs on a Note too. See docs/tp-write-payloads.md §3.
+  if ((row.kind === "note" || row.kind === "preference") && options?.notesAsNote) {
+    const noteText = row.kind === "preference"
+      ? `Пожелание: ${PREF_RU[row.preferredType ?? ""] ?? row.preferredType ?? "тип"}`
+      : (row.note && row.note.trim() ? row.note.trim() : "Заметка ученика на день (через клуб).");
+    // Title = single-line "[Клуб] <text>" so the coach sees it on the calendar tile;
     // a multi-line note keeps its full body in description (title collapses whitespace).
-    const title = `${markerPrefix("note")} ${noteText.replace(/\s+/gu, " ")}`.trim();
+    const title = `${markerPrefix(row.kind === "preference" ? "preference" : "note")} ${noteText.replace(/\s+/gu, " ")}`.trim();
     const description = noteText.includes("\n") ? noteText : "";
     const notePayload: ClubNotePayload = {
       athleteId,
@@ -353,7 +385,29 @@ export function planCalendarEntryAction(
       isHidden: false,
       attachments: [],
     };
-    return { ok: true, requestId: row.id, kind: kindTag, actionType: "create_note", notePayload, label: `Заметка (Note): ${row.date}`, unresolved: [] };
+    const label = row.kind === "preference" ? `Пожелание (Note): ${row.date}` : `Заметка (Note): ${row.date}`;
+    return { ok: true, requestId: row.id, kind: kindTag, actionType: "create_note", notePayload, label, unresolved: [] };
+  }
+
+  // day_off as a native TP Availability (CLUB_DAYOFF_AS_AVAILABILITY) — mode type 1
+  // "unable to train" on a single-day range, carrying the student's reason (TP enum) if
+  // given. Availability never reaches the /workouts feed (verified) → not in the workout
+  // cache → no guard. type carries the mode; limitedAvailability stays false (unused in
+  // both captured modes). NOTE: grouping consecutive day_off days into ONE range record is
+  // a batch concern — the single-record executor emits start=end=date. See §4.
+  if (row.kind === "day_off" && options?.dayoffAsAvailability) {
+    const availabilityPayload: ClubAvailabilityPayload = {
+      personId: athleteId,
+      startDate: row.date,
+      endDate: row.date,
+      type: 1,
+      limitedAvailability: false,
+      reason: row.dayOffReason && row.dayOffReason.trim() ? row.dayOffReason.trim() : "",
+      availableSportTypes: [],
+      description: "",
+    };
+    const reasonTag = availabilityPayload.reason ? ` · причина ${availabilityPayload.reason}` : "";
+    return { ok: true, requestId: row.id, kind: kindTag, actionType: "create_availability", availabilityPayload, label: `Выходной (Availability type 1): ${row.date}${reasonTag}`, unresolved: [] };
   }
 
   // Race stays a run-typed planned workout (distance kept); the rest are description-

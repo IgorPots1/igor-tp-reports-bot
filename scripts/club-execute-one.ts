@@ -21,9 +21,9 @@
  */
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { planCalendarEntryAction, type ClubCalendarEntryRow } from "@/features/club/tp-execution";
-import { isClubRaceAsEventEnabled, isClubNotesAsNoteEnabled } from "@/features/club/constants";
+import { isClubRaceAsEventEnabled, isClubNotesAsNoteEnabled, isClubDayoffAsAvailabilityEnabled } from "@/features/club/constants";
 import { markCalendarEntryApplied, rollbackCalendarEntryApplied } from "@/features/club/calendar";
-import { createWorkout, deleteWorkout, createEvent, deleteEvent, createNote, deleteNote } from "@/features/trainingpeaks/tp-api-client";
+import { createWorkout, deleteWorkout, createEvent, deleteEvent, createNote, deleteNote, createAvailability, deleteAvailability } from "@/features/trainingpeaks/tp-api-client";
 import { parseAthleteIdFromUrl } from "@/features/trainingpeaks/athlete-roster-import";
 
 const entryId = process.argv[2];
@@ -40,7 +40,7 @@ async function loadEntry(id: string): Promise<{ row: ClubCalendarEntryRow; athle
   const supabase = createSupabaseServerClient();
   const { data } = await supabase
     .from("club_calendar_entries")
-    .select("id, student_id, entry_date, kind, preferred_workout_type, note, race_name, race_city, race_distance_label, race_target_seconds, status, applied_tp_workout_id")
+    .select("id, student_id, entry_date, kind, preferred_workout_type, note, day_off_reason, race_name, race_city, race_distance_label, race_target_seconds, status, applied_tp_workout_id")
     .eq("id", id)
     .maybeSingle();
   if (!data) return null;
@@ -54,6 +54,7 @@ async function loadEntry(id: string): Promise<{ row: ClubCalendarEntryRow; athle
     kind: (r.kind as ClubCalendarEntryRow["kind"]) ?? "note",
     preferredType: (r.preferred_workout_type as ClubCalendarEntryRow["preferredType"]) ?? null,
     note: (r.note as string | null) ?? null,
+    dayOffReason: (r.day_off_reason as string | null) ?? null,
     raceName: (r.race_name as string | null) ?? null,
     raceCity: (r.race_city as string | null) ?? null,
     raceDistanceLabel: (r.race_distance_label as string | null) ?? null,
@@ -73,14 +74,18 @@ async function main(): Promise<void> {
 
   const raceAsEvent = isClubRaceAsEventEnabled();
   const notesAsNote = isClubNotesAsNoteEnabled();
+  const dayoffAsAvailability = isClubDayoffAsAvailabilityEnabled();
+  const planOptions = { raceAsEvent, notesAsNote, dayoffAsAvailability };
 
   if (ROLLBACK) {
     if (!row.appliedTpWorkoutId) { console.error("у записи нет applied_tp_workout_id — нечего откатывать"); process.exit(1); }
-    // Determine entity kind (event / note / workout) by re-planning a clone (applied guard cleared).
-    const probe = planCalendarEntryAction({ ...row, appliedTpWorkoutId: null, status: "approved" }, athleteId, { raceAsEvent, notesAsNote });
+    // Determine entity kind (event / note / availability / workout) by re-planning a clone
+    // (applied guard cleared). Roll back with the SAME flags you applied with.
+    const probe = planCalendarEntryAction({ ...row, appliedTpWorkoutId: null, status: "approved" }, athleteId, planOptions);
     const isEvent = probe.ok && probe.actionType === "create_event";
     const isNote = probe.ok && probe.actionType === "create_note";
-    const entity = isEvent ? "event" : isNote ? "note" : "workout";
+    const isAvailability = probe.ok && probe.actionType === "create_availability";
+    const entity = isEvent ? "event" : isNote ? "note" : isAvailability ? "availability" : "workout";
     if (!APPLY || process.env.CLUB_TP_EXECUTION_ENABLED !== "true") {
       console.log(`DRY-RUN rollback: удалил бы TP ${entity} ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката: --apply + CLUB_TP_EXECUTION_ENABLED=true.`);
       process.exit(0);
@@ -89,6 +94,8 @@ async function main(): Promise<void> {
       ? await deleteEvent(athleteId as number, row.appliedTpWorkoutId)
       : isNote
       ? await deleteNote(athleteId as number, row.appliedTpWorkoutId)
+      : isAvailability
+      ? await deleteAvailability(athleteId as number, row.appliedTpWorkoutId)
       : await deleteWorkout("tpapi", athleteId as number, row.appliedTpWorkoutId);
     console.log(`delete ${entity} status=${del.status}`);
     const rb = await rollbackCalendarEntryApplied(entryId);
@@ -96,10 +103,14 @@ async function main(): Promise<void> {
     process.exit(rb.ok ? 0 : 1);
   }
 
-  const plan = planCalendarEntryAction(row, athleteId, { raceAsEvent, notesAsNote });
+  const plan = planCalendarEntryAction(row, athleteId, planOptions);
   if (!plan.ok) { console.error(`не планируется: ${plan.reason}`); process.exit(1); }
   console.log(`== ПЛАН (${plan.actionType}) ==`);
-  const printable = plan.actionType === "create_event" ? plan.eventPayload : plan.actionType === "create_note" ? plan.notePayload : plan.payload;
+  const printable =
+    plan.actionType === "create_event" ? plan.eventPayload
+    : plan.actionType === "create_note" ? plan.notePayload
+    : plan.actionType === "create_availability" ? plan.availabilityPayload
+    : plan.payload;
   console.log(JSON.stringify(printable, null, 2));
   if (plan.unresolved.length) console.log("unresolved:", plan.unresolved.join("; "));
 
@@ -119,6 +130,10 @@ async function main(): Promise<void> {
     const res = await createNote(athleteId as number, plan.notePayload as unknown as Record<string, unknown>);
     createdId = res.noteId;
     console.log(`создан TP note id=${createdId} (заметка, в кэш тренировок НЕ попадёт)`);
+  } else if (plan.actionType === "create_availability") {
+    const res = await createAvailability(athleteId as number, plan.availabilityPayload as unknown as Record<string, unknown>);
+    createdId = res.availabilityId;
+    console.log(`создан TP availability id=${createdId} (выходной type 1, в кэш тренировок НЕ попадёт)`);
   } else {
     const res = await createWorkout(plan.payload);
     createdId = res.workoutId;

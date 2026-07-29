@@ -583,6 +583,34 @@ export async function deleteNote(athleteId: number, noteId: number): Promise<{ s
   return fetchJsonWithRetry(`${TP_API_HOST}${endpoint}`, { method: "DELETE" });
 }
 
+// ─── availability (unable-to-train / limited, on a date range) ────────────────────
+
+/**
+ * Create a native TP Availability record. Endpoint POST /fitness/v1/athletes/{id}/availability
+ * (SINGULAR); the athlete id is the field `personId`. Body contract from two verified UI
+ * captures (docs/tp-write-payloads.md §4): `type` carries the mode (1=unable to train,
+ * 2=limited), takes a `startDate`..`endDate` RANGE. Response is the created record; `id`
+ * is the numeric availability id. Availability does NOT enter the workout cache. Capability
+ * only — the caller decides when.
+ */
+export async function createAvailability(athleteId: number, body: Record<string, unknown>): Promise<{ availabilityId: number; raw: Record<string, unknown> }> {
+  const endpoint = `/fitness/v1/athletes/${athleteId}/availability`;
+  const responseBody = await writeJsonOrThrow(`${TP_API_HOST}${endpoint}`, "POST", body);
+  const record = assertRecord(responseBody, endpoint);
+  const availabilityId = assertNumber(record.id, "id", endpoint);
+  return { availabilityId, raw: record };
+}
+
+/**
+ * DELETE a TP Availability by id (rollback). The single-resource path GET /availability/{id}
+ * returns 200 (confirmed by read), so DELETE mirrors it. Returns raw {status, body} without
+ * throwing. NOTE: the DELETE verb itself is unverified end-to-end — confirm on first rollback.
+ */
+export async function deleteAvailability(athleteId: number, availabilityId: number): Promise<{ status: number; body: unknown }> {
+  const endpoint = `/fitness/v1/athletes/${athleteId}/availability/${availabilityId}`;
+  return fetchJsonWithRetry(`${TP_API_HOST}${endpoint}`, { method: "DELETE" });
+}
+
 // ─── athlete settings (zones + thresholds live here) ─────────────────────────────
 
 /**

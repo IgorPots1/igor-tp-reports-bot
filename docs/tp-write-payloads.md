@@ -213,19 +213,42 @@ array; single `GET /availability/{id}` → 200):
 **Delete (rollback):** `DELETE /fitness/v1/athletes/{id}/availability/{availabilityId}`
 (single-resource `GET /availability/{id}` returns 200; DELETE mirrors it — unverified verb).
 
-**Fields — what is known vs pending a second capture:**
-- `type` — the captured "unavailable" mode = **`1`**. The UI has a second mode
-  ("ограниченная доступность"/limited); its `type` value + how `limitedAvailability`,
-  `availableSportTypes`, `reason` populate are **pending a second UI capture** — do not
-  guess them.
-- `availableSportTypes` — empty for full-unavailable. In limited mode it is expected to
-  carry sport-type identifiers (map against TP workout types: Run=3, Bike=2, Swim=1, …),
-  which would make "only running that day" expressible — **to be confirmed by capture**.
-- `reason` / `description` — free text; coach-visibility not yet confirmed.
+**Second capture — "limited availability" mode** (verified by read; ids 2436620/2436622):
+```jsonc
+{ "personId": 3102415, "startDate": "2026-12-03", "endDate": "2026-12-03",
+  "limitedAvailability": false, "reason": "Injury", "availableSportTypes": [3],
+  "description": "", "type": 2 }
+```
 
-**Cache:** availability does **NOT** appear in the `/workouts` feed (verified), so it never
-enters `trainingpeaks_workout_cache` — no guard needed. NOT YET IMPLEMENTED as a client
-method (awaiting the limited-mode capture); this section is the recon record.
+**Fields — confirmed by reading BOTH records:**
+- `type` — **`1` = unable to train** (a club day_off), **`2` = limited availability**.
+  Confirmed by GET on both. The mode is carried by `type`.
+- `limitedAvailability` — **`false` in BOTH modes** (even type 2). So this boolean does NOT
+  carry the mode and is effectively unused for it — set `false` as the UI does; do not
+  derive the mode from it.
+- `reason` — TP enum, stored **verbatim as a string** (read back `"Injury"`). UI values:
+  `Appointment`, `Injury`, `Sick`, `Vacation`, `Work`, `Other` (empty `""` = no reason).
+  Whether the API validates against the enum or accepts any string is **unverified** (we do
+  not test writes) — send only the enum values.
+- `availableSportTypes` — **`[]` for type 1** (what a club day_off uses). For type 2 the
+  captured value was `[3]` = **Run**; the id scheme coincides with TP `workoutTypeValueId`
+  (Run=3, Bike=2, Swim=1, CrossTrain=5). No sport-type reference endpoint exists (all
+  candidates 404); the full list (Brick, Mtn Bike) is **inferred, not captured**. Not needed
+  for day_off (type 1, empty).
+- `description` — free text; coach-visibility not separately confirmed.
+
+**Cache:** availability does **NOT** appear in the `/workouts` feed (verified by reading the
+same range), so it never enters `trainingpeaks_workout_cache` — **no guard needed**.
+
+**Used by** `createAvailability`/`deleteAvailability`, gated by `CLUB_DAYOFF_AS_AVAILABILITY`
+(day_off → type 1). A club day_off emits a single-day range (`start=end=date`);
+grouping consecutive days into one range record is a batch concern (the single-record
+executor does not group). Limited mode (type 2 / sport restriction) is NOT wired — a club
+"preference" is a workout-TYPE wish, which `availableSportTypes` (SPORTS, not types) cannot
+express, so preferences go to a Note (§3), not Availability.
+
+**Health signal (plan, not wired):** `reason` ∈ {Injury, Sick} should raise a Coach OS
+health signal, not stay a calendar marker. See `docs/club-health-signal-from-availability.md`.
 
 ---
 

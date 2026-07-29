@@ -279,6 +279,8 @@ export type ClubCalendarEntry = {
   kind: ClubCalendarKind;
   preferredType: ClubCalendarPreferredType | null;
   note: string | null;
+  /** day_off: TP Availability reason enum (Appointment/Injury/Sick/Vacation/Work/Other) or null. */
+  dayOffReason: string | null;
   raceName: string | null;
   raceCity: string | null;
   raceDistanceLabel: string | null;

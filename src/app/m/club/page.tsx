@@ -1689,6 +1689,18 @@ function WorkoutComments({ workoutId, initData }: { workoutId: string; initData:
 // ---------------------------------------------------------------------------
 
 const PREF_LABEL: Record<string, string> = { long: "Длительная", intervals: "Интервальная", rest: "Отдых" };
+// Day-off reason: value = TP Availability reason enum (goes verbatim to TP), label = RU.
+// Mirrors CLUB_DAYOFF_REASONS server-side (kept local so this client file imports no
+// server constants). Injury/Sick are the future health-signal triggers.
+const DAYOFF_REASONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "Без причины" },
+  { value: "Appointment", label: "Дела/приём" },
+  { value: "Injury", label: "Травма" },
+  { value: "Sick", label: "Болезнь" },
+  { value: "Vacation", label: "Отпуск" },
+  { value: "Work", label: "Работа" },
+  { value: "Other", label: "Другое" },
+];
 const WEEKDAY_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 function entryMarks(entries: ClubCalendarEntry[]): ClubIconName[] {
@@ -1834,7 +1846,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                         <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: C.ink }}>
                           <ClubIcon name={e.kind === "day_off" ? "moon" : e.kind === "preference" ? "target" : e.kind === "note" ? "stickyNote" : "flag"} size={13} color={C.sub} />
                           <span style={{ minWidth: 0 }}>
-                            {e.kind === "day_off" ? "Выходной" : null}
+                            {e.kind === "day_off" ? (e.dayOffReason ? `Выходной · ${DAYOFF_REASONS.find((r) => r.value === e.dayOffReason)?.label ?? e.dayOffReason}` : "Выходной") : null}
                             {e.kind === "preference" ? (PREF_LABEL[e.preferredType ?? ""] ?? e.preferredType) : null}
                             {e.kind === "note" ? e.note : null}
                             {e.kind === "race" ? `${e.raceName}${e.raceCity ? ` · ${e.raceCity}` : ""}${e.raceDistanceLabel ? ` · ${e.raceDistanceLabel}` : ""}` : null}
@@ -1851,8 +1863,11 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                   </div>
                 ) : null}
 
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                  <button type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "day_off" })}><ClubIcon name="moon" size={14} />Выходной</button>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10, alignItems: "center" }}>
+                  <button type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "day_off", dayOffReason: form.doReason || undefined })}><ClubIcon name="moon" size={14} />Выходной</button>
+                  <select style={{ ...S.input, width: "auto", marginBottom: 0, padding: "8px 10px" }} value={form.doReason ?? ""} onChange={(e) => set("doReason", e.target.value)} aria-label="Причина выходного">
+                    {DAYOFF_REASONS.map((r) => (<option key={r.value} value={r.value}>{r.label}</option>))}
+                  </select>
                   {(["long", "intervals", "rest"] as const).map((p) => (
                     <button key={p} type="button" style={{ ...S.sectionBtn, display: "inline-flex", alignItems: "center", gap: 6 }} disabled={saving} onClick={() => create({ date: selDay.date, kind: "preference", preferredType: p })}><ClubIcon name="target" size={14} />{PREF_LABEL[p]}</button>
                   ))}

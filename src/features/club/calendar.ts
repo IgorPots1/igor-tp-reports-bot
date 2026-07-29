@@ -5,7 +5,7 @@
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
-import { CLUB_CALENDAR_DAYS, CLUB_TIMEZONE } from "./constants";
+import { CLUB_CALENDAR_DAYS, CLUB_DAYOFF_REASONS, CLUB_TIMEZONE, type ClubDayoffReason } from "./constants";
 import type {
   ClubCalendarDay,
   ClubCalendarEntry,
@@ -58,6 +58,7 @@ function mapEntryRow(r: Record<string, unknown>): ClubCalendarEntry {
     kind: (r.kind as ClubCalendarKind) ?? "note",
     preferredType: (r.preferred_workout_type as ClubCalendarPreferredType | null) ?? null,
     note: (r.note as string | null) ?? null,
+    dayOffReason: (r.day_off_reason as string | null) ?? null,
     raceName: (r.race_name as string | null) ?? null,
     raceCity: (r.race_city as string | null) ?? null,
     raceDistanceLabel: (r.race_distance_label as string | null) ?? null,
@@ -73,7 +74,7 @@ export async function getClubCalendar(studentId: string): Promise<ClubCalendarVi
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("club_calendar_entries")
-    .select("id, entry_date, kind, preferred_workout_type, note, race_name, race_city, race_distance_label, race_target_seconds, status")
+    .select("id, entry_date, kind, preferred_workout_type, note, day_off_reason, race_name, race_city, race_distance_label, race_target_seconds, status")
     .eq("student_id", studentId)
     .gte("entry_date", from)
     .lte("entry_date", to)
@@ -173,6 +174,7 @@ export async function createCalendarEntry(
     kind?: unknown;
     preferredType?: unknown;
     note?: unknown;
+    dayOffReason?: unknown;
     raceName?: unknown;
     raceCity?: unknown;
     raceDistanceLabel?: unknown;
@@ -197,13 +199,21 @@ export async function createCalendarEntry(
     source: "club",
     preferred_workout_type: null,
     note: null,
+    day_off_reason: null,
     race_name: null,
     race_city: null,
     race_distance_label: null,
     race_target_seconds: null,
   };
 
-  if (kind === "preference") {
+  if (kind === "day_off") {
+    // Optional reason from the TP Availability enum; anything else is ignored (no error —
+    // a day off without a reason is valid, "No reason selected").
+    const reason = typeof input.dayOffReason === "string" && (CLUB_DAYOFF_REASONS as readonly string[]).includes(input.dayOffReason)
+      ? (input.dayOffReason as ClubDayoffReason)
+      : null;
+    row.day_off_reason = reason;
+  } else if (kind === "preference") {
     const pref = typeof input.preferredType === "string" && VALID_PREF.includes(input.preferredType as ClubCalendarPreferredType) ? input.preferredType : null;
     if (!pref) return { ok: false, error: "Выбери тип: длительная, интервальная или отдых." };
     row.preferred_workout_type = pref;
@@ -220,7 +230,6 @@ export async function createCalendarEntry(
     row.race_target_seconds = hms(input.raceTarget);
     row.note = cleanText(input.note, 300); // race wishes (naryad 5.2)
   }
-  // day_off carries no extra fields.
 
   const supabase = createSupabaseServerClient();
   // day_off / preference are one-per-day → upsert; note / race may repeat → insert.
