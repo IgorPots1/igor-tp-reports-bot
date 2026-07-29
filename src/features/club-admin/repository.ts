@@ -188,6 +188,10 @@ export type QueueItem = {
   status: string;
   createdAt: string;
   actionable: boolean;
+  /** race only: already pushed to TP (applied_tp_workout_id set). Delete needs a TP rollback first. */
+  syncedToTp?: boolean;
+  /** race only: coach can delete this declaration (DB) when it hasn't gone to TP. */
+  deletable?: boolean;
 };
 
 export async function listClubQueue(filter: { kind?: string; status?: string }): Promise<QueueItem[]> {
@@ -196,11 +200,22 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
   const wantKind = (k: string) => !filter.kind || filter.kind === "all" || filter.kind === k;
 
   if (wantKind("race")) {
-    const { data } = await supabase.from("club_races").select("id, student_id, name, race_date, distance_label, status, created_at").order("created_at", { ascending: false }).limit(300);
+    // Step 4: races come from the consolidated calendar (club_calendar_entries kind='race'),
+    // the path that executes to TP. syncedToTp = already pushed (applied_tp_workout_id set) →
+    // a coach delete needs the attended TP rollback first (club-execute-one.ts --rollback).
+    const { data } = await supabase
+      .from("club_calendar_entries")
+      .select("id, student_id, race_name, entry_date, race_distance_label, distance_meters, status, applied_tp_workout_id, created_at")
+      .eq("kind", "race")
+      .order("created_at", { ascending: false })
+      .limit(300);
     for (const r of (data as Array<Record<string, unknown>> | null) ?? []) {
-      items.push({ kind: "race", id: r.id as string, studentId: r.student_id as string, title: (r.name as string) ?? "Старт",
-        subtitle: `${r.race_date}${r.distance_label ? ` · ${r.distance_label}` : ""}`, status: (r.status as string) ?? "declared",
-        createdAt: r.created_at as string, actionable: (r.status as string) === "declared" });
+      const meters = r.distance_meters;
+      const dist = (r.race_distance_label as string | null) ?? (typeof meters === "number" && meters > 0 ? `${(meters / 1000).toFixed(1)} км` : null);
+      const synced = r.applied_tp_workout_id != null;
+      items.push({ kind: "race", id: r.id as string, studentId: r.student_id as string, title: (r.race_name as string) ?? "Старт",
+        subtitle: `${r.entry_date}${dist ? ` · ${dist}` : ""}${synced ? " · в TP" : ""}`, status: (r.status as string) ?? "approved",
+        createdAt: r.created_at as string, actionable: false, syncedToTp: synced, deletable: !synced });
     }
   }
   if (wantKind("dayoff")) {
@@ -243,6 +258,29 @@ export async function setDayoffStatus(id: string, status: "approved" | "rejected
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.from("club_dayoff_requests").update({ status, status_by: coach, status_at: new Date().toISOString() }).eq("id", id);
   if (error) throw new Error(`club-admin: dayoff status: ${error.message}`);
+}
+
+/**
+ * Delete a student's declared race (calendar entry). REFUSES if it already went to TP:
+ * the coach must roll it back in TP first (attended: club-execute-one.ts <id> --rollback),
+ * so a TP workout is never orphaned. TP mutation stays out of the web app.
+ */
+export async function deleteClubRace(entryId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!entryId) return { ok: false, error: "Нет старта." };
+  const supabase = createSupabaseServerClient();
+  const { data } = await supabase
+    .from("club_calendar_entries")
+    .select("applied_tp_workout_id")
+    .eq("id", entryId)
+    .eq("kind", "race")
+    .maybeSingle();
+  if (!data) return { ok: false, error: "Старт не найден." };
+  if ((data as { applied_tp_workout_id: number | null }).applied_tp_workout_id != null) {
+    return { ok: false, error: `Старт уже в TP. Сначала откати в TP: club-execute-one.ts ${entryId} --rollback, потом удаляй.` };
+  }
+  const { error } = await supabase.from("club_calendar_entries").delete().eq("id", entryId).eq("kind", "race");
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

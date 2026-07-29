@@ -1,7 +1,7 @@
 import { getSingleSearchParam } from "@/app/admin/lib";
 import FormActionButton from "@/app/admin/FormActionButton";
 import { isClubAdminEnabled, listClubQueue } from "@/features/club-admin/repository";
-import { setRequestStatusAction, batchApproveRacesAction } from "@/app/admin/club/actions";
+import { setRequestStatusAction, batchApproveRacesAction, deleteClubRaceAction } from "@/app/admin/club/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -81,6 +81,16 @@ export default async function ClubQueuePage({ searchParams }: { searchParams: Pr
                         <FormActionButton className="admin-button admin-button-danger admin-button-small" confirmMessage="Отклонить заявку?" pendingText="…">Отклонить</FormActionButton>
                       </form>
                     </div>
+                  ) : i.kind === "race" ? (
+                    i.deletable ? (
+                      <form action={deleteClubRaceAction}>
+                        <input type="hidden" name="redirectTo" value={selfPath} />
+                        <input type="hidden" name="id" value={i.id} />
+                        <FormActionButton className="admin-button admin-button-danger admin-button-small" confirmMessage="Удалить старт?" pendingText="…">Удалить</FormActionButton>
+                      </form>
+                    ) : (
+                      <span className="admin-summary-label">в TP · откат: club-execute-one.ts {i.id} --rollback</span>
+                    )
                   ) : <span className="admin-badge admin-badge-muted">-</span>}
                 </td>
               </tr>

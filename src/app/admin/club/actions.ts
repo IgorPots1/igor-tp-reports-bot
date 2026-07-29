@@ -148,6 +148,16 @@ export async function setRequestStatusAction(formData: FormData): Promise<void> 
   redirect(withNotice(redirectTo, "notice", status === "approved" ? "Подтверждено." : "Отклонено."));
 }
 
+export async function deleteClubRaceAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const id = req(formData, "id");
+  const repo = await import("@/features/club-admin/repository");
+  const res = await repo.deleteClubRace(id);
+  revalidateClub();
+  redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? "Старт удалён." : (res.error ?? "Ошибка.")));
+}
+
 /** Batch-approve checked race requests. Checkbox name: "raceIds". */
 export async function batchApproveRacesAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");

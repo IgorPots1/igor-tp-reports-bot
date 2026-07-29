@@ -35,11 +35,6 @@ function clampScale(v: unknown): number | null {
 // Races (Block 6)
 // ---------------------------------------------------------------------------
 
-/** Normalized race name for dedup: trimmed, lower-cased, collapsed whitespace. */
-function normRaceName(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/gu, " ");
-}
-
 export async function createClubRace(
   studentId: string,
   input: { name?: unknown; raceDate?: unknown; distanceLabel?: unknown; distanceMeters?: unknown; city?: unknown; country?: unknown; targetResultSeconds?: unknown }
@@ -76,58 +71,28 @@ function mapCalRaceStatus(status: string | null, hasTpAnchor: boolean): ClubRace
 
 export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
   const supabase = createSupabaseServerClient();
-  // BRIDGE (steps 2-4): union the consolidated calendar races (new writes land here) with
-  // legacy club_races (old form rows, until the transfer script migrates them), deduped by
-  // (date + normalized name), preferring the calendar row (it executes / carries the TP
-  // anchor). Step 4 drops the club_races side once the transfer is confirmed live.
-  const [calRes, legacyRes] = await Promise.all([
-    supabase
-      .from("club_calendar_entries")
-      .select("id, entry_date, race_name, race_city, race_distance_label, distance_meters, race_target_seconds, status, applied_tp_workout_id")
-      .eq("student_id", studentId)
-      .eq("kind", "race"),
-    supabase
-      .from("club_races")
-      .select("id, name, race_date, distance_label, distance_meters, city, target_result_seconds, status")
-      .eq("student_id", studentId),
-  ]);
-  const out: ClubRace[] = [];
-  const seen = new Set<string>();
-  const key = (date: string, name: string) => `${date}|${normRaceName(name)}`;
+  // Step 4: reads collapsed to the calendar (the transfer moved legacy club_races in). The
+  // consolidated source is club_calendar_entries kind='race'; club_races is read-only legacy
+  // and no longer read here.
+  const { data } = await supabase
+    .from("club_calendar_entries")
+    .select("id, entry_date, race_name, race_city, race_distance_label, distance_meters, race_target_seconds, status, applied_tp_workout_id")
+    .eq("student_id", studentId)
+    .eq("kind", "race");
   const kmLabel = (label: unknown, meters: unknown): string | null =>
     (label as string | null) ?? (typeof meters === "number" && meters > 0 ? `${(meters / 1000).toFixed(1)} км` : null);
-  for (const r of (calRes.data as Array<Record<string, unknown>> | null) ?? []) {
-    const date = String(r.entry_date ?? "");
-    const name = String(r.race_name ?? "");
-    if (!date) continue;
-    seen.add(key(date, name));
-    out.push({
+  const out: ClubRace[] = ((data as Array<Record<string, unknown>> | null) ?? [])
+    .filter((r) => String(r.entry_date ?? ""))
+    .map((r) => ({
       id: r.id as string,
-      name,
-      raceDate: date,
-      dateLabel: formatRuDate(date),
+      name: String(r.race_name ?? ""),
+      raceDate: String(r.entry_date ?? ""),
+      dateLabel: formatRuDate(String(r.entry_date ?? "")),
       distanceLabel: kmLabel(r.race_distance_label, r.distance_meters),
       city: (r.race_city as string | null) ?? null,
       targetResultSeconds: intOrNull(r.race_target_seconds),
       status: mapCalRaceStatus(r.status as string | null, r.applied_tp_workout_id != null),
-    });
-  }
-  for (const r of (legacyRes.data as Array<Record<string, unknown>> | null) ?? []) {
-    const date = String(r.race_date ?? "");
-    const name = String(r.name ?? "");
-    if (!date || seen.has(key(date, name))) continue;
-    seen.add(key(date, name));
-    out.push({
-      id: r.id as string,
-      name,
-      raceDate: date,
-      dateLabel: formatRuDate(date),
-      distanceLabel: kmLabel(r.distance_label, r.distance_meters),
-      city: (r.city as string | null) ?? null,
-      targetResultSeconds: intOrNull(r.target_result_seconds),
-      status: (r.status as ClubRace["status"]) ?? "declared",
-    });
-  }
+    }));
   out.sort((a, b) => (a.raceDate < b.raceDate ? 1 : a.raceDate > b.raceDate ? -1 : 0));
   return out.slice(0, 50);
 }
