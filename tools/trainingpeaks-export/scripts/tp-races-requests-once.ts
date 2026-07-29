@@ -10,7 +10,12 @@ import { createClient } from "@supabase/supabase-js";
 import { reportsRoot, toolRoot } from "./lib/paths.ts";
 
 type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
-type TrainingPeaksJobType = "race_scan_events";
+// Both scan directions run through this same runner + persist. The forward weekly
+// job enqueues "race_scan_events"; the backward backfill (enqueue-race-scan-backfill)
+// enqueues "race_scan_backfill". Only the window differs — runRaceScanJob just passes
+// week_from..week_to to tp-scan-events, so no branching is needed below.
+type TrainingPeaksJobType = "race_scan_events" | "race_scan_backfill";
+const RACE_SCAN_JOB_TYPES: TrainingPeaksJobType[] = ["race_scan_events", "race_scan_backfill"];
 
 type TrainingPeaksJobRow = {
   id: string;
@@ -158,7 +163,7 @@ async function recoverStaleRunningRaceJobs(timeoutMinutes: number): Promise<numb
       result_json: null,
       finished_at: finishedAt,
     })
-    .eq("job_type", "race_scan_events")
+    .in("job_type", RACE_SCAN_JOB_TYPES)
     .eq("status", "running")
     .not("started_at", "is", null)
     .lt("started_at", cutoff)
@@ -175,7 +180,7 @@ async function claimNextQueuedRaceJob(): Promise<TrainingPeaksJobRow | null> {
     const { data: nextJob, error: selectError } = await supabase
       .from("trainingpeaks_jobs")
       .select("*")
-      .eq("job_type", "race_scan_events")
+      .in("job_type", RACE_SCAN_JOB_TYPES)
       .eq("status", "queued")
       .order("created_at", { ascending: true })
       .limit(1)
