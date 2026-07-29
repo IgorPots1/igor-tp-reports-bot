@@ -26,6 +26,7 @@ import {
 import { resolveClubLinkToken } from "./link-tokens";
 import { isClubLinkTokensEnabled, clubCoachParticipantStudentId } from "./constants";
 import { recordClubAccessRequest } from "./access-requests";
+import { recordClubOpen, deriveOpenSection } from "./club-open";
 import { getTrainingPeaksStudentById } from "@/features/trainingpeaks/repository";
 
 /** Outer mini-app gate + club feature flag. Both must be on. */
@@ -125,6 +126,7 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
       const participant = await getTrainingPeaksStudentById(participantId).catch(() => null);
       if (participant) {
         console.info(`[club.resolve] coach_participant user=${user.id} student=${participant.id}`);
+        await recordClubOpen(participant.id, user.id, deriveOpenSection(startParamToken(initData)));
         return { ok: true, student: participant };
       }
       console.warn(`[club.resolve] coach_participant configured id=${participantId} but no such student`);
@@ -156,6 +158,7 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
         };
       }
     }
+    await recordClubOpen(existing.id, user.id, deriveOpenSection(token));
     return { ok: true, student: existing };
   }
 

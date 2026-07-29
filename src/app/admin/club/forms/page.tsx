@@ -8,6 +8,7 @@ import {
   CLUB_FORM_TITLES,
 } from "@/features/club-admin/forms-broadcast";
 import { sendClubFormsBroadcastAction, remindClubScheduleNonRespondersAction } from "@/app/admin/club/actions";
+import { getClubOpenAdmin } from "@/features/club/club-open";
 import BroadcastPanel from "./BroadcastPanel";
 
 export const dynamic = "force-dynamic";
@@ -25,9 +26,10 @@ export default async function ClubFormsPage({ searchParams }: { searchParams: Pr
   const error = getSingleSearchParam(sp.error);
   const selfPath = "/admin/club/forms";
 
-  const [{ attached, unreachable }, nonResponders] = await Promise.all([
+  const [{ attached, unreachable }, nonResponders, opens] = await Promise.all([
     listBroadcastRecipients(),
     computeScheduleNonResponders(),
+    getClubOpenAdmin(),
   ]);
   const broadcastEnabled = isClubFormsBroadcastEnabled();
 
@@ -47,6 +49,24 @@ export default async function ClubFormsPage({ searchParams }: { searchParams: Pr
           Рассылка выключена флагом CLUB_FORMS_BROADCAST_ENABLED. Получателей видно, но отправка вернёт «выключено». Включи флаг на Vercel, когда будешь готов.
         </div>
       ) : null}
+
+      <div className="admin-card" style={{ marginTop: 12 }}>
+        <div className="admin-badge-row">
+          <strong>Открытия клуба</strong>
+          <span className="admin-summary-label">уникальных за 7 дней: {opens.uniqueThisWeek} · сегодня: {opens.openedTodayCount} · всего открывали: {opens.everOpenedCount}</span>
+        </div>
+        {opens.recent.length === 0 ? (
+          <p className="admin-summary-label" style={{ marginTop: 6 }}>Пока никто не открывал (или логирование только что включили - данные появятся после первых заходов).</p>
+        ) : (
+          <div style={{ maxHeight: 220, overflowY: "auto", marginTop: 8, columns: "2 260px" }}>
+            {opens.recent.map((o) => (
+              <div key={o.studentId} style={{ padding: "2px 0", breakInside: "avoid", fontSize: 13 }}>
+                {o.name} · {new Date(o.lastSeenAt).toLocaleString("ru-RU")}{o.lastSection ? ` · ${o.lastSection}` : ""}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <BroadcastPanel
         selfPath={selfPath}

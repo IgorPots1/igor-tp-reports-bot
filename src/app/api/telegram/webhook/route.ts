@@ -23,6 +23,7 @@ import {
   isTrainingPeaksContextObserverEnabled,
 } from "@/features/trainingpeaks/context-observer";
 import { handleTrainingPeaksGroupProbe } from "@/features/trainingpeaks/group-probe";
+import { handleClubStartCommand } from "@/features/club/start-onboarding";
 import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
@@ -249,6 +250,20 @@ export async function POST(request: Request) {
   if (HELP_COMMAND_PATTERN.test(messageText)) {
     await handleTrainingPeaksTelegramHelp(parsedMessage);
     return okResponse();
+  }
+
+  // Club onboarding deep link (t.me/<bot>?start=club) from the group chat. Handled BEFORE the
+  // coach-only /start path so a plain user is greeted (not blocked). Pressing Start also gives
+  // the bot a DM with them, so later form broadcasts can reach them. Falls through when it is
+  // not a club start or the club is off — existing /start (case_/action_/student_/coach) intact.
+  const clubStartParam = messageText.match(/^\/start(?:@\w+)?\s+(\S+)/)?.[1];
+  if (clubStartParam === "club") {
+    const from = update.message?.from;
+    const handled = await handleClubStartCommand({
+      chatId: parsedMessage.chatId,
+      from: from ? { id: from.id, username: from.username ?? null, first_name: from.first_name ?? null } : null,
+    });
+    if (handled) return okResponse();
   }
 
   if (START_COMMAND_PATTERN.test(messageText)) {
