@@ -427,6 +427,10 @@ export type ClubWorkoutDetailView = {
   ascentM: number | null;
   /** Per-lap breakdown (empty when no FIT laps for this workout). */
   laps: ClubWorkoutLap[];
+  /** Stepwise climb profile: CUMULATIVE ascent (m) vs cumulative distance (km) at each lap
+   * boundary, built from per-lap total_ascent_m (no per-point altitude). null when no lap
+   * ascent at all. Honest = cumulative gain, not net altitude (we only have per-lap gain). */
+  elevationProfile: Array<{ km: number; elevM: number }> | null;
   /** HR zones (empty when time_in_zones absent). */
   zones: ClubZoneSlice[];
   zoneBasisLabel: string | null;

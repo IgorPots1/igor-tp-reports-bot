@@ -1552,6 +1552,30 @@ function LapBars({ values }: { values: Array<number | null> }) {
   );
 }
 
+// Stepwise cumulative-climb profile (per-lap ascent; no per-point altitude). Staircase:
+// horizontal across each lap, step up by that lap's ascent at the boundary.
+function ElevationProfile({ points }: { points: Array<{ km: number; elevM: number }> }) {
+  if (points.length < 2) return null;
+  const maxX = points[points.length - 1].km || 1;
+  const maxEl = Math.max(1, ...points.map((p) => p.elevM));
+  const w = 320;
+  const h = 54;
+  const pad = 2;
+  const X = (x: number) => pad + (x / maxX) * (w - 2 * pad);
+  const Y = (el: number) => h - pad - (el / maxEl) * (h - 2 * pad);
+  let line = `M ${X(points[0].km).toFixed(1)} ${Y(points[0].elevM).toFixed(1)}`;
+  for (let i = 1; i < points.length; i += 1) {
+    line += ` L ${X(points[i].km).toFixed(1)} ${Y(points[i - 1].elevM).toFixed(1)} L ${X(points[i].km).toFixed(1)} ${Y(points[i].elevM).toFixed(1)}`;
+  }
+  const area = `${line} L ${X(maxX).toFixed(1)} ${h - pad} L ${X(0).toFixed(1)} ${h - pad} Z`;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} style={{ marginTop: 6 }}>
+      <path d={area} style={{ fill: C.accent }} opacity={0.16} />
+      <path d={line} style={{ fill: "none", stroke: C.accent, strokeWidth: 2, strokeLinejoin: "round", strokeLinecap: "round" }} opacity={0.9} />
+    </svg>
+  );
+}
+
 function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: string; initData: string; onClose: () => void }) {
   const [view, setView] = useState<ClubWorkoutDetailView | null>(null);
   const [status, setStatus] = useState<Status>("loading");
@@ -1640,6 +1664,12 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
                       <div style={{ marginTop: 10 }}>
                         <div style={S.cardMeta}>Пульс по кругам</div>
                         <LapBars values={view.laps.map((l) => l.avgHr)} />
+                      </div>
+                    ) : null}
+                    {view.elevationProfile ? (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={S.cardMeta}>Набор высоты по дистанции{view.ascentM ? ` · ${view.ascentM} м` : ""}</div>
+                        <ElevationProfile points={view.elevationProfile} />
                       </div>
                     ) : null}
                   </div>

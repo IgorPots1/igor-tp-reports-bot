@@ -2850,6 +2850,27 @@ export async function getClubWorkoutDetail(input: {
   const zones = derived ? parseZones(derived.time_in_zones, derived.zone_basis) : [];
   const zoneBasisLabel = derived?.zone_basis === "threshold_hr" ? "по порогу ЧСС" : derived?.zone_basis === "max_hr_pct" ? "по % от макс. ЧСС" : null;
 
+  // Stepwise climb profile from per-lap ascent (no per-point altitude): cumulative ascent
+  // vs cumulative distance at each lap boundary. x falls back to lap index when distance
+  // is absent. null when no lap carries ascent → the block is simply not drawn.
+  const elevationProfile = ((): Array<{ km: number; elevM: number }> | null => {
+    if (lapRows.length === 0) return null;
+    let cumKm = 0;
+    let cumAsc = 0;
+    let anyAsc = false;
+    const pts: Array<{ km: number; elevM: number }> = [{ km: 0, elevM: 0 }];
+    for (const l of lapRows) {
+      cumKm += l.distance_m != null && l.distance_m > 0 ? l.distance_m / 1000 : 0;
+      if (l.total_ascent_m != null && l.total_ascent_m > 0) {
+        cumAsc += l.total_ascent_m;
+        anyAsc = true;
+      }
+      pts.push({ km: Number(cumKm.toFixed(2)), elevM: Math.round(cumAsc) });
+    }
+    if (!anyAsc) return null;
+    return cumKm > 0 ? pts : pts.map((p, i) => ({ km: i, elevM: p.elevM }));
+  })();
+
   return {
     id: row.id,
     studentId: row.studentId,
@@ -2870,6 +2891,7 @@ export async function getClubWorkoutDetail(input: {
     avgCadence: row.isRunning && avgCadence ? avgCadence * 2 : avgCadence,
     ascentM: ascentSum != null && ascentSum > 0 ? Math.round(ascentSum) : null,
     laps,
+    elevationProfile,
     zones,
     zoneBasisLabel,
     track,
