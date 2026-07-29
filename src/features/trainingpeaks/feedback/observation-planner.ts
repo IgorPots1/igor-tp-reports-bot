@@ -52,7 +52,7 @@ export function planObservations(packet: ContextPacket): Observation[] {
   // pace-dependent entry (even-pace CV) likewise needs trusted pace/distance.
   // evaluateFullStructure is rep-count-only (lap-trigger timing), independent
   // of both flags.
-  const positives = collectPositiveSignals(current, sessionType).filter((s) => {
+  const positives = collectPositiveSignals(current, sessionType, packet.laps).filter((s) => {
     if (!trustGate.hrTrusted && (s.key === "praise_good_recovery" || s.key === "praise_steady_hr_rise" || s.key === "praise_hr_steady_long" || s.key === "praise_long_held_steady")) return false;
     if (!trustGate.paceDistanceTrusted && s.key === "praise_even_pace") return false;
     return true;

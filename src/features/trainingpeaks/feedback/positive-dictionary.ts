@@ -13,14 +13,21 @@
 // pct_time_*_target is NULL across the whole base.
 
 import { parseComparisonKey } from "../comparison/index.ts";
+import { computeSplitHalf } from "./split-half.ts";
 import type { AdviceKey } from "./advice-keys.ts";
-import type { PlannerDerivedMetrics, SessionType } from "./types.ts";
+import type { PlannerDerivedMetrics, PlannerLap, SessionType } from "./types.ts";
 
 export const EVEN_PACE_CV_MAX_PCT = 4; // judgment call: "очень ровно" for rep-to-rep pace CV
 export const GOOD_RECOVERY_MIN_DROP_BPM = 20; // judgment call: healthy HR fall in the recovery window
 export const STEADY_HR_MAX_DECOUPLING_PCT = 2; // below the 5% drift threshold, a deliberate dead zone in between
 export const LONG_HELD_MIN_DURATION_S = 5400; // 90 min — matches the corpus example "полтора часа ровно удержал"
 export const HR_RISE_TOLERANCE_BPM = 2; // "ровно растут": no consecutive drop bigger than this
+// Raw-HR guard for the steady-HR praise. Decoupling (HR/pace ratio) stays low even when raw HR climbs
+// with a faster pace (negative split) — so a low decoupling does NOT prove «пульс не пополз» (Паутов:
+// 147→153 avg, decoupling 1.4%). When we DO have a half split, don't praise steadiness if the second
+// half's average HR rose more than this. Single-lap runs have no split → the reframed claim (efficiency,
+// not raw pulse) carries the honesty there.
+export const SECOND_HALF_HR_RISE_MAX_BPM = 5;
 
 export type PositiveSignal = { key: AdviceKey; metric: string; numbers: Record<string, number>; reason: string };
 
@@ -59,23 +66,29 @@ export function evaluateFullStructure(current: PlannerDerivedMetrics, sessionTyp
   return { key: "praise_full_structure", metric: "reps_detected_count", numbers: { plannedReps, detectedReps: current.repsDetectedCount }, reason: `detected ${current.repsDetectedCount} == planned ${plannedReps}` };
 }
 
-/** Fires either the moderate ("ровный, не пополз") or the strong, duration-led
- *  variant ("долго ровно удержал") — same underlying signal, one output. */
-export function evaluateSteadyHr(current: PlannerDerivedMetrics, sessionType: SessionType): PositiveSignal | null {
+/** Fires the moderate or the strong, duration-led variant of "aerobically steady" — same underlying
+ *  signal (low decoupling), one output. The CLAIM is about efficiency (HR/pace held), NOT raw pulse: a
+ *  low decoupling can coexist with a rising HR when the pace rose too. When laps give a half split, we
+ *  additionally REFUSE to praise steadiness if raw HR climbed in the second half (Паутов). */
+export function evaluateSteadyHr(current: PlannerDerivedMetrics, sessionType: SessionType, laps: PlannerLap[] = []): PositiveSignal | null {
   if (sessionType !== "long_tempo" || current.hrDecouplingPct === null || current.durationS === null) return null;
   if (current.hrDecouplingPct > STEADY_HR_MAX_DECOUPLING_PCT) return null;
+  const split = computeSplitHalf(laps);
+  if (split && split.firstHalfAvgHr !== null && split.secondHalfAvgHr !== null && split.secondHalfAvgHr - split.firstHalfAvgHr > SECOND_HALF_HR_RISE_MAX_BPM) {
+    return null; // raw HR clearly rose in the 2nd half — not steady, whatever decoupling says
+  }
   if (current.durationS >= LONG_HELD_MIN_DURATION_S) {
     return { key: "praise_long_held_steady", metric: "hr_decoupling_pct", numbers: { hrDecouplingPct: current.hrDecouplingPct, durationS: current.durationS }, reason: `decoupling ${current.hrDecouplingPct}% <= ${STEADY_HR_MAX_DECOUPLING_PCT}% over ${Math.round(current.durationS / 60)}min` };
   }
   return { key: "praise_hr_steady_long", metric: "hr_decoupling_pct", numbers: { hrDecouplingPct: current.hrDecouplingPct }, reason: `decoupling ${current.hrDecouplingPct}% <= ${STEADY_HR_MAX_DECOUPLING_PCT}%` };
 }
 
-export function collectPositiveSignals(current: PlannerDerivedMetrics, sessionType: SessionType): PositiveSignal[] {
+export function collectPositiveSignals(current: PlannerDerivedMetrics, sessionType: SessionType, laps: PlannerLap[] = []): PositiveSignal[] {
   return [
     evaluateEvenPace(current, sessionType),
     evaluateGoodRecovery(current, sessionType),
     evaluateSteadyHrRise(current, sessionType),
     evaluateFullStructure(current, sessionType),
-    evaluateSteadyHr(current, sessionType),
+    evaluateSteadyHr(current, sessionType, laps),
   ].filter((s): s is PositiveSignal => s !== null);
 }

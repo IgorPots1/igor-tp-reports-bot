@@ -10,6 +10,7 @@
 
 import { computeSplitHalf } from "./split-half.ts";
 import { planObservations } from "./observation-planner.ts";
+import { SECOND_HALF_HR_RISE_MAX_BPM } from "./positive-dictionary.ts";
 import { alignFactorsToTriggerDay } from "./stated-factors.ts";
 import { FEWSHOTS, GLOSS, ordinalWord, registerWord, sexRuleText } from "./feedback-corpus.ts";
 import type { ContextPacket, Observation, PlannerDerivedMetrics, PlannerLap, PlannerStudentMessage, SessionType } from "./types.ts";
@@ -123,7 +124,15 @@ function buildLongArc(current: PlannerDerivedMetrics, laps: PlannerLap[], observ
   }
 
   if (D !== null && D < 5 && !paceDropped) {
-    notes.push(vary(wid, 7, "[дуга] пульс держался ровно почти всю дистанцию, к концу не пополз, хорошая выносливость", "[дуга] пульс всю дистанцию ровный, к финишу не полез, выносливость хорошая", "[дуга] сердце держало ровно до конца, не поползло, форма по выносливости хорошая"));
+    // Decoupling low = HR/pace efficiency held. That is NOT «пульс не пополз»: raw HR can climb with a
+    // faster pace (Паутов 147→153, decoupling 1.4%). If the half split shows the raw HR rose, say the
+    // TRUE thing (прибавил, пульс подрос, но экономично); otherwise praise the aerobic steadiness.
+    const hrRose = split !== null && split.firstHalfAvgHr !== null && split.secondHalfAvgHr !== null && split.secondHalfAvgHr - split.firstHalfAvgHr > SECOND_HALF_HR_RISE_MAX_BPM;
+    if (hrRose) {
+      notes.push(vary(wid, 7, "[дуга] во второй половине прибавил, пульс подрос, но аэробно экономично, эффективность не просела", "[дуга] к концу пульс выше, но в связке с темпом, разложил, форма по выносливости хорошая", "[дуга] вторую половину бодрее, пульс поднялся, но экономично, выносливость хорошая"));
+    } else {
+      notes.push(vary(wid, 7, "[дуга] аэробно держался ровно почти всю дистанцию, к концу не просел, хорошая выносливость", "[дуга] эффективность ровная всю дистанцию, темп и пульс в связке до финиша, выносливость хорошая", "[дуга] сердце и темп держались ровно в связке до конца, экономично, форма хорошая"));
+    }
     if (fastStart) notes.push("[нюанс] начало чуть бодрее второй половины, но в пределах нормы");
     return { notes, rich: false };
   }
