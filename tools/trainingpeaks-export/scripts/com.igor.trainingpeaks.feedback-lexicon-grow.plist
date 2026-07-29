@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Живой рост словаря голоса (Блок 2+3) — РАЗ В НЕДЕЛЮ (понедельник 08:10 локального времени).
+     Копит living-lexicon.json (новые слова из sent_text, порог >=2) и blacklist candidates
+     (что тренер вырезает). READ-ONLY по БД, пишет только локальные JSON.
+     ВАЖНО: рост применится в прод только после commit+deploy этих JSON (словарь бандлится в сборку).
+     Раннер сам подсказывает в логе, когда есть что коммитить.
+     НЕ ставится автоматически. Ставит Игорь:
+       cp .../com.igor.trainingpeaks.feedback-lexicon-grow.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.feedback-lexicon-grow.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.feedback-lexicon-grow</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-feedback-lexicon-grow.sh"</string>
+  </array>
+
+  <!-- Понедельник 08:10. Если ноут спал — launchd докрутит при пробуждении.
+       RunAtLoad НЕ ставим: иначе рост гонялся бы на каждый вход/включение. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>8</integer>
+    <key>Minute</key><integer>10</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/feedback-lexicon-grow.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/feedback-lexicon-grow.launchd.err.log</string>
+</dict>
+</plist>
