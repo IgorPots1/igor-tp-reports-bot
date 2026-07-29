@@ -8,11 +8,12 @@
 //
 // Sent as the BOT (no business connection). Gated by the club being live (isClubEnabled).
 
-import { getTelegramBotUsername, sendTelegramUrlButton, sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
+import { sendTelegramUrlButton, sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
 import { getTrainingPeaksStudentByTelegramUserId } from "@/features/trainingpeaks/repository";
 
 import { isClubEnabled } from "./miniapp-guard";
 import { recordClubAccessRequest } from "./access-requests";
+import { clubMiniAppShortName, resolveClubBotUsername, clubGeneralLinkStr } from "./entry-links";
 
 export type ClubStartFrom = { id: number; username?: string | null; first_name?: string | null; last_name?: string | null };
 
@@ -24,11 +25,13 @@ function greetingText(): string {
 }
 
 async function clubMiniAppUrl(): Promise<string | null> {
-  if (process.env.MINIAPP_ENABLED !== "true") return null;
-  const shortName = process.env.TELEGRAM_MINIAPP_SHORT_NAME?.trim();
+  // The CLUB app (XOclub) under the CLUB bot — via the shared club entry-link resolvers, NOT
+  // TELEGRAM_MINIAPP_SHORT_NAME (nutrition/Report). Returns null if the club short name is unset
+  // (then the greeting is sent without a button, never a wrong-app link). See entry-links.ts.
+  const shortName = clubMiniAppShortName();
   if (!shortName) return null;
-  const username = await getTelegramBotUsername();
-  return `https://t.me/${username}/${shortName}`;
+  const username = await resolveClubBotUsername();
+  return clubGeneralLinkStr(username, shortName);
 }
 
 /**

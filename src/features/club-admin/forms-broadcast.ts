@@ -13,8 +13,9 @@
 // There is no scheduled auto-broadcast.
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import { sendTelegramMessageStrict, getTelegramBotUsername } from "@/features/telegram/telegram-client";
+import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
 import { isClubFormsBroadcastEnabled } from "@/features/club/constants";
+import { clubMiniAppShortName, resolveClubBotUsername } from "@/features/club/entry-links";
 
 export type ClubFormType = "starts" | "schedule";
 
@@ -61,9 +62,12 @@ function todayIso(): string {
 }
 
 async function buildDeepLink(section: string): Promise<string> {
-  const shortName = process.env.TELEGRAM_MINIAPP_SHORT_NAME?.trim();
-  if (!shortName) throw new Error("TELEGRAM_MINIAPP_SHORT_NAME не задан (BotFather /newapp short name).");
-  const username = await getTelegramBotUsername();
+  // MUST be the CLUB app short name (XOclub) under the CLUB bot — NOT TELEGRAM_MINIAPP_SHORT_NAME
+  // (that is the nutrition/Report app). Reuses the club entry-link resolvers so every club link
+  // is built the same way. See src/features/club/entry-links.ts.
+  const shortName = clubMiniAppShortName();
+  if (!shortName) throw new Error("CLUB_MINIAPP_SHORT_NAME не задан (короткое имя клубного мини-аппа, напр. XOclub).");
+  const username = await resolveClubBotUsername();
   return `https://t.me/${username}/${shortName}?startapp=${section}`;
 }
 
