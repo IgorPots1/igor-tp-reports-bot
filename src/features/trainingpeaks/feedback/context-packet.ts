@@ -317,6 +317,19 @@ const ARC_OWNED_KEYS = new Set([
   "praise_full_structure", "correction_interval_fade", "praise_default_good",
 ]);
 
+// The gloss the model sees for one observation. For a stated cause we PREPEND the student's real quote
+// (from the observation's reason «…») so the model обыгрывает ИМЕННО его слова — the gloss itself no
+// longer carries example words to parrot (урок Трофимовой: «работа/ремонт» из скобок глоссы утекали в
+// текст, хотя ученик говорил про операцию).
+function glossFor(o: Observation): string {
+  const gloss = GLOSS[o.adviceKey as keyof typeof GLOSS] ?? o.adviceKey;
+  if (o.adviceKey.startsWith("cause_confirmed")) {
+    const quote = o.reason.match(/«([^»]+)»/)?.[1];
+    if (quote) return `ученик написал: «${quote}» — ${gloss}`;
+  }
+  return gloss;
+}
+
 function renderObservations(observations: Observation[], arc: { notes: string[]; rich: boolean } | null): string {
   const studentFacing = observations.filter((o) => o.type !== "coach_signal");
   if (arc && arc.rich) {
@@ -324,7 +337,7 @@ function renderObservations(observations: Observation[], arc: { notes: string[];
     const out: string[] = ["Разбери ДУГОЙ тренировки (2-3 живые фразы голосом Игоря, СГРУППИРУЙ, не список цифр). Точки дуги:", ...arc.notes.map((s) => `- ${s}`)];
     if (extras.length) {
       out.push("", "Если ложится, можно добавить (по желанию, не обязательно):");
-      for (const o of extras) out.push(`- ${o.type === "question" ? "[ВОПРОС]" : o.type === "praise" ? "[ПОХВАЛА]" : "[ЗАМЕТКА]"} ${GLOSS[o.adviceKey as keyof typeof GLOSS] ?? o.adviceKey}`);
+      for (const o of extras) out.push(`- ${o.type === "question" ? "[ВОПРОС]" : o.type === "praise" ? "[ПОХВАЛА]" : "[ЗАМЕТКА]"} ${glossFor(o)}`);
     }
     return out.join("\n");
   }
@@ -332,7 +345,7 @@ function renderObservations(observations: Observation[], arc: { notes: string[];
   const other = studentFacing.filter((o) => !o.focused);
   const line = (o: Observation) => {
     const label = o.type === "praise" ? "ПОХВАЛА" : o.type === "correction" && o.adviceKey.startsWith("cause") ? "ЗАБОТА" : o.type === "correction" ? "МЯГКАЯ КОРРЕКЦИЯ" : "ВОПРОС";
-    return `- [${label}] ${GLOSS[o.adviceKey as keyof typeof GLOSS] ?? o.adviceKey}`;
+    return `- [${label}] ${glossFor(o)}`;
   };
   const arcOpener = arc && !arc.rich ? [`- [ПОХВАЛА] ${arc.notes[0]!.replace(/^\[[^\]]+\]\s*/, "")}`] : [];
   const out: string[] = ["Тут не богато, скажи коротко (1-2 фразы, не надувай):", ...arcOpener, ...focused.map(line)];
