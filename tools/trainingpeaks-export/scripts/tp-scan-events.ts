@@ -29,6 +29,7 @@ type CliArgs = {
   athleteId: number | null;
   student: string | null;
   headed: boolean;
+  delayMs: number;
 };
 
 type RaceRow = {
@@ -213,6 +214,7 @@ function parseArgs(argv: string[]): CliArgs {
     athleteId: null,
     student: null,
     headed: false,
+    delayMs: 0,
   };
 
   for (const arg of argv) {
@@ -246,6 +248,14 @@ function parseArgs(argv: string[]): CliArgs {
         throw new Error(`Invalid --concurrency value: ${arg}`);
       }
       out.concurrency = Math.min(MAX_CONCURRENCY, Math.max(MIN_CONCURRENCY, Math.floor(parsed)));
+      continue;
+    }
+    if (arg.startsWith("--delay-ms=")) {
+      const parsed = Number(arg.slice("--delay-ms=".length).trim());
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(`Invalid --delay-ms value: ${arg}`);
+      }
+      out.delayMs = Math.floor(parsed);
       continue;
     }
     if (arg.startsWith("--student=")) {
@@ -1060,6 +1070,12 @@ async function main(): Promise<void> {
           }),
         }).catch(() => {});
         // #endregion
+      }
+      // Throttle: space out requests so a large backward scan does not burst TP into
+      // TLS socket disconnects (observed 62/113 failures at concurrency 3, 400-day window).
+      // Default 0 → forward weekly scan behaves exactly as before.
+      if (args.delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, args.delayMs));
       }
     });
   } finally {

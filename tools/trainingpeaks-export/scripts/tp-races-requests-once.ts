@@ -519,10 +519,16 @@ async function runRaceScanJob(job: TrainingPeaksJobRow): Promise<{
   if (!ISO_DATE_PATTERN.test(job.week_from) || !ISO_DATE_PATTERN.test(job.week_to)) {
     throw new Error(`Invalid date range in job ${job.id}: ${job.week_from}..${job.week_to}`);
   }
+  // The backward backfill scans a much wider window (400 days) across the whole roster.
+  // At concurrency 3 that burst got TLS-dropped by TP (62/113 failed). Serialize it and
+  // space requests. The forward weekly scan keeps its defaults (concurrency 3, no delay).
+  const throttle =
+    job.job_type === "race_scan_backfill" ? ["--concurrency=1", "--delay-ms=1500"] : [];
   await runNpmScript("tp-scan-events", [
     `--from=${job.week_from}`,
     `--to=${job.week_to}`,
     "--limit=10000",
+    ...throttle,
   ]);
   const outputDir = await getLatestRaceScanOutputDir();
   if (!outputDir) {
