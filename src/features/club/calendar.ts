@@ -169,6 +169,16 @@ function cleanText(v: unknown, max: number): string | null {
   return t.length > 0 ? t : null;
 }
 
+function intOrNull(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+}
+
+/** Normalized race name for dedup: trimmed, lower-cased, collapsed whitespace. */
+function normRaceName(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/gu, " ");
+}
+
 /**
  * Create (or upsert for day_off/preference) a calendar entry for the student.
  * Validates kind/date; races require an exact name (naryad 5.2). All entries land as
@@ -185,9 +195,11 @@ export async function createCalendarEntry(
     raceName?: unknown;
     raceCity?: unknown;
     raceDistanceLabel?: unknown;
+    raceDistanceMeters?: unknown;
     raceTarget?: unknown;
+    raceTargetSeconds?: unknown;
   }
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; duplicate?: boolean }> {
   const date = ymd(input.date);
   const kind = typeof input.kind === "string" && VALID_KINDS.includes(input.kind as ClubCalendarKind) ? (input.kind as ClubCalendarKind) : null;
   if (!date || !kind) {
@@ -234,8 +246,12 @@ export async function createCalendarEntry(
     row.race_name = name;
     row.race_city = cleanText(input.raceCity, 80);
     row.race_distance_label = cleanText(input.raceDistanceLabel, 40);
-    row.race_target_seconds = hms(input.raceTarget);
+    row.distance_meters = intOrNull(input.raceDistanceMeters);
+    row.race_target_seconds = intOrNull(input.raceTargetSeconds) ?? hms(input.raceTarget);
     row.note = cleanText(input.note, 300); // race wishes (naryad 5.2)
+    // Races are auto-approved: the student's declaration is trusted, no coach-approval wait.
+    // Only the STATUS is automated; TP enqueue/execution stays the separate gated step.
+    row.status = "approved";
   }
 
   const supabase = createSupabaseServerClient();
@@ -260,6 +276,22 @@ export async function createCalendarEntry(
     ({ error } = existingId
       ? await supabase.from("club_calendar_entries").update(row).eq("id", existingId)
       : await supabase.from("club_calendar_entries").insert(row));
+  } else if (kind === "race") {
+    // Dedup: same student + date + normalized race name must not create a second race.
+    // Pre-check for a friendly no-op; the partial unique index (migration 20260816000000)
+    // is the concurrency backstop (23505 -> no-op). Similar-but-different names are allowed.
+    const raceName = String(row.race_name ?? "");
+    const { data: sameDay } = await supabase
+      .from("club_calendar_entries")
+      .select("id, race_name")
+      .eq("student_id", studentId)
+      .eq("entry_date", date)
+      .eq("kind", "race");
+    if (Array.isArray(sameDay) && sameDay.some((r) => normRaceName(String((r as { race_name?: unknown }).race_name ?? "")) === normRaceName(raceName))) {
+      return { ok: true, duplicate: true }; // idempotent: same race already declared
+    }
+    ({ error } = await supabase.from("club_calendar_entries").insert(row));
+    if (error?.code === "23505") return { ok: true, duplicate: true };
   } else {
     ({ error } = await supabase.from("club_calendar_entries").insert(row));
   }

@@ -3130,7 +3130,25 @@ export async function loadRaceDatesWithSource(): Promise<Map<string, Map<string,
     out.set(studentId, perStudent);
   };
 
-  // club_races (lower priority) first, race_events second so it overrides.
+  // Declared races (lower priority) first, race_events second so it overrides. BRIDGE
+  // (steps 2-4): read BOTH the consolidated calendar races (new writes) and legacy
+  // club_races, so record typing sees a declared race regardless of which table holds it.
+  // classifyRecordType only needs the DATE, so a date present in either is enough. Step 4
+  // drops the club_races read once the transfer is confirmed.
+  try {
+    const { data } = await supabase
+      .from("club_calendar_entries")
+      .select("student_id, entry_date, status")
+      .eq("kind", "race")
+      .neq("status", "rejected");
+    for (const row of (data as Array<{ student_id: string; entry_date: string }> | null) ?? []) {
+      // Same logical source as club_races (student-declared); keep the label for provenance.
+      put(row.student_id, (row.entry_date ?? "").slice(0, 10), "club_races");
+    }
+  } catch {
+    /* table absent → skip */
+  }
+
   try {
     const { data } = await supabase
       .from("club_races")

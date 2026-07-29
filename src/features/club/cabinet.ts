@@ -10,6 +10,7 @@ import { getBillingClientForStudent, getBillingClientDetail, getEffectiveBilling
 import type { BillingMonthStatusRow } from "@/features/billing/types";
 
 import { formatRuDate } from "./service";
+import { createCalendarEntry } from "./calendar";
 import { buildClubTbankPayUrl } from "./billing-links";
 import type {
   ClubBillingView,
@@ -48,67 +49,87 @@ export async function createClubRace(
   if (!name || !raceDate) {
     return { ok: false, error: "Укажи название и дату старта." };
   }
-  const supabase = createSupabaseServerClient();
-  // Dedup: the SAME student + date + name (case/space-insensitive) must not create a
-  // second row. Pre-check for a friendly no-op; the DB unique index (migration
-  // 20260815000000) is the concurrency-safe backstop (23505 handled below). Similar (not
-  // identical) names on the same date are allowed and flagged for the coach in the admin list.
-  const { data: sameDay } = await supabase
-    .from("club_races")
-    .select("id, name")
-    .eq("student_id", studentId)
-    .eq("race_date", raceDate);
-  if (Array.isArray(sameDay) && sameDay.some((r) => normRaceName(String((r as { name?: unknown }).name ?? "")) === normRaceName(name))) {
-    return { ok: true, duplicate: true }; // idempotent: already declared, no second record
-  }
-  // Races are auto-approved: the student's declaration is trusted, no coach-approval wait.
-  // Only the STATUS is automated here; the TP enqueue/execution stays a separate, gated step.
-  const { error } = await supabase.from("club_races").insert({
-    student_id: studentId,
-    name,
-    race_date: raceDate,
-    distance_meters: intOrNull(input.distanceMeters),
-    distance_label: typeof input.distanceLabel === "string" ? input.distanceLabel.trim() || null : null,
-    city: typeof input.city === "string" ? input.city.trim() || null : null,
-    country: typeof input.country === "string" ? input.country.trim() || null : null,
-    target_result_seconds: intOrNull(input.targetResultSeconds),
-    status: "approved",
-    approved_by: "student_self",
-    approved_at: new Date().toISOString(),
+  // CONSOLIDATION (step 2): the «Старты» form now writes to the CALENDAR path
+  // (club_calendar_entries kind='race'), the one that actually executes to TP via
+  // club-execute-one.ts. createCalendarEntry handles auto-approve, dedup and distance_meters.
+  // club_races is no longer written (kept read-only legacy until the transfer + Igor's word).
+  // Note: the calendar path is future-or-today only (forward-looking); a past race date is
+  // rejected here (club_races used to allow any date); declaring is a forward action.
+  return createCalendarEntry(studentId, {
+    date: raceDate,
+    kind: "race",
+    raceName: name,
+    raceCity: input.city,
+    raceDistanceLabel: input.distanceLabel,
+    raceDistanceMeters: input.distanceMeters,
+    raceTargetSeconds: input.targetResultSeconds,
   });
-  if (error) {
-    if (error.code === "23505") {
-      return { ok: true, duplicate: true }; // unique index caught a concurrent duplicate
-    }
-    const kind = logClubDbError("createClubRace", error);
-    return { ok: false, error: kind === "missing_table" ? "Раздел стартов ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
-  }
-  return { ok: true };
+}
+
+/** Map a calendar race entry's status (+ TP anchor) to the ClubRace status the tab shows. */
+function mapCalRaceStatus(status: string | null, hasTpAnchor: boolean): ClubRace["status"] {
+  if (status === "applied" || hasTpAnchor) return "synced_to_tp";
+  if (status === "rejected") return "rejected";
+  if (status === "approved") return "approved";
+  return "declared";
 }
 
 export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("club_races")
-    .select("id, name, race_date, distance_label, distance_meters, city, target_result_seconds, status")
-    .eq("student_id", studentId)
-    .order("race_date", { ascending: false })
-    .limit(50);
-  if (error || !data) {
-    return [];
+  // BRIDGE (steps 2-4): union the consolidated calendar races (new writes land here) with
+  // legacy club_races (old form rows, until the transfer script migrates them), deduped by
+  // (date + normalized name), preferring the calendar row (it executes / carries the TP
+  // anchor). Step 4 drops the club_races side once the transfer is confirmed live.
+  const [calRes, legacyRes] = await Promise.all([
+    supabase
+      .from("club_calendar_entries")
+      .select("id, entry_date, race_name, race_city, race_distance_label, distance_meters, race_target_seconds, status, applied_tp_workout_id")
+      .eq("student_id", studentId)
+      .eq("kind", "race"),
+    supabase
+      .from("club_races")
+      .select("id, name, race_date, distance_label, distance_meters, city, target_result_seconds, status")
+      .eq("student_id", studentId),
+  ]);
+  const out: ClubRace[] = [];
+  const seen = new Set<string>();
+  const key = (date: string, name: string) => `${date}|${normRaceName(name)}`;
+  const kmLabel = (label: unknown, meters: unknown): string | null =>
+    (label as string | null) ?? (typeof meters === "number" && meters > 0 ? `${(meters / 1000).toFixed(1)} км` : null);
+  for (const r of (calRes.data as Array<Record<string, unknown>> | null) ?? []) {
+    const date = String(r.entry_date ?? "");
+    const name = String(r.race_name ?? "");
+    if (!date) continue;
+    seen.add(key(date, name));
+    out.push({
+      id: r.id as string,
+      name,
+      raceDate: date,
+      dateLabel: formatRuDate(date),
+      distanceLabel: kmLabel(r.race_distance_label, r.distance_meters),
+      city: (r.race_city as string | null) ?? null,
+      targetResultSeconds: intOrNull(r.race_target_seconds),
+      status: mapCalRaceStatus(r.status as string | null, r.applied_tp_workout_id != null),
+    });
   }
-  return (data as Array<Record<string, unknown>>).map((r) => ({
-    id: r.id as string,
-    name: (r.name as string) ?? "",
-    raceDate: r.race_date as string,
-    dateLabel: formatRuDate(r.race_date as string),
-    distanceLabel:
-      (r.distance_label as string | null) ??
-      (r.distance_meters ? `${((r.distance_meters as number) / 1000).toFixed(1)} км` : null),
-    city: (r.city as string | null) ?? null,
-    targetResultSeconds: intOrNull(r.target_result_seconds),
-    status: (r.status as ClubRace["status"]) ?? "declared",
-  }));
+  for (const r of (legacyRes.data as Array<Record<string, unknown>> | null) ?? []) {
+    const date = String(r.race_date ?? "");
+    const name = String(r.name ?? "");
+    if (!date || seen.has(key(date, name))) continue;
+    seen.add(key(date, name));
+    out.push({
+      id: r.id as string,
+      name,
+      raceDate: date,
+      dateLabel: formatRuDate(date),
+      distanceLabel: kmLabel(r.distance_label, r.distance_meters),
+      city: (r.city as string | null) ?? null,
+      targetResultSeconds: intOrNull(r.target_result_seconds),
+      status: (r.status as ClubRace["status"]) ?? "declared",
+    });
+  }
+  out.sort((a, b) => (a.raceDate < b.raceDate ? 1 : a.raceDate > b.raceDate ? -1 : 0));
+  return out.slice(0, 50);
 }
 
 // ---------------------------------------------------------------------------

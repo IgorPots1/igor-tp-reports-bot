@@ -2000,6 +2000,12 @@ const DAYOFF_STATUS_LABEL: Record<string, string> = {
 // Preset race distances (label sent to the coach). "Своя" reveals a decimal input.
 const RACE_DISTANCE_PRESETS = ["5 км", "10 км", "21.1 км", "42.2 км"] as const;
 
+/** Parse a km number out of a preset label ("21.1 км") or a custom km input → meters. */
+function kmToMeters(dist: string | undefined | null): number | null {
+  const km = parseFloat(String(dist ?? "").replace(",", ".").replace(/[^\d.]/gu, ""));
+  return Number.isFinite(km) && km > 0 ? Math.round(km * 1000) : null;
+}
+
 /** iOS: after the keyboard animates up, pull the focused field into the middle of the scroll
  *  area so it (and the submit button below) is not hidden under the keyboard. */
 function scrollFieldIntoView(e: React.FocusEvent<HTMLElement>): void {
@@ -2127,7 +2133,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
               <label style={{ ...S.fieldLabel, marginTop: 8 }}>Город (необязательно)</label>
               <input style={S.input} placeholder="Например, Москва" value={form.city ?? ""} onChange={(e) => set("city", e.target.value)} onFocus={scrollFieldIntoView} />
 
-              <button style={{ ...S.saveBtn, marginTop: 4 }} type="button" disabled={saving} onClick={() => submit({ race: { name: form.name, raceDate: form.date, distanceLabel: customDist ? (form.dist?.trim() ? `${form.dist.trim()} км` : "") : form.dist, city: form.city, targetResultSeconds: combineHms(form.th, form.tm, form.ts) } })}>
+              <button style={{ ...S.saveBtn, marginTop: 4 }} type="button" disabled={saving} onClick={() => submit({ race: { name: form.name, raceDate: form.date, distanceLabel: customDist ? (form.dist?.trim() ? `${form.dist.trim()} км` : "") : form.dist, distanceMeters: kmToMeters(form.dist), city: form.city, targetResultSeconds: combineHms(form.th, form.tm, form.ts) } })}>
                 {saving ? "Отправляю…" : "Заявить старт"}
               </button>
               <div style={S.hint}>Старт сохранится сразу, без ожидания тренера. Он появится в списке ниже.</div>
