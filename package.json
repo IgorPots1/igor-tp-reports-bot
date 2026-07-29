@@ -72,6 +72,7 @@
     "audit-club-race-reclassification": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/audit-club-race-reclassification.ts",
     "audit-club-race-snapshots-fastest": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/audit-club-race-snapshots-fastest.ts",
     "audit-club-race-record-provenance": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/audit-club-race-record-provenance.ts",
+    "audit-club-race-events-coverage": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/audit-club-race-events-coverage.ts",
     "check-club-aggregates-parity": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-club-aggregates-parity.ts",
     "check-club-aggregates-parity-realdb": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-club-aggregates-parity-realdb.ts",
     "check-club-week-rollup-parity": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-club-week-rollup-parity.ts",
