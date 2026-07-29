@@ -383,6 +383,75 @@ function mapWorkoutCacheRow(row: Record<string, unknown>): ClubWorkoutRow {
   };
 }
 
+// --- Feed card enrichment (Stage 2, screen 1) ---------------------------------
+
+/**
+ * "07:30" from a workout start_time. TP-API scan stores a NAIVE-LOCAL ISO
+ * (raw.startTime, the athlete's local wall-clock, no offset); the FIT path stores UTC
+ * (normalizeIsoDateFromUtc → toISOString → trailing "Z"). We show the wall-clock digits
+ * for naive-local and explicit-offset strings (both already carry local time), but NEVER
+ * for a UTC "Z" value - its local time is unknown without a per-athlete timezone, and a
+ * wrong time is worse than none. Timeless / unparseable → null (block not drawn).
+ */
+function localStartHm(startTime: string | null): string | null {
+  if (!startTime) return null;
+  const s = startTime.trim();
+  if (/z$/iu.test(s)) return null; // UTC (FIT path): local wall-clock unknown, don't show
+  const m = s.match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/u);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return null;
+  return `${m[1]}:${m[2]}`;
+}
+
+// Insight rule (documented so it can be tuned): compare a running workout's pace to the
+// athlete's OWN recent runs of comparable distance. Cross-distance pace is noisy, so we
+// only compare within a distance band and require enough samples before making a claim.
+const INSIGHT_MIN_KM = 3; // ignore very short runs (pace is noisy / warm-ups)
+const INSIGHT_BAND = 0.4; // comparable = ±40% of this run's distance
+const INSIGHT_MIN_SAMPLES = 3; // need at least this many comparable prior runs
+const INSIGHT_MIN_FASTER = 0.04; // ≥4% faster than the athlete's usual pace at this distance
+const INSIGHT_BASELINE_DAYS = 120; // how far back to build the per-athlete baseline
+
+type PaceSample = { id: string; date: string; km: number; pace: number };
+
+/** Group loaded rows into per-athlete running pace samples (date-ascending, as loaded). */
+function buildInsightBaseline(rows: ClubWorkoutRow[]): Map<string, PaceSample[]> {
+  const by = new Map<string, PaceSample[]>();
+  for (const r of rows) {
+    if (!r.isCompleted || !r.isRunning) continue;
+    const km = r.distanceKm ?? 0;
+    if (km < INSIGHT_MIN_KM) continue;
+    const pace = paceSecPerKm(r.distanceKm, r.durationSeconds);
+    if (!pace || pace <= 0) continue;
+    const arr = by.get(r.studentId) ?? [];
+    arr.push({ id: r.id, date: r.workoutDate, km, pace });
+    by.set(r.studentId, arr);
+  }
+  return by;
+}
+
+/** "На N% быстрее обычного" when this run beats the athlete's usual pace at this distance. */
+function computeFeedInsight(
+  item: { id: string; date: string; distanceKm: number | null; paceSecPerKm: number | null; isRunning: boolean },
+  baseline: PaceSample[]
+): string | null {
+  if (!item.isRunning || !item.paceSecPerKm || item.paceSecPerKm <= 0) return null;
+  if (!item.distanceKm || item.distanceKm < INSIGHT_MIN_KM) return null;
+  const lo = item.distanceKm * (1 - INSIGHT_BAND);
+  const hi = item.distanceKm * (1 + INSIGHT_BAND);
+  const comparable = baseline
+    .filter((s) => s.id !== item.id && s.date <= item.date && s.km >= lo && s.km <= hi)
+    .slice(-10); // most recent up to 10 (baseline is date-ascending)
+  if (comparable.length < INSIGHT_MIN_SAMPLES) return null;
+  const avg = comparable.reduce((a, b) => a + b.pace, 0) / comparable.length;
+  if (avg <= 0) return null;
+  const faster = (avg - item.paceSecPerKm) / avg; // >0 → this run's pace is smaller = faster
+  if (faster < INSIGHT_MIN_FASTER) return null;
+  return `На ${Math.round(faster * 100)}% быстрее обычного`;
+}
+
 export async function loadClubWorkoutRows(input: {
   from: string;
   to: string;
@@ -1548,17 +1617,26 @@ export async function getClubFeed(input: {
   const nextCursor =
     pageRows.length === pageSize && !exhausted ? encodeFeedCursor(pageRows[pageRows.length - 1]) : null;
 
-  // Single reactions + avg-HR + track query each for the whole page (no N+1).
+  // Single reactions + avg-HR + track query each for the whole page (no N+1). Plus a
+  // bounded baseline read (page athletes over INSIGHT_BASELINE_DAYS) for the "faster than
+  // usual" insight: computed from each athlete's OWN history, not the whole club.
   const pageIds = pageRows.map((r) => r.id);
-  const [reactions, avgHrById, tracksById] = await Promise.all([
+  const uniqueAthletes = [...new Set(pageRows.map((r) => r.studentId))];
+  const baselineFrom = addDaysIso(today, -INSIGHT_BASELINE_DAYS);
+  const [reactions, avgHrById, tracksById, baselineRows] = await Promise.all([
     loadReactionsForWorkouts(pageIds, input.currentStudentId),
     loadAvgHrForWorkouts(pageIds),
     loadTracksForWorkouts(pageIds),
+    uniqueAthletes.length > 0
+      ? loadClubWorkoutRows({ from: baselineFrom, to: today, studentIds: uniqueAthletes })
+      : Promise.resolve([] as ClubWorkoutRow[]),
   ]);
+  const insightBaseline = buildInsightBaseline(baselineRows);
 
   const items: ClubFeedItem[] = pageRows.map((row) => {
     const label = typeLabel(row.family);
     const agg = reactions.get(row.id);
+    const pace = row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null;
     return {
       id: row.id,
       studentId: row.studentId,
@@ -1570,8 +1648,13 @@ export async function getClubFeed(input: {
       dateLabel: formatRuDate(row.workoutDate),
       distanceKm: row.distanceKm,
       durationSeconds: row.durationSeconds,
-      paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
+      paceSecPerKm: pace,
       avgHr: avgHrById.get(row.id) ?? null,
+      timeLabel: localStartHm(row.startTime),
+      insight: computeFeedInsight(
+        { id: row.id, date: row.workoutDate, distanceKm: row.distanceKm, paceSecPerKm: pace, isRunning: row.isRunning },
+        insightBaseline.get(row.studentId) ?? []
+      ),
       title: cleanTitle(row.title),
       caption: sanitizeCaption(row.title, label),
       track: tracksById.get(row.id) ?? null,
@@ -2508,6 +2591,8 @@ export async function getClubPublicProfile(input: {
       durationSeconds: row.durationSeconds,
       paceSecPerKm: row.isRunning ? paceSecPerKm(row.distanceKm, row.durationSeconds) : null,
       avgHr: null,
+      timeLabel: localStartHm(row.startTime),
+      insight: null,
       title: cleanTitle(row.title),
       caption: sanitizeCaption(row.title, label),
       track: null,

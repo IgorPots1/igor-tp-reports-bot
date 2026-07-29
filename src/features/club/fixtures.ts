@@ -30,6 +30,8 @@ function feedItem(over: Partial<ClubFeedItem> & { id: string; studentId: string 
     durationSeconds: 3000,
     paceSecPerKm: 300,
     avgHr: null,
+    timeLabel: null,
+    insight: null,
     title: null,
     caption: null,
     track: null,

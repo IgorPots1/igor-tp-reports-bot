@@ -869,7 +869,7 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
         <Monogram text={item.monogram} onClick={() => onOpenStudent(item.studentId)} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={S.cardName} onClick={() => onOpenStudent(item.studentId)}>{item.studentDisplayName}</div>
-          <div style={S.cardMeta}>{item.typeLabel} · {item.dateLabel}</div>
+          <div style={S.cardMeta}>{item.typeLabel} · {item.dateLabel}{item.timeLabel ? ` · ${item.timeLabel}` : ""}</div>
         </div>
       </div>
       <div style={{ cursor: "pointer" }} onClick={() => onOpenWorkout(item.id)}>
@@ -884,6 +884,7 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
             {cells.map((c, i) => (<StatCell key={i} label={c.label} value={c.value} />))}
           </div>
         ) : null}
+        {item.insight ? <div style={S.insightBadge}>{item.insight}</div> : null}
         {item.caption && !item.title ? <div style={S.caption}>{item.caption}</div> : null}
         <div style={{ fontSize: 11.5, color: C.faint, marginTop: 8 }}>Тапни, чтобы открыть тренировку →</div>
       </div>
@@ -2283,6 +2284,7 @@ const S = {
   statRow: { display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" } as React.CSSProperties,
   stat: { background: C.cardAlt, borderRadius: 999, padding: "5px 12px", fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: HEAD } as React.CSSProperties,
   caption: { marginTop: 10, fontSize: 13.5, color: C.sub, lineHeight: 1.4 } as React.CSSProperties,
+  insightBadge: { display: "inline-block", marginTop: 10, padding: "4px 11px", borderRadius: 999, background: "rgba(245,197,24,0.16)", color: C.accentText, fontFamily: HEAD, fontSize: 12, fontWeight: 600 } as React.CSSProperties,
   reactRow: { display: "flex", gap: 10, marginTop: 12 } as React.CSSProperties,
   reactChip: { fontSize: 13, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "0 13px", minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box", cursor: "pointer" } as React.CSSProperties,
   secHead: { fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" as const, color: C.faint } as React.CSSProperties,

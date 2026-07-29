@@ -34,6 +34,12 @@ export type ClubFeedItem = {
   paceSecPerKm: number | null;
   /** Average heart rate (bpm) from FIT-derived metrics, when available. */
   avgHr: number | null;
+  /** Local wall-clock start "07:30" - only when start_time is a trustworthy local value
+   * (naive-local or offset-carrying). null for UTC/absent (we never show a time we can't trust). */
+  timeLabel: string | null;
+  /** Short insight vs the athlete's OWN recent history at a comparable distance, e.g.
+   * "На 6% быстрее обычного". null when not running / too few comparable runs / not faster. */
+  insight: string | null;
   /** Workout title (title fill-rate ~100%), shown on the feed card. */
   title: string | null;
   /** Short neutral caption derived from the workout title (safe subset). */
