@@ -239,11 +239,30 @@ export async function createCalendarEntry(
   }
 
   const supabase = createSupabaseServerClient();
-  // day_off / preference are one-per-day → upsert; note / race may repeat → insert.
+  // day_off / preference are one-per-day; note / race may repeat. The DB enforces the singleton
+  // rule with a PARTIAL unique index (…(student_id, entry_date, kind) WHERE kind in
+  // ('day_off','preference')). PostgREST's upsert(onConflict:"columns") CANNOT infer a partial
+  // index -> Postgres 42P10 "no unique or exclusion constraint matching the ON CONFLICT
+  // specification", so day_off/preference silently never saved. Do a manual upsert instead:
+  // update the existing singleton row (keeps its id + applied_tp_workout_id) or insert. The
+  // partial index still blocks accidental duplicates.
   const singleton = kind === "day_off" || kind === "preference";
-  const { error } = singleton
-    ? await supabase.from("club_calendar_entries").upsert(row, { onConflict: "student_id,entry_date,kind" })
-    : await supabase.from("club_calendar_entries").insert(row);
+  let error: { code?: string | null; message?: string | null } | null = null;
+  if (singleton) {
+    const { data: existing } = await supabase
+      .from("club_calendar_entries")
+      .select("id")
+      .eq("student_id", studentId)
+      .eq("entry_date", date)
+      .eq("kind", kind)
+      .maybeSingle();
+    const existingId = (existing as { id: string } | null)?.id;
+    ({ error } = existingId
+      ? await supabase.from("club_calendar_entries").update(row).eq("id", existingId)
+      : await supabase.from("club_calendar_entries").insert(row));
+  } else {
+    ({ error } = await supabase.from("club_calendar_entries").insert(row));
+  }
   if (error) {
     // Log the REAL cause (this is where a missing column masqueraded as «Календарь пока не
     // активен»). Only an absent TABLE is the benign "not set up" case; a missing column /
