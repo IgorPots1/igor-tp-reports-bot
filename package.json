@@ -68,6 +68,7 @@
     "check-initdata-auth": "npx tsx scripts/check-initdata-auth.ts",
     "audit-club-starttime-coverage": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/audit-club-starttime-coverage.ts",
     "club-races-migrate-to-calendar": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/club-races-migrate-to-calendar.ts",
+    "audit-club-track-coverage": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/audit-club-track-coverage.ts",
     "check-club-aggregates-parity": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-club-aggregates-parity.ts",
     "check-club-aggregates-parity-realdb": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-club-aggregates-parity-realdb.ts",
     "check-club-week-rollup-parity": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-club-week-rollup-parity.ts",
