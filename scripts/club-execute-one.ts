@@ -2,19 +2,20 @@
  * Phase 1.5 — create EXACTLY ONE club marker in TrainingPeaks for a single approved
  * club_calendar_entries row, then persist the link (idempotency + rollback anchor).
  *
- * SAFETY GATES (all required to actually write to TP):
- *   - pass the entry id as arg 1
- *   - pass --apply
- *   - CLUB_TP_EXECUTION_ENABLED=true in the environment
- * Without ALL THREE it is a DRY-RUN: it prints the exact CreateWorkoutPayload and does
- * NOT touch TrainingPeaks. This is Igor's hand — the assistant only prepares + dry-runs.
+ * SAFETY GATES (to actually write to TP):
+ *   - CREATE needs BOTH --apply AND CLUB_TP_EXECUTION_ENABLED=true.
+ *   - ROLLBACK needs ONLY CLUB_TP_EXECUTION_ENABLED=true (no --apply — a rollback is already
+ *     an explicit destructive intent; --apply means "create").
+ * Without the gate it is a DRY-RUN: it prints the exact payload and does NOT touch
+ * TrainingPeaks. This is Igor's hand — the assistant only prepares + dry-runs.
  *
  * Modes:
  *   <entryId>                      dry-run (print payload, no write)
  *   <entryId> --apply              create in TP (needs CLUB_TP_EXECUTION_ENABLED=true),
- *                                  then markCalendarEntryApplied(id, newTpWorkoutId)
- *   <entryId> --rollback           delete the created TP workout by applied_tp_workout_id,
- *                                  then clear the link + return status to 'approved'
+ *                                  then markCalendarEntryApplied(id, newTpId, entityType)
+ *   <entryId> --rollback           delete the created TP entity (type read from
+ *                                  applied_entity_type), clear the link, status→'approved'
+ *                                  (needs CLUB_TP_EXECUTION_ENABLED=true; NO --apply)
  *
  *   node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
  *     --env-file=.env.local scripts/club-execute-one.ts <entryId> [--apply|--rollback]
@@ -98,8 +99,11 @@ async function main(): Promise<void> {
       entity = probe.ok ? entityTypeOf(probe.actionType) : "workout";
       console.log(`applied_entity_type ПУСТ (старая запись) → тип угадан по флагам: ${entity}. ВАЖНО: откатывай с теми же флагами, что при apply.`);
     }
-    if (!APPLY || process.env.CLUB_TP_EXECUTION_ENABLED !== "true") {
-      console.log(`DRY-RUN rollback: удалил бы TP ${entity} ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката: --apply + CLUB_TP_EXECUTION_ENABLED=true.`);
+    // Rollback executes on CLUB_TP_EXECUTION_ENABLED alone — NO --apply needed (--apply means
+    // "create"; a rollback is already an explicit destructive intent). This matches
+    // club-tp-delete.ts and club-execute-dayoff-group.ts.
+    if (process.env.CLUB_TP_EXECUTION_ENABLED !== "true") {
+      console.log(`DRY-RUN rollback: удалил бы TP ${entity} ${row.appliedTpWorkoutId} (athlete ${athleteId}) и вернул статус в approved. Для реального отката добавь CLUB_TP_EXECUTION_ENABLED=true (--apply НЕ нужен).`);
       process.exit(0);
     }
     const del = entity === "event"
