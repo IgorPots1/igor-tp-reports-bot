@@ -425,6 +425,23 @@ export default function ClubPage() {
     };
   }, []);
 
+  // Deep-link routing (form broadcasts): the bot link carries ?startapp=starts|schedule so
+  // the tap opens the right section directly, not the home tab. Runs once after initData
+  // resolves (the overlays fetch with initData; open only when it is ready). An already-bound
+  // recipient resolves by telegram_user_id, so the section code never affects auth.
+  const deepLinkRoutedRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkRoutedRef.current || !initData) return;
+    const target = getTelegramWebApp()?.initDataUnsafe?.start_param;
+    if (target === "starts") {
+      deepLinkRoutedRef.current = true;
+      setOpenSection("races");
+    } else if (target === "schedule") {
+      deepLinkRoutedRef.current = true;
+      setOpenCalendar(true);
+    }
+  }, [initData]);
+
   // Resolve initial theme once: saved choice wins, else the Telegram colorScheme.
   useEffect(() => {
     let initial: Theme = "light";

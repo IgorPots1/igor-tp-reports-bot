@@ -395,3 +395,13 @@ export function clubCoachParticipantStudentId(): string | null {
 export function isClubTracksEnabled(): boolean {
   return process.env.CLUB_TRACKS_ENABLED === "true";
 }
+/**
+ * Outbound club form broadcasts from the admin (the FIRST outbound path of the club).
+ * OFF by default → the admin screen refuses to send and the actions return "disabled".
+ * Nothing is ever sent automatically; even ON, every send is an explicit coach tap with a
+ * confirmation. There is NO scheduled auto-broadcast (deliberately not built). Read on Vercel
+ * (the admin server actions run there). See docs/club-forms-broadcast.md.
+ */
+export function isClubFormsBroadcastEnabled(): boolean {
+  return process.env.CLUB_FORMS_BROADCAST_ENABLED === "true";
+}

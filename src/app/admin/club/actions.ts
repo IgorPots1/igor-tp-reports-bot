@@ -43,6 +43,7 @@ function revalidateClub() {
   revalidatePath("/admin/club/queue");
   revalidatePath("/admin/club/links");
   revalidatePath("/admin/club/manage");
+  revalidatePath("/admin/club/forms");
 }
 
 /** hh:mm:ss | mm:ss | ss → seconds. */
@@ -471,4 +472,74 @@ export async function rejectClubAccessRequestAction(formData: FormData): Promise
   }
   revalidateClub();
   redirect(withNotice(redirectTo, "notice", "Заявка отклонена."));
+}
+
+// ── Club form broadcasts (first outbound path; every send is this explicit coach tap) ──
+
+export async function sendClubFormsBroadcastAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const formType = req(formData, "formType");
+  const messageText = req(formData, "messageText");
+  const studentIds = formData.getAll("studentIds").filter((v): v is string => typeof v === "string" && v.length > 0);
+  const isReminder = opt(formData, "isReminder") === "1";
+  let notice = "";
+  let errorMsg: string | null = null;
+  if (formType !== "starts" && formType !== "schedule") {
+    errorMsg = "Неизвестный тип формы.";
+  } else {
+    const { broadcastClubForm } = await import("@/features/club-admin/forms-broadcast");
+    try {
+      const r = await broadcastClubForm({ formType, studentIds, messageText, isReminder, createdBy: COACH });
+      if (!r.ok) {
+        errorMsg = r.disabledReason ?? "Не отправлено.";
+      } else {
+        const parts = [`Отправлено ${r.sent}`];
+        if (r.skippedDuplicate.length) parts.push(`пропущено дублей ${r.skippedDuplicate.length}`);
+        if (r.failed.length) parts.push(`ошибок ${r.failed.length}: ${r.failed.slice(0, 5).map((f) => f.name).join(", ")}${r.failed.length > 5 ? "…" : ""}`);
+        notice = parts.join(" · ");
+      }
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : "Ошибка отправки.";
+    }
+  }
+  revalidateClub();
+  if (errorMsg) redirect(withNotice(redirectTo, "error", errorMsg));
+  redirect(withNotice(redirectTo, "notice", notice));
+}
+
+export async function remindClubScheduleNonRespondersAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const messageText = req(formData, "messageText");
+  const { computeScheduleNonResponders, broadcastClubForm } = await import("@/features/club-admin/forms-broadcast");
+  let notice = "";
+  let errorMsg: string | null = null;
+  try {
+    const nr = await computeScheduleNonResponders();
+    if (nr.students.length === 0) {
+      notice = "Напоминать некому: все получатели уже заполнили расписание (или рассылки ещё не было).";
+    } else {
+      const r = await broadcastClubForm({
+        formType: "schedule",
+        studentIds: nr.students.map((s) => s.studentId),
+        messageText,
+        isReminder: true,
+        createdBy: COACH,
+      });
+      if (!r.ok) {
+        errorMsg = r.disabledReason ?? "Не отправлено.";
+      } else {
+        const parts = [`Напоминание отправлено ${r.sent}`];
+        if (r.skippedDuplicate.length) parts.push(`пропущено дублей ${r.skippedDuplicate.length}`);
+        if (r.failed.length) parts.push(`ошибок ${r.failed.length}`);
+        notice = parts.join(" · ");
+      }
+    }
+  } catch (e) {
+    errorMsg = e instanceof Error ? e.message : "Ошибка.";
+  }
+  revalidateClub();
+  if (errorMsg) redirect(withNotice(redirectTo, "error", errorMsg));
+  redirect(withNotice(redirectTo, "notice", notice));
 }

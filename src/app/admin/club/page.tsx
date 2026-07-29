@@ -23,6 +23,7 @@ export default function ClubHubPage() {
       </div>
       <div className="admin-actions">
         <Link className="admin-button admin-button-primary" href="/admin/club/requests">Заявки на доступ</Link>
+        <Link className="admin-button admin-button-primary" href="/admin/club/forms">Рассылка форм</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/results">Ревизия результатов</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/race-fill">Дотяжка гонок</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/queue">Очередь заявок</Link>
