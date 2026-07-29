@@ -1048,16 +1048,21 @@ const CLUB_TABLE_PROBES: Array<{ table: string; columns: string }> = [
 ];
 
 /**
- * Probe every club table + its critical columns with a HEAD count. A read that hits a missing
- * GRANT returns Postgres 42501 (permission denied), a missing table 42P01, a missing column
- * 42703 — WITHOUT this the mini-app tab would just render EMPTY and hide the misconfiguration.
- * Here each becomes a loud red row in /admin/club/manage with its real code.
+ * Probe every club table + its critical columns. A read that hits a missing GRANT returns
+ * Postgres 42501 (permission denied), a missing table 42P01, a missing column 42703 — WITHOUT
+ * this the mini-app tab would just render EMPTY and hide the misconfiguration. Here each becomes
+ * a loud red row in /admin/club/manage WITH its real code.
+ *
+ * NOTE: uses `.limit(1)`, NOT a HEAD count. A HEAD request has no response BODY, so on a 42501
+ * PostgREST returns an error with an EMPTY message and no code — which rendered as a blank
+ * "ошибка:" and hid exactly the permission problem this probe exists to surface. A tiny GET
+ * carries the real code/message/hint.
  */
 export async function probeClubTablesHealth(): Promise<ClubTableHealth[]> {
   const supabase = createSupabaseServerClient();
   const out: ClubTableHealth[] = [];
   for (const probe of CLUB_TABLE_PROBES) {
-    const { error } = await supabase.from(probe.table).select(probe.columns, { count: "exact", head: true });
+    const { error } = await supabase.from(probe.table).select(probe.columns).limit(1);
     if (error) {
       out.push({
         table: probe.table,
