@@ -178,7 +178,7 @@ export async function assemblePlannerInputsForWorkouts(
   const obsRows = await fetchIn<Record<string, unknown>>(
     supabase,
     "trainingpeaks_telegram_context_observations",
-    "student_id, text_preview, labels, observed_at",
+    "student_id, text_preview, labels, observed_at, metadata",
     "student_id",
     studentIds,
     (q) => q.gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -187,6 +187,13 @@ export async function assemblePlannerInputsForWorkouts(
   for (const o of obsRows) {
     const text = (o.text_preview as string | null)?.trim();
     if (!text) continue;
+    // Drop THIRD-PARTY messages: in a shared group topic linked to student X, everyone else's messages
+    // are stored under X's student_id (senderRole=third_party_in_linked_topic — 281 such rows found in
+    // the audit, e.g. 4 other people's reports under one student). Feeding them to the factor extractor
+    // and the words channel poisoned X's context with someone else's «тяжело»/«gps»/«еда». Keep only the
+    // student's own (known/linked_student; business_dm is 1:1 so its unset role is the student too).
+    const senderRole = ((o.metadata as Record<string, unknown> | null)?.senderRole as string | undefined) ?? null;
+    if (senderRole === "third_party_in_linked_topic") continue;
     const list = messagesByStudent.get(o.student_id as string) ?? [];
     list.push({ text, date: (o.observed_at as string).slice(0, 10), at: o.observed_at as string, labels: Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [] });
     messagesByStudent.set(o.student_id as string, list);

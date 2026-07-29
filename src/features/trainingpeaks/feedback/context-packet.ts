@@ -390,6 +390,11 @@ function windowStudentWords(input: ContextPacket): string[] {
     const t = mm.text.trim();
     if (!t || seen.has(t)) continue;
     if (/^https?:\/\/\S+$/iu.test(t)) continue; // bare link (e.g. a race URL), not a report
+    // Garmin/Strava auto-share boilerplate («Просмотрите мое занятие … в Garmin Connect. #beatyesterday
+    // <link>») is a SHARE notification, not a report — it carried no words, but landed in studentWords
+    // as if the student said something, so the draft tried to обыграть it. Drop it (once the URL is
+    // stripped the remainder is short boilerplate); a real report that merely mentions Garmin survives.
+    if (/#beatyesterday|garmin connect|strava\.com|просмотрите мо[её] занятие/iu.test(t) && t.replace(/https?:\/\/\S+/gu, "").trim().length < 80) continue;
     seen.add(t);
     out.push(t);
     if (out.length >= 5) break;
