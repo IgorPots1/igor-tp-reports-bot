@@ -195,6 +195,12 @@ export async function fetchHandledWorkoutCacheIds(cacheIds: string[]): Promise<S
 
 export type WorkoutJobBlockState = { blocked: boolean; dismissedAt: string | null };
 
+// After this many FAILED jobs for one workout, stop re-enqueuing it. Each re-enqueue is a NEW job row
+// (attempts is per-row, so it can't see prior rows), so a DETERMINISTIC failure — e.g. the fact-check
+// blocking «pulse on untrusted HR» every time — piled up 3× for Koroleva. A couple of retries cover a
+// transient hiccup; past that it's not going to self-heal, so leave the failed card for the coach.
+export const FEEDBACK_FAILED_RETRY_CAP = 2;
+
 /**
  * Per workout, the state the REPORT-triggered sweep needs to decide whether to (re)enqueue:
  *   blocked      — an active or completed job exists (pending/generating/done/sent/shared): never
@@ -212,6 +218,7 @@ export async function fetchWorkoutJobBlockState(cacheIds: string[]): Promise<Map
   if (cacheIds.length === 0) return out;
   const supabase = createSupabaseServerClient();
   const BLOCKING = new Set<FeedbackJobStatus>(["pending", "generating", "done", "sent", "shared", "shared_confirmed"]);
+  const failedCount = new Map<string, number>();
   for (let i = 0; i < cacheIds.length; i += 150) {
     const part = cacheIds.slice(i, i + 150);
     const { data, error } = await withSupabaseNetworkRetry(() =>
@@ -221,8 +228,18 @@ export async function fetchWorkoutJobBlockState(cacheIds: string[]): Promise<Map
     for (const r of (data as Array<{ workout_cache_id: string; status: FeedbackJobStatus; dismissed_at: string | null }>) ?? []) {
       const cur = out.get(r.workout_cache_id) ?? { blocked: false, dismissedAt: null };
       if (BLOCKING.has(r.status)) cur.blocked = true;
+      else if (r.status === "failed") failedCount.set(r.workout_cache_id, (failedCount.get(r.workout_cache_id) ?? 0) + 1);
       else if (r.status === "dismissed" && r.dismissed_at && (!cur.dismissedAt || r.dismissed_at > cur.dismissedAt)) cur.dismissedAt = r.dismissed_at;
       out.set(r.workout_cache_id, cur);
+    }
+  }
+  // Retry cap: a workout that already failed FEEDBACK_FAILED_RETRY_CAP times stops re-enqueuing (the
+  // failure is deterministic, not a hiccup). The failed card stays for the coach; no more duplicates.
+  for (const [cacheId, n] of failedCount) {
+    if (n >= FEEDBACK_FAILED_RETRY_CAP) {
+      const cur = out.get(cacheId) ?? { blocked: false, dismissedAt: null };
+      cur.blocked = true;
+      out.set(cacheId, cur);
     }
   }
   return out;
