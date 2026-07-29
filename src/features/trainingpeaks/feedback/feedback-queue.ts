@@ -171,6 +171,32 @@ export async function enrichPendingCardStudentWords(workoutCacheId: string, text
 }
 
 /**
+ * Late report on an ALREADY-GENERATED but NOT-YET-SENT card: the draft is written on the old context and
+ * must NOT change silently under Igor (he may have read it). So instead of regenerating we set a FLAG
+ * (context_packet.lateReportText) that the review panel surfaces as «пришёл поздний отчёт — проверь».
+ * Igor decides: skip and regenerate, or send as-is. Only 'done' (in review) — sent/shared/dismissed are
+ * finished, pending is handled by enrichPendingCardStudentWords. No button (measured: ~2 cases / 2 weeks).
+ */
+export async function flagDoneCardLateReport(workoutCacheId: string, text: string): Promise<boolean> {
+  const t = (text ?? "").trim();
+  if (!t) return false;
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase.from(TABLE).select("id, context_packet").eq("workout_cache_id", workoutCacheId).eq("status", "done").order("created_at", { ascending: false }).limit(1)
+  );
+  if (error || !data || data.length === 0) return false;
+  const row = data[0] as { id: string; context_packet: Record<string, unknown> };
+  const packet = (row.context_packet ?? {}) as { lateReportText?: unknown };
+  const existing = Array.isArray(packet.lateReportText) ? (packet.lateReportText as string[]) : [];
+  if (existing.some((w) => w.trim() === t)) return false;
+  const updated = [...existing, t].slice(0, 4);
+  const { error: updateError } = await withSupabaseNetworkRetry(() =>
+    supabase.from(TABLE).update({ context_packet: { ...(row.context_packet as Record<string, unknown>), lateReportText: updated } }).eq("id", row.id)
+  );
+  return !updateError;
+}
+
+/**
  * Which of these workouts already have a HANDLED job (done/dismissed/sent/shared): a
  * draft was generated and is awaiting review, was sent/shared, or the coach dismissed
  * it. The enqueue sweep skips these so an hourly metrics recompute can't resurrect a

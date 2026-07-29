@@ -15,7 +15,7 @@ import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-e
 import { classifyReport, isReportCandidate, resolveArbiterDecision, type ReportVerdict } from "@/features/trainingpeaks/feedback/report-arbiter-ai";
 import { deviceGlitchScope } from "@/features/trainingpeaks/feedback/stated-factors";
 import { isDataFragment } from "@/features/trainingpeaks/feedback/session-type";
-import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState } from "@/features/trainingpeaks/feedback/feedback-queue";
+import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState, flagDoneCardLateReport } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
 
@@ -779,7 +779,12 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   if (!dryRun) {
     for (const e of enrichments) {
       const cacheId = matchRunCacheId(e.studentId, e.date, runsByStudent, raceKeys);
-      if (cacheId && (await enrichPendingCardStudentWords(cacheId, e.text))) summary.runsEnriched = (summary.runsEnriched ?? 0) + 1;
+      if (!cacheId) continue;
+      // pending/generating card → fold the late words in (it hasn't generated yet).
+      if (await enrichPendingCardStudentWords(cacheId, e.text)) summary.runsEnriched = (summary.runsEnriched ?? 0) + 1;
+      // done-but-not-sent card → the draft is already written; don't change it, just FLAG the late report
+      // for the coach panel. (no-op if the only card is pending — that was handled above.)
+      else await flagDoneCardLateReport(cacheId, e.text);
     }
   }
 

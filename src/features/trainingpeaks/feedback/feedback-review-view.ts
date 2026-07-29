@@ -230,6 +230,12 @@ export function buildReportCardView(
       transparency.push({ kind: "words", text: `жаргон в черновике (упростить, не для ученика): ${jargon.map((f) => `«${f.word}»`).join(", ")}` });
     }
   }
+  // Late report after this card was generated (#1): the draft is stale. Flag it (never auto-change the
+  // draft — Igor may have read it) so he can regenerate or send as-is. Shown FIRST so he notices.
+  const lateReport = Array.isArray((packet as { lateReportText?: unknown } | undefined)?.lateReportText) ? ((packet as { lateReportText?: string[] }).lateReportText ?? []) : [];
+  if (!isAttention && lateReport.length > 0) {
+    transparency.unshift({ kind: "words", text: `⚠ пришёл поздний отчёт ПОСЛЕ генерации — проверь, возможно перегенерить: ${lateReport.map((w) => `«${w.slice(0, 120)}»`).join(" · ")}` });
+  }
   const { channel, mention, windowOpen } = resolveChannel({
     dmCapable: opts?.dmCapable,
     hasGroupThread: opts?.hasGroupThread,
