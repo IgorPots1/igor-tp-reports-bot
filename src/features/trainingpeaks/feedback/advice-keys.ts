@@ -31,6 +31,7 @@ export type AdviceKey =
   // Block 1 — student NAMED the cause (жара/не пил/недосып/болел/ремонт/болит/рельеф).
   // Same "причина, не вина" category D; honored over a mechanical question.
   | "cause_confirmed_heat"
+  | "cause_confirmed_humidity"
   | "cause_confirmed_dehydration"
   | "cause_confirmed_nutrition"
   | "cause_confirmed_undersleep"

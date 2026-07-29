@@ -37,6 +37,7 @@ export const PRIORITY: Record<AdviceKey, number> = {
   cause_confirmed_dehydration: 64,
   cause_confirmed_nutrition: 64,
   cause_confirmed_heat: 64,
+  cause_confirmed_humidity: 64,
   cause_confirmed_life_stress: 63,
   cause_confirmed_conditions: 63,
   cause_confirmed_muscle_doms: 63, // benign normal-after-strength note; honored but not alarming (never «покажитесь»)

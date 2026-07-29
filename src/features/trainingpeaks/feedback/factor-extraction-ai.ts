@@ -13,7 +13,7 @@ const CLAUDE_MODEL = process.env.FEEDBACK_FACTOR_MODEL?.trim() || "claude-haiku-
 const ANTHROPIC_API_URL = process.env.ANTHROPIC_API_URL?.trim() || "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 
-const ALLOWED_FACTORS = new Set<StatedFactorKind>(["illness", "soreness", "muscle_doms", "undersleep", "dehydration", "nutrition", "heat", "life_stress", "conditions", "device_glitch"]);
+const ALLOWED_FACTORS = new Set<StatedFactorKind>(["illness", "soreness", "muscle_doms", "undersleep", "dehydration", "nutrition", "heat", "humidity", "life_stress", "conditions", "device_glitch"]);
 
 function extractJsonOnly(content: string): string {
   const trimmed = content.trim();
@@ -45,7 +45,8 @@ function buildPrompt(windowed: PlannerStudentMessage[]): string {
     "- undersleep (мало спал/недосып/не выспался)",
     "- dehydration (не пил/забыл попить/воду не брал/пил мало) — сюда же любые перефразы",
     "- nutrition (ЕДА/гели: поел/не поел/без гелей/натощак/что съел перед стартом/каша-банан-батончик/не хватило углеводов) — КОНТЕКСТ как прошла тренировка, НЕ вода. Бери, когда ученик связывает еду с тем, как далось.",
-    "- heat (жара/духота/пекло/высокая температура воздуха)",
+    "- heat (жара/пекло/высокая температура воздуха) — про ТЕМПЕРАТУРУ",
+    "- humidity (влажность/душно/парит/нет ветра/воздух стоит/нечем дышать) — про ВЛАЖНОСТЬ, отдельно от heat: во влажном воздухе тело хуже охлаждается, пульс выше. Может быть вместе с heat (жарко И влажно).",
     "- life_stress (работа/ремонт/переезд/аврал/стресс/устаю по жизни)",
     "- conditions (рельеф/горки/дорожка-манеж/ветер/грязь/снег)",
     "- device_glitch (часы/датчик/пульс врут, глючат, «странно себя ведут», пульс кривой/завышен — ИЛИ GPS/трек/дистанция: «GPS не поймал», «трек кривой», «дистанцию наврал») — сигнал, что данным устройства нельзя верить. В quote СОХРАНИ, ЧТО именно глючило (пульс vs GPS/дистанция) — от этого зависит, какой метрике не верить.",
