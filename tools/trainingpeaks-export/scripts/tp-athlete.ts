@@ -107,6 +107,8 @@ async function main(): Promise<void> {
       hrInput: getFlag(args, "--hr"),
       apply: hasFlag(args, "--apply"),
       confirm: getFlag(args, "--confirm"),
+      evidence: getFlag(args, "--evidence"),
+      tier: getFlag(args, "--tier"),
     });
     return;
   }

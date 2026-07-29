@@ -45,6 +45,8 @@ export type SetThresholdArgs = {
   hrInput?: string; // "168"
   apply: boolean;
   confirm?: string;
+  evidence?: string; // logged to tp_threshold_applications.evidence
+  tier?: string; // logged to tp_threshold_applications.tier
 };
 
 type PlannedChange = {
@@ -268,6 +270,7 @@ export async function runSetThreshold(match: RosterMatch, args: SetThresholdArgs
     applyPlans.push(planType(p.type, freshArray, p.newThresholdNative, coachUserId));
   }
 
+  const applied: { type: ZoneType; before: number | null; after: number }[] = [];
   for (const p of applyPlans) {
     const putPath = `/fitness/v2/athletes/${athleteId}/${p.type === "speed" ? "speedzones" : "heartratezones"}`;
     const beforeCount = Array.isArray(p.type === "speed" ? fresh.speedZones : fresh.heartRateZones)
@@ -300,6 +303,40 @@ export async function runSetThreshold(match: RosterMatch, args: SetThresholdArgs
       process.exitCode = 2;
       return;
     }
+    applied.push({ type: p.type, before: p.oldThresholdNative, after: p.newThresholdNative });
+  }
+
+  // ── audit log + snapshot refresh (append-only) ────────────────────────────
+  // Each successful application is logged to tp_threshold_applications so the
+  // candidate scan can drop this athlete; and a fresh snapshot is written so a
+  // later manual TP change (different from value_after) brings them back.
+  const supabase = getSupabase();
+  try {
+    const afterSettings = await getAthleteSettings(athleteId);
+    const zonesW = pickWhitelistedSettings(afterSettings);
+    await supabase.from("tp_zone_snapshots").insert({
+      trainingpeaks_athlete_id: athleteId,
+      captured_at: new Date().toISOString(),
+      zones: Object.keys(zonesW).length > 0 ? zonesW : null,
+      source: "post_apply",
+    });
+  } catch (e) {
+    console.warn(`  (снапшот после записи не обновился: ${e instanceof Error ? e.message : String(e)})`);
+  }
+  for (const a of applied) {
+    const display = a.type === "speed" ? formatMpsAsPace(a.after) : `${Math.round(a.after)} bpm`;
+    const { error } = await supabase.from("tp_threshold_applications").insert({
+      trainingpeaks_athlete_id: athleteId,
+      kind: a.type === "speed" ? "pace" : "hr",
+      value_before: a.before,
+      value_after: a.after,
+      value_after_display: display,
+      evidence: args.evidence ?? null,
+      tier: args.tier ?? null,
+      applied_by: "tp-athlete-cli",
+    });
+    if (error) console.warn(`  ⚠ ЛОГ применения НЕ записан (${a.type}): ${error.message} — таблица tp_threshold_applications создана?`);
+    else console.log(`  лог применения записан (${a.type} → ${display}).`);
   }
   console.log(`\nГотово. Проверь зоны глазами в TP (особенно currentUserId-вопрос на первой правке ученика).`);
 }
