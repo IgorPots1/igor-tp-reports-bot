@@ -749,12 +749,13 @@ export default function CoachDeskPage() {
   }, [initData, loadReports]);
 
   // Group send: Business API can't post to a group, so open Telegram's share sheet from
-  // Igor's own account (mention prefix → the student gets a notification), then RECORD it as
-  // 'shared' (unverified) — unless the kill-switch is off, in which case it's prepare-only.
+  // Igor's own account, then RECORD it as 'shared' (unverified) — unless the kill-switch is off,
+  // in which case it's prepare-only. NO @username prefix: Igor shares via «Ответить» on the
+  // student's message, so the reply notification already reaches them — a mention just adds noise.
   const shareToGroup = useCallback(
     async (card: ReportCardModel) => {
       const body = card.draftText ?? "";
-      const text = card.mention ? `${card.mention}\n${body}` : body;
+      const text = body;
       if (typeof window !== "undefined") {
         const shareUrl = `https://t.me/share/url?url=${encodeURIComponent("")}&text=${encodeURIComponent(text)}`;
         const tg = getTelegramWebApp();

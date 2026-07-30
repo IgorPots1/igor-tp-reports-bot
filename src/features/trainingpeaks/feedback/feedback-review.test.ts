@@ -259,16 +259,24 @@ describe("scoreFeedbackSignificance", () => {
 });
 
 describe("buildReportsView — «Новые» queue", () => {
-  const correction = makeJob({ id: "j-corr", status: "pending", studentId: "s-corr", contextPacket: packet({ observations: [{ type: "correction", adviceKey: "pace_control", focused: true, reason: "x" }] }) });
-  const clean = makeJob({ id: "j-clean", status: "pending", studentId: "s-clean", contextPacket: packet({ observations: [{ type: "praise", adviceKey: "praise_even_pace", focused: true, reason: "y" }] }) });
+  // NEWER createdAt on the correction, OLDER on the clean → time-order must put correction first REGARDLESS
+  // of significance (the queue now sorts by time, not by score).
+  const correction = makeJob({ id: "j-corr", status: "pending", studentId: "s-corr", createdAt: "2026-07-15T10:00:00Z", contextPacket: packet({ observations: [{ type: "correction", adviceKey: "pace_control", focused: true, reason: "x" }] }) });
+  const clean = makeJob({ id: "j-clean", status: "pending", studentId: "s-clean", createdAt: "2026-07-14T10:00:00Z", contextPacket: packet({ observations: [{ type: "praise", adviceKey: "praise_even_pace", focused: true, reason: "y" }] }) });
   const lookup = (id: string) => ({ name: `Ученик ${id}`, telegramUsername: null });
 
-  test("pending jobs go to queue, most significant first, with a badge", () => {
-    const v = buildReportsView([clean, correction], lookup, false);
-    assert.deepEqual(v.queue.map((c) => c.id), ["j-corr", "j-clean"]); // разбор before чисто
+  test("pending jobs go to queue in TIME order (newest first), badge still shown", () => {
+    const v = buildReportsView([clean, correction], lookup, false); // input order clean-then-correction
+    assert.deepEqual(v.queue.map((c) => c.id), ["j-corr", "j-clean"]); // newer (07-15) on top, not by significance
     assert.equal(v.queue[0].significanceBadge, "разбор");
     assert.equal(v.queue[1].significanceBadge, "чисто");
     assert.equal(v.counts.queue, 2);
+  });
+  test("queue is time-ordered even when the significant card is OLDER", () => {
+    const olderCorr = makeJob({ id: "j-old-corr", status: "pending", studentId: "s1", createdAt: "2026-07-10T10:00:00Z", contextPacket: packet({ observations: [{ type: "correction", adviceKey: "pace_control", focused: true, reason: "x" }] }) });
+    const newerClean = makeJob({ id: "j-new-clean", status: "pending", studentId: "s2", createdAt: "2026-07-20T10:00:00Z", contextPacket: packet({ observations: [{ type: "praise", adviceKey: "praise_even_pace", focused: true, reason: "y" }] }) });
+    const v = buildReportsView([olderCorr, newerClean], lookup, false);
+    assert.deepEqual(v.queue.map((c) => c.id), ["j-new-clean", "j-old-corr"]); // newest first, significance ignored for order
   });
 });
 

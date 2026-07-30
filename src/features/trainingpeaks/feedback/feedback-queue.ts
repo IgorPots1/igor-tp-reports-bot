@@ -433,7 +433,7 @@ export async function submitFeedbackDraft(input: {
   // ran on. Deterministic chain (the prompt asks for all three, but the model drifts): drop the long
   // dash → force the greeting to the student's register → strip the trailing period and split a rich
   // draft into greeting/body/question paragraphs (short one-liners stay compact).
-  const draftText = normalizeDraftFormat(enforceGreeting(stripLongDash(input.draftText), packet.register));
+  const draftText = normalizeDraftFormat(enforceGreeting(stripLongDash(input.draftText), packet.register, input.jobId));
   const check = validateFeedbackDraft({ draft: draftText, packet });
   const now = new Date().toISOString();
   const nextStatus = check.ok ? "done" : "failed";

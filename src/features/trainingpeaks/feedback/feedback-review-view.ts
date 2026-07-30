@@ -28,6 +28,7 @@ export type ReportCardView = {
   id: string;
   studentName: string;
   telegramUsername: string | null;
+  createdAt: string | null; // ISO — when the card entered the queue; used to order cards by time
   workoutDate: string | null; // ISO 'YYYY-MM-DD' or null (blocked job with empty packet)
   dateLabel: string;
   // Non-null when the workout is OLDER than the day the card surfaced (a late-synced report:
@@ -248,6 +249,7 @@ export function buildReportCardView(
     id: job.id,
     studentName,
     telegramUsername,
+    createdAt: job.createdAt ?? null,
     workoutDate,
     dateLabel: formatRuDate(workoutDate),
     lateSyncLabel: lateSyncLabelFor(workoutDate, job.createdAt),
@@ -282,7 +284,7 @@ const HISTORY_STATUSES = new Set<FeedbackJobStatus>(["sent", "shared_confirmed"]
  * being dropped — the coach still sees the signal.
  */
 export function buildReportsView(jobs: TrainingPeaksFeedbackJob[], lookup: StudentLookup, sendEnabled: boolean): ReportsView {
-  const queue: Array<{ card: ReportCardView; score: number; date: string }> = [];
+  const queue: ReportCardView[] = [];
   const review: ReportCardView[] = [];
   const attention: ReportCardView[] = [];
   const history: ReportCardView[] = [];
@@ -295,25 +297,28 @@ export function buildReportsView(jobs: TrainingPeaksFeedbackJob[], lookup: Stude
       dmWindowOpen: student?.dmWindowOpen,
       reportsViaGroup: student?.reportsViaGroup,
     });
-    if (QUEUE_STATUSES.has(job.status)) {
-      const packet = job.contextPacket as FeedbackContextPacket | undefined;
-      queue.push({ card, score: scoreFeedbackSignificance(packet).score, date: packet?.workoutDate ?? "" });
-    } else if (job.status === "done" || job.status === "shared") review.push(card); // 'shared' stays actionable (resend / confirm)
+    if (QUEUE_STATUSES.has(job.status)) queue.push(card);
+    else if (job.status === "done" || job.status === "shared") review.push(card); // 'shared' stays actionable (resend / confirm)
     else if (ATTENTION_STATUSES.has(job.status)) attention.push(card);
     else if (HISTORY_STATUSES.has(job.status)) history.push(card);
   }
 
-  // «Новые»: most to discuss on top; ties broken by freshest workout — so the eye
-  // lands on the workouts that actually need a reply, not merely the newest.
-  queue.sort((a, b) => b.score - a.score || b.date.localeCompare(a.date));
-  const queueCards = queue.map((q) => q.card);
+  // Time order everywhere — newest at TOP (Игорь: «идут вразнобой, не понимаю, кто за кем»). The queue
+  // used to reorder by a significance score, which is what read as random; every section now sorts by
+  // createdAt DESC so a batch review goes strictly top-down by when each card arrived. The significance
+  // badge still shows ON the card — it's just no longer the sort key.
+  const byNewest = (a: ReportCardView, b: ReportCardView) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+  queue.sort(byNewest);
+  review.sort(byNewest);
+  attention.sort(byNewest);
+  history.sort(byNewest);
 
   return {
-    queue: queueCards,
+    queue,
     review,
     attention,
     history,
     sendEnabled,
-    counts: { queue: queueCards.length, review: review.length, attention: attention.length, history: history.length },
+    counts: { queue: queue.length, review: review.length, attention: attention.length, history: history.length },
   };
 }

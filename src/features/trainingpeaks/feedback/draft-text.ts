@@ -20,20 +20,39 @@ export function stripLongDash(text: string): string {
 // the rule can't rest on obedience: this deterministic pass forces the first line's greeting to the
 // register. Unknown register → «вы» (the lower-risk address, same default as registerWord). Applied
 // at the submitFeedbackDraft seam alongside stripLongDash, so it covers both backends.
-export function enforceGreeting(text: string, register: "ty" | "vy" | "unknown"): string {
-  const desired = register === "ty" ? "Привет!" : "Здравствуйте!";
-  const rightWord = register === "ty" ? "привет" : "здравствуй";
-  const wrongWord = register === "ty" ? "здравствуй" : "привет";
+// Greeting VARIANTS per register — punctuation/emoji variety on the two canonical greetings so the
+// coach's «Привет!»/«Здравствуйте!» doesn't read identically on every card (Игорь: «звучит одинаково»).
+// Register (ты/вы) is respected strictly. Time-of-day greetings («Доброе утро/вечер») are deliberately
+// left out: a card is generated when the student reports but SENT later, so send-time is unknown here
+// and «Доброе утро» could land at night — those need send-time gating, added separately if wanted.
+const GREETINGS: Record<"ty" | "vy", string[]> = {
+  ty: ["Привет!", "Привет)", "Привет!)", "Привет 👋", "Привет 🙌", "Привет 😊"],
+  vy: ["Здравствуйте!", "Здравствуйте)", "Здравствуйте!)", "Здравствуйте 👋", "Здравствуйте 🙌"],
+};
+function seedIndex(seed: string, n: number): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return h % n;
+}
+// A greeting at the START of the first line: the word (привет/здравствуй…) plus its trailing punctuation/
+// emoji run, either register. Cyrillic-safe; `[^\p{L}\n]*` eats «! ) , 👋» but stops at the next word.
+const LEADING_GREETING_RE = /^\s*(?:привет|здравствуй)[а-яё]*[^\p{L}\n]*/iu;
+
+export function enforceGreeting(text: string, register: "ty" | "vy" | "unknown", seed?: string): string {
+  const reg: "ty" | "vy" = register === "ty" ? "ty" : "vy"; // unknown → «вы» (lower-risk address)
+  const pool = GREETINGS[reg];
+  // With a seed (live: the job id) rotate deterministically — same card always gets the SAME greeting
+  // (idempotent on regenerate), different cards vary. Without a seed (tests / targeted rebuilds) the
+  // canonical first variant, so behavior is unchanged there.
+  const desired = seed ? pool[seedIndex(seed, pool.length)]! : pool[0]!;
   const lines = text.split("\n");
   const idx = lines.findIndex((l) => l.trim().length > 0);
   if (idx === -1) return text;
   const first = lines[idx]!;
-  const has = (word: string) => new RegExp(`(?<![а-яё])${word}[а-яё]*`, "iu").test(first);
-  if (has(rightWord)) return text; // correct greeting already present → leave the draft untouched
-  if (has(wrongWord)) {
-    // Swap just the wrong greeting token (with its trailing !/,/space) for the right one, keeping any
-    // rest of the line ("Привет, всё ровно" → "Здравствуйте! всё ровно").
-    lines[idx] = first.replace(new RegExp(`(?<![а-яё])${wrongWord}[а-яё]*!?,?\\s*`, "iu"), `${desired} `).replace(/\s+$/u, "");
+  if (LEADING_GREETING_RE.test(first)) {
+    // Replace whatever greeting the model wrote (right OR wrong register, any punctuation) with `desired`,
+    // keeping the rest of the line ("Здравствуйте! молодец" → "Привет! молодец" for a ты student).
+    lines[idx] = first.replace(LEADING_GREETING_RE, `${desired} `).replace(/\s+$/u, "");
     return lines.join("\n");
   }
   return `${desired}\n${text}`; // no greeting at all → prepend it as the first line
@@ -52,9 +71,11 @@ function stripTrailingPeriod(t: string): string {
 
 export function normalizeDraftFormat(text: string): string {
   const t = stripTrailingPeriod(text.replace(/[ \t]+$/gmu, "").replace(/\n{3,}/g, "\n\n").trim());
-  const gm = t.match(/^(привет!?|здравствуйте!?)[\s,]*/iu);
+  // Anchor on the greeting incl. its trailing punctuation/emoji (a rotated «Привет 👋» / «Здравствуйте)»),
+  // so reformatting a rich draft preserves the variant instead of stripping it back to the bare word.
+  const gm = t.match(/^(привет|здравствуйте)([^\p{L}\n]*)/iu);
   if (!gm) return t; // no greeting to anchor on (shouldn't happen post-enforce) → leave structure alone
-  const greeting = gm[1]!.replace(/[\s,]+$/u, "");
+  const greeting = `${gm[1]!}${gm[2]!}`.replace(/[\s,]+$/u, "");
   const body = t.slice(gm[0]!.length).trim();
   if (!body) return greeting;
 

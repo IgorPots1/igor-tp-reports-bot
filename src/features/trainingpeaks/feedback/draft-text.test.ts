@@ -81,4 +81,34 @@ describe("normalizeDraftFormat — Block 3, trailing period + conditional paragr
   test("greeting-only draft returns just the greeting", () => {
     assert.equal(normalizeDraftFormat("Здравствуйте!"), "Здравствуйте!");
   });
+  test("preserves a rotated greeting variant (emoji/paren) through reformatting", () => {
+    assert.equal(normalizeDraftFormat("Привет 👋 молодец)"), "Привет 👋 молодец)");
+    const rich = normalizeDraftFormat("Здравствуйте) В целом отлично, только начинали слишком быстро. Как ноги?");
+    assert.ok(rich.startsWith("Здравствуйте)\n\n"), rich);
+  });
+});
+
+describe("enforceGreeting — rotation (seed)", () => {
+  test("seeded greeting stays register-correct (ты → Привет*, вы → Здравствуйте*)", () => {
+    for (const seed of ["a", "b", "c", "job-123", "zzzz", "9f705619"]) {
+      assert.match(enforceGreeting("Отлично вышло)", "ty", seed).split("\n")[0]!, /^Привет/u);
+      assert.match(enforceGreeting("Отлично вышло)", "vy", seed).split("\n")[0]!, /^Здравствуйте/u);
+    }
+  });
+  test("same seed → same greeting (idempotent on regenerate)", () => {
+    assert.equal(enforceGreeting("Молодец)", "ty", "job-42"), enforceGreeting("Молодец)", "ty", "job-42"));
+  });
+  test("seed replaces a WRONG-register greeting with a correct variant", () => {
+    const out = enforceGreeting("Здравствуйте! молодец", "ty", "seed-x");
+    assert.match(out, /^Привет/u);
+    assert.doesNotMatch(out, /Здравствуй/iu);
+  });
+  test("rotation actually varies across seeds (not always identical)", () => {
+    const outs = new Set(["a", "b", "c", "d", "e", "f", "g", "h"].map((s) => enforceGreeting("Ок)", "ty", s)));
+    assert.ok(outs.size >= 2);
+  });
+  test("no seed → canonical first variant (unchanged behavior)", () => {
+    assert.equal(enforceGreeting("Отлично)", "ty").split("\n")[0], "Привет!");
+    assert.equal(enforceGreeting("Отлично)", "vy").split("\n")[0], "Здравствуйте!");
+  });
 });
