@@ -15,7 +15,7 @@ import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-e
 import { classifyReport, isReportCandidate, resolveArbiterDecision, type ReportVerdict } from "@/features/trainingpeaks/feedback/report-arbiter-ai";
 import { deviceGlitchScope } from "@/features/trainingpeaks/feedback/stated-factors";
 import { isDataFragment } from "@/features/trainingpeaks/feedback/session-type";
-import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState, flagDoneCardLateReport } from "@/features/trainingpeaks/feedback/feedback-queue";
+import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState, flagDoneCardLateReport, reviveDismissedFeedbackJob } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
 
@@ -416,6 +416,7 @@ export type FeedbackReportSweepSummary = {
   runsBlocked: number;
   runsSkipped: number;
   runsWithWords: number; // of enqueued, how many packets carry student words (expected == enqueued)
+  runsRevived?: number; // dismissed cards flipped back in place by a fresh report (no duplicate row)
   runsEnriched?: number; // clarification follow-ups that added words to an existing pre-generation card
   enrichmentsCount?: number; // dryRun only: how many clarification enrichments were queued
   // Populated only on a dryRun — the runs that WOULD be enqueued, for proof/inspection.
@@ -470,21 +471,58 @@ async function cacheReportAiVerdicts(supabase: SupabaseLike, verdicts: Array<{ i
   }
 }
 
-// The run a report/clarification is about: latest non-race run in [date-1, date] (same rule as the
-// enqueue matching loop). Used to point a clarification at the card to enrich.
-function matchRunCacheId(studentId: string, date: string, runsByStudent: Map<string, DerivedRow[]>, raceKeys: Set<string>): string | null {
+// A report that NAMES its workout type ("сделал интервалы", "лёгкая", "темповый") should bind to a run
+// of that type, not merely the latest run in the window — an interval report landing on a same-day easy
+// run mislabels the whole card (the reason surge/pace advice went to the wrong workout). We distinguish
+// only the INTERVAL axis (reps_detected_count>0), the one the derived row answers deterministically at
+// match time; easy-vs-tempo is left to the latest-run tie-break. `по\s+\d` catches "по 400"; `\d[xх×]\d`
+// catches "5х400". Cyrillic-safe lookbehind on «по» (JS \b is ASCII-only).
+const INTERVAL_REPORT_RE = /интервал|отрезк|повтор|(?<![а-яё])по\s+\d|\d\s*[xхx×]\s*\d/iu;
+const NON_INTERVAL_REPORT_RE = /лёгк|легк|восстанов|трусц|спокойн|темпов|длительн|длинн/iu;
+
+export function reportNamedType(text: string): "interval" | "non_interval" | null {
+  const t = (text ?? "").toLowerCase();
+  if (INTERVAL_REPORT_RE.test(t)) return "interval";
+  if (NON_INTERVAL_REPORT_RE.test(t)) return "non_interval";
+  return null;
+}
+
+function runIsInterval(row: DerivedRow): boolean {
+  const reps = row.reps_detected_count;
+  return typeof reps === "number" && reps > 0;
+}
+
+// Pick the run a report is about: the LATEST at/before the report, BUT if the report names a type and at
+// least one candidate matches it, restrict to those first. Falls back to all candidates when the named
+// type isn't present among them (e.g. the interval run hasn't synced yet) — no run is ever dropped, only
+// re-ranked. With no named type this is exactly the old latest-run pick (drop-in).
+export function pickRunForReport(candidates: DerivedRow[], text: string): DerivedRow {
+  const named = reportNamedType(text);
+  let pool = candidates;
+  if (named === "interval") {
+    const m = candidates.filter(runIsInterval);
+    if (m.length > 0) pool = m;
+  } else if (named === "non_interval") {
+    const m = candidates.filter((r) => !runIsInterval(r));
+    if (m.length > 0) pool = m;
+  }
+  return [...pool].sort((a, b) => {
+    const byDate = (b.workout_date as string).localeCompare(a.workout_date as string);
+    if (byDate !== 0) return byDate;
+    return String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? ""));
+  })[0];
+}
+
+// The run a report/clarification is about: type-aware latest non-race run in [date-1, date] (same rule
+// as the enqueue matching loop). Used to point a clarification at the card to enrich.
+function matchRunCacheId(studentId: string, date: string, text: string, runsByStudent: Map<string, DerivedRow[]>, raceKeys: Set<string>): string | null {
   const prev = shiftYmd(date, -REPORT_MATCH_WINDOW_DAYS);
   const inWindow = (runsByStudent.get(studentId) ?? []).filter((r) => {
     const wd = r.workout_date as string;
     return (wd === date || wd === prev) && !raceKeys.has(`${r.student_id as string}|${wd}`);
   });
   if (inWindow.length === 0) return null;
-  inWindow.sort((a, b) => {
-    const byDate = (b.workout_date as string).localeCompare(a.workout_date as string);
-    if (byDate !== 0) return byDate;
-    return String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? ""));
-  });
-  return inWindow[0].workout_cache_id as string;
+  return pickRunForReport(inWindow, text).workout_cache_id as string;
 }
 
 /**
@@ -627,11 +665,11 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
 
   // Split candidates: reports (create/refresh a card) vs enrichments (clarification → add words to an
   // EXISTING card, never create one). The decision is pure with the regex fallback baked in.
-  const reports: Array<{ studentId: string; date: string; observedAt: string; weak: boolean }> = [];
+  const reports: Array<{ studentId: string; date: string; observedAt: string; weak: boolean; text: string }> = [];
   const enrichments: Array<{ studentId: string; date: string; text: string }> = [];
   for (const c of candidates) {
     const decision = resolveArbiterDecision({ aiLabel: c.aiLabel, isReportLike: c.isReportLike, isWeak: c.isWeak });
-    if (decision.kind === "report") reports.push({ studentId: c.studentId, date: c.date, observedAt: c.observedAt, weak: decision.weak });
+    if (decision.kind === "report") reports.push({ studentId: c.studentId, date: c.date, observedAt: c.observedAt, weak: decision.weak, text: c.text });
     else if (decision.kind === "clarification") enrichments.push({ studentId: c.studentId, date: c.date, text: c.text });
   }
   summary.reports = reports.filter((r) => !r.weak).length;
@@ -661,7 +699,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
 
   // 4. per report, pick the run it's about; dedupe so two reports about one run enqueue it once.
   const reportFreshFloor = shiftYmd(new Date().toISOString().slice(0, 10), -ENQUEUE_MAX_REPORT_AGE_DAYS);
-  const chosen = new Map<string, { row: DerivedRow; reportDate: string; triggerObservedAt: string }>();
+  const chosen = new Map<string, { row: DerivedRow; reportDate: string; triggerObservedAt: string; reviveJobId: string | null }>();
   for (const rep of reports) {
     const prevDay = shiftYmd(rep.date, -REPORT_MATCH_WINDOW_DAYS);
     let inWindow = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
@@ -713,14 +751,14 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       summary.reportsRunAlreadyHandled += 1;
       continue;
     }
-    // The LATEST run at/before the report is the one they're writing about. No wall-clock start
-    // time is stored, so a same-day tie breaks on updated_at (freshest metrics).
-    available.sort((a, b) => {
-      const byDate = (b.workout_date as string).localeCompare(a.workout_date as string);
-      if (byDate !== 0) return byDate;
-      return String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? ""));
-    });
-    chosen.set(available[0].workout_cache_id as string, { row: available[0], reportDate: rep.date, triggerObservedAt: rep.observedAt });
+    // The run they're writing about: type-aware (interval report → interval run) latest at/before the
+    // report. No wall-clock start time is stored, so a same-day tie breaks on updated_at.
+    const winner = pickRunForReport(available, rep.text);
+    const wbs = blockState.get(winner.workout_cache_id as string);
+    // Resurrection without a duplicate: if the ONLY prior job is a dismissal (no active/done job), revive
+    // THAT row in place rather than inserting a second card. reviveJobId carries the dismissed row's id.
+    const reviveJobId = wbs && !wbs.blocked ? wbs.dismissedJobId : null;
+    chosen.set(winner.workout_cache_id as string, { row: winner, reportDate: rep.date, triggerObservedAt: rep.observedAt, reviveJobId });
     summary.reportsMatchedRun += 1;
   }
   // 5. build packets (windowStudentWords attaches the report as words) and enqueue — only when a run
@@ -729,7 +767,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   if (chosen.size > 0) {
     const chosenList = [...chosen.values()];
     const packets = await assemblePlannerInputsForWorkouts(supabase, chosenList.map((c) => c.row));
-    for (const { row, reportDate, triggerObservedAt } of chosenList) {
+    for (const { row, reportDate, triggerObservedAt, reviveJobId } of chosenList) {
       const cacheId = row.workout_cache_id as string;
       const studentId = row.student_id as string;
       const plannerInput = packets.get(cacheId);
@@ -746,7 +784,10 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
           details.push({ studentId, workoutCacheId: cacheId, workoutDate: row.workout_date as string, reportDate, wordsCount: 0, blocked: true });
           summary.runsBlocked += 1;
         } else {
-          const res = await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: "нет канала (Business-DM/группа) — не могу написать этому ученику" });
+          const reason = "нет канала (Business-DM/группа) — не могу написать этому ученику";
+          const res = reviveJobId
+            ? await reviveDismissedFeedbackJob({ jobId: reviveJobId, blockedReason: reason })
+            : await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: reason });
           if (res.skipped) summary.runsSkipped += 1;
           else summary.runsBlocked += 1;
         }
@@ -764,12 +805,19 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
         else summary.runsEnqueued += 1;
         continue;
       }
-      const res = built.blocked
-        ? await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: built.reason })
-        : await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, packet: built.packet });
+      // reviveJobId set → the only prior job was a dismissal: flip that row back in place (no duplicate
+      // card). Otherwise a normal insert. Both return `.skipped` on a race with a concurrent sweep.
+      const res = reviveJobId
+        ? built.blocked
+          ? await reviveDismissedFeedbackJob({ jobId: reviveJobId, blockedReason: built.reason })
+          : await reviveDismissedFeedbackJob({ jobId: reviveJobId, packet: built.packet })
+        : built.blocked
+          ? await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, blockedReason: built.reason })
+          : await enqueueTrainingPeaksFeedbackJob({ workoutCacheId: cacheId, studentId, packet: built.packet });
       if (res.skipped) summary.runsSkipped += 1;
       else if (built.blocked) summary.runsBlocked += 1;
       else summary.runsEnqueued += 1;
+      if (reviveJobId && !res.skipped) summary.runsRevived = (summary.runsRevived ?? 0) + 1;
     }
   }
 
@@ -778,7 +826,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   // window, skip races); the queue helper no-ops when there's no pending/generating card for it.
   if (!dryRun) {
     for (const e of enrichments) {
-      const cacheId = matchRunCacheId(e.studentId, e.date, runsByStudent, raceKeys);
+      const cacheId = matchRunCacheId(e.studentId, e.date, e.text, runsByStudent, raceKeys);
       if (!cacheId) continue;
       // pending/generating card → fold the late words in (it hasn't generated yet).
       if (await enrichPendingCardStudentWords(cacheId, e.text)) summary.runsEnriched = (summary.runsEnriched ?? 0) + 1;

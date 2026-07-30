@@ -144,6 +144,37 @@ export async function enqueueTrainingPeaksFeedbackJob(input: {
 }
 
 /**
+ * Resurrection WITHOUT a duplicate row: the coach dismissed a card, the student then wrote a NEW report
+ * about the same run. Instead of INSERTing a second card (the active-unique index only blocks duplicate
+ * pending/generating rows — it lets a fresh pending in past a 'dismissed' one, which is exactly how
+ * Есения/Антон each got two cards on one workout), we flip the EXISTING dismissed row back to pending
+ * (or blocked) in place, with the freshly-built packet, and clear the dismissal. One row per workout, ever.
+ *
+ * The block-state guarantees this is only called when NO active/done job exists for the cache, so the
+ * dismissed→pending flip can't collide with the active-unique index. A 23505 here means a concurrent
+ * sweep already revived/inserted one — treat as skipped, not an error.
+ */
+export async function reviveDismissedFeedbackJob(input: {
+  jobId: string;
+  packet?: FeedbackContextPacket;
+  blockedReason?: string;
+}): Promise<{ revived: boolean; skipped: boolean }> {
+  if (!input.packet && !input.blockedReason) {
+    throw new Error("reviveDismissedFeedbackJob: need either packet or blockedReason");
+  }
+  const supabase = createSupabaseServerClient();
+  const patch: Record<string, unknown> = input.blockedReason
+    ? { status: "blocked", blocked_reason: input.blockedReason, context_packet: input.packet ?? {}, dismissed_at: null }
+    : { status: "pending", blocked_reason: null, context_packet: input.packet, dismissed_at: null };
+  const { error } = await withSupabaseNetworkRetry(() => supabase.from(TABLE).update(patch).eq("id", input.jobId).eq("status", "dismissed"));
+  if (error) {
+    if ((error as { code?: string }).code === "23505") return { revived: false, skipped: true };
+    throw new Error(`revive feedback job failed: ${error.message}`);
+  }
+  return { revived: true, skipped: false };
+}
+
+/**
  * Arbiter clarification enrichment: the student added a follow-up detail to a run they'd already
  * reported ("забыла отписать про интервалы, GPS не работал"). It must NOT create a new card — it
  * enriches the words on the EXISTING one. Only a card still BEFORE generation (pending/generating)
@@ -219,7 +250,7 @@ export async function fetchHandledWorkoutCacheIds(cacheIds: string[]): Promise<S
   return handled;
 }
 
-export type WorkoutJobBlockState = { blocked: boolean; dismissedAt: string | null };
+export type WorkoutJobBlockState = { blocked: boolean; dismissedAt: string | null; dismissedJobId: string | null };
 
 // After this many FAILED jobs for one workout, stop re-enqueuing it. Each re-enqueue is a NEW job row
 // (attempts is per-row, so it can't see prior rows), so a DETERMINISTIC failure — e.g. the fact-check
@@ -248,14 +279,21 @@ export async function fetchWorkoutJobBlockState(cacheIds: string[]): Promise<Map
   for (let i = 0; i < cacheIds.length; i += 150) {
     const part = cacheIds.slice(i, i + 150);
     const { data, error } = await withSupabaseNetworkRetry(() =>
-      supabase.from(TABLE).select("workout_cache_id, status, dismissed_at").in("workout_cache_id", part)
+      supabase.from(TABLE).select("id, workout_cache_id, status, dismissed_at").in("workout_cache_id", part)
     );
     if (error) throw new Error(`fetch workout job block state failed: ${error.message}`);
-    for (const r of (data as Array<{ workout_cache_id: string; status: FeedbackJobStatus; dismissed_at: string | null }>) ?? []) {
-      const cur = out.get(r.workout_cache_id) ?? { blocked: false, dismissedAt: null };
+    for (const r of (data as Array<{ id: string; workout_cache_id: string; status: FeedbackJobStatus; dismissed_at: string | null }>) ?? []) {
+      const cur = out.get(r.workout_cache_id) ?? { blocked: false, dismissedAt: null, dismissedJobId: null };
       if (BLOCKING.has(r.status)) cur.blocked = true;
       else if (r.status === "failed") failedCount.set(r.workout_cache_id, (failedCount.get(r.workout_cache_id) ?? 0) + 1);
-      else if (r.status === "dismissed" && r.dismissed_at && (!cur.dismissedAt || r.dismissed_at > cur.dismissedAt)) cur.dismissedAt = r.dismissed_at;
+      // Track the NEWEST dismissal AND its job id: the sweep resurrects a dismissed run by reviving THIS
+      // row in place (status→pending, fresh packet) instead of inserting a second card (Есения/Антон:
+      // dismiss → new report next day spawned a duplicate row because the active-unique index lets a
+      // new pending in past a dismissed one).
+      else if (r.status === "dismissed" && r.dismissed_at && (!cur.dismissedAt || r.dismissed_at > cur.dismissedAt)) {
+        cur.dismissedAt = r.dismissed_at;
+        cur.dismissedJobId = r.id;
+      }
       out.set(r.workout_cache_id, cur);
     }
   }
@@ -263,7 +301,7 @@ export async function fetchWorkoutJobBlockState(cacheIds: string[]): Promise<Map
   // failure is deterministic, not a hiccup). The failed card stays for the coach; no more duplicates.
   for (const [cacheId, n] of failedCount) {
     if (n >= FEEDBACK_FAILED_RETRY_CAP) {
-      const cur = out.get(cacheId) ?? { blocked: false, dismissedAt: null };
+      const cur = out.get(cacheId) ?? { blocked: false, dismissedAt: null, dismissedJobId: null };
       cur.blocked = true;
       out.set(cacheId, cur);
     }
