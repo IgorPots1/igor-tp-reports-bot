@@ -61,7 +61,7 @@ type TodayView = {
   };
 };
 
-type StartAthlete = { studentId: string; name: string; distance: string | null };
+type StartAthlete = { studentId: string; name: string; distance: string | null; pending?: boolean };
 type StartEvent = {
   title: string;
   date: string;
@@ -233,6 +233,7 @@ const S = {
   rosterRow: { display: "flex" as const, justifyContent: "space-between" as const, gap: 10, padding: "5px 0", fontSize: 14 } as const,
   rosterName: { fontWeight: 600, color: C.ink } as const,
   rosterDist: { flex: "0 0 auto" as const, fontWeight: 600, color: C.faint, fontSize: 13 } as const,
+  pendingTag: { marginLeft: 6, fontWeight: 600, color: C.sub, fontSize: 11 } as const,
   tabBar: {
     position: "fixed" as const,
     left: 0,
@@ -1210,7 +1211,10 @@ function EventCard(props: { event: StartEvent; open: boolean; onToggle: () => vo
         <div style={S.roster}>
           {e.athletes.map((a) => (
             <div key={a.studentId} style={S.rosterRow}>
-              <span style={S.rosterName}>{a.name}</span>
+              <span style={S.rosterName}>
+                {a.name}
+                {a.pending ? <span style={S.pendingTag}>заявка</span> : null}
+              </span>
               <span style={S.rosterDist}>{a.distance ?? "уточняется"}</span>
             </div>
           ))}

@@ -10,6 +10,7 @@ export type CoachDeskStartAthlete = {
   studentId: string;
   name: string;
   distance: string | null; // distance_raw as-is, or null → "уточняется" in UI
+  pending?: boolean; // true = declared in the club, not yet in the athlete's TP calendar
 };
 
 export type CoachDeskStartEvent = {
@@ -26,6 +27,20 @@ export type CoachDeskStartsView = {
   later: CoachDeskStartEvent[];
   counts: { events: number; athletes: number; thisWeek: number };
 };
+
+// Merge the scanned race_events with the club-declared races, deduped by (student, date): the SCANNED
+// row wins, because a race that already reached TP and came back in a scan is the confirmed copy (real
+// TP title, real source). A declared race NOT yet in race_events is appended, so the coach sees a
+// start the moment a student submits it — not only after the weekly scan. This is the one dedup point
+// that stops the same physical race (one row from the calendar, one from the scan) showing twice. Pure.
+export function dedupeStartRows(
+  scanned: TrainingPeaksRaceEventRow[],
+  declared: TrainingPeaksRaceEventRow[]
+): TrainingPeaksRaceEventRow[] {
+  const seen = new Set(scanned.map((row) => `${row.studentId}|${row.eventDate}`));
+  const extra = declared.filter((row) => !seen.has(`${row.studentId}|${row.eventDate}`));
+  return [...scanned, ...extra];
+}
 
 function daysBetween(fromIso: string, toIso: string): number {
   const from = Date.parse(`${fromIso}T00:00:00Z`);
@@ -111,6 +126,9 @@ export function buildCoachDeskStartsView(
       studentId: row.studentId,
       name: row.studentName?.trim() || "Без имени",
       distance,
+      // "club_declared" = a club start still queued for TP (approved, not applied). "club_applied"
+      // and any scan/manual source are treated as already in TP, so no pending flag.
+      pending: row.source === "club_declared",
     };
     const existing = groups.get(key);
     if (!existing) {

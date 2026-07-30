@@ -2502,6 +2502,77 @@ export async function listUpcomingTrainingPeaksRaceEvents(input: {
   }));
 }
 
+// Declared club races (club_calendar_entries kind='race'), mapped into the SAME row shape as the
+// scanned race_events so the coach-desk radar can show a start the MOMENT a student submits it —
+// before it reaches TP and comes back in a scan. source carries provenance so the view can flag a
+// not-yet-in-TP start: "club_declared" = approved, still queued for send; "club_applied" = already
+// pushed to TP (its scanned copy just hasn't landed yet). Tolerant: any read error (table/columns
+// absent) → [], so the radar never breaks. Names joined in a second batch, like the scan read above.
+export async function listDeclaredClubRaceRows(input: {
+  fromDate: string;
+  toDate: string;
+}): Promise<TrainingPeaksRaceEventRow[]> {
+  const supabase = createSupabaseServerClient();
+  try {
+    const { data, error } = await withSupabaseNetworkRetry(() => supabase
+      .from("club_calendar_entries")
+      .select("id, student_id, entry_date, race_name, race_distance_label, distance_meters, status")
+      .eq("kind", "race")
+      .neq("status", "rejected")
+      .gte("entry_date", input.fromDate)
+      .lte("entry_date", input.toDate)
+      .order("entry_date", { ascending: true }));
+    if (error) {
+      return [];
+    }
+    const rows =
+      (data as Array<{
+        id: string;
+        student_id: string;
+        entry_date: string | null;
+        race_name: string | null;
+        race_distance_label: string | null;
+        distance_meters: number | null;
+        status: string | null;
+      }> | null) ?? [];
+
+    const studentIds = [...new Set(rows.map((row) => row.student_id).filter(Boolean))];
+    const nameById = new Map<string, string | null>();
+    if (studentIds.length > 0) {
+      const { data: students } = await withSupabaseNetworkRetry(() => supabase
+        .from("trainingpeaks_students")
+        .select("id, student_name")
+        .in("id", studentIds));
+      for (const student of (students as Array<{ id: string; student_name: string | null }> | null) ?? []) {
+        nameById.set(student.id, student.student_name ?? null);
+      }
+    }
+
+    return rows
+      .map((row) => {
+        const meters = typeof row.distance_meters === "number" ? row.distance_meters : null;
+        const distanceRaw =
+          row.race_distance_label && row.race_distance_label.trim()
+            ? row.race_distance_label.trim()
+            : meters && meters > 0
+              ? `${(meters / 1000).toFixed(1)} км`
+              : null;
+        return {
+          id: row.id,
+          studentId: row.student_id,
+          studentName: nameById.get(row.student_id) ?? null,
+          eventDate: (row.entry_date ?? "").slice(0, 10),
+          title: (row.race_name && row.race_name.trim()) || "Старт",
+          distanceRaw,
+          source: row.status === "applied" ? "club_applied" : "club_declared",
+        };
+      })
+      .filter((row) => row.eventDate);
+  } catch {
+    return [];
+  }
+}
+
 export async function getTrainingPeaksWorkoutCacheFreshness(input?: {
   date?: string;
 }): Promise<{ latestScannedAt: string | null; rowCount: number }> {

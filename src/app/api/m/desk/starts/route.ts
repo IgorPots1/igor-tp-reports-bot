@@ -1,8 +1,8 @@
 import type { NextRequest } from "next/server";
 
 import { resolveMiniAppCoach } from "@/features/telegram/miniapp-coach-resolver";
-import { listUpcomingTrainingPeaksRaceEvents } from "@/features/trainingpeaks/repository";
-import { buildCoachDeskStartsView } from "@/features/trainingpeaks/coach-desk-starts";
+import { listDeclaredClubRaceRows, listUpcomingTrainingPeaksRaceEvents } from "@/features/trainingpeaks/repository";
+import { buildCoachDeskStartsView, dedupeStartRows } from "@/features/trainingpeaks/coach-desk-starts";
 import { getTrainingPeaksAttentionDigestBelgradeTodayIso } from "@/features/trainingpeaks/attention-digest-run";
 
 export const runtime = "nodejs";
@@ -49,11 +49,15 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   try {
     const today = getTrainingPeaksAttentionDigestBelgradeTodayIso();
-    const rows = await listUpcomingTrainingPeaksRaceEvents({
-      fromDate: today,
-      toDate: addDaysIso(today, STARTS_WINDOW_DAYS),
-    });
-    const view = buildCoachDeskStartsView(rows, today);
+    const window = { fromDate: today, toDate: addDaysIso(today, STARTS_WINDOW_DAYS) };
+    // Two sources: the scanned TP calendar (trainingpeaks_race_events) and club-declared races that
+    // may not have reached TP yet (club_calendar_entries kind='race'). Deduped by (student, date) so
+    // a declared start shows immediately, and its later scanned copy never doubles it. See §В2/§В3.
+    const [scanned, declared] = await Promise.all([
+      listUpcomingTrainingPeaksRaceEvents(window),
+      listDeclaredClubRaceRows(window),
+    ]);
+    const view = buildCoachDeskStartsView(dedupeStartRows(scanned, declared), today);
     return jsonResponse(200, { ok: true, windowDays: STARTS_WINDOW_DAYS, view });
   } catch (error) {
     console.error("[miniapp.desk.starts] failed", {
