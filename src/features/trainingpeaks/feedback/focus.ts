@@ -53,6 +53,7 @@ export const PRIORITY: Record<AdviceKey, number> = {
   correction_second_half_surge_tempo: 60,
   correction_hr_drift_tempo: 60,
   correction_interval_fade: 57,
+  remark_easy_even_pace: 50, // gentle «ровнее» on easy — below a real surge correction, above questions/praise
   correction_fast_start_rep: 60, // sleeping — priority set for when Этап 0.5 lands
   correction_recovery_too_fast: 60, // sleeping
   correction_easy_too_fast: 60, // sleeping

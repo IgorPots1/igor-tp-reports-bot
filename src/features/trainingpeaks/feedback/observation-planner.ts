@@ -86,16 +86,33 @@ export function planObservations(packet: ContextPacket): Observation[] {
     const lapsForSplit = trustGate.hrTrusted ? packet.laps : packet.laps.map((l) => ({ ...l, avgHr: null }));
     const negSplit = evaluateNegativeSplit({ laps: lapsForSplit, sessionType });
     if (negSplit.kind === "praise_disciplined") {
-      observations.push(
-        makeObservation({
-          type: "praise",
-          metric: "split_half_pace_hr",
-          numbers: { deltaSecPerKm: negSplit.deltaSecPerKm, hrDeltaBpm: negSplit.hrDeltaBpm, firstHalfPaceSecPerKm: negSplit.firstHalfPaceSecPerKm, secondHalfPaceSecPerKm: negSplit.secondHalfPaceSecPerKm },
-          sessionType,
-          adviceKey: "praise_negative_split",
-          reason: `second half ${negSplit.deltaSecPerKm}s/km faster, pulse rose only ${negSplit.hrDeltaBpm}bpm — disciplined pacing`,
-        })
-      );
+      const numbers = { deltaSecPerKm: negSplit.deltaSecPerKm, hrDeltaBpm: negSplit.hrDeltaBpm, firstHalfPaceSecPerKm: negSplit.firstHalfPaceSecPerKm, secondHalfPaceSecPerKm: negSplit.secondHalfPaceSecPerKm };
+      if (sessionType === "easy") {
+        // Coach rule: on an EASY run even a CONTROLLED negative split isn't praise — easy should be EVEN.
+        // A gentle REMARK (not a hard correction, not «разогнался»): acknowledge the discipline, nudge to
+        // hold even next time. (Anton: 2nd half +15s/km, pulse +5 — controlled, but it's a lёгкая.)
+        observations.push(
+          makeObservation({
+            type: "correction",
+            metric: "split_half_pace_hr",
+            numbers,
+            sessionType,
+            adviceKey: "remark_easy_even_pace",
+            reason: `easy run: 2nd half ${negSplit.deltaSecPerKm}s/km faster, pulse +${negSplit.hrDeltaBpm}bpm — controlled, but easy should stay even`,
+          })
+        );
+      } else {
+        observations.push(
+          makeObservation({
+            type: "praise",
+            metric: "split_half_pace_hr",
+            numbers,
+            sessionType,
+            adviceKey: "praise_negative_split",
+            reason: `second half ${negSplit.deltaSecPerKm}s/km faster, pulse rose only ${negSplit.hrDeltaBpm}bpm — disciplined pacing`,
+          })
+        );
+      }
     } else if (negSplit.kind === "correction_surge") {
       const adviceKey: AdviceKey = sessionType === "long_tempo" ? "correction_second_half_surge_tempo" : "correction_second_half_surge_easy";
       observations.push(

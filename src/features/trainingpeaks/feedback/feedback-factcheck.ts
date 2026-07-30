@@ -54,6 +54,17 @@ function detectGenderForms(low: string): { fem: string[]; masc: string[] } {
   return { fem: [...new Set(fem)], masc: [...new Set(masc)] };
 }
 const PULSE_WORDS = ["пульс", "чсс"];
+// A draft that claims the session PROGRESSIVELY faded / got harder toward the end («отрезки стали
+// тяжелее», «темп начал проседать», «под финиш тяжелее давалось», «с трудом»). Deliberately NOT a
+// general condition-difficulty («в жару чуть тяжелее», «по тропам тяжелее, чем по асфальту») — that is
+// legit context when a heat/terrain cause or the student's words back it, and false-flagging it rejected
+// good drafts (Железникова/Левина). Matched against a real fade/fatigue signal or the student's words.
+const FATIGUE_CLAIM_RE = /просе[дл]|просад|(?:стал[аио]?|начал[аио]?)\s+[^.!?]{0,15}(?:тяжел|трудн|тяжко|сложн)|(?:под\s+конец|под\s+финиш|к\s+концу|к\s+финишу|ближе\s+к\s+концу)[^.!?]{0,25}(?:тяжел|трудн|тяжко|сложн|част|устал|сдал)|(?:тяжел|трудн)[^.!?]{0,15}(?:под\s+конец|под\s+финиш|к\s+концу|к\s+финишу)|давал(?:ось|ась|ись|ся)\s+(?:тяжел|труд)|с\s+трудом|выдох(?:ся|лась|лись)|вымота(?:л|ло)/iu;
+// Signals that genuinely license a "got harder/faded" claim: an interval fade, an HR drift, a fatigue
+// CAUSE the student named, or an elevated-pulse / recovery question. Heat/humidity/comparison/praise do
+// NOT (Сорокин had heat + only praise, yet the draft invented «отрезки стали тяжелее»).
+const FATIGUE_SUPPORT_KEY_RE = /correction_interval_fade|correction_hr_drift|cause_confirmed_(?:tired|undersleep|illness|soreness|muscle_doms)|question_high_pulse|question_accumulated/;
+const STUDENT_SAID_HARD_RE = /тяжел|устал|трудно|сложно|вымот|выдох|тяжко|сдал|не\s*тян|заморил|умотал/i;
 // Unambiguous "ты"-address markers for the register check: the pronouns ты/тебя/тебе/тобой, the
 // possessive твой/твоя/твоё/твои/твоего/… (тво + й/я/и/е/ю/ё), and 2nd-person-singular verbs ending
 // -ешь/-ишь (держишь, пишешь). Cyrillic-safe boundaries (JS \b is ASCII-only). Deliberately NOT the
@@ -119,6 +130,18 @@ export function validateFeedbackDraft(input: { draft: string; packet: FeedbackCo
   // C7: untrusted HR → the draft must not discuss pulse at all.
   if (!packet.hrTrusted && PULSE_WORDS.some((w) => low.includes(w))) {
     return { ok: false, reason: "hr_trusted=false, но черновик про пульс (недостоверный датчик)" };
+  }
+
+  // Anti-fabricated-fatigue (Сорокин): the draft claims the session got HARDER / faded («стало тяжелее»,
+  // «давались с трудом», «под конец тяжело») but NO fatigue/fade signal fired AND the student didn't say
+  // so. The model invented the arc (his reps were even, fade negative, only praise signals fired). Reject.
+  const claimsFatigue = FATIGUE_CLAIM_RE.test(low);
+  if (claimsFatigue) {
+    const hasFatigueSignal = packet.observations.some((o) => FATIGUE_SUPPORT_KEY_RE.test(o.adviceKey));
+    const studentSaidHard = STUDENT_SAID_HARD_RE.test(packet.studentWords.join(" ").toLowerCase());
+    if (!hasFatigueSignal && !studentSaidHard) {
+      return { ok: false, reason: "черновик утверждает «стало тяжелее/просело/с трудом», но нет сигнала усталости/fade и ученик так не писал (выдуманная усталость)" };
+    }
   }
 
   // Privacy (б) insurance gate: a GROUP-bound draft must not carry any personal/medical topic (operation,

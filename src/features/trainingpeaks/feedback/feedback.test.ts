@@ -307,12 +307,22 @@ describe("planObservations — orchestrator", () => {
     assert.ok(!observations.some((o) => o.type === "correction"));
   });
 
-  test("disciplined negative split ends up praised and focused", () => {
-    const observations = planObservations(basePacket({ laps: negSplitLaps(141) }));
+  test("disciplined negative split on EASY → gentle remark, not praise (coach rule: easy stays even)", () => {
+    const observations = planObservations(basePacket({ laps: negSplitLaps(141) })); // basePacket title «Лёгкая»
+    assert.ok(!observations.some((o) => o.adviceKey === "praise_negative_split"));
+    const remark = observations.find((o) => o.adviceKey === "remark_easy_even_pace");
+    assert.ok(remark);
+    assert.equal(remark!.type, "correction");
+    assert.ok(!observations.some((o) => o.adviceKey.startsWith("correction_second_half_surge")));
+  });
+
+  test("disciplined negative split on TEMPO → still praised (rule is easy-only)", () => {
+    const observations = planObservations(
+      basePacket({ laps: negSplitLaps(141), workout: { workoutId: 1, workoutDate: "2026-07-15", title: "Длительная 12км" }, current: baseCurrent({ durationS: 4000 }) })
+    );
     const praise = observations.find((o) => o.adviceKey === "praise_negative_split");
     assert.ok(praise);
-    assert.equal(praise!.focused, true);
-    assert.ok(!observations.some((o) => o.adviceKey.startsWith("correction_second_half_surge")));
+    assert.ok(!observations.some((o) => o.adviceKey === "remark_easy_even_pace"));
   });
 
   test("surging negative split is corrected, never praised", () => {

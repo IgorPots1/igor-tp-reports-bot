@@ -23,6 +23,7 @@ export type AdviceKey =
   | "correction_second_half_surge_easy"
   | "correction_second_half_surge_tempo"
   | "correction_hr_drift_tempo"
+  | "remark_easy_even_pace" // coach rule: on EASY, a controlled negative split is a gentle «ровнее», not praise
   // C4 — fatigue → cause (corpus category D, cause not blame)
   | "cause_confirmed_tired_rhr"
   | "cause_confirmed_tired_sleep"
