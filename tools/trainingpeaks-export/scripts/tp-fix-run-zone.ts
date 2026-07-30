@@ -19,7 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { toolRoot } from "./lib/paths.ts";
 import { getAthleteSettings } from "../../../src/features/trainingpeaks/tp-api-client.ts";
-import { authedWriteOnce, COACH_ID_SETUP_HINT, findWt0Set, formatMpsAsPace, getSupabase, isRecord, loadCoachUserId } from "./lib/tp-athlete-helpers.ts";
+import { authedWriteOnce, COACH_ID_SETUP_HINT, findActiveHold, findWt0Set, formatMpsAsPace, getSupabase, isRecord, loadCoachUserId, parsePaceToSecPerKm, secPerKmToMps } from "./lib/tp-athlete-helpers.ts";
 import { pickWhitelistedSettings } from "./lib/tp-settings-whitelist.ts";
 import { describeUncovered, getCoveredScheme, recomputeZones, ZoneShapeMismatchError, type ZoneBoundary } from "./lib/tp-zone-formulas.ts";
 
@@ -42,11 +42,15 @@ async function main(): Promise<void> {
   const arr = settings.speedZones;
   const wt0 = findWt0Set(arr);
   if (!wt0 || typeof wt0.threshold !== "number") { console.error(`✗ ${id}: нет набора workoutTypeId=0 с порогом — нечего выравнивать по.`); process.exit(3); }
-  const target = wt0.threshold; // the real threshold, already set on the default set
+  const wt0Orig = wt0.threshold; // wt=0 (default) is NEVER changed here — verified untouched below
+  // Default aligns wt=3 to wt=0. --run-pace=<mm:ss> instead sets wt=3 to an EXPLICIT pace — used
+  // to REVERT a run set to the value the athlete's (un-recomputed) structures were authored for.
+  const runPaceOverride = getFlag("run-pace");
+  const target = runPaceOverride ? secPerKmToMps(parsePaceToSecPerKm(runPaceOverride)) : wt0Orig;
   const wt3 = findSet(arr, 3);
 
-  console.log(`\n=== tp-fix-run-zone — атлет ${id} · режим ${apply ? "APPLY" : "DRY-RUN"} ===`);
-  console.log(`default(wt=0) порог: ${fp(target)} (${target.toFixed(4)} m/s)`);
+  console.log(`\n=== tp-fix-run-zone — атлет ${id} · режим ${apply ? "APPLY" : "DRY-RUN"}${runPaceOverride ? ` · РУЧНОЙ wt=3=${runPaceOverride}` : ""} ===`);
+  console.log(`default(wt=0) порог: ${fp(wt0Orig)} (не трогаем)${runPaceOverride ? ` · целевой wt=3: ${fp(target)}` : ""}`);
   if (!wt3) { console.log(`бегового набора (wt=3) НЕТ — беговые карточки и так рендерятся от wt=0. Делать нечего.`); return; }
   const oldThr3 = typeof wt3.threshold === "number" ? wt3.threshold : null;
   console.log(`RUN(wt=3) порог сейчас: ${fp(oldThr3)}  →  станет ${fp(target)}`);
@@ -73,6 +77,8 @@ async function main(): Promise<void> {
 
   if (process.env.TP_ATHLETE_REAL_WRITE !== "1" || getFlag("confirm") !== `RUNZONE ${id}`) { console.error(`\nREFUSED: need TP_ATHLETE_REAL_WRITE=1 AND --confirm "RUNZONE ${id}".`); process.exit(3); }
   if (coachId === null) { console.error(`\nREFUSED: ${COACH_ID_SETUP_HINT}`); process.exit(3); }
+  const hold = await findActiveHold(getSupabase(), id);
+  if (hold) { console.error(`\n✗ атлет ${id} на РУЧНОМ УДЕРЖАНИИ (${hold.reason}${hold.heldBy ? `, ${hold.heldBy}` : ""}) — автоматика НЕ переопределяет зоны. Ничего не записано.`); process.exit(3); }
 
   const beforeCount = (arr as unknown[]).length;
   const res = await authedWriteOnce("PUT", `/fitness/v2/athletes/${id}/speedzones`, newFullArray);
@@ -86,9 +92,10 @@ async function main(): Promise<void> {
   const t0 = a0 && typeof a0.threshold === "number" ? a0.threshold : null;
   const t3 = a3 && typeof a3.threshold === "number" ? a3.threshold : null;
   const wt3ok = t3 !== null && Math.abs(t3 - target) < 1e-6;
-  const wt0ok = t0 !== null && Math.abs(t0 - target) < 1e-6; // wt0 must be unchanged (== target)
+  const wt0ok = t0 !== null && Math.abs(t0 - wt0Orig) < 1e-6; // wt0 must be UNCHANGED (never touched here)
   const countOk = aCount === beforeCount;
-  console.log(`ВЕРИФИКАЦИЯ: wt=3 ${wt3ok ? "✅ = " + fp(t3) : `❌ ${fp(t3)}`} · wt=0 ${wt0ok ? "✅ цел " + fp(t0) : `❌ ИЗМЕНИЛСЯ ${fp(t0)}`} · наборов ${beforeCount}→${aCount} ${countOk ? "✅" : "❌"} · сошлись ${wt3ok && wt0ok && Math.abs((t3 ?? 0) - (t0 ?? 1)) < 1e-6 ? "✅" : "❌"}`);
+  const converged = runPaceOverride ? "n/a (ручной wt=3)" : wt3ok && wt0ok && Math.abs((t3 ?? 0) - (t0 ?? 1)) < 1e-6 ? "✅" : "❌";
+  console.log(`ВЕРИФИКАЦИЯ: wt=3 ${wt3ok ? "✅ = " + fp(t3) : `❌ ${fp(t3)}`} · wt=0 ${wt0ok ? "✅ цел " + fp(t0) : `❌ ИЗМЕНИЛСЯ ${fp(t0)}`} · наборов ${beforeCount}→${aCount} ${countOk ? "✅" : "❌"} · сошлись ${converged}`);
   if (!wt3ok || !wt0ok || !countOk) { console.error(`✗ верификация не прошла — проверь в TP.`); process.exit(5); }
 
   // snapshot the post-fix state (append-only); NOT a threshold-applications row — threshold value unchanged.

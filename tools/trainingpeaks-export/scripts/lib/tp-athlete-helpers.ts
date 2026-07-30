@@ -69,6 +69,25 @@ export function getSupabase(): SupabaseClient {
   });
 }
 
+/** Active manual "do NOT auto-override" hold for an athlete, or null. Every zone-WRITE tool must
+ *  call this before writing and REFUSE if a hold exists (Buchkina-style manual exceptions). If the
+ *  tp_threshold_holds table is missing (migration not applied yet), fail-OPEN with a warning so
+ *  existing flows don't break — the hold is still recorded in ops-log/memory until the table lands. */
+export async function findActiveHold(supabase: SupabaseClient, athleteId: number): Promise<{ reason: string; heldBy: string | null } | null> {
+  const { data, error } = await supabase
+    .from("tp_threshold_holds")
+    .select("reason, held_by")
+    .eq("trainingpeaks_athlete_id", athleteId)
+    .eq("active", true)
+    .limit(1);
+  if (error) {
+    console.warn(`  (проверка holds не удалась — таблица tp_threshold_holds применена? ${error.message})`);
+    return null;
+  }
+  const r = (data ?? [])[0];
+  return r ? { reason: String(r.reason), heldBy: typeof r.held_by === "string" ? r.held_by : null } : null;
+}
+
 // ── config that must stay OUTSIDE the repo/skill (mirrors feedback-worker.env) ─
 
 const LOCAL_CONFIG_PATH = path.join(os.homedir(), ".tp-reports-bot", "tp-athlete.env");

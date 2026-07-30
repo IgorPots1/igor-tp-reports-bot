@@ -38,7 +38,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getAthleteSettings } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { readSessionSnapshot } from "../../../src/features/trainingpeaks/tp-session-snapshot.ts";
 import { toolRoot } from "./lib/paths.ts";
-import { authedWriteOnce, COACH_ID_SETUP_HINT, findWt0Set, formatMpsAsPace, isRecord, loadCoachUserId, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
+import { authedWriteOnce, COACH_ID_SETUP_HINT, findActiveHold, findWt0Set, formatMpsAsPace, isRecord, loadCoachUserId, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
 import { planType } from "./lib/tp-athlete-set-threshold.ts";
 import { pickWhitelistedSettings } from "./lib/tp-settings-whitelist.ts";
 
@@ -110,14 +110,17 @@ function recompute(structObj: unknown, desc: string, title: string, thrSec: numb
   const isEasy = !fx.isRep && /лёгк|легк|длительн|восстанов|свободн/i.test(title);
   const rs = ranges(desc); // appearance order, NO dedup, NO sort
   const nonRest = fx.steps.filter((s) => s.role !== "отдых");
-  let mode: "positional" | "anchorAll";
+  let mode: "positional" | "positionalAll" | "anchorAll";
   if (rs.length === 0) { if (nonRest.length > 1) return { isEasy, plans: [], defer: `нет диапазонов в описании, а рабочих шагов ${nonRest.length} (>1) — привязать нечем, якорь на работу не ставим` }; mode = "anchorAll"; }
-  else if (rs.length === nonRest.length) mode = "positional";
-  else return { isEasy, plans: [], defer: `диапазонов в описании ${rs.length} ≠ рабочих шагов ${nonRest.length} — позиционная привязка неоднозначна` };
+  else if (rs.length === fx.steps.length) mode = "positionalAll"; // темп задан на КАЖДЫЙ шаг (включая восстановления со своим темпом) → диапазон i → шаг i
+  else if (rs.length === nonRest.length) mode = "positional";     // темп только на рабочих; шаги отдыха → якорь
+  else return { isEasy, plans: [], defer: `диапазонов в описании ${rs.length} ≠ ни рабочих шагов ${nonRest.length}, ни всех шагов ${fx.steps.length} — позиционная привязка неоднозначна` };
   const plans: Plan[] = []; let pos = 0;
   for (const st of fx.steps) {
     let assigned: Rng | "anchor";
-    if (st.role === "отдых" || mode === "anchorAll") assigned = "anchor";
+    if (mode === "anchorAll") assigned = "anchor";
+    else if (mode === "positionalAll") { assigned = rs[pos]; pos++; }
+    else if (st.role === "отдых") assigned = "anchor";
     else { assigned = rs[pos]; pos++; }
     let nMin: number, nMax: number, src: string;
     if (assigned === "anchor") { const a = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (a - 8)) * 100); nMin = Math.round((thrSec / (a + 12)) * 100); src = `якорь ${fp(a)}`; }
@@ -220,6 +223,8 @@ async function main(): Promise<void> {
   if (process.env.TP_ATHLETE_REAL_WRITE !== "1" || getFlag("confirm") !== `RESTORE ${id}`) { console.error(`\nREFUSED: need TP_ATHLETE_REAL_WRITE=1 AND --confirm "RESTORE ${id}".`); process.exit(3); }
   const coachId = loadCoachUserId();
   if (coachId === null) { console.error(`\nREFUSED: ${COACH_ID_SETUP_HINT}`); process.exit(3); }
+  const hold = await findActiveHold(supabase, id);
+  if (hold) { console.error(`\n✗ атлет ${id} на РУЧНОМ УДЕРЖАНИИ (${hold.reason}${hold.heldBy ? `, ${hold.heldBy}` : ""}) — автоматика НЕ переопределяет. Ничего не записано.`); process.exit(3); }
 
   // ── 5. write EVERY structure first (GET → modify targets → stringify → PUT → verify) ──
   console.log(`\n── ЗАПИСЬ СТРУКТУР (${wks.length}) ──`);
