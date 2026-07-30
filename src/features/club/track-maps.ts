@@ -16,7 +16,11 @@ const MAPBOX_IMAGE_SIZE = "600x300@2x";
 const MAPBOX_ROUTE_STYLE = "path-5+2563eb-0.9"; // width 5, colour #2563eb, opacity 0.9 (Run Club)
 const GEOCODE_TIMEOUT_MS = 3000;
 const IMAGE_TIMEOUT_MS = 8000;
-const SIGNATURE_TTL_SECONDS = 3600;
+// Signature bucketed to the hour so every mint within the hour yields the SAME URL (the browser
+// caches it across feed re-opens); valid ~25h, far beyond the 1h browser max-age, so a cached
+// image is never re-requested after the signature expires (no broken tiles near the boundary).
+const SIGNATURE_BUCKET_SECONDS = 3600;
+const SIGNATURE_VALID_SECONDS = 90000;
 
 type LatLng = [number, number];
 
@@ -90,17 +94,30 @@ function signingSecret(): string {
   return process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 }
 
-export function signTrackImagePath(workoutCacheId: string): string {
-  const exp = Math.floor(Date.now() / 1000) + SIGNATURE_TTL_SECONDS;
-  const sig = createHmac("sha256", signingSecret()).update(`${workoutCacheId}:${exp}`).digest("hex").slice(0, 32);
-  return `/api/m/club/track-image/${encodeURIComponent(workoutCacheId)}?e=${exp}&s=${sig}`;
+/** Stable-per-hour, content-addressed signed path. The polyline hash in the URL cache-busts a
+ *  recompute; the hour-bucketed expiry keeps the URL identical within the hour so the browser
+ *  caches the image instead of re-fetching on every feed open. */
+export function signTrackImagePath(workoutCacheId: string, polyline: LatLng[]): string {
+  const hash = polylineHash(polyline);
+  const hourStart = Math.floor(Date.now() / 1000 / SIGNATURE_BUCKET_SECONDS) * SIGNATURE_BUCKET_SECONDS;
+  const exp = hourStart + SIGNATURE_VALID_SECONDS;
+  const sig = createHmac("sha256", signingSecret()).update(`${workoutCacheId}:${hash}:${exp}`).digest("hex").slice(0, 32);
+  return `/api/m/club/track-image/${encodeURIComponent(workoutCacheId)}?h=${hash}&e=${exp}&s=${sig}`;
 }
 
-export function verifyTrackImageSignature(workoutCacheId: string, exp: string | null, sig: string | null): boolean {
-  if (!exp || !sig) return false;
+export function verifyTrackImageSignature(
+  workoutCacheId: string,
+  hash: string | null,
+  exp: string | null,
+  sig: string | null
+): boolean {
+  if (!hash || !exp || !sig) return false;
   const expNum = Number(exp);
-  if (!Number.isFinite(expNum) || expNum < Math.floor(Date.now() / 1000)) return false;
-  const expected = createHmac("sha256", signingSecret()).update(`${workoutCacheId}:${expNum}`).digest("hex").slice(0, 32);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(expNum) || expNum < now || expNum > now + SIGNATURE_VALID_SECONDS + SIGNATURE_BUCKET_SECONDS) {
+    return false;
+  }
+  const expected = createHmac("sha256", signingSecret()).update(`${workoutCacheId}:${hash}:${expNum}`).digest("hex").slice(0, 32);
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);

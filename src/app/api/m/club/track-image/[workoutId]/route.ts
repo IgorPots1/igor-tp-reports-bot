@@ -20,7 +20,7 @@ export async function GET(
   }
   const { workoutId } = await ctx.params;
   const params = new URL(request.url).searchParams;
-  if (!verifyTrackImageSignature(workoutId, params.get("e"), params.get("s"))) {
+  if (!verifyTrackImageSignature(workoutId, params.get("h"), params.get("e"), params.get("s"))) {
     return new Response("Forbidden", { status: 403 });
   }
   const result = await getTrackImage(workoutId);
