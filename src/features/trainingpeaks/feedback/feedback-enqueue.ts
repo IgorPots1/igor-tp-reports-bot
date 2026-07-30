@@ -16,6 +16,7 @@ import { classifyReport, isReportCandidate, resolveArbiterDecision, type ReportV
 import { deviceGlitchScope } from "@/features/trainingpeaks/feedback/stated-factors";
 import { isSensitiveTopic } from "@/features/trainingpeaks/feedback/sensitive-topics";
 import { isDataFragment } from "@/features/trainingpeaks/feedback/session-type";
+import { buildRaceExclusionKeys, type RaceDayDistances } from "@/features/trainingpeaks/feedback/race-shift-gate";
 import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState, flagDoneCardLateReport, reviveDismissedFeedbackJob } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
@@ -118,6 +119,32 @@ async function fetchRaceKeys(supabase: SupabaseLike, studentIds: string[], fromY
 }
 
 /**
+ * Race days WITH distance, for the ±1 shifted-race gate on the comparison base (race-shift-gate).
+ * Separate from fetchRaceKeys (which stays exact-day for its other call sites) so the norm base is
+ * the only consumer touched. Manual entries win over scan for the same day.
+ */
+async function fetchRaceDaysWithDistance(supabase: SupabaseLike, studentIds: string[], fromYmd: string): Promise<RaceDayDistances> {
+  const out: RaceDayDistances = new Map();
+  if (studentIds.length === 0) return out;
+  const rows = await fetchIn<{ student_id: string; event_date: string; distance_km: number | null; source: string }>(
+    supabase,
+    "trainingpeaks_race_events",
+    "student_id, event_date, distance_km, source",
+    "student_id",
+    studentIds,
+    (q) => q.gte("event_date", fromYmd)
+  );
+  for (const r of rows) {
+    const day = (r.event_date ?? "").slice(0, 10);
+    if (!r.student_id || !day) continue;
+    const byDay = out.get(r.student_id) ?? new Map<string, number | null>();
+    if (!byDay.has(day) || (r.source === "manual" && byDay.get(day) == null)) byDay.set(day, r.distance_km ?? null);
+    out.set(r.student_id, byDay);
+  }
+  return out;
+}
+
+/**
  * Build the planner input (ContextPacket) for each target workout, doing the
  * derived+laps+history+memory+health+student joins in bulk. Returns a map keyed
  * by workout_cache_id. Pure read.
@@ -141,16 +168,34 @@ export async function assemblePlannerInputsForWorkouts(
   const historyFloor = dayFloor(historyWindowDays);
   const healthFloor = dayFloor(healthWindowDays);
 
-  // Races to exclude from history (comparison base + personal easy-run baselines) so a max-effort
-  // start doesn't inflate the norm and later read as "the student regressed".
-  const raceKeys = await fetchRaceKeys(supabase, studentIds, new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10));
-
   // Run history per student (for compareWorkout + personal baselines), bounded to the
   // window the comparison actually reads back.
   const historyRows = await fetchIn<DerivedRow>(supabase, "trainingpeaks_workout_derived_metrics", DERIVED_SELECT, "student_id", studentIds, (q) => {
     const base = q.eq("workout_type", "run");
     return historyFloor ? base.gte("workout_date", historyFloor) : base;
   });
+
+  // ±1 shifted-race gate for the norm base (night/TZ starts logged on E±1). ADDS to the exact-day
+  // raceKeys above; see race-shift-gate.ts. Per-run distance (which derived_metrics lacks) comes
+  // from the cache; the gate fires only on a hard, distance-matching adjacent run, so easy runs
+  // around a race stay in the base. Only the comparison-base loop below consumes this set.
+  const raceDaysWithDist = await fetchRaceDaysWithDistance(supabase, studentIds, new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10));
+  const historyCacheIds = [...new Set(historyRows.map((r) => r.workout_cache_id as string).filter(Boolean))];
+  const raceRunDistById = new Map<string, number | null>();
+  if (historyCacheIds.length > 0) {
+    const cacheRows = await fetchIn<{ id: string; completed_distance_raw: number | null }>(supabase, "trainingpeaks_workout_cache", "id, completed_distance_raw", "id", historyCacheIds);
+    for (const c of cacheRows) raceRunDistById.set(c.id, c.completed_distance_raw != null ? c.completed_distance_raw / 1000 : null);
+  }
+  const baseRaceExclusion = buildRaceExclusionKeys(
+    raceDaysWithDist,
+    historyRows.map((r) => ({
+      studentId: r.student_id as string,
+      date: (r.workout_date as string).slice(0, 10),
+      distanceKm: raceRunDistById.get(r.workout_cache_id as string) ?? null,
+      avgHr: (r.avg_hr as number | null) ?? null,
+      hrTrusted: (r.hr_trusted as boolean | null) ?? false,
+    }))
+  );
 
   const students = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_students", "id, sex, telegram_formality", "id", studentIds);
   const studentById = new Map(students.map((s) => [s.id as string, s]));
@@ -293,7 +338,7 @@ export async function assemblePlannerInputsForWorkouts(
 
   const historyByStudent = new Map<string, PlannerDerivedMetrics[]>();
   for (const r of historyRows) {
-    if (raceKeys.has(`${r.student_id as string}|${r.workout_date as string}`)) continue; // race → out of baselines/comparison
+    if (baseRaceExclusion.has(`${r.student_id as string}|${(r.workout_date as string).slice(0, 10)}`)) continue; // race (exact + ±1 shifted) → out of baselines/comparison
     const row = toPlannerDerived(r, aggFor(r.workout_cache_id as string));
     const list = historyByStudent.get(r.student_id as string) ?? [];
     list.push(row);
