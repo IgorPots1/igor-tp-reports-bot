@@ -75,7 +75,28 @@ async function getWorkout(athleteId: number, workoutId: number): Promise<Record<
 type Rng = { fast: number; slow: number; idx: number };
 // NO dedup: a repeated range is TWO real segments run at the same pace (warm-up and a recovery
 // can share a pace). Ranges are returned in APPEARANCE order for positional matching to steps.
-function ranges(desc: string): Rng[] { const out: Rng[] = []; const re = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi; let m: RegExpExecArray | null; while ((m = re.exec(desc)) !== null) { const fast = Math.min(S(m[1]), S(m[2])), slow = Math.max(S(m[1]), S(m[2])); if (fast < 150 || slow > 600) continue; out.push({ fast, slow, idx: m.index }); } return out; }
+function ranges(desc: string): Rng[] {
+  const out: Rng[] = [];
+  const push = (a: number, b: number, idx: number): void => { const fast = Math.min(a, b), slow = Math.max(a, b); if (fast < 150 || slow > 600) return; out.push({ fast, slow, idx }); };
+  let m: RegExpExecArray | null;
+  // 1) explicit range via dash / @ / до: "6:05–6:32", "05:16-05:26"
+  const dash = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi;
+  while ((m = dash.exec(desc)) !== null) push(S(m[1]), S(m[2]), m.index);
+  // 2) one-sided prose CEILING: "6:23 и медленнее" / "6:23 или тише" — the number is the fastest
+  //    allowed, the floor is open. A POINT range (fast=slow); open-floor steps compare the ceiling.
+  //    (JS \w/\b miss Cyrillic — match stems: медленн covers медленнее/медленней.)
+  const slower = /(\d{1,2}:\d{2})\s*(?:и|или)\s+(?:медленн|тише|легче|спокойн)/gi;
+  while ((m = slower.exec(desc)) !== null) { const t = S(m[1]); if (t >= 150 && t <= 600) out.push({ fast: t, slow: t, idx: m.index }); }
+  // 3) narrative easy-run range "…держись ближе к 7:04 … двигайся ближе к 7:29" (paces in prose,
+  //    no dash). Only when nothing structured was found, pair the extreme paces into one range.
+  if (out.length === 0) {
+    const near = /ближе\s+к\s+(\d{1,2}:\d{2})/gi; const ts: { t: number; idx: number }[] = [];
+    while ((m = near.exec(desc)) !== null) { const t = S(m[1]); if (t >= 150 && t <= 600) ts.push({ t, idx: m.index }); }
+    if (ts.length >= 2) { const lo = ts.reduce((a, b) => (b.t < a.t ? b : a)); const hi = ts.reduce((a, b) => (b.t > a.t ? b : a)); push(lo.t, hi.t, Math.min(lo.idx, hi.idx)); }
+  }
+  out.sort((a, b) => a.idx - b.idx); // appearance order for positional / segment matching
+  return out;
+}
 type Role = "разминка" | "заминка" | "отдых" | "работа";
 type FlatStep = { role: Role; min: number; max: number; block: number; step: number; durSec: number };
 /** flatten a structure OBJECT (structure.structure[].steps[]) into ordered steps with roles.
@@ -89,7 +110,10 @@ function flatSteps(structObj: unknown): { metric: string; isRep: boolean; steps:
   structObj.structure.forEach((block: unknown, bi: number) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st: unknown, si: number) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; const len = isRecord(st.length) ? st.length : null; const durSec = len && String(len.unit ?? "") === "second" && typeof len.value === "number" ? len.value : 0; steps.push({ role, min: isRecord(tg) && typeof tg.minValue === "number" ? tg.minValue : NaN, max: isRecord(tg) && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si, durSec }); }); });
   return { metric, isRep, steps };
 }
-type Seg = { durSec: number; range: Rng | null };
+type Seg = { durSec: number; range: Rng | null; text: string };
+/** One step's assignment: the description pace (Rng), or "anchor"/"keep" when the text gives no
+ *  pace, plus `walk` = this step's description segment says шагом/пауза/стоя (leave it untouched). */
+type Assign = { ref: Rng | "anchor" | "keep"; walk: boolean };
 /** Parse the description into ordered SEGMENTS: a duration ("3 минуты", "1,5 минуты", "90 секунд")
  *  with an OPTIONAL pace range appearing before the next duration. A segment with no range is
  *  "by feel" (по ощущениям / легко). This replaces "grab every range" — which lost the no-pace
@@ -101,7 +125,7 @@ function parseSegments(desc: string): Seg[] {
   while ((m = durRe.exec(desc)) !== null) { const n = parseFloat(m[1].replace(",", ".")); if (!Number.isFinite(n) || n <= 0) continue; const sec = /сек/i.test(m[2]) ? n : n * 60; durs.push({ pos: m.index, sec }); }
   const rs = ranges(desc);
   const segs: Seg[] = [];
-  for (let i = 0; i < durs.length; i++) { const start = durs[i].pos; const end = i + 1 < durs.length ? durs[i + 1].pos : desc.length; const r = rs.find((x) => x.idx >= start && x.idx < end); segs.push({ durSec: durs[i].sec, range: r ? { fast: r.fast, slow: r.slow, idx: r.idx } : null }); }
+  for (let i = 0; i < durs.length; i++) { const start = durs[i].pos; const end = i + 1 < durs.length ? durs[i + 1].pos : desc.length; const r = rs.find((x) => x.idx >= start && x.idx < end); segs.push({ durSec: durs[i].sec, range: r ? { fast: r.fast, slow: r.slow, idx: r.idx } : null, text: desc.slice(start, end) }); }
   return segs;
 }
 /** Match each structure step to a description SEGMENT by DURATION, order-preserving (a later step
@@ -110,8 +134,8 @@ function parseSegments(desc: string): Seg[] {
  *  pace → "anchor" for an easy/rest/warm/cool step, or "keep" (leave as-is) for a WORK step (an
  *  RPE / "по ощущениям" hard effort we must not turn into an easy anchor). Null if a step can't be
  *  matched at all → defer. */
-function matchByDuration(steps: FlatStep[], segs: Seg[]): (Rng | "anchor" | "keep")[] | null {
-  const out: (Rng | "anchor" | "keep")[] = []; let ptr = 0;
+function matchByDuration(steps: FlatStep[], segs: Seg[]): Assign[] | null {
+  const out: Assign[] = []; let ptr = 0;
   for (const st of steps) {
     if (st.durSec <= 0) return null; // distance-based step — no duration key
     const tol = Math.max(10, st.durSec * 0.08);
@@ -119,25 +143,26 @@ function matchByDuration(steps: FlatStep[], segs: Seg[]): (Rng | "anchor" | "kee
     for (let j = ptr; j < segs.length; j++) { if (Math.abs(segs[j].durSec - st.durSec) <= tol) { found = j; break; } }
     if (found < 0) return null;
     const seg = segs[found]; ptr = found + 1;
-    out.push(seg.range ? seg.range : st.role === "работа" ? "keep" : "anchor");
+    const walk = /шагом|пауз|стоя/i.test(seg.text); // #4: walk / pause step — recompute leaves it untouched
+    out.push({ ref: seg.range ? seg.range : st.role === "работа" ? "keep" : "anchor", walk });
   }
   return out;
 }
 /** Fallback for descriptions with NO durations (simple easy runs like "Лёгкий бег — темп 5:56-6:17"):
  *  match ranges to steps by position/count. null if it can't reconcile. */
-function positionalFallback(steps: FlatStep[], rs: Rng[]): (Rng | "anchor")[] | null {
+function positionalFallback(steps: FlatStep[], rs: Rng[]): Assign[] | null {
   const nonRest = steps.filter((s) => s.role !== "отдых");
   let mode: "positional" | "positionalAll" | "anchorAll";
   if (rs.length === 0) { if (nonRest.length > 1) return null; mode = "anchorAll"; }
   else if (rs.length === steps.length) mode = "positionalAll";
   else if (rs.length === nonRest.length) mode = "positional";
   else return null;
-  const out: (Rng | "anchor")[] = []; let pos = 0;
+  const out: Assign[] = []; let pos = 0; // no per-segment text here → walk detected from structure (min=0)
   for (const st of steps) {
-    if (mode === "anchorAll") out.push("anchor");
-    else if (mode === "positionalAll") { out.push(rs[pos]); pos++; }
-    else if (st.role === "отдых") out.push("anchor");
-    else { out.push(rs[pos]); pos++; }
+    if (mode === "anchorAll") out.push({ ref: "anchor", walk: false });
+    else if (mode === "positionalAll") { out.push({ ref: rs[pos], walk: false }); pos++; }
+    else if (st.role === "отдых") out.push({ ref: "anchor", walk: false });
+    else { out.push({ ref: rs[pos], walk: false }); pos++; }
   }
   return out;
 }
@@ -163,62 +188,28 @@ function recompute(structObj: unknown, desc: string, title: string, thrSec: numb
   const fx = flatSteps(structObj); if (!fx || !/pace/i.test(fx.metric)) return null;
   const isEasy = !fx.isRep && /лёгк|легк|длительн|восстанов|свободн/i.test(title);
   const segs = parseSegments(desc);
-  let assigned: (Rng | "anchor" | "keep")[] | null = matchByDuration(fx.steps, segs);
+  let assigned: Assign[] | null = matchByDuration(fx.steps, segs);
   if (!assigned) assigned = positionalFallback(fx.steps, ranges(desc)); // no-duration descriptions (simple easy runs)
   if (!assigned) return { isEasy, plans: [], defer: `шаги (${fx.steps.length}) не привязать: сегментов по длительности ${segs.length}, диапазонов ${ranges(desc).length}` };
   const plans: Plan[] = [];
   fx.steps.forEach((st, i) => {
-    const a = assigned[i];
+    const a = assigned[i].ref; const walk = assigned[i].walk;
+    // #3 open floor (minValue=0 — deliberate walk / very-easy) and #4 «шагом»/«пауза» steps: leave
+    // the %-targets EXACTLY as authored. Targets are threshold-relative, so the new threshold already
+    // rescales the pace ceiling proportionally; rewriting to an anchor would speed a walk up.
+    const openFloor = st.min === 0;
     let nMin: number, nMax: number, src: string;
-    if (a === "keep") { nMin = st.min; nMax = st.max; src = "без темпа (RPE/по ощущ.) — не трогаем"; }
+    if (openFloor || walk) { nMin = st.min; nMax = st.max; src = openFloor ? "открытый пол — не трогаем (порог сам масштабирует потолок)" : "шагом/пауза — не трогаем"; }
+    else if (a === "keep") { nMin = st.min; nMax = st.max; src = "без темпа (RPE/по ощущ.) — не трогаем"; }
     else if (a === "anchor") { const an = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (an - 8)) * 100); nMin = Math.round((thrSec / (an + 12)) * 100); src = `якорь ${fp(an)}`; }
+    else if (a.fast === a.slow) { nMax = Math.round((thrSec / a.fast) * 100); nMin = Number.isFinite(st.min) ? st.min : nMax; src = `≤${fp(a.fast)} (потолок; пол сохранён)`; } // one-sided "X и медленнее": set ceiling, keep floor
     else { nMax = Math.round((thrSec / a.fast) * 100); nMin = Math.round((thrSec / a.slow) * 100); src = `${fp(a.slow)}–${fp(a.fast)}`; }
     const [lo, hi] = band();
-    const ok = a === "keep" ? true : nMin >= lo && nMax <= hi; // keep = unchanged → not gated on band
+    const untouched = openFloor || walk || a === "keep";
+    const ok = untouched ? true : nMin >= lo && nMax <= hi; // untouched steps → not gated on band
     plans.push({ block: st.block, step: st.step, role: st.role, oldMin: st.min, oldMax: st.max, newMin: nMin, newMax: nMax, lo, hi, ok, src });
   });
   return { isEasy, plans };
-}
-
-/** POST-CONDITION GUARD (result-based, filter-bug-proof). Independently — with a query
- *  DELIBERATELY DIFFERENT from the recompute list-builder (no SQL date bound; date filtered in
- *  code) and reading the LIVE TP structure, not the DB cache — verify that EVERY planned pace
- *  workout of the athlete (today and later) renders, under the NEW threshold, within 20s of its
- *  description (positional) / anchor. Fail-closed: anything that cannot be verified is a violation.
- *  Returns the list of violations (empty = consistent). This checks the RESULT, not the work-list,
- *  so a filter/window bug in the recompute list cannot hide a workout from it. */
-async function checkPlanConsistency(supabase: SupabaseClient, id: number, thrSec: number, anchor: number | null): Promise<string[]> {
-  const viol: string[] = [];
-  const today = todayIso();
-  // Independent broad query — NOT the recompute query: no SQL date filter (date filtered in code
-  // below), and the structure is read LIVE from TP, not from the DB cache the recompute used.
-  const { data } = await supabase.from("trainingpeaks_workout_cache").select("workout_date, title, trainingpeaks_workout_id, is_planned, completed_time_raw, workout_type_value_id, description:source_snapshot->>description").eq("trainingpeaks_athlete_id", id);
-  const planned = (data ?? []).filter((r) => r.is_planned === true && (r.completed_time_raw == null || r.completed_time_raw === 0) && r.workout_type_value_id === 3 && String(r.workout_date) >= today);
-  for (const w of planned) {
-    const wid = Number(w.trainingpeaks_workout_id);
-    let live: Record<string, unknown>;
-    try { live = await getWorkout(id, wid); } catch (e) { viol.push(`${w.workout_date} «${w.title}»: не прочитал живую структуру (${e instanceof Error ? e.message : String(e)}) — НЕ ПРОВЕРИТЬ`); continue; }
-    const fx = flatSteps(live.structure);
-    if (!fx || !/pace/i.test(fx.metric)) continue; // no pace targets → nothing to render wrong
-    const rs = ranges(typeof w.description === "string" ? w.description : "");
-    const nonRest = fx.steps.filter((s) => s.role !== "отдых");
-    let mode: "positional" | "anchorAll" | "bad";
-    if (rs.length === 0) mode = nonRest.length > 1 ? "bad" : "anchorAll";
-    else if (rs.length === nonRest.length) mode = "positional";
-    else mode = "bad";
-    if (mode === "bad") { viol.push(`${w.workout_date} «${w.title}»: диапазонов ${rs.length} ≠ рабочих шагов ${nonRest.length} — НЕ ПРОВЕРИТЬ (fail-closed)`); continue; }
-    let ptr = 0;
-    for (const st of fx.steps) {
-      const mid = (st.min + st.max) / 2; const livePace = Number.isFinite(mid) ? thrSec * 100 / mid : null;
-      let refPace: number | null;
-      if (st.role === "отдых" || mode === "anchorAll") refPace = anchor;
-      else { const r = rs[ptr]; ptr++; refPace = (r.fast + r.slow) / 2; }
-      if (livePace == null || refPace == null) { viol.push(`${w.workout_date} «${w.title}» [b${st.block}s${st.step}] ${st.role}: нет темпа/якоря — НЕ ПРОВЕРИТЬ`); continue; }
-      const d = Math.abs(livePace - refPace);
-      if (d > 20) viol.push(`${w.workout_date} «${w.title}» [b${st.block}s${st.step}] ${st.role}: @${fp(livePace)} vs эталон ${fp(refPace)} — Δ${Math.round(d)}с`);
-    }
-  }
-  return viol;
 }
 
 async function main(): Promise<void> {
