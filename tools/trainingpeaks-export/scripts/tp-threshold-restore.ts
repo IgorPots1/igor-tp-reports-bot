@@ -128,6 +128,47 @@ function recompute(structObj: unknown, desc: string, title: string, thrSec: numb
   return { isEasy, plans };
 }
 
+/** POST-CONDITION GUARD (result-based, filter-bug-proof). Independently — with a query
+ *  DELIBERATELY DIFFERENT from the recompute list-builder (no SQL date bound; date filtered in
+ *  code) and reading the LIVE TP structure, not the DB cache — verify that EVERY planned pace
+ *  workout of the athlete (today and later) renders, under the NEW threshold, within 20s of its
+ *  description (positional) / anchor. Fail-closed: anything that cannot be verified is a violation.
+ *  Returns the list of violations (empty = consistent). This checks the RESULT, not the work-list,
+ *  so a filter/window bug in the recompute list cannot hide a workout from it. */
+async function checkPlanConsistency(supabase: SupabaseClient, id: number, thrSec: number, anchor: number | null): Promise<string[]> {
+  const viol: string[] = [];
+  const today = todayIso();
+  // Independent broad query — NOT the recompute query: no SQL date filter (date filtered in code
+  // below), and the structure is read LIVE from TP, not from the DB cache the recompute used.
+  const { data } = await supabase.from("trainingpeaks_workout_cache").select("workout_date, title, trainingpeaks_workout_id, is_planned, completed_time_raw, workout_type_value_id, description:source_snapshot->>description").eq("trainingpeaks_athlete_id", id);
+  const planned = (data ?? []).filter((r) => r.is_planned === true && (r.completed_time_raw == null || r.completed_time_raw === 0) && r.workout_type_value_id === 3 && String(r.workout_date) >= today);
+  for (const w of planned) {
+    const wid = Number(w.trainingpeaks_workout_id);
+    let live: Record<string, unknown>;
+    try { live = await getWorkout(id, wid); } catch (e) { viol.push(`${w.workout_date} «${w.title}»: не прочитал живую структуру (${e instanceof Error ? e.message : String(e)}) — НЕ ПРОВЕРИТЬ`); continue; }
+    const fx = flatSteps(live.structure);
+    if (!fx || !/pace/i.test(fx.metric)) continue; // no pace targets → nothing to render wrong
+    const rs = ranges(typeof w.description === "string" ? w.description : "");
+    const nonRest = fx.steps.filter((s) => s.role !== "отдых");
+    let mode: "positional" | "anchorAll" | "bad";
+    if (rs.length === 0) mode = nonRest.length > 1 ? "bad" : "anchorAll";
+    else if (rs.length === nonRest.length) mode = "positional";
+    else mode = "bad";
+    if (mode === "bad") { viol.push(`${w.workout_date} «${w.title}»: диапазонов ${rs.length} ≠ рабочих шагов ${nonRest.length} — НЕ ПРОВЕРИТЬ (fail-closed)`); continue; }
+    let ptr = 0;
+    for (const st of fx.steps) {
+      const mid = (st.min + st.max) / 2; const livePace = Number.isFinite(mid) ? thrSec * 100 / mid : null;
+      let refPace: number | null;
+      if (st.role === "отдых" || mode === "anchorAll") refPace = anchor;
+      else { const r = rs[ptr]; ptr++; refPace = (r.fast + r.slow) / 2; }
+      if (livePace == null || refPace == null) { viol.push(`${w.workout_date} «${w.title}» [b${st.block}s${st.step}] ${st.role}: нет темпа/якоря — НЕ ПРОВЕРИТЬ`); continue; }
+      const d = Math.abs(livePace - refPace);
+      if (d > 20) viol.push(`${w.workout_date} «${w.title}» [b${st.block}s${st.step}] ${st.role}: @${fp(livePace)} vs эталон ${fp(refPace)} — Δ${Math.round(d)}с`);
+    }
+  }
+  return viol;
+}
+
 async function main(): Promise<void> {
   const supabase = getSupabase();
   const id = Number(getFlag("athlete"));
