@@ -418,12 +418,23 @@ export async function submitFeedbackDraft(input: {
   if (!jobRow) throw new Error(`submit: job ${input.jobId} not found`);
   const job = mapRow(jobRow as FeedbackJobRow);
 
+  // Sex is frozen into the packet at ENQUEUE; a student marked (or corrected to) male AFTER that would
+  // keep a stale/null sex and be addressed in the wrong gender. Re-read the CURRENT sex at generation and
+  // apply it to the fact-check; if it changed, persist it so a retry's prompt uses the corrected род too.
+  let packet = job.contextPacket;
+  const { data: freshStudent } = await withSupabaseNetworkRetry(() =>
+    supabase.from("trainingpeaks_students").select("sex").eq("id", job.studentId).maybeSingle()
+  ).catch(() => ({ data: null }));
+  const freshSex = ((freshStudent as { sex?: string } | null)?.sex as "male" | "female" | null | undefined) ?? null;
+  const sexChanged = freshSex !== packet.sex;
+  if (sexChanged) packet = { ...packet, sex: freshSex };
+
   // Normalize before both the fact-check and storage, so the stored draft is exactly what the check
   // ran on. Deterministic chain (the prompt asks for all three, but the model drifts): drop the long
   // dash → force the greeting to the student's register → strip the trailing period and split a rich
   // draft into greeting/body/question paragraphs (short one-liners stay compact).
-  const draftText = normalizeDraftFormat(enforceGreeting(stripLongDash(input.draftText), job.contextPacket.register));
-  const check = validateFeedbackDraft({ draft: draftText, packet: job.contextPacket });
+  const draftText = normalizeDraftFormat(enforceGreeting(stripLongDash(input.draftText), packet.register));
+  const check = validateFeedbackDraft({ draft: draftText, packet });
   const now = new Date().toISOString();
   const nextStatus = check.ok ? "done" : "failed";
   const update: Record<string, unknown> = {
@@ -433,6 +444,8 @@ export async function submitFeedbackDraft(input: {
     generated_at: now,
     attempts: job.attempts + 1,
     error_reason: check.ok ? null : check.reason,
+    // Persist the re-read sex so a retry's prompt (built from the packet) uses the corrected род.
+    ...(sexChanged ? { context_packet: packet } : {}),
   };
   const { error: updateError } = await withSupabaseNetworkRetry(() => supabase.from(TABLE).update(update).eq("id", input.jobId));
   if (updateError) throw new Error(`submit: update failed: ${updateError.message}`);
