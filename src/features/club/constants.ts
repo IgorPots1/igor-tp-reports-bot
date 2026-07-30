@@ -396,6 +396,21 @@ export function isClubTracksEnabled(): boolean {
   return process.env.CLUB_TRACKS_ENABLED === "true";
 }
 /**
+ * Club map tiles (Phase 4b): render the stored polyline on a Mapbox static image (city +
+ * route), served through our own proxy route. OFF by default → the club shows the SVG
+ * silhouette only. Needs CLUB_MAPBOX_TOKEN (server-side; never exposed to the browser).
+ */
+export function isClubMapTilesEnabled(): boolean {
+  return process.env.CLUB_MAP_TILES_ENABLED === "true";
+}
+/** Mapbox token for static-map + reverse-geocode. SERVER-SIDE only (no NEXT_PUBLIC): the token
+ *  is used to fetch the image on the server; the browser only ever sees our proxy path. */
+export function clubMapboxToken(): string | null {
+  return process.env.CLUB_MAPBOX_TOKEN?.trim() || null;
+}
+/** Private Storage bucket holding rendered route images (path: <workout_cache_id>.png). */
+export const CLUB_TRACK_MAPS_BUCKET = "club-track-maps";
+/**
  * Outbound club form broadcasts from the admin (the FIRST outbound path of the club).
  * OFF by default → the admin screen refuses to send and the actions return "disabled".
  * Nothing is ever sent automatically; even ON, every send is an explicit coach tap with a
