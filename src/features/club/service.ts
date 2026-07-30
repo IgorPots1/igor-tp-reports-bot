@@ -2068,6 +2068,85 @@ function personalRecordsFromSnapshots(
   return out;
 }
 
+const SEGMENT_NOMINAL_KM: Record<string, number> = { "5k": 5, "10k": 10, "21k": 21.097, "42k": 42.195 };
+const SEGMENT_STANDARD_KM = [5, 10, 21, 42];
+const SEGMENT_RATIO = 1.6; // parent effort > 1.6x nominal => a within-race segment
+
+function nearestStandardKm(km: number): number {
+  return SEGMENT_STANDARD_KM.reduce((best, s) => (Math.abs(s - km) < Math.abs(best - km) ? s : best), SEGMENT_STANDARD_KM[0]);
+}
+
+/** race_events for one student, keyed by date → the day's MAIN (longest) event title +
+ *  its distance. Used to caption within-race segments. Inert if the table is absent. */
+async function loadRaceEventsByDate(
+  studentId: string
+): Promise<Map<string, { title: string | null; maxKm: number | null }>> {
+  const out = new Map<string, { title: string | null; maxKm: number | null }>();
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data } = await supabase
+      .from("trainingpeaks_race_events")
+      .select("event_date, title, distance_km")
+      .eq("student_id", studentId);
+    for (const row of (data as Array<{ event_date: string | null; title: string | null; distance_km: number | null }> | null) ?? []) {
+      const d = (row.event_date ?? "").slice(0, 10);
+      if (!d) continue;
+      const cur = out.get(d) ?? { title: null, maxKm: null };
+      const km = typeof row.distance_km === "number" ? row.distance_km : null;
+      if (km != null && (cur.maxKm == null || km > cur.maxKm)) {
+        cur.maxKm = km;
+        if (row.title) cur.title = row.title; // title of the longest event that day
+      } else if (cur.title == null && row.title) {
+        cur.title = row.title; // fallback title when distances are missing (e.g. the Nazarov case)
+      }
+      out.set(d, cur);
+    }
+  } catch {
+    /* table absent → no captions */
+  }
+  return out;
+}
+
+/** Mutates: sets raceSegmentLabel on race records that are a shorter SEGMENT of a longer
+ *  race the same day. Signals (any): a same-date race record of a longer distance; the
+ *  day's event distance; the source-workout distance (live path). Caption uses the day's
+ *  event title, else the parent distance. Nothing is hidden — this only annotates. */
+function annotateRaceSegments(
+  records: ClubRecordEntry[],
+  eventsByDate: Map<string, { title: string | null; maxKm: number | null }>
+): void {
+  const raceByDate = new Map<string, ClubRecordEntry[]>();
+  for (const r of records) {
+    if (r.recordType !== "race" || !r.date) continue;
+    const arr = raceByDate.get(r.date) ?? [];
+    arr.push(r);
+    raceByDate.set(r.date, arr);
+  }
+  for (const r of records) {
+    if (r.recordType !== "race" || !r.date) continue;
+    const nominal = SEGMENT_NOMINAL_KM[r.distanceKey] ?? 0;
+    if (nominal <= 0) continue;
+    const ev = eventsByDate.get(r.date);
+    const sameDayKms = (raceByDate.get(r.date) ?? [])
+      .filter((o) => o !== r)
+      .map((o) => SEGMENT_NOMINAL_KM[o.distanceKey] ?? 0);
+    const sameDayLongerKm = sameDayKms.length ? Math.max(...sameDayKms) : 0;
+    const workoutKm = r.wholeDistanceKm ?? null;
+    const isSegment =
+      sameDayLongerKm > nominal * SEGMENT_RATIO ||
+      (ev?.maxKm != null && ev.maxKm > nominal * SEGMENT_RATIO) ||
+      (r.calcMethod === "best_split" && workoutKm != null && workoutKm > nominal * SEGMENT_RATIO);
+    if (!isSegment) continue;
+    if (ev?.title) {
+      r.raceSegmentLabel = `отрезок гонки «${ev.title}»`;
+    } else {
+      const parentKm = ev?.maxKm ?? (sameDayLongerKm > 0 ? sameDayLongerKm : workoutKm);
+      r.raceSegmentLabel =
+        parentKm != null ? `в составе ${nearestStandardKm(parentKm)} км` : "отрезок более длинной гонки";
+    }
+  }
+}
+
 export async function getClubRecords(input: {
   currentStudentId: string;
 }): Promise<ClubRecordsView> {
@@ -2085,6 +2164,7 @@ export async function getClubRecords(input: {
 
   // Personal card uses the shared snapshot source (identical to the Profile tab).
   const personal = personalRecordsFromSnapshots(input.currentStudentId, snapshots, coach);
+  annotateRaceSegments(personal, await loadRaceEventsByDate(input.currentStudentId));
   const clubTops: ClubRecordsView["clubTops"] = [];
 
   for (const target of C.CLUB_RECORD_DISTANCES) {
@@ -2329,6 +2409,7 @@ export async function getClubProfileDetail(input: {
   // lap reconstruction here (Phase 1.1 removed loadOrderedLaps + loadWorkoutQualityIndex
   // from the profile path). Guarantees profile records == Results tab records.
   const records = personalRecordsFromSnapshots(input.currentStudentId, snapshots, coach);
+  annotateRaceSegments(records, await loadRaceEventsByDate(input.currentStudentId));
 
   // Weekly series (last 12 ISO weeks) + best week (over full window).
   const weekMap = kmByWeek(ownRunning);
@@ -2655,6 +2736,7 @@ export async function getClubPublicProfile(input: {
     activeDays.add(row.workoutDate);
   }
   const records = await studentRecordsFromRows(ownRunning, input.targetStudentId);
+  annotateRaceSegments(records, await loadRaceEventsByDate(input.targetStudentId));
 
   // Screen 2 enrichment. Last-7-days activity strip (oldest → newest).
   const last7Days: ClubActivityDay[] = [];

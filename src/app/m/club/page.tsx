@@ -1004,6 +1004,7 @@ function RecordsTab(props: {
         {rec.paceSecPerKm ? <span style={{ color: C.sub, fontSize: 14 }}>{fmtPace(rec.paceSecPerKm)}</span> : null}
       </div>
       <div style={S.cardMeta}>{rec.dateLabel}</div>
+      {rec.raceSegmentLabel ? <div style={S.segmentNote}>{rec.raceSegmentLabel}</div> : null}
       <div style={{ marginTop: 8 }}><TrustBadge trust={rec.trust} /></div>
     </div>
   );
@@ -1324,11 +1325,14 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
           <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет данных</div>
         ) : (
           v.records.map((r) => (
-            <div key={`${r.distanceKey}-${r.recordType}`} style={S.recRow}>
-              <span style={{ width: 18, display: "inline-flex" }}><ClubIcon name={r.recordType === "race" ? "flag" : "footprints"} size={13} color={C.sub} /></span>
-              <span style={{ fontFamily: HEAD, fontSize: 15, color: C.ink, width: 64 }}>{r.distanceLabel}</span>
-              <span style={{ flex: 1, fontFamily: HEAD, fontSize: 17, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
-              <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>
+            <div key={`${r.distanceKey}-${r.recordType}`} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={S.recRow}>
+                <span style={{ width: 18, display: "inline-flex" }}><ClubIcon name={r.recordType === "race" ? "flag" : "footprints"} size={13} color={C.sub} /></span>
+                <span style={{ fontFamily: HEAD, fontSize: 15, color: C.ink, width: 64 }}>{r.distanceLabel}</span>
+                <span style={{ flex: 1, fontFamily: HEAD, fontSize: 17, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
+                <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>
+              </div>
+              {r.raceSegmentLabel ? <div style={{ ...S.segmentNote, marginLeft: 18 }}>{r.raceSegmentLabel}</div> : null}
             </div>
           ))
         )}
@@ -1473,11 +1477,14 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
                 <div style={{ marginBottom: 14 }}>
                   <div style={S.secHead}>Прошедшие старты</div>
                   {view.pastRaces.map((r) => (
-                    <div key={`race-${r.distanceKey}`} style={S.recRow}>
-                      <span style={{ width: 16, display: "inline-flex" }}><ClubIcon name="flag" size={12} color={C.sub} /></span>
-                      <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink, width: 60 }}>{r.distanceLabel}</span>
-                      <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
-                      <span style={{ fontSize: 12, color: C.faint, whiteSpace: "nowrap" }}>{r.dateLabel}</span>
+                    <div key={`race-${r.distanceKey}`} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={S.recRow}>
+                        <span style={{ width: 16, display: "inline-flex" }}><ClubIcon name="flag" size={12} color={C.sub} /></span>
+                        <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink, width: 60 }}>{r.distanceLabel}</span>
+                        <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
+                        <span style={{ fontSize: 12, color: C.faint, whiteSpace: "nowrap" }}>{r.dateLabel}</span>
+                      </div>
+                      {r.raceSegmentLabel ? <div style={{ ...S.segmentNote, marginLeft: 16 }}>{r.raceSegmentLabel}</div> : null}
                     </div>
                   ))}
                 </div>
@@ -2382,6 +2389,7 @@ const S = {
   progressTrack: { height: 10, background: C.cardAlt, borderRadius: 999, marginTop: 12, overflow: "hidden" } as React.CSSProperties,
   progressFill: { height: "100%", background: C.accent, borderRadius: 999, transition: "width 0.3s" } as React.CSSProperties,
   fixtureNote: { marginTop: 8, fontSize: 12, color: C.warn } as React.CSSProperties,
+  segmentNote: { fontSize: 11.5, color: C.sub, fontStyle: "italic", marginTop: 1 } as React.CSSProperties,
   okNote: { marginTop: 8, fontSize: 12, color: C.good } as React.CSSProperties,
   badge: { display: "inline-block", fontSize: 12, border: `1px solid ${C.line}`, borderRadius: 999, padding: "2px 10px" } as React.CSSProperties,
   rankRow: (me: boolean): React.CSSProperties => ({ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", marginTop: 6, borderRadius: 10, background: me ? "rgba(245,197,24,0.08)" : "transparent", border: me ? `1px solid ${C.accent}` : "1px solid transparent" }),

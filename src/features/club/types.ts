@@ -141,6 +141,12 @@ export type ClubRecordEntry = {
    *  tell a standalone result from a within-race SEGMENT (a 21k split of a 42k marathon:
    *  calcMethod=best_split + wholeDistanceKm≈42). Undefined for coach records. */
   wholeDistanceKm?: number | null;
+  /** Set when this record is a shorter SEGMENT run inside a LONGER race that day (e.g. a
+   *  21k best-split of a marathon). A short, ready-to-render caption like
+   *  «отрезок гонки «Белые ночи»» or «в составе 42 км». Null/undefined for standalone
+   *  results. Shown to make clear the record is not a standalone start (records still
+   *  appear everywhere — nothing is hidden). */
+  raceSegmentLabel?: string | null;
 };
 
 export type ClubRecordsClubTopRow = {
