@@ -11,11 +11,14 @@
   <key>Label</key>
   <string>com.igor.trainingpeaks.fit-ingest-scan</string>
 
+  <!-- CLUB_TRACKS_ENABLED=true: сохранять GPS-треки клуба. ВСЕГДА вместе с обрезкой приватности
+       (CLUB_TRACK_PRIVACY_RADIUS_M, дефолт 300 м) — старт/финиш режутся в общем пути ингеста ДО
+       записи в БД, чтобы домашний адрес не попал в базу. Тот же путь, что и 60-дневный бэкфилл. -->
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>PAST_DAYS=5 "$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-fit-ingest-scan.sh"</string>
+    <string>PAST_DAYS=5 CLUB_TRACKS_ENABLED=true CLUB_TRACK_PRIVACY_RADIUS_M=300 "$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-fit-ingest-scan.sh"</string>
   </array>
 
   <!-- запуск при каждом входе/включении ноута (добирает пропущенное за время сна) -->

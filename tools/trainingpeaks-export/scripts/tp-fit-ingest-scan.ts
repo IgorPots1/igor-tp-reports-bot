@@ -65,6 +65,7 @@ import {
 } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { toolRoot } from "./lib/paths.ts";
 import {
+  cropTrackForPrivacy,
   extractTrackPoints,
   findWorkoutStartMs,
   lapDurationSeconds,
@@ -501,7 +502,24 @@ async function ingestOneWorkoutFit(input: {
     let trackRow: TrainingPeaksWorkoutTrackUpsertRow | null = null;
     if (process.env.CLUB_TRACKS_ENABLED === "true" && typeof simplifyTrack === "function") {
       try {
-        const simplified = simplifyTrack(extractTrackPoints(downloaded.records));
+        // PRIVACY: crop start/finish within CLUB_TRACK_PRIVACY_RADIUS_M (default 300 m) BEFORE
+        // simplify+store, so a home address never lands in the DB. This runs in the SAME code
+        // path as the 60-day backfill (run-fit-tracks-backfill-60d.sh calls this scanner), so
+        // both forward and backfill are cropped. The `[track-crop]` line lets a small sample run
+        // be eyeballed (points dropped from each end, how far the kept start sits from home).
+        const rawPoints = extractTrackPoints(downloaded.records);
+        const radiusParsed = Number(process.env.CLUB_TRACK_PRIVACY_RADIUS_M ?? "300");
+        const cropRadiusM = Number.isFinite(radiusParsed) && radiusParsed > 0 ? radiusParsed : 300;
+        const crop = cropTrackForPrivacy(rawPoints, cropRadiusM);
+        const simplified = simplifyTrack(crop.points);
+        if (rawPoints.length > 0) {
+          console.log(
+            `[track-crop] workout=${input.cacheRow.trainingPeaksWorkoutId} raw=${rawPoints.length} kept=${crop.points.length} ` +
+              `dropped_start=${crop.droppedStart} dropped_end=${crop.droppedEnd} ` +
+              `start_moved_m=${Math.round(crop.startMovedM)} end_moved_m=${Math.round(crop.endMovedM)} radius=${cropRadiusM}` +
+              `${crop.points.length === 0 ? " (whole track within radius → no route stored)" : ""}`
+          );
+        }
         if (simplified) {
           trackRow = {
             student_id: input.cacheRow.studentId,

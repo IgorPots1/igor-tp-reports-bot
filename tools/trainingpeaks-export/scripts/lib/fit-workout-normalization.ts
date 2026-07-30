@@ -167,6 +167,63 @@ export function extractTrackPoints(rawRecords: unknown[]): Array<[number, number
   return out;
 }
 
+const EARTH_RADIUS_M = 6_371_000;
+
+/** Great-circle distance in metres between two [lat, lng] points. */
+export function haversineMeters(a: [number, number], b: [number, number]): number {
+  const toRad = (deg: number): number => (deg * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const lat1 = toRad(a[0]);
+  const lat2 = toRad(b[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+export type TrackPrivacyCropResult = {
+  points: Array<[number, number]>;
+  droppedStart: number;
+  droppedEnd: number;
+  /** Distance from the real start/finish to the first/last KEPT point (≈ radius when trimmed). */
+  startMovedM: number;
+  endMovedM: number;
+};
+
+/**
+ * Privacy crop for a GPS track. Trims the contiguous run of points within `radiusM` of the
+ * FIRST point (start) and, separately, of the LAST point (finish), so a stored/rendered route
+ * never exposes home. Only the two ENDS are trimmed (contiguous from each end), so a loop that
+ * passes near the start mid-route is NOT chopped in the middle. If the whole track is within the
+ * radius (a short loop around home) nothing is safe to keep and an empty track is returned — the
+ * caller then stores no route. Empty input or a non-positive radius returns the input unchanged.
+ */
+export function cropTrackForPrivacy(
+  points: Array<[number, number]>,
+  radiusM: number
+): TrackPrivacyCropResult {
+  if (!Array.isArray(points) || points.length === 0 || !(radiusM > 0)) {
+    return { points, droppedStart: 0, droppedEnd: 0, startMovedM: 0, endMovedM: 0 };
+  }
+  const start = points[0]!;
+  const end = points[points.length - 1]!;
+  let i = 0;
+  while (i < points.length && haversineMeters(points[i]!, start) < radiusM) i += 1;
+  let j = points.length - 1;
+  while (j >= i && haversineMeters(points[j]!, end) < radiusM) j -= 1;
+  if (i > j) {
+    // Entire track sits within the privacy radius → keep nothing (no home-revealing route).
+    return { points: [], droppedStart: points.length, droppedEnd: 0, startMovedM: 0, endMovedM: 0 };
+  }
+  const cropped = points.slice(i, j + 1);
+  return {
+    points: cropped,
+    droppedStart: i,
+    droppedEnd: points.length - 1 - j,
+    startMovedM: haversineMeters(start, cropped[0]!),
+    endMovedM: haversineMeters(end, cropped[cropped.length - 1]!),
+  };
+}
+
 export function normalizeFitLaps(rawLaps: unknown[], workoutStartMs: number | null): NormalizedFitLap[] {
   return rawLaps
     .filter((entry): entry is RawFitLapLike => Boolean(entry) && typeof entry === "object")
