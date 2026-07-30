@@ -285,12 +285,20 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
     // Step 4: races come from the consolidated calendar (club_calendar_entries kind='race'),
     // the path that executes to TP. syncedToTp = already pushed (applied_tp_workout_id set) →
     // a coach delete needs the attended TP rollback first (club-execute-one.ts --rollback).
-    const { data } = await supabase
+    // Tolerant of tp_rollback_requested_at not existing yet (migration 20260820 not applied): fall
+    // back to the base columns so the queue never breaks on deploy-before-migrate.
+    const raceBase = "id, student_id, race_name, entry_date, race_distance_label, distance_meters, status, applied_tp_workout_id, created_at";
+    const racePrimary = await supabase
       .from("club_calendar_entries")
-      .select("id, student_id, race_name, entry_date, race_distance_label, distance_meters, status, applied_tp_workout_id, tp_rollback_requested_at, created_at")
+      .select(`${raceBase}, tp_rollback_requested_at`)
       .eq("kind", "race")
       .order("created_at", { ascending: false })
       .limit(300);
+    let data: unknown = racePrimary.data;
+    if (racePrimary.error) {
+      const fb = await supabase.from("club_calendar_entries").select(raceBase).eq("kind", "race").order("created_at", { ascending: false }).limit(300);
+      data = fb.data;
+    }
     for (const r of (data as Array<Record<string, unknown>> | null) ?? []) {
       const meters = r.distance_meters;
       const dist = (r.race_distance_label as string | null) ?? (typeof meters === "number" && meters > 0 ? `${(meters / 1000).toFixed(1)} км` : null);
@@ -355,14 +363,20 @@ export async function setDayoffStatus(id: string, status: "approved" | "rejected
 export async function deleteClubRace(entryId: string): Promise<{ ok: boolean; error?: string; pending?: boolean }> {
   if (!entryId) return { ok: false, error: "Нет старта." };
   const supabase = createSupabaseServerClient();
-  const { data } = await supabase
+  // Tolerant of the intent column missing (migration not applied): fall back so a not-yet-in-TP
+  // start can still be deleted directly.
+  const primary = await supabase
     .from("club_calendar_entries")
     .select("applied_tp_workout_id, tp_rollback_requested_at")
     .eq("id", entryId)
     .eq("kind", "race")
     .maybeSingle();
-  if (!data) return { ok: false, error: "Старт не найден." };
-  const row = data as { applied_tp_workout_id: number | null; tp_rollback_requested_at: string | null };
+  let row = primary.data as { applied_tp_workout_id: number | null; tp_rollback_requested_at: string | null } | null;
+  if (primary.error) {
+    const fb = await supabase.from("club_calendar_entries").select("applied_tp_workout_id").eq("id", entryId).eq("kind", "race").maybeSingle();
+    row = fb.data ? { applied_tp_workout_id: (fb.data as { applied_tp_workout_id: number | null }).applied_tp_workout_id, tp_rollback_requested_at: null } : null;
+  }
+  if (!row) return { ok: false, error: "Старт не найден." };
   if (row.applied_tp_workout_id != null) {
     if (row.tp_rollback_requested_at) return { ok: true, pending: true };
     const { error } = await supabase

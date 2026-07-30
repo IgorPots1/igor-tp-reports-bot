@@ -76,11 +76,19 @@ export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
   // Step 4: reads collapsed to the calendar (the transfer moved legacy club_races in). The
   // consolidated source is club_calendar_entries kind='race'; club_races is read-only legacy
   // and no longer read here.
-  const { data } = await supabase
+  // Tolerant of tp_rollback_requested_at not existing yet (migration 20260820 not applied): fall
+  // back to the base columns so the whole races list never breaks on deploy-before-migrate.
+  const baseCols = "id, entry_date, race_name, race_city, race_distance_label, distance_meters, race_target_seconds, status, applied_tp_workout_id";
+  const primary = await supabase
     .from("club_calendar_entries")
-    .select("id, entry_date, race_name, race_city, race_distance_label, distance_meters, race_target_seconds, status, applied_tp_workout_id, tp_rollback_requested_at")
+    .select(`${baseCols}, tp_rollback_requested_at`)
     .eq("student_id", studentId)
     .eq("kind", "race");
+  let data: unknown = primary.data;
+  if (primary.error) {
+    const fb = await supabase.from("club_calendar_entries").select(baseCols).eq("student_id", studentId).eq("kind", "race");
+    data = fb.data;
+  }
   const kmLabel = (label: unknown, meters: unknown): string | null =>
     (label as string | null) ?? (typeof meters === "number" && meters > 0 ? `${(meters / 1000).toFixed(1)} км` : null);
   const out: ClubRace[] = ((data as Array<Record<string, unknown>> | null) ?? [])
@@ -114,15 +122,22 @@ export async function cancelClubRace(
 ): Promise<{ ok: boolean; error?: string; pending?: boolean }> {
   if (!studentId || !entryId) return { ok: false, error: "Не указан старт." };
   const supabase = createSupabaseServerClient();
-  const { data } = await supabase
+  // Tolerant of the intent column missing (migration not applied): fall back so a not-yet-in-TP
+  // start can still be deleted directly.
+  const primary = await supabase
     .from("club_calendar_entries")
     .select("applied_tp_workout_id, tp_rollback_requested_at")
     .eq("id", entryId)
     .eq("student_id", studentId)
     .eq("kind", "race")
     .maybeSingle();
+  let data = primary.data as { applied_tp_workout_id: number | null; tp_rollback_requested_at: string | null } | null;
+  if (primary.error) {
+    const fb = await supabase.from("club_calendar_entries").select("applied_tp_workout_id").eq("id", entryId).eq("student_id", studentId).eq("kind", "race").maybeSingle();
+    data = fb.data ? { applied_tp_workout_id: (fb.data as { applied_tp_workout_id: number | null }).applied_tp_workout_id, tp_rollback_requested_at: null } : null;
+  }
   if (!data) return { ok: false, error: "Старт не найден." };
-  const row = data as { applied_tp_workout_id: number | null; tp_rollback_requested_at: string | null };
+  const row = data;
   if (row.applied_tp_workout_id != null) {
     if (row.tp_rollback_requested_at) return { ok: true, pending: true };
     const { error } = await supabase
