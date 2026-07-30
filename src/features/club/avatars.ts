@@ -43,17 +43,17 @@ export function verifyAvatarSignature(studentId: string, exp: string | null, sig
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** The Telegram user id linked to a club student (via club_access_requests), or null. */
+/** The Telegram user id linked to a club student, or null. The link lives on
+ *  trainingpeaks_students.telegram_user_id (set by auto-linking) — NOT on club_access_requests,
+ *  whose student_id is often null after auto-link. Querying the wrong one returned null for everyone,
+ *  so avatars silently never resolved. */
 export async function resolveStudentTelegramUserId(studentId: string): Promise<number | null> {
   try {
     const supabase = createSupabaseServerClient();
     const { data } = await supabase
-      .from("club_access_requests")
+      .from("trainingpeaks_students")
       .select("telegram_user_id")
-      .eq("student_id", studentId)
-      .not("telegram_user_id", "is", null)
-      .order("created_at", { ascending: false })
-      .limit(1)
+      .eq("id", studentId)
       .maybeSingle();
     const id = Number((data as { telegram_user_id: number | null } | null)?.telegram_user_id ?? 0);
     return Number.isFinite(id) && id > 0 ? id : null;

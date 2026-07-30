@@ -1005,7 +1005,7 @@ function ChallengeTab(props: { status: Status; view: ClubChallengeView | null; o
           v.topPerformers.map((p, i) => (
             <div key={p.studentId} style={S.rankRow(p.isCurrentStudent)}>
               <span style={S.rankBadge(i)}>{i + 1}</span>
-              <Monogram text={p.monogram} onClick={() => props.onOpenStudent(p.studentId)} />
+              <Monogram text={p.monogram} avatarUrl={p.avatarUrl} onClick={() => props.onOpenStudent(p.studentId)} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={S.cardName}>{p.displayName}{p.isCurrentStudent ? " · ты" : ""}</div>
                 <div style={S.cardMeta}>{p.noPlan ? `${p.completedCount} тренировок, без плана` : `${p.completedCount} из ${p.plannedCount} тренировок`}</div>
@@ -1127,7 +1127,7 @@ function TopList({ title, rows, onOpenStudent }: { title: string; rows: ClubTopR
           rows.slice(0, 10).map((r, i) => (
             <div key={r.studentId} style={S.rankRowSm(r.isCurrentStudent)}>
               <span style={S.rankBadgeSm(i)}>{i + 1}</span>
-              <Monogram text={r.monogram} size={26} onClick={() => onOpenStudent(r.studentId)} />
+              <Monogram text={r.monogram} size={26} avatarUrl={r.avatarUrl} onClick={() => onOpenStudent(r.studentId)} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={S.cardNameSm}>{r.displayName}{r.isCurrentStudent ? " · ты" : ""}</div>
               </div>
@@ -1544,7 +1544,7 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
           ) : (
             <div>
               <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
-                <div style={{ width: 48, height: 48, borderRadius: 999, background: C.accent, color: C.accentInk, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: HEAD, fontWeight: 700, fontSize: 17 }}>{view.monogram}</div>
+                <Monogram text={view.monogram} avatarUrl={view.avatarUrl} size={48} tone={C.accent} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontFamily: HEAD, fontSize: 20, color: C.ink }}>{view.displayName}</div>
                   {view.joinDateLabel ? <div style={{ fontSize: 12, color: C.faint, marginTop: 2 }}>в клубе с {view.joinDateLabel}</div> : null}
@@ -1760,7 +1760,7 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
         {status === "ready" && view ? (
           <div>
             <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 4 }}>
-              <Monogram text={view.monogram} />
+              <Monogram text={view.monogram} avatarUrl={view.avatarUrl} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontFamily: HEAD, fontSize: 17, color: C.ink }}>{view.studentDisplayName}</div>
                 <div style={S.cardMeta}>{view.typeLabel} · {view.dateLabel}</div>

@@ -73,6 +73,8 @@ export type ClubTopPerformer = {
   studentId: string;
   displayName: string;
   monogram: string;
+  /** Signed avatar proxy URL, or null (feature off / opted out / no photo). Monogram is the fallback. */
+  avatarUrl?: string | null;
   /** Completion ratio 0..1 (completed running workouts / planned running workouts). */
   completionPct: number;
   plannedCount: number;
@@ -263,6 +265,8 @@ export type ClubTopRow = {
   studentId: string;
   displayName: string;
   monogram: string;
+  /** Signed avatar proxy URL, or null (feature off / opted out / no photo). Monogram is the fallback. */
+  avatarUrl?: string | null;
   value: string;
   isCurrentStudent: boolean;
 };
@@ -411,6 +415,8 @@ export type ClubPublicProfileView = {
   studentId: string;
   displayName: string;
   monogram: string;
+  /** Signed avatar proxy URL, or null (feature off / opted out / no photo). Monogram is the fallback. */
+  avatarUrl?: string | null;
   visible: boolean;
   weekKm: number;
   monthKm: number;
@@ -450,6 +456,8 @@ export type ClubWorkoutDetailView = {
   studentId: string;
   studentDisplayName: string;
   monogram: string;
+  /** Signed avatar proxy URL, or null (feature off / opted out / no photo). Monogram is the fallback. */
+  avatarUrl?: string | null;
   typeLabel: string;
   isRunning: boolean;
   dateLabel: string;

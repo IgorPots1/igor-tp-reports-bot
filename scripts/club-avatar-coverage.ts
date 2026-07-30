@@ -17,35 +17,34 @@ import { getTelegramUserProfilePhotoFileId } from "@/features/telegram/telegram-
 
 async function main(): Promise<void> {
   const supabase = createSupabaseServerClient();
+  // The link lives on trainingpeaks_students.telegram_user_id (set by auto-linking), NOT on
+  // club_access_requests. ~112 rows → well under the 1000-row cap, no pagination needed.
   const { data, error } = await supabase
-    .from("club_access_requests")
-    .select("student_id, telegram_user_id, telegram_username")
-    .not("student_id", "is", null)
-    .not("telegram_user_id", "is", null)
-    .order("created_at", { ascending: false });
+    .from("trainingpeaks_students")
+    .select("id, student_name, telegram_user_id")
+    .not("telegram_user_id", "is", null);
   if (error) throw new Error(`load linked students failed: ${error.message}`);
-  const rows = (data as Array<{ student_id: string; telegram_user_id: number; telegram_username: string | null }> | null) ?? [];
+  const rows = (data as Array<{ id: string; student_name: string | null; telegram_user_id: number }> | null) ?? [];
 
-  // One entry per student (a student may have several access requests over time).
-  const byStudent = new Map<string, { userId: number; username: string | null }>();
+  const byStudent = new Map<string, { userId: number; name: string | null }>();
   for (const r of rows) {
-    if (!byStudent.has(r.student_id)) byStudent.set(r.student_id, { userId: Number(r.telegram_user_id), username: r.telegram_username });
+    if (!byStudent.has(r.id)) byStudent.set(r.id, { userId: Number(r.telegram_user_id), name: r.student_name });
   }
 
   let withPhoto = 0;
   let without = 0;
   const missing: string[] = [];
-  for (const [sid, { userId, username }] of byStudent) {
+  for (const [sid, { userId, name }] of byStudent) {
     const fileId = await getTelegramUserProfilePhotoFileId(userId);
     if (fileId) {
       withPhoto += 1;
     } else {
       without += 1;
-      missing.push(username ? `@${username}` : sid.slice(0, 8));
+      missing.push(name ? name : sid.slice(0, 8));
     }
   }
 
-  console.log(`Привязано учеников (student_id + telegram_user_id): ${byStudent.size}`);
+  console.log(`Привязано учеников (trainingpeaks_students.telegram_user_id): ${byStudent.size}`);
   console.log(`Фото доступно через getUserProfilePhotos: ${withPhoto}`);
   console.log(`Без фото / не запускали бота / приватность: ${without}`);
   if (missing.length > 0) console.log(`  без фото: ${missing.join(", ")}`);
