@@ -7,7 +7,14 @@
  *
  * WHY: tp-threshold-restore writes the structure BEFORE the threshold, so TP snapshotted the
  * derived pace under the OLD threshold. The step %-targets are correct, but velocityPlanned can
- * stay stale (observed on Семешина). A no-op re-PUT after the threshold is correct forces recompute.
+ * stay stale (observed on Семешина, Kruglova).
+ *
+ * FINDING (2026-07-30, verified on live TP): an IDENTICAL re-PUT does NOT trigger recompute.
+ * TP only recomputes velocityPlanned on a REAL value change — neither a same-structure PUT nor a
+ * same-value threshold PUT refreshes it. So --apply here is effectively a no-op VERIFIER: it PUTs
+ * the unchanged structure and STOPS if a stale workout stays stale (which it will). DRY-RUN is the
+ * useful mode — a stale-velP auditor. Actually refreshing a stale velP needs a change-and-revert
+ * (a transient wrong threshold/target), which is a separate, explicitly-gated decision.
  *
  * SAFETY (mirrors tp-athlete):
  *  - DRY-RUN by default. APPLY needs --apply + env TP_ATHLETE_REAL_WRITE=1 + --confirm "RESAVE".
