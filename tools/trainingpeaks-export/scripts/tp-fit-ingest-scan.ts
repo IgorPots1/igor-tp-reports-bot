@@ -521,17 +521,26 @@ async function ingestOneWorkoutFit(input: {
         // A cropped remainder with a huge internal gap is a torn route (real relocation / signal
         // loss). Better to store nothing than to draw a straight line across half the city.
         const torn = crop.points.length > 0 && isTrackTorn(crop.points);
-        const simplified = torn ? null : simplifyTrack(crop.points);
+        // Span-vs-distance: a route's geographic spread (bbox diagonal) cannot exceed the path
+        // length of the workout. A sparse recording from transport (few points, no adjacent gap
+        // → torn misses it) blows the bbox far past the real distance. Drop when span > 1.5×
+        // distance. Skipped when the workout distance is unknown (no lap distance) so we never
+        // drop a legit track just because distance data is missing.
+        const workoutDistanceM = normalizedLaps.reduce((sum, lap) => sum + (lap.distanceM ?? 0), 0);
+        const spanM = Math.round(bboxSpanMeters(crop.points));
+        const spanImplausible = crop.points.length > 0 && workoutDistanceM > 100 && spanM > workoutDistanceM * 1.5;
+        const simplified = torn || spanImplausible ? null : simplifyTrack(crop.points);
         if (rawPoints.length > 0) {
-          const spanM = Math.round(bboxSpanMeters(cleanPoints));
           const note = torn
             ? " (torn → no route stored)"
-            : crop.points.length === 0
-              ? " (whole track within radius → no route stored)"
-              : "";
+            : spanImplausible
+              ? " (span >> distance → no route stored)"
+              : crop.points.length === 0
+                ? " (whole track within radius → no route stored)"
+                : "";
           console.log(
             `[track-crop] workout=${input.cacheRow.trainingPeaksWorkoutId} raw=${rawPoints.length} clean=${cleanPoints.length} kept=${crop.points.length} ` +
-              `span_m=${spanM} dropped_start=${crop.droppedStart} dropped_end=${crop.droppedEnd} ` +
+              `span_m=${spanM} dist_m=${Math.round(workoutDistanceM)} dropped_start=${crop.droppedStart} dropped_end=${crop.droppedEnd} ` +
               `start_moved_m=${Math.round(crop.startMovedM)} end_moved_m=${Math.round(crop.endMovedM)} radius=${cropRadiusM}${note}`
           );
         }
