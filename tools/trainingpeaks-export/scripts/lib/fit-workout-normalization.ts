@@ -224,6 +224,81 @@ export function cropTrackForPrivacy(
   };
 }
 
+const SPIKE_STEP_M = 1000; // an isolated jump > 1km between neighbours is a GPS glitch, not a stride
+const TORN_GAP_M = 2000; // after cropping, a > 2km gap between adjacent points = a torn route
+
+/** Reject coords that are out of range or the (0,0) "null island" garbage a dead GPS emits. */
+function isValidLatLng(point: [number, number]): boolean {
+  const [lat, lng] = point;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  if (Math.abs(lat) < 0.02 && Math.abs(lng) < 0.02) return false; // (0,0) ± noise → dead fix
+  return true;
+}
+
+/**
+ * Despike a raw GPS track BEFORE privacy-cropping. Drops null-island/out-of-range coords and
+ * isolated teleports (a point far from the last kept point whose successor returns near it —
+ * a one-sample glitch). A SUSTAINED relocation (several points far away) is kept — that is a
+ * real gap, not a spike, and is handled downstream by the torn-route check. Leading/trailing
+ * spikes are removed by seeding on the first agreeing pair and dropping a final lone jump.
+ * These stray points were why start/finish distances read as tens of km.
+ */
+export function sanitizeTrackPoints(points: Array<[number, number]>): Array<[number, number]> {
+  const valid = points.filter(isValidLatLng);
+  const n = valid.length;
+  if (n <= 2) return valid;
+  // Seed on the first point that agrees with its successor (skips a leading spike).
+  let seed = 0;
+  while (seed + 1 < n && haversineMeters(valid[seed]!, valid[seed + 1]!) > SPIKE_STEP_M) seed += 1;
+  if (seed + 1 >= n) return valid; // no agreeing pair anywhere → cannot despike, leave as-is
+  const out: Array<[number, number]> = [valid[seed]!];
+  for (let i = seed + 1; i < n; i += 1) {
+    const cur = valid[i]!;
+    const last = out[out.length - 1]!;
+    if (haversineMeters(last, cur) <= SPIKE_STEP_M) {
+      out.push(cur);
+      continue;
+    }
+    const next = i + 1 < n ? valid[i + 1]! : null;
+    if (next === null) continue; // trailing lone jump, nothing to confirm it → drop
+    if (haversineMeters(last, next) <= SPIKE_STEP_M) continue; // isolated spike (successor returns)
+    out.push(cur); // sustained relocation → keep (torn-route check decides whether to store)
+  }
+  return out;
+}
+
+/** Largest distance (m) between two adjacent points. A big value means the polyline would draw a
+ *  straight line across a gap — a torn route. Zero for < 2 points. */
+export function maxAdjacentGapMeters(points: Array<[number, number]>): number {
+  let max = 0;
+  for (let i = 1; i < points.length; i += 1) max = Math.max(max, haversineMeters(points[i - 1]!, points[i]!));
+  return max;
+}
+
+/** True when a cropped remainder is torn (some adjacent gap exceeds TORN_GAP_M) and should not
+ *  be stored — better no route than a line drawn across half the city. */
+export function isTrackTorn(points: Array<[number, number]>): boolean {
+  return maxAdjacentGapMeters(points) > TORN_GAP_M;
+}
+
+/** Bounding-box diagonal (m) — how far the track spreads. Small span on a kept=0 track confirms
+ *  a stadium / small-loop workout (correctly cropped) rather than a defect. */
+export function bboxSpanMeters(points: Array<[number, number]>): number {
+  if (points.length === 0) return 0;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const [lat, lng] of points) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  }
+  return haversineMeters([minLat, minLng], [maxLat, maxLng]);
+}
+
 export function normalizeFitLaps(rawLaps: unknown[], workoutStartMs: number | null): NormalizedFitLap[] {
   return rawLaps
     .filter((entry): entry is RawFitLapLike => Boolean(entry) && typeof entry === "object")

@@ -65,9 +65,12 @@ import {
 } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { toolRoot } from "./lib/paths.ts";
 import {
+  bboxSpanMeters,
   cropTrackForPrivacy,
   extractTrackPoints,
   findWorkoutStartMs,
+  isTrackTorn,
+  sanitizeTrackPoints,
   lapDurationSeconds,
   lapPaceSecPerKm,
   normalizeFitLaps,
@@ -508,16 +511,28 @@ async function ingestOneWorkoutFit(input: {
         // both forward and backfill are cropped. The `[track-crop]` line lets a small sample run
         // be eyeballed (points dropped from each end, how far the kept start sits from home).
         const rawPoints = extractTrackPoints(downloaded.records);
+        // Despike BEFORE cropping: drop null-island/out-of-range coords and isolated GPS teleports.
+        // Without this a stray point tens of km away became the first/last kept point and the
+        // start/finish distance read as tens of km instead of ~radius.
+        const cleanPoints = sanitizeTrackPoints(rawPoints);
         const radiusParsed = Number(process.env.CLUB_TRACK_PRIVACY_RADIUS_M ?? "300");
         const cropRadiusM = Number.isFinite(radiusParsed) && radiusParsed > 0 ? radiusParsed : 300;
-        const crop = cropTrackForPrivacy(rawPoints, cropRadiusM);
-        const simplified = simplifyTrack(crop.points);
+        const crop = cropTrackForPrivacy(cleanPoints, cropRadiusM);
+        // A cropped remainder with a huge internal gap is a torn route (real relocation / signal
+        // loss). Better to store nothing than to draw a straight line across half the city.
+        const torn = crop.points.length > 0 && isTrackTorn(crop.points);
+        const simplified = torn ? null : simplifyTrack(crop.points);
         if (rawPoints.length > 0) {
+          const spanM = Math.round(bboxSpanMeters(cleanPoints));
+          const note = torn
+            ? " (torn → no route stored)"
+            : crop.points.length === 0
+              ? " (whole track within radius → no route stored)"
+              : "";
           console.log(
-            `[track-crop] workout=${input.cacheRow.trainingPeaksWorkoutId} raw=${rawPoints.length} kept=${crop.points.length} ` +
-              `dropped_start=${crop.droppedStart} dropped_end=${crop.droppedEnd} ` +
-              `start_moved_m=${Math.round(crop.startMovedM)} end_moved_m=${Math.round(crop.endMovedM)} radius=${cropRadiusM}` +
-              `${crop.points.length === 0 ? " (whole track within radius → no route stored)" : ""}`
+            `[track-crop] workout=${input.cacheRow.trainingPeaksWorkoutId} raw=${rawPoints.length} clean=${cleanPoints.length} kept=${crop.points.length} ` +
+              `span_m=${spanM} dropped_start=${crop.droppedStart} dropped_end=${crop.droppedEnd} ` +
+              `start_moved_m=${Math.round(crop.startMovedM)} end_moved_m=${Math.round(crop.endMovedM)} radius=${cropRadiusM}${note}`
           );
         }
         if (simplified) {
