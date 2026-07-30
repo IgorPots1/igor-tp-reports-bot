@@ -2222,10 +2222,10 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
               <div key={r.id} style={S.listRow}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={S.cardName}>{r.name}</div>
-                  <div style={S.cardMeta}>{r.dateLabel}{r.distanceLabel ? ` · ${r.distanceLabel}` : ""}{r.city ? ` · ${r.city}` : ""}</div>
+                  <div style={S.cardMeta}>{r.dateLabel}{r.distanceLabel ? ` · ${r.distanceLabel}` : ""}{r.city ? ` · ${r.city}` : ""}{r.source === "tp" ? " · от тренера" : ""}</div>
                 </div>
                 <span style={S.statusChip}>{RACE_STATUS_LABEL[r.status] ?? r.status}</span>
-                {r.status !== "removing" && r.status !== "rejected" ? (
+                {r.source !== "tp" && r.status !== "removing" && r.status !== "rejected" ? (
                   <button type="button" style={S.rowCancelBtn} disabled={saving} onClick={() => cancelRace(r.id)} aria-label="Отменить старт">Отменить</button>
                 ) : null}
               </div>

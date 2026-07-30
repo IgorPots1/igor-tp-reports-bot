@@ -278,6 +278,9 @@ export type ClubRace = {
   city: string | null;
   targetResultSeconds: number | null;
   status: ClubRaceStatus;
+  /** "club" = the student's own declaration (cancellable). "tp" = a race the coach placed directly
+   *  in TrainingPeaks, surfaced read-only from trainingpeaks_race_events (no cancel). */
+  source?: "club" | "tp";
 };
 
 export type ClubDayoffStatus = "pending" | "approved" | "rejected" | "applied";

@@ -102,7 +102,44 @@ export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
       city: (r.race_city as string | null) ?? null,
       targetResultSeconds: intOrNull(r.race_target_seconds),
       status: mapCalRaceStatus(r.status as string | null, r.applied_tp_workout_id != null, r.tp_rollback_requested_at != null),
+      source: "club" as const,
     }));
+
+  // Also surface races the coach placed DIRECTLY in TrainingPeaks (trainingpeaks_race_events): the
+  // student never declared them, so they are absent from the calendar, but they must still show
+  // (read-only) in "Старты" — otherwise a coach-set start is invisible to the student. Dedup by date,
+  // the student's own calendar entry wins. Upcoming only (today onward), tolerant of a missing table.
+  // Same idea as the coach radar merge (dedupeStartRows). Latency = the weekly race scan cadence.
+  const seenDates = new Set(out.map((r) => r.raceDate));
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const { data: tpData } = await supabase
+      .from("trainingpeaks_race_events")
+      .select("event_date, title, distance_raw")
+      .eq("student_id", studentId)
+      .gte("event_date", today)
+      .order("event_date", { ascending: true })
+      .limit(50);
+    for (const t of (tpData as Array<{ event_date: string | null; title: string | null; distance_raw: string | null }> | null) ?? []) {
+      const date = (t.event_date ?? "").slice(0, 10);
+      if (!date || seenDates.has(date)) continue;
+      seenDates.add(date);
+      out.push({
+        id: `tp:${date}`,
+        name: (t.title ?? "").trim() || "Старт",
+        raceDate: date,
+        dateLabel: formatRuDate(date),
+        distanceLabel: t.distance_raw && t.distance_raw.trim() ? t.distance_raw.trim() : null,
+        city: null,
+        targetResultSeconds: null,
+        status: "synced_to_tp",
+        source: "tp",
+      });
+    }
+  } catch {
+    /* table absent → no coach-placed TP races */
+  }
+
   out.sort((a, b) => (a.raceDate < b.raceDate ? 1 : a.raceDate > b.raceDate ? -1 : 0));
   return out.slice(0, 50);
 }
