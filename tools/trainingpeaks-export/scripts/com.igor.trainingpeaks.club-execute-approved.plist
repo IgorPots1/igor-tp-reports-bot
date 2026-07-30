@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Auto-drain approved club_calendar_entries into TrainingPeaks every 30 min (on :10 and :40,
+     offset from the cache/fit/materialize runners). Executes ONLY when CLUB_TP_EXECUTION_ENABLED=true
+     (set in ~/.bash_profile, read via bash -lc). Flag off → the runner dry-runs, writes nothing.
+     Install by Igor AFTER a manual dry-run review:
+       cp .../com.igor.trainingpeaks.club-execute-approved.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.club-execute-approved.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.club-execute-approved</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-club-execute-approved.sh"</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Minute</key><integer>40</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-execute-approved.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-execute-approved.launchd.err.log</string>
+</dict>
+</plist>

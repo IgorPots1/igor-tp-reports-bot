@@ -2013,8 +2013,8 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
                             {e.kind === "race" ? `${e.raceName}${e.raceCity ? ` · ${e.raceCity}` : ""}${e.raceDistanceLabel ? ` · ${e.raceDistanceLabel}` : ""}` : null}
                           </span>
                         </span>
-                        <span style={{ fontSize: 10.5, color: e.status === "approved" || e.status === "applied" ? C.good : C.sub }}>
-                          {e.status === "pending" ? "на подтв." : e.status === "approved" ? "подтв." : e.status === "applied" ? "в TP" : "отклонён"}
+                        <span style={{ fontSize: 10.5, color: e.status === "applied" ? C.good : C.sub }}>
+                          {e.status === "pending" ? "на подтв." : e.status === "approved" ? "принято, ждёт отправки" : e.status === "applied" ? "в TP" : "отклонён"}
                         </span>
                         {e.status === "pending" ? (
                           <button type="button" style={{ ...S.reactChip, cursor: "pointer", display: "inline-flex", alignItems: "center" }} onClick={() => remove(e.id)} aria-label="Удалить"><ClubIcon name="x" size={13} /></button>

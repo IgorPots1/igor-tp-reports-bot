@@ -194,6 +194,59 @@ export type QueueItem = {
   deletable?: boolean;
 };
 
+export type ClubTpSendStatus = {
+  /** approved entries not yet applied to TP — the auto-send queue. */
+  queued: number;
+  /** of those, how many recorded a send error (still retried). */
+  failed: number;
+  failedList: Array<{ studentName: string; date: string | null; kind: string; error: string; attempts: number }>;
+};
+
+/**
+ * Coach visibility for the club → TP auto-send: how many approved entries are waiting to go to
+ * TrainingPeaks, and which FAILED (with reason) so nothing sits stuck silently. Tolerant of the
+ * tracking columns not existing yet (migration 20260819 not applied) → returns zeros.
+ */
+export async function getClubTpSendStatus(): Promise<ClubTpSendStatus> {
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("club_calendar_entries")
+      .select("student_id, entry_date, kind, tp_send_error, tp_send_attempts, trainingpeaks_students(student_name)")
+      .eq("status", "approved")
+      .is("applied_tp_workout_id", null)
+      .order("entry_date", { ascending: true });
+    if (error) return { queued: 0, failed: 0, failedList: [] };
+    const rows =
+      (data as Array<{
+        student_id: string;
+        entry_date: string | null;
+        kind: string;
+        tp_send_error: string | null;
+        tp_send_attempts: number | null;
+        trainingpeaks_students: { student_name: string | null } | Array<{ student_name: string | null }> | null;
+      }> | null) ?? [];
+    const nameOf = (s: (typeof rows)[number]): string => {
+      const st = Array.isArray(s.trainingpeaks_students) ? s.trainingpeaks_students[0] : s.trainingpeaks_students;
+      return st?.student_name ?? s.student_id;
+    };
+    const failedRows = rows.filter((r) => r.tp_send_error);
+    return {
+      queued: rows.length,
+      failed: failedRows.length,
+      failedList: failedRows.slice(0, 50).map((r) => ({
+        studentName: nameOf(r),
+        date: r.entry_date,
+        kind: r.kind,
+        error: r.tp_send_error ?? "",
+        attempts: r.tp_send_attempts ?? 0,
+      })),
+    };
+  } catch {
+    return { queued: 0, failed: 0, failedList: [] };
+  }
+}
+
 export async function listClubQueue(filter: { kind?: string; status?: string }): Promise<QueueItem[]> {
   const supabase = createSupabaseServerClient();
   const items: QueueItem[] = [];
