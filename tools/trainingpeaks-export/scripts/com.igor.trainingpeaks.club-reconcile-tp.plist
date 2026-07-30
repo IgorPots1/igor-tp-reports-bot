@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Reconcile club starts with TrainingPeaks once a day (09:00): direction "deleted in TP ->
-     reflected in the app". READ-ONLY against TP; --apply in the .sh writes the DB reset. Independent
-     of CLUB_TP_EXECUTION_ENABLED (never mutates TP). Install by Igor AFTER a manual dry-run review:
+<!-- Reconcile club starts with TrainingPeaks every 30 minutes: direction "deleted in TP ->
+     reflected in the app". Frequent because the requests are cheap (one GET per applied Event, few of
+     them) and a start deleted in TP should stop showing "в TP" within ~30 min, not up to a day.
+     READ-ONLY against TP; --apply in the .sh writes the DB reset. Independent of
+     CLUB_TP_EXECUTION_ENABLED (never mutates TP). Install by Igor AFTER a manual dry-run review
+     (if a daily version was already loaded, `launchctl unload` it first, then load this one):
        node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
          --env-file=.env.local scripts/club-reconcile-tp-once.ts        # dry-run, writes nothing
        cp .../com.igor.trainingpeaks.club-reconcile-tp.plist ~/Library/LaunchAgents/
@@ -22,11 +25,8 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key><integer>9</integer>
-    <key>Minute</key><integer>20</integer>
-  </dict>
+  <key>StartInterval</key>
+  <integer>1800</integer>
 
   <key>StandardOutPath</key>
   <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-reconcile-tp.launchd.out.log</string>
