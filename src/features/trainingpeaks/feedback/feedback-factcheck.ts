@@ -23,7 +23,13 @@ const TY_ADDRESS_MARKERS = /(?<![а-яё])(?:ты|тебя|тебе|тобой|�
 
 function extractNumbers(text: string): { paces: string[]; nums: number[] } {
   const paces = [...text.matchAll(/\d+:\d\d/g)].map((m) => m[0]);
-  const stripped = text.replace(/\d+:\d\d/g, " ").replace(/👍|🙌|🔥|😁/g, " ");
+  const stripped = text
+    .replace(/\d+:\d\d/g, " ")
+    // RPE / субъективная оценка усилия «N из 10» или «N/10» — это СЛОВА ученика (его ощущение),
+    // не выдуманная и не абсолютная метрика темпа/пульса/дистанции. Пропускаем (Назаров: «8 из 10»).
+    // Выдуманные пейс/пульс/дистанция по-прежнему ловятся ниже.
+    .replace(/\b\d{1,2}\s*(?:из|\/)\s*10(?!\d)/giu, " ")
+    .replace(/👍|🙌|🔥|😁/g, " ");
   const nums = [...stripped.matchAll(/-?\d+(?:[.,]\d+)?/g)].map((m) => Number.parseFloat(m[0].replace(",", ".")));
   return { paces, nums };
 }
