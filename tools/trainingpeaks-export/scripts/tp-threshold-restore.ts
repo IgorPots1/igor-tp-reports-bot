@@ -77,6 +77,14 @@ function flatSteps(structObj: unknown): { metric: string; isRep: boolean; steps:
   return { metric, isRep, steps };
 }
 function band(role: Role, isRep: boolean, isEasy: boolean): [number, number] { if (role !== "работа") return [70, 88]; if (isEasy) return [70, 88]; return isRep ? [95, 135] : [88, 100]; }
+/** Deep structural diff (order-insensitive on objects; by-index on arrays). `polyline` is a
+ *  TP-recomputed rendering artifact and is excluded at any level. Collects human-readable paths. */
+function deepDiff(a: unknown, b: unknown, p: string, out: string[]): void {
+  if (a === b) return;
+  if (Array.isArray(a) && Array.isArray(b)) { if (a.length !== b.length) { out.push(`${p}.length ${a.length}→${b.length}`); return; } for (let i = 0; i < a.length; i++) deepDiff(a[i], b[i], `${p}[${i}]`, out); return; }
+  if (isRecord(a) && isRecord(b)) { const keys = new Set([...Object.keys(a), ...Object.keys(b)]); for (const k of keys) { if (k === "polyline") continue; deepDiff(a[k], b[k], p ? `${p}.${k}` : k, out); } return; }
+  out.push(`${p}: ${JSON.stringify(a)} → ${JSON.stringify(b)}`);
+}
 type Plan = { block: number; step: number; role: Role; oldMin: number; oldMax: number; newMin: number; newMax: number; lo: number; hi: number; ok: boolean; src: string };
 /** recompute new %-targets per step from description + real threshold. Returns null if no pace-structure. */
 function recompute(structObj: unknown, desc: string, title: string, thrSec: number, anchor: number | null): { isEasy: boolean; plans: Plan[] } | null {
@@ -167,13 +175,20 @@ async function main(): Promise<void> {
     live.structure = JSON.stringify(structObj); // PUT expects structure as STRING
     const res = await authedWriteOnce("PUT", `/fitness/v6/athletes/${id}/workouts/${wk.wid}`, live);
     if (res.status !== 200) { console.error(`  ✗ ${wk.title}: PUT ${res.status} (не 200) — СТОП, порог НЕ ставлю.`); process.exit(2); }
-    // verify
+    // verify: FULL structure compare (expected = structObj we just wrote) vs live GET.
+    // Any difference besides the deliberately-changed targets (polyline excluded) → STOP.
     const after = await getWorkout(id, wk.wid);
-    const afx = flatSteps(after.structure);
-    const okTargets = afx && afx.steps.length === wk.rc.plans.length && wk.rc.plans.every((p, i) => afx.steps[i].min === p.newMin && afx.steps[i].max === p.newMax);
+    const diffs: string[] = [];
+    deepDiff(structObj, after.structure, "structure", diffs);
     const okMeta = after.workoutId === before.workoutId && after.title === before.title && after.description === before.description;
-    if (!okTargets || !okMeta) { console.error(`  ✗ ${wk.title}: верификация не прошла (targets ${okTargets}, meta ${okMeta}) — СТОП, порог НЕ ставлю. Проверь тренировку в TP.`); process.exit(2); }
-    console.log(`  ✅ ${wk.date} «${wk.title}»: структура записана и верифицирована (${wk.rc.plans.length} шаг(ов), id/описание целы).`);
+    if (diffs.length > 0 || !okMeta) {
+      console.error(`  ✗ ${wk.title}: ПОЛНАЯ сверка структуры НЕ прошла — СТОП, порог НЕ ставлю. Проверь тренировку в TP.`);
+      if (!okMeta) console.error(`     meta изменилось: workoutId ${JSON.stringify(before.workoutId)}→${JSON.stringify(after.workoutId)} / title/description`);
+      for (const d of diffs.slice(0, 25)) console.error(`     Δ ${d}`);
+      if (diffs.length > 25) console.error(`     … ещё ${diffs.length - 25}`);
+      process.exit(2);
+    }
+    console.log(`  ✅ ${wk.date} «${wk.title}»: структура записана; ПОЛНАЯ сверка до/после чиста (${wk.rc.plans.length} шаг(ов), только намеренные targets; polyline исключён), id/описание целы.`);
   }
 
   // ── 6. threshold only after ALL structures OK ──
