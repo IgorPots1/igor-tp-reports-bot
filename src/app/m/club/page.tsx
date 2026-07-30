@@ -1050,6 +1050,7 @@ function RecordsTab(props: {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={S.cardName}>{row.displayName}{row.isCurrentStudent ? " · ты" : ""}</div>
                 <div style={S.cardMeta}>{fmtPace(row.paceSecPerKm) ?? ""}</div>
+                {row.raceSegmentLabel ? <div style={S.segmentNote}>{row.raceSegmentLabel}</div> : null}
               </div>
               <span style={S.timeBig}>{fmtDuration(row.durationSeconds)}</span>
             </div>

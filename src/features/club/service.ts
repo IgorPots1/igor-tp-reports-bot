@@ -2147,6 +2147,68 @@ function annotateRaceSegments(
   }
 }
 
+/** Batch variant of loadRaceEventsByDate for many students (club tops). */
+async function loadRaceEventsByStudents(
+  studentIds: string[]
+): Promise<Map<string, Map<string, { title: string | null; maxKm: number | null }>>> {
+  const out = new Map<string, Map<string, { title: string | null; maxKm: number | null }>>();
+  if (studentIds.length === 0) return out;
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data } = await supabase
+      .from("trainingpeaks_race_events")
+      .select("student_id, event_date, title, distance_km")
+      .in("student_id", studentIds);
+    for (const row of (data as Array<{ student_id: string; event_date: string | null; title: string | null; distance_km: number | null }> | null) ?? []) {
+      const sid = row.student_id;
+      const d = (row.event_date ?? "").slice(0, 10);
+      if (!sid || !d) continue;
+      const byDate = out.get(sid) ?? new Map<string, { title: string | null; maxKm: number | null }>();
+      const cur = byDate.get(d) ?? { title: null, maxKm: null };
+      const km = typeof row.distance_km === "number" ? row.distance_km : null;
+      if (km != null && (cur.maxKm == null || km > cur.maxKm)) {
+        cur.maxKm = km;
+        if (row.title) cur.title = row.title;
+      } else if (cur.title == null && row.title) {
+        cur.title = row.title;
+      }
+      byDate.set(d, cur);
+      out.set(sid, byDate);
+    }
+  } catch {
+    /* table absent → no captions */
+  }
+  return out;
+}
+
+/** Segment caption for one club-top row, using the student's snapshots (a same-date record
+ *  of a longer distance) + their race_events. Returns null for a standalone result. */
+function topRowSegmentLabel(
+  row: ClubRecordsClubTopRow,
+  studentSnap: StudentSnapshot | undefined,
+  events: Map<string, { title: string | null; maxKm: number | null }> | undefined
+): string | null {
+  const date = row.date ? row.date.slice(0, 10) : null;
+  if (!date) return null;
+  const nominal = SEGMENT_NOMINAL_KM[row.distanceKey] ?? 0;
+  if (nominal <= 0) return null;
+  let sameDayLongerKm = 0;
+  if (studentSnap) {
+    for (const [key, slot] of studentSnap) {
+      const km = SEGMENT_NOMINAL_KM[key] ?? 0;
+      if (km <= nominal) continue;
+      const d = (slot.race?.date ?? slot.raceVerified?.date ?? "").slice(0, 10);
+      if (d && d === date) sameDayLongerKm = Math.max(sameDayLongerKm, km);
+    }
+  }
+  const ev = events?.get(date);
+  const isSegment = sameDayLongerKm > nominal * SEGMENT_RATIO || (ev?.maxKm != null && ev.maxKm > nominal * SEGMENT_RATIO);
+  if (!isSegment) return null;
+  if (ev?.title) return `отрезок гонки «${ev.title}»`;
+  const parentKm = ev?.maxKm ?? (sameDayLongerKm > 0 ? sameDayLongerKm : null);
+  return parentKm != null ? `в составе ${nearestStandardKm(parentKm)} км` : "отрезок более длинной гонки";
+}
+
 export async function getClubRecords(input: {
   currentStudentId: string;
 }): Promise<ClubRecordsView> {
@@ -2170,18 +2232,18 @@ export async function getClubRecords(input: {
   for (const target of C.CLUB_RECORD_DISTANCES) {
     // Club top: ONLY real races (verified). Coach-confirmed verified races count;
     // materialized best_verified races count; coach-hidden distance excluded.
-    const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null }> = [];
+    const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null; date: string | null; isCoach: boolean }> = [];
     for (const [studentId, perStudent] of snapshots) {
       if (!visibleById.has(studentId)) continue; // student turned non-visible after last materialize
       const c = coach.get(`${studentId}|${target.key}`);
       if (c) {
         if (c.trust === "verified") {
-          raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm });
+          raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
         }
         continue; // coach override (verified pushed above, hidden/preliminary excluded from tops)
       }
       const rv = perStudent.get(target.key)?.raceVerified;
-      if (rv) raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: rv.durationSeconds, pace: rv.paceSecPerKm });
+      if (rv) raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, isCoach: false });
     }
     raceRows.sort((a, b) => a.durationSeconds - b.durationSeconds);
     const topRows: ClubRecordsClubTopRow[] = raceRows.slice(0, C.CLUB_RECORDS_TOP_N).map((r, index) => ({
@@ -2195,6 +2257,9 @@ export async function getClubRecords(input: {
       isCurrentStudent: r.studentId === input.currentStudentId,
       trust: "verified",
       recordType: "race",
+      date: r.date,
+      // Segment caption is filled in a post-pass below (needs each student's race_events).
+      raceSegmentLabel: r.isCoach ? null : undefined,
     }));
     clubTops.push({
       distanceKey: target.key,
@@ -2202,6 +2267,20 @@ export async function getClubRecords(input: {
       alwaysPreliminary: target.alwaysPreliminary,
       rows: topRows,
     });
+  }
+
+  // Segment captions for the tops (consistency with the card): a top result that is a
+  // shorter segment of a longer race that day gets the same «отрезок гонки …» note. Coach
+  // rows were pre-set to null above. One batched race_events read for the top students.
+  const topStudentIds = [
+    ...new Set(clubTops.flatMap((t) => t.rows.filter((r) => r.raceSegmentLabel === undefined).map((r) => r.studentId))),
+  ];
+  const eventsByStudent = await loadRaceEventsByStudents(topStudentIds);
+  for (const top of clubTops) {
+    for (const row of top.rows) {
+      if (row.raceSegmentLabel !== undefined) continue; // coach row (null) already decided
+      row.raceSegmentLabel = topRowSegmentLabel(row, snapshots.get(row.studentId), eventsByStudent.get(row.studentId));
+    }
   }
 
   return { personal, clubTops, freshness };

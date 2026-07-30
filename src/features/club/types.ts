@@ -162,6 +162,10 @@ export type ClubRecordsClubTopRow = {
   trust: RecordTrust;
   /** Club tops only ever contain real races. */
   recordType: "race";
+  /** Record date (for segment detection); null for coach rows without a stored date. */
+  date?: string | null;
+  /** Set when this top result is a within-race segment (same caption as the card). */
+  raceSegmentLabel?: string | null;
 };
 
 export type ClubRecordsView = {
