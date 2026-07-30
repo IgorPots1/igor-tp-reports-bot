@@ -232,7 +232,9 @@ export async function assemblePlannerInputsForWorkouts(
   // Laps + titles for every involved workout (targets + history).
   const allCacheIds = [...new Set([...targetDerivedRows, ...historyRows].map((r) => r.workout_cache_id as string))];
   const lapsByCacheId = new Map<string, PlannerLap[]>();
-  const rawLapAgg = new Map<string, { distanceM: number; timeS: number }>();
+  // Track total AND work-only aggregates: fix #2 uses the WORK portion for a segmented run's steady pace
+  // (warm-up/cool-down/recovery laps otherwise drag the average and manufacture false "progress").
+  const rawLapAgg = new Map<string, { distanceM: number; timeS: number; workDistanceM: number; workTimeS: number; anyWork: boolean; anyNonWork: boolean }>();
   const lapRows = await fetchIn<Record<string, unknown>>(
     supabase,
     "trainingpeaks_workout_laps",
@@ -254,9 +256,18 @@ export async function assemblePlannerInputsForWorkouts(
       isWork: (l.is_work as boolean | null) ?? null,
     });
     lapsByCacheId.set(cacheId, list);
-    const a = rawLapAgg.get(cacheId) ?? { distanceM: 0, timeS: 0 };
-    a.distanceM += typeof l.distance_m === "number" ? l.distance_m : 0;
-    a.timeS += typeof l.timer_time_s === "number" ? l.timer_time_s : 0;
+    const a = rawLapAgg.get(cacheId) ?? { distanceM: 0, timeS: 0, workDistanceM: 0, workTimeS: 0, anyWork: false, anyNonWork: false };
+    const dist = typeof l.distance_m === "number" ? l.distance_m : 0;
+    const time = typeof l.timer_time_s === "number" ? l.timer_time_s : 0;
+    a.distanceM += dist;
+    a.timeS += time;
+    if (l.is_work === true) {
+      a.workDistanceM += dist;
+      a.workTimeS += time;
+      a.anyWork = true;
+    } else if (l.is_work === false) {
+      a.anyNonWork = true;
+    }
     rawLapAgg.set(cacheId, a);
   }
   const titleByCacheId = new Map<string, string | null>();
@@ -270,8 +281,14 @@ export async function assemblePlannerInputsForWorkouts(
   }
 
   const aggFor = (cacheId: string) => {
-    const a = rawLapAgg.get(cacheId) ?? { distanceM: 0, timeS: 0 };
-    return { avgPaceSecPerKm: a.distanceM > 0 && a.timeS > 0 ? (a.timeS / a.distanceM) * 1000 : null, durationS: a.timeS > 0 ? a.timeS : null };
+    const a = rawLapAgg.get(cacheId) ?? { distanceM: 0, timeS: 0, workDistanceM: 0, workTimeS: 0, anyWork: false, anyNonWork: false };
+    // Fix #2: a SEGMENTED run (has explicit non-work laps — warm-up/cool-down/recovery) uses its WORK
+    // portion for pace, so those laps can't blend the steady pace slow. A uniform continuous run (no
+    // is_work=false lap) uses all laps unchanged. Duration stays the TOTAL time (the ±25% comparability band).
+    const useWork = a.anyWork && a.anyNonWork && a.workDistanceM > 0 && a.workTimeS > 0;
+    const distanceM = useWork ? a.workDistanceM : a.distanceM;
+    const timeS = useWork ? a.workTimeS : a.timeS;
+    return { avgPaceSecPerKm: distanceM > 0 && timeS > 0 ? (timeS / distanceM) * 1000 : null, durationS: a.timeS > 0 ? a.timeS : null };
   };
 
   const historyByStudent = new Map<string, PlannerDerivedMetrics[]>();

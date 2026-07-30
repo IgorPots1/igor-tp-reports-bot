@@ -13,7 +13,7 @@
 // that a pace/HR improvement is real (EF moved the same way), and is NEVER shown
 // to the student. EF moved but pace/HR didn't clear threshold → silence.
 
-import { median } from "./norm.ts";
+import { median, mad } from "./norm.ts";
 import { evaluateMechanismB } from "./signal-consistency.ts";
 import { buildMetricShift, metricStrength, type BuiltShift } from "./metric-shift.ts";
 import { MIN_RECENT_FOR_STABLE_NORM, OLD_MODE_MIN_AGE_DAYS, SLIDING_WINDOW_DAYS, daysBetween } from "./resolve-window.ts";
@@ -27,6 +27,21 @@ export const DURATION_TOLERANCE = 0.25; // ±25%
 export const HR_BAND_BPM = 5; // same intensity band
 export const EF_MIN_IMPROVE_FRACTION = 0.03; // EF must corroborate by ≥3% of norm
 export const MAX_REPS_FOR_STEADY = 1; // reps_detected_count < 2 → steady, not interval
+export const OUTLIER_MAD_MULT = 2.5; // fix #3: drop pool members beyond this × MAD (a single 8:33 anomaly)
+export const RECENT_TREND_MARGIN_SEC = 5; // fix #4: must beat recent best by this to call it "faster"
+export const RECENT_ANCHOR_COUNT = 2; // fix #4: how many most-recent comparable runs anchor "recent form"
+
+// Fix #3 — drop pool outliers before building the norm: one anomalous run (a walk-broken session that
+// synced as a slow "steady" run) shifts a small-n median and inflates the "progress" delta. Needs ≥4
+// points to judge an outlier; a zero-spread pool is left untouched.
+function dropOutliers(values: number[]): number[] {
+  if (values.length < 4) return values;
+  const m = median(values);
+  const d = mad(values);
+  if (m === null || d === null || d === 0) return values;
+  const kept = values.filter((v) => Math.abs(v - m) <= OUTLIER_MAD_MULT * d);
+  return kept.length >= 2 ? kept : values;
+}
 
 const FLAT: Partial<Record<ComparisonMetric, number>> = {
   steady_pace: STEADY_PACE_THRESHOLD_SEC,
@@ -41,6 +56,11 @@ function isSteadyRun(row: DerivedRowForComparison): boolean {
   return (
     row.workoutType === "run" &&
     (row.repsDetectedCount ?? 0) <= MAX_REPS_FOR_STEADY &&
+    // Fix #1 (pool gate by session intent): a run with a planned STRUCTURE key is an interval session,
+    // even when rep-detection returned <2 reps. Such a run's whole-workout pace is a blend of fast reps +
+    // slow recoveries/warm-up — feeding it into the easy pool manufactured false "faster than usual"
+    // (Утенкова: a 5×300 that synced as reps=0 blended to 8:33 and dragged her easy norm slow). Excluded.
+    row.comparisonKey === null &&
     row.avgPaceSecPerKm !== null &&
     row.avgHr !== null &&
     row.durationS !== null
@@ -131,7 +151,6 @@ export function matchSteadyWorkout(input: {
     // 2 recent points → no MAD → old fired on the flat threshold alone despite scattered old data).
     // Now if a month-plus-ago baseline is itself unstable (high MAD, "месяц назад скакали"), 2×MAD
     // exceeds the delta and the claim is silenced — there is no norm there to compare against.
-    const spreadFor = (metric: ComparisonMetric) => valuesOf(poolRows, metric);
 
     // aerobic_ef corroboration: an improvement in pace/HR is only credited when
     // EF moved the same way (faster-per-HR) by ≥3% of its norm.
@@ -139,15 +158,40 @@ export function matchSteadyWorkout(input: {
     const efImproved =
       efNorm !== null && efNorm > 0 && current.aerobicEf !== null && (current.aerobicEf - efNorm) / efNorm >= EF_MIN_IMPROVE_FRACTION;
 
+    // Fix #4 — recent-form anchor (recent mode only): "faster than usual" must beat the student's RECENT
+    // best comparable run, not just a windowed median a slow block dragged down. Утенкова ran 404 with a
+    // 407 two days prior (identical) — no real progress — yet the 8-week median (~419) made it read as −15.
+    const recentAnchorPace =
+      mode === "recent"
+        ? (() => {
+            const paces = [...poolRows]
+              .filter((r) => r.avgPaceSecPerKm !== null)
+              .sort((a, b) => b.workoutDate.localeCompare(a.workoutDate))
+              .slice(0, RECENT_ANCHOR_COUNT)
+              .map((r) => r.avgPaceSecPerKm!);
+            return paces.length ? Math.min(...paces) : null; // fastest of the N most-recent comparable runs
+          })()
+        : null;
+
     const builtByMetric = new Map<ComparisonMetric, BuiltShift>();
     for (const metric of STEADY_METRICS) {
-      const built = buildMetricShift(metric, metricValue(current, metric), valuesOf(poolRows, metric), spreadFor(metric), FLAT[metric]!);
+      // Fix #3: build the norm on the outlier-trimmed pool (a lone anomaly can't manufacture progress).
+      const poolValues = dropOutliers(valuesOf(poolRows, metric));
+      const built = buildMetricShift(metric, metricValue(current, metric), poolValues, poolValues, FLAT[metric]!);
       if (!built) continue;
       // EF gate applies to pace and HR (the "at comparable HR / pace" story); a
       // decoupling improvement stands on its own.
       if ((metric === "steady_pace" || metric === "avg_hr") && !efImproved) {
         built.flatPass = false;
         if (built.shift.status === "improved") built.shift.status = "neutral";
+      }
+      // Fix #4: a pace improvement that doesn't beat the recent best by a real margin is not progress.
+      if (metric === "steady_pace" && recentAnchorPace !== null && built.shift.status === "improved") {
+        const cur = metricValue(current, "steady_pace");
+        if (cur !== null && cur > recentAnchorPace - RECENT_TREND_MARGIN_SEC) {
+          built.flatPass = false;
+          built.shift.status = "neutral";
+        }
       }
       builtByMetric.set(metric, built);
     }

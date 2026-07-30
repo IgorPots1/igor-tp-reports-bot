@@ -234,6 +234,36 @@ describe("ярус 3 — steady runs, HR-band honesty gate", () => {
     const res = matchSteadyWorkout({ current, history });
     assert.ok(!res.candidates.some((c) => c.primaryMetric === "steady_pace"));
   });
+
+  // fix #1 — pool gate by session intent (Утенкова root)
+  test("fix #1: a keyed interval that synced as reps<2 is NOT pooled as a steady run", () => {
+    const current = steady({ workoutId: 99, workoutDate: "2026-07-30", avgPaceSecPerKm: 404, avgHr: 149, aerobicEf: 0.0165 });
+    const keyedBlend = steady({ workoutId: 1, workoutDate: "2026-07-16", comparisonKey: "5x[300second]", repsDetectedCount: 0, avgPaceSecPerKm: 513, avgHr: 150, aerobicEf: 0.013 });
+    const res = matchSteadyWorkout({ current, history: [keyedBlend] });
+    assert.equal(res.hadComparable, false); // the interval-blend is excluded from the easy pool
+  });
+
+  // fix #4 — recent-form anchor (Утенкова: 404 ≈ 407 two days prior → no real progress)
+  test("fix #4: pace ≈ recent best (flat trend) → suppressed despite beating the windowed median", () => {
+    const current = steady({ workoutId: 99, workoutDate: "2026-07-30", avgPaceSecPerKm: 404, avgHr: 149, aerobicEf: 0.0175 });
+    const history = [
+      steady({ workoutId: 1, workoutDate: "2026-07-28", avgPaceSecPerKm: 407, avgHr: 149, aerobicEf: 0.0165 }), // recent best
+      steady({ workoutId: 2, workoutDate: "2026-07-14", avgPaceSecPerKm: 420, avgHr: 149, aerobicEf: 0.016 }),
+      steady({ workoutId: 3, workoutDate: "2026-07-07", avgPaceSecPerKm: 425, avgHr: 149, aerobicEf: 0.016 }),
+    ];
+    const res = matchSteadyWorkout({ current, history });
+    assert.ok(!res.candidates.some((c) => c.primaryMetric === "steady_pace"));
+  });
+  test("fix #4 guard: a genuine gain beyond recent best STILL fires (no over-suppression)", () => {
+    const current = steady({ workoutId: 99, workoutDate: "2026-07-30", avgPaceSecPerKm: 404, avgHr: 149, aerobicEf: 0.0185 });
+    const history = [
+      steady({ workoutId: 1, workoutDate: "2026-07-28", avgPaceSecPerKm: 420, avgHr: 149, aerobicEf: 0.016 }), // recent best 420
+      steady({ workoutId: 2, workoutDate: "2026-07-14", avgPaceSecPerKm: 424, avgHr: 149, aerobicEf: 0.016 }),
+      steady({ workoutId: 3, workoutDate: "2026-07-07", avgPaceSecPerKm: 428, avgHr: 149, aerobicEf: 0.016 }),
+    ];
+    const res = matchSteadyWorkout({ current, history });
+    assert.ok(res.candidates.some((c) => c.primaryMetric === "steady_pace")); // 404 vs recent best 420 = 16 → real
+  });
 });
 
 describe("pulse anomaly detector (unchanged from наряд 1)", () => {
