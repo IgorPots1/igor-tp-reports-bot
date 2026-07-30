@@ -9,8 +9,11 @@
  *  - Structure write is the VERIFIED recipe (tp-write-payloads §5): GET the whole workout →
  *    modify ONLY targets on the live object → JSON.stringify(structure) → PUT the whole object →
  *    verify by GET. NEVER build the object from scratch.
- *  - Sanity bands by role: warmup/cooldown/rest AND an easy/long run's active step 70-88;
- *    tempo work 88-100; rep work 95-135. Any step out of band → whole athlete deferred, no write.
+ *  - Sanity: ONE wide physiological frame on EVERY step (55-140%). It catches parser garbage
+ *    and a clearly-wrong threshold, but does NOT argue with the coach's prescribed pace
+ *    ("Бег по темпу" = run-to-a-given-pace, not a tempo effort). No narrow per-role bands.
+ *    Any step outside 55-140% → whole athlete deferred, no write. The meaningful result-check
+ *    is the anchor gate (easy step @new threshold = FIT anchor ±20s) — it checks the outcome.
  *  - Order: ALL structures written+verified FIRST; the threshold is set ONLY after every
  *    structure succeeded. A structure failure stops before the threshold is touched.
  *  - After the threshold, verify the easy step resolves to the athlete anchor ±20s, else stop.
@@ -82,7 +85,9 @@ function flatSteps(structObj: unknown): { metric: string; isRep: boolean; steps:
   structObj.structure.forEach((block: unknown, bi: number) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st: unknown, si: number) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; steps.push({ role, min: isRecord(tg) && typeof tg.minValue === "number" ? tg.minValue : NaN, max: isRecord(tg) && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si }); }); });
   return { metric, isRep, steps };
 }
-function band(role: Role, isRep: boolean, isEasy: boolean): [number, number] { if (role !== "работа") return [70, 88]; if (isEasy) return [70, 88]; return isRep ? [95, 135] : [88, 100]; }
+/** ONE wide physiological frame on every step — catches parser garbage / a clearly-wrong
+ *  threshold, never argues with the coach's prescribed pace. No narrow per-role bands. */
+function band(): [number, number] { return [55, 140]; }
 /** Deep structural diff (order-insensitive on objects; by-index on arrays). `polyline` is a
  *  TP-recomputed rendering artifact and is excluded at any level. Collects human-readable paths. */
 function deepDiff(a: unknown, b: unknown, p: string, out: string[]): void {
@@ -107,7 +112,7 @@ function recompute(structObj: unknown, desc: string, title: string, thrSec: numb
     let nMin: number, nMax: number, src: string;
     if (assigned === "anchor" || assigned == null) { const a = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (a - 8)) * 100); nMin = Math.round((thrSec / (a + 12)) * 100); src = `якорь ${fp(a)}`; }
     else { nMax = Math.round((thrSec / assigned.fast) * 100); nMin = Math.round((thrSec / assigned.slow) * 100); src = `${fp(assigned.slow)}–${fp(assigned.fast)}`; }
-    const [lo, hi] = band(st.role, fx.isRep, isEasy);
+    const [lo, hi] = band();
     plans.push({ block: st.block, step: st.step, role: st.role, oldMin: st.min, oldMax: st.max, newMin: nMin, newMax: nMax, lo, hi, ok: nMin >= lo && nMax <= hi, src });
   }
   return { isEasy, plans };
