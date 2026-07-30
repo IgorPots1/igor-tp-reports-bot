@@ -781,6 +781,37 @@ function TrackSilhouette({ track, height }: { track: ClubTrack; height: number }
   );
 }
 
+// Phase 4b — route on a real map. The SVG silhouette is drawn immediately as a right-sized
+// placeholder (no layout shift, meaningful shape, and the fallback if the image never arrives);
+// the Mapbox image lazy-loads over it and fades in. The image URL is our signed proxy path, so
+// no Mapbox URL/token reaches the browser. mapImageUrl is null when tiles are off → silhouette only.
+function TrackMap({ track, height }: { track: ClubTrack; height: number }) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <div style={{ position: "relative", width: "100%", height, borderRadius: 10, overflow: "hidden", background: C.cardAlt }}>
+      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", opacity: loaded ? 0 : 1, transition: "opacity 200ms" }}>
+        <TrackSilhouette track={track} height={height} />
+      </div>
+      {track.mapImageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- signed proxy PNG, not a Next asset
+        <img
+          src={track.mapImageUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onLoad={() => setLoaded(true)}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: loaded ? 1 : 0, transition: "opacity 200ms" }}
+        />
+      ) : null}
+      {track.city ? (
+        <div style={{ position: "absolute", left: 8, bottom: 6, padding: "2px 7px", borderRadius: 6, background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 11, letterSpacing: 0.2 }}>
+          {track.city}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function TrustBadge({ trust }: { trust: "verified" | "preliminary" | "hidden" }) {
   if (trust === "verified") {
     return <span style={{ ...S.badge, color: C.good, borderColor: C.line }}>подтверждён</span>;
@@ -874,8 +905,8 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
       </div>
       <div style={{ cursor: "pointer" }} onClick={() => onOpenWorkout(item.id)}>
         {item.track ? (
-          <div style={{ marginTop: 10, background: C.cardAlt, borderRadius: 10, padding: 6 }}>
-            <TrackSilhouette track={item.track} height={72} />
+          <div style={{ marginTop: 10 }}>
+            <TrackMap track={item.track} height={150} />
           </div>
         ) : null}
         {item.title ? <div style={{ ...S.cardName, whiteSpace: "normal", marginTop: 10, fontSize: 14, color: C.ink }}>{item.title}</div> : null}
@@ -1235,15 +1266,35 @@ function SectionCard({ icon, title, subtitle, onClick }: { icon: ClubIconName; t
 function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null; onRetry: () => void; initData: string; onOpenSection: (s: CabinetSection) => void; onOpenCalendar: () => void; theme: Theme; onTheme: (t: Theme) => void }) {
   const [privacyMsg, setPrivacyMsg] = useState<string | null>(null);
   const [visible, setVisibleState] = useState<boolean | null>(null);
+  const [routes, setRoutesState] = useState<boolean | null>(null);
+  const [routesMsg, setRoutesMsg] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [nameSaving, setNameSaving] = useState(false);
   const [nameMsg, setNameMsg] = useState<string | null>(null);
   const privacyBusyRef = useRef(false);
+  const routesBusyRef = useRef(false);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
   const current = visible ?? v.clubVisible;
+  const routesCurrent = routes ?? v.routesVisible;
   const nameValue = nameDraft ?? v.displayName;
+
+  async function setRoutesVisibility(next: boolean) {
+    if (routesBusyRef.current) return;
+    routesBusyRef.current = true;
+    setRoutesState(next);
+    const res = await fetch("/api/m/club/routes-visibility", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData: props.initData, visible: next }),
+    }).then((r) => r.json()).catch(() => ({ ok: false, error: "Ошибка" }));
+    if (!res.ok) {
+      setRoutesState(v.routesVisible); // revert optimistic toggle
+    }
+    setRoutesMsg(res.ok ? (next ? "Маршруты видны на карте" : "Маршруты убраны, картинки удалены") : (res.error ?? "Недоступно"));
+    routesBusyRef.current = false;
+  }
 
   async function saveName() {
     setNameSaving(true);
@@ -1390,6 +1441,18 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
         {!v.privacyEnabled ? <div style={S.cardMeta}>Управление видимостью включит тренер</div> : null}
         {privacyMsg ? <div style={S.cardMeta}>{privacyMsg}</div> : null}
       </div>
+
+      {v.mapTilesEnabled ? (
+        <div style={S.card}>
+          <div style={S.secHead}>Мои маршруты на карте</div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button style={S.pill(routesCurrent === true)} type="button" onClick={() => setRoutesVisibility(true)}>Показывать</button>
+            <button style={S.pill(routesCurrent === false)} type="button" onClick={() => setRoutesVisibility(false)}>Убрать</button>
+          </div>
+          <div style={S.cardMeta}>Старт и финиш всегда обрезаны на 300 м. «Убрать» удаляет картинки маршрутов из хранилища, а не прячет их.</div>
+          {routesMsg ? <div style={S.cardMeta}>{routesMsg}</div> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1629,8 +1692,10 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
               <>
                 {view.track ? (
                   <div style={{ ...S.card, padding: 12 }}>
-                    <div style={S.secHead}>Маршрут</div>
-                    <TrackSilhouette track={view.track} height={180} />
+                    <div style={S.secHead}>Маршрут{view.track.city ? ` · ${view.track.city}` : ""}</div>
+                    <div style={{ marginTop: 8 }}>
+                      <TrackMap track={view.track} height={200} />
+                    </div>
                   </div>
                 ) : null}
 

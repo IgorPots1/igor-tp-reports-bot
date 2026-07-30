@@ -122,6 +122,8 @@ export const CLUB_PROFILE_FIXTURE: ClubProfileDetailView = {
   ],
   clubVisible: true,
   privacyEnabled: false,
+  routesVisible: true,
+  mapTilesEnabled: false,
   challengeRank: 2,
   challengeParticipants: 14,
   completionPct: 0.8,

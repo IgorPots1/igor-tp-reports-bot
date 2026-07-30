@@ -139,13 +139,15 @@ export async function getTrackImage(workoutCacheId: string): Promise<TrackImageR
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_workout_tracks")
-    .select("student_id, polyline, map_hash, trainingpeaks_students(club_routes_visible)")
+    .select("student_id, polyline, map_hash, city, city_hash, trainingpeaks_students(club_routes_visible)")
     .eq("workout_cache_id", workoutCacheId)
     .maybeSingle();
   if (error || !data) return { kind: "none" };
   const row = data as unknown as {
     polyline: unknown;
     map_hash: string | null;
+    city: string | null;
+    city_hash: string | null;
     // PostgREST types an embedded to-one as an array; normalise below.
     trainingpeaks_students:
       | { club_routes_visible: boolean | null }
@@ -179,6 +181,9 @@ export async function getTrackImage(workoutCacheId: string): Promise<TrackImageR
   const bytes = await resp.arrayBuffer();
   await supabase.storage.from(CLUB_TRACK_MAPS_BUCKET).upload(path, bytes, { upsert: true, contentType: "image/png" });
   await supabase.from("trainingpeaks_workout_tracks").update({ map_hash: hash }).eq("workout_cache_id", workoutCacheId);
+  // Piggyback the city on the one-time image generation (no extra call once cached); the feed
+  // then reads the cached city from the row on the next load.
+  await resolveTrackCity({ workoutCacheId, polyline, city: row.city, cityHash: row.city_hash });
   return { kind: "ok", bytes };
 }
 

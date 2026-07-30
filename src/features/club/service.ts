@@ -21,6 +21,7 @@ import {
 
 import * as C from "./constants";
 import { CLUB_MARKER_TITLE_SENTINEL } from "./cache-guard";
+import { signTrackImagePath } from "./track-maps";
 import {
   evaluateCandidate,
   referenceVdotForAthlete,
@@ -194,16 +195,25 @@ async function loadTracksForWorkouts(workoutIds: string[]): Promise<Map<string, 
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_workout_tracks")
-    .select("workout_cache_id, polyline, bbox, point_count")
+    .select("workout_cache_id, polyline, bbox, point_count, city")
     .in("workout_cache_id", workoutIds);
   if (error) {
     return out;
   }
-  for (const row of (data as Array<{ workout_cache_id: string; polyline: unknown; bbox: unknown; point_count: number | null }> | null) ?? []) {
+  const mapTilesOn = C.isClubMapTilesEnabled();
+  for (const row of (data as Array<{ workout_cache_id: string; polyline: unknown; bbox: unknown; point_count: number | null; city: string | null }> | null) ?? []) {
     const polyline = Array.isArray(row.polyline) ? (row.polyline as Array<[number, number]>) : null;
     const bbox = row.bbox as ClubTrack["bbox"] | null;
     if (polyline && polyline.length >= 2 && bbox) {
-      out.set(row.workout_cache_id, { polyline, bbox, pointCount: row.point_count ?? polyline.length });
+      out.set(row.workout_cache_id, {
+        polyline,
+        bbox,
+        pointCount: row.point_count ?? polyline.length,
+        // Signed, cacheable image path — minted server-side so no Mapbox URL/token reaches the
+        // browser. Null when tiles are off → the club keeps showing the silhouette only.
+        mapImageUrl: mapTilesOn ? signTrackImagePath(row.workout_cache_id, polyline) : null,
+        city: row.city ?? null,
+      });
     }
   }
   return out;
@@ -2549,6 +2559,22 @@ export async function getClubProfileDetail(input: {
   const rankIndex = performers.findIndex((p) => p.studentId === input.currentStudentId);
   const current = rankIndex >= 0 ? performers[rankIndex] : null;
 
+  // Route opt-out state — a targeted, tolerant read, isolated from the hot loadClubStudents path
+  // (the club_routes_visible column may not exist until the migration is applied → default true).
+  let routesVisible = true;
+  try {
+    const { data: rv } = await createSupabaseServerClient()
+      .from("trainingpeaks_students")
+      .select("club_routes_visible")
+      .eq("id", input.currentStudentId)
+      .maybeSingle();
+    if (rv && (rv as { club_routes_visible?: boolean | null }).club_routes_visible === false) {
+      routesVisible = false;
+    }
+  } catch {
+    /* column absent → default visible */
+  }
+
   return {
     displayName: ownStudent?.displayName ?? fullName(input.currentStudentName),
     monogram: monogram(input.currentStudentName),
@@ -2564,6 +2590,8 @@ export async function getClubProfileDetail(input: {
     achievements,
     clubVisible: ownStudent?.clubVisible ?? true,
     privacyEnabled: C.isPrivacyEnabled(),
+    routesVisible,
+    mapTilesEnabled: C.isClubMapTilesEnabled(),
     challengeRank: rankIndex >= 0 ? rankIndex + 1 : null,
     challengeParticipants: performers.length,
     completionPct: current?.completionPct ?? 0,
