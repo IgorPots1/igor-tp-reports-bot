@@ -73,7 +73,9 @@ async function getWorkout(athleteId: number, workoutId: number): Promise<Record<
 
 // ── description parse + role steps + recompute ────────────────────────────────
 type Rng = { fast: number; slow: number; idx: number };
-function ranges(desc: string): Rng[] { const out: Rng[] = []; const re = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi; let m: RegExpExecArray | null; const seen = new Set<string>(); while ((m = re.exec(desc)) !== null) { const fast = Math.min(S(m[1]), S(m[2])), slow = Math.max(S(m[1]), S(m[2])); if (fast < 150 || slow > 600) continue; const k = `${fast}-${slow}`; if (seen.has(k)) continue; seen.add(k); out.push({ fast, slow, idx: m.index }); } return out; }
+// NO dedup: a repeated range is TWO real segments run at the same pace (warm-up and a recovery
+// can share a pace). Ranges are returned in APPEARANCE order for positional matching to steps.
+function ranges(desc: string): Rng[] { const out: Rng[] = []; const re = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi; let m: RegExpExecArray | null; while ((m = re.exec(desc)) !== null) { const fast = Math.min(S(m[1]), S(m[2])), slow = Math.max(S(m[1]), S(m[2])); if (fast < 150 || slow > 600) continue; out.push({ fast, slow, idx: m.index }); } return out; }
 type Role = "разминка" | "заминка" | "отдых" | "работа";
 type FlatStep = { role: Role; min: number; max: number; block: number; step: number };
 /** flatten a structure OBJECT (structure.structure[].steps[]) into ordered steps with roles. */
@@ -97,20 +99,28 @@ function deepDiff(a: unknown, b: unknown, p: string, out: string[]): void {
   out.push(`${p}: ${JSON.stringify(a)} → ${JSON.stringify(b)}`);
 }
 type Plan = { block: number; step: number; role: Role; oldMin: number; oldMax: number; newMin: number; newMax: number; lo: number; hi: number; ok: boolean; src: string };
-/** recompute new %-targets per step from description + real threshold. Returns null if no pace-structure. */
-function recompute(structObj: unknown, desc: string, title: string, thrSec: number, anchor: number | null): { isEasy: boolean; plans: Plan[] } | null {
+/** recompute new %-targets per step from description + real threshold.
+ *  POSITIONAL: the i-th description range → the i-th NON-rest step, in appearance order
+ *  (no dedup, no sort — the coach writes segments in order). Anchor is used ONLY for rest
+ *  steps, and for a lone easy step when the description carries NO range at all. Any other
+ *  range/step count mismatch is ambiguous → returns a `defer` reason and writes nothing
+ *  (never guess an anchor onto a work step). Returns null if not a pace-structure. */
+function recompute(structObj: unknown, desc: string, title: string, thrSec: number, anchor: number | null): { isEasy: boolean; plans: Plan[]; defer?: string } | null {
   const fx = flatSteps(structObj); if (!fx || !/pace/i.test(fx.metric)) return null;
   const isEasy = !fx.isRep && /лёгк|легк|длительн|восстанов|свободн/i.test(title);
-  const rs = ranges(desc).sort((a, b) => a.fast - b.fast);
-  const slowRange = rs.length ? rs[rs.length - 1] : null; const fastRanges = rs.slice(0, Math.max(0, rs.length - 1));
-  const plans: Plan[] = []; let wi = 0;
+  const rs = ranges(desc); // appearance order, NO dedup, NO sort
+  const nonRest = fx.steps.filter((s) => s.role !== "отдых");
+  let mode: "positional" | "anchorAll";
+  if (rs.length === 0) { if (nonRest.length > 1) return { isEasy, plans: [], defer: `нет диапазонов в описании, а рабочих шагов ${nonRest.length} (>1) — привязать нечем, якорь на работу не ставим` }; mode = "anchorAll"; }
+  else if (rs.length === nonRest.length) mode = "positional";
+  else return { isEasy, plans: [], defer: `диапазонов в описании ${rs.length} ≠ рабочих шагов ${nonRest.length} — позиционная привязка неоднозначна` };
+  const plans: Plan[] = []; let pos = 0;
   for (const st of fx.steps) {
-    let assigned: Rng | "anchor" | null;
-    if (st.role === "работа") { assigned = isEasy ? (slowRange ?? "anchor") : (fastRanges.length ? fastRanges[Math.min(wi, fastRanges.length - 1)] : (slowRange ?? "anchor")); wi++; }
-    else if (st.role === "отдых") assigned = "anchor";
-    else assigned = slowRange ?? "anchor";
+    let assigned: Rng | "anchor";
+    if (st.role === "отдых" || mode === "anchorAll") assigned = "anchor";
+    else { assigned = rs[pos]; pos++; }
     let nMin: number, nMax: number, src: string;
-    if (assigned === "anchor" || assigned == null) { const a = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (a - 8)) * 100); nMin = Math.round((thrSec / (a + 12)) * 100); src = `якорь ${fp(a)}`; }
+    if (assigned === "anchor") { const a = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (a - 8)) * 100); nMin = Math.round((thrSec / (a + 12)) * 100); src = `якорь ${fp(a)}`; }
     else { nMax = Math.round((thrSec / assigned.fast) * 100); nMin = Math.round((thrSec / assigned.slow) * 100); src = `${fp(assigned.slow)}–${fp(assigned.fast)}`; }
     const [lo, hi] = band();
     plans.push({ block: st.block, step: st.step, role: st.role, oldMin: st.min, oldMax: st.max, newMin: nMin, newMax: nMax, lo, hi, ok: nMin >= lo && nMax <= hi, src });
@@ -150,10 +160,11 @@ async function main(): Promise<void> {
     const rc = recompute(w.structure, desc, w.title ?? "", thrSec, anchor);
     console.log(`── ${w.workout_date} · «${w.title}» (wid ${w.trainingpeaks_workout_id}) ──`);
     if (!rc) { console.log(`   не pace-структура — пропуск (не трогаем)`); continue; }
+    if (rc.defer) { defer = true; flags.push(`${w.workout_date} «${w.title}»: ${rc.defer}`); console.log(`   ⚑ ОТЛОЖЕНО (привязка): ${rc.defer}`); continue; }
     for (const p of rc.plans) { const resolved = `${fp(thrSec * 100 / p.newMax)}–${fp(thrSec * 100 / p.newMin)}`; if (!p.ok) { defer = true; flags.push(`${w.workout_date} «${w.title}» ${p.role} ${p.newMin}-${p.newMax}% вне ${p.lo}-${p.hi}%`); } console.log(`   [b${p.block}s${p.step}] ${p.role.padEnd(9)} ${isNaN(p.oldMin) ? "—" : `${p.oldMin}-${p.oldMax}%`} → ${p.newMin}-${p.newMax}%  (@порог ${resolved}, из ${p.src}) [${p.lo}-${p.hi}]${p.ok ? "" : " ⚑ВНЕ ПОЛОСЫ"}`); }
     wks.push({ wid: Number(w.trainingpeaks_workout_id), date: w.workout_date as string, title: (w.title as string) ?? "", desc, rc });
   }
-  if (defer) { console.log(`\n✗ АТЛЕТ ОТЛОЖЕН (sanity):\n  ${flags.join("\n  ")}\nНичего не записано.`); process.exit(4); }
+  if (defer) { console.log(`\n✗ АТЛЕТ ОТЛОЖЕН (sanity/привязка):\n  ${flags.join("\n  ")}\nНичего не записано.`); process.exit(4); }
   console.log(`\n✓ все шаги в полосах.`);
 
   if (!apply) {
