@@ -51,6 +51,42 @@ export type NormalizedFitLap = {
   wktStepIndex: number | null;
 };
 
+export type WorkoutSeriesPoint = { t: number; hr: number | null; pace: number | null };
+
+/**
+ * Downsample per-second FIT records into a smooth HR + pace over-TIME series for the club workout
+ * detail chart. Bins the run's elapsed time into `targetPoints` equal buckets (≤ record count) and
+ * averages HR and speed per bucket (speed → pace, sec/km). Pure; the caller gates to running
+ * workouts. Returns null for < 2 usable records or an all-empty result. Pace is null in a bucket the
+ * runner was stopped/creeping (avg speed below a jog threshold), so a stop shows as a gap in the line
+ * rather than a fake 40:00/km spike — which is exactly why the axis is time, not distance.
+ */
+export function buildWorkoutSeries(records: NormalizedFitRecord[], targetPoints = 120): WorkoutSeriesPoint[] | null {
+  if (!Array.isArray(records) || records.length < 2) return null;
+  const totalS = records[records.length - 1]?.timeS;
+  if (typeof totalS !== "number" || !Number.isFinite(totalS) || totalS <= 0) return null;
+  const buckets = Math.max(2, Math.min(targetPoints, records.length));
+  const bucketS = totalS / buckets;
+  const acc = Array.from({ length: buckets }, () => ({ hrSum: 0, hrN: 0, spSum: 0, spN: 0 }));
+  for (const r of records) {
+    const t = r.timeS;
+    if (typeof t !== "number" || !Number.isFinite(t) || t < 0) continue;
+    let idx = Math.floor(t / bucketS);
+    if (idx >= buckets) idx = buckets - 1;
+    const b = acc[idx];
+    if (typeof r.heartRate === "number" && r.heartRate > 0) { b.hrSum += r.heartRate; b.hrN += 1; }
+    if (typeof r.speedMps === "number" && r.speedMps > 0) { b.spSum += r.speedMps; b.spN += 1; }
+  }
+  const JOG_MPS = 0.5; // below ~33 min/km → a stop; pace becomes a gap, not a fake spike
+  const out: WorkoutSeriesPoint[] = acc.map((b, i) => {
+    const hr = b.hrN > 0 ? Math.round(b.hrSum / b.hrN) : null;
+    const avgSp = b.spN > 0 ? b.spSum / b.spN : 0;
+    const pace = avgSp > JOG_MPS ? Math.round(1000 / avgSp) : null;
+    return { t: Math.round((i + 0.5) * bucketS), hr, pace };
+  });
+  return out.some((p) => p.hr != null || p.pace != null) ? out : null;
+}
+
 // Loose shapes for the fields we read off the parser's runtime output.
 // Deliberately untyped against fit-file-parser's exported interfaces because
 // elapsedRecordField-injected fields (elapsed_time) aren't part of the strict

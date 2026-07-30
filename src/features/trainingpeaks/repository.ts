@@ -2702,6 +2702,8 @@ export type TrainingPeaksWorkoutTrackUpsertRow = {
   polyline: Array<[number, number]>;
   point_count: number;
   bbox: { minLat: number; minLng: number; maxLat: number; maxLng: number };
+  /** Phase 5: downsampled HR+pace over-time series for the detail chart (running only). */
+  series?: Array<{ t: number; hr: number | null; pace: number | null }> | null;
   source?: "fit";
   scanned_at?: string;
   scan_job_id?: string | null;
@@ -2711,12 +2713,24 @@ export async function upsertTrainingPeaksWorkoutTrack(
   row: TrainingPeaksWorkoutTrackUpsertRow
 ): Promise<void> {
   const supabase = createSupabaseServerClient();
-  const { error } = await withSupabaseNetworkRetry(() => supabase
+  const payload = { ...row, source: row.source ?? "fit", updated_at: new Date().toISOString() };
+  const first = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_tracks")
-    .upsert({ ...row, source: row.source ?? "fit", updated_at: new Date().toISOString() }, { onConflict: "workout_cache_id" }));
-  if (error) {
-    throw new Error(`Failed to upsert TrainingPeaks workout track: ${error.message}`);
+    .upsert(payload, { onConflict: "workout_cache_id" }));
+  if (!first.error) return;
+  // Tolerant of the `series` column not existing yet (migration 20260822 not applied): retry without
+  // it so tracks still store on a runner that ran ahead of the migration. Only when we actually sent
+  // series and the error looks like a missing column / stale schema cache.
+  if (payload.series != null && /series|schema cache|does not exist|42703/i.test(first.error.message)) {
+    const { series: _dropped, ...withoutSeries } = payload;
+    void _dropped;
+    const retry = await withSupabaseNetworkRetry(() => supabase
+      .from("trainingpeaks_workout_tracks")
+      .upsert(withoutSeries, { onConflict: "workout_cache_id" }));
+    if (retry.error) throw new Error(`Failed to upsert TrainingPeaks workout track: ${retry.error.message}`);
+    return;
   }
+  throw new Error(`Failed to upsert TrainingPeaks workout track: ${first.error.message}`);
 }
 
 export async function listTrainingPeaksHealthMetricsForStudentDateRange(input: {

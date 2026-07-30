@@ -71,6 +71,7 @@ import {
   findWorkoutStartMs,
   isTrackTorn,
   sanitizeTrackPoints,
+  buildWorkoutSeries,
   lapDurationSeconds,
   lapPaceSecPerKm,
   normalizeFitLaps,
@@ -584,6 +585,13 @@ async function ingestOneWorkoutFit(input: {
       warnings.push(
         `pace-based metrics null: workout_type=${workoutType} — rep scalars, decoupling and aerobic_ef are running metrics, not computed off a run (${NOT_A_RUN_REASON})`
       );
+    }
+
+    // Phase 5 — smooth HR+pace over-TIME series for the workout-detail chart. Running only; it rides
+    // on the (GPS) track row, downsampled to ~120 points at ingest. New workouts only, like the track.
+    if (isRun && trackRow) {
+      const series = buildWorkoutSeries(normalizedRecords);
+      if (series) trackRow.series = series;
     }
 
     const workDetection = isRun ? detectWorkLaps({ laps: normalizedLaps, structureSnapshot }) : null;

@@ -468,6 +468,10 @@ export type ClubWorkoutDetailView = {
    * boundary, built from per-lap total_ascent_m (no per-point altitude). null when no lap
    * ascent at all. Honest = cumulative gain, not net altitude (we only have per-lap gain). */
   elevationProfile: Array<{ km: number; elevM: number }> | null;
+  /** Phase 5: downsampled HR + pace over-TIME series (~120 pts) for the smooth detail chart.
+   *  Each point { t: seconds from start, hr: bpm|null, pace: sec/km|null }. null for non-runs /
+   *  runs without GPS / old workouts (not backfilled). Complements the per-lap bars. */
+  series: Array<{ t: number; hr: number | null; pace: number | null }> | null;
   /** HR zones (empty when time_in_zones absent). */
   zones: ClubZoneSlice[];
   zoneBasisLabel: string | null;

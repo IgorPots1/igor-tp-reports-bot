@@ -3056,6 +3056,24 @@ export async function getClubWorkoutDetail(input: {
   const derived = (derivedResult.data as { avg_hr: number | null; hr_trusted: boolean | null; time_in_zones: unknown; zone_basis: "threshold_hr" | "max_hr_pct" | null } | null) ?? null;
   const track = trackMap.get(input.workoutId) ?? null;
 
+  // Phase 5: downsampled HR+pace-over-time series for the smooth detail chart (running GPS workouts,
+  // new only). Separate tolerant read so the feed's track payload stays light and a missing column
+  // (migration 20260822 not applied) degrades to "no chart".
+  let series: Array<{ t: number; hr: number | null; pace: number | null }> | null = null;
+  try {
+    const { data: sData } = await supabase
+      .from("trainingpeaks_workout_tracks")
+      .select("series")
+      .eq("workout_cache_id", input.workoutId)
+      .maybeSingle();
+    const raw = (sData as { series?: unknown } | null)?.series;
+    if (Array.isArray(raw) && raw.length > 0) {
+      series = raw as Array<{ t: number; hr: number | null; pace: number | null }>;
+    }
+  } catch {
+    /* column absent → no chart */
+  }
+
   const laps: ClubWorkoutLap[] = lapRows.map((l) => ({
     index: l.lap_index,
     distanceKm: l.distance_m != null && l.distance_m > 0 ? Number((l.distance_m / 1000).toFixed(2)) : null,
@@ -3116,6 +3134,7 @@ export async function getClubWorkoutDetail(input: {
     ascentM: ascentSum != null && ascentSum > 0 ? Math.round(ascentSum) : null,
     laps,
     elevationProfile,
+    series,
     zones,
     zoneBasisLabel,
     track,

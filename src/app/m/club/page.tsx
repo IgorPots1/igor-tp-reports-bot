@@ -1694,9 +1694,42 @@ function ElevationProfile({ points }: { points: Array<{ km: number; elevM: numbe
   );
 }
 
+// Smooth HR + pace over-TIME chart (Phase 5). Two lines on one 340x120 frame: HR (red) and pace
+// (blue), each normalised to its own range; pace is inverted so FASTER sits higher. Pace breaks into
+// segments on null buckets (stops), so a rest shows as a gap, not a fake spike. Time on X.
+function SeriesChart({ series }: { series: Array<{ t: number; hr: number | null; pace: number | null }> }) {
+  const W = 340, H = 120, PAD = 6;
+  const ts = series.map((p) => p.t);
+  const tMin = Math.min(...ts), tMax = Math.max(...ts);
+  const tSpan = tMax - tMin || 1;
+  const x = (t: number) => PAD + ((t - tMin) / tSpan) * (W - 2 * PAD);
+  const hrs = series.map((p) => p.hr).filter((v): v is number => v != null);
+  const paces = series.map((p) => p.pace).filter((v): v is number => v != null);
+  const hrMin = hrs.length ? Math.min(...hrs) : 0, hrMax = hrs.length ? Math.max(...hrs) : 1;
+  const paceMin = paces.length ? Math.min(...paces) : 0, paceMax = paces.length ? Math.max(...paces) : 1;
+  const yHr = (hr: number) => PAD + (1 - (hr - hrMin) / (hrMax - hrMin || 1)) * (H - 2 * PAD);
+  // pace: smaller sec/km = faster = higher on the chart → invert.
+  const yPace = (p: number) => PAD + ((p - paceMin) / (paceMax - paceMin || 1)) * (H - 2 * PAD);
+  const hrPoints = series.filter((p) => p.hr != null).map((p) => `${x(p.t).toFixed(1)},${yHr(p.hr as number).toFixed(1)}`).join(" ");
+  const paceSegs: string[] = [];
+  let cur: string[] = [];
+  for (const p of series) {
+    if (p.pace == null) { if (cur.length > 1) paceSegs.push(cur.join(" ")); cur = []; continue; }
+    cur.push(`${x(p.t).toFixed(1)},${yPace(p.pace).toFixed(1)}`);
+  }
+  if (cur.length > 1) paceSegs.push(cur.join(" "));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block", marginTop: 4 }}>
+      {paceSegs.map((seg, i) => <polyline key={`p${i}`} points={seg} fill="none" stroke="#3b82f6" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />)}
+      {hrPoints ? <polyline points={hrPoints} fill="none" stroke="#dc5b52" strokeWidth={1.5} vectorEffect="non-scaling-stroke" /> : null}
+    </svg>
+  );
+}
+
 function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: string; initData: string; onClose: () => void }) {
   const [view, setView] = useState<ClubWorkoutDetailView | null>(null);
   const [status, setStatus] = useState<Status>("loading");
+  const [seriesOpen, setSeriesOpen] = useState(false); // long screen: collapsed by default (like achievements)
 
   useEffect(() => {
     let alive = true;
@@ -1791,6 +1824,24 @@ function WorkoutDetailOverlay({ workoutId, initData, onClose }: { workoutId: str
                         <div style={S.cardMeta}>Набор высоты по дистанции{view.ascentM ? ` · ${view.ascentM} м` : ""}</div>
                         <ElevationProfile points={view.elevationProfile} />
                       </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {view.series && view.series.length > 1 ? (
+                  <div style={S.card}>
+                    <button type="button" onClick={() => setSeriesOpen((o) => !o)} style={S.collapseHead}>
+                      <span>Пульс и темп по времени</span>
+                      <span>{seriesOpen ? "▲" : "▼"}</span>
+                    </button>
+                    {seriesOpen ? (
+                      <>
+                        <div style={{ display: "flex", gap: 14, margin: "8px 0 2px", fontSize: 12, color: C.sub }}>
+                          <span><span style={{ color: "#dc5b52" }}>●</span> пульс</span>
+                          <span><span style={{ color: "#3b82f6" }}>●</span> темп (выше = быстрее)</span>
+                        </div>
+                        <SeriesChart series={view.series} />
+                        <div style={S.cardMeta}>Гладкая динамика за всю тренировку; провалы темпа - остановки. Круги выше показывают структуру.</div>
+                      </>
                     ) : null}
                   </div>
                 ) : null}
