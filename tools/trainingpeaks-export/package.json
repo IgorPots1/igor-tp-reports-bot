@@ -23,6 +23,7 @@
     "tp-actions-loop": "tsx scripts/tp-actions-loop.ts",
     "tp-races-requests-once": "tsx scripts/tp-races-requests-once.ts",
     "tp-races-loop": "tsx scripts/tp-races-loop.ts",
+    "enqueue-race-scan-weekly": "tsx scripts/enqueue-race-scan-weekly.ts",
     "enqueue-race-scan-backfill": "tsx scripts/enqueue-race-scan-backfill.ts",
     "tp-discover-events-api": "tsx scripts/tp-discover-events-api.ts",
     "tp-discover-workouts-api": "tsx scripts/tp-discover-workouts-api.ts",

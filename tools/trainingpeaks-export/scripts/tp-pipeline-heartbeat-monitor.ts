@@ -5,10 +5,17 @@
 // becomes a message instead of being found by accident — the class of bug behind the 9-day metrics
 // stall and the health-scan frozen since May.
 //
+// Coverage is deliberately CROSS-HOST: besides the Mac scan flows, it also watches the VERCEL crons
+// (утренняя сводка + импорт платежей). Those run off-box, so when Vercel silently stops invoking
+// them — as happened 2026-07-28, unnoticed for 3 days — the Mac monitor is the only thing that can
+// see it, because both write their run rows to the shared Supabase. Adding a flow here = one row per
+// success + a threshold; that is all it takes to make the next silent death visible next morning.
+//
 // READ-ONLY (no writes). Runs from run-feedback-safety-net.sh (09:30). Flags: --dry-run (no send).
 //
 // Thresholds (justified): hourly flows (cache/fit/enqueue) → 3h tolerates ~2 missed runs (a short
 // sleep is fine, 3 misses is a problem). health (6×/day, every ~3-4h) → 8h = 2 missed cycles.
+// Vercel daily crons (digest 09:00, billing 08:30) → 26h = one missed day + 2h buffer.
 // race (weekly Mon) → 9 days = one missed week + buffer (tightens once race becomes daily).
 
 import { loadLocalEnv } from "./lib/local-env.ts";
@@ -23,6 +30,8 @@ const HEARTBEAT_FLOWS: HeartbeatFlow[] = [
   { job: "fit_ingest_scan", label: "метрики FIT", maxH: 3, cadence: "часовой" },
   { job: "workout_feedback_enqueue", label: "очередь фидбека", maxH: 3, cadence: "часовой" },
   { job: "health_metrics_scan", label: "здоровье (сон/пульс/HRV)", maxH: 8, cadence: "6×/день" },
+  // Vercel cron — writes the same cron_run_logs row (status=sent) on a successful digest send.
+  { job: "attention_digest", label: "утренняя сводка (Vercel)", maxH: 26, cadence: "дневной" },
 ];
 // Race-scan's wrapper lives outside the repo (local-only), so it can't write a heartbeat here yet.
 // Until it does, monitor its OUTPUT freshness: the newest race_events row. Weaker (no new races ≠
@@ -63,6 +72,24 @@ async function main(): Promise<void> {
     const ok = age <= RACE_MAX_H;
     state.push(`  ${ok ? "✅" : "⚠️"} старты/календарь (недельный, по данным race_events): последняя запись ${fmt(age)} назад · порог ${RACE_MAX_H / 24}д · heartbeat не настроен`);
     if (!ok) stale.push(`⚠️ старты/календарь: новых записей ${fmt(age)} (порог ${RACE_MAX_H / 24}д) — проверь race-scan`);
+  }
+
+  // billing email import (Vercel cron, daily 08:30) — REAL MONEY, and it logs to its OWN table
+  // (billing_email_import_runs), not cron_run_logs, so it needs a dedicated freshness read. A
+  // successful run is status='success'; its started_at is the freshness anchor. This is the flow
+  // that silently stopped 2026-07-28 → payments stopped importing with no alert.
+  {
+    const { data } = await sb
+      .from("billing_email_import_runs")
+      .select("started_at")
+      .eq("status", "success")
+      .order("started_at", { ascending: false })
+      .limit(1);
+    const last = (data as Array<{ started_at: string }> | null)?.[0]?.started_at ?? null;
+    const age = ageH(last);
+    const ok = age <= 26;
+    state.push(`  ${ok ? "✅" : "⚠️"} импорт платежей (Vercel, дневной): последний успех ${fmt(age)} назад · порог 26ч`);
+    if (!ok) stale.push(`⚠️ импорт платежей: молчит ${fmt(age)} (порог 26ч) — проверь Vercel cron billing-email-import`);
   }
 
   console.log(`[tp-pipeline-heartbeat-monitor] ${new Date(now).toISOString()}`);
