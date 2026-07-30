@@ -16,6 +16,12 @@
  *  - After the threshold, verify the easy step resolves to the athlete anchor ±20s, else stop.
  *  - One athlete per invocation, by design.
  *
+ * EXIT CODES (a batch runner interprets these — see Igor's stop-vs-skip rule):
+ *   0 applied OK · 2 SKIP athlete (structure verify/data mismatch — no threshold set)
+ *   3 SKIP (no real threshold / refused gate) · 4 SKIP (sanity band defer)
+ *   5 STOP-ALL (write path broken: PUT structure ≠200, threshold PUT ≠204, or 204-but-value-wrong)
+ *   1 STOP-ALL (unexpected error)
+ *
  * Usage:
  *   npx tsx tools/trainingpeaks-export/scripts/tp-threshold-restore.ts --athlete=5748681
  *   TP_ATHLETE_REAL_WRITE=1 ... --athlete=5748681 --apply --confirm "RESTORE 5748681"
@@ -174,7 +180,7 @@ async function main(): Promise<void> {
     const before = { title: live.title, description: live.description, workoutId: live.workoutId, nSteps: fx.steps.length };
     live.structure = JSON.stringify(structObj); // PUT expects structure as STRING
     const res = await authedWriteOnce("PUT", `/fitness/v6/athletes/${id}/workouts/${wk.wid}`, live);
-    if (res.status !== 200) { console.error(`  ✗ ${wk.title}: PUT ${res.status} (не 200) — СТОП, порог НЕ ставлю.`); process.exit(2); }
+    if (res.status !== 200) { console.error(`  ✗ ${wk.title}: PUT структуры ${res.status} (не 200) — СТОП ВСЕГО ПРОГОНА (путь записи сломан).`); process.exit(5); }
     // verify: FULL structure compare (expected = structObj we just wrote) vs live GET.
     // Any difference besides the deliberately-changed targets (polyline excluded) → STOP.
     const after = await getWorkout(id, wk.wid);
@@ -197,13 +203,13 @@ async function main(): Promise<void> {
   const plan = planType("speed", settings.speedZones, thrMps, coachId);
   const beforeThr = findWt0Set(settings.speedZones);
   const zres = await authedWriteOnce("PUT", `/fitness/v2/athletes/${id}/speedzones`, plan.newFullArray);
-  if (zres.status !== 204) { console.error(`  ✗ порог PUT ${zres.status} (не 204) — СТОП. Структуры записаны, порог НЕ применён.`); process.exit(2); }
+  if (zres.status !== 204) { console.error(`  ✗ порог PUT ${zres.status} (не 204) — СТОП ВСЕГО ПРОГОНА (путь записи сломан). Структуры записаны, порог НЕ применён.`); process.exit(5); }
   const afterSettings = await getAthleteSettings(id);
   const afterWt0 = findWt0Set(afterSettings.speedZones);
   const afterThrMps = afterWt0 && typeof afterWt0.threshold === "number" ? afterWt0.threshold : null;
   const thrOk = afterThrMps !== null && Math.abs(afterThrMps - thrMps) < 1e-6;
   const countOk = Array.isArray(afterSettings.speedZones) && Array.isArray(settings.speedZones) && (afterSettings.speedZones as unknown[]).length === (settings.speedZones as unknown[]).length;
-  if (!thrOk || !countOk) { console.error(`  ✗ порог верификация не прошла (порог ${afterThrMps}, ждали ${thrMps}; наборы ${countOk}) — СТОП.`); process.exit(2); }
+  if (!thrOk || !countOk) { console.error(`  ✗ порог верификация не прошла (порог ${afterThrMps}, ждали ${thrMps}; наборы ${countOk}) — СТОП ВСЕГО ПРОГОНА (204, но значение не подтвердилось).`); process.exit(5); }
   console.log(`  ✅ порог применён: ${beforeThr && typeof beforeThr.threshold === "number" ? fp(1000 / beforeThr.threshold) : "?"} → ${fp(thrSec)} (верифицирован, наборы целы).`);
 
   // ── 7. anchor sanity: easy step resolves to anchor ±20s ──
