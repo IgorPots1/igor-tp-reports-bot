@@ -15,6 +15,12 @@ export type ClubTrack = {
   polyline: Array<[number, number]>;
   bbox: { minLat: number; minLng: number; maxLat: number; maxLng: number };
   pointCount: number;
+  /** Phase 4b: signed, cacheable path to the Mapbox route image (null when map tiles are off).
+   *  The silhouette is drawn from `polyline` as an instant placeholder; this image lazy-loads
+   *  over it. Served by our proxy — never a Mapbox URL/token. */
+  mapImageUrl?: string | null;
+  /** Reverse-geocoded city (cached), or null until resolved on first image render. */
+  city?: string | null;
 };
 
 export type ClubFeedItem = {
@@ -225,6 +231,10 @@ export type ClubProfileDetailView = ClubProfileView & {
   clubVisible: boolean;
   /** Whether the opt-out toggle is live (CLUB_PRIVACY_ENABLED); UI hint only. */
   privacyEnabled: boolean;
+  /** Whether THIS student's routes are shown on the map (for the route opt-out toggle). */
+  routesVisible: boolean;
+  /** Whether map tiles are live (CLUB_MAP_TILES_ENABLED); hides the route toggle when off. */
+  mapTilesEnabled: boolean;
   freshness: ClubFreshness;
 };
 
