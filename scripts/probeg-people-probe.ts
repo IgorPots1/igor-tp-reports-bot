@@ -1,38 +1,40 @@
 /**
- * Protocols people-probe (Фаза 10.3, step 0b): measure REAL coverage — for a handful of students
- * whose probeg athlete id Igor found by hand, read their PUBLIC probeg profile (/user/<id>/) and
- * check how many of OUR races (trainingpeaks_race_events) show up there by date (and time).
+ * Protocols people-probe (Фаза 10.3, step 0b): measure REAL coverage against probeg's PUBLIC
+ * results-by-name page — no login, no cookies, no stored athlete id.
  *
- * No login, no cookies: the profile page is public. Igor finds the ids in a browser and passes a
- * mapping; the script only reads public /user/<id>/ pages. POLITE by contract: sequential (no
- * parallelism), a delay between requests, and a disk cache so a re-run hits zero network. On the
- * first fetched profile it SELF-DIAGNOSES (prints status, html size, and the date/time pairs it
- * extracted) so the extraction is calibrated on a live page, not blind.
+ * probeg exposes /results/<Фамилия>/<Имя>/ publicly: each finish row directly (date, event, city,
+ * time, place, age group, age, club). The search is by PREFIX and MIXES namesakes (e.g. «Антон Малык»
+ * returns Малыкцев, Малык, Малыков in one table), so a name can NEVER be the link. A finish counts
+ * ONLY when its DATE and TIME match one of our race_events within a minute — that, not the name, is
+ * the disambiguation. Name/city are shown for the human, not used to decide.
  *
- * TWO MODES:
+ * POLITE by contract: sequential, a delay before every LIVE fetch, and a disk cache so a re-run hits
+ * zero network. Self-diagnoses on the first fetch (prints the URL, status, and extracted finishes) so
+ * the extraction is calibrated on a live page. Latin roster names → Cyrillic via name-translit.ts.
+ *
+ * MODES:
  *   --candidates
- *       List our students who finished the seed events (Белые ночи 04.07.2026, Казанский 03.05.2026,
- *       Московский полумарафон 26.04.2026) with their date/distance/OUR time — the list to eyeball,
- *       pick 5-7, and look up on probeg. READ-ONLY DB, no network.
- *   --check --ids=<path.json>
- *       ids.json = [{ "studentId": "<uuid>", "probegUserId": 9511 }, ...]. Reads each public profile,
- *       extracts its finishes (date + time), and reports for each student how many of our races match
- *       by date, and by date+time (±tolerance). Ends with the overall coverage fraction.
+ *       List our finishers of the seed events (Белые ночи 04.07, Казанский 03.05, Моск. полумарафон
+ *       26.04) with date/distance/OUR time + studentId — pick the sample, build students.json.
+ *   --check --students=<path.json>
+ *       students.json = ["<studentId>", ...]. For each: transliterate the name, fetch the public
+ *       results page (both surname/given orders; given-only fallback), match our races by date+time,
+ *       report per-student + overall coverage.
  *
  *   node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
- *     --env-file=.env.local scripts/probeg-people-probe.ts --candidates
- *   node ... scripts/probeg-people-probe.ts --check --ids=./probeg-ids.json
+ *     --env-file=/Users/igor/igor-tp-reports-bot/.env.local scripts/probeg-people-probe.ts --candidates
+ *   node ... scripts/probeg-people-probe.ts --check --students=./students.json
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import { nameGuesses } from "@/features/club/name-translit";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const MODE_CANDIDATES = process.argv.includes("--candidates");
 const MODE_CHECK = process.argv.includes("--check");
-const IDS_PATH = process.argv.find((a) => a.startsWith("--ids="))?.slice("--ids=".length).trim() || "";
+const STUDENTS_PATH = process.argv.find((a) => a.startsWith("--students="))?.slice("--students=".length).trim() || "";
 
-// Seed events (date + a title fragment) whose finishers we know are on probeg — for --candidates.
 const SEED_EVENTS = [
   { date: "2026-07-04", label: "Белые ночи" },
   { date: "2026-05-03", label: "Казанский марафон" },
@@ -40,15 +42,14 @@ const SEED_EVENTS = [
 ];
 
 const CACHE_DIR = path.resolve("probeg-cache");
-const REQUEST_DELAY_MS = 3000; // polite: ≥3s between live probeg fetches
-const TIME_TOLERANCE_S = 180; // chip/gun + GPS vs official → ±3 min counts as the same finish
-const USER_AGENT = "igor-tp-reports-bot/probeg-recon (contact: coach; polite, cached, sequential)";
+const REQUEST_DELAY_MS = 3000; // polite: ≥3s before every LIVE fetch
+const TIME_TOLERANCE_S = 60; // "в пределах минуты" — watch (net-ish) vs official time
+const USER_AGENT = "igor-tp-reports-bot/probeg-recon (polite, cached, sequential)";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
-/** completed_time_raw is HOURS (see rawHoursToSeconds in service.ts) → seconds. */
 function rawHoursToSeconds(v: number | string | null | undefined): number | null {
   const n = typeof v === "string" ? Number(v) : v;
   return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.round(n * 3600) : null;
@@ -60,7 +61,6 @@ function fmtHms(sec: number | null): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** DD.MM.YYYY | YYYY-MM-DD → YYYY-MM-DD, else null. */
 function toIsoDate(s: string): string | null {
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
@@ -78,10 +78,9 @@ function hmsToSeconds(hms: string): number | null {
 }
 
 /**
- * Extract (isoDate, seconds) finish pairs from a profile's HTML. Layout-agnostic: find each date
- * token and pair it with the FIRST time token within the next ~300 chars (same table row). Robust to
- * markup changes — needs only that a finish shows a date and a time near each other. Returns unique
- * pairs. PURE.
+ * Extract (isoDate, seconds) finish pairs from a results page. Layout-agnostic: each date token is
+ * paired with the FIRST time token in the next ~300 chars (same row). Robust to markup — needs only a
+ * date and a time near each other, which every finish row has. Unique pairs. PURE.
  */
 export function extractFinishes(html: string): Array<{ date: string; seconds: number }> {
   const out: Array<{ date: string; seconds: number }> = [];
@@ -91,8 +90,7 @@ export function extractFinishes(html: string): Array<{ date: string; seconds: nu
   while ((m = dateRe.exec(html)) !== null) {
     const iso = toIsoDate(m[1]);
     if (!iso) continue;
-    const window = html.slice(m.index, m.index + 300);
-    const t = window.match(/(\d{1,2}:\d{2}:\d{2})/);
+    const t = html.slice(m.index, m.index + 300).match(/\b(\d{1,2}:\d{2}:\d{2})\b/);
     if (!t) continue;
     const sec = hmsToSeconds(t[1]);
     if (sec == null || sec <= 0) continue;
@@ -104,14 +102,15 @@ export function extractFinishes(html: string): Array<{ date: string; seconds: nu
   return out;
 }
 
-async function fetchProfileHtml(userId: number, diagnose: boolean): Promise<string | null> {
+function cacheKey(name: string): string {
+  return name.replace(/[^0-9a-zа-яё]/gi, "_");
+}
+
+async function fetchHtml(url: string, cacheName: string, diagnose: boolean): Promise<string | null> {
   if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
-  const cachePath = path.join(CACHE_DIR, `user-${userId}.html`);
-  if (existsSync(cachePath)) {
-    return readFileSync(cachePath, "utf8");
-  }
-  await sleep(REQUEST_DELAY_MS); // polite pause before every LIVE fetch
-  const url = `https://probeg.org/user/${userId}/`;
+  const cachePath = path.join(CACHE_DIR, `${cacheName}.html`);
+  if (existsSync(cachePath)) return readFileSync(cachePath, "utf8");
+  await sleep(REQUEST_DELAY_MS);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
@@ -120,13 +119,12 @@ async function fetchProfileHtml(userId: number, diagnose: boolean): Promise<stri
     if (diagnose) {
       const pairs = extractFinishes(html);
       console.log(`  [self-diagnose] ${url} status=${resp.status} htmlLen=${html.length} extractedFinishes=${pairs.length}`);
-      console.log(`  [self-diagnose] первые 3: ${pairs.slice(0, 3).map((p) => `${p.date} ${fmtHms(p.seconds)}`).join(" | ") || "(ничего — парсер калибруем: см. probeg-cache/user-" + userId + ".html)"}`);
+      console.log(`  [self-diagnose] первые 3: ${pairs.slice(0, 3).map((p) => `${p.date} ${fmtHms(p.seconds)}`).join(" | ") || `(0 — калибровка: см. ${cachePath})`}`);
     }
     if (resp.status >= 200 && resp.status < 300 && html.length > 0) {
       writeFileSync(cachePath, html, "utf8");
       return html;
     }
-    console.log(`  ошибка загрузки ${url}: status=${resp.status}`);
     return null;
   } catch (e) {
     console.log(`  ошибка загрузки ${url}: ${e instanceof Error ? e.message : String(e)}`);
@@ -136,9 +134,39 @@ async function fetchProfileHtml(userId: number, diagnose: boolean): Promise<stri
   }
 }
 
+const enc = (s: string) => encodeURIComponent(s);
+
+/** Fetch the public results-by-name page, trying both name orders, then a given-name-only fallback
+ *  (the Хадижат case: found only by given name). Returns the HTML with the most finishes. */
+async function fetchResultsForName(rosterName: string, diagnose: boolean): Promise<{ html: string; via: string } | null> {
+  const guesses = nameGuesses(rosterName);
+  let best: { html: string; via: string; n: number } | null = null;
+  for (const g of guesses) {
+    if (!g.surname) continue;
+    const url = g.given
+      ? `https://probeg.org/results/${enc(g.surname)}/${enc(g.given)}/`
+      : `https://probeg.org/results/${enc(g.surname)}/`;
+    const html = await fetchHtml(url, `results-${cacheKey(g.surname)}-${cacheKey(g.given)}`, diagnose && !best);
+    if (html) {
+      const n = extractFinishes(html).length;
+      if (!best || n > best.n) best = { html, via: `${g.surname}/${g.given}`, n };
+    }
+  }
+  // Given-name-only fallback when surname search came back empty.
+  if ((!best || best.n === 0) && guesses[0]?.given) {
+    const given = guesses[0].given;
+    const url = `https://probeg.org/results/${enc(given)}/`;
+    const html = await fetchHtml(url, `results-givenonly-${cacheKey(given)}`, false);
+    if (html) {
+      const n = extractFinishes(html).length;
+      if (!best || n > best.n) best = { html, via: `${given} (только имя)`, n };
+    }
+  }
+  return best ? { html: best.html, via: best.via } : null;
+}
+
 type OurRace = { date: string; title: string; distanceRaw: string | null; ourSeconds: number | null };
 
-/** All our races for a student (from race_events) + our time that day (from the workout cache). */
 async function loadOurRaces(studentId: string): Promise<OurRace[]> {
   const supabase = createSupabaseServerClient();
   const { data: races } = await supabase
@@ -164,77 +192,75 @@ async function loadOurRaces(studentId: string): Promise<OurRace[]> {
   return out;
 }
 
+async function studentName(studentId: string): Promise<string> {
+  const supabase = createSupabaseServerClient();
+  const { data } = await supabase.from("trainingpeaks_students").select("student_name").eq("id", studentId).maybeSingle();
+  return (data as { student_name: string | null } | null)?.student_name ?? studentId;
+}
+
 async function runCandidates(): Promise<void> {
   const supabase = createSupabaseServerClient();
-  console.log("=== КАНДИДАТЫ ДЛЯ ПРОБЫ (наши финиши на seed-событиях) ===");
-  console.log("Выбери 5-7, найди их профили на probeg по ФИО, собери probeg-ids.json.");
+  console.log("=== КАНДИДАТЫ (наши финиши seed-событий) — выбери 5-7, собери students.json ===");
   for (const ev of SEED_EVENTS) {
     const { data } = await supabase
       .from("trainingpeaks_race_events")
-      .select("student_id, event_date, title, distance_raw, trainingpeaks_students(student_name)")
+      .select("student_id, distance_raw, trainingpeaks_students(student_name)")
       .eq("event_date", ev.date);
-    const rows = (data as Array<{ student_id: string; title: string | null; distance_raw: string | null; trainingpeaks_students: { student_name: string | null } | Array<{ student_name: string | null }> | null }> | null) ?? [];
+    const rows = (data as Array<{ student_id: string; distance_raw: string | null; trainingpeaks_students: { student_name: string | null } | Array<{ student_name: string | null }> | null }> | null) ?? [];
     console.log(`\n--- ${ev.label} · ${ev.date} · учеников: ${rows.length} ---`);
     for (const r of rows) {
       const st = Array.isArray(r.trainingpeaks_students) ? r.trainingpeaks_students[0] : r.trainingpeaks_students;
-      const name = st?.student_name ?? r.student_id;
       const { data: wk } = await supabase
-        .from("trainingpeaks_workout_cache")
-        .select("completed_time_raw, completed_distance_raw")
-        .eq("student_id", r.student_id)
-        .eq("workout_date", ev.date)
-        .order("completed_distance_raw", { ascending: false })
-        .limit(1);
+        .from("trainingpeaks_workout_cache").select("completed_time_raw, completed_distance_raw")
+        .eq("student_id", r.student_id).eq("workout_date", ev.date).order("completed_distance_raw", { ascending: false }).limit(1);
       const w = (wk as Array<{ completed_time_raw: number | string | null }> | null)?.[0] ?? null;
-      console.log(`  ${name} · ${r.distance_raw ?? "?"} · наше время ${fmtHms(rawHoursToSeconds(w?.completed_time_raw))} · studentId=${r.student_id}`);
+      console.log(`  ${st?.student_name ?? r.student_id} · ${r.distance_raw ?? "?"} · наше ${fmtHms(rawHoursToSeconds(w?.completed_time_raw))} · studentId=${r.student_id}`);
     }
   }
-  console.log("\nФормат probeg-ids.json: [{ \"studentId\": \"<uuid>\", \"probegUserId\": 9511 }, ...]");
+  console.log("\nФормат students.json: [\"<studentId>\", \"<studentId>\", ...]");
   process.exit(0);
 }
 
 async function runCheck(): Promise<void> {
-  if (!IDS_PATH || !existsSync(IDS_PATH)) {
-    console.error(`--ids=<path.json> не найден: ${IDS_PATH || "(не задан)"}`);
+  if (!STUDENTS_PATH || !existsSync(STUDENTS_PATH)) {
+    console.error(`--students=<path.json> не найден: ${STUDENTS_PATH || "(не задан)"}`);
     process.exit(1);
   }
-  const mapping = JSON.parse(readFileSync(IDS_PATH, "utf8")) as Array<{ studentId: string; probegUserId: number; name?: string }>;
-  const supabase = createSupabaseServerClient();
-
-  let totalRaces = 0, dateHits = 0, dateTimeHits = 0;
+  const ids = JSON.parse(readFileSync(STUDENTS_PATH, "utf8")) as string[];
+  let totalRaces = 0, dateHits = 0, dateTimeHits = 0, notFound = 0;
   let first = true;
-  for (const { studentId, probegUserId, name } of mapping) {
-    const nm = name ?? (await supabase.from("trainingpeaks_students").select("student_name").eq("id", studentId).maybeSingle()).data?.student_name ?? studentId.slice(0, 8);
-    console.log(`\n=== ${nm} · probeg/user/${probegUserId}/ ===`);
-    const html = await fetchProfileHtml(probegUserId, first);
+  for (const studentId of ids) {
+    const name = await studentName(studentId);
+    const res = await fetchResultsForName(name, first);
     first = false;
-    if (!html) { console.log("  профиль не загрузился — пропуск"); continue; }
-    const profileFinishes = extractFinishes(html);
+    console.log(`\n=== ${name} ${res ? `· probeg [${res.via}]` : "· НЕ НАЙДЕН на probeg"} ===`);
+    const finishes = res ? extractFinishes(res.html) : [];
     const ourRaces = await loadOurRaces(studentId);
     for (const race of ourRaces) {
       totalRaces += 1;
-      const sameDate = profileFinishes.filter((f) => f.date === race.date);
+      const sameDate = finishes.filter((f) => f.date === race.date);
       const byDate = sameDate.length > 0;
       const byTime = race.ourSeconds != null && sameDate.some((f) => Math.abs(f.seconds - (race.ourSeconds as number)) <= TIME_TOLERANCE_S);
-      if (byDate) dateHits += 1;
       if (byTime) dateTimeHits += 1;
-      const mark = byTime ? "OK дата+время" : byDate ? "~ только дата" : "нет";
-      const probegTimes = sameDate.map((f) => fmtHms(f.seconds)).join(",") || "-";
-      console.log(`  ${race.date} · ${race.title || race.distanceRaw || ""} · наше ${fmtHms(race.ourSeconds)} · probeg[${probegTimes}] → ${mark}`);
+      else if (byDate) dateHits += 1;
+      else notFound += 1;
+      const mark = byTime ? "OK дата+время" : byDate ? `~ дата есть, время не сошлось (probeg: ${sameDate.map((f) => fmtHms(f.seconds)).join(",")})` : "НЕ НАЙДЕНА";
+      console.log(`  ${race.date} · ${race.title || race.distanceRaw || ""} · наше ${fmtHms(race.ourSeconds)} → ${mark}`);
     }
   }
-
   console.log("\n=== ИТОГ ПОКРЫТИЯ ===");
+  const pct = (n: number) => (totalRaces ? Math.round((n / totalRaces) * 100) : 0);
   console.log(`Наших гонок проверено: ${totalRaces}`);
-  console.log(`Нашлись в профиле по дате: ${dateHits} (${totalRaces ? Math.round((dateHits / totalRaces) * 100) : 0}%)`);
-  console.log(`Из них подтверждены датой+временем (±${TIME_TOLERANCE_S}с): ${dateTimeHits} (${totalRaces ? Math.round((dateTimeHits / totalRaces) * 100) : 0}%)`);
+  console.log(`Подтверждено ДАТОЙ+ВРЕМЕНЕМ (±${TIME_TOLERANCE_S}с): ${dateTimeHits} (${pct(dateTimeHits)}%)`);
+  console.log(`Дата есть, но время не сошлось (gun/chip? другой старт?): ${dateHits} (${pct(dateHits)}%)`);
+  console.log(`Не найдено вовсе: ${notFound} (${pct(notFound)}%)`);
   process.exit(0);
 }
 
 async function main(): Promise<void> {
   if (MODE_CANDIDATES) return runCandidates();
   if (MODE_CHECK) return runCheck();
-  console.error("Укажи режим: --candidates  или  --check --ids=<path.json>");
+  console.error("Режим: --candidates  или  --check --students=<path.json>");
   process.exit(1);
 }
 
