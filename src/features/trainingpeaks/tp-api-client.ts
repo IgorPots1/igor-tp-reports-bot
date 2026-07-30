@@ -555,6 +555,17 @@ export async function deleteEvent(athleteId: number, eventId: number): Promise<{
   return fetchJsonWithRetry(`${TP_API_HOST}${endpoint}`, { method: "DELETE" });
 }
 
+/**
+ * READ-ONLY existence probe for a TP Event (reconciliation): GET the single-resource path and
+ * return only the status, without throwing. 404 → the event is gone (deleted directly in TP by a
+ * human). Mirrors deleteEvent's endpoint. Never mutates — GET only.
+ */
+export async function getEventStatus(athleteId: number, eventId: number): Promise<{ status: number }> {
+  const endpoint = `/fitness/v6/athletes/${athleteId}/event/${eventId}`;
+  const { status } = await fetchJsonWithRetry(`${TP_API_HOST}${endpoint}`, { method: "GET" });
+  return { status };
+}
+
 // ─── calendar notes (native TP note pinned to a day) ─────────────────────────────
 
 /**

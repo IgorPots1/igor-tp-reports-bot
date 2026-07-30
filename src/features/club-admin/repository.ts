@@ -14,6 +14,7 @@ import {
   type CoachRecord,
 } from "@/features/club/service";
 import { classifyRaceEventFill, type RaceFillEvent, type RaceFillWorkout } from "@/features/club/race-fill";
+import { RECONCILE_REMOVED_MARKER } from "@/features/club/tp-reconcile";
 import { CLUB_RECORD_DISTANCES } from "@/features/club/constants";
 import type { RecordDistanceKey } from "@/features/club/records";
 import { resolveClubBotUsername } from "@/features/club/entry-links";
@@ -207,6 +208,9 @@ export type ClubTpSendStatus = {
   /** of those, how many had the TP delete FAIL (reverse discrepancy: app says gone, TP still has it). */
   removalFailed: number;
   removalFailedList: Array<{ studentName: string; date: string | null; kind: string; error: string; attempts: number }>;
+  /** starts removed DIRECTLY in TP (a human), caught by reconciliation in the last 30 days. */
+  reconciledRemoved: number;
+  reconciledRemovedList: Array<{ studentName: string; date: string | null; kind: string; error: string; attempts: number }>;
 };
 
 /**
@@ -215,7 +219,7 @@ export type ClubTpSendStatus = {
  * tracking columns not existing yet (migration 20260819 not applied) → returns zeros.
  */
 export async function getClubTpSendStatus(): Promise<ClubTpSendStatus> {
-  const empty: ClubTpSendStatus = { queued: 0, failed: 0, failedList: [], awaitingRemoval: 0, removalFailed: 0, removalFailedList: [] };
+  const empty: ClubTpSendStatus = { queued: 0, failed: 0, failedList: [], awaitingRemoval: 0, removalFailed: 0, removalFailedList: [], reconciledRemoved: 0, reconciledRemovedList: [] };
   type StatusRow = {
     student_id: string;
     entry_date: string | null;
@@ -263,6 +267,22 @@ export async function getClubTpSendStatus(): Promise<ClubTpSendStatus> {
       removalFailedRows = rbRows.filter((r) => r.tp_send_error);
     }
 
+    // Reconciliation direction (deleted in TP → reflected here): starts the reconcile runner rejected
+    // because their TP event was gone. Marked with RECONCILE_REMOVED_MARKER, bounded to 30 days so the
+    // list does not grow forever. Tolerant of the tracking columns missing → skip.
+    let reconciledRemovedRows: StatusRow[] = [];
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: recData, error: recError } = await supabase
+      .from("club_calendar_entries")
+      .select("student_id, entry_date, kind, tp_send_error, tp_send_attempts, trainingpeaks_students(student_name)")
+      .eq("status", "rejected")
+      .ilike("tp_send_error", `${RECONCILE_REMOVED_MARKER}%`)
+      .gte("tp_send_attempted_at", since)
+      .order("tp_send_attempted_at", { ascending: false });
+    if (!recError) {
+      reconciledRemovedRows = (recData as StatusRow[] | null) ?? [];
+    }
+
     return {
       queued: rows.length,
       failed: failedRows.length,
@@ -270,6 +290,8 @@ export async function getClubTpSendStatus(): Promise<ClubTpSendStatus> {
       awaitingRemoval,
       removalFailed: removalFailedRows.length,
       removalFailedList: removalFailedRows.slice(0, 50).map(asItem),
+      reconciledRemoved: reconciledRemovedRows.length,
+      reconciledRemovedList: reconciledRemovedRows.slice(0, 50).map(asItem),
     };
   } catch {
     return empty;

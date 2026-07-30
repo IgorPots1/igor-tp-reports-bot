@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Reconcile club starts with TrainingPeaks once a day (09:00): direction "deleted in TP ->
+     reflected in the app". READ-ONLY against TP; --apply in the .sh writes the DB reset. Independent
+     of CLUB_TP_EXECUTION_ENABLED (never mutates TP). Install by Igor AFTER a manual dry-run review:
+       node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
+         --env-file=.env.local scripts/club-reconcile-tp-once.ts        # dry-run, writes nothing
+       cp .../com.igor.trainingpeaks.club-reconcile-tp.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.club-reconcile-tp.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.club-reconcile-tp</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-club-reconcile-tp.sh"</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>20</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-reconcile-tp.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-reconcile-tp.launchd.err.log</string>
+</dict>
+</plist>

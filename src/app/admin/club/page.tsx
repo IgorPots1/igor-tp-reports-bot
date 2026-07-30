@@ -52,6 +52,18 @@ export default async function ClubHubPage() {
           ) : null}
         </div>
       ) : null}
+      {tpSend.reconciledRemoved > 0 ? (
+        <div className="admin-alert">
+          <strong>Снято в TP вручную (сверка), за 30 дней: {tpSend.reconciledRemoved}</strong>
+          <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+            {tpSend.reconciledRemovedList.map((f, i) => (
+              <li key={i}>
+                {f.studentName} · {f.date ?? "?"}: {f.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="admin-actions">
         <Link className="admin-button admin-button-primary" href="/admin/club/requests">Заявки на доступ</Link>
         <Link className="admin-button admin-button-primary" href="/admin/club/forms">Рассылка форм</Link>
