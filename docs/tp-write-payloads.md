@@ -252,6 +252,50 @@ health signal, not stay a calendar marker. See `docs/club-health-signal-from-ava
 
 ---
 
+## 5. Workout structure — create + in-place edit (verified 2026-07-30 via UI capture)
+
+Resolves the open item in `tp-api-capability-matrix.md` (was: full-object workout PUT "not
+tested"). Captured passively on athlete `3102415`, test workout `3875087430`
+("PI STRUCTURE TEST"): one CREATE, four EDITs (one single-step, three multi-step).
+
+| Op | Method + endpoint | Response |
+|---|---|---|
+| Create | `POST /fitness/v6/athletes/{athleteId}/workouts` | `200`, returns the workout with a real numeric `workoutId` |
+| **Edit in place** | **`PUT /fitness/v6/athletes/{athleteId}/workouts/{workoutId}`** | `200` |
+
+`content-type: application/json`. Cookie→bearer auth (same as everything else).
+
+**Body = the WHOLE workout object** (~70 fields: `title`, `workoutDay`, `workoutTypeValueId`,
+`description`, `coachComments`, `workoutComments`, planned/actual metrics, `userTags`, …), NOT
+a patch. On create `workoutId: 0`; on edit it carries the real id.
+
+**`structure` is a JSON-encoded STRING** (double-encoded — a string whose content is
+`{"structure":[…],"primaryIntensityMetric":"percentOfThresholdPace","primaryLengthMetric":"duration"}`).
+Inside: blocks (`type:"step"|"repetition"`, `length:{value,unit}`) → `steps[]` each
+`{name, intensityClass ("warmUp"|"active"|"rest"|"coolDown"), length, openDuration,
+targets:[{minValue, maxValue}]}`. `minValue`/`maxValue` are **integer percents**.
+
+**PUT overwrites the ENTIRE structure — it does NOT patch a single step.** Observed:
+- Edit #1 changed only `Hard` `100-103 → 90-100`, yet the body still carried **all 4 steps**.
+- Edit #2 changed `Warm 78-88→63-73`, `Hard→92-99`, `Cool 70-80→44-60` — three steps in **one**
+  PUT with the full structure.
+
+**Preserved across an edit:** `workoutId` is **stable** (`3875087430` on all four PUTs → truly
+in-place, id kept). `title`, `workoutDay`, `description`, `coachComments`, `workoutComments`
+are all fields of the same object and round-trip unchanged when only `structure` is modified.
+
+**Safe recipe to change step %:** GET the workout → modify → PUT the *whole object* back
+(never build it from scratch — that would drop the fields you didn't set):
+1. `GET /fitness/v6/athletes/{id}/workouts/{workoutId}` (full object; `structure` is a string).
+2. `JSON.parse` the `structure` string → change `steps[].targets[0].minValue/maxValue` → `JSON.stringify` back onto the object.
+3. `PUT /fitness/v6/athletes/{id}/workouts/{workoutId}` with the (otherwise untouched) object.
+4. Verify: `GET` again → targets changed, `workoutId`/`description`/comments intact.
+
+Read-of-shape endpoints seen alongside the edit: `GET …/workouts/{id}` and
+`GET …/workouts/{id}/details` (the latter carries the structure) load the object the UI edits.
+
+---
+
 ## Safety / provenance
 - All mutations were performed by Igor by hand in the UI; the capture tool only
   observed traffic to `tpapi.trainingpeaks.com` / `api.peakswaresb.com`.

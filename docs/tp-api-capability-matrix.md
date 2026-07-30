@@ -64,6 +64,7 @@ mechanism), but were not exercised live in this PR1 pass — either for time, or
 
 | Entity | Endpoint | Method | Note |
 |---|---|---|---|
+| **Workout structure edit (in-place)** | `PUT /fitness/v6/athletes/{id}/workouts/{workoutId}` | PUT | ✅ **RESOLVED via UI capture (2026-07-30).** In-place edit sends the **whole workout object** (`structure` is a JSON-encoded string with ALL steps — NOT a per-step patch); `workoutId` stays stable; `title`/`description`/comments round-trip. Recipe = GET → modify structure → PUT full object. **Exact form: `docs/tp-write-payloads.md` §5.** |
 | Event create | `POST /fitness/v6/athletes/{id}/event` | POST | ✅ **RESOLVED via UI capture (2026-07-24).** The earlier 500 was the wrong endpoint (`/events` plural) + wrong body. Real endpoint is **`/event` (singular)**; body uses **`personId`** (not `athleteId`), a real `eventType` (e.g. `RunningRoad`), `eventDate`, `distance`+`distanceUnits`, and `goals{}`/`legs[]`/`workouts[]`/`results[]`. Returns 200 with numeric event `id`. **Exact form: `docs/tp-write-payloads.md` §2.** |
 | Workout comments | `/fitness/v2/athletes/{id}/workouts/{workoutId}/comments[/{commentId}]` | GET/POST/DELETE | **Correction to plan §A**, which said "no dedicated comment endpoint" — nagelflorian shows there IS one (v2), separate from the full-object workout PUT. Not tested live. |
 | Private workout note | `/fitness/v6/workouts/{workoutId}/privateWorkoutNote` | PUT | Not tested. |
