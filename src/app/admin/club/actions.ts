@@ -155,7 +155,8 @@ export async function deleteClubRaceAction(formData: FormData): Promise<void> {
   const repo = await import("@/features/club-admin/repository");
   const res = await repo.deleteClubRace(id);
   revalidateClub();
-  redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? "Старт удалён." : (res.error ?? "Ошибка.")));
+  const okMsg = res.pending ? "Снятие из TP запланировано (уйдёт ближайшим прогоном раннера)." : "Старт удалён.";
+  redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? okMsg : (res.error ?? "Ошибка.")));
 }
 
 /** Batch-approve checked race requests. Checkbox name: "raceIds". */

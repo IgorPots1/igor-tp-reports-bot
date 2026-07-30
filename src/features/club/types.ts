@@ -268,7 +268,7 @@ export type ClubExtendedTopsView = {
 
 // --- Cabinet sections (blocks 6/7/8) ---
 
-export type ClubRaceStatus = "declared" | "approved" | "synced_to_tp" | "rejected";
+export type ClubRaceStatus = "declared" | "approved" | "synced_to_tp" | "rejected" | "removing";
 export type ClubRace = {
   id: string;
   name: string;

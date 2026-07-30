@@ -82,14 +82,20 @@ export default async function ClubQueuePage({ searchParams }: { searchParams: Pr
                       </form>
                     </div>
                   ) : i.kind === "race" ? (
-                    i.deletable ? (
+                    i.rollbackRequested ? (
+                      <span className="admin-summary-label">снимаю из TP (раннер)</span>
+                    ) : i.deletable ? (
                       <form action={deleteClubRaceAction}>
                         <input type="hidden" name="redirectTo" value={selfPath} />
                         <input type="hidden" name="id" value={i.id} />
                         <FormActionButton className="admin-button admin-button-danger admin-button-small" confirmMessage="Удалить старт?" pendingText="…">Удалить</FormActionButton>
                       </form>
                     ) : (
-                      <span className="admin-summary-label">в TP · откат: club-execute-one.ts {i.id} --rollback</span>
+                      <form action={deleteClubRaceAction}>
+                        <input type="hidden" name="redirectTo" value={selfPath} />
+                        <input type="hidden" name="id" value={i.id} />
+                        <FormActionButton className="admin-button admin-button-danger admin-button-small" confirmMessage="Снять старт из TP? Раннер удалит событие в TrainingPeaks." pendingText="…">Снять из TP</FormActionButton>
+                      </form>
                     )
                   ) : <span className="admin-badge admin-badge-muted">-</span>}
                 </td>

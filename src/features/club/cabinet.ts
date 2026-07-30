@@ -62,7 +62,9 @@ export async function createClubRace(
 }
 
 /** Map a calendar race entry's status (+ TP anchor) to the ClubRace status the tab shows. */
-function mapCalRaceStatus(status: string | null, hasTpAnchor: boolean): ClubRace["status"] {
+function mapCalRaceStatus(status: string | null, hasTpAnchor: boolean, rollbackRequested: boolean): ClubRace["status"] {
+  // A pending rollback wins over everything: the start is being taken out of TP, then removed.
+  if (rollbackRequested) return "removing";
   if (status === "applied" || hasTpAnchor) return "synced_to_tp";
   if (status === "rejected") return "rejected";
   if (status === "approved") return "approved";
@@ -76,7 +78,7 @@ export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
   // and no longer read here.
   const { data } = await supabase
     .from("club_calendar_entries")
-    .select("id, entry_date, race_name, race_city, race_distance_label, distance_meters, race_target_seconds, status, applied_tp_workout_id")
+    .select("id, entry_date, race_name, race_city, race_distance_label, distance_meters, race_target_seconds, status, applied_tp_workout_id, tp_rollback_requested_at")
     .eq("student_id", studentId)
     .eq("kind", "race");
   const kmLabel = (label: unknown, meters: unknown): string | null =>
@@ -91,10 +93,55 @@ export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
       distanceLabel: kmLabel(r.race_distance_label, r.distance_meters),
       city: (r.race_city as string | null) ?? null,
       targetResultSeconds: intOrNull(r.race_target_seconds),
-      status: mapCalRaceStatus(r.status as string | null, r.applied_tp_workout_id != null),
+      status: mapCalRaceStatus(r.status as string | null, r.applied_tp_workout_id != null, r.tp_rollback_requested_at != null),
     }));
   out.sort((a, b) => (a.raceDate < b.raceDate ? 1 : a.raceDate > b.raceDate ? -1 : 0));
   return out.slice(0, 50);
+}
+
+/**
+ * Cancel a student's own declared start. Two paths, mirroring the coach admin (deleteClubRace):
+ *   - NOT yet in TP (applied_tp_workout_id IS NULL) → delete the declaration directly. No TP entity
+ *     exists, so nothing to roll back.
+ *   - ALREADY in TP → the web app cannot mutate TrainingPeaks (no creds here), so record a rollback
+ *     INTENT (tp_rollback_requested_at). The Mac runner deletes the TP entity and removes the row.
+ * Idempotent: cancelling a start whose rollback is already requested is a no-op. Scoped to the
+ * student's OWN race rows (student_id + kind='race') so one student can never touch another's.
+ */
+export async function cancelClubRace(
+  studentId: string,
+  entryId: string
+): Promise<{ ok: boolean; error?: string; pending?: boolean }> {
+  if (!studentId || !entryId) return { ok: false, error: "Не указан старт." };
+  const supabase = createSupabaseServerClient();
+  const { data } = await supabase
+    .from("club_calendar_entries")
+    .select("applied_tp_workout_id, tp_rollback_requested_at")
+    .eq("id", entryId)
+    .eq("student_id", studentId)
+    .eq("kind", "race")
+    .maybeSingle();
+  if (!data) return { ok: false, error: "Старт не найден." };
+  const row = data as { applied_tp_workout_id: number | null; tp_rollback_requested_at: string | null };
+  if (row.applied_tp_workout_id != null) {
+    if (row.tp_rollback_requested_at) return { ok: true, pending: true };
+    const { error } = await supabase
+      .from("club_calendar_entries")
+      .update({ tp_rollback_requested_at: new Date().toISOString(), tp_rollback_requested_by: "student" })
+      .eq("id", entryId)
+      .eq("student_id", studentId)
+      .eq("kind", "race");
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, pending: true };
+  }
+  const { error } = await supabase
+    .from("club_calendar_entries")
+    .delete()
+    .eq("id", entryId)
+    .eq("student_id", studentId)
+    .eq("kind", "race");
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

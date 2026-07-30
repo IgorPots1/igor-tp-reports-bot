@@ -2064,7 +2064,7 @@ function CalendarOverlay({ initData, onClose }: { initData: string; onClose: () 
 // Cabinet sections (races / day-off / wishes / billing / prediction)
 // ---------------------------------------------------------------------------
 const RACE_STATUS_LABEL: Record<string, string> = {
-  declared: "на подтверждении", approved: "подтверждён", synced_to_tp: "в TP", rejected: "отклонён",
+  declared: "на подтверждении", approved: "подтверждён", synced_to_tp: "в TP", rejected: "отклонён", removing: "снимаю из TP",
 };
 const DAYOFF_STATUS_LABEL: Record<string, string> = {
   pending: "на подтверждении", approved: "подтверждён", rejected: "отклонён", applied: "применён",
@@ -2164,6 +2164,13 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
     setForm({});
   }
 
+  async function cancelRace(id: string) {
+    if (typeof window !== "undefined" && !window.confirm("Отменить старт? Он будет снят из TrainingPeaks.")) return;
+    setSaving(true);
+    await load({ action: "cancel", raceId: id });
+    setSaving(false);
+  }
+
   return (
     <div style={S.overlay} onClick={onClose}>
       <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
@@ -2218,6 +2225,9 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
                   <div style={S.cardMeta}>{r.dateLabel}{r.distanceLabel ? ` · ${r.distanceLabel}` : ""}{r.city ? ` · ${r.city}` : ""}</div>
                 </div>
                 <span style={S.statusChip}>{RACE_STATUS_LABEL[r.status] ?? r.status}</span>
+                {r.status !== "removing" && r.status !== "rejected" ? (
+                  <button type="button" style={S.rowCancelBtn} disabled={saving} onClick={() => cancelRace(r.id)} aria-label="Отменить старт">Отменить</button>
+                ) : null}
               </div>
             ))}
             {races.length === 0 ? <Empty text="Пока нет заявленных стартов" /> : null}
@@ -2502,6 +2512,7 @@ const S = {
   hint: { color: C.faint, fontSize: 11.5, marginTop: 8, lineHeight: 1.4 } as React.CSSProperties,
   listRow: { display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderTop: `1px solid ${C.line}` } as React.CSSProperties,
   statusChip: { fontSize: 11.5, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" } as React.CSSProperties,
+  rowCancelBtn: { flex: "0 0 auto", fontSize: 11.5, color: C.sub, background: "transparent", border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap", cursor: "pointer" } as React.CSSProperties,
   tabBar: { position: "fixed", left: 0, right: 0, bottom: 0, display: "flex", background: C.card, borderTop: `1px solid ${C.line}`, paddingBottom: "env(safe-area-inset-bottom)" } as React.CSSProperties,
   tab: (active: boolean): React.CSSProperties => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 0 6px", background: "transparent", border: "none", color: active ? C.accentText : C.faint, cursor: "pointer", fontFamily: BODY }),
 };

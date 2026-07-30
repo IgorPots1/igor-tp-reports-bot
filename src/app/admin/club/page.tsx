@@ -37,6 +37,21 @@ export default async function ClubHubPage() {
           ) : null}
         </div>
       ) : null}
+      {tpSend.awaitingRemoval > 0 ? (
+        <div className={tpSend.removalFailed > 0 ? "admin-alert admin-alert-warning" : "admin-alert"}>
+          <strong>Ожидают снятия из TrainingPeaks: {tpSend.awaitingRemoval}</strong>
+          {tpSend.removalFailed > 0 ? ` (с ошибкой: ${tpSend.removalFailed})` : ""}
+          {tpSend.removalFailedList.length > 0 ? (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {tpSend.removalFailedList.map((f, i) => (
+                <li key={i}>
+                  {f.studentName} · {f.date ?? "?"} · {f.kind}: {f.error} (попыток: {f.attempts})
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       <div className="admin-actions">
         <Link className="admin-button admin-button-primary" href="/admin/club/requests">Заявки на доступ</Link>
         <Link className="admin-button admin-button-primary" href="/admin/club/forms">Рассылка форм</Link>

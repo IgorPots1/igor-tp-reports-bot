@@ -188,10 +188,12 @@ export type QueueItem = {
   status: string;
   createdAt: string;
   actionable: boolean;
-  /** race only: already pushed to TP (applied_tp_workout_id set). Delete needs a TP rollback first. */
+  /** race only: already pushed to TP (applied_tp_workout_id set). Delete queues a TP rollback. */
   syncedToTp?: boolean;
   /** race only: coach can delete this declaration (DB) when it hasn't gone to TP. */
   deletable?: boolean;
+  /** race only: a TP rollback is already requested (runner will remove it) — show "снимаю из TP". */
+  rollbackRequested?: boolean;
 };
 
 export type ClubTpSendStatus = {
@@ -200,6 +202,11 @@ export type ClubTpSendStatus = {
   /** of those, how many recorded a send error (still retried). */
   failed: number;
   failedList: Array<{ studentName: string; date: string | null; kind: string; error: string; attempts: number }>;
+  /** applied entries with a pending rollback request — the runner will remove them from TP. */
+  awaitingRemoval: number;
+  /** of those, how many had the TP delete FAIL (reverse discrepancy: app says gone, TP still has it). */
+  removalFailed: number;
+  removalFailedList: Array<{ studentName: string; date: string | null; kind: string; error: string; attempts: number }>;
 };
 
 /**
@@ -208,6 +215,26 @@ export type ClubTpSendStatus = {
  * tracking columns not existing yet (migration 20260819 not applied) → returns zeros.
  */
 export async function getClubTpSendStatus(): Promise<ClubTpSendStatus> {
+  const empty: ClubTpSendStatus = { queued: 0, failed: 0, failedList: [], awaitingRemoval: 0, removalFailed: 0, removalFailedList: [] };
+  type StatusRow = {
+    student_id: string;
+    entry_date: string | null;
+    kind: string;
+    tp_send_error: string | null;
+    tp_send_attempts: number | null;
+    trainingpeaks_students: { student_name: string | null } | Array<{ student_name: string | null }> | null;
+  };
+  const nameOf = (s: StatusRow): string => {
+    const st = Array.isArray(s.trainingpeaks_students) ? s.trainingpeaks_students[0] : s.trainingpeaks_students;
+    return st?.student_name ?? s.student_id;
+  };
+  const asItem = (r: StatusRow) => ({
+    studentName: nameOf(r),
+    date: r.entry_date,
+    kind: r.kind,
+    error: r.tp_send_error ?? "",
+    attempts: r.tp_send_attempts ?? 0,
+  });
   try {
     const supabase = createSupabaseServerClient();
     const { data, error } = await supabase
@@ -216,34 +243,36 @@ export async function getClubTpSendStatus(): Promise<ClubTpSendStatus> {
       .eq("status", "approved")
       .is("applied_tp_workout_id", null)
       .order("entry_date", { ascending: true });
-    if (error) return { queued: 0, failed: 0, failedList: [] };
-    const rows =
-      (data as Array<{
-        student_id: string;
-        entry_date: string | null;
-        kind: string;
-        tp_send_error: string | null;
-        tp_send_attempts: number | null;
-        trainingpeaks_students: { student_name: string | null } | Array<{ student_name: string | null }> | null;
-      }> | null) ?? [];
-    const nameOf = (s: (typeof rows)[number]): string => {
-      const st = Array.isArray(s.trainingpeaks_students) ? s.trainingpeaks_students[0] : s.trainingpeaks_students;
-      return st?.student_name ?? s.student_id;
-    };
+    if (error) return empty;
+    const rows = (data as StatusRow[] | null) ?? [];
     const failedRows = rows.filter((r) => r.tp_send_error);
+
+    // Reverse direction: applied starts with a pending rollback. The runner removes them from TP;
+    // if the TP delete failed (tp_send_error set), that is the discrepancy the coach must see.
+    let awaitingRemoval = 0;
+    let removalFailedRows: StatusRow[] = [];
+    const { data: rbData, error: rbError } = await supabase
+      .from("club_calendar_entries")
+      .select("student_id, entry_date, kind, tp_send_error, tp_send_attempts, trainingpeaks_students(student_name)")
+      .not("tp_rollback_requested_at", "is", null)
+      .not("applied_tp_workout_id", "is", null)
+      .order("entry_date", { ascending: true });
+    if (!rbError) {
+      const rbRows = (rbData as StatusRow[] | null) ?? [];
+      awaitingRemoval = rbRows.length;
+      removalFailedRows = rbRows.filter((r) => r.tp_send_error);
+    }
+
     return {
       queued: rows.length,
       failed: failedRows.length,
-      failedList: failedRows.slice(0, 50).map((r) => ({
-        studentName: nameOf(r),
-        date: r.entry_date,
-        kind: r.kind,
-        error: r.tp_send_error ?? "",
-        attempts: r.tp_send_attempts ?? 0,
-      })),
+      failedList: failedRows.slice(0, 50).map(asItem),
+      awaitingRemoval,
+      removalFailed: removalFailedRows.length,
+      removalFailedList: removalFailedRows.slice(0, 50).map(asItem),
     };
   } catch {
-    return { queued: 0, failed: 0, failedList: [] };
+    return empty;
   }
 }
 
@@ -258,7 +287,7 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
     // a coach delete needs the attended TP rollback first (club-execute-one.ts --rollback).
     const { data } = await supabase
       .from("club_calendar_entries")
-      .select("id, student_id, race_name, entry_date, race_distance_label, distance_meters, status, applied_tp_workout_id, created_at")
+      .select("id, student_id, race_name, entry_date, race_distance_label, distance_meters, status, applied_tp_workout_id, tp_rollback_requested_at, created_at")
       .eq("kind", "race")
       .order("created_at", { ascending: false })
       .limit(300);
@@ -266,9 +295,10 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
       const meters = r.distance_meters;
       const dist = (r.race_distance_label as string | null) ?? (typeof meters === "number" && meters > 0 ? `${(meters / 1000).toFixed(1)} км` : null);
       const synced = r.applied_tp_workout_id != null;
+      const rollbackRequested = r.tp_rollback_requested_at != null;
       items.push({ kind: "race", id: r.id as string, studentId: r.student_id as string, title: (r.race_name as string) ?? "Старт",
-        subtitle: `${r.entry_date}${dist ? ` · ${dist}` : ""}${synced ? " · в TP" : ""}`, status: (r.status as string) ?? "approved",
-        createdAt: r.created_at as string, actionable: false, syncedToTp: synced, deletable: !synced });
+        subtitle: `${r.entry_date}${dist ? ` · ${dist}` : ""}${synced ? " · в TP" : ""}${rollbackRequested ? " · снимаю из TP" : ""}`, status: (r.status as string) ?? "approved",
+        createdAt: r.created_at as string, actionable: false, syncedToTp: synced, deletable: !synced, rollbackRequested });
     }
   }
   if (wantKind("dayoff")) {
@@ -314,22 +344,34 @@ export async function setDayoffStatus(id: string, status: "approved" | "rejected
 }
 
 /**
- * Delete a student's declared race (calendar entry). REFUSES if it already went to TP:
- * the coach must roll it back in TP first (attended: club-execute-one.ts <id> --rollback),
- * so a TP workout is never orphaned. TP mutation stays out of the web app.
+ * Delete a coach-facing declared race (calendar entry). Two paths, same as the student cancel
+ * (cabinet.cancelClubRace):
+ *   - NOT yet in TP (applied_tp_workout_id IS NULL) → delete the declaration directly.
+ *   - ALREADY in TP → the web app cannot mutate TrainingPeaks, so record a rollback INTENT
+ *     (tp_rollback_requested_at); the Mac runner deletes the TP entity and removes the row.
+ * Idempotent: a second delete on a start whose rollback is already requested is a no-op.
+ * Returns pending=true when it queued a TP rollback rather than deleting outright.
  */
-export async function deleteClubRace(entryId: string): Promise<{ ok: boolean; error?: string }> {
+export async function deleteClubRace(entryId: string): Promise<{ ok: boolean; error?: string; pending?: boolean }> {
   if (!entryId) return { ok: false, error: "Нет старта." };
   const supabase = createSupabaseServerClient();
   const { data } = await supabase
     .from("club_calendar_entries")
-    .select("applied_tp_workout_id")
+    .select("applied_tp_workout_id, tp_rollback_requested_at")
     .eq("id", entryId)
     .eq("kind", "race")
     .maybeSingle();
   if (!data) return { ok: false, error: "Старт не найден." };
-  if ((data as { applied_tp_workout_id: number | null }).applied_tp_workout_id != null) {
-    return { ok: false, error: `Старт уже в TP. Сначала откати в TP: club-execute-one.ts ${entryId} --rollback, потом удаляй.` };
+  const row = data as { applied_tp_workout_id: number | null; tp_rollback_requested_at: string | null };
+  if (row.applied_tp_workout_id != null) {
+    if (row.tp_rollback_requested_at) return { ok: true, pending: true };
+    const { error } = await supabase
+      .from("club_calendar_entries")
+      .update({ tp_rollback_requested_at: new Date().toISOString(), tp_rollback_requested_by: "coach" })
+      .eq("id", entryId)
+      .eq("kind", "race");
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, pending: true };
   }
   const { error } = await supabase.from("club_calendar_entries").delete().eq("id", entryId).eq("kind", "race");
   if (error) return { ok: false, error: error.message };

@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
 import { isRacesEnabled } from "@/features/club/constants";
-import { createClubRace, listClubRaces } from "@/features/club/cabinet";
+import { cancelClubRace, createClubRace, listClubRaces } from "@/features/club/cabinet";
 
 export const runtime = "nodejs";
 
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(503, { ok: false, error: "Старты пока не активны." });
   }
 
-  let body: { initData?: unknown; action?: unknown; race?: Record<string, unknown> } = {};
+  let body: { initData?: unknown; action?: unknown; race?: Record<string, unknown>; raceId?: unknown } = {};
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -33,6 +33,16 @@ export async function POST(request: NextRequest): Promise<Response> {
       }
       const races = await listClubRaces(auth.student.id);
       return jsonResponse(200, { ok: true, view: { races } });
+    }
+    if (body.action === "cancel") {
+      // Student cancels their own start. Not-yet-in-TP → deleted now; already-in-TP → a rollback
+      // intent the Mac runner drains (deletes the TP event, then removes the row). No TP write here.
+      const res = await cancelClubRace(auth.student.id, typeof body.raceId === "string" ? body.raceId : "");
+      if (!res.ok) {
+        return jsonResponse(400, { ok: false, error: res.error });
+      }
+      const races = await listClubRaces(auth.student.id);
+      return jsonResponse(200, { ok: true, view: { races }, pending: res.pending ?? false });
     }
     const races = await listClubRaces(auth.student.id);
     return jsonResponse(200, { ok: true, view: { races } });
