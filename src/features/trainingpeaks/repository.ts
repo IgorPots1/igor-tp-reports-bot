@@ -7035,6 +7035,46 @@ export async function findTrainingPeaksMoveActionBySourceMessageAndDates(input: 
   return mapTrainingPeaksActionRow(data as TrainingPeaksActionRow);
 }
 
+/**
+ * Cross-channel move dedupe: is there already a LIVE move action for the same student and the same
+ * (sourceDate, target) pair, created recently — regardless of which chat/message it came from? This
+ * is what stops one physical request written in the DM AND echoed in the group from spawning two
+ * moves. Unlike findTrainingPeaksMoveActionBySourceMessageAndDates it deliberately ignores
+ * source_chat_id / source_message_id (different message, same intent). Terminal actions
+ * (rejected/cancelled, or already completed/failed) are excluded so a genuine LATER re-request of the
+ * same move still goes through.
+ */
+export async function findActiveTrainingPeaksMoveActionByStudentAndDates(input: {
+  studentId: string;
+  sourceDate: string;
+  targetValue: string;
+  sinceMinutes: number;
+}): Promise<TrainingPeaksAction | null> {
+  const sinceIso = new Date(Date.now() - Math.max(1, input.sinceMinutes) * 60_000).toISOString();
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
+    .from("trainingpeaks_actions")
+    .select("*")
+    .eq("action_type", "move_workout")
+    .eq("student_id", input.studentId)
+    .eq("parsed_payload->>sourceDate", input.sourceDate)
+    .eq("parsed_payload->target->>value", input.targetValue)
+    .gte("created_at", sinceIso)
+    .not("status", "in", "(rejected,cancelled)")
+    .not("execution_status", "in", "(completed,failed)")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle());
+
+  if (error) {
+    throw new Error(
+      `Failed to find active TrainingPeaks move action by student/date pair ${input.studentId}/${input.sourceDate}->${input.targetValue}: ${error.message}`
+    );
+  }
+
+  return data ? mapTrainingPeaksActionRow(data as TrainingPeaksActionRow) : null;
+}
+
 export async function hasTrainingPeaksTelegramContextObservationForChatTextHash(
   chatId: string,
   textSha256: string

@@ -86,6 +86,7 @@ import {
   getLatestTrainingPeaksCronRunLog,
   getTrainingPeaksCoachCaseByTelegramMessageAndKind,
   getTrainingPeaksTelegramContextObservationByChatMessage,
+  findActiveTrainingPeaksMoveActionByStudentAndDates,
   findTrainingPeaksMoveActionBySourceMessageAndDates,
   claimOneApprovedTrainingPeaksActionForDryRun as claimOneApprovedTrainingPeaksActionForDryRunInRepository,
   completeTrainingPeaksActionDryRun as completeTrainingPeaksActionDryRunInRepository,
@@ -3076,6 +3077,21 @@ export async function createTrainingPeaksActionsFromGroupMoveCase(input: {
       if (duplicate) {
         if (!actionIds.includes(duplicate.id)) {
           actionIds.push(duplicate.id);
+        }
+        continue;
+      }
+
+      // Cross-channel dedupe: the same move may already be live from the DM (student wrote it there
+      // and echoed it here). Match on student + resolved sourceDate + target value, any message.
+      const crossChannelDuplicate = await findActiveTrainingPeaksMoveActionByStudentAndDates({
+        studentId: groupCase.studentId,
+        sourceDate: proposal.sourceDate,
+        targetValue: typeof proposal.target?.value === "string" ? proposal.target.value : proposal.targetDate,
+        sinceMinutes: CROSS_CHANNEL_MOVE_DEDUPE_MINUTES,
+      });
+      if (crossChannelDuplicate) {
+        if (!actionIds.includes(crossChannelDuplicate.id)) {
+          actionIds.push(crossChannelDuplicate.id);
         }
         continue;
       }
@@ -10377,6 +10393,9 @@ export async function consumeTrainingPeaksStudentTelegramLinkCode(
 const MULTI_MESSAGE_MOVE_INTENT_CONFIDENCE_CAP = 0.85;
 const MULTI_MESSAGE_MOVE_INTENT_DEDUPE_MINUTES = 10;
 const MULTI_MESSAGE_MOVE_INTENT_CONTEXT_MINUTES = 3;
+// Cross-channel dedupe: the SAME move written in the DM and echoed in the group must not spawn two
+// actions. A live move for the same (student, sourceDate, target) within this window is one request.
+const CROSS_CHANNEL_MOVE_DEDUPE_MINUTES = 3 * 24 * 60;
 const MULTI_MESSAGE_MOVE_INTENT_CONTEXT_LIMIT = 5;
 const MULTI_MESSAGE_MOVE_INTENT_CONTEXT_PREVIEW_LIMIT = 3;
 
@@ -10742,6 +10761,38 @@ export async function createTrainingPeaksMoveWorkoutActionFromTelegram(
           : "Похоже, в сообщении больше одного переноса. Разобран только один. Проверь вручную.",
       ],
     };
+  }
+
+  // Cross-channel dedupe: the same move may already be live from another chat (student wrote it in
+  // the DM and echoed it in the group, or vice versa). One physical request = one action. Matches on
+  // resolved sourceDate + target value, ignoring which message it came from.
+  const dmSourceDate = typeof enrichedParsed.sourceDate === "string" ? enrichedParsed.sourceDate : null;
+  const dmTargetValue = typeof enrichedParsed.target?.value === "string" ? enrichedParsed.target.value : null;
+  if (dmSourceDate && dmTargetValue) {
+    try {
+      const crossChannelDuplicate = await findActiveTrainingPeaksMoveActionByStudentAndDates({
+        studentId: student.id,
+        sourceDate: dmSourceDate,
+        targetValue: dmTargetValue,
+        sinceMinutes: CROSS_CHANNEL_MOVE_DEDUPE_MINUTES,
+      });
+      if (crossChannelDuplicate) {
+        console.info("Skipping TrainingPeaks move action — live cross-channel duplicate exists", {
+          studentId: student.id,
+          chatId: input.chatId,
+          messageId: input.messageId,
+          existingActionId: crossChannelDuplicate.id,
+        });
+        return { ok: false, reason: "parse_rejected", student };
+      }
+    } catch (error) {
+      console.warn("Cross-channel move dedupe check failed; proceeding to create", {
+        studentId: student.id,
+        chatId: input.chatId,
+        messageId: input.messageId,
+        error,
+      });
+    }
   }
 
   const action = await createTrainingPeaksActionInRepository({
