@@ -100,7 +100,11 @@ const FACTOR_GROUNDING: Partial<Record<StatedFactorKind, RegExp>> = {
 export function alignFactorsToTriggerDay(factors: StatedFactor[], triggerObservedAt: string | undefined): StatedFactor[] {
   if (!triggerObservedAt) return factors;
   const triggerDay = triggerObservedAt.slice(0, 10);
-  return factors.filter((f) => PERSISTENT_FACTORS.has(f.factor) || f.date === triggerDay);
+  // Keep a factor if it was named on the trigger day, OR it is a persistent life-state RECURRING across
+  // days (real accumulation: «несколько дней подряд устал»). A persistent factor named ONCE on a −1 day is
+  // NOT accumulation — it's yesterday's one-off bleeding onto today's different run (Кукушкина: «третья
+  // смена» from yesterday's long run stuck to today's easy run). Those drop.
+  return factors.filter((f) => f.date === triggerDay || (PERSISTENT_FACTORS.has(f.factor) && f.recurring));
 }
 
 /** Block #3 — does the cited quote actually contain domain evidence for this factor? Guards the Haiku
