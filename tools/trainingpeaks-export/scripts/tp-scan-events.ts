@@ -39,6 +39,11 @@ type RaceRow = {
   event_title: string | null;
   sport_type: string | null;
   distance: string | null;
+  /** true when the event distance cannot be trusted (missing/zero, or ultra placeholder
+   *  >100km as seen on backyard/last-one-standing). A MARK for review, not a drop — the
+   *  event still counts as a race; only its distance value is flagged unreliable. */
+  distance_suspect: boolean;
+  distance_suspect_reason: string | null;
   goal: string | null;
   description: string | null;
   confidence: number;
@@ -318,23 +323,24 @@ function pickFirstNonEmpty(record: Record<string, unknown>, keys: readonly strin
   return null;
 }
 
-function formatDistanceKm(rawDistance: unknown): { distance: string | null; raw: string | null } {
+function formatDistanceKm(rawDistance: unknown): { distance: string | null; raw: string | null; km: number | null } {
   if (rawDistance === null || rawDistance === undefined) {
-    return { distance: null, raw: null };
+    return { distance: null, raw: null, km: null };
   }
   const raw = typeof rawDistance === "string" ? rawDistance.trim() : String(rawDistance);
   if (!raw) {
-    return { distance: null, raw: null };
+    return { distance: null, raw: null, km: null };
   }
   const normalized = raw.replace(",", ".");
   const numeric = Number(normalized);
   if (!Number.isFinite(numeric) || numeric <= 0) {
-    return { distance: raw, raw };
+    // km is 0 for an explicit "0" (a real, suspect zero); null when non-numeric.
+    return { distance: raw, raw, km: Number.isFinite(numeric) ? numeric / 1000 : null };
   }
   const kilometers = numeric / 1000;
   const roundedOne = Math.round(kilometers * 10) / 10;
   const rendered = Number.isInteger(roundedOne) ? String(roundedOne) : roundedOne.toFixed(1);
-  return { distance: `${rendered} км`, raw };
+  return { distance: `${rendered} км`, raw, km: kilometers };
 }
 
 /** Render one `written` goal entry. TP returns these as objects (e.g. { text, ... }),
@@ -617,6 +623,19 @@ function parseRacesFromPayload(input: {
           ? descriptionValue
           : JSON.stringify(descriptionValue);
     const distanceParsed = formatDistanceKm(distanceValue);
+    // Distance sanity: TP's event distance is unreliable for ultra/backyard (a 50km
+    // backyard stores "100000", a 33km walk stores "0"). Do NOT trust the value — MARK it.
+    // The date is what drives race classification; distance is advisory, so we keep the
+    // row but flag the number so no downstream reader (threshold tiers) trusts it blindly.
+    let distanceSuspect = false;
+    let distanceSuspectReason: string | null = null;
+    if (distanceParsed.raw === null || distanceParsed.km === 0) {
+      distanceSuspect = true;
+      distanceSuspectReason = "zero_or_missing";
+    } else if (distanceParsed.km !== null && distanceParsed.km > 100) {
+      distanceSuspect = true;
+      distanceSuspectReason = "ultra_verify_gt_100km";
+    }
     const goal = sanitizeGoalValue(goalValue);
     const keyCount = ["eventdate", "eventtitle", "eventname", "name", "sporttype", "eventtype", "distance", "goal", "goals", "description"].filter((k) =>
       Object.keys(eventObj).some((actual) => actual.toLowerCase() === k),
@@ -626,6 +645,9 @@ function parseRacesFromPayload(input: {
     if (distanceParsed.raw !== null) {
       notesParts.push(`distance_raw=${distanceParsed.raw}`);
     }
+    if (distanceSuspect) {
+      notesParts.push(`distance_suspect=${distanceSuspectReason}`);
+    }
 
     rows.push({
       student_name: input.student.name ?? input.student.student_id,
@@ -634,6 +656,8 @@ function parseRacesFromPayload(input: {
       event_title: title,
       sport_type: sportType,
       distance: distanceParsed.distance,
+      distance_suspect: distanceSuspect,
+      distance_suspect_reason: distanceSuspectReason,
       goal,
       description,
       confidence: Number(confidence.toFixed(2)),
@@ -666,6 +690,8 @@ function toCsv(rows: RaceRow[]): string {
     "event_title",
     "sport_type",
     "distance",
+    "distance_suspect",
+    "distance_suspect_reason",
     "goal",
     "description",
     "confidence",
@@ -709,8 +735,9 @@ function toMarkdownReport(input: {
     lines.push("- No event rows found in selected range.");
   } else {
     for (const row of input.rows.slice(0, 10)) {
+      const distSuspect = row.distance_suspect ? ` [!] distance_suspect=${row.distance_suspect_reason}` : "";
       lines.push(
-        `- ${row.student_name} | ${row.event_date ?? "n/a"} | ${row.event_title ?? "untitled"} | ${row.distance ?? "n/a"} | confidence=${row.confidence}`,
+        `- ${row.student_name} | ${row.event_date ?? "n/a"} | ${row.event_title ?? "untitled"} | ${row.distance ?? "n/a"}${distSuspect} | confidence=${row.confidence}`,
       );
     }
   }
@@ -1129,8 +1156,13 @@ async function main(): Promise<void> {
   );
   const artifactsWriteMs = Date.now() - artifactsWriteStartedAtMs;
   const totalScanMs = Date.now() - totalScanStartedAtMs;
-  const completedAthletes = logs.filter((entry) => entry.selected && !entry.error).length;
-  const failedAthletes = logs.filter((entry) => entry.selected && Boolean(entry.error)).length;
+  // Count ONLY athletes actually requested. `request_url` is set solely inside the request
+  // loop, which iterates limitedStudents (selected sliced to --limit). The old filter counted
+  // every SELECTED student incl. those sliced off and never fetched, so `scanned` reported the
+  // whole roster (113) when only 15 were hit — a lie that caused a wrong read of the results.
+  const attemptedLogs = logs.filter((entry) => entry.selected && entry.request_url !== null);
+  const completedAthletes = attemptedLogs.filter((entry) => !entry.error).length;
+  const failedAthletes = attemptedLogs.filter((entry) => Boolean(entry.error)).length;
   const p50RequestMs = Math.round(computePercentile(requestDurationsMs, 50));
   const p95RequestMs = Math.round(computePercentile(requestDurationsMs, 95));
   const maxRequestMs =
@@ -1192,7 +1224,7 @@ async function main(): Promise<void> {
   console.log(`[tp-scan-events] scan-log.json=${scanLogPath}`);
   console.log(`[tp-scan-events] events-api-debug.json=${eventsApiDebugPath}`);
   console.log(
-    `[tp-scan-events] scanned=${completedAthletes + failedAthletes} rows=${races.length} total=${totalScanMs}ms auth=${authCaptureMs}ms p50=${p50RequestMs}ms p95=${p95RequestMs}ms concurrency=${args.concurrency}`,
+    `[tp-scan-events] selected=${selectedStudents.length} scanned=${completedAthletes + failedAthletes} rows=${races.length} total=${totalScanMs}ms auth=${authCaptureMs}ms p50=${p50RequestMs}ms p95=${p95RequestMs}ms concurrency=${args.concurrency}`,
   );
 }
 
