@@ -33,3 +33,6 @@ graphify-out/
 reports/
 outputs-analysis/
 ЧЕКПОЙНТ_*
+
+# probeg recon response cache (local, not committed)
+probeg-cache/
