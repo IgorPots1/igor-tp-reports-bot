@@ -211,6 +211,9 @@ export type TelegramInitDataUser = {
   firstName: string | null;
   lastName: string | null;
   username: string | null;
+  /** Telegram-hosted avatar URL from initData (short-lived). Present regardless of whether the user
+   *  started the bot — the club avatar capture downloads it as a fallback to getUserProfilePhotos. */
+  photoUrl: string | null;
 };
 
 export function parseTelegramInitDataUser(initData: string): TelegramInitDataUser | null {
@@ -227,6 +230,7 @@ export function parseTelegramInitDataUser(initData: string): TelegramInitDataUse
       firstName: typeof u.first_name === "string" ? u.first_name : null,
       lastName: typeof u.last_name === "string" ? u.last_name : null,
       username: typeof u.username === "string" ? u.username : null,
+      photoUrl: typeof u.photo_url === "string" ? u.photo_url : null,
     };
   } catch {
     return null;

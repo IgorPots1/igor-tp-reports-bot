@@ -446,6 +446,20 @@ export default function ClubPage() {
     }
   }, [initData]);
 
+  // Second avatar source: hand our OWN Telegram photo_url (carried in initData) to the server once on
+  // open, so members who never started the bot still get an avatar. Fire-and-forget; the server
+  // no-ops when avatars are off / the weekly re-check is fresh / the member opted out.
+  const avatarCaptureRef = useRef(false);
+  useEffect(() => {
+    if (avatarCaptureRef.current || !initData) return;
+    avatarCaptureRef.current = true;
+    void fetch("/api/m/club/avatar-capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData }),
+    }).catch(() => {});
+  }, [initData]);
+
   // Resolve initial theme once: saved choice wins, else the Telegram colorScheme.
   useEffect(() => {
     let initial: Theme = "light";

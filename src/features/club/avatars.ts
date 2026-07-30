@@ -135,6 +135,66 @@ export async function getAvatarImage(studentId: string): Promise<AvatarImageResu
   return { kind: "none" };
 }
 
+/** True only for a Telegram-hosted https photo URL (t.me / *.telesco.pe / *.telegram.org). The
+ *  initData is already HMAC-validated by the caller, so photo_url is trustworthy; this is a
+ *  belt-and-braces SSRF guard so we never fetch an arbitrary host. */
+function isTelegramPhotoUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:") return false;
+    return u.hostname === "t.me" || /(^|\.)(telesco\.pe|telegram\.org|cdn-telegram\.org)$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * SECOND avatar source (naryad §1): the current student's photo_url from initData, captured on
+ * mini-app open. Unlike getUserProfilePhotos (Bot API — only for those who started the bot), initData
+ * carries photo_url regardless, so it fills the gap for the ~half who have no Bot-API photo. Downloads
+ * into the SAME private bucket, honours the SAME opt-out, and re-checks at most weekly. Fires only for
+ * the caller's OWN student id (initData holds only their photo). Best-effort — never throws.
+ */
+export async function captureAvatarFromInitData(studentId: string, photoUrl: string | null): Promise<void> {
+  if (!isClubAvatarsEnabled() || !studentId || !photoUrl || !isTelegramPhotoUrl(photoUrl)) return;
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data } = await supabase
+      .from("trainingpeaks_students")
+      .select("club_avatar_visible, club_avatar_path, club_avatar_checked_at")
+      .eq("id", studentId)
+      .maybeSingle();
+    const row = data as { club_avatar_visible: boolean | null; club_avatar_path: string | null; club_avatar_checked_at: string | null } | null;
+    if (!row || row.club_avatar_visible === false) return;
+    const checkedAt = row.club_avatar_checked_at ? Date.parse(row.club_avatar_checked_at) : NaN;
+    const fresh = Number.isFinite(checkedAt) && Date.now() - checkedAt < REFRESH_MS;
+    // Have a cached image AND it is fresh → nothing to do (the weekly re-check keeps it current).
+    // Otherwise (no image yet — the Bot-API gap — or stale) capture from initData.
+    if (row.club_avatar_path && fresh) return;
+    const resp = await fetchWithTimeout(photoUrl, 8000);
+    if (!resp.ok) return;
+    const bytes = await resp.arrayBuffer();
+    if (bytes.byteLength === 0) return;
+    await supabase.storage.from(CLUB_AVATARS_BUCKET).upload(`${studentId}.jpg`, bytes, { upsert: true, contentType: IMAGE_CONTENT_TYPE });
+    await supabase
+      .from("trainingpeaks_students")
+      .update({ club_avatar_path: `${studentId}.jpg`, club_avatar_checked_at: new Date().toISOString() })
+      .eq("id", studentId);
+  } catch {
+    /* transient (network / storage) — try again on the next open */
+  }
+}
+
 /** Opt-out cleanup: delete the cached avatar image and clear the pointer (mirrors purgeStudentRouteImages). */
 export async function purgeStudentAvatar(studentId: string): Promise<void> {
   const supabase = createSupabaseServerClient();
