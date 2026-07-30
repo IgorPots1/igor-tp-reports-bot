@@ -53,6 +53,9 @@ export type PlannerStudentMessage = {
   date: string; // 'YYYY-MM-DD' (observed_at day)
   at?: string; // full ISO observed_at — lets windowStudentWords anchor to the trigger TIME, not just day
   labels: string[];
+  /** Source channel of the message (privacy fix а): a group-bound draft must be built ONLY from
+   *  group_topic messages — what a student wrote in business_dm (личка) never enters a group draft. */
+  channel?: "business_dm" | "group_topic" | null;
 };
 
 export type PlannerHealthMetric = {
@@ -119,6 +122,14 @@ export type ContextPacket = {
    *  onward — instead of a date window, so yesterday's report about a DIFFERENT run can't bleed in.
    *  Optional: callers that don't know the trigger (tests, targeted rebuilds) fall back to the window. */
   triggerObservedAt?: string;
+  /** Privacy fix а/б: this card will be delivered to the GROUP (the trigger report came via the group
+   *  topic, or the student can't be DM'd). A group-bound packet is built only from group_topic messages
+   *  with sensitive/medical topics stripped. Optional: unset → treated as private (DM), full context. */
+  groupBound?: boolean;
+  /** Privacy fix в: ISO of the coach's most recent outgoing touch (contact_status.last_coach_touch_at).
+   *  A persistent factor (life_stress/undersleep) the student raised BEFORE this touch is treated as
+   *  already-answered and not re-raised. Optional: unset → no suppression. */
+  coachTouchAt?: string | null;
   healthMetrics: PlannerHealthMetric[];
   healthProfile: PlannerHealthProfile | null;
   /** Factors the student named around this workout, extracted from studentMessages at packet-build

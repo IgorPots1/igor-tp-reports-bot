@@ -25,6 +25,7 @@ function basePacket(overrides: Partial<FeedbackContextPacket> = {}): FeedbackCon
     comparisonBaseline: null,
     studentWords: [],
     observations: [],
+    groupBound: false,
     ...overrides,
   };
 }

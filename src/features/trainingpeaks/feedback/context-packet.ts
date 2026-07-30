@@ -11,7 +11,7 @@
 import { computeSplitHalf } from "./split-half.ts";
 import { planObservations } from "./observation-planner.ts";
 import { SECOND_HALF_HR_RISE_MAX_BPM } from "./positive-dictionary.ts";
-import { alignFactorsToTriggerDay } from "./stated-factors.ts";
+import { alignFactorsToTriggerDay, suppressAnsweredPersistentFactors } from "./stated-factors.ts";
 import { FEWSHOTS, GLOSS, ordinalWord, registerWord, sexRuleText } from "./feedback-corpus.ts";
 import type { ContextPacket, Observation, PlannerDerivedMetrics, PlannerLap, PlannerStudentMessage, SessionType } from "./types.ts";
 
@@ -40,6 +40,9 @@ export type FeedbackContextPacket = {
   studentWords: string[];
   // Transparency for the coach panel (next part), never shown to the student.
   observations: Array<{ type: string; adviceKey: string; focused: boolean; reason: string }>;
+  // Privacy fix а/б: this draft is bound for the GROUP. Carried onto the packet so the factcheck can
+  // block any personal/medical lexicon that survived the context filter (insurance gate).
+  groupBound: boolean;
 };
 
 export type BuildFeedbackContextPacketResult =
@@ -446,6 +449,7 @@ function buildSensorGlitchPacket(input: ContextPacket, reason: string): Feedback
     observations: [
       { type: "question", adviceKey: "sensor_glitch_ask", focused: true, reason: `данные датчика недостоверны (${reason}), черновик по словам/ощущениям, без цифр` },
     ],
+    groupBound: input.groupBound ?? false,
   };
 }
 
@@ -454,6 +458,10 @@ export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackC
   // the trigger is only known when the sweep matches the report to the run — extraction runs earlier.
   if (input.triggerObservedAt && Array.isArray(input.statedFactors)) {
     input.statedFactors = alignFactorsToTriggerDay(input.statedFactors, input.triggerObservedAt);
+    // Privacy fix в: a persistent life-topic (life_stress/undersleep) the student raised BEFORE the coach's
+    // last outgoing touch is already-answered — don't re-raise it (Виктория: недосып поднят заново после
+    // того, как вопрос уже закрыли).
+    input.statedFactors = suppressAnsweredPersistentFactors(input.statedFactors, input.coachTouchAt ?? null, input.triggerObservedAt);
   }
   const blockReason = resolveBlock(input.current);
   if (blockReason !== null) {
@@ -485,6 +493,7 @@ export function buildFeedbackContextPacket(input: ContextPacket): BuildFeedbackC
     comparisonBaseline: comparison.baseline,
     studentWords,
     observations: observations.map((o) => ({ type: o.type, adviceKey: o.adviceKey, focused: o.focused, reason: o.reason })),
+    groupBound: input.groupBound ?? false,
   };
   return { blocked: false, packet };
 }

@@ -107,6 +107,26 @@ export function alignFactorsToTriggerDay(factors: StatedFactor[], triggerObserve
   return factors.filter((f) => f.date === triggerDay || (PERSISTENT_FACTORS.has(f.factor) && f.recurring));
 }
 
+// Privacy fix в: a persistent life-topic (life_stress/undersleep) raised on an EARLIER day that the coach
+// has since replied to is already-answered — re-raising it reads as «тренер не помнит, что мы обсудили»
+// (Виктория: недосып). Drop such a factor when the coach's last outgoing touch falls between the day it
+// was raised and the current report. A topic raised TODAY (trigger day) is a fresh mention → always kept;
+// tight-window factors (about THIS run) are never touched here.
+export function suppressAnsweredPersistentFactors(factors: StatedFactor[], coachTouchAt: string | null, triggerObservedAt: string): StatedFactor[] {
+  if (!coachTouchAt) return factors;
+  const touchMs = Date.parse(coachTouchAt);
+  const triggerMs = Date.parse(triggerObservedAt);
+  const triggerDay = triggerObservedAt.slice(0, 10);
+  if (!Number.isFinite(touchMs) || !Number.isFinite(triggerMs)) return factors;
+  return factors.filter((f) => {
+    if (!PERSISTENT_FACTORS.has(f.factor)) return true;
+    if (f.date >= triggerDay) return true; // raised today → fresh mention, keep
+    const raisedStartMs = Date.parse(`${f.date}T00:00:00Z`);
+    const answered = Number.isFinite(raisedStartMs) && touchMs > raisedStartMs && touchMs < triggerMs;
+    return !answered;
+  });
+}
+
 /** Block #3 — does the cited quote actually contain domain evidence for this factor? Guards the Haiku
  *  path (where the model picks a narrow snippet and can mislabel it) against cross-domain misattribution.
  *  Fail-OPEN: unknown factor or empty quote → grounded (we only drop when we CAN judge and the evidence

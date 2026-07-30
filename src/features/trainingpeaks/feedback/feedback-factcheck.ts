@@ -7,6 +7,7 @@
 // other number in the draft must trace to that set.
 
 import type { FeedbackContextPacket } from "./context-packet.ts";
+import { isSensitiveTopic } from "./sensitive-topics.ts";
 
 export type FeedbackFactCheckResult = { ok: true } | { ok: false; reason: string };
 
@@ -79,6 +80,13 @@ export function validateFeedbackDraft(input: { draft: string; packet: FeedbackCo
   // C7: untrusted HR → the draft must not discuss pulse at all.
   if (!packet.hrTrusted && PULSE_WORDS.some((w) => low.includes(w))) {
     return { ok: false, reason: "hr_trusted=false, но черновик про пульс (недостоверный датчик)" };
+  }
+
+  // Privacy (б) insurance gate: a GROUP-bound draft must not carry any personal/medical topic (operation,
+  // illness, врач, diagnosis, injury, burnout) — the context filter already strips such input, this is the
+  // last line before a leak reaches a 70-person topic (Трофимова: «операция» в групповой черновик).
+  if (packet.groupBound && isSensitiveTopic(draft)) {
+    return { ok: false, reason: "групповой черновик с личной/медицинской темой (операция/болезнь/врач/травма) — не для группы" };
   }
 
   return { ok: true };

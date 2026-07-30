@@ -14,6 +14,7 @@ import { detectWeakConfirmation, normalizeObserverText } from "@/features/traini
 import { extractStatedFactors } from "@/features/trainingpeaks/feedback/factor-extraction-ai";
 import { classifyReport, isReportCandidate, resolveArbiterDecision, type ReportVerdict } from "@/features/trainingpeaks/feedback/report-arbiter-ai";
 import { deviceGlitchScope } from "@/features/trainingpeaks/feedback/stated-factors";
+import { isSensitiveTopic } from "@/features/trainingpeaks/feedback/sensitive-topics";
 import { isDataFragment } from "@/features/trainingpeaks/feedback/session-type";
 import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState, flagDoneCardLateReport, reviveDismissedFeedbackJob } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
@@ -124,7 +125,7 @@ async function fetchRaceKeys(supabase: SupabaseLike, studentIds: string[], fromY
 export async function assemblePlannerInputsForWorkouts(
   supabase: SupabaseLike,
   targetDerivedRows: DerivedRow[],
-  opts?: { historyWindowDays?: number | null; healthWindowDays?: number | null }
+  opts?: { historyWindowDays?: number | null; healthWindowDays?: number | null; groupBoundByCacheId?: Map<string, boolean> }
 ): Promise<Map<string, ContextPacket>> {
   const studentIds = [...new Set(targetDerivedRows.map((r) => r.student_id as string))];
 
@@ -178,7 +179,7 @@ export async function assemblePlannerInputsForWorkouts(
   const obsRows = await fetchIn<Record<string, unknown>>(
     supabase,
     "trainingpeaks_telegram_context_observations",
-    "student_id, text_preview, labels, observed_at, metadata",
+    "student_id, text_preview, labels, observed_at, metadata, source_type",
     "student_id",
     studentIds,
     (q) => q.gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -195,7 +196,8 @@ export async function assemblePlannerInputsForWorkouts(
     const senderRole = ((o.metadata as Record<string, unknown> | null)?.senderRole as string | undefined) ?? null;
     if (senderRole === "third_party_in_linked_topic") continue;
     const list = messagesByStudent.get(o.student_id as string) ?? [];
-    list.push({ text, date: (o.observed_at as string).slice(0, 10), at: o.observed_at as string, labels: Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [] });
+    const channel = o.source_type === "group_topic" || o.source_type === "business_dm" ? (o.source_type as "group_topic" | "business_dm") : null;
+    list.push({ text, date: (o.observed_at as string).slice(0, 10), at: o.observed_at as string, labels: Array.isArray(o.labels) ? (o.labels as unknown[]).map(String) : [], channel });
     messagesByStudent.set(o.student_id as string, list);
   }
 
@@ -220,6 +222,12 @@ export async function assemblePlannerInputsForWorkouts(
   }
   const profiles = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_student_health_metric_profiles", "student_id, has_pulse, has_sleep_hours, has_hrv, has_body_battery", "student_id", studentIds, undefined, "student_id");
   const profileByStudent = new Map(profiles.map((p) => [p.student_id as string, { hasPulse: !!p.has_pulse, hasSleepHours: !!p.has_sleep_hours, hasHrv: !!p.has_hrv, hasBodyBattery: !!p.has_body_battery }]));
+
+  // Privacy fix в: the coach's most recent outgoing touch per student — a persistent factor the student
+  // raised BEFORE this touch is treated as already-answered and not re-raised (Виктория: недосып поднят
+  // заново после того, как вопрос уже закрыли). Best-effort: a missing row → no suppression.
+  const contactRows = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_student_contact_status", "student_id, last_coach_touch_at", "student_id", studentIds, undefined, "student_id");
+  const coachTouchByStudent = new Map((contactRows ?? []).map((c) => [c.student_id as string, (c.last_coach_touch_at as string | null) ?? null]));
 
   // Laps + titles for every involved workout (targets + history).
   const allCacheIds = [...new Set([...targetDerivedRows, ...historyRows].map((r) => r.workout_cache_id as string))];
@@ -282,6 +290,18 @@ export async function assemblePlannerInputsForWorkouts(
     const current = toPlannerDerived(r, aggFor(cacheId));
     const student = studentById.get(sid);
     const history = (historyByStudent.get(sid) ?? []).filter((h) => h.workoutId !== current.workoutId && h.workoutDate < current.workoutDate);
+    // Privacy fix а/б: a GROUP-bound card is built ONLY from group_topic messages, with sensitive/medical
+    // topics stripped — личка never reaches a group draft, and health topics don't either (even the
+    // student's own group message about an operation). A private (DM) card keeps the full context.
+    const groupBound = opts?.groupBoundByCacheId?.get(cacheId) ?? false;
+    const allMessages = messagesByStudent.get(sid) ?? [];
+    const studentMessages = groupBound
+      ? allMessages.filter((m) => m.channel === "group_topic" && !isSensitiveTopic(m.text))
+      : allMessages;
+    // Durable memory is health_status / emotional_state summaries — inherently private. Keep it out of a
+    // group draft entirely (health_status) and drop any emotional item that reads as a sensitive topic.
+    const allMemory = memoryByStudent.get(sid) ?? [];
+    const memoryItems = groupBound ? allMemory.filter((m) => m.type !== "health_status" && !isSensitiveTopic(m.text)) : allMemory;
     const packet: ContextPacket = {
       studentId: sid,
       sex: (student?.sex as "female" | "male" | null) ?? null,
@@ -291,8 +311,10 @@ export async function assemblePlannerInputsForWorkouts(
       history,
       lastPraise: null,
       laps: lapsByCacheId.get(cacheId) ?? [],
-      memoryItems: memoryByStudent.get(sid) ?? [],
-      studentMessages: messagesByStudent.get(sid) ?? [],
+      memoryItems,
+      studentMessages,
+      groupBound,
+      coachTouchAt: coachTouchByStudent.get(sid) ?? null,
       healthMetrics: healthByStudent.get(sid) ?? [],
       healthProfile: profileByStudent.get(sid) ?? null,
     };
@@ -581,7 +603,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       withSupabaseNetworkRetry(() =>
         supabase
           .from("trainingpeaks_telegram_context_observations")
-          .select("id, student_id, observed_at, labels, text_preview, report_ai_label")
+          .select("id, student_id, observed_at, labels, text_preview, report_ai_label, source_type")
           .gte("observed_at", sinceIso)
           .order("id", { ascending: true })
           .range(from, to)
@@ -594,7 +616,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   // GENEROUS prefilter: forward anything that MIGHT be a report (misses are often keyword-less — the
   // AI arbiter below makes the final call). report_like/weak always qualify. `report_ai_label` carries
   // the cached arbiter verdict so each message is classified once, not every sweep.
-  type ReportCandidate = { id: string; studentId: string; date: string; observedAt: string; text: string; isReportLike: boolean; isWeak: boolean; aiLabel: ReportVerdict | null };
+  type ReportCandidate = { id: string; studentId: string; date: string; observedAt: string; text: string; isReportLike: boolean; isWeak: boolean; aiLabel: ReportVerdict | null; channel: "group_topic" | "business_dm" | null };
   const candidates: ReportCandidate[] = (obsRows ?? [])
     .map((o): ReportCandidate | null => {
       if (!o.student_id || !activeIds.has(o.student_id as string)) return null;
@@ -606,7 +628,8 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
       if (!isReportLike && !isWeak && !isReportCandidate(text, labels)) return null;
       const cached = o.report_ai_label as string | null;
       const aiLabel = cached === "report" || cached === "clarification" || cached === "not_report" ? (cached as ReportVerdict) : null;
-      return { id: o.id as string, studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10), observedAt: o.observed_at as string, text, isReportLike, isWeak, aiLabel };
+      const channel = o.source_type === "group_topic" || o.source_type === "business_dm" ? (o.source_type as "group_topic" | "business_dm") : null;
+      return { id: o.id as string, studentId: o.student_id as string, date: (o.observed_at as string).slice(0, 10), observedAt: o.observed_at as string, text, isReportLike, isWeak, aiLabel, channel };
     })
     .filter((c): c is ReportCandidate => c !== null);
 
@@ -665,11 +688,11 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
 
   // Split candidates: reports (create/refresh a card) vs enrichments (clarification → add words to an
   // EXISTING card, never create one). The decision is pure with the regex fallback baked in.
-  const reports: Array<{ studentId: string; date: string; observedAt: string; weak: boolean; text: string }> = [];
+  const reports: Array<{ studentId: string; date: string; observedAt: string; weak: boolean; text: string; channel: "group_topic" | "business_dm" | null }> = [];
   const enrichments: Array<{ studentId: string; date: string; text: string }> = [];
   for (const c of candidates) {
     const decision = resolveArbiterDecision({ aiLabel: c.aiLabel, isReportLike: c.isReportLike, isWeak: c.isWeak });
-    if (decision.kind === "report") reports.push({ studentId: c.studentId, date: c.date, observedAt: c.observedAt, weak: decision.weak, text: c.text });
+    if (decision.kind === "report") reports.push({ studentId: c.studentId, date: c.date, observedAt: c.observedAt, weak: decision.weak, text: c.text, channel: c.channel });
     else if (decision.kind === "clarification") enrichments.push({ studentId: c.studentId, date: c.date, text: c.text });
   }
   summary.reports = reports.filter((r) => !r.weak).length;
@@ -699,7 +722,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
 
   // 4. per report, pick the run it's about; dedupe so two reports about one run enqueue it once.
   const reportFreshFloor = shiftYmd(new Date().toISOString().slice(0, 10), -ENQUEUE_MAX_REPORT_AGE_DAYS);
-  const chosen = new Map<string, { row: DerivedRow; reportDate: string; triggerObservedAt: string; reviveJobId: string | null }>();
+  const chosen = new Map<string, { row: DerivedRow; reportDate: string; triggerObservedAt: string; reviveJobId: string | null; triggerChannel: "group_topic" | "business_dm" | null }>();
   for (const rep of reports) {
     const prevDay = shiftYmd(rep.date, -REPORT_MATCH_WINDOW_DAYS);
     let inWindow = (runsByStudent.get(rep.studentId) ?? []).filter((r) => {
@@ -758,7 +781,7 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
     // Resurrection without a duplicate: if the ONLY prior job is a dismissal (no active/done job), revive
     // THAT row in place rather than inserting a second card. reviveJobId carries the dismissed row's id.
     const reviveJobId = wbs && !wbs.blocked ? wbs.dismissedJobId : null;
-    chosen.set(winner.workout_cache_id as string, { row: winner, reportDate: rep.date, triggerObservedAt: rep.observedAt, reviveJobId });
+    chosen.set(winner.workout_cache_id as string, { row: winner, reportDate: rep.date, triggerObservedAt: rep.observedAt, reviveJobId, triggerChannel: rep.channel });
     summary.reportsMatchedRun += 1;
   }
   // 5. build packets (windowStudentWords attaches the report as words) and enqueue — only when a run
@@ -766,7 +789,13 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
   const details: NonNullable<FeedbackReportSweepSummary["details"]> = [];
   if (chosen.size > 0) {
     const chosenList = [...chosen.values()];
-    const packets = await assemblePlannerInputsForWorkouts(supabase, chosenList.map((c) => c.row));
+    // Privacy fix а: this card is GROUP-bound iff the trigger report came via the group topic (the reply
+    // goes back where the student reported) OR the student can't be DM'd (only the group is reachable).
+    // A group-bound packet is assembled from group-sourced, non-sensitive context only.
+    const groupBoundByCacheId = new Map<string, boolean>(
+      chosenList.map((c) => [c.row.workout_cache_id as string, c.triggerChannel === "group_topic" || !dmCapableIds.has(c.row.student_id as string)])
+    );
+    const packets = await assemblePlannerInputsForWorkouts(supabase, chosenList.map((c) => c.row), { groupBoundByCacheId });
     for (const { row, reportDate, triggerObservedAt, reviveJobId } of chosenList) {
       const cacheId = row.workout_cache_id as string;
       const studentId = row.student_id as string;
