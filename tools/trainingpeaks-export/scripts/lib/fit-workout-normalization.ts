@@ -265,6 +265,29 @@ export function sanitizeTrackPoints(points: Array<[number, number]>): Array<[num
     if (haversineMeters(last, next) <= SPIKE_STEP_M) continue; // isolated spike (successor returns)
     out.push(cur); // sustained relocation → keep (torn-route check decides whether to store)
   }
+  // Drop a disconnected SHORT leading/trailing cluster (a stray GPS-lock burst tens of km from
+  // the run body that agrees with itself, so the despike loop kept it): split at gaps
+  // > SPIKE_STEP_M and drop end segments shorter than the body. This makes the first/last kept
+  // point the REAL start/finish, so the crop's start/finish distance reads ~radius, not tens of
+  // km. A torn track (two substantial halves) is left intact for isTrackTorn to reject.
+  if (out.length >= 3) {
+    const segments: Array<Array<[number, number]>> = [];
+    let seg: Array<[number, number]> = [out[0]!];
+    for (let i = 1; i < out.length; i += 1) {
+      if (haversineMeters(out[i - 1]!, out[i]!) > SPIKE_STEP_M) {
+        segments.push(seg);
+        seg = [];
+      }
+      seg.push(out[i]!);
+    }
+    segments.push(seg);
+    if (segments.length > 1) {
+      const minKeep = Math.max(10, Math.floor(out.length * 0.05));
+      while (segments.length > 1 && segments[0]!.length < minKeep) segments.shift();
+      while (segments.length > 1 && segments[segments.length - 1]!.length < minKeep) segments.pop();
+      return segments.flat();
+    }
+  }
   return out;
 }
 

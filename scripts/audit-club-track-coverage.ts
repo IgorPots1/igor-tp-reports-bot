@@ -18,11 +18,20 @@ type TrackRow = { student_id: string; workout_cache_id: string; workout_date: st
 async function main() {
   const supabase = createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from("trainingpeaks_workout_tracks")
-    .select("student_id, workout_cache_id, workout_date, scanned_at");
-  if (error) throw new Error(`tracks read failed: ${error.message}`);
-  const tracks = (data as TrackRow[] | null) ?? [];
+  // Paginate: a single .select() caps at 1000 rows (PostgREST default), so after the 60-day
+  // backfill (thousands of tracks) tracks_total was silently truncated to 1000. Read in pages.
+  const tracks: TrackRow[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("trainingpeaks_workout_tracks")
+      .select("student_id, workout_cache_id, workout_date, scanned_at")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`tracks read failed: ${error.message}`);
+    const batch = (data as TrackRow[] | null) ?? [];
+    tracks.push(...batch);
+    if (batch.length < PAGE) break;
+  }
 
   const total = tracks.length;
   const students = new Set(tracks.map((t) => t.student_id)).size;

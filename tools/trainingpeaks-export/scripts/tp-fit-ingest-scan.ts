@@ -913,8 +913,18 @@ async function main(): Promise<void> {
   }
 
   const failedCount = summaries.filter((s) => s.status === "failed").length;
+  const okCount = summaries.filter((s) => s.status === "ok").length;
   if (failedCount > 0) {
-    throw new Error(`${failedCount} student(s) failed FIT ingest.`);
+    // Partial success is NOT a run failure: a 100+ student backfill must not exit nonzero just
+    // because a few lost TP export access. Print the failures prominently and exit 0 — UNLESS
+    // the whole run wiped out (okCount === 0), which is a real fault (dead session etc.).
+    const failed = summaries.filter((s) => s.status === "failed");
+    console.error(`\n===== FIT ingest: ${failedCount} student(s) FAILED (${okCount} ok) =====`);
+    for (const s of failed) console.error(`  FAILED ${s.studentName}${s.reason ? ` (${s.reason})` : ""}`);
+    console.error("==================================================");
+    if (okCount === 0) {
+      throw new Error(`ALL ${failedCount} student(s) failed FIT ingest.`);
+    }
   }
 }
 
