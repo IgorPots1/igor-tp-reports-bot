@@ -403,6 +403,15 @@ export function isClubTracksEnabled(): boolean {
 export function isClubMapTilesEnabled(): boolean {
   return process.env.CLUB_MAP_TILES_ENABLED === "true";
 }
+/**
+ * Club member avatars from Telegram (corzina B). OFF by default → the club shows the monogram
+ * fallback only. When ON, each member's Telegram photo is downloaded once (weekly re-check) into a
+ * PRIVATE bucket (never the short-lived Telegram URL) and served through our auth-gated proxy. A
+ * per-student opt-out (club_avatar_visible) removes the image and reverts to the monogram.
+ */
+export function isClubAvatarsEnabled(): boolean {
+  return process.env.CLUB_AVATARS_ENABLED === "true";
+}
 /** Mapbox token for static-map + reverse-geocode. SERVER-SIDE only (no NEXT_PUBLIC): the token
  *  is used to fetch the image on the server; the browser only ever sees our proxy path. */
 export function clubMapboxToken(): string | null {

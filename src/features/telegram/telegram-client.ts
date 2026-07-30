@@ -453,6 +453,38 @@ export async function getTelegramFilePath(fileId: string): Promise<string> {
 }
 
 /**
+ * Largest-size file_id of a user's CURRENT Telegram profile photo, or null. Works only for users who
+ * have started the bot (getUserProfilePhotos is a Bot API method) — which is most club members.
+ * Returns null (not throw) on any API/absence case, so a missing photo is a benign monogram fallback,
+ * never an error. The file_id is then resolved via getTelegramFilePath + downloadTelegramFile.
+ */
+export async function getTelegramUserProfilePhotoFileId(userId: number): Promise<string | null> {
+  if (!Number.isFinite(userId) || userId <= 0) return null;
+  const token = getTelegramBotToken();
+  let response: Response;
+  try {
+    response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/getUserProfilePhotos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, limit: 1 }),
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  const payload = (await response.json().catch(() => null)) as {
+    ok?: boolean;
+    result?: { total_count?: number; photos?: Array<Array<{ file_id?: string }>> };
+  } | null;
+  if (!payload || payload.ok === false) return null;
+  const photos = payload.result?.photos;
+  // photos[0] = the most recent photo, as an array of sizes ascending → the last is the largest.
+  const sizes = photos && photos.length > 0 ? photos[0] : null;
+  if (!sizes || sizes.length === 0) return null;
+  return sizes[sizes.length - 1]?.file_id?.trim() || null;
+}
+
+/**
  * Sends an inline URL button. Unlike `web_app` buttons, plain `url` buttons are
  * allowed in business-account messages (web_app returns BUTTON_TYPE_INVALID).
  * Point it at a t.me Mini App direct link so it opens with signed initData.

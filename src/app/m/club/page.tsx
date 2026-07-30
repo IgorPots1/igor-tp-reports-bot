@@ -697,7 +697,7 @@ export default function ClubPage() {
 // Shared bits
 // ---------------------------------------------------------------------------
 
-function Monogram({ text, tone, onClick, size = 40 }: { text: string; tone?: string; onClick?: () => void; size?: number }) {
+function Monogram({ text, tone, onClick, size = 40, avatarUrl }: { text: string; tone?: string; onClick?: () => void; size?: number; avatarUrl?: string | null }) {
   return (
     <div
       onClick={onClick}
@@ -707,9 +707,21 @@ function Monogram({ text, tone, onClick, size = 40 }: { text: string; tone?: str
         display: "flex", alignItems: "center", justifyContent: "center",
         fontFamily: HEAD, fontWeight: 600, fontSize: Math.round(size * 0.375), flexShrink: 0,
         border: `1px solid ${C.line}`, cursor: onClick ? "pointer" : "default",
+        position: "relative", overflow: "hidden",
       }}
     >
       {text}
+      {avatarUrl ? (
+        // Photo overlays the monogram. On error (opted out → 403, no photo → 404) the image hides
+        // itself and the monogram shows through — the fallback is automatic, no state needed.
+        // eslint-disable-next-line @next/next/no-img-element -- signed proxy JPEG, not a Next asset
+        <img
+          src={avatarUrl}
+          alt=""
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", borderRadius: 999 }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -897,7 +909,7 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
   return (
     <div style={S.card}>
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <Monogram text={item.monogram} onClick={() => onOpenStudent(item.studentId)} />
+        <Monogram text={item.monogram} avatarUrl={item.avatarUrl} onClick={() => onOpenStudent(item.studentId)} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={S.cardName} onClick={() => onOpenStudent(item.studentId)}>{item.studentDisplayName}</div>
           <div style={S.cardMeta}>{item.typeLabel} · {item.dateLabel}{item.timeLabel ? ` · ${item.timeLabel}` : ""}</div>
@@ -1077,7 +1089,7 @@ function RecordsTab(props: {
           clubTop.rows.map((row) => (
             <div key={`${row.rank}-${row.studentId}`} style={S.rankRow(row.isCurrentStudent)}>
               <span style={S.rankBadge(row.rank - 1)}>{row.rank}</span>
-              <Monogram text={row.monogram} onClick={() => props.onOpenStudent(row.studentId)} />
+              <Monogram text={row.monogram} avatarUrl={row.avatarUrl} onClick={() => props.onOpenStudent(row.studentId)} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={S.cardName}>{row.displayName}{row.isCurrentStudent ? " · ты" : ""}</div>
                 <div style={S.cardMeta}>{fmtPace(row.paceSecPerKm) ?? ""}</div>
@@ -1268,16 +1280,20 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
   const [visible, setVisibleState] = useState<boolean | null>(null);
   const [routes, setRoutesState] = useState<boolean | null>(null);
   const [routesMsg, setRoutesMsg] = useState<string | null>(null);
+  const [avatarVis, setAvatarVis] = useState<boolean | null>(null);
+  const [avatarMsg, setAvatarMsg] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [nameSaving, setNameSaving] = useState(false);
   const [nameMsg, setNameMsg] = useState<string | null>(null);
   const privacyBusyRef = useRef(false);
   const routesBusyRef = useRef(false);
+  const avatarBusyRef = useRef(false);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
   const current = visible ?? v.clubVisible;
   const routesCurrent = routes ?? v.routesVisible;
+  const avatarCurrent = avatarVis ?? v.avatarVisible;
   const nameValue = nameDraft ?? v.displayName;
 
   async function setRoutesVisibility(next: boolean) {
@@ -1294,6 +1310,22 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
     }
     setRoutesMsg(res.ok ? (next ? "Маршруты видны на карте" : "Маршруты убраны, картинки удалены") : (res.error ?? "Недоступно"));
     routesBusyRef.current = false;
+  }
+
+  async function setAvatarVisibility(next: boolean) {
+    if (avatarBusyRef.current) return;
+    avatarBusyRef.current = true;
+    setAvatarVis(next);
+    const res = await fetch("/api/m/club/avatar-visibility", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ initData: props.initData, visible: next }),
+    }).then((r) => r.json()).catch(() => ({ ok: false, error: "Ошибка" }));
+    if (!res.ok) {
+      setAvatarVis(v.avatarVisible); // revert optimistic toggle
+    }
+    setAvatarMsg(res.ok ? (next ? "Фото показывается в клубе" : "Фото убрано, картинка удалена") : (res.error ?? "Недоступно"));
+    avatarBusyRef.current = false;
   }
 
   async function saveName() {
@@ -1451,6 +1483,21 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
           </div>
           <div style={S.cardMeta}>Старт и финиш всегда обрезаны на 300 м. «Убрать» удаляет картинки маршрутов из хранилища, а не прячет их.</div>
           {routesMsg ? <div style={S.cardMeta}>{routesMsg}</div> : null}
+        </div>
+      ) : null}
+
+      {v.avatarsEnabled ? (
+        <div style={S.card}>
+          <div style={S.secHead}>Моё фото в клубе</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+            <Monogram text={v.monogram} avatarUrl={avatarCurrent === false ? null : v.avatarUrl} size={48} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button style={S.pill(avatarCurrent === true)} type="button" onClick={() => setAvatarVisibility(true)}>Показывать</button>
+              <button style={S.pill(avatarCurrent === false)} type="button" onClick={() => setAvatarVisibility(false)}>Убрать</button>
+            </div>
+          </div>
+          <div style={S.cardMeta}>Фото берётся из Telegram и видно участникам клуба. «Убрать» удаляет картинку из хранилища, останется монограмма.</div>
+          {avatarMsg ? <div style={S.cardMeta}>{avatarMsg}</div> : null}
         </div>
       ) : null}
     </div>

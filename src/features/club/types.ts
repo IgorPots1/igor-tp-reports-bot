@@ -29,6 +29,8 @@ export type ClubFeedItem = {
   studentId: string;
   studentDisplayName: string;
   monogram: string;
+  /** Signed avatar proxy URL, or null (feature off / opted out / no photo). Monogram is the fallback. */
+  avatarUrl?: string | null;
   /** Human-readable activity type, e.g. "Бег". Gender-neutral. */
   typeLabel: string;
   isRunning: boolean;
@@ -172,6 +174,8 @@ export type ClubRecordsClubTopRow = {
   date?: string | null;
   /** Set when this top result is a within-race segment (same caption as the card). */
   raceSegmentLabel?: string | null;
+  /** Signed proxy URL of the member's avatar, or null (feature off / opted out / no photo). */
+  avatarUrl?: string | null;
 };
 
 export type ClubRecordsView = {
@@ -235,6 +239,12 @@ export type ClubProfileDetailView = ClubProfileView & {
   routesVisible: boolean;
   /** Whether map tiles are live (CLUB_MAP_TILES_ENABLED); hides the route toggle when off. */
   mapTilesEnabled: boolean;
+  /** Whether avatars are live (CLUB_AVATARS_ENABLED); hides the avatar toggle when off. */
+  avatarsEnabled: boolean;
+  /** Whether THIS student's avatar is shown (for the avatar opt-out toggle). */
+  avatarVisible: boolean;
+  /** Signed proxy URL of THIS student's own avatar, or null (feature off / opted out / no photo). */
+  avatarUrl: string | null;
   freshness: ClubFreshness;
 };
 

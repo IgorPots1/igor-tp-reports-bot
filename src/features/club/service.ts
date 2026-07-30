@@ -21,6 +21,7 @@ import {
 
 import * as C from "./constants";
 import { CLUB_MARKER_TITLE_SENTINEL } from "./cache-guard";
+import { signAvatarPath } from "./avatars";
 import { signTrackImagePath } from "./track-maps";
 import {
   evaluateCandidate,
@@ -1753,6 +1754,7 @@ export async function getClubFeed(input: {
       studentId: row.studentId,
       studentDisplayName: displayById.get(row.studentId) ?? fullName(row.studentName),
       monogram: monogram(row.studentName),
+      avatarUrl: C.isClubAvatarsEnabled() ? signAvatarPath(row.studentId) : null,
       typeLabel: label,
       isRunning: row.isRunning,
       date: row.workoutDate,
@@ -2280,6 +2282,9 @@ export async function getClubRecords(input: {
       date: r.date,
       // Segment caption is filled in a post-pass below (needs each student's race_events).
       raceSegmentLabel: r.isCoach ? null : undefined,
+      // Signed avatar URL for everyone; the proxy re-checks the member's opt-out live (403 →
+      // monogram) and a missing photo 404s → monogram. So the UI always keeps a monogram fallback.
+      avatarUrl: C.isClubAvatarsEnabled() ? signAvatarPath(r.studentId) : null,
     }));
     clubTops.push({
       distanceKey: target.key,
@@ -2585,6 +2590,22 @@ export async function getClubProfileDetail(input: {
     /* column absent → default visible */
   }
 
+  // Avatar opt-out state — separate tolerant read so it degrades independently of routesVisible
+  // (the club_avatar_visible column ships in migration 20260821; absent → default visible).
+  let avatarVisible = true;
+  try {
+    const { data: av } = await createSupabaseServerClient()
+      .from("trainingpeaks_students")
+      .select("club_avatar_visible")
+      .eq("id", input.currentStudentId)
+      .maybeSingle();
+    if (av && (av as { club_avatar_visible?: boolean | null }).club_avatar_visible === false) {
+      avatarVisible = false;
+    }
+  } catch {
+    /* column absent → default visible */
+  }
+
   return {
     displayName: ownStudent?.displayName ?? fullName(input.currentStudentName),
     monogram: monogram(input.currentStudentName),
@@ -2602,6 +2623,9 @@ export async function getClubProfileDetail(input: {
     privacyEnabled: C.isPrivacyEnabled(),
     routesVisible,
     mapTilesEnabled: C.isClubMapTilesEnabled(),
+    avatarsEnabled: C.isClubAvatarsEnabled(),
+    avatarVisible,
+    avatarUrl: C.isClubAvatarsEnabled() && avatarVisible ? signAvatarPath(input.currentStudentId) : null,
     challengeRank: rankIndex >= 0 ? rankIndex + 1 : null,
     challengeParticipants: performers.length,
     completionPct: current?.completionPct ?? 0,
