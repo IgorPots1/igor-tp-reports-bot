@@ -1273,6 +1273,7 @@ function toRecordEntry(ev: EvaluatedRecord, recordType: ClubRecordType): ClubRec
     source: ev.source,
     calcMethod: ev.calcMethod,
     recordType,
+    wholeDistanceKm: cand.wholeDistanceKm,
   };
 }
 
@@ -3063,10 +3064,41 @@ export async function getClubPrediction(input: { currentStudentId: string }): Pr
   const rows = await loadClubWorkoutRows({ from, to: today });
   const own = rows.filter((r) => r.studentId === input.currentStudentId && r.isCompleted && r.isRunning);
   const allRecords = await studentRecordsFromRows(own, input.currentStudentId);
-  // E-Predictor anchors on RACES only — a training-run segment corrupts the anchor.
-  const records = allRecords.filter((r) => r.recordType === "race");
+  // E-Predictor anchors on genuine race RESULTS only. Two things corrupt an anchor and are
+  // excluded: (a) training-run segments (recordType != race); (b) a race record that is
+  // itself a shorter SEGMENT of a LONGER race that day - e.g. a 21k best-split of a marathon
+  // run at marathon pace, which would badly UNDER-predict a standalone 21k (the Ivoshin case).
+  // Detect (b) by the RELIABLE signal, the source-workout distance (wholeDistanceKm), plus the
+  // day's event distance where present (TP event distance is often empty/wrong for ultras, so
+  // the workout distance is primary - per the Nazarov finding).
+  const SEGMENT_RATIO = 1.6; // source effort > 1.6x nominal => a segment, not a race + cooldown
+  const { data: evRows } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("event_date, distance_km")
+    .eq("student_id", input.currentStudentId)
+    .gte("event_date", from);
+  const eventMaxKmByDate = new Map<string, number>();
+  for (const e of (evRows as Array<{ event_date: string | null; distance_km: number | null }> | null) ?? []) {
+    const d = (e.event_date ?? "").slice(0, 10);
+    const km = typeof e.distance_km === "number" ? e.distance_km : null;
+    if (!d || km == null) continue;
+    eventMaxKmByDate.set(d, Math.max(eventMaxKmByDate.get(d) ?? 0, km));
+  }
+  const isWithinLongerRace = (r: ClubRecordEntry): boolean => {
+    const nominalKm = DISTANCE_METERS[r.distanceKey] / 1000;
+    const workoutSeg = r.calcMethod === "best_split" && r.wholeDistanceKm != null && r.wholeDistanceKm > nominalKm * SEGMENT_RATIO;
+    const evMax = eventMaxKmByDate.get(r.date);
+    const eventSeg = evMax != null && evMax > nominalKm * SEGMENT_RATIO;
+    return workoutSeg || eventSeg;
+  };
+  const raceRecords = allRecords.filter((r) => r.recordType === "race");
+  const records = raceRecords.filter((r) => !isWithinLongerRace(r));
   if (records.length === 0) {
-    return none("Прогноз строится по результатам гонок - их пока нет в данных. Заяви старт или дождись синка забега.");
+    return none(
+      raceRecords.length > 0
+        ? "Прогноз пока недоступен: в данных только отрезки внутри более длинных гонок - нужен самостоятельный старт на дистанции."
+        : "Прогноз строится по результатам гонок - их пока нет в данных. Заяви старт или дождись синка забега."
+    );
   }
 
   // Pick the record whose distance is closest (log-ratio) to the target — most reliable base.
