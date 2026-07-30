@@ -149,9 +149,12 @@ async function main(): Promise<void> {
   console.log(`\n=== tp-threshold-restore — ${name} (${id}) · режим ${apply ? "APPLY" : "DRY-RUN"} ===`);
   console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"}`);
 
-  const { data: futRows } = await supabase.from("trainingpeaks_workout_cache").select("workout_date, title, trainingpeaks_workout_id, is_planned, completed_time_raw, workout_type_value_id, description:source_snapshot->>description, structure:source_snapshot->structure").eq("trainingpeaks_athlete_id", id).gt("workout_date", todayIso()).order("workout_date");
+  // TODAY and later — NOT "tomorrow and later". A `.gt(today)` here silently skipped today's
+  // planned workouts, leaving them on OLD %-targets after a threshold change (a student could run
+  // today at the wrong pace). Completed today-workouts are excluded by the is_planned/completed filter.
+  const { data: futRows } = await supabase.from("trainingpeaks_workout_cache").select("workout_date, title, trainingpeaks_workout_id, is_planned, completed_time_raw, workout_type_value_id, description:source_snapshot->>description, structure:source_snapshot->structure").eq("trainingpeaks_athlete_id", id).gte("workout_date", todayIso()).order("workout_date");
   const planned = (futRows ?? []).filter((r) => r.is_planned === true && (r.completed_time_raw == null || r.completed_time_raw === 0) && r.workout_type_value_id === 3);
-  console.log(`будущих плановых бегов: ${planned.length}\n`);
+  console.log(`плановых бегов (сегодня и позже): ${planned.length}\n`);
 
   type Wk = { wid: number; date: string; title: string; desc: string; rc: { isEasy: boolean; plans: Plan[] } };
   const wks: Wk[] = []; let defer = false; const flags: string[] = [];
