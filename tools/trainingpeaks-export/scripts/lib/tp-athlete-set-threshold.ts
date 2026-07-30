@@ -12,7 +12,9 @@
  *  - calculationMethod must be covered by a verified formula (tp-zone-formulas.ts),
  *    else refuse — never substitute another method's ratios.
  *  - Read-modify-write the WHOLE zones array (a partial PUT deletes the other sets —
- *    proven by experiment). Only the wt=0 set changes; wt=1/wt=3 pass through.
+ *    proven by experiment). BOTH wt=0 (default) AND wt=3 (RUN) are set to the new threshold —
+ *    TP renders RUN workout cards against wt=3, so leaving it stale shows wrong paces (proven,
+ *    the run-zone bug). wt=1 passes through. An uncovered wt=3 method REFUSES (never guess).
  *  - One PUT per zone type, NO retry. Verify by GET afterwards.
  */
 
@@ -58,6 +60,7 @@ export type PlannedChange = {
   oldZones: ZoneBoundary[];
   newZones: ZoneBoundary[];
   oldThresholdNative: number | null;
+  runSetAligned: number | null; // wt=3 (RUN) old threshold that is ALSO being set to newThreshold, or null if no wt=3 set
 };
 
 function asZoneArray(v: unknown): ZoneBoundary[] {
@@ -70,6 +73,18 @@ function asZoneArray(v: unknown): ZoneBoundary[] {
       maximum: typeof r.maximum === "number" ? r.maximum : 0,
     };
   });
+}
+
+/** Rebuild one zone set (any workoutTypeId) for a new threshold, recomputing its zones by its OWN
+ *  covered scheme. Throws (fail-closed) if the set's method is uncovered — never guess ratios. */
+function recomputeSet(type: ZoneType, set: Record<string, unknown>, newThreshold: number, coachUserId: number | null): Record<string, unknown> {
+  const method = typeof set.calculationMethod === "number" ? set.calculationMethod : NaN;
+  const scheme = getCoveredScheme(type, method);
+  if (!scheme) throw new Error(`${type} wt=${String(set.workoutTypeId)}: ${describeUncovered(type, method)}`);
+  let rec;
+  try { rec = recomputeZones(scheme, asZoneArray(set.zones), newThreshold); }
+  catch (e) { if (e instanceof ZoneShapeMismatchError) throw new Error(`${type} wt=${String(set.workoutTypeId)}: ${e.message}`); throw e; }
+  return { ...set, threshold: newThreshold, zones: rec.zones, ...(coachUserId !== null ? { currentUserId: coachUserId } : {}) };
 }
 
 /** Build the RMW payload for one zone type, or throw a refusal Error with a clear message.
@@ -99,16 +114,22 @@ export function planType(
     throw e;
   }
 
-  // Read-modify-write: replace ONLY the wt=0 set; every other set passes through
-  // unchanged. currentUserId (a client write-field GET omits) is added to every set.
+  // Read-modify-write the WHOLE array. Set BOTH the wt=0 (default) AND wt=3 (RUN) sets to the new
+  // threshold: TP renders RUN workout cards against wt=3, so setting only wt=0 leaves run cards on
+  // a STALE threshold (proven — the run-zone bug). wt=1 passes through. An uncovered wt=3 method
+  // REFUSES (recomputeSet throws) rather than guess zones or silently skip. currentUserId (a client
+  // write-field a GET omits) is added to every set.
   const newWt0: Record<string, unknown> = {
     ...wt0,
     threshold: newThresholdNative,
     zones: recomputed.zones,
     ...(coachUserId !== null ? { currentUserId: coachUserId } : {}),
   };
+  const runSet = fullArray.find((s) => isRecord(s) && s.workoutTypeId === 3);
+  const runSetAligned = isRecord(runSet) && typeof runSet.threshold === "number" ? runSet.threshold : null;
   const newFullArray = fullArray.map((s) => {
     if (isRecord(s) && s.workoutTypeId === 0) return newWt0;
+    if (isRecord(s) && s.workoutTypeId === 3) return recomputeSet(type, s, newThresholdNative, coachUserId);
     return isRecord(s) && coachUserId !== null ? { ...s, currentUserId: coachUserId } : s;
   });
 
@@ -121,6 +142,7 @@ export function planType(
     oldZones,
     newZones: recomputed.zones,
     oldThresholdNative: typeof wt0.threshold === "number" ? wt0.threshold : null,
+    runSetAligned,
   };
 }
 
@@ -130,6 +152,7 @@ function renderDiff(change: PlannedChange): void {
     native === null ? "—" : isSpeed ? `${formatMpsAsPace(native)} (${native.toFixed(4)} m/s)` : `${Math.round(native)} bpm`;
   console.log(`\n── ${change.type === "speed" ? "ПОРОГОВЫЙ ТЕМП (speedzones)" : "ПОРОГОВЫЙ ПУЛЬС (heartratezones)"} ──`);
   console.log(`threshold:  ${fmt(change.oldThresholdNative)}  →  ${fmt(change.newThresholdNative)}`);
+  if (change.runSetAligned !== null) console.log(`беговой набор wt=3:  ${fmt(change.runSetAligned)}  →  ${fmt(change.newThresholdNative)}  (тоже выравнивается — TP рендерит беговые карточки от него)`);
   console.log(`zones (workoutTypeId=0), min–max:`);
   const n = Math.max(change.oldZones.length, change.newZones.length);
   for (let i = 0; i < n; i += 1) {
