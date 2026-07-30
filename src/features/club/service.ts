@@ -193,15 +193,25 @@ async function loadTracksForWorkouts(workoutIds: string[]): Promise<Map<string, 
     return out;
   }
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
+  // Select `city` (maps Phase 4b), but TOLERATE the column not existing yet (migration 20260818
+  // not applied): fall back to the pre-maps columns so the silhouette keeps rendering. Without
+  // this, deploying the maps code before the migration would break the track read entirely.
+  type TrackRowRaw = { workout_cache_id: string; polyline: unknown; bbox: unknown; point_count: number | null; city?: string | null };
+  const primary = await supabase
     .from("trainingpeaks_workout_tracks")
     .select("workout_cache_id, polyline, bbox, point_count, city")
     .in("workout_cache_id", workoutIds);
-  if (error) {
-    return out;
+  let rows = (primary.data as TrackRowRaw[] | null) ?? [];
+  if (primary.error) {
+    const fallback = await supabase
+      .from("trainingpeaks_workout_tracks")
+      .select("workout_cache_id, polyline, bbox, point_count")
+      .in("workout_cache_id", workoutIds);
+    if (fallback.error) return out;
+    rows = (fallback.data as TrackRowRaw[] | null) ?? [];
   }
   const mapTilesOn = C.isClubMapTilesEnabled();
-  for (const row of (data as Array<{ workout_cache_id: string; polyline: unknown; bbox: unknown; point_count: number | null; city: string | null }> | null) ?? []) {
+  for (const row of rows) {
     const polyline = Array.isArray(row.polyline) ? (row.polyline as Array<[number, number]>) : null;
     const bbox = row.bbox as ClubTrack["bbox"] | null;
     if (polyline && polyline.length >= 2 && bbox) {
