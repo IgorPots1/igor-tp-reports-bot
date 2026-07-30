@@ -77,15 +77,69 @@ type Rng = { fast: number; slow: number; idx: number };
 // can share a pace). Ranges are returned in APPEARANCE order for positional matching to steps.
 function ranges(desc: string): Rng[] { const out: Rng[] = []; const re = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi; let m: RegExpExecArray | null; while ((m = re.exec(desc)) !== null) { const fast = Math.min(S(m[1]), S(m[2])), slow = Math.max(S(m[1]), S(m[2])); if (fast < 150 || slow > 600) continue; out.push({ fast, slow, idx: m.index }); } return out; }
 type Role = "разминка" | "заминка" | "отдых" | "работа";
-type FlatStep = { role: Role; min: number; max: number; block: number; step: number };
-/** flatten a structure OBJECT (structure.structure[].steps[]) into ordered steps with roles. */
+type FlatStep = { role: Role; min: number; max: number; block: number; step: number; durSec: number };
+/** flatten a structure OBJECT (structure.structure[].steps[]) into ordered steps with roles.
+ *  durSec = the step's duration in seconds (0 for a distance-based step) — the key for matching
+ *  a step to its description SEGMENT by duration. */
 function flatSteps(structObj: unknown): { metric: string; isRep: boolean; steps: FlatStep[] } | null {
   if (!isRecord(structObj) || !Array.isArray(structObj.structure)) return null;
   const metric = String(structObj.primaryIntensityMetric ?? "");
   const isRep = structObj.structure.some((b: unknown) => isRecord(b) && b.type === "repetition");
   const steps: FlatStep[] = [];
-  structObj.structure.forEach((block: unknown, bi: number) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st: unknown, si: number) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; steps.push({ role, min: isRecord(tg) && typeof tg.minValue === "number" ? tg.minValue : NaN, max: isRecord(tg) && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si }); }); });
+  structObj.structure.forEach((block: unknown, bi: number) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st: unknown, si: number) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; const len = isRecord(st.length) ? st.length : null; const durSec = len && String(len.unit ?? "") === "second" && typeof len.value === "number" ? len.value : 0; steps.push({ role, min: isRecord(tg) && typeof tg.minValue === "number" ? tg.minValue : NaN, max: isRecord(tg) && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si, durSec }); }); });
   return { metric, isRep, steps };
+}
+type Seg = { durSec: number; range: Rng | null };
+/** Parse the description into ordered SEGMENTS: a duration ("3 минуты", "1,5 минуты", "90 секунд")
+ *  with an OPTIONAL pace range appearing before the next duration. A segment with no range is
+ *  "by feel" (по ощущениям / легко). This replaces "grab every range" — which lost the no-pace
+ *  segments and could not reconcile the count. */
+function parseSegments(desc: string): Seg[] {
+  // NB: JS \w / \b do NOT cover Cyrillic — match the stems directly (минут covers минут/минуты/минуту).
+  const durRe = /(\d+(?:[.,]\d+)?)\s*(секунд|сек|минут|мин)/gi;
+  const durs: { pos: number; sec: number }[] = []; let m: RegExpExecArray | null;
+  while ((m = durRe.exec(desc)) !== null) { const n = parseFloat(m[1].replace(",", ".")); if (!Number.isFinite(n) || n <= 0) continue; const sec = /сек/i.test(m[2]) ? n : n * 60; durs.push({ pos: m.index, sec }); }
+  const rs = ranges(desc);
+  const segs: Seg[] = [];
+  for (let i = 0; i < durs.length; i++) { const start = durs[i].pos; const end = i + 1 < durs.length ? durs[i + 1].pos : desc.length; const r = rs.find((x) => x.idx >= start && x.idx < end); segs.push({ durSec: durs[i].sec, range: r ? { fast: r.fast, slow: r.slow, idx: r.idx } : null }); }
+  return segs;
+}
+/** Match each structure step to a description SEGMENT by DURATION, order-preserving (a later step
+ *  never takes an earlier segment → position is the tiebreak on equal durations). Segments with no
+ *  corresponding step (e.g. a "5 минут полный отдых" pause) are skipped. A matched segment with no
+ *  pace → "anchor" for an easy/rest/warm/cool step, or "keep" (leave as-is) for a WORK step (an
+ *  RPE / "по ощущениям" hard effort we must not turn into an easy anchor). Null if a step can't be
+ *  matched at all → defer. */
+function matchByDuration(steps: FlatStep[], segs: Seg[]): (Rng | "anchor" | "keep")[] | null {
+  const out: (Rng | "anchor" | "keep")[] = []; let ptr = 0;
+  for (const st of steps) {
+    if (st.durSec <= 0) return null; // distance-based step — no duration key
+    const tol = Math.max(10, st.durSec * 0.08);
+    let found = -1;
+    for (let j = ptr; j < segs.length; j++) { if (Math.abs(segs[j].durSec - st.durSec) <= tol) { found = j; break; } }
+    if (found < 0) return null;
+    const seg = segs[found]; ptr = found + 1;
+    out.push(seg.range ? seg.range : st.role === "работа" ? "keep" : "anchor");
+  }
+  return out;
+}
+/** Fallback for descriptions with NO durations (simple easy runs like "Лёгкий бег — темп 5:56-6:17"):
+ *  match ranges to steps by position/count. null if it can't reconcile. */
+function positionalFallback(steps: FlatStep[], rs: Rng[]): (Rng | "anchor")[] | null {
+  const nonRest = steps.filter((s) => s.role !== "отдых");
+  let mode: "positional" | "positionalAll" | "anchorAll";
+  if (rs.length === 0) { if (nonRest.length > 1) return null; mode = "anchorAll"; }
+  else if (rs.length === steps.length) mode = "positionalAll";
+  else if (rs.length === nonRest.length) mode = "positional";
+  else return null;
+  const out: (Rng | "anchor")[] = []; let pos = 0;
+  for (const st of steps) {
+    if (mode === "anchorAll") out.push("anchor");
+    else if (mode === "positionalAll") { out.push(rs[pos]); pos++; }
+    else if (st.role === "отдых") out.push("anchor");
+    else { out.push(rs[pos]); pos++; }
+  }
+  return out;
 }
 /** ONE wide physiological frame on every step — catches parser garbage / a clearly-wrong
  *  threshold, never argues with the coach's prescribed pace. No narrow per-role bands. */
@@ -100,34 +154,29 @@ function deepDiff(a: unknown, b: unknown, p: string, out: string[]): void {
 }
 type Plan = { block: number; step: number; role: Role; oldMin: number; oldMax: number; newMin: number; newMax: number; lo: number; hi: number; ok: boolean; src: string };
 /** recompute new %-targets per step from description + real threshold.
- *  POSITIONAL: the i-th description range → the i-th NON-rest step, in appearance order
- *  (no dedup, no sort — the coach writes segments in order). Anchor is used ONLY for rest
- *  steps, and for a lone easy step when the description carries NO range at all. Any other
- *  range/step count mismatch is ambiguous → returns a `defer` reason and writes nothing
- *  (never guess an anchor onto a work step). Returns null if not a pace-structure. */
+ *  SEGMENT-based: parse the description into segments (duration + optional pace), then match each
+ *  structure step to a segment by DURATION (order-preserving; position tiebreaks equal durations —
+ *  see matchByDuration). A step's matched segment with a pace → that pace; a no-pace segment → the
+ *  athlete anchor (easy/rest/warm/cool step) or "keep" (a WORK step that is by-feel/RPE, left
+ *  unchanged — never turned into an easy anchor). Un-matchable steps → defer. null if not pace. */
 function recompute(structObj: unknown, desc: string, title: string, thrSec: number, anchor: number | null): { isEasy: boolean; plans: Plan[]; defer?: string } | null {
   const fx = flatSteps(structObj); if (!fx || !/pace/i.test(fx.metric)) return null;
   const isEasy = !fx.isRep && /лёгк|легк|длительн|восстанов|свободн/i.test(title);
-  const rs = ranges(desc); // appearance order, NO dedup, NO sort
-  const nonRest = fx.steps.filter((s) => s.role !== "отдых");
-  let mode: "positional" | "positionalAll" | "anchorAll";
-  if (rs.length === 0) { if (nonRest.length > 1) return { isEasy, plans: [], defer: `нет диапазонов в описании, а рабочих шагов ${nonRest.length} (>1) — привязать нечем, якорь на работу не ставим` }; mode = "anchorAll"; }
-  else if (rs.length === fx.steps.length) mode = "positionalAll"; // темп задан на КАЖДЫЙ шаг (включая восстановления со своим темпом) → диапазон i → шаг i
-  else if (rs.length === nonRest.length) mode = "positional";     // темп только на рабочих; шаги отдыха → якорь
-  else return { isEasy, plans: [], defer: `диапазонов в описании ${rs.length} ≠ ни рабочих шагов ${nonRest.length}, ни всех шагов ${fx.steps.length} — позиционная привязка неоднозначна` };
-  const plans: Plan[] = []; let pos = 0;
-  for (const st of fx.steps) {
-    let assigned: Rng | "anchor";
-    if (mode === "anchorAll") assigned = "anchor";
-    else if (mode === "positionalAll") { assigned = rs[pos]; pos++; }
-    else if (st.role === "отдых") assigned = "anchor";
-    else { assigned = rs[pos]; pos++; }
+  const segs = parseSegments(desc);
+  let assigned: (Rng | "anchor" | "keep")[] | null = matchByDuration(fx.steps, segs);
+  if (!assigned) assigned = positionalFallback(fx.steps, ranges(desc)); // no-duration descriptions (simple easy runs)
+  if (!assigned) return { isEasy, plans: [], defer: `шаги (${fx.steps.length}) не привязать: сегментов по длительности ${segs.length}, диапазонов ${ranges(desc).length}` };
+  const plans: Plan[] = [];
+  fx.steps.forEach((st, i) => {
+    const a = assigned[i];
     let nMin: number, nMax: number, src: string;
-    if (assigned === "anchor") { const a = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (a - 8)) * 100); nMin = Math.round((thrSec / (a + 12)) * 100); src = `якорь ${fp(a)}`; }
-    else { nMax = Math.round((thrSec / assigned.fast) * 100); nMin = Math.round((thrSec / assigned.slow) * 100); src = `${fp(assigned.slow)}–${fp(assigned.fast)}`; }
+    if (a === "keep") { nMin = st.min; nMax = st.max; src = "без темпа (RPE/по ощущ.) — не трогаем"; }
+    else if (a === "anchor") { const an = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (an - 8)) * 100); nMin = Math.round((thrSec / (an + 12)) * 100); src = `якорь ${fp(an)}`; }
+    else { nMax = Math.round((thrSec / a.fast) * 100); nMin = Math.round((thrSec / a.slow) * 100); src = `${fp(a.slow)}–${fp(a.fast)}`; }
     const [lo, hi] = band();
-    plans.push({ block: st.block, step: st.step, role: st.role, oldMin: st.min, oldMax: st.max, newMin: nMin, newMax: nMax, lo, hi, ok: nMin >= lo && nMax <= hi, src });
-  }
+    const ok = a === "keep" ? true : nMin >= lo && nMax <= hi; // keep = unchanged → not gated on band
+    plans.push({ block: st.block, step: st.step, role: st.role, oldMin: st.min, oldMax: st.max, newMin: nMin, newMax: nMax, lo, hi, ok, src });
+  });
   return { isEasy, plans };
 }
 

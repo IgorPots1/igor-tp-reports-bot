@@ -20,28 +20,22 @@ const todayIso = (): string => new Date().toISOString().slice(0, 10);
 async function bearer(): Promise<string> { const s = await readSessionSnapshot(); const r = await fetch(`${TP_API_HOST}/users/v3/token`, { headers: { accept: "application/json", Cookie: `Production_tpAuth=${s.cookieValue}` } }); return ((await r.json()) as { token: { access_token: string } }).token.access_token; }
 async function getWk(aid: number, wid: number, b: string): Promise<Record<string, unknown>> { const r = await fetch(`${TP_API_HOST}/fitness/v6/athletes/${aid}/workouts/${wid}`, { headers: { accept: "application/json", authorization: `Bearer ${b}` } }); const o = await r.json(); return isRecord(o) ? o : {}; }
 async function anchorFor(id: number): Promise<number | null> { const dm: string[] = []; for (let f = 0; ; f += 1000) { const { data } = await sb.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id").eq("trainingpeaks_athlete_id", id).eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", daysAgo(90)).lte("workout_date", todayIso()).range(f, f + 999); if (!data || !data.length) break; for (const r of data) dm.push(r.workout_cache_id as string); if (data.length < 1000) break; } const ps: number[] = []; for (let i = 0; i < dm.length; i += 300) { const { data } = await sb.from("trainingpeaks_workout_cache").select("completed_distance_raw, completed_time_raw").in("id", dm.slice(i, i + 300)); for (const w of data ?? []) { const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm < 3000 || h <= 0) continue; const pc = (h * 3600) / (mm / 1000); if (pc > 240 && pc < 540) ps.push(pc); } } const srt = [...ps].sort((a, b) => a - b); return srt.length >= 3 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null; }
-type Rng = { fast: number; slow: number };
-function ranges(desc: string): Rng[] { const out: Rng[] = []; const re = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi; let m: RegExpExecArray | null; while ((m = re.exec(desc)) !== null) { const fast = Math.min(S(m[1]), S(m[2])), slow = Math.max(S(m[1]), S(m[2])); if (fast < 150 || slow > 600) continue; out.push({ fast, slow }); } return out; }
+type Rng = { fast: number; slow: number; idx: number };
+function ranges(desc: string): Rng[] { const out: Rng[] = []; const re = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi; let m: RegExpExecArray | null; while ((m = re.exec(desc)) !== null) { const fast = Math.min(S(m[1]), S(m[2])), slow = Math.max(S(m[1]), S(m[2])); if (fast < 150 || slow > 600) continue; out.push({ fast, slow, idx: m.index }); } return out; }
 type Role = "разминка" | "заминка" | "отдых" | "работа";
-type Flat = { role: Role; min: number; max: number; block: number; step: number };
-function flatSteps(structObj: unknown): Flat[] | null { if (!isRecord(structObj) || !Array.isArray(structObj.structure)) return null; const steps: Flat[] = []; structObj.structure.forEach((block, bi) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st, si) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length && isRecord(st.targets[0]) ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; steps.push({ role, min: tg && typeof tg.minValue === "number" ? tg.minValue : NaN, max: tg && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si }); }); }); return steps; }
-/** Assign the DESCRIPTION (text) pace to each step positionally. Returns the assigned reference
- *  per step (a text range, or 'anchor' for rests/no-pace), or 'defer' if the text can't be mapped. */
-function assignRefs(steps: Flat[], desc: string): (Rng | "anchor")[] | "defer" {
-  const rs = ranges(desc); const nonRest = steps.filter((s) => s.role !== "отдых");
-  let mode: "positional" | "positionalAll" | "anchorAll";
-  if (rs.length === 0) { if (nonRest.length > 1) return "defer"; mode = "anchorAll"; }
-  else if (rs.length === steps.length) mode = "positionalAll";
-  else if (rs.length === nonRest.length) mode = "positional";
-  else return "defer";
-  const out: (Rng | "anchor")[] = []; let pos = 0;
-  for (const st of steps) {
-    if (mode === "anchorAll") out.push("anchor");
-    else if (mode === "positionalAll") { out.push(rs[pos]); pos++; }
-    else if (st.role === "отдых") out.push("anchor");
-    else { out.push(rs[pos]); pos++; }
-  }
-  return out;
+type Flat = { role: Role; min: number; max: number; block: number; step: number; durSec: number };
+function flatSteps(structObj: unknown): Flat[] | null { if (!isRecord(structObj) || !Array.isArray(structObj.structure)) return null; const steps: Flat[] = []; structObj.structure.forEach((block, bi) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st, si) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length && isRecord(st.targets[0]) ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; const len = isRecord(st.length) ? st.length : null; const durSec = len && String(len.unit ?? "") === "second" && typeof len.value === "number" ? len.value : 0; steps.push({ role, min: tg && typeof tg.minValue === "number" ? tg.minValue : NaN, max: tg && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si, durSec }); }); }); return steps; }
+type Seg = { durSec: number; range: Rng | null };
+function parseSegments(desc: string): Seg[] { const durRe = /(\d+(?:[.,]\d+)?)\s*(секунд|сек|минут|мин)/gi; const durs: { pos: number; sec: number }[] = []; let m: RegExpExecArray | null; while ((m = durRe.exec(desc)) !== null) { const n = parseFloat(m[1].replace(",", ".")); if (!Number.isFinite(n) || n <= 0) continue; const sec = /сек/i.test(m[2]) ? n : n * 60; durs.push({ pos: m.index, sec }); } const rs = ranges(desc); const segs: Seg[] = []; for (let i = 0; i < durs.length; i++) { const start = durs[i].pos; const end = i + 1 < durs.length ? durs[i + 1].pos : desc.length; const r = rs.find((x) => x.idx >= start && x.idx < end); segs.push({ durSec: durs[i].sec, range: r ?? null }); } return segs; }
+function matchByDuration(steps: Flat[], segs: Seg[]): (Rng | "anchor" | "keep")[] | null { const out: (Rng | "anchor" | "keep")[] = []; let ptr = 0; for (const st of steps) { if (st.durSec <= 0) return null; const tol = Math.max(10, st.durSec * 0.08); let found = -1; for (let j = ptr; j < segs.length; j++) { if (Math.abs(segs[j].durSec - st.durSec) <= tol) { found = j; break; } } if (found < 0) return null; const seg = segs[found]; ptr = found + 1; out.push(seg.range ? seg.range : st.role === "работа" ? "keep" : "anchor"); } return out; }
+function positionalFallback(steps: Flat[], rs: Rng[]): (Rng | "anchor")[] | null { const nonRest = steps.filter((s) => s.role !== "отдых"); let mode: "positional" | "positionalAll" | "anchorAll"; if (rs.length === 0) { if (nonRest.length > 1) return null; mode = "anchorAll"; } else if (rs.length === steps.length) mode = "positionalAll"; else if (rs.length === nonRest.length) mode = "positional"; else return null; const out: (Rng | "anchor")[] = []; let pos = 0; for (const st of steps) { if (mode === "anchorAll") out.push("anchor"); else if (mode === "positionalAll") { out.push(rs[pos]); pos++; } else if (st.role === "отдых") out.push("anchor"); else { out.push(rs[pos]); pos++; } } return out; }
+/** Assign the DESCRIPTION pace to each step: segment-by-duration first, positional fallback for
+ *  no-duration descriptions. Returns per step a text range, 'anchor', 'keep' (RPE work — no text
+ *  pace to compare), or 'defer' if the text can't be mapped. Mirrors tp-threshold-restore.recompute. */
+function assignRefs(steps: Flat[], desc: string): (Rng | "anchor" | "keep")[] | "defer" {
+  let a: (Rng | "anchor" | "keep")[] | null = matchByDuration(steps, parseSegments(desc));
+  if (!a) a = positionalFallback(steps, ranges(desc));
+  return a ?? "defer";
 }
 
 async function main(): Promise<void> {
@@ -63,7 +57,8 @@ async function main(): Promise<void> {
       const diffs: string[] = [];
       steps.forEach((step, i) => {
         const mid = (step.min + step.max) / 2; const livePace = Number.isFinite(mid) ? thrSec * 100 / mid : null;
-        const r = refs[i]; const refPace = r === "anchor" ? anchor : (r.fast + r.slow) / 2;
+        const r = refs[i]; if (r === "keep") return; // RPE/by-feel work step — no text pace to compare
+        const refPace = r === "anchor" ? anchor : (r.fast + r.slow) / 2;
         if (livePace == null || refPace == null) return; // anchor step with no FIT anchor → can't compare
         const d = Math.abs(livePace - refPace);
         if (d > 20) diffs.push(`[b${step.block}s${step.step}] ${step.role} факт @${fp(livePace)} (${step.min}-${step.max}%) ≠ ОПИСАНИЕ ${r === "anchor" ? `якорь ${fp(anchor)}` : `${fp((r as Rng).slow)}–${fp((r as Rng).fast)}`} — Δ${Math.round(d)}с`);
