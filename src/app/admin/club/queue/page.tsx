@@ -62,7 +62,7 @@ export default async function ClubQueuePage({ searchParams }: { searchParams: Pr
                 <td>{i.kind === "race" && i.actionable ? <input type="checkbox" name="raceIds" value={i.id} form="batch-races" /> : null}</td>
                 <td>{KIND_LABEL[i.kind]}</td>
                 <td>{i.title}<div className="admin-summary-label">{i.subtitle}</div></td>
-                <td>{i.status}</td>
+                <td>{i.status}{i.rejectedReason ? <div className="admin-summary-label">{i.rejectedReason}</div> : null}</td>
                 <td>
                   {i.actionable ? (
                     <div className="admin-inline-actions">

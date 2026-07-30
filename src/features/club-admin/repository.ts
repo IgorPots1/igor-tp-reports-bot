@@ -15,6 +15,7 @@ import {
 } from "@/features/club/service";
 import { classifyRaceEventFill, type RaceFillEvent, type RaceFillWorkout } from "@/features/club/race-fill";
 import { RECONCILE_REMOVED_MARKER } from "@/features/club/tp-reconcile";
+import { rejectedRaceReason } from "@/features/club-admin/rejected-reason";
 import { CLUB_RECORD_DISTANCES } from "@/features/club/constants";
 import type { RecordDistanceKey } from "@/features/club/records";
 import { resolveClubBotUsername } from "@/features/club/entry-links";
@@ -195,6 +196,8 @@ export type QueueItem = {
   deletable?: boolean;
   /** race only: a TP rollback is already requested (runner will remove it) — show "снимаю из TP". */
   rollbackRequested?: boolean;
+  /** race only, when status='rejected': WHY it is rejected (coach reject vs reconcile-removed). */
+  rejectedReason?: string | null;
 };
 
 export type ClubTpSendStatus = {
@@ -312,7 +315,7 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
     const raceBase = "id, student_id, race_name, entry_date, race_distance_label, distance_meters, status, applied_tp_workout_id, created_at";
     const racePrimary = await supabase
       .from("club_calendar_entries")
-      .select(`${raceBase}, tp_rollback_requested_at`)
+      .select(`${raceBase}, tp_rollback_requested_at, tp_send_error`)
       .eq("kind", "race")
       .order("created_at", { ascending: false })
       .limit(300);
@@ -326,9 +329,11 @@ export async function listClubQueue(filter: { kind?: string; status?: string }):
       const dist = (r.race_distance_label as string | null) ?? (typeof meters === "number" && meters > 0 ? `${(meters / 1000).toFixed(1)} км` : null);
       const synced = r.applied_tp_workout_id != null;
       const rollbackRequested = r.tp_rollback_requested_at != null;
+      const status = (r.status as string) ?? "approved";
       items.push({ kind: "race", id: r.id as string, studentId: r.student_id as string, title: (r.race_name as string) ?? "Старт",
-        subtitle: `${r.entry_date}${dist ? ` · ${dist}` : ""}${synced ? " · в TP" : ""}${rollbackRequested ? " · снимаю из TP" : ""}`, status: (r.status as string) ?? "approved",
-        createdAt: r.created_at as string, actionable: false, syncedToTp: synced, deletable: !synced, rollbackRequested });
+        subtitle: `${r.entry_date}${dist ? ` · ${dist}` : ""}${synced ? " · в TP" : ""}${rollbackRequested ? " · снимаю из TP" : ""}`, status,
+        createdAt: r.created_at as string, actionable: false, syncedToTp: synced, deletable: !synced, rollbackRequested,
+        rejectedReason: rejectedRaceReason(status, (r.tp_send_error as string | null) ?? null) });
     }
   }
   if (wantKind("dayoff")) {
