@@ -137,6 +137,10 @@ export type ClubRecordEntry = {
   calcMethod: "best_split" | "whole_workout";
   /** race (declared-race date / coach-confirmed) vs training_split (segment of a training run). */
   recordType: "race" | "training_split";
+  /** Full distance (km) of the source workout the record was cut from. Lets a consumer
+   *  tell a standalone result from a within-race SEGMENT (a 21k split of a 42k marathon:
+   *  calcMethod=best_split + wholeDistanceKm≈42). Undefined for coach records. */
+  wholeDistanceKm?: number | null;
 };
 
 export type ClubRecordsClubTopRow = {
