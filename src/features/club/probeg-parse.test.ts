@@ -102,11 +102,19 @@ describe("nameGate", () => {
 });
 
 describe("isForeignRace", () => {
-  test("non-CIS races flagged, Russia/CIS not", () => {
-    assert.ok(isForeignRace("Podgorica Marathon"));
-    assert.ok(isForeignRace("Dubai Run 2026"));
+  test("Latin-script titles flagged (the bulk of the abroad races)", () => {
+    for (const t of ["Durmitor Ultra", "PG Run League", "Bokeški polumaraton", "Podgorička noć", "Columbus Marathon", "Hometown 10k", "Larnaka Race", "Rakvere jooks"]) {
+      assert.ok(isForeignRace(t), t);
+    }
+  });
+  test("Cyrillic toponyms flagged", () => {
     assert.ok(isForeignRace("Черногория, Будва — забег"));
+    assert.ok(isForeignRace("Нарвский полумарафон"));
+    assert.ok(isForeignRace("Дубайский марафон"));
+  });
+  test("Russian/CIS titles NOT flagged (Roman numerals are not Latin words)", () => {
     assert.ok(!isForeignRace("XII Казанский марафон"));
+    assert.ok(!isForeignRace("XXXV Международный марафон «Белые ночи»"));
     assert.ok(!isForeignRace("Московский полумарафон"));
     assert.ok(!isForeignRace("Минский полумарафон")); // Belarus is CIS → on probeg
   });
@@ -119,10 +127,26 @@ describe("matchRace", () => {
   const kristina = studentNameVariantSets("Kristina Pamparaite");
   const hadizhat = studentNameVariantSets("Murtazalieva Hadizhat");
 
-  test("distance gate: a same-date 5h marathon is NOT a candidate for our 46-min 10k", () => {
+  test("Назаров: matching name+date, Δ1s, but conflicting distance → probable «дистанция сомнительна» (not dropped)", () => {
+    const race = { date: "2026-07-04", ourSeconds: at(3, 43, 57), ourKm: 47.641 }; // our GPS distance is garbage
+    const finishes: ProbegFinish[] = [{ date: "2026-07-04", seconds: at(3, 43, 58), distanceKm: 42.2, name: "Дмитрий Назаров", place: "1", city: "", event: "" }];
+    const r = matchRace(race, finishes, studentNameVariantSets("Nazarov Dmitry"));
+    assert.equal(r.verdict, "probable");
+    assert.equal(r.distanceDoubtful, true);
+  });
+
+  test("Головко: matching name+date, Δ2min, conflicting distance → probable «дистанция сомнительна»", () => {
+    const race = { date: "2026-07-04", ourSeconds: at(4, 31, 37), ourKm: 57.618 };
+    const finishes: ProbegFinish[] = [{ date: "2026-07-04", seconds: at(4, 29, 23), distanceKm: 42.2, name: "Екатерина Головко", place: "1", city: "", event: "" }];
+    const r = matchRace(race, finishes, studentNameVariantSets("Golovko Ekaterina"));
+    assert.equal(r.verdict, "probable");
+    assert.equal(r.distanceDoubtful, true);
+  });
+
+  test("distance still guards NAMESAKES: a FOREIGN name with matching distance+time → none", () => {
     const race = { date: "2026-07-04", ourSeconds: at(0, 45, 8), ourKm: 10 };
-    const finishes: ProbegFinish[] = [{ date: "2026-07-04", seconds: at(0, 45, 0), distanceKm: 42.2, name: "Антон Малык", place: "1", city: "", event: "" }];
-    assert.equal(matchRace(race, finishes, malyk).verdict, "none"); // Δ8s + right name, WRONG distance → dropped
+    const finishes: ProbegFinish[] = [{ date: "2026-07-04", seconds: at(0, 45, 6), distanceKm: 10, name: "Роман Антонов", place: "1", city: "", event: "" }];
+    assert.equal(matchRace(race, finishes, malyk).verdict, "none"); // name rules it out before distance matters
   });
 
   test("name gate: foreign surname on a perfect date+distance+time → none (the Роман Антонов false positive)", () => {
@@ -167,10 +191,13 @@ describe("matchRace", () => {
     assert.equal(r.byConfirmedName, true);
   });
 
-  test("a confirmed spelling does NOT bypass date/distance/time — a wrong-distance same-day finish stays out", () => {
-    const race = { date: "2026-05-23", ourSeconds: at(0, 55, 0), ourKm: 10 }; // our 10k
+  test("a confirmed spelling with a conflicting distance is PROBABLE «дистанция сомнительна», never auto-linked", () => {
+    const race = { date: "2026-05-23", ourSeconds: at(0, 55, 0), ourKm: 10 };
     const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 55, 5), distanceKm: 42.2, name: "Хади Муртазалиева", place: "5", city: "", event: "" }];
-    assert.equal(matchRace(race, finishes, hadizhat, { exact: 60, probable: 900 }, ["хади муртазалиева"]).verdict, "none");
+    const r = matchRace(race, finishes, hadizhat, { exact: 60, probable: 900 }, ["хади муртазалиева"]);
+    assert.notEqual(r.verdict, "exact"); // distance conflict blocks auto-link even for a confirmed name
+    assert.equal(r.verdict, "probable");
+    assert.equal(r.distanceDoubtful, true);
   });
 
   test("unreadable finisher name is NOT a reject: perfect time+distance → probable «имя не распозналось»", () => {
@@ -187,9 +214,11 @@ describe("matchRace", () => {
     assert.equal(matchRace(race, finishes, malyk).verdict, "exact");
   });
 
-  test("both distances known and conflicting → not even exact", () => {
+  test("conflicting distance with a matching name blocks EXACT but yields probable «дистанция сомнительна»", () => {
     const race = { date: "2026-05-23", ourSeconds: at(0, 45, 8), ourKm: 10 };
     const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 45, 20), distanceKm: 42.2, name: "Антон Малык", place: "1", city: "", event: "" }];
-    assert.equal(matchRace(race, finishes, malyk).verdict, "none");
+    const r = matchRace(race, finishes, malyk);
+    assert.equal(r.verdict, "probable");
+    assert.equal(r.distanceDoubtful, true);
   });
 });

@@ -208,50 +208,61 @@ export function normalizeFinisherName(name: string): string {
 // the report prints the flagged list so the coach can eyeball it. CIS (RU/BY/KZ/AM/KG/UZ/TJ/AZ) is NOT
 // foreign; those races ARE on probeg.
 const FOREIGN_KEYWORDS = [
-  "черногор", "montenegro", "podgorica", "подгориц", "budva", "будва", "kotor", "котор", "tivat", "тиват", "herceg", "cetinje",
-  "оаэ", " uae", "дубай", "dubai", "abu dhabi", "абу-даби", "эмират", "emirates", "ras al khaimah",
-  "сша", " usa", "америк", "america", "нью-йорк", "new york", "бостон", "boston", "chicago", "чикаго", "los angeles", "майами", "miami",
-  "турци", "turkey", "antalya", "анталия", "istanbul", "стамбул",
-  "грузи", "georgia", "тбилиси", "tbilisi", "батуми", "batumi",
-  "латви", "рига", "riga", "эстони", "таллин", "tallinn", "литв", "вильнюс", "vilnius",
-  "berlin", "берлин", "london", "лондон", "париж", "paris", "valencia", "валенси", "barcelona", "барселон",
-  "amsterdam", "prague", "прага", "budapest", "будапешт", "варшав", "warsaw", "хельсинки", "helsinki",
-  "финлянди", "finland", "герман", "germany", "испани", "spain", "итали", "italy", "франци", "france",
-  "кипр", "cyprus", "bangkok", "бангкок", "tokyo", "токио", "singapore", "сингапур",
+  // Montenegro (Черногория) — the biggest bucket in our data
+  "черногор", "montenegro", "никшич", "гусинье", "ловчен", "дурмитор", "бокешк", "подгорич",
+  "оаэ", "дубай", "abu dhabi", "абу-даби", "эмират", "ras al khaimah",
+  "сша", "америк", "нью-йорк", "коламбус", "огайо", "чилликоте", "лос-анджелес", "майами",
+  "турци", "анталия", "стамбул",
+  "грузи", "тбилиси", "батуми",
+  "латви", "эстони", "нарвск", "раквере", "литв", "финлянди", "герман", "испани", "итали", "франци",
+  "кипр", "ларнак", "берлин", "лондон", "париж", "прага", "будапешт", "варшав", "хельсинки", "токио", "бангкок", "сингапур",
 ];
 
-/** True when a race title points abroad (outside Russia/CIS) — no probeg protocol will ever exist. */
+// Roman numerals used in Russian race titles (XII, XXXV, …) — a Latin run of ONLY these is NOT a foreign
+// signal; anything else Latin is.
+const ROMAN_ONLY = /^[ivxlcdm]+$/iu;
+
+/**
+ * True when a race title points abroad (outside Russia/CIS) — no probeg protocol will ever exist, so
+ * the race must be excluded from the coverage denominator. Two signals: a toponym keyword, OR any
+ * Latin-script word (≥3 letters, Roman numerals excepted). Russian/CIS titles are Cyrillic, so Latin
+ * almost always means abroad. Deliberately over-flags (the coach preferred it): applied only to a
+ * NON-match, so a matched race — Russian by definition, it hit a probeg protocol — is never touched.
+ */
 export function isForeignRace(title: string | null | undefined): boolean {
   if (!title) return false;
   const t = title.toLowerCase();
-  return FOREIGN_KEYWORDS.some((k) => t.includes(k));
+  if (FOREIGN_KEYWORDS.some((k) => t.includes(k))) return true;
+  const latinRuns = title.match(/[a-zÀ-ɏ]{3,}/giu) ?? [];
+  return latinRuns.some((run) => !ROMAN_ONLY.test(run));
 }
 
 export type MatchVerdict = "exact" | "probable" | "none";
 export type OurRaceInput = { date: string; ourSeconds: number | null; ourKm: number | null };
-export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean; byConfirmedName: boolean };
+export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean; byConfirmedName: boolean; distanceDoubtful: boolean };
 
 /**
- * Classify one of our races against a person's probeg finishes. Requires BOTH a result match (date +
- * distance + time) AND a person match — either alone is not enough on a 27k mass start.
- *   EXACT    — |Δtime| ≤ exactTol, distance corroborates (or one side has none), name is KNOWN and
- *              STRICT (all tokens exact): auto-linkable.
- *   PROBABLE — |Δtime| ≤ probableTol, distance matches on BOTH sides, AND either the name matches
- *              (surname exact, given may be a shortening) OR the name could NOT be read at all. An
- *              unreadable name is NOT a reason to drop — the coach decides. Needs coach confirmation.
- *   NONE     — otherwise. `nameRejected` carries a same-date time+distance hit whose name was PRESENT
- *              but FOREIGN, so the report shows why it was dropped. `nameUnrecognized` flags a probable
- *              whose finisher name was blank (shown to the coach as «имя не распозналось»).
+ * Classify one of our races against a person's probeg finishes. The NAME proves the person; the
+ * distance is only there to fend off namesakes, so once the name matches it is dropped — our GPS
+ * distances are known to contain garbage (record-reconstruction lesson) and must not veto a real hit.
+ *   EXACT    — |Δtime| ≤ exactTol, name KNOWN+STRICT (all tokens exact), AND distance corroborates
+ *              (or one side has none): auto-linkable.
+ *   PROBABLE — |Δtime| ≤ probableTol AND the name matches (surname exact, given may be a shortening),
+ *              regardless of distance. `distanceDoubtful` flags the case where the distances conflict
+ *              (our GPS is suspect — «наша дистанция сомнительна»). Also fires when the name could not
+ *              be read but the distance corroborates (`nameUnrecognized`). Needs coach confirmation.
+ *   NONE     — otherwise. `nameRejected` carries a same-date, in-time hit whose name was PRESENT but
+ *              FOREIGN, so the report can show why it was dropped.
  *
- * `confirmedSpellings` is the identifier memory: finisher spellings the coach has already confirmed
- * belong to THIS student (club_probeg_athlete_links). A confirmed spelling counts as name-EXACT, so a
- * shortened name like «Хади Муртазалиева» — forever PROBABLE on its own — auto-links once confirmed and
- * never returns to the queue. `byConfirmedName` marks such a match.
+ * `confirmedSpellings` is the identifier memory (club_probeg_athlete_links): a confirmed spelling counts
+ * as name-EXACT, so «Хади Муртазалиева» auto-links once confirmed instead of re-queuing. `byConfirmedName`
+ * marks such a match.
  */
 export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentVariants: string[][], tol: { exact: number; probable: number } = { exact: 60, probable: 900 }, confirmedSpellings: string[] = []): MatchResult {
   const confirmedSet = new Set(confirmedSpellings.map(normalizeFinisherName).filter((s) => s.length > 0));
   const sameDate = finishes.filter((f) => f.date === race.date);
-  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: false };
+  const base = { sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: false, distanceDoubtful: false };
+  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, ...base };
   const scored = sameDate
     .map((f) => {
       const dt = Math.abs(f.seconds - race.ourSeconds!);
@@ -260,17 +271,23 @@ export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentV
       const confirmed = nameKnown && confirmedSet.has(normalizeFinisherName(f.name));
       return {
         f, dt, nameKnown, confirmed,
-        distOk: !bothKnown || distanceMatch(race.ourKm, f.distanceKm),
+        distOk: !bothKnown || distanceMatch(race.ourKm, f.distanceKm), // match, or one side unknown
         distMatch: bothKnown && distanceMatch(race.ourKm, f.distanceKm),
+        distConflict: bothKnown && !distanceMatch(race.ourKm, f.distanceKm),
         nameStrict: confirmed || (nameKnown && nameGate(studentVariants, f.name, { strict: true })),
         nameOk: confirmed || (nameKnown && nameGate(studentVariants, f.name)),
       };
     })
     .sort((a, b) => a.dt - b.dt);
-  const exact = scored.find((c) => c.dt <= tol.exact && c.distOk && c.nameStrict);
-  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: exact.confirmed };
-  const probable = scored.find((c) => c.dt <= tol.probable && c.distMatch && (c.nameOk || !c.nameKnown));
-  if (probable) return { verdict: "probable", finish: probable.f, deltaSeconds: probable.dt, sameDate, nameRejected: null, nameUnrecognized: !probable.nameKnown, byConfirmedName: false };
-  const nameRejected = scored.find((c) => c.dt <= tol.probable && (c.distMatch || c.distOk) && c.nameKnown && !c.nameOk)?.f ?? null;
-  return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected, nameUnrecognized: false, byConfirmedName: false };
+  // Auto-link only when the distance ALSO corroborates — a distance conflict drops to probable for review.
+  const exact = scored.find((c) => c.dt <= tol.exact && c.nameStrict && c.distOk);
+  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, ...base, byConfirmedName: exact.confirmed };
+  // Name matches → distance gate dropped. distanceDoubtful when our distance conflicts with the protocol.
+  const byName = scored.find((c) => c.dt <= tol.probable && c.nameOk);
+  if (byName) return { verdict: "probable", finish: byName.f, deltaSeconds: byName.dt, ...base, distanceDoubtful: byName.distConflict };
+  // Name unreadable but the distance corroborates → coach decides who it is.
+  const byBlank = scored.find((c) => c.dt <= tol.probable && !c.nameKnown && c.distMatch);
+  if (byBlank) return { verdict: "probable", finish: byBlank.f, deltaSeconds: byBlank.dt, ...base, nameUnrecognized: true };
+  const nameRejected = scored.find((c) => c.dt <= tol.probable && c.nameKnown && !c.nameOk)?.f ?? null;
+  return { verdict: "none", finish: null, deltaSeconds: null, ...base, nameRejected };
 }
