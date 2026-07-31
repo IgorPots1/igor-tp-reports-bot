@@ -58,6 +58,22 @@ export function normalizeCyrillicName(name: string): string {
   return name.toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim();
 }
 
+/**
+ * Per-token Cyrillic variant sets for the NAME GATE (probeg-parse.nameGate). One set per roster token
+ * (lowercased, ё→е). A finisher must match the student on EVERY token (surname exact, given may be a
+ * shortening) — the roster's surname/given order is unknown, so the gate matches by membership, not
+ * position, and both tokens carry their translit variants. Latin → variants; Cyrillic → passed through.
+ */
+export function studentNameVariantSets(rosterName: string): string[][] {
+  const isCyr = /[а-яё]/iu.test(rosterName);
+  const tokens = rosterName.trim().split(/\s+/u).map((t) => t.replace(/[^a-zа-яё]/giu, "")).filter((t) => t.length >= 2);
+  const norm = (s: string): string => s.toLowerCase().replace(/ё/gu, "е");
+  return tokens.map((t) => {
+    const vs = isCyr ? [t] : translitVariants(t);
+    return [...new Set(vs.map(norm))];
+  });
+}
+
 export type NameSpec = { surname: string; given: string };
 
 /**

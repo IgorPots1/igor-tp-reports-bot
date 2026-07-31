@@ -25,7 +25,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { nameSearchSpecs } from "@/features/club/name-translit";
+import { nameSearchSpecs, studentNameVariantSets } from "@/features/club/name-translit";
 import { extractFinishes, fmtHms, matchRace, normalizeKm, type MatchResult, type ProbegFinish } from "@/features/club/probeg-parse";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
@@ -163,12 +163,13 @@ function fmtKm(km: number | null): string {
 
 async function checkStudent(studentId: string, name: string, diagnose: boolean, probablesOut: ProbableDetail[]): Promise<StudentTally> {
   const { finishes, tried } = await fetchFinishesForName(name, diagnose);
+  const variants = studentNameVariantSets(name); // имя должно СОВПАСТЬ (фамилия), иначе не матч
   const ourRaces = await loadOurRaces(studentId); // прошедшие гонки
   const tally: StudentTally = { total: 0, exact: 0, probable: 0, notFound: 0, probables: [] };
   console.log(`\n=== ${name} · probeg попытки [${tried.join(" ; ")}] · строк финишей: ${finishes.length} · наших гонок: ${ourRaces.length} ===`);
   for (const race of ourRaces) {
     tally.total += 1;
-    const res: MatchResult = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S });
+    const res: MatchResult = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S });
     const ours = `наше ${race.date} ${fmtKm(race.ourKm)} ${fmtHms(race.ourSeconds)}`;
     if (res.verdict === "exact" && res.finish) {
       tally.exact += 1;
@@ -181,8 +182,12 @@ async function checkStudent(studentId: string, name: string, diagnose: boolean, 
       console.log(`  ВЕРОЯТНО ${race.title || fmtKm(race.ourKm)} · ${ours} ↔ probeg ${res.finish.name} «${res.finish.event}» ${fmtKm(res.finish.distanceKm)} ${fmtHms(res.finish.seconds)} место ${res.finish.place ?? "?"} ${res.finish.city ?? ""} (Δ${res.deltaSeconds}с) — на подтверждение`);
     } else {
       tally.notFound += 1;
-      const sd = res.sameDate.length ? ` (в тот день у однофамильцев: ${res.sameDate.map((f) => `${fmtKm(f.distanceKm)}/${fmtHms(f.seconds)}`).slice(0, 4).join(", ")})` : "";
-      console.log(`  нет      ${race.title || fmtKm(race.ourKm)} · ${ours}${sd}`);
+      const why = res.nameRejected
+        ? ` (совпали дата+дистанция+время, но имя «${res.nameRejected.name}» ≠ ученик → отброшено по фамилии)`
+        : res.sameDate.length
+          ? ` (в тот день у однофамильцев: ${res.sameDate.map((f) => `${f.name} ${fmtKm(f.distanceKm)}/${fmtHms(f.seconds)}`).slice(0, 3).join(", ")})`
+          : "";
+      console.log(`  нет      ${race.title || fmtKm(race.ourKm)} · ${ours}${why}`);
     }
   }
   return tally;

@@ -116,31 +116,85 @@ export function extractFinishes(html: string): ProbegFinish[] {
   return out;
 }
 
-export type MatchVerdict = "exact" | "probable" | "none";
-export type OurRaceInput = { date: string; ourSeconds: number | null; ourKm: number | null };
-export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[] };
+/** One student token (its Cyrillic variants) vs one finisher token. "prefix" is a given-name SHORTENING
+ *  and is directional ON PURPOSE: only when the FINISHER token is a shortening of the roster variant
+ *  (Хади⊂Хадижат), never the reverse — otherwise a foreign surname that merely EXTENDS ours would pass
+ *  (Малык→Малыков, Малык→Малыкцев are different people). The surname, being roster-length or longer on
+ *  probeg, must therefore match EXACTLY. */
+function relToken(variants: string[], f: string): "exact" | "prefix" | "none" {
+  if (variants.includes(f)) return "exact";
+  if (f.length >= 3) {
+    for (const v of variants) if (v.length > f.length && v.startsWith(f)) return "prefix"; // finisher is a shortening of roster
+  }
+  return "none";
+}
 
 /**
- * Classify one of our races against a person's probeg finishes.
- *   EXACT    — same date, |Δtime| ≤ exactTol, and distance corroborates (or one side has no distance):
- *              ≤1 min on the same date is self-disambiguating; auto-linkable.
- *   PROBABLE — same date, |Δtime| ≤ probableTol, AND distance matches on BOTH sides (gun-vs-chip, GPS
- *              drift). Needs coach confirmation. The distance gate is the Малык fix.
- *   NONE     — otherwise. A different-distance same-date finisher is NOT a candidate.
+ * Does the finisher name belong to this student? A date+distance+time hit proves the RESULT; the name
+ * proves the PERSON — a 27k mass start makes a same-minute same-distance coincidence common, so a
+ * foreign surname must be rejected even on a perfect time. Order-agnostic (unknown on both sides): find
+ * an injective assignment of EVERY roster token to a distinct finisher token, each compatible, with at
+ * least one EXACT anchor. `strict` (auto-link gate) forbids prefixes — every token must be exact.
+ *   Павлова Кристина vs {Кристина,Пампарайте}: only the given «Кристина» overlaps → rejected.
+ *   Роман Антонов vs {Антон,Малык}: surname Малык matches nothing → rejected.
+ *   Хади Муртазалиева vs {Хадижат,Муртазалиева}: surname exact + given prefix → passes (non-strict).
+ *   Надежда Муртазалиева vs {Хадижат,Муртазалиева}: given incompatible → rejected (namesake).
  */
-export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], tol: { exact: number; probable: number } = { exact: 60, probable: 900 }): MatchResult {
+export function nameGate(studentVariants: string[][], finisherName: string, opts: { strict?: boolean } = {}): boolean {
+  const norm = (s: string): string => s.toLowerCase().replace(/ё/gu, "е");
+  const fTokens = norm(finisherName).split(/\s+/u).map((t) => t.replace(/[^a-zа-яё-]/gu, "")).filter((t) => t.length >= 2);
+  const sTokens = studentVariants.map((vs) => vs.map(norm).filter((v) => v.length >= 2)).filter((vs) => vs.length > 0);
+  if (sTokens.length === 0 || fTokens.length === 0) return false;
+  const used = new Array<boolean>(fTokens.length).fill(false);
+  const assign = (i: number, hasExact: boolean): boolean => {
+    if (i === sTokens.length) return hasExact;
+    for (let j = 0; j < fTokens.length; j++) {
+      if (used[j]) continue;
+      const r = relToken(sTokens[i], fTokens[j]);
+      if (r === "none" || (opts.strict && r !== "exact")) continue;
+      used[j] = true;
+      if (assign(i + 1, hasExact || r === "exact")) return true;
+      used[j] = false;
+    }
+    return false;
+  };
+  return assign(0, false);
+}
+
+export type MatchVerdict = "exact" | "probable" | "none";
+export type OurRaceInput = { date: string; ourSeconds: number | null; ourKm: number | null };
+export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null };
+
+/**
+ * Classify one of our races against a person's probeg finishes. Requires BOTH a result match (date +
+ * distance + time) AND a person match (name gate) — either alone is not enough.
+ *   EXACT    — |Δtime| ≤ exactTol, distance corroborates (or one side has none), name STRICT (all
+ *              tokens exact): auto-linkable.
+ *   PROBABLE — |Δtime| ≤ probableTol, distance matches on BOTH sides, name matches (surname exact,
+ *              given may be a shortening). Needs coach confirmation.
+ *   NONE     — otherwise. `nameRejected` carries a same-date time+distance hit that FAILED the name
+ *              gate, so the report can show WHY it was dropped (foreign surname).
+ */
+export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentVariants: string[][], tol: { exact: number; probable: number } = { exact: 60, probable: 900 }): MatchResult {
   const sameDate = finishes.filter((f) => f.date === race.date);
-  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, sameDate };
+  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected: null };
   const scored = sameDate
     .map((f) => {
       const dt = Math.abs(f.seconds - race.ourSeconds!);
       const bothKnown = race.ourKm != null && f.distanceKm != null;
-      return { f, dt, bothKnown, distOk: !bothKnown || distanceMatch(race.ourKm, f.distanceKm), distMatch: bothKnown && distanceMatch(race.ourKm, f.distanceKm) };
+      return {
+        f, dt,
+        distOk: !bothKnown || distanceMatch(race.ourKm, f.distanceKm),
+        distMatch: bothKnown && distanceMatch(race.ourKm, f.distanceKm),
+        nameStrict: nameGate(studentVariants, f.name, { strict: true }),
+        nameOk: nameGate(studentVariants, f.name),
+      };
     })
     .sort((a, b) => a.dt - b.dt);
-  const exact = scored.find((c) => c.dt <= tol.exact && c.distOk);
-  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, sameDate };
-  const probable = scored.find((c) => c.dt <= tol.probable && c.distMatch);
-  if (probable) return { verdict: "probable", finish: probable.f, deltaSeconds: probable.dt, sameDate };
-  return { verdict: "none", finish: null, deltaSeconds: null, sameDate };
+  const exact = scored.find((c) => c.dt <= tol.exact && c.distOk && c.nameStrict);
+  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, sameDate, nameRejected: null };
+  const probable = scored.find((c) => c.dt <= tol.probable && c.distMatch && c.nameOk);
+  if (probable) return { verdict: "probable", finish: probable.f, deltaSeconds: probable.dt, sameDate, nameRejected: null };
+  const nameRejected = scored.find((c) => c.dt <= tol.probable && (c.distMatch || c.distOk) && !c.nameOk)?.f ?? null;
+  return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected };
 }
