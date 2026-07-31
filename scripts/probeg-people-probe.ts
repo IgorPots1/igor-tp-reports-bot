@@ -21,20 +21,27 @@
  *   --confirmed=<path.json>           Optional. {"<studentId>": ["Хади Муртазалиева", ...]} — confirmed
  *                                     spellings (previews club_probeg_athlete_links): such a name counts
  *                                     as EXACT, so a shortened name auto-links instead of re-queuing.
+ *   --write [--commit]                Build the write plan: EXACT → club_records (official_protocol/
+ *                                     verified), PROBABLE → club_protocol_pending queue, both → remembered
+ *                                     spelling. WITHOUT --commit it is a DRY-RUN (prints the plan, writes
+ *                                     nothing). Idempotent: coach_confirmed never overwritten, already-
+ *                                     linked/queued rows skipped. Reads confirmed spellings from the DB.
  *
  *   node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
- *     --env-file=/Users/igor/igor-tp-reports-bot/.env.local scripts/probeg-people-probe.ts --check-all
+ *     --env-file=/Users/igor/igor-tp-reports-bot/.env.local scripts/probeg-people-probe.ts --write
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { nameSearchSpecs, studentNameVariantSets } from "@/features/club/name-translit";
-import { extractFinishes, fmtHms, isForeignRace, matchRace, normalizeKm, type MatchResult, type ProbegFinish } from "@/features/club/probeg-parse";
+import { distanceKeyOf, extractFinishes, fmtHms, isForeignRace, matchRace, normalizeFinisherName, normalizeKm, type MatchResult, type ProbegFinish } from "@/features/club/probeg-parse";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const MODE_CANDIDATES = process.argv.includes("--candidates");
 const MODE_CHECK = process.argv.includes("--check");
 const MODE_CHECK_ALL = process.argv.includes("--check-all");
+const MODE_WRITE = process.argv.includes("--write");
+const COMMIT = process.argv.includes("--commit"); // без него --write делает ТОЛЬКО dry-run, ничего не пишет
 const STUDENTS_PATH = process.argv.find((a) => a.startsWith("--students="))?.slice("--students=".length).trim() || "";
 const CONFIRMED_PATH = process.argv.find((a) => a.startsWith("--confirmed="))?.slice("--confirmed=".length).trim() || "";
 
@@ -352,11 +359,129 @@ async function runCheckAll(): Promise<void> {
   process.exit(0);
 }
 
+const KM_OF_KEY: Record<string, number> = { "5k": 5, "10k": 10, "21k": 21.0975, "42k": 42.195 };
+
+/** Read-only SELECT that tolerates a not-yet-applied table (returns null so the caller treats it empty). */
+async function selectSafe<T>(table: string, columns: string): Promise<T[] | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase.from(table).select(columns);
+  if (error) { console.log(`  (таблица ${table} недоступна — считаю пустой; применить миграцию перед --commit): ${error.message}`); return null; }
+  return (data as T[] | null) ?? [];
+}
+
+type RecPlan = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; action: "insert" | "upgrade" };
+type LinkPlan = { studentId: string; studentName: string; name: string; norm: string };
+type PendPlan = { studentId: string; studentName: string; race: OurRace; res: MatchResult };
+
+/**
+ * Build the write plan (EXACT → club_records official_protocol; PROBABLE → confirmation queue; both →
+ * remembered spelling) and either PRINT it (dry-run, default) or COMMIT it. Idempotent: coach_confirmed
+ * rows are never touched, an already-linked protocol is skipped, an already-queued probable is skipped.
+ */
+async function runWrite(): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const students = await loadClubStudents();
+  console.log(`=== WRITE ${COMMIT ? "(COMMIT — ПИШЕМ в БД)" : "(DRY-RUN — ничего не пишется)"} · учеников: ${students.length} ===`);
+
+  const recs = await selectSafe<{ student_id: string; distance_key: string; source: string; protocol_url: string | null }>("club_records", "student_id, distance_key, source, protocol_url");
+  const recMap = new Map<string, { source: string; url: string | null }>();
+  for (const r of recs ?? []) recMap.set(`${r.student_id}|${r.distance_key}`, { source: r.source, url: r.protocol_url });
+  const links = await selectSafe<{ student_id: string; confirmed_name_normalized: string }>("club_probeg_athlete_links", "student_id, confirmed_name_normalized");
+  const linkSet = new Set((links ?? []).map((l) => `${l.student_id}|${l.confirmed_name_normalized}`));
+  const confirmedByStudent = new Map<string, string[]>();
+  for (const l of links ?? []) { const a = confirmedByStudent.get(l.student_id) ?? []; a.push(l.confirmed_name_normalized); confirmedByStudent.set(l.student_id, a); }
+  const pend = await selectSafe<{ student_id: string; race_date: string; protocol_seconds: number | null }>("club_protocol_pending", "student_id, race_date, protocol_seconds");
+  const pendSet = new Set((pend ?? []).map((p) => `${p.student_id}|${p.race_date}|${p.protocol_seconds}`));
+
+  const recordPlans: RecPlan[] = [];
+  const linkPlans: LinkPlan[] = [];
+  const pendPlans: PendPlan[] = [];
+  const skips: string[] = [];
+
+  let first = true;
+  for (const s of students) {
+    const { finishes } = await fetchFinishesForName(s.name, first); first = false;
+    const variants = studentNameVariantSets(s.name);
+    const confirmed = confirmedByStudent.get(s.id) ?? [];
+    for (const race of await loadOurRaces(s.id)) {
+      if (race.ourSeconds == null || race.foreign) continue; // вне знаменателя — не пишем
+      const res = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
+      if (res.verdict === "exact" && res.finish) {
+        const dkey = distanceKeyOf(res.finish.distanceKm);
+        if (!dkey) { skips.push(`${s.name}: ТОЧНО ${race.date}, но дистанция ${res.finish.distanceKm}км не 5/10/21/42к → club_records не хранит`); continue; }
+        const ex = recMap.get(`${s.id}|${dkey}`);
+        const url = res.finish.protocolUrl ?? null;
+        if (ex?.source === "coach_confirmed") { skips.push(`${s.name}: ${dkey} уже coach_confirmed → не трогаю`); continue; }
+        if (ex?.source === "official_protocol" && ex.url === url) { skips.push(`${s.name}: ${dkey} уже привязан к тому же протоколу → без изменений`); continue; }
+        recordPlans.push({ studentId: s.id, studentName: s.name, dkey, finish: res.finish, date: race.date, action: ex ? "upgrade" : "insert" });
+        const norm = normalizeFinisherName(res.finish.name);
+        if (norm && !linkSet.has(`${s.id}|${norm}`)) { linkSet.add(`${s.id}|${norm}`); linkPlans.push({ studentId: s.id, studentName: s.name, name: res.finish.name, norm }); }
+      } else if (res.verdict === "probable" && res.finish) {
+        const pkey = `${s.id}|${race.date}|${res.finish.seconds}`;
+        if (pendSet.has(pkey)) { skips.push(`${s.name}: ВЕРОЯТНОЕ ${race.date} уже в очереди → без изменений`); continue; }
+        pendSet.add(pkey);
+        pendPlans.push({ studentId: s.id, studentName: s.name, race, res });
+      }
+    }
+  }
+
+  console.log(`\n--- АВТО-ПРИВЯЗКИ → club_records (official_protocol/verified): ${recordPlans.length} ---`);
+  for (const p of recordPlans) console.log(`  ${p.studentName}: [${p.dkey}] ${p.action} → ${fmtHms(p.finish.seconds)} ${p.finish.protocolUrl ?? "(url?)"} (гонка ${p.date}, ${p.finish.event})`);
+  console.log(`\n--- ПАМЯТЬ НАПИСАНИЙ → club_probeg_athlete_links: ${linkPlans.length} ---`);
+  for (const p of linkPlans) console.log(`  ${p.studentName}: «${p.name}»`);
+  console.log(`\n--- В ОЧЕРЕДЬ ПОДТВЕРЖДЕНИЯ → club_protocol_pending: ${pendPlans.length} ---`);
+  for (const p of pendPlans) {
+    const flags = [p.res.distanceDoubtful ? "дист.сомнит." : "", p.res.nameUnrecognized ? "имя?" : "", p.res.weakName ? "без фамилии" : ""].filter(Boolean).join(",");
+    console.log(`  ${p.studentName}: ${p.race.date} наше ${fmtKm(p.race.ourKm)} ${fmtHms(p.race.ourSeconds)} ↔ ${p.res.finish?.name} ${fmtKm(p.res.finish?.distanceKm ?? null)} ${fmtHms(p.res.finish?.seconds ?? null)} место ${p.res.finish?.place ?? "?"}${flags ? ` [${flags}]` : ""}`);
+  }
+  console.log(`\n--- ПРОПУЩЕНО (coach_confirmed / уже привязано / нестанд. дистанция / уже в очереди): ${skips.length} ---`);
+  for (const l of skips) console.log(`  ${l}`);
+  console.log(`\n=== К ЗАПИСИ: ${recordPlans.length} авто-привязок + ${linkPlans.length} написаний + ${pendPlans.length} в очередь = ${recordPlans.length + linkPlans.length + pendPlans.length} ===`);
+
+  if (!COMMIT) {
+    console.log("\nDRY-RUN: ничего не записано. Проверь список глазами, примени миграции 20260823/20260824, затем повтори с --commit.");
+    process.exit(0);
+  }
+
+  const nowIso = new Date().toISOString();
+  let ok = 0, failed = 0;
+  const run = async (label: string, fn: () => Promise<{ error: { message: string } | null }>): Promise<void> => {
+    const { error } = await fn();
+    if (error) { failed += 1; console.log(`  FAIL ${label}: ${error.message}`); } else { ok += 1; }
+  };
+  for (const p of recordPlans) {
+    const km = KM_OF_KEY[p.dkey];
+    await run(`club_records ${p.studentName}/${p.dkey}`, () => supabase.from("club_records").upsert({
+      student_id: p.studentId, distance_key: p.dkey, duration_seconds: p.finish.seconds,
+      pace_sec_per_km: km ? Math.round(p.finish.seconds / km) : null, record_date: p.date,
+      trust: "verified", source: "official_protocol", protocol_url: p.finish.protocolUrl ?? null,
+      protocol_result_time_seconds: p.finish.seconds, verified_at: nowIso, race_name: p.finish.event,
+    }, { onConflict: "student_id,distance_key" }));
+  }
+  for (const p of linkPlans) {
+    await run(`link ${p.studentName}`, () => supabase.from("club_probeg_athlete_links").upsert({
+      student_id: p.studentId, confirmed_name: p.name, confirmed_name_normalized: p.norm, confirmed_by: "probeg-writer",
+    }, { onConflict: "student_id,confirmed_name_normalized" }));
+  }
+  for (const p of pendPlans) {
+    const f = p.res.finish!;
+    await run(`pending ${p.studentName}`, () => supabase.from("club_protocol_pending").upsert({
+      student_id: p.studentId, race_date: p.race.date, our_seconds: p.race.ourSeconds, our_distance_km: p.race.ourKm, our_title: p.race.title,
+      protocol_url: f.protocolUrl ?? null, protocol_name: f.name, protocol_event: f.event, protocol_city: f.city, protocol_place: f.place,
+      protocol_seconds: f.seconds, protocol_distance_km: f.distanceKm,
+      distance_doubtful: p.res.distanceDoubtful, name_unrecognized: p.res.nameUnrecognized, weak_name: p.res.weakName,
+    }, { onConflict: "student_id,race_date,protocol_seconds" }));
+  }
+  console.log(`\n=== COMMIT завершён: ${ok} записано, ${failed} ошибок ===`);
+  process.exit(failed ? 1 : 0);
+}
+
 async function main(): Promise<void> {
   if (MODE_CANDIDATES) return runCandidates();
+  if (MODE_WRITE) return runWrite();
   if (MODE_CHECK_ALL) return runCheckAll();
   if (MODE_CHECK) return runCheck();
-  console.error("Режим: --candidates | --check --students=<path.json> | --check-all");
+  console.error("Режим: --candidates | --check --students=<path.json> | --check-all | --write [--commit]");
   process.exit(1);
 }
 

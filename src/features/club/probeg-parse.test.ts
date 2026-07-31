@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { studentNameVariantSets } from "./name-translit.ts";
-import { descriptorToKm, distanceMatch, extractFinishes, isForeignRace, matchRace, nameGate, type ProbegFinish } from "./probeg-parse.ts";
+import { descriptorToKm, distanceKeyOf, distanceMatch, extractFinishes, isForeignRace, matchRace, nameGate, type ProbegFinish } from "./probeg-parse.ts";
 
 // Rows copied from a real probeg /results/ page (shape preserved): a word-form marathon, a numeric
 // "5 км", and a meters "10550 м" — the three distance encodings the parser must all read.
@@ -36,6 +36,21 @@ describe("extractFinishes", () => {
     assert.equal(f[0].city, "Санкт-Петербург");
     assert.equal(f[0].name, "Сергей Ивошин"); // namesake disambiguation is by eye; the name is shown, never decisive
     assert.equal(f[1].name, "Виктория Малык");
+  });
+  test("protocol URL captured from the /race/<id>/ anchor", () => {
+    assert.equal(f[0].protocolUrl, "https://probeg.org/race/187000/");
+  });
+});
+
+describe("distanceKeyOf", () => {
+  test("standard PR buckets with drift, else null", () => {
+    assert.equal(distanceKeyOf(42.2), "42k");
+    assert.equal(distanceKeyOf(21.1), "21k");
+    assert.equal(distanceKeyOf(10.55), "10k");
+    assert.equal(distanceKeyOf(5), "5k");
+    assert.equal(distanceKeyOf(15), null); // relay
+    assert.equal(distanceKeyOf(105.6), null); // ultra
+    assert.equal(distanceKeyOf(null), null);
   });
 });
 

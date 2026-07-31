@@ -18,7 +18,19 @@ export type ProbegFinish = {
   place: string | null; // e.g. "247" (из 259)
   city: string | null;
   event: string; // event name (descriptor stripped)
+  protocolUrl?: string | null; // https://probeg.org/race/<id>/ — stored on the record as the official link
 };
+
+/** Map a protocol distance (km) to a club_records distance_key, or null when it is not one of the four
+ *  PR buckets (an ultra/relay/odd distance has no club_records home). Tolerant of GPS/labeling drift. */
+export function distanceKeyOf(km: number | null): "5k" | "10k" | "21k" | "42k" | null {
+  if (km == null) return null;
+  if (distanceMatch(km, 42.2)) return "42k";
+  if (distanceMatch(km, 21.1)) return "21k";
+  if (distanceMatch(km, 10)) return "10k";
+  if (distanceMatch(km, 5)) return "5k";
+  return null;
+}
 
 export function toIsoDate(s: string): string | null {
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -94,16 +106,20 @@ export function extractFinishes(html: string): ProbegFinish[] {
 
     let distanceKm: number | null = null;
     let event = "";
-    const anchorRe = /\/race\/\d+\/">([\s\S]*?)<\/a>/gu;
+    let raceId: string | null = null;
+    const anchorRe = /\/race\/(\d+)\/">([\s\S]*?)<\/a>/gu;
     let am: RegExpExecArray | null;
     while ((am = anchorRe.exec(row)) !== null) {
-      const content = am[1];
+      if (raceId == null) raceId = am[1]; // date + event anchors share the race id; keep the first
+      const content = am[2];
       if (!/<br/iu.test(content)) continue; // the date anchor has no <br/> — skip it
       const parts = content.split(/<br\s*\/?>/iu);
       distanceKm = descriptorToKm(parts[parts.length - 1]);
       event = collapse(stripTags(parts.slice(0, -1).join(" ")));
+      raceId = am[1]; // prefer the event anchor's id
       break;
     }
+    const protocolUrl = raceId ? `https://probeg.org/race/${raceId}/` : null;
 
     const pm = row.match(/(\d+)\s*(?:из|&nbsp;из)/u);
     const cm = row.match(/\/races\/city\/\d+\/">([^<]+)<\/a>/u);
@@ -121,7 +137,7 @@ export function extractFinishes(html: string): ProbegFinish[] {
     const key = `${iso}|${sec}|${distanceKm ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ date: iso, seconds: sec, distanceKm, name, place: pm ? pm[1] : null, city: cm ? collapse(cm[1]) : null, event });
+    out.push({ date: iso, seconds: sec, distanceKm, name, place: pm ? pm[1] : null, city: cm ? collapse(cm[1]) : null, event, protocolUrl });
   }
   return out;
 }
