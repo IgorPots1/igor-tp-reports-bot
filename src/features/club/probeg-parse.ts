@@ -239,7 +239,7 @@ export function isForeignRace(title: string | null | undefined): boolean {
 
 export type MatchVerdict = "exact" | "probable" | "none";
 export type OurRaceInput = { date: string; ourSeconds: number | null; ourKm: number | null };
-export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean; byConfirmedName: boolean; distanceDoubtful: boolean };
+export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean; byConfirmedName: boolean; distanceDoubtful: boolean; weakName: boolean };
 
 /**
  * Classify one of our races against a person's probeg finishes. The NAME proves the person; the
@@ -260,8 +260,13 @@ export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; 
  */
 export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentVariants: string[][], tol: { exact: number; probable: number } = { exact: 60, probable: 900 }, confirmedSpellings: string[] = []): MatchResult {
   const confirmedSet = new Set(confirmedSpellings.map(normalizeFinisherName).filter((s) => s.length > 0));
+  // A roster with only ONE token is a given name with no surname (Margarita, Olga). The name then proves
+  // almost nothing — it matches every namesake with that first name — so the name-over-distance relaxation
+  // is unsafe. Such students never auto-link (unless a spelling was confirmed) and are proposed only on a
+  // TIGHT hit: distance matches AND |Δtime| ≤ exactTol.
+  const weak = studentVariants.length < 2;
   const sameDate = finishes.filter((f) => f.date === race.date);
-  const base = { sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: false, distanceDoubtful: false };
+  const base = { sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: false, distanceDoubtful: false, weakName: weak };
   if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, ...base };
   const scored = sameDate
     .map((f) => {
@@ -280,8 +285,16 @@ export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentV
     })
     .sort((a, b) => a.dt - b.dt);
   // Auto-link only when the distance ALSO corroborates — a distance conflict drops to probable for review.
-  const exact = scored.find((c) => c.dt <= tol.exact && c.nameStrict && c.distOk);
+  // A surname-less student never auto-links unless the spelling was already confirmed.
+  const exact = scored.find((c) => c.dt <= tol.exact && c.nameStrict && c.distOk && (!weak || c.confirmed));
   if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, ...base, byConfirmedName: exact.confirmed };
+  if (weak) {
+    // Surname-less: name alone pulls random namesakes, so demand distance match AND a tight time.
+    const w = scored.find((c) => c.dt <= tol.exact && c.distMatch && c.nameOk);
+    if (w) return { verdict: "probable", finish: w.f, deltaSeconds: w.dt, ...base };
+    const nr = scored.find((c) => c.dt <= tol.probable && c.nameKnown && !c.nameOk)?.f ?? null;
+    return { verdict: "none", finish: null, deltaSeconds: null, ...base, nameRejected: nr };
+  }
   // Name matches → distance gate dropped. distanceDoubtful when our distance conflicts with the protocol.
   const byName = scored.find((c) => c.dt <= tol.probable && c.nameOk);
   if (byName) return { verdict: "probable", finish: byName.f, deltaSeconds: byName.dt, ...base, distanceDoubtful: byName.distConflict };

@@ -214,6 +214,19 @@ describe("matchRace", () => {
     assert.equal(matchRace(race, finishes, malyk).verdict, "exact");
   });
 
+  test("surname-less student (Olga/Margarita): given-name-only match with wrong time/distance → none", () => {
+    const olga = studentNameVariantSets("Olga"); // one token, no surname
+    // Рогожина Ольга, 5к 42:17 vs our 9.873к 57:04 — given matches but distance+time are off → not proposed
+    const off = matchRace({ date: "2026-05-23", ourSeconds: at(0, 57, 4), ourKm: 9.873 },
+      [{ date: "2026-05-23", seconds: at(0, 42, 17), distanceKm: 5, name: "Рогожина Ольга", place: "1", city: "", event: "Сириус" }], olga);
+    assert.equal(off.verdict, "none");
+    assert.equal(off.weakName, true);
+    // a TIGHT hit (distance match + Δ≤1min) is still proposed as probable — never auto-linked
+    const tight = matchRace({ date: "2026-05-23", ourSeconds: at(0, 42, 30), ourKm: 5 },
+      [{ date: "2026-05-23", seconds: at(0, 42, 17), distanceKm: 5, name: "Рогожина Ольга", place: "1", city: "", event: "Сириус" }], olga);
+    assert.equal(tight.verdict, "probable");
+  });
+
   test("conflicting distance with a matching name blocks EXACT but yields probable «дистанция сомнительна»", () => {
     const race = { date: "2026-05-23", ourSeconds: at(0, 45, 8), ourKm: 10 };
     const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 45, 20), distanceKm: 42.2, name: "Антон Малык", place: "1", city: "", event: "" }];

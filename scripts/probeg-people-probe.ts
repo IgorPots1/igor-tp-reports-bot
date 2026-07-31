@@ -189,7 +189,7 @@ async function studentName(studentId: string): Promise<string> {
   return (data as { student_name: string | null } | null)?.student_name ?? studentId;
 }
 
-type ProbableDetail = { studentName: string; race: OurRace; finish: ProbegFinish; deltaSeconds: number | null; nameUnrecognized: boolean; distanceDoubtful: boolean };
+type ProbableDetail = { studentName: string; race: OurRace; finish: ProbegFinish; deltaSeconds: number | null; nameUnrecognized: boolean; distanceDoubtful: boolean; weakName: boolean };
 type SkipDetail = { studentName: string; race: OurRace };
 // comparable = состоявшиеся гонки в России/СНГ с нашим временем — единственный честный знаменатель.
 // foreign (зарубеж, протокола нет и не будет) и notime (нет нашего времени, сверять не с чем) — вне него.
@@ -223,11 +223,11 @@ async function checkStudent(studentId: string, name: string, diagnose: boolean, 
     } else if (res.verdict === "probable" && res.finish) {
       tally.comparable += 1;
       tally.probable += 1;
-      const detail: ProbableDetail = { studentName: name, race, finish: res.finish, deltaSeconds: res.deltaSeconds, nameUnrecognized: res.nameUnrecognized, distanceDoubtful: res.distanceDoubtful };
+      const detail: ProbableDetail = { studentName: name, race, finish: res.finish, deltaSeconds: res.deltaSeconds, nameUnrecognized: res.nameUnrecognized, distanceDoubtful: res.distanceDoubtful, weakName: res.weakName };
       tally.probables.push(detail);
       probablesOut.push(detail);
       const who = res.nameUnrecognized ? "имя не распозналось" : res.finish.name;
-      const note = res.distanceDoubtful ? " — наша дистанция сомнительна" : "";
+      const note = `${res.distanceDoubtful ? " — наша дистанция сомнительна" : ""}${res.weakName ? " — ученик без фамилии" : ""}`;
       console.log(`  ВЕРОЯТНО ${race.title || fmtKm(race.ourKm)} · ${ours} ↔ probeg ${who} «${res.finish.event}» ${fmtKm(res.finish.distanceKm)} ${fmtHms(res.finish.seconds)} место ${res.finish.place ?? "?"} ${res.finish.city ?? ""} (Δ${res.deltaSeconds}с)${note} — на подтверждение`);
     } else if (race.foreign) { // не нашлось И название зарубежное → вне знаменателя (не промах)
       tally.foreign += 1;
@@ -266,7 +266,7 @@ function printSummary(totals: StudentTally, students: number, probables: Probabl
     console.log(`\n--- СПИСОК ВЕРОЯТНЫХ (${probables.length}) — очередь на подтверждение тренером ---`);
     for (const p of probables) {
       const who = p.nameUnrecognized ? "имя не распозналось" : p.finish.name;
-      const note = p.distanceDoubtful ? " [наша дистанция сомнительна]" : p.nameUnrecognized ? " [имя не распозналось]" : "";
+      const note = `${p.distanceDoubtful ? " [наша дистанция сомнительна]" : ""}${p.nameUnrecognized ? " [имя не распозналось]" : ""}${p.weakName ? " [ученик без фамилии]" : ""}`;
       console.log(`  ${p.studentName}: наше ${p.race.date} ${fmtKm(p.race.ourKm)} ${fmtHms(p.race.ourSeconds)}  ↔  probeg ${who} «${p.finish.event}» ${fmtKm(p.finish.distanceKm)} ${fmtHms(p.finish.seconds)} место ${p.finish.place ?? "?"} ${p.finish.city ?? ""}${note}`);
     }
   }
