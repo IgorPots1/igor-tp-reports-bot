@@ -18,7 +18,7 @@ import { readSessionSnapshot } from "../../../src/features/trainingpeaks/tp-sess
 import { findWt0Set, isRecord, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
 import { toolRoot } from "./lib/paths.ts";
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
-const root = path.resolve(toolRoot, "..", ".."); loadEnv(path.join(root, ".env.local")); loadEnv(path.join(root, ".env"));
+const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p);
 const sb = createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } });
 const S = (mm: string): number => { const [a, b] = mm.split(":"); return Number(a) * 60 + Number(b); };
 const fp = (s: number | null): string => (s && s > 0 && Number.isFinite(s) ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : "—");
@@ -64,13 +64,21 @@ function assignRefs(steps: Flat[], desc: string): (Rng | "anchor" | "keep")[] | 
 async function main(): Promise<void> {
   const b = await bearer(); const today = todayIso();
   const roster = process.argv.includes("--roster");
-  let ids: number[]; let scopeErr = 0;
-  if (roster) {
+  // --ids=5475679,5476215,... — verify a POINTED list (e.g. a batch about to be applied), not the
+  // whole roster. Takes precedence over --roster.
+  const idsArg = process.argv.find((a) => a.startsWith("--ids="));
+  let ids: number[]; let scopeErr = 0; let scopeLabel: string;
+  if (idsArg) {
+    ids = [...new Set(idsArg.slice("--ids=".length).split(",").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0))];
+    scopeLabel = `список (${ids.length})`;
+  } else if (roster) {
     const r = await getCoachedAthletesRoster();
     ids = [...new Set(r.filter((a) => Number.isInteger(a.athleteId) && a.athleteId > 0).map((a) => a.athleteId))];
+    scopeLabel = "ВЕСЬ РОСТЕР";
   } else {
     const { data: rb } = await sb.from("tp_threshold_applications").select("trainingpeaks_athlete_id").eq("kind", "pace").eq("tier", "restore");
     ids = [...new Set((rb ?? []).map((r) => Number(r.trainingpeaks_athlete_id)))];
+    scopeLabel = "restore";
   }
   const bad: { date: string; line: string }[] = []; let ok = 0, wk = 0, skippedSteps = 0, deferWk = 0;
   for (const id of ids) {
@@ -108,7 +116,7 @@ async function main(): Promise<void> {
     }
   }
   bad.sort((a, b2) => a.date.localeCompare(b2.date));
-  console.log(`scope: ${roster ? "ВЕСЬ РОСТЕР" : "restore"} · атлетов ${ids.length}${scopeErr ? ` (ошибок GET настроек: ${scopeErr})` : ""} · темповых плановых ${wk} (>= ${today})`);
+  console.log(`scope: ${scopeLabel} · атлетов ${ids.length}${scopeErr ? ` (ошибок GET настроек: ${scopeErr})` : ""} · темповых плановых ${wk} (>= ${today})`);
   console.log(`пропущено как непроверяемые по тексту: ${skippedSteps} шаг(ов) (нет числа в описании / открытый пол без потолка)`);
   console.log(`\n======== РАСХОЖДЕНИЯ СТРУКТУРЫ И ТЕКСТА — ${bad.length} тренировок ========`);
   if (!bad.length) console.log("  (нет — все шаги с явным темпом совпадают с описанием)");
