@@ -1,52 +1,56 @@
-// Latin → Cyrillic name transliteration for probeg matching (Фаза 10.3, plan step 1). Our roster
-// stores names in Latin (trainingpeaks_students.student_name); probeg is Cyrillic. This produces a
-// best-guess Cyrillic spelling to query probeg's public /results/<surname>/<given>/ page.
-//
-// Reverse transliteration is INHERENTLY AMBIGUOUS (c → ц|к, y → ы|й, e → е|э, …). We pick the most
-// common Russian mapping and lean on the caller's fallbacks (name-order swap, given-name-only) plus
-// the decisive date+time match — a wrong guess just yields an empty page, never a wrong link.
+// Latin → Cyrillic name transliteration for probeg matching (Фаза 10.3, plan step 1). Our roster is
+// Latin (trainingpeaks_students.student_name); probeg is Cyrillic. Reverse transliteration is
+// AMBIGUOUS (ai → ай|аи, ei → ей|еи, y → ы|й, c → к|ц, ia → ия|иа, iu → ю|иу, …), so instead of one
+// best-guess we GENERATE VARIANTS and the caller tries each public /results/<surname>/<given>/ URL.
+// A wrong variant just yields an empty page; the decisive check is always date+time, never the name.
 
-// Digraphs first (longest match wins), then single letters. Lowercase in/out; caller capitalizes.
-const DIGRAPHS: Array<[string, string]> = [
-  ["shch", "щ"], ["sch", "щ"], ["tch", "ч"],
-  ["zh", "ж"], ["kh", "х"], ["ts", "ц"], ["ch", "ч"], ["sh", "ш"],
-  ["yo", "е"], ["yu", "ю"], ["ya", "я"], ["ye", "е"], ["yi", "и"],
-  ["ph", "ф"], ["ck", "к"], ["ei", "ей"], ["iy", "ий"],
+// Unambiguous multi-letter mappings, longest first. (ia/iu ARE ambiguous → branched below.)
+const MULTI: Array<[string, string[]]> = [
+  ["shch", ["щ"]], ["sch", ["щ"]],
+  ["zh", ["ж"]], ["kh", ["х"]], ["ts", ["ц"]], ["ch", ["ч"]], ["sh", ["ш"]], ["ph", ["ф"]],
+  ["yo", ["е"]], ["yu", ["ю"]], ["ya", ["я"]], ["ye", ["е"]], ["yi", ["и"]],
+  ["ia", ["ия", "иа"]], ["iu", ["ю", "иу"]],
 ];
-const SINGLES: Record<string, string> = {
-  a: "а", b: "б", c: "к", d: "д", e: "е", f: "ф", g: "г", h: "х", i: "и", j: "ж",
-  k: "к", l: "л", m: "м", n: "н", o: "о", p: "п", q: "к", r: "р", s: "с", t: "т",
-  u: "у", v: "в", w: "в", x: "кс", z: "з",
+const SINGLE: Record<string, string> = {
+  a: "а", b: "б", c: "к", d: "д", e: "е", f: "ф", g: "г", h: "х", i: "и", j: "ж", k: "к",
+  l: "л", m: "м", n: "н", o: "о", p: "п", q: "к", r: "р", s: "с", t: "т", u: "у", v: "в",
+  w: "в", x: "кс", z: "з",
 };
 const VOWELS = new Set(["a", "e", "i", "o", "u", "y"]);
+const MAX_VARIANTS = 8;
 
-/** Best-guess Cyrillic for one Latin word. `y` is contextual: after a vowel it is a glide (й, so
- *  "ay"→"ай"), otherwise the vowel ы. */
-export function translitWord(latin: string): string {
-  const s = latin.toLowerCase().replace(/[^a-z]/g, "");
-  let out = "";
+/** All plausible Cyrillic spellings of one Latin word (bounded set). Branches on the ambiguous
+ *  digraphs; `i`/`y` after a vowel are glides (ай/ей) OR separate vowels (аи/еи). PURE. */
+export function translitVariants(latin: string): string[] {
+  const s = latin.toLowerCase().replace(/[^a-z]/gu, "");
+  let cands = [""];
+  const branch = (opts: string[]): void => {
+    const next: string[] = [];
+    for (const c of cands) for (const o of opts) next.push(c + o);
+    cands = next.length > MAX_VARIANTS ? next.slice(0, MAX_VARIANTS) : next;
+  };
   let i = 0;
   while (i < s.length) {
     let matched = false;
-    for (const [lat, cyr] of DIGRAPHS) {
-      if (s.startsWith(lat, i)) {
-        out += cyr;
-        i += lat.length;
-        matched = true;
-        break;
-      }
+    for (const [lat, opts] of MULTI) {
+      if (s.startsWith(lat, i)) { branch(opts); i += lat.length; matched = true; break; }
     }
     if (matched) continue;
     const ch = s[i];
-    if (ch === "y") {
-      const prev = i > 0 ? s[i - 1] : "";
-      out += VOWELS.has(prev) ? "й" : "ы";
-    } else {
-      out += SINGLES[ch] ?? ch;
-    }
+    const prev = i > 0 ? s[i - 1] : "";
+    if (ch === "i" && VOWELS.has(prev)) branch(["й", "и"]); // ai/ei/oi/ui → ...й | ...и (Николай/Раиса)
+    else if (ch === "y") branch(VOWELS.has(prev) ? ["й", "и"] : ["ы", "й"]);
+    else if (ch === "c") branch(["к", "ц"]);
+    else branch([SINGLE[ch] ?? ch]);
     i += 1;
   }
-  return out ? out[0].toUpperCase() + out.slice(1) : "";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of cands) {
+    const cap = c ? c[0].toUpperCase() + c.slice(1) : "";
+    if (cap && !seen.has(cap)) { seen.add(cap); out.push(cap); }
+  }
+  return out;
 }
 
 /** Normalize a Cyrillic name for comparison: lowercase, ё→е, collapse spaces. */
@@ -54,27 +58,38 @@ export function normalizeCyrillicName(name: string): string {
   return name.toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim();
 }
 
-export type NameGuess = { surname: string; given: string };
+export type NameSpec = { surname: string; given: string };
 
 /**
- * Split a roster name into (surname, given) and transliterate both. The roster order is unknown, so
- * we return BOTH interpretations (token0=surname and token0=given); the caller tries each against
- * probeg. Already-Cyrillic input is passed through (only normalized). Multi-token names keep the
- * first two significant tokens.
+ * Ordered, deduped, bounded list of probeg /results/ path specs to try for a roster name. Includes
+ * BOTH token orders (roster surname/given order is unknown), extra translit variants, AND surname-ONLY
+ * specs — the latter catch a given-name mismatch (e.g. our «Хадижат» vs probeg «Хади»): search the
+ * surname alone, then disambiguate by date+time. Already-Cyrillic input is passed through.
  */
-export function nameGuesses(rosterName: string): NameGuess[] {
-  const isCyrillic = /[а-яё]/i.test(rosterName);
-  const tokens = rosterName.trim().split(/\s+/u).filter((t) => t.replace(/[^a-zа-яё]/gi, "").length >= 2);
-  if (tokens.length < 2) {
-    const one = isCyrillic ? (tokens[0] ?? "") : translitWord(tokens[0] ?? "");
-    return one ? [{ surname: one, given: "" }] : [];
+export function nameSearchSpecs(rosterName: string): NameSpec[] {
+  const isCyr = /[а-яё]/iu.test(rosterName);
+  const tokens = rosterName.trim().split(/\s+/u).filter((t) => t.replace(/[^a-zа-яё]/giu, "").length >= 2).slice(0, 2);
+  if (tokens.length === 0) return [];
+  const variantsOf = (t: string): string[] => (isCyr ? [t[0].toUpperCase() + t.slice(1).toLowerCase()] : translitVariants(t).slice(0, 3));
+
+  const specs: NameSpec[] = [];
+  const seen = new Set<string>();
+  const add = (surname: string, given: string): void => {
+    const k = `${surname}|${given}`;
+    if (surname && !seen.has(k)) { seen.add(k); specs.push({ surname, given }); }
+  };
+
+  if (tokens.length === 1) {
+    for (const v of variantsOf(tokens[0])) add(v, "");
+    return specs.slice(0, 6);
   }
-  const conv = (t: string) => (isCyrillic ? t[0].toUpperCase() + t.slice(1).toLowerCase() : translitWord(t));
-  const a = conv(tokens[0]);
-  const b = conv(tokens[1]);
-  // Both orders — probeg's URL is /results/<surname>/<given>/ and rosters vary.
-  return [
-    { surname: a, given: b },
-    { surname: b, given: a },
-  ];
+  const t0 = variantsOf(tokens[0]);
+  const t1 = variantsOf(tokens[1]);
+  add(t0[0], t1[0]); // order A (token0=surname)
+  add(t1[0], t0[0]); // order B (token1=surname)
+  add(t0[0], ""); // surname-only A → catches given-name mismatch
+  add(t1[0], ""); // surname-only B
+  for (const s of t0.slice(1)) add(s, t1[0]); // extra surname variants, order A
+  for (const s of t1.slice(1)) add(s, t0[0]); // extra surname variants, order B
+  return specs.slice(0, 6);
 }

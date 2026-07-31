@@ -28,7 +28,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { nameGuesses } from "@/features/club/name-translit";
+import { nameSearchSpecs } from "@/features/club/name-translit";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const MODE_CANDIDATES = process.argv.includes("--candidates");
@@ -43,7 +43,9 @@ const SEED_EVENTS = [
 
 const CACHE_DIR = path.resolve("probeg-cache");
 const REQUEST_DELAY_MS = 3000; // polite: ≥3s before every LIVE fetch
-const TIME_TOLERANCE_S = 60; // "в пределах минуты" — watch (net-ish) vs official time
+const EXACT_TOLERANCE_S = 60; // ≤1 мин → точное совпадение (авто-привязываемо)
+const PROBABLE_TOLERANCE_S = 900; // ≤15 мин на той же дате → вероятное (gun vs chip); ТОЛЬКО на подтверждение
+const TODAY_ISO = new Date().toISOString().slice(0, 10); // future races have no protocol yet — excluded
 const USER_AGENT = "igor-tp-reports-bot/probeg-recon (polite, cached, sequential)";
 
 function sleep(ms: number): Promise<void> {
@@ -136,33 +138,31 @@ async function fetchHtml(url: string, cacheName: string, diagnose: boolean): Pro
 
 const enc = (s: string) => encodeURIComponent(s);
 
-/** Fetch the public results-by-name page, trying both name orders, then a given-name-only fallback
- *  (the Хадижат case: found only by given name). Returns the HTML with the most finishes. */
-async function fetchResultsForName(rosterName: string, diagnose: boolean): Promise<{ html: string; via: string } | null> {
-  const guesses = nameGuesses(rosterName);
-  let best: { html: string; via: string; n: number } | null = null;
-  for (const g of guesses) {
-    if (!g.surname) continue;
-    const url = g.given
-      ? `https://probeg.org/results/${enc(g.surname)}/${enc(g.given)}/`
-      : `https://probeg.org/results/${enc(g.surname)}/`;
-    const html = await fetchHtml(url, `results-${cacheKey(g.surname)}-${cacheKey(g.given)}`, diagnose && !best);
-    if (html) {
-      const n = extractFinishes(html).length;
-      if (!best || n > best.n) best = { html, via: `${g.surname}/${g.given}`, n };
+/**
+ * Fetch the public results-by-name page across ALL name specs (both orders, translit variants, and
+ * surname-only) and UNION their finishes — our person may sit under a variant spelling or only be
+ * reachable by surname alone (given mismatch). Bounded (≤6 URLs/student). Cached + polite.
+ */
+async function fetchFinishesForName(rosterName: string, diagnose: boolean): Promise<{ finishes: Array<{ date: string; seconds: number }>; tried: string[] }> {
+  const specs = nameSearchSpecs(rosterName);
+  const finishes: Array<{ date: string; seconds: number }> = [];
+  const seen = new Set<string>();
+  const tried: string[] = [];
+  let firstDiag = diagnose;
+  for (const spec of specs) {
+    const url = spec.given
+      ? `https://probeg.org/results/${enc(spec.surname)}/${enc(spec.given)}/`
+      : `https://probeg.org/results/${enc(spec.surname)}/`;
+    tried.push(spec.given ? `${spec.surname}/${spec.given}` : `${spec.surname}/*`);
+    const html = await fetchHtml(url, `results-${cacheKey(spec.surname)}-${cacheKey(spec.given)}`, firstDiag);
+    firstDiag = false;
+    if (!html) continue;
+    for (const f of extractFinishes(html)) {
+      const k = `${f.date}|${f.seconds}`;
+      if (!seen.has(k)) { seen.add(k); finishes.push(f); }
     }
   }
-  // Given-name-only fallback when surname search came back empty.
-  if ((!best || best.n === 0) && guesses[0]?.given) {
-    const given = guesses[0].given;
-    const url = `https://probeg.org/results/${enc(given)}/`;
-    const html = await fetchHtml(url, `results-givenonly-${cacheKey(given)}`, false);
-    if (html) {
-      const n = extractFinishes(html).length;
-      if (!best || n > best.n) best = { html, via: `${given} (только имя)`, n };
-    }
-  }
-  return best ? { html: best.html, via: best.via } : null;
+  return { finishes, tried };
 }
 
 type OurRace = { date: string; title: string; distanceRaw: string | null; ourSeconds: number | null };
@@ -173,6 +173,7 @@ async function loadOurRaces(studentId: string): Promise<OurRace[]> {
     .from("trainingpeaks_race_events")
     .select("event_date, title, distance_raw")
     .eq("student_id", studentId)
+    .lte("event_date", TODAY_ISO) // future races have no protocol yet — never counted
     .order("event_date", { ascending: true });
   const rows = (races as Array<{ event_date: string | null; title: string | null; distance_raw: string | null }> | null) ?? [];
   const out: OurRace[] = [];
@@ -227,33 +228,40 @@ async function runCheck(): Promise<void> {
     process.exit(1);
   }
   const ids = JSON.parse(readFileSync(STUDENTS_PATH, "utf8")) as string[];
-  let totalRaces = 0, dateHits = 0, dateTimeHits = 0, notFound = 0;
+  let totalRaces = 0, exactHits = 0, probableHits = 0, notFound = 0;
   let first = true;
   for (const studentId of ids) {
     const name = await studentName(studentId);
-    const res = await fetchResultsForName(name, first);
+    const { finishes, tried } = await fetchFinishesForName(name, first);
     first = false;
-    console.log(`\n=== ${name} ${res ? `· probeg [${res.via}]` : "· НЕ НАЙДЕН на probeg"} ===`);
-    const finishes = res ? extractFinishes(res.html) : [];
-    const ourRaces = await loadOurRaces(studentId);
+    console.log(`\n=== ${name} · probeg попытки [${tried.join(" ; ")}] · строк финишей: ${finishes.length} ===`);
+    const ourRaces = await loadOurRaces(studentId); // прошедшие гонки
     for (const race of ourRaces) {
       totalRaces += 1;
       const sameDate = finishes.filter((f) => f.date === race.date);
-      const byDate = sameDate.length > 0;
-      const byTime = race.ourSeconds != null && sameDate.some((f) => Math.abs(f.seconds - (race.ourSeconds as number)) <= TIME_TOLERANCE_S);
-      if (byTime) dateTimeHits += 1;
-      else if (byDate) dateHits += 1;
+      const delta = (f: { seconds: number }) => (race.ourSeconds != null ? Math.abs(f.seconds - race.ourSeconds) : Infinity);
+      const exact = sameDate.some((f) => delta(f) <= EXACT_TOLERANCE_S);
+      const probable = !exact && sameDate.some((f) => delta(f) <= PROBABLE_TOLERANCE_S);
+      if (exact) exactHits += 1;
+      else if (probable) probableHits += 1;
       else notFound += 1;
-      const mark = byTime ? "OK дата+время" : byDate ? `~ дата есть, время не сошлось (probeg: ${sameDate.map((f) => fmtHms(f.seconds)).join(",")})` : "НЕ НАЙДЕНА";
+      const probegTimes = sameDate.map((f) => fmtHms(f.seconds)).join(",");
+      const mark = exact
+        ? "ТОЧНО (дата+время ≤1мин)"
+        : probable
+          ? `ВЕРОЯТНО (та же дата, Δ≤15мин, probeg: ${probegTimes}) — только на подтверждение`
+          : sameDate.length
+            ? `дата есть, но время далеко (probeg: ${probegTimes}) → не матч`
+            : "не найдено";
       console.log(`  ${race.date} · ${race.title || race.distanceRaw || ""} · наше ${fmtHms(race.ourSeconds)} → ${mark}`);
     }
   }
-  console.log("\n=== ИТОГ ПОКРЫТИЯ ===");
+  console.log(`\n=== ИТОГ ПОКРЫТИЯ (только СОСТОЯВШИЕСЯ гонки, до ${TODAY_ISO}) ===`);
   const pct = (n: number) => (totalRaces ? Math.round((n / totalRaces) * 100) : 0);
-  console.log(`Наших гонок проверено: ${totalRaces}`);
-  console.log(`Подтверждено ДАТОЙ+ВРЕМЕНЕМ (±${TIME_TOLERANCE_S}с): ${dateTimeHits} (${pct(dateTimeHits)}%)`);
-  console.log(`Дата есть, но время не сошлось (gun/chip? другой старт?): ${dateHits} (${pct(dateHits)}%)`);
-  console.log(`Не найдено вовсе: ${notFound} (${pct(notFound)}%)`);
+  console.log(`Наших гонок проверено (прошедших): ${totalRaces}`);
+  console.log(`ТОЧНО (дата+время ≤1мин, авто-привязываемо): ${exactHits} (${pct(exactHits)}%)`);
+  console.log(`ВЕРОЯТНО (та же дата, Δ≤15мин, на подтверждение): ${probableHits} (${pct(probableHits)}%)`);
+  console.log(`Не найдено: ${notFound} (${pct(notFound)}%)`);
   process.exit(0);
 }
 

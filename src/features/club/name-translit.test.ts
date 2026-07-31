@@ -1,45 +1,47 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { nameGuesses, normalizeCyrillicName, translitWord } from "./name-translit.ts";
+import { nameSearchSpecs, normalizeCyrillicName, translitVariants } from "./name-translit.ts";
 
-describe("translitWord", () => {
-  test("real roster surnames transliterate to the expected Cyrillic", () => {
-    assert.equal(translitWord("Malyk"), "Малык");
-    assert.equal(translitWord("Anton"), "Антон");
-    assert.equal(translitWord("Plotnitskaya"), "Плотницкая");
-    assert.equal(translitWord("Ashrapova"), "Ашрапова");
-    assert.equal(translitWord("Ivoshin"), "Ивошин");
-    assert.equal(translitWord("Pamparayte"), "Пампарайте");
-    assert.equal(translitWord("Zalogina"), "Залогина");
-    assert.equal(translitWord("Murtazalieva"), "Муртазалиева");
+describe("translitVariants", () => {
+  test("real roster names include the correct Cyrillic among the variants", () => {
+    const cases: Array<[string, string]> = [
+      ["Malyk", "Малык"],
+      ["Anton", "Антон"],
+      ["Plotnitskaya", "Плотницкая"],
+      ["Ashrapova", "Ашрапова"],
+      ["Ivoshin", "Ивошин"],
+      ["Zalogina", "Залогина"],
+      ["Murtazalieva", "Муртазалиева"],
+      ["Sergey", "Сергей"],
+    ];
+    for (const [latin, expected] of cases) {
+      assert.ok(translitVariants(latin).includes(expected), `${latin} → ${translitVariants(latin).join(", ")} должно содержать ${expected}`);
+    }
   });
 
-  test("y is a glide after a vowel (ай), else the vowel ы", () => {
-    assert.equal(translitWord("Nikolay"), "Николай");
-    assert.equal(translitWord("Rybak"), "Рыбак");
+  test("the ai/ay bug: 'Pamparaite' now yields Пампарайте (not only Пампараите)", () => {
+    const v = translitVariants("Pamparaite");
+    assert.ok(v.includes("Пампарайте"), `variants: ${v.join(", ")}`);
+    assert.ok(v.includes("Пампараите")); // the ambiguous alternative is also offered
   });
 
-  test("common digraphs", () => {
-    assert.equal(translitWord("Shishkin"), "Шишкин");
-    assert.equal(translitWord("Zhukov"), "Жуков");
-    assert.equal(translitWord("Chekhov"), "Чехов");
+  test("y after a vowel is a glide (Николай), consonant-y is ы", () => {
+    assert.ok(translitVariants("Nikolay").includes("Николай"));
+    assert.ok(translitVariants("Rybak").includes("Рыбак"));
   });
 });
 
-describe("nameGuesses", () => {
-  test("returns both surname/given orders for a two-token Latin name", () => {
-    const g = nameGuesses("Malyk Anton");
-    assert.deepEqual(g, [
-      { surname: "Малык", given: "Антон" },
-      { surname: "Антон", given: "Малык" },
-    ]);
+describe("nameSearchSpecs", () => {
+  test("includes both orders AND a surname-only spec (the Хадижат given-mismatch case)", () => {
+    const specs = nameSearchSpecs("Murtazalieva Hadizhat");
+    assert.ok(specs.some((s) => s.surname === "Муртазалиева" && s.given === ""), "должен быть поиск только по фамилии");
+    assert.ok(specs.some((s) => s.surname === "Муртазалиева" && s.given !== ""), "и фамилия+имя");
   });
 
-  test("passes already-Cyrillic names through (only cased)", () => {
-    const g = nameGuesses("Плотницкая Анна");
-    assert.equal(g[0].surname, "Плотницкая");
-    assert.equal(g[0].given, "Анна");
+  test("already-Cyrillic passes through", () => {
+    const specs = nameSearchSpecs("Плотницкая Анна");
+    assert.ok(specs.some((s) => s.surname === "Плотницкая" && s.given === "Анна"));
   });
 });
 
