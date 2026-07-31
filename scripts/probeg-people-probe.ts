@@ -369,7 +369,8 @@ async function selectSafe<T>(table: string, columns: string): Promise<T[] | null
   return (data as T[] | null) ?? [];
 }
 
-type RecPlan = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; action: "insert" | "upgrade" };
+type ExactCand = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; ourSeconds: number | null };
+type RecPlan = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; action: "insert" | "upgrade"; ourSeconds: number | null };
 type LinkPlan = { studentId: string; studentName: string; name: string; norm: string };
 type PendPlan = { studentId: string; studentName: string; race: OurRace; res: MatchResult };
 
@@ -383,9 +384,9 @@ async function runWrite(): Promise<void> {
   const students = await loadClubStudents();
   console.log(`=== WRITE ${COMMIT ? "(COMMIT — ПИШЕМ в БД)" : "(DRY-RUN — ничего не пишется)"} · учеников: ${students.length} ===`);
 
-  const recs = await selectSafe<{ student_id: string; distance_key: string; source: string; protocol_url: string | null }>("club_records", "student_id, distance_key, source, protocol_url");
-  const recMap = new Map<string, { source: string; url: string | null }>();
-  for (const r of recs ?? []) recMap.set(`${r.student_id}|${r.distance_key}`, { source: r.source, url: r.protocol_url });
+  const recs = await selectSafe<{ student_id: string; distance_key: string; source: string; protocol_url: string | null; duration_seconds: number | null }>("club_records", "student_id, distance_key, source, protocol_url, duration_seconds");
+  const recMap = new Map<string, { source: string; url: string | null; seconds: number | null }>();
+  for (const r of recs ?? []) recMap.set(`${r.student_id}|${r.distance_key}`, { source: r.source, url: r.protocol_url, seconds: r.duration_seconds });
   const links = await selectSafe<{ student_id: string; confirmed_name_normalized: string }>("club_probeg_athlete_links", "student_id, confirmed_name_normalized");
   const linkSet = new Set((links ?? []).map((l) => `${l.student_id}|${l.confirmed_name_normalized}`));
   const confirmedByStudent = new Map<string, string[]>();
@@ -393,6 +394,7 @@ async function runWrite(): Promise<void> {
   const pend = await selectSafe<{ student_id: string; race_date: string; protocol_seconds: number | null }>("club_protocol_pending", "student_id, race_date, protocol_seconds");
   const pendSet = new Set((pend ?? []).map((p) => `${p.student_id}|${p.race_date}|${p.protocol_seconds}`));
 
+  const exactCands: ExactCand[] = [];
   const recordPlans: RecPlan[] = [];
   const linkPlans: LinkPlan[] = [];
   const pendPlans: PendPlan[] = [];
@@ -409,13 +411,7 @@ async function runWrite(): Promise<void> {
       if (res.verdict === "exact" && res.finish) {
         const dkey = distanceKeyOf(res.finish.distanceKm);
         if (!dkey) { skips.push(`${s.name}: ТОЧНО ${race.date}, но дистанция ${res.finish.distanceKm}км не 5/10/21/42к → club_records не хранит`); continue; }
-        const ex = recMap.get(`${s.id}|${dkey}`);
-        const url = res.finish.protocolUrl ?? null;
-        if (ex?.source === "coach_confirmed") { skips.push(`${s.name}: ${dkey} уже coach_confirmed → не трогаю`); continue; }
-        if (ex?.source === "official_protocol" && ex.url === url) { skips.push(`${s.name}: ${dkey} уже привязан к тому же протоколу → без изменений`); continue; }
-        recordPlans.push({ studentId: s.id, studentName: s.name, dkey, finish: res.finish, date: race.date, action: ex ? "upgrade" : "insert" });
-        const norm = normalizeFinisherName(res.finish.name);
-        if (norm && !linkSet.has(`${s.id}|${norm}`)) { linkSet.add(`${s.id}|${norm}`); linkPlans.push({ studentId: s.id, studentName: s.name, name: res.finish.name, norm }); }
+        exactCands.push({ studentId: s.id, studentName: s.name, dkey, finish: res.finish, date: race.date, ourSeconds: race.ourSeconds });
       } else if (res.verdict === "probable" && res.finish) {
         const pkey = `${s.id}|${race.date}|${res.finish.seconds}`;
         if (pendSet.has(pkey)) { skips.push(`${s.name}: ВЕРОЯТНОЕ ${race.date} уже в очереди → без изменений`); continue; }
@@ -425,8 +421,42 @@ async function runWrite(): Promise<void> {
     }
   }
 
-  console.log(`\n--- АВТО-ПРИВЯЗКИ → club_records (official_protocol/verified): ${recordPlans.length} ---`);
-  for (const p of recordPlans) console.log(`  ${p.studentName}: [${p.dkey}] ${p.action} → ${fmtHms(p.finish.seconds)} ${p.finish.protocolUrl ?? "(url?)"} (гонка ${p.date}, ${p.finish.event})`);
+  // club_records is UNIQUE(student, distance_key): a student with several protocols on one distance must
+  // collapse to ONE row. Keep the FASTEST (best) — deterministic, never last-processed. Show each collision.
+  const collisions: string[] = [];
+  const slowerThanOurs: string[] = [];
+  const groups = new Map<string, ExactCand[]>();
+  for (const c of exactCands) { const k = `${c.studentId}|${c.dkey}`; const g = groups.get(k); if (g) g.push(c); else groups.set(k, [c]); }
+  for (const [k, group] of groups) {
+    const { studentName, dkey, studentId } = group[0];
+    const ex = recMap.get(k);
+    const winner = group.reduce((a, b) => (b.finish.seconds < a.finish.seconds ? b : a)); // best = fastest official
+    if (group.length > 1) {
+      collisions.push(`${studentName} [${dkey}]: ${group.length} результата (${group.map((c) => fmtHms(c.finish.seconds)).join(", ")}) → берём ЛУЧШИЙ ${fmtHms(winner.finish.seconds)} (${winner.date}, ${winner.finish.protocolUrl ?? "url?"})`);
+    }
+    const url = winner.finish.protocolUrl ?? null;
+    if (ex?.source === "coach_confirmed") { skips.push(`${studentName}: ${dkey} уже coach_confirmed → не трогаю (${group.length} проток. пропущено)`); continue; }
+    if (ex?.source === "official_protocol") {
+      if (ex.url === url) { skips.push(`${studentName}: ${dkey} уже привязан к тому же протоколу → без изменений`); continue; }
+      if (ex.seconds != null && ex.seconds <= winner.finish.seconds) { skips.push(`${studentName}: ${dkey} уже official ${fmtHms(ex.seconds)} не хуже ${fmtHms(winner.finish.seconds)} → оставляю`); continue; }
+    }
+    recordPlans.push({ studentId, studentName, dkey, finish: winner.finish, date: winner.date, action: ex ? "upgrade" : "insert", ourSeconds: winner.ourSeconds });
+    // Official slower than OUR best time at this distance: our GPS said faster. Rule — official wins
+    // (verified fact; a faster reconstructed value is likely GPS garbage), but surface it for the coach.
+    const bestOur = group.reduce<number | null>((m, c) => (c.ourSeconds != null && (m == null || c.ourSeconds < m) ? c.ourSeconds : m), null);
+    if (bestOur != null && winner.finish.seconds > bestOur) {
+      slowerThanOurs.push(`${studentName} [${dkey}]: наше лучшее ${fmtHms(bestOur)} vs официальное ${fmtHms(winner.finish.seconds)} (медленнее на ${winner.finish.seconds - bestOur}с) → пишем ОФИЦИАЛЬНОЕ`);
+    }
+    const norm = normalizeFinisherName(winner.finish.name);
+    if (norm && !linkSet.has(`${studentId}|${norm}`)) { linkSet.add(`${studentId}|${norm}`); linkPlans.push({ studentId, studentName, name: winner.finish.name, norm }); }
+  }
+
+  console.log(`\n--- КОЛЛИЗИИ (несколько результатов на одну дистанцию → берётся ЛУЧШИЙ): ${collisions.length} ---`);
+  for (const l of collisions) console.log(`  ${l}`);
+  console.log(`\n--- ОФИЦИАЛЬНЫЙ МЕДЛЕННЕЕ НАШЕГО (правило: пишем официальный — он проверенный факт): ${slowerThanOurs.length} ---`);
+  for (const l of slowerThanOurs) console.log(`  ${l}`);
+  console.log(`\n--- АВТО-ПРИВЯЗКИ → club_records (official_protocol/verified), по одному лучшему на (ученик,дистанция): ${recordPlans.length} ---`);
+  for (const p of recordPlans) console.log(`  ${p.studentName}: [${p.dkey}] ${p.action} → ${fmtHms(p.finish.seconds)}${p.ourSeconds != null && p.finish.seconds > p.ourSeconds ? ` (наше ${fmtHms(p.ourSeconds)})` : ""} ${p.finish.protocolUrl ?? "(url?)"} (гонка ${p.date}, ${p.finish.event})`);
   console.log(`\n--- ПАМЯТЬ НАПИСАНИЙ → club_probeg_athlete_links: ${linkPlans.length} ---`);
   for (const p of linkPlans) console.log(`  ${p.studentName}: «${p.name}»`);
   console.log(`\n--- В ОЧЕРЕДЬ ПОДТВЕРЖДЕНИЯ → club_protocol_pending: ${pendPlans.length} ---`);
