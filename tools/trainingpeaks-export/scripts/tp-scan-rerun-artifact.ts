@@ -154,8 +154,28 @@ async function main(): Promise<void> {
   type TempoDm = { trainingpeaks_athlete_id: number; workout_cache_id: string; workout_date: string; steady_duration_s: number | null };
   const tempoRows: TempoDm[] = [];
   for (let f = 0; ; f += 1000) { const { data, error } = await sb.from("trainingpeaks_workout_derived_metrics").select("trainingpeaks_athlete_id, workout_cache_id, workout_date, steady_duration_s").eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("steady_duration_s", TEMPO_MIN_STEADY_S).gte("workout_date", fromIso).lte("workout_date", today).range(f, f + 999); if (error) throw new Error(`tempo: ${error.message}`); if (!data || !data.length) break; tempoRows.push(...(data as TempoDm[])); if (data.length < 1000) break; }
-  const tLaps = new Map<string, { d: number; t: number }[]>();
-  { const ids = [...new Set(tempoRows.map((r) => r.workout_cache_id))]; for (let i = 0; i < ids.length; i += 150) { const { data } = await sb.from("trainingpeaks_workout_laps").select("workout_cache_id, distance_m, timer_time_s").in("workout_cache_id", ids.slice(i, i + 150)); for (const l of data ?? []) { const d = typeof l.distance_m === "number" ? l.distance_m : 0; const t = typeof l.timer_time_s === "number" ? l.timer_time_s : 0; if (d <= 0 || t <= 0) continue; const key = l.workout_cache_id as string; const arr = tLaps.get(key) ?? []; arr.push({ d, t }); tLaps.set(key, arr); } } }
+  const tLaps = new Map<string, { d: number; t: number; i: number }[]>();
+  { const ids = [...new Set(tempoRows.map((r) => r.workout_cache_id))]; for (let ci = 0; ci < ids.length; ci += 150) { const { data } = await sb.from("trainingpeaks_workout_laps").select("workout_cache_id, lap_index, distance_m, timer_time_s").in("workout_cache_id", ids.slice(ci, ci + 150)); for (const l of data ?? []) { const d = typeof l.distance_m === "number" ? l.distance_m : 0; const t = typeof l.timer_time_s === "number" ? l.timer_time_s : 0; if (d <= 0 || t <= 0) continue; const key = l.workout_cache_id as string; const arr = tLaps.get(key) ?? []; arr.push({ d, t, i: typeof l.lap_index === "number" ? l.lap_index : 0 }); tLaps.set(key, arr); } } for (const arr of tLaps.values()) arr.sort((a, b) => a.i - b.i); }
+  // change 4b (variant 2): the fastest EVEN continuous [minS,maxS]-second lap window. "Even" = per-lap
+  // pace CV ≤ 6%, so a long easy run's end-surge (fast tail glued to slow km) never qualifies — only a
+  // genuinely steady tempo does. Returns the segment pace directly (NOT the whole-workout average).
+  const fastestEvenSegment = (laps: { d: number; t: number }[], minS: number, maxS: number): { pace: number; dur: number } | null => {
+    let best: { pace: number; dur: number } | null = null;
+    for (let a = 0; a < laps.length; a++) {
+      let sumD = 0, sumT = 0; const ps: number[] = [];
+      for (let b = a; b < laps.length; b++) {
+        if (laps[b].d < 100 || laps[b].t <= 0) break;
+        sumD += laps[b].d; sumT += laps[b].t; ps.push(laps[b].t / (laps[b].d / 1000));
+        if (sumT < minS) continue;
+        if (sumT > maxS) break;
+        const segPace = sumT / (sumD / 1000); if (!(segPace > 150 && segPace < 540)) continue;
+        const mean = ps.reduce((x, y) => x + y, 0) / ps.length; const sd = Math.sqrt(ps.reduce((x, y) => x + (y - mean) ** 2, 0) / ps.length);
+        if (mean > 0 && sd / mean > 0.06) continue; // not even (mix of easy + fast / end-surge) → skip
+        if (!best || segPace < best.pace) best = { pace: segPace, dur: sumT };
+      }
+    }
+    return best;
+  };
   const effortPace = (laps: { d: number; t: number }[], frac: number): number | null => { if (laps.length < 2) return null; const total = laps.reduce((s, l) => s + l.d, 0); const sorted = [...laps].sort((a, b) => a.t / a.d - b.t / b.d); let accD = 0, accT = 0; for (const l of sorted) { if (accD >= frac * total) break; accD += l.d; accT += l.t; } return accD > 0 ? accT / (accD / 1000) : null; };
   const tPool = new Map<number, { paces: number[]; sessions: Set<string>; latest: string; bands: Set<string> }>();
   for (const t of tempoRows) { const laps = tLaps.get(t.workout_cache_id); if (!laps) continue; const steadyS = t.steady_duration_s ?? 0; const tp = effortPace(laps, 0.6); if (tp === null || !(tp > 150 && tp < 540)) continue; const est = tp + tempoOffset(steadyS); const id = Number(t.trainingpeaks_athlete_id); const acc = tPool.get(id) ?? { paces: [], sessions: new Set<string>(), latest: "", bands: new Set<string>() }; acc.paces.push(est); acc.sessions.add(t.workout_date); acc.bands.add(tempoBand(steadyS)); if (t.workout_date > acc.latest) acc.latest = t.workout_date; tPool.set(id, acc); }
@@ -177,7 +197,7 @@ async function main(): Promise<void> {
     if (!prev) { tt.set(id, { pace, date, dur, n: 1, how }); return; }
     tt.set(id, pace < prev.pace ? { pace, date, dur, n: prev.n + 1, how } : { ...prev, n: prev.n + 1 });
   };
-  for (const t of tempoRows) { const steadyS = t.steady_duration_s ?? 0; if (steadyS < 1200 || steadyS > 2700) continue; const laps = tLaps.get(t.workout_cache_id); if (!laps) continue; const ep = effortPace(laps, 0.7); if (ep === null || !(ep > 150 && ep < 540)) continue; considerTT(Number(t.trainingpeaks_athlete_id), ep, t.workout_date, steadyS, "непрерывный"); }
+  for (const t of tempoRows) { const laps = tLaps.get(t.workout_cache_id); if (!laps || laps.length < 2) continue; const seg = fastestEvenSegment(laps, 1200, 2100); if (!seg) continue; considerTT(Number(t.trainingpeaks_athlete_id), seg.pace, t.workout_date, seg.dur, "ровный сегмент"); }
   { const { data: splitRows } = await sb.from("trainingpeaks_workout_derived_metrics").select("trainingpeaks_athlete_id, workout_cache_id, workout_date, rep_paces").eq("workout_type", "run").eq("has_fit", true).gte("reps_detected_count", 1).lte("reps_detected_count", 2).gte("workout_date", fromIso).lte("workout_date", today);
     const sIds = [...new Set((splitRows ?? []).map((r) => r.workout_cache_id as string))]; const sLaps = new Map<string, Lap[]>();
     for (let i = 0; i < sIds.length; i += 150) { const { data } = await sb.from("trainingpeaks_workout_laps").select("workout_cache_id, lap_index, timer_time_s, elapsed_time_s, is_work").in("workout_cache_id", sIds.slice(i, i + 150)); for (const l of data ?? []) { const key = l.workout_cache_id as string; const lap: Lap = { lapIndex: l.lap_index as number, timerTimeS: l.timer_time_s as number, elapsedTimeS: l.elapsed_time_s as number, isWork: l.is_work as boolean }; const arr = sLaps.get(key); if (arr) arr.push(lap); else sLaps.set(key, [lap]); } }
