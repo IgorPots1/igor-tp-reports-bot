@@ -33,7 +33,13 @@ export type BillingPaymentStatus =
   | "overdue"
   | "paused"
   | "manual_review"
-  | "refunded";
+  | "refunded"
+  // Month predates the billing system (admin launched 2026-05), so it was never
+  // actually billed. Not a debt: the debt aggregates allowlist
+  // pending/overdue/manual_review, which excludes this by construction.
+  // NB: computeReminderCandidates (club-reminders.ts) skips only "paid" — it needs
+  // this value added to its guard when it gets wired to a caller.
+  | "waived_presystem";
 export type BillingPaymentSource = "manual" | "email_import";
 export type BillingImportedPaymentStatus = "new" | "matched" | "ignored";
 export type BillingPayerIdentityType = "payer_hint" | "description_hint" | "payment_description";
