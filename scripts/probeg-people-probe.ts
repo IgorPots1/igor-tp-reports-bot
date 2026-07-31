@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { nameSearchSpecs, studentNameVariantSets } from "@/features/club/name-translit";
-import { extractFinishes, fmtHms, matchRace, normalizeKm, type MatchResult, type ProbegFinish } from "@/features/club/probeg-parse";
+import { extractFinishes, fmtHms, isForeignRace, matchRace, normalizeKm, type MatchResult, type ProbegFinish } from "@/features/club/probeg-parse";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const MODE_CANDIDATES = process.argv.includes("--candidates");
@@ -136,7 +136,7 @@ async function fetchFinishesForName(rosterName: string, diagnose: boolean): Prom
   return { finishes, tried };
 }
 
-type OurRace = { date: string; title: string; ourKm: number | null; ourSeconds: number | null };
+type OurRace = { date: string; title: string; ourKm: number | null; ourSeconds: number | null; foreign: boolean };
 
 async function loadOurRaces(studentId: string): Promise<OurRace[]> {
   const supabase = createSupabaseServerClient();
@@ -161,7 +161,8 @@ async function loadOurRaces(studentId: string): Promise<OurRace[]> {
       .limit(1);
     const w = (wk as Array<{ completed_time_raw: number | string | null; completed_distance_raw: number | string | null }> | null)?.[0] ?? null;
     const ourKm = normalizeKm(w?.completed_distance_raw) ?? normalizeKm(r.distance_raw); // actual GPS first, planned distance fallback
-    out.push({ date, title: (r.title ?? "").trim(), ourKm, ourSeconds: rawHoursToSeconds(w?.completed_time_raw) });
+    const title = (r.title ?? "").trim();
+    out.push({ date, title, ourKm, ourSeconds: rawHoursToSeconds(w?.completed_time_raw), foreign: isForeignRace(title) });
   }
   return out;
 }
@@ -173,23 +174,38 @@ async function studentName(studentId: string): Promise<string> {
 }
 
 type ProbableDetail = { studentName: string; race: OurRace; finish: ProbegFinish; deltaSeconds: number | null; nameUnrecognized: boolean };
-type StudentTally = { total: number; exact: number; probable: number; notFound: number; probables: ProbableDetail[] };
+type SkipDetail = { studentName: string; race: OurRace };
+// comparable = состоявшиеся гонки в России/СНГ с нашим временем — единственный честный знаменатель.
+// foreign (зарубеж, протокола нет и не будет) и notime (нет нашего времени, сверять не с чем) — вне него.
+type StudentTally = { comparable: number; exact: number; probable: number; notFound: number; foreign: number; notime: number; probables: ProbableDetail[] };
 
 function fmtKm(km: number | null): string {
   return km == null ? "?км" : `${km}км`;
 }
 
-async function checkStudent(studentId: string, name: string, diagnose: boolean, probablesOut: ProbableDetail[], confirmed: string[]): Promise<StudentTally> {
+async function checkStudent(studentId: string, name: string, diagnose: boolean, probablesOut: ProbableDetail[], confirmed: string[], skips: { foreign: SkipDetail[]; notime: SkipDetail[] }): Promise<StudentTally> {
   const { finishes, tried } = await fetchFinishesForName(name, diagnose);
   const variants = studentNameVariantSets(name); // имя должно СОВПАСТЬ (фамилия), иначе не матч
   const ourRaces = await loadOurRaces(studentId); // прошедшие гонки
-  const tally: StudentTally = { total: 0, exact: 0, probable: 0, notFound: 0, probables: [] };
+  const tally: StudentTally = { comparable: 0, exact: 0, probable: 0, notFound: 0, foreign: 0, notime: 0, probables: [] };
   const conf = confirmed.length ? ` · подтв. написаний: ${confirmed.length}` : "";
   console.log(`\n=== ${name} · probeg попытки [${tried.join(" ; ")}] · строк финишей: ${finishes.length} · наших гонок: ${ourRaces.length}${conf} ===`);
   for (const race of ourRaces) {
-    tally.total += 1;
-    const res: MatchResult = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
     const ours = `наше ${race.date} ${fmtKm(race.ourKm)} ${fmtHms(race.ourSeconds)}`;
+    if (race.foreign) { // зарубеж — protokola на probeg не будет, вне знаменателя
+      tally.foreign += 1;
+      skips.foreign.push({ studentName: name, race });
+      console.log(`  зарубеж  ${race.title || fmtKm(race.ourKm)} · ${ours} → вне знаменателя (не Россия/СНГ)`);
+      continue;
+    }
+    if (race.ourSeconds == null) { // нет нашего времени — сверять не с чем, вне знаменателя
+      tally.notime += 1;
+      skips.notime.push({ studentName: name, race });
+      console.log(`  без врем ${race.title || fmtKm(race.ourKm)} · ${ours} → вне знаменателя (нет нашего времени)`);
+      continue;
+    }
+    tally.comparable += 1;
+    const res: MatchResult = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
     if (res.verdict === "exact" && res.finish) {
       tally.exact += 1;
       const via = res.byConfirmedName ? " [по подтверждённому имени]" : "";
@@ -214,15 +230,23 @@ async function checkStudent(studentId: string, name: string, diagnose: boolean, 
   return tally;
 }
 
-function printSummary(totals: StudentTally, students: number, probables: ProbableDetail[]): void {
-  const pct = (n: number) => (totals.total ? Math.round((n / totals.total) * 100) : 0);
-  console.log(`\n=== ИТОГ ПОКРЫТИЯ (только СОСТОЯВШИЕСЯ гонки до ${TODAY_ISO}; учеников: ${students}) ===`);
-  console.log(`Наших гонок проверено: ${totals.total}`);
-  console.log(`ТОЧНО    (дата+дистанция+время ≤1мин, авто-привязываемо): ${totals.exact} (${pct(totals.exact)}%)`);
-  console.log(`ВЕРОЯТНО (та же дата+дистанция, Δ≤15мин, на подтверждение): ${totals.probable} (${pct(totals.probable)}%)`);
-  console.log(`Не найдено: ${totals.notFound} (${pct(totals.notFound)}%)`);
+function printSummary(totals: StudentTally, students: number, probables: ProbableDetail[], skips: { foreign: SkipDetail[]; notime: SkipDetail[] }): void {
+  const denom = totals.comparable;
+  const pct = (n: number) => (denom ? Math.round((n / denom) * 100) : 0);
+  const past = denom + totals.foreign + totals.notime;
+  console.log(`\n=== ИТОГ ПОКРЫТИЯ (состоявшиеся гонки до ${TODAY_ISO}; учеников: ${students}) ===`);
+  console.log(`Прошедших гонок всего: ${past}  =  сверяемых ${denom} + зарубеж ${totals.foreign} + без времени ${totals.notime}`);
+  console.log(`\nЗнаменатель = СВЕРЯЕМЫЕ (Россия/СНГ, есть наше время): ${denom}`);
+  console.log(`  ТОЧНЫЕ   (дата+дистанция+имя+время ≤1мин, авто-привязка): ${totals.exact} (${pct(totals.exact)}%)`);
+  console.log(`  ВЕРОЯТНЫЕ (та же дата+дистанция, Δ≤15мин, на подтверждение): ${totals.probable} (${pct(totals.probable)}%)`);
+  console.log(`  РЕАЛЬНЫЕ ПРОМАХИ (нет на probeg под этим человеком): ${totals.notFound} (${pct(totals.notFound)}%)`);
+  console.log(`\nВне знаменателя: зарубеж ${totals.foreign} (probeg = РФ/СНГ), без нашего времени ${totals.notime} (сверять не с чем)`);
+  if (skips.foreign.length) {
+    console.log(`\n--- ЗАРУБЕЖНЫЕ (${skips.foreign.length}) — проверь классификацию по названию ---`);
+    for (const s of skips.foreign) console.log(`  ${s.studentName}: ${s.race.date} ${fmtKm(s.race.ourKm)} · ${s.race.title}`);
+  }
   if (probables.length) {
-    console.log(`\n--- СПИСОК ВЕРОЯТНЫХ (${probables.length}) — это очередь на подтверждение тренером ---`);
+    console.log(`\n--- СПИСОК ВЕРОЯТНЫХ (${probables.length}) — очередь на подтверждение тренером ---`);
     for (const p of probables) {
       const who = p.nameUnrecognized ? "имя не распозналось" : p.finish.name;
       console.log(`  ${p.studentName}: наше ${p.race.date} ${fmtKm(p.race.ourKm)} ${fmtHms(p.race.ourSeconds)}  ↔  probeg ${who} «${p.finish.event}» ${fmtKm(p.finish.distanceKm)} ${fmtHms(p.finish.seconds)} место ${p.finish.place ?? "?"} ${p.finish.city ?? ""}`);
@@ -270,7 +294,8 @@ async function runCandidates(): Promise<void> {
 }
 
 function foldTally(into: StudentTally, one: StudentTally): void {
-  into.total += one.total; into.exact += one.exact; into.probable += one.probable; into.notFound += one.notFound;
+  into.comparable += one.comparable; into.exact += one.exact; into.probable += one.probable;
+  into.notFound += one.notFound; into.foreign += one.foreign; into.notime += one.notime;
 }
 
 async function runCheck(): Promise<void> {
@@ -280,15 +305,16 @@ async function runCheck(): Promise<void> {
   }
   const ids = JSON.parse(readFileSync(STUDENTS_PATH, "utf8")) as string[];
   const confirmedMap = loadConfirmedSpellings();
-  const totals: StudentTally = { total: 0, exact: 0, probable: 0, notFound: 0, probables: [] };
+  const totals: StudentTally = { comparable: 0, exact: 0, probable: 0, notFound: 0, foreign: 0, notime: 0, probables: [] };
   const probables: ProbableDetail[] = [];
+  const skips = { foreign: [] as SkipDetail[], notime: [] as SkipDetail[] };
   let first = true;
   for (const studentId of ids) {
     const name = await studentName(studentId);
-    foldTally(totals, await checkStudent(studentId, name, first, probables, confirmedMap[studentId] ?? []));
+    foldTally(totals, await checkStudent(studentId, name, first, probables, confirmedMap[studentId] ?? [], skips));
     first = false;
   }
-  printSummary(totals, ids.length, probables);
+  printSummary(totals, ids.length, probables, skips);
   process.exit(0);
 }
 
@@ -296,14 +322,15 @@ async function runCheckAll(): Promise<void> {
   const students = await loadClubStudents();
   const confirmedMap = loadConfirmedSpellings();
   console.log(`=== ПРОГОН ПО ВСЕМУ КЛУБУ · учеников с прошедшими гонками: ${students.length} · до ~${students.length * 6} запросов (кэш переиспользуется) ===`);
-  const totals: StudentTally = { total: 0, exact: 0, probable: 0, notFound: 0, probables: [] };
+  const totals: StudentTally = { comparable: 0, exact: 0, probable: 0, notFound: 0, foreign: 0, notime: 0, probables: [] };
   const probables: ProbableDetail[] = [];
+  const skips = { foreign: [] as SkipDetail[], notime: [] as SkipDetail[] };
   let first = true;
   for (const s of students) {
-    foldTally(totals, await checkStudent(s.id, s.name, first, probables, confirmedMap[s.id] ?? []));
+    foldTally(totals, await checkStudent(s.id, s.name, first, probables, confirmedMap[s.id] ?? [], skips));
     first = false;
   }
-  printSummary(totals, students.length, probables);
+  printSummary(totals, students.length, probables, skips);
   process.exit(0);
 }
 

@@ -30,6 +30,21 @@ describe("translitVariants", () => {
     assert.ok(translitVariants("Nikolay").includes("Николай"));
     assert.ok(translitVariants("Rybak").includes("Рыбак"));
   });
+
+  test("given-name DICTIONARY beats rules: correct spelling first", () => {
+    const cases: Array<[string, string]> = [
+      ["Alexander", "Александр"], ["Tatiana", "Татьяна"], ["Olga", "Ольга"], ["Igor", "Игорь"],
+      ["Elena", "Елена"], ["Ekaterina", "Екатерина"], ["Anastasia", "Анастасия"], ["Dmitry", "Дмитрий"],
+      ["Demian", "Демьян"],
+    ];
+    for (const [latin, expected] of cases) assert.equal(translitVariants(latin)[0], expected, `${latin} → ${translitVariants(latin).join(", ")}`);
+  });
+
+  test("surname SOFT-SIGN variants are offered (ль, палатализация, -ьев)", () => {
+    assert.ok(translitVariants("Vasileva").includes("Васильева"));
+    assert.ok(translitVariants("Melnikova").includes("Мельникова"));
+    assert.ok(translitVariants("Diyachenko").includes("Дьяченко"));
+  });
 });
 
 describe("nameSearchSpecs", () => {

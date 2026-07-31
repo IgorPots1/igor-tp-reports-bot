@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { studentNameVariantSets } from "./name-translit.ts";
-import { descriptorToKm, distanceMatch, extractFinishes, matchRace, nameGate, type ProbegFinish } from "./probeg-parse.ts";
+import { descriptorToKm, distanceMatch, extractFinishes, isForeignRace, matchRace, nameGate, type ProbegFinish } from "./probeg-parse.ts";
 
 // Rows copied from a real probeg /results/ page (shape preserved): a word-form marathon, a numeric
 // "5 км", and a meters "10550 м" — the three distance encodings the parser must all read.
@@ -78,6 +78,37 @@ describe("nameGate", () => {
   test("strict forbids the given shortening (auto-link bar)", () => {
     assert.ok(!nameGate(hadizhat, "Хади Муртазалиева", { strict: true })); // Хади is not exact → no auto-link
     assert.ok(nameGate(malyk, "Антон Малык", { strict: true }));
+  });
+
+  test("the Бучкина bug: dictionary given name makes the student pass their OWN finish", () => {
+    const buchkina = studentNameVariantSets("Buchkina Tatiana"); // rules alone gave «Татияна» ≠ «Татьяна»
+    assert.ok(nameGate(buchkina, "Татьяна Бучкина")); // now passes — and strictly, so auto-linkable
+    assert.ok(nameGate(buchkina, "Татьяна Бучкина", { strict: true }));
+  });
+
+  test("soft-sign / ё / one-letter tolerance on the surname", () => {
+    assert.ok(nameGate(studentNameVariantSets("Vasileva Elena"), "Елена Васильева")); // ь
+    assert.ok(nameGate(studentNameVariantSets("Melnikova Olga"), "Ольга Мельникова")); // ь
+    assert.ok(nameGate(studentNameVariantSets("Korolev Petr"), "Пётр Королёв")); // ё/е
+    assert.ok(!nameGate(malyk, "Антон Малыков")); // 2-letter surname extension still rejected
+  });
+
+  test("the one-letter tolerance does NOT merge distinct given names (Лилия ≠ Лидия)", () => {
+    const liliya = studentNameVariantSets("Zalogina Liliya");
+    assert.ok(nameGate(liliya, "Лилия Залогина"));
+    assert.ok(!nameGate(liliya, "Лидия Залогина")); // both given names → fuzzy withheld → different person
+    assert.ok(!nameGate(studentNameVariantSets("Karina Ivanova"), "Марина Иванова")); // Карина ≠ Марина
+  });
+});
+
+describe("isForeignRace", () => {
+  test("non-CIS races flagged, Russia/CIS not", () => {
+    assert.ok(isForeignRace("Podgorica Marathon"));
+    assert.ok(isForeignRace("Dubai Run 2026"));
+    assert.ok(isForeignRace("Черногория, Будва — забег"));
+    assert.ok(!isForeignRace("XII Казанский марафон"));
+    assert.ok(!isForeignRace("Московский полумарафон"));
+    assert.ok(!isForeignRace("Минский полумарафон")); // Belarus is CIS → on probeg
   });
 });
 

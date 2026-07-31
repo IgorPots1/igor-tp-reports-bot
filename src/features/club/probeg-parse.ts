@@ -8,6 +8,8 @@
 // surname-only pool (e.g. фамилия=Антон) drops dozens of same-date finishers across every distance;
 // without a distance gate a 5-hour marathon looked like a candidate for a 46-minute 10k.
 
+import { isKnownGivenName } from "./name-translit.ts";
+
 export type ProbegFinish = {
   date: string; // ISO yyyy-mm-dd
   seconds: number; // finish time
@@ -124,16 +126,39 @@ export function extractFinishes(html: string): ProbegFinish[] {
   return out;
 }
 
-/** One student token (its Cyrillic variants) vs one finisher token. "prefix" is a given-name SHORTENING
- *  and is directional ON PURPOSE: only when the FINISHER token is a shortening of the roster variant
- *  (Хади⊂Хадижат), never the reverse — otherwise a foreign surname that merely EXTENDS ours would pass
- *  (Малык→Малыков, Малык→Малыкцев are different people). The surname, being roster-length or longer on
- *  probeg, must therefore match EXACTLY. */
-function relToken(variants: string[], f: string): "exact" | "prefix" | "none" {
-  if (variants.includes(f)) return "exact";
-  if (f.length >= 3) {
-    for (const v of variants) if (v.length > f.length && v.startsWith(f)) return "prefix"; // finisher is a shortening of roster
+/** Fold away the differences the coach said to tolerate on a surname: ё/е and the soft sign ь. Input is
+ *  already lowercased. So Василева≡Васильева, Королев≡Королёв. */
+function softName(s: string): string {
+  return s.replace(/ё/gu, "е").replace(/ь/gu, "");
+}
+
+/** Levenshtein distance ≤ 1 (the coach's "one letter" tolerance)? Early-outs on a length gap > 1. */
+function within1Edit(a: string, b: string): boolean {
+  if (a === b) return true;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) { i += 1; j += 1; continue; }
+    if (++edits > 1) return false;
+    if (la > lb) i += 1; else if (lb > la) j += 1; else { i += 1; j += 1; }
   }
+  return true; // any leftover tail is the single trailing edit
+}
+
+/** One student token (its Cyrillic variants) vs one finisher token, after softening ь/ё.
+ *  "exact"  — equal (auto-link strength; covers Василева≡Васильева, Королев≡Королёв).
+ *  "fuzzy"  — differ by ≤1 letter, both ≥4 chars, and NEITHER is a known given name — the coach's
+ *             one-letter tolerance is for SURNAMES; on first names it would merge Лилия/Лидия.
+ *  "prefix" — finisher is a SHORTENING of the roster token (Хади⊂Хадижат), never the reverse: a foreign
+ *             surname that merely EXTENDS ours (Малык→Малыков/Малыкцев) is a different person. */
+function relToken(variants: string[], f: string): "exact" | "fuzzy" | "prefix" | "none" {
+  const nf = softName(f);
+  for (const v of variants) if (softName(v) === nf) return "exact";
+  if (!isKnownGivenName(nf)) {
+    for (const v of variants) { const nv = softName(v); if (!isKnownGivenName(nv) && Math.min(nv.length, nf.length) >= 4 && within1Edit(nv, nf)) return "fuzzy"; }
+  }
+  for (const v of variants) { const nv = softName(v); if (nf.length >= 3 && nv.length > nf.length && nv.startsWith(nf)) return "prefix"; }
   return "none";
 }
 
@@ -142,11 +167,13 @@ function relToken(variants: string[], f: string): "exact" | "prefix" | "none" {
  * proves the PERSON — a 27k mass start makes a same-minute same-distance coincidence common, so a
  * foreign surname must be rejected even on a perfect time. Order-agnostic (unknown on both sides): find
  * an injective assignment of EVERY roster token to a distinct finisher token, each compatible, with at
- * least one EXACT anchor. `strict` (auto-link gate) forbids prefixes — every token must be exact.
+ * least one STRONG (exact|fuzzy) anchor. `strict` (auto-link gate) allows only exact — no fuzzy, no
+ * prefix — so a shortened or one-letter-off name goes to PROBABLE (the coach confirms it once and the
+ * confirmed spelling then auto-links).
  *   Павлова Кристина vs {Кристина,Пампарайте}: only the given «Кристина» overlaps → rejected.
  *   Роман Антонов vs {Антон,Малык}: surname Малык matches nothing → rejected.
+ *   Татьяна Бучкина vs {Бучкина,Татьяна}: both exact via the given-name dictionary → passes.
  *   Хади Муртазалиева vs {Хадижат,Муртазалиева}: surname exact + given prefix → passes (non-strict).
- *   Надежда Муртазалиева vs {Хадижат,Муртазалиева}: given incompatible → rejected (namesake).
  */
 export function nameGate(studentVariants: string[][], finisherName: string, opts: { strict?: boolean } = {}): boolean {
   const norm = (s: string): string => s.toLowerCase().replace(/ё/gu, "е");
@@ -154,14 +181,14 @@ export function nameGate(studentVariants: string[][], finisherName: string, opts
   const sTokens = studentVariants.map((vs) => vs.map(norm).filter((v) => v.length >= 2)).filter((vs) => vs.length > 0);
   if (sTokens.length === 0 || fTokens.length === 0) return false;
   const used = new Array<boolean>(fTokens.length).fill(false);
-  const assign = (i: number, hasExact: boolean): boolean => {
-    if (i === sTokens.length) return hasExact;
+  const assign = (i: number, hasStrong: boolean): boolean => {
+    if (i === sTokens.length) return hasStrong;
     for (let j = 0; j < fTokens.length; j++) {
       if (used[j]) continue;
       const r = relToken(sTokens[i], fTokens[j]);
       if (r === "none" || (opts.strict && r !== "exact")) continue;
       used[j] = true;
-      if (assign(i + 1, hasExact || r === "exact")) return true;
+      if (assign(i + 1, hasStrong || r === "exact" || r === "fuzzy")) return true;
       used[j] = false;
     }
     return false;
@@ -173,6 +200,31 @@ export function nameGate(studentVariants: string[][], finisherName: string, opts
  *  the confirmed-spelling memory (club_probeg_athlete_links.confirmed_name_normalized). */
 export function normalizeFinisherName(name: string): string {
   return name.toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim();
+}
+
+// probeg covers Russia + CIS only. A race abroad (Montenegro, UAE, USA, …) will NEVER have a protocol
+// there, so it must be excluded from the coverage denominator, not counted as a miss. Detected by the
+// title (race_events has no city). Non-CIS countries + distinctive foreign host cities. Best-effort —
+// the report prints the flagged list so the coach can eyeball it. CIS (RU/BY/KZ/AM/KG/UZ/TJ/AZ) is NOT
+// foreign; those races ARE on probeg.
+const FOREIGN_KEYWORDS = [
+  "черногор", "montenegro", "podgorica", "подгориц", "budva", "будва", "kotor", "котор", "tivat", "тиват", "herceg", "cetinje",
+  "оаэ", " uae", "дубай", "dubai", "abu dhabi", "абу-даби", "эмират", "emirates", "ras al khaimah",
+  "сша", " usa", "америк", "america", "нью-йорк", "new york", "бостон", "boston", "chicago", "чикаго", "los angeles", "майами", "miami",
+  "турци", "turkey", "antalya", "анталия", "istanbul", "стамбул",
+  "грузи", "georgia", "тбилиси", "tbilisi", "батуми", "batumi",
+  "латви", "рига", "riga", "эстони", "таллин", "tallinn", "литв", "вильнюс", "vilnius",
+  "berlin", "берлин", "london", "лондон", "париж", "paris", "valencia", "валенси", "barcelona", "барселон",
+  "amsterdam", "prague", "прага", "budapest", "будапешт", "варшав", "warsaw", "хельсинки", "helsinki",
+  "финлянди", "finland", "герман", "germany", "испани", "spain", "итали", "italy", "франци", "france",
+  "кипр", "cyprus", "bangkok", "бангкок", "tokyo", "токио", "singapore", "сингапур",
+];
+
+/** True when a race title points abroad (outside Russia/CIS) — no probeg protocol will ever exist. */
+export function isForeignRace(title: string | null | undefined): boolean {
+  if (!title) return false;
+  const t = title.toLowerCase();
+  return FOREIGN_KEYWORDS.some((k) => t.includes(k));
 }
 
 export type MatchVerdict = "exact" | "probable" | "none";
