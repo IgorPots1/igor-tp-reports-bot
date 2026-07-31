@@ -154,7 +154,7 @@ async function studentName(studentId: string): Promise<string> {
   return (data as { student_name: string | null } | null)?.student_name ?? studentId;
 }
 
-type ProbableDetail = { studentName: string; race: OurRace; finish: ProbegFinish; deltaSeconds: number | null };
+type ProbableDetail = { studentName: string; race: OurRace; finish: ProbegFinish; deltaSeconds: number | null; nameUnrecognized: boolean };
 type StudentTally = { total: number; exact: number; probable: number; notFound: number; probables: ProbableDetail[] };
 
 function fmtKm(km: number | null): string {
@@ -176,10 +176,11 @@ async function checkStudent(studentId: string, name: string, diagnose: boolean, 
       console.log(`  ТОЧНО   ${race.title || fmtKm(race.ourKm)} · ${ours} ↔ probeg ${res.finish.name} ${fmtKm(res.finish.distanceKm)} ${fmtHms(res.finish.seconds)} (Δ${res.deltaSeconds}с)`);
     } else if (res.verdict === "probable" && res.finish) {
       tally.probable += 1;
-      const detail: ProbableDetail = { studentName: name, race, finish: res.finish, deltaSeconds: res.deltaSeconds };
+      const detail: ProbableDetail = { studentName: name, race, finish: res.finish, deltaSeconds: res.deltaSeconds, nameUnrecognized: res.nameUnrecognized };
       tally.probables.push(detail);
       probablesOut.push(detail);
-      console.log(`  ВЕРОЯТНО ${race.title || fmtKm(race.ourKm)} · ${ours} ↔ probeg ${res.finish.name} «${res.finish.event}» ${fmtKm(res.finish.distanceKm)} ${fmtHms(res.finish.seconds)} место ${res.finish.place ?? "?"} ${res.finish.city ?? ""} (Δ${res.deltaSeconds}с) — на подтверждение`);
+      const who = res.nameUnrecognized ? "имя не распозналось" : res.finish.name;
+      console.log(`  ВЕРОЯТНО ${race.title || fmtKm(race.ourKm)} · ${ours} ↔ probeg ${who} «${res.finish.event}» ${fmtKm(res.finish.distanceKm)} ${fmtHms(res.finish.seconds)} место ${res.finish.place ?? "?"} ${res.finish.city ?? ""} (Δ${res.deltaSeconds}с) — на подтверждение`);
     } else {
       tally.notFound += 1;
       const why = res.nameRejected
@@ -203,7 +204,8 @@ function printSummary(totals: StudentTally, students: number, probables: Probabl
   if (probables.length) {
     console.log(`\n--- СПИСОК ВЕРОЯТНЫХ (${probables.length}) — это очередь на подтверждение тренером ---`);
     for (const p of probables) {
-      console.log(`  ${p.studentName}: наше ${p.race.date} ${fmtKm(p.race.ourKm)} ${fmtHms(p.race.ourSeconds)}  ↔  probeg ${p.finish.name} «${p.finish.event}» ${fmtKm(p.finish.distanceKm)} ${fmtHms(p.finish.seconds)} место ${p.finish.place ?? "?"} ${p.finish.city ?? ""}`);
+      const who = p.nameUnrecognized ? "имя не распозналось" : p.finish.name;
+      console.log(`  ${p.studentName}: наше ${p.race.date} ${fmtKm(p.race.ourKm)} ${fmtHms(p.race.ourSeconds)}  ↔  probeg ${who} «${p.finish.event}» ${fmtKm(p.finish.distanceKm)} ${fmtHms(p.finish.seconds)} место ${p.finish.place ?? "?"} ${p.finish.city ?? ""}`);
     }
   }
 }

@@ -105,13 +105,21 @@ export function extractFinishes(html: string): ProbegFinish[] {
 
     const pm = row.match(/(\d+)\s*(?:из|&nbsp;из)/u);
     const cm = row.match(/\/races\/city\/\d+\/">([^<]+)<\/a>/u);
-    const names = [...row.matchAll(/>\s*([А-ЯЁ][а-яё]+(?:\s+[А-ЯЁ][а-яё.]+)+)\s*</gu)]
-      .map((x) => collapse(x[1])).filter((n) => !n.includes(",") && !/\d/u.test(n));
+    // Finisher name comes from the «Имя» COLUMN, not a free-text scan: the event cell can hold two
+    // capitalised words («Арена Марафон») that a global regex mistakes for a name. Columns are stable
+    // (№, Дата, Забег, Город, Результат, Место, Группа, Возраст, Имя, Город, Клуб) — «Имя» is 3rd from
+    // the end. Empty/unreadable → name "" (treated as "unrecognised", NOT a foreign name — never a hard reject).
+    const cells = row.match(/<td\b[^>]*>[\s\S]*?<\/td>/giu) ?? [];
+    let name = "";
+    if (cells.length >= 3) {
+      const cand = collapse(stripTags(cells[cells.length - 3]));
+      if (/[а-яё]{2}/iu.test(cand) && !/[,]/u.test(cand)) name = cand;
+    }
 
     const key = `${iso}|${sec}|${distanceKm ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ date: iso, seconds: sec, distanceKm, name: names[0] ?? "", place: pm ? pm[1] : null, city: cm ? collapse(cm[1]) : null, event });
+    out.push({ date: iso, seconds: sec, distanceKm, name, place: pm ? pm[1] : null, city: cm ? collapse(cm[1]) : null, event });
   }
   return out;
 }
@@ -163,38 +171,41 @@ export function nameGate(studentVariants: string[][], finisherName: string, opts
 
 export type MatchVerdict = "exact" | "probable" | "none";
 export type OurRaceInput = { date: string; ourSeconds: number | null; ourKm: number | null };
-export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null };
+export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean };
 
 /**
  * Classify one of our races against a person's probeg finishes. Requires BOTH a result match (date +
- * distance + time) AND a person match (name gate) — either alone is not enough.
- *   EXACT    — |Δtime| ≤ exactTol, distance corroborates (or one side has none), name STRICT (all
- *              tokens exact): auto-linkable.
- *   PROBABLE — |Δtime| ≤ probableTol, distance matches on BOTH sides, name matches (surname exact,
- *              given may be a shortening). Needs coach confirmation.
- *   NONE     — otherwise. `nameRejected` carries a same-date time+distance hit that FAILED the name
- *              gate, so the report can show WHY it was dropped (foreign surname).
+ * distance + time) AND a person match — either alone is not enough on a 27k mass start.
+ *   EXACT    — |Δtime| ≤ exactTol, distance corroborates (or one side has none), name is KNOWN and
+ *              STRICT (all tokens exact): auto-linkable.
+ *   PROBABLE — |Δtime| ≤ probableTol, distance matches on BOTH sides, AND either the name matches
+ *              (surname exact, given may be a shortening) OR the name could NOT be read at all. An
+ *              unreadable name is NOT a reason to drop — the coach decides. Needs coach confirmation.
+ *   NONE     — otherwise. `nameRejected` carries a same-date time+distance hit whose name was PRESENT
+ *              but FOREIGN, so the report shows why it was dropped. `nameUnrecognized` flags a probable
+ *              whose finisher name was blank (shown to the coach as «имя не распозналось»).
  */
 export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentVariants: string[][], tol: { exact: number; probable: number } = { exact: 60, probable: 900 }): MatchResult {
   const sameDate = finishes.filter((f) => f.date === race.date);
-  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected: null };
+  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected: null, nameUnrecognized: false };
   const scored = sameDate
     .map((f) => {
       const dt = Math.abs(f.seconds - race.ourSeconds!);
       const bothKnown = race.ourKm != null && f.distanceKm != null;
+      const nameKnown = f.name.trim().length > 0;
       return {
-        f, dt,
+        f, dt, nameKnown,
         distOk: !bothKnown || distanceMatch(race.ourKm, f.distanceKm),
         distMatch: bothKnown && distanceMatch(race.ourKm, f.distanceKm),
-        nameStrict: nameGate(studentVariants, f.name, { strict: true }),
-        nameOk: nameGate(studentVariants, f.name),
+        nameStrict: nameKnown && nameGate(studentVariants, f.name, { strict: true }),
+        nameOk: nameKnown && nameGate(studentVariants, f.name),
       };
     })
     .sort((a, b) => a.dt - b.dt);
   const exact = scored.find((c) => c.dt <= tol.exact && c.distOk && c.nameStrict);
-  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, sameDate, nameRejected: null };
-  const probable = scored.find((c) => c.dt <= tol.probable && c.distMatch && c.nameOk);
-  if (probable) return { verdict: "probable", finish: probable.f, deltaSeconds: probable.dt, sameDate, nameRejected: null };
-  const nameRejected = scored.find((c) => c.dt <= tol.probable && (c.distMatch || c.distOk) && !c.nameOk)?.f ?? null;
-  return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected };
+  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, sameDate, nameRejected: null, nameUnrecognized: false };
+  const probable = scored.find((c) => c.dt <= tol.probable && c.distMatch && (c.nameOk || !c.nameKnown));
+  if (probable) return { verdict: "probable", finish: probable.f, deltaSeconds: probable.dt, sameDate, nameRejected: null, nameUnrecognized: !probable.nameKnown };
+  const nameRejected = scored.find((c) => c.dt <= tol.probable && (c.distMatch || c.distOk) && c.nameKnown && !c.nameOk)?.f ?? null;
+  return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected, nameUnrecognized: false };
 }

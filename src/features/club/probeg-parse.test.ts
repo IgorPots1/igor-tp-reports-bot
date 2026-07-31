@@ -12,12 +12,17 @@ const FIXTURE = `
 <tr><td>1</td><td class="text-center"><a href="/race/187000/">04.07.2026</a></td><td><a href="/race/187000/">XXXV Международный марафон «Белые ночи»<br/>марафон</a></td><td><a href="/races/city/1/">Санкт-Петербург</a></td><td>4:34:39</td><td>7309 из 8000</td><td>М 35-44<br/>(100 из 200)</td><td>40 лет</td><td>Сергей Ивошин</td><td>г Самара</td><td></td></tr>
 <tr><td>2</td><td class="text-center"><a href="/race/1/">05.07.2026</a></td><td><a href="/race/1/">Коломенский полумарафон «Летопись победы»<br/>5 км</a></td><td><a href="/races/city/2/">Московская область, Коломна</a></td><td>0:38:04</td><td>247 из 259</td><td>Ж 35-44</td><td>39 лет</td><td>Виктория Малык</td><td>г Москва</td><td></td></tr>
 <tr><td>3</td><td class="text-center"><a href="/race/3/">22.06.2025</a></td><td><a href="/race/3/">V Международный марафон Алые Паруса<br/>10550 м</a></td><td><a href="/races/city/1/">Санкт-Петербург</a></td><td>1:00:20</td><td>243 из 900</td><td>М 35-44</td><td>39 лет</td><td>Сергей Ивошин</td><td>г Самара</td><td></td></tr>
+<tr><td>4</td><td class="text-center"><a href="/race/4/">15.06.2025</a></td><td><a href="/race/4/">Арена Марафон<br/>10 км</a></td><td><a href="/races/city/1/">Санкт-Петербург</a></td><td>0:50:00</td><td>10 из 100</td><td>М 30-39</td><td>31 год</td><td></td><td>г Москва</td><td></td></tr>
 </table>`;
 
 describe("extractFinishes", () => {
   const f = extractFinishes(FIXTURE);
   test("one finish per data row (header skipped)", () => {
-    assert.equal(f.length, 3);
+    assert.equal(f.length, 4);
+  });
+  test("name comes from the «Имя» column, not the event cell («Арена Марафон» is the event, name is blank)", () => {
+    assert.equal(f[3].event, "Арена Марафон"); // two capitalised words in the event cell...
+    assert.equal(f[3].name, ""); // ...must NOT leak into the finisher name; the «Имя» cell is empty
   });
   test("distance from all three encodings: word марафон, N км, N м", () => {
     assert.equal(f[0].distanceKm, 42.2); // «марафон»
@@ -121,6 +126,14 @@ describe("matchRace", () => {
     const race = { date: "2026-05-23", ourSeconds: at(0, 55, 0), ourKm: 21.1 };
     const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 55, 5), distanceKm: 21.1, name: "Хади Муртазалиева", place: "5", city: "", event: "" }];
     assert.equal(matchRace(race, finishes, hadizhat).verdict, "probable"); // strict name fails → not auto-linked
+  });
+
+  test("unreadable finisher name is NOT a reject: perfect time+distance → probable «имя не распозналось»", () => {
+    const race = { date: "2025-06-15", ourSeconds: at(0, 50, 2), ourKm: 10 };
+    const finishes: ProbegFinish[] = [{ date: "2025-06-15", seconds: at(0, 50, 0), distanceKm: 10, name: "", place: "10", city: "", event: "Арена Марафон" }];
+    const r = matchRace(race, finishes, malyk);
+    assert.equal(r.verdict, "probable"); // not dropped — coach decides
+    assert.equal(r.nameUnrecognized, true);
   });
 
   test("exact still fires when probeg has no readable distance (time ≤1min + exact name)", () => {
