@@ -307,8 +307,12 @@ async function main(): Promise<void> {
   const jsonPath = path.join(outDir, "threshold-scan-rerun.json");
   writeFileSync(jsonPath, `${JSON.stringify({ generated: today, window_from: fromIso, aggregates: agg, racesDroppedSlow, rows: rows.map((r) => ({ ...r, ests: r.ests.map((e) => ({ ...e, pace_fmt: fmtPace(e.pace) })) })) }, null, 2)}\n`, "utf8");
   console.log(`JSON: ${jsonPath}`);
+  // seed the artifact with Igor's uploaded decisions (threshold-decisions.seed.json) so the marked
+  // athletes come pre-accepted with his value on load, even in a fresh browser. Absent file → no seed.
+  const seeded: Record<string, { status: string; value: string }> = {};
+  { const seedPath = path.join(outDir, "threshold-decisions.seed.json"); if (existsSync(seedPath)) { try { const sd = JSON.parse(readFileSync(seedPath, "utf8")) as { decisions?: { athlete_id: number; status: string; pace?: string }[] }; for (const d of sd.decisions ?? []) seeded[String(d.athlete_id)] = { status: d.status, value: d.pace ?? "" }; console.log(`seed: ${Object.keys(seeded).length} решений из threshold-decisions.seed.json`); } catch (e) { console.warn(`seed parse failed: ${e instanceof Error ? e.message : String(e)}`); } } }
   const htmlPath = path.join(outDir, "threshold-scan-rerun.html");
-  writeFileSync(htmlPath, renderHtml(rows, agg, { today, fromIso, racesDroppedSlow, six, anchorN: anchor.size }), "utf8");
+  writeFileSync(htmlPath, renderHtml(rows, agg, { today, fromIso, racesDroppedSlow, six, anchorN: anchor.size, seeded }), "utf8");
   console.log(`HTML: ${htmlPath}`);
   console.log(`\nВСЕГО ${agg.total} · ПРИМЕНЕНО ${agg.applied} · HOLD ${agg.hold} · КАНДИДАТОВ ${agg.candidates} (забег ${agg.race} · интервалы/темпо ${agg.interval} · грубо ${agg.rough}) · АНОМАЛИИ ${agg.anomalies} (>1.45: ${agg.anomHigh} · ~1.0: ${agg.anomLow} · спор: ${agg.dispute}) · нет якоря ${agg.noAnchor} · без данных ${agg.nodata}`);
 }
@@ -339,7 +343,7 @@ function rowHtml(r: Row, decide = true): string {
 </tr>`;
 }
 function section(title: string, rows: Row[], note = "", decide = true): string { if (!rows.length) return `<h2>${esc(title)} — 0</h2>${note ? `<p class="note">${esc(note)}</p>` : ""}`; return `<h2>${esc(title)} — ${rows.length}</h2>${note ? `<p class="note">${esc(note)}</p>` : ""}<table><thead><tr><th>решение</th><th>имя</th><th>текущий</th><th>предлаг</th><th>Δ</th><th>источник</th><th>на чём (дата·дист·время)</th><th>якорь</th><th>отн.</th><th>флаги</th></tr></thead><tbody>${rows.map((r) => rowHtml(r, decide)).join("\n")}</tbody></table>`; }
-function renderHtml(rows: Row[], agg: Record<string, number>, meta: { today: string; fromIso: string; racesDroppedSlow: number; six: Row[]; anchorN: number }): string {
+function renderHtml(rows: Row[], agg: Record<string, number>, meta: { today: string; fromIso: string; racesDroppedSlow: number; six: Row[]; anchorN: number; seeded: Record<string, { status: string; value: string }> }): string {
   const g = (name: string): Row[] => rows.filter((r) => r.group === name).sort((a, b) => (a.proposed ?? 9e9) - (b.proposed ?? 9e9));
   const byConf = (a: Row, b: Row) => (a.lessReliable ? 1 : 0) - (b.lessReliable ? 1 : 0) || (a.propDate && b.propDate ? b.propDate.localeCompare(a.propDate) : 0);
   const css = `:root{--bg:#fbfaf8;--fg:#1c1a17;--mut:#6b6459;--line:#e6e1d8;--card:#fff;--accent:#8a5a2b;--ok:#2f7d4f;--warn:#b8791f;--bad:#b23b3b}
@@ -391,7 +395,14 @@ ${section("Совсем нет данных", g("nodata"))}
 <script>
 (function(){
  var KEY='scan-rerun-decisions-v1';
+ var VKEY='scan-rerun-seed-ver';
  var store={};try{store=JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(e){store={};}
+ // Igor's uploaded marks are AUTHORITATIVE. When the seed CHANGES (new upload), reset decisions to
+ // EXACTLY the seed — this clears stale checkmarks left in localStorage from earlier sessions. Same
+ // seed on a plain regen → keep the in-browser work (no reset).
+ var SEED=${JSON.stringify(meta.seeded)};
+ var SEED_VER=${JSON.stringify(JSON.stringify(meta.seeded))};
+ try{ if(Object.keys(SEED).length && localStorage.getItem(VKEY)!==SEED_VER){ store={}; for(var sk in SEED){if(SEED[sk]&&SEED[sk].status)store[sk]={status:SEED[sk].status,value:SEED[sk].value};} localStorage.setItem(KEY,JSON.stringify(store)); localStorage.setItem(VKEY,SEED_VER); } }catch(e){}
  function persist(){try{localStorage.setItem(KEY,JSON.stringify(store));}catch(e){}}
  function fmt(sec){var m=Math.floor(sec/60),s=Math.round(sec%60);if(s===60){s=0;m++;}return m+':'+String(s).padStart(2,'0');}
  function parse(s){var m=/^(\\d{1,2}):([0-5]?\\d)$/.exec((s||'').trim());return m?(+m[1]*60+ +m[2]):null;}
