@@ -50,7 +50,7 @@ type Row = {
   aid: number; name: string; current: number | null; runSet?: { def: number | null; run: number | null }; anchor: number | null;
   ests: Est[]; proposed: number | null; propSrc: string | null; propBasis: string | null; propConf: string | null; propDate: string | null; lessReliable: boolean;
   ratio: number | null; dual: { second: number | null; secondSrc: string | null; deltaSec: number | null; dispute: boolean };
-  futurePlanned: number; group: string; flags: string[];
+  futurePlanned: number; group: string; flags: string[]; appliedInfo?: { value: number; at: string };
 };
 
 async function main(): Promise<void> {
@@ -288,7 +288,7 @@ async function main(): Promise<void> {
     else if (!best) group = "rough";                                        // only anchor÷1.25
     else group = best.rank <= 2 ? "race" : "interval";
 
-    rows.push({ aid, name: nameById.get(aid) ?? `id ${aid}`, current: currentPace, runSet: rs, anchor: anc, ests: es, proposed, propSrc, propBasis, propConf, propDate, lessReliable: !!best?.lessReliable, ratio, dual, futurePlanned: futurePlanned.get(aid) ?? 0, group, flags });
+    rows.push({ aid, name: nameById.get(aid) ?? `id ${aid}`, current: currentPace, runSet: rs, anchor: anc, ests: es, proposed, propSrc, propBasis, propConf, propDate, lessReliable: !!best?.lessReliable, ratio, dual, futurePlanned: futurePlanned.get(aid) ?? 0, group, flags, appliedInfo: applied && app ? { value: app.valueAfter, at: app.at } : undefined });
   }
 
   // ── aggregates ──
@@ -374,7 +374,10 @@ td.decide{white-space:nowrap;width:1%}
 .decide .k-reason{display:none;width:96px;font:inherit;padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);margin-top:3px}
 tr.accepted{background:color-mix(in srgb,var(--ok) 13%,transparent)}
 tr.rejected{background:color-mix(in srgb,var(--bad) 10%,transparent)}
-tr.rejected .name,tr.rejected .prop{text-decoration:line-through;opacity:.65}`;
+tr.rejected .name,tr.rejected .prop{text-decoration:line-through;opacity:.65}
+.applied-block{margin-top:28px;border:1px solid var(--line);border-radius:8px;padding:4px 14px;background:var(--card)}
+.applied-block summary{cursor:pointer;font-weight:600;color:var(--mut);padding:10px 0;font-size:14px;list-style:revert}
+.applied-block table{margin:6px 0 12px}`;
   const pill = (b: number | string, s: string): string => `<div class="pill"><b>${b}</b><span>${s}</span></div>`;
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Скан порогов — рерун ${meta.today}</title><style>${css}</style></head><body><div class="wrap">
 <h1>Скан кандидатов на пороги — рерун</h1>
@@ -391,6 +394,7 @@ ${section("⚠ Источники спорят (>20с между забегом 
 ${section("Беговой набор (wt=3) vs default (wt=0) — шестеро, показаны ОБА числа", meta.six, "Справочно (решения — в основной группе каждого). Лаврентьев и Хоффман: беговой может быть медленнее и ВЕРНЫМ (как Бучкина) — не выравнивать молча.", false)}
 ${section("Нет лёгкого якоря (самопроверку не сделать)", g("no-anchor"))}
 ${section("Совсем нет данных", g("nodata"))}
+${(() => { const ar = rows.filter((r) => r.group === "applied").sort((a, b) => (b.appliedInfo?.at ?? "").localeCompare(a.appliedInfo?.at ?? "")); if (!ar.length) return ""; return `<details class="applied-block"><summary>✓ Применено — ${ar.length} (порог уже стоит; что и когда ставили)</summary><div class="scroll"><table><thead><tr><th>имя</th><th>порог</th><th>когда</th></tr></thead><tbody>${ar.map((r) => `<tr><td class="name">${esc(r.name)}<span class="aid">${r.aid}</span></td><td>${pace(r.appliedInfo ? 1000 / r.appliedInfo.value : r.current)}</td><td>${(r.appliedInfo?.at ?? "").slice(0, 10)}</td></tr>`).join("")}</tbody></table></div></details>`; })()}
 </div></div>
 <script>
 (function(){
