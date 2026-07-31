@@ -38,12 +38,12 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getAthleteSettings } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { readSessionSnapshot } from "../../../src/features/trainingpeaks/tp-session-snapshot.ts";
 import { toolRoot } from "./lib/paths.ts";
-import { authedWriteOnce, COACH_ID_SETUP_HINT, findActiveHold, findWt0Set, formatMpsAsPace, isRecord, loadCoachUserId, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
+import { authedWriteOnce, COACH_ID_SETUP_HINT, findActiveHold, findWt0Set, formatMpsAsPace, isRecord, loadCoachUserId, parsePaceToSecPerKm, secPerKmToMps, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
 import { planType } from "./lib/tp-athlete-set-threshold.ts";
 import { pickWhitelistedSettings } from "./lib/tp-settings-whitelist.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
-function getSupabase(): SupabaseClient { const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), path.join(toolRoot, ".env")]) loadEnv(p); return createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } }); }
+function getSupabase(): SupabaseClient { const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), path.join(toolRoot, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p); return createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } }); }
 const S = (mm: string): number => { const [a, b] = mm.split(":"); return Number(a) * 60 + Number(b); };
 function daysAgo(n: number): string { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 function todayIso(): string { return new Date().toISOString().slice(0, 10); }
@@ -218,11 +218,15 @@ async function main(): Promise<void> {
   if (!Number.isInteger(id)) { console.error("need --athlete=<id>"); process.exit(2); }
   const apply = hasFlag("apply");
 
-  const { data: thr } = await supabase.from("tp_threshold_applications").select("value_after,tier,applied_at").eq("trainingpeaks_athlete_id", id).eq("kind", "pace").neq("tier", "rollback").order("applied_at", { ascending: false }).limit(1);
-  const thrMps = thr?.[0]?.value_after as number | undefined; const thrSec = thrMps ? 1000 / thrMps : null;
+  // Threshold source: --pace=mm:ss APPLIES A DECISION value (scan-candidate apply); recompute
+  // structures FOR that pace, then set it. Without --pace: restore the last real logged threshold.
+  const paceOverride = getFlag("pace");
+  let thrMps: number | undefined; let thrSec: number | null;
+  if (paceOverride) { thrSec = parsePaceToSecPerKm(paceOverride); thrMps = secPerKmToMps(thrSec); }
+  else { const { data: thr } = await supabase.from("tp_threshold_applications").select("value_after,tier,applied_at").eq("trainingpeaks_athlete_id", id).eq("kind", "pace").neq("tier", "rollback").order("applied_at", { ascending: false }).limit(1); thrMps = thr?.[0]?.value_after as number | undefined; thrSec = thrMps ? 1000 / thrMps : null; }
   const { data: nmRow } = await supabase.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1);
   const name = (nmRow?.[0]?.student_name as string) ?? `id ${id}`;
-  if (!thrMps || !thrSec) { console.error(`✗ ${name}: нет реального порога (value_after) — восстановить нечем.`); process.exit(3); }
+  if (!thrMps || !thrSec) { console.error(`✗ ${name}: нет порога (${paceOverride ? "плохой --pace" : "нет value_after в логе"}).`); process.exit(3); }
 
   // easy anchor (FIT reps=0 continuous 90d)
   const dm: { workout_cache_id: string }[] = []; for (let f = 0; ; f += 1000) { const { data } = await supabase.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id").eq("trainingpeaks_athlete_id", id).eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", daysAgo(90)).lte("workout_date", todayIso()).range(f, f + 999); if (!data || !data.length) break; dm.push(...(data as { workout_cache_id: string }[])); if (data.length < 1000) break; }
@@ -326,9 +330,9 @@ async function main(): Promise<void> {
   // ── log restore ──
   try {
     const zonesW = pickWhitelistedSettings(afterSettings);
-    await supabase.from("tp_zone_snapshots").insert({ trainingpeaks_athlete_id: id, captured_at: new Date().toISOString(), zones: Object.keys(zonesW).length ? zonesW : null, source: "post_restore" });
-    await supabase.from("tp_threshold_applications").insert({ trainingpeaks_athlete_id: id, kind: "pace", value_before: beforeThr && typeof beforeThr.threshold === "number" ? beforeThr.threshold : null, value_after: thrMps, value_after_display: formatMpsAsPace(thrMps), evidence: `restore with structure recompute (${wks.length} workouts)`, tier: "restore", applied_by: "tp-threshold-restore" });
-    console.log(`  лог восстановления записан (tier=restore).`);
+    await supabase.from("tp_zone_snapshots").insert({ trainingpeaks_athlete_id: id, captured_at: new Date().toISOString(), zones: Object.keys(zonesW).length ? zonesW : null, source: paceOverride ? "post_candidate_apply" : "post_restore" });
+    await supabase.from("tp_threshold_applications").insert({ trainingpeaks_athlete_id: id, kind: "pace", value_before: beforeThr && typeof beforeThr.threshold === "number" ? beforeThr.threshold : null, value_after: thrMps, value_after_display: formatMpsAsPace(thrMps), evidence: paceOverride ? `scan-decision apply --pace=${paceOverride} (${wks.length} workouts recomputed)` : `restore with structure recompute (${wks.length} workouts)`, tier: paceOverride ? "candidate" : "restore", applied_by: "tp-threshold-restore" });
+    console.log(`  лог записан (tier=${paceOverride ? "candidate" : "restore"}).`);
   } catch (e) { console.warn(`  (лог не записан: ${e instanceof Error ? e.message : String(e)})`); }
   console.log(`\n✅ ГОТОВО — ${name}: ${wks.length} структур + порог ${fp(thrSec)}. Проверь глазами в TP. Ops-log отдельно.`);
 }
