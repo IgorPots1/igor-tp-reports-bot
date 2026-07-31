@@ -14,6 +14,7 @@ import {
   type TrainingPeaksStudentContactStatus,
   type TrainingPeaksWorkoutCacheRow,
 } from "@/features/trainingpeaks/repository";
+import { isMemoryItemFresh } from "@/features/trainingpeaks/memory-freshness";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
 import {
   buildResolvedCommunicationProfilePromptLines,
@@ -163,7 +164,7 @@ export async function buildTrainingPeaksReplyDraftContext(
     recoveryAlertMessage: recovery.message,
     recoveryAlertAvailable: recovery.available,
     telegramContextBullets,
-    coachMemoryPromptBlock: buildCoachMemoryPromptBlock(activeMemoryItems),
+    coachMemoryPromptBlock: buildCoachMemoryPromptBlock(activeMemoryItems, periodTo),
     resolvedCommunicationProfile,
     promptContext,
   };
@@ -422,7 +423,7 @@ function buildPromptContext(input: {
           }),
         ];
   const recentContactEventsSummary = formatRecentContactEventsSummary(input.recentContactEvents);
-  const coachMemoryPromptBlock = buildCoachMemoryPromptBlock(input.activeMemoryItems);
+  const coachMemoryPromptBlock = buildCoachMemoryPromptBlock(input.activeMemoryItems, input.periodTo);
 
   return [
     `student_name=${input.studentName}`,
@@ -451,12 +452,18 @@ function buildPromptContext(input: {
   ].join("\n");
 }
 
-function buildCoachMemoryPromptBlock(items: TrainingPeaksStudentMemoryItem[]): string | null {
+function buildCoachMemoryPromptBlock(
+  items: TrainingPeaksStudentMemoryItem[],
+  asOfDate: string
+): string | null {
   if (items.length === 0) {
     return null;
   }
 
-  const totalItems = items.slice(0, COACH_MEMORY_MAX_TOTAL_ITEMS);
+  // Drop items that have gone stale for their type (per-type freshness window). Display-only: the DB
+  // row stays active, we just don't feed an old cold / mood note into the draft as current context.
+  const freshItems = items.filter((item) => isMemoryItemFresh(item, asOfDate));
+  const totalItems = freshItems.slice(0, COACH_MEMORY_MAX_TOTAL_ITEMS);
   if (totalItems.length === 0) {
     return null;
   }
@@ -499,7 +506,9 @@ function buildCoachMemoryPromptBlock(items: TrainingPeaksStudentMemoryItem[]): s
     return null;
   }
 
-  const hiddenCount = items.length - shownCount;
+  // Count only fresh-but-unshown items here; stale items were intentionally suppressed above and must
+  // not be advertised back ("+ N notes" would defeat hiding them).
+  const hiddenCount = freshItems.length - shownCount;
   if (hiddenCount > 0) {
     lines.push(`+ еще ${hiddenCount} заметок`);
   }
