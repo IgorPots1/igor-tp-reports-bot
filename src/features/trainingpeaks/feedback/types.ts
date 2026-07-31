@@ -136,6 +136,10 @@ export type ContextPacket = {
    *  time (Haiku with a deterministic keyword fallback). Optional: callers that don't extract leave
    *  it undefined and the planner behaves exactly as before (no factor → no override). */
   statedFactors?: StatedFactor[];
+  /** Questions actually SENT to this student recently (adviceKey + date), read from past sent drafts.
+   *  The planner holds a question back if the same one was asked within 14 days or the coach engaged
+   *  since (question-pause). Optional: unset → no pause (a question is never suppressed). */
+  recentlyAskedQuestions?: Array<{ adviceKey: string; date: string }>;
 };
 
 export type ObservationType = "praise" | "correction" | "question" | "coach_signal";

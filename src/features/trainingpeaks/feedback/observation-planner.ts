@@ -14,6 +14,7 @@ import { detectNegativeSelfReport } from "./negative-self-report.ts";
 import { evaluateNegativeSplit } from "./negative-split.ts";
 import { collectPositiveSignals } from "./positive-dictionary.ts";
 import { evaluateAccumulationQuestion, evaluateContradictionQuestion } from "./questions.ts";
+import { isQuestionOnPause } from "./question-pause.ts";
 import { classifySessionType } from "./session-type.ts";
 import { evaluateHrDriftTempo, evaluateIntervalFade } from "./signal-type-table.ts";
 import type { AdviceKey } from "./advice-keys.ts";
@@ -35,6 +36,10 @@ function makeObservation(input: { type: ObservationType; metric: string; numbers
 export function planObservations(packet: ContextPacket): Observation[] {
   const observations: Observation[] = [];
   const { current } = packet;
+  // A question is a coach technique, not a schedule: hold it back if the same one was asked to this
+  // student within 14 days, or the coach already engaged since (question-pause).
+  const onPause = (adviceKey: string): boolean =>
+    isQuestionOnPause({ adviceKey, recentlyAsked: packet.recentlyAskedQuestions, coachTouchAt: packet.coachTouchAt, workoutDate: packet.workout.workoutDate });
 
   const sessionClassification = classifySessionType({ current, title: packet.workout.title });
   const sessionType = sessionClassification.sessionType;
@@ -152,7 +157,9 @@ export function planObservations(packet: ContextPacket): Observation[] {
       observations.push(makeObservation({ type: "correction", metric: "fatigue_cause", numbers: fatigue.numbers, sessionType, adviceKey: fatigue.adviceKey, reason: fatigue.reason }));
     } else if (fatigue.kind === "question") {
       fatigueTriggered = true;
-      observations.push(makeObservation({ type: "question", metric: "fatigue_cause", numbers: fatigue.numbers, sessionType, adviceKey: "question_high_pulse_unknown", reason: fatigue.reason }));
+      if (!onPause("question_high_pulse_unknown")) {
+        observations.push(makeObservation({ type: "question", metric: "fatigue_cause", numbers: fatigue.numbers, sessionType, adviceKey: "question_high_pulse_unknown", reason: fatigue.reason }));
+      }
     }
     // fatigue.kind === "silent": words said fine, C7-style silence — nothing added.
     // fatigue.kind === "not_triggered": pulse wasn't elevated — nothing added.
@@ -160,14 +167,14 @@ export function planObservations(packet: ContextPacket): Observation[] {
 
   // C6 — contradiction question, only when C4 never engaged this workout.
   const contradiction = evaluateContradictionQuestion(packet, fatigueTriggered);
-  if (contradiction.fired) {
+  if (contradiction.fired && !onPause("question_contradiction")) {
     observations.push(makeObservation({ type: "question", metric: "contradiction", numbers: contradiction.numbers, sessionType, adviceKey: "question_contradiction", reason: contradiction.reason }));
   }
 
   // C5 — accumulation question (duration-based, not gated by HR/pace trust). Suppressed when the
   // student named a factor: they already explained the load, don't interrogate on top of it.
   const accumulation = evaluateAccumulationQuestion(packet);
-  if (accumulation.fired && !statedCause) {
+  if (accumulation.fired && !statedCause && !onPause("question_accumulated_load")) {
     observations.push(makeObservation({ type: "question", metric: "accumulated_load", numbers: accumulation.numbers, sessionType, adviceKey: "question_accumulated_load", reason: accumulation.reason }));
   }
 
@@ -187,7 +194,7 @@ export function planObservations(packet: ContextPacket): Observation[] {
       : comparison.praise.reason;
     observations.push(makeObservation({ type: coachOnly ? "coach_signal" : "praise", metric: "comparison_progress", numbers: comparison.praise.numbers, sessionType, adviceKey: "praise_comparison_progress", reason, priorityOverride: priorityForComparisonWeight(comparison.praise.weight) }));
   }
-  if (comparison.hrSensorQuestion) {
+  if (comparison.hrSensorQuestion && !onPause("question_hr_sensor")) {
     observations.push(makeObservation({ type: "question", metric: "hr_sensor", numbers: comparison.hrSensorQuestion.numbers, sessionType, adviceKey: "question_hr_sensor", reason: comparison.hrSensorQuestion.reason }));
   }
   for (const signal of comparison.coachSignals) {

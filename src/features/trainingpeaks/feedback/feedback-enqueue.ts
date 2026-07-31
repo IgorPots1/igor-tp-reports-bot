@@ -17,6 +17,7 @@ import { deviceGlitchScope } from "@/features/trainingpeaks/feedback/stated-fact
 import { isSensitiveTopic } from "@/features/trainingpeaks/feedback/sensitive-topics";
 import { isDataFragment } from "@/features/trainingpeaks/feedback/session-type";
 import { buildRaceExclusionKeys, type RaceDayDistances } from "@/features/trainingpeaks/feedback/race-shift-gate";
+import { QUESTION_PAUSE_DAYS, extractAskedQuestionKeys } from "@/features/trainingpeaks/feedback/question-pause";
 import { enqueueTrainingPeaksFeedbackJob, enrichPendingCardStudentWords, fetchHandledWorkoutCacheIds, fetchWorkoutJobBlockState, flagDoneCardLateReport, reviveDismissedFeedbackJob } from "@/features/trainingpeaks/feedback/feedback-queue";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerLap } from "@/features/trainingpeaks/feedback/types";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
@@ -274,6 +275,30 @@ export async function assemblePlannerInputsForWorkouts(
   const contactRows = await fetchIn<Record<string, unknown>>(supabase, "trainingpeaks_student_contact_status", "student_id, last_coach_touch_at", "student_id", studentIds, undefined, "student_id");
   const coachTouchByStudent = new Map((contactRows ?? []).map((c) => [c.student_id as string, (c.last_coach_touch_at as string | null) ?? null]));
 
+  // Which questions were put in front of the coach for each student recently → the planner holds a
+  // repeat of the SAME question within 14 days (question-pause), so a slow-moving condition doesn't
+  // re-fire it day after day. Read from draft_text (every time the planner produced the question,
+  // whether the card was sent or dismissed — either way asking it again days later is the churn).
+  // Window = pause + a week of margin. `updated_at` is the unique pagination key.
+  const recentDraftJobs = await fetchIn<{ student_id: string; draft_text: string | null; created_at: string }>(
+    supabase,
+    "trainingpeaks_workout_feedback_jobs",
+    "student_id, draft_text, created_at, updated_at",
+    "student_id",
+    studentIds,
+    (q) => q.not("draft_text", "is", null).gte("created_at", new Date(Date.now() - (QUESTION_PAUSE_DAYS + 7) * 86_400_000).toISOString()),
+    "updated_at"
+  );
+  const recentQuestionsByStudent = new Map<string, Array<{ adviceKey: string; date: string }>>();
+  for (const j of recentDraftJobs) {
+    const keys = extractAskedQuestionKeys(j.draft_text);
+    if (keys.length === 0) continue;
+    const date = (j.created_at ?? "").slice(0, 10);
+    const arr = recentQuestionsByStudent.get(j.student_id) ?? [];
+    for (const k of keys) arr.push({ adviceKey: k, date });
+    recentQuestionsByStudent.set(j.student_id, arr);
+  }
+
   // Laps + titles for every involved workout (targets + history).
   const allCacheIds = [...new Set([...targetDerivedRows, ...historyRows].map((r) => r.workout_cache_id as string))];
   const lapsByCacheId = new Map<string, PlannerLap[]>();
@@ -377,6 +402,7 @@ export async function assemblePlannerInputsForWorkouts(
       studentMessages,
       groupBound,
       coachTouchAt: coachTouchByStudent.get(sid) ?? null,
+      recentlyAskedQuestions: recentQuestionsByStudent.get(sid) ?? [],
       healthMetrics: healthByStudent.get(sid) ?? [],
       healthProfile: profileByStudent.get(sid) ?? null,
     };
