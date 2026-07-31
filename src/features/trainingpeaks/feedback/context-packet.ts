@@ -12,7 +12,8 @@ import { computeSplitHalf } from "./split-half.ts";
 import { planObservations } from "./observation-planner.ts";
 import { SECOND_HALF_HR_RISE_MAX_BPM } from "./positive-dictionary.ts";
 import { alignFactorsToTriggerDay, suppressAnsweredPersistentFactors } from "./stated-factors.ts";
-import { FEWSHOTS, GLOSS, ordinalWord, registerWord, sexRuleText } from "./feedback-corpus.ts";
+import { FEWSHOTS, GLOSS, registerWord, sexRuleText } from "./feedback-corpus.ts";
+import { hrClimbed, isHonestFade } from "./signal-honesty.ts";
 import type { ContextPacket, Observation, PlannerDerivedMetrics, PlannerLap, PlannerStudentMessage, SessionType } from "./types.ts";
 
 export type FeedbackContextPacket = {
@@ -173,34 +174,33 @@ function buildLongArc(current: PlannerDerivedMetrics, laps: PlannerLap[], observ
 }
 
 function buildIntervalArc(current: PlannerDerivedMetrics): { notes: string[]; rich: boolean } {
-  const hrOk = current.hrTrusted !== false;
   const wid = current.workoutId;
   const paces = (current.repPaces ?? []).filter((p): p is number => p !== null);
-  const hrs = (current.repPeakHrs ?? []).filter((h): h is number => h !== null);
   const notes: string[] = [];
   if (paces.length < 3) {
     notes.push("[дуга] серия отработана до конца");
     return { notes, rich: false };
   }
-  let breakAt = -1;
-  let best = paces[0]!;
-  for (let i = 1; i < paces.length; i += 1) {
-    if (paces[i]! > best * 1.05) {
-      breakAt = i;
-      break;
-    }
-    best = Math.min(best, paces[i]!);
-  }
-  const hrClimb = hrOk && hrs.length >= 3 && hrs[hrs.length - 1]! > hrs[0]! + 6;
-  if (breakAt === -1) {
+  // A decline is asserted only when it is REAL: back half genuinely + sustainably slower past the
+  // ≥8 s/km floor (isHonestFade), not one blip vs the single fastest rep. This silences «темп просел»
+  // on a series that held or got FASTER (Olga: last rep her fastest, back half quicker).
+  const faded = isHonestFade(current.repPaces);
+  const hrClimb = hrClimbed(current.repPeakHrs, current.hrTrusted);
+  if (!faded) {
     notes.push(vary(wid, 22, "[дуга] вся серия ровно, от первого до последнего отрезка темп держался", "[дуга] всю серию отработал ровно, темп от первого до последнего держался", "[дуга] серия ровная, каждый отрезок в темпе, без просадок"));
     if (hrClimb) notes.push("[нюанс] пульс по ходу ровно рос по работе, без провалов, нормально");
     return { notes, rich: hrClimb };
   }
   notes.push(vary(wid, 23, "[дуга-начало] первые отрезки, ровно", "[дуга-начало] первые отрезки держал ровно", "[дуга-начало] старт серии ровный"));
-  notes.push(`[дуга-перелом] примерно с ${ordinalWord(breakAt + 1)} отрезка темп начал проседать${hrOk ? " / пульс частить" : ""}`);
-  notes.push(hrOk ? vary(wid, 24, "[дуга-конец] восстановление там уже не так успевало, к концу тяжелее", "[дуга-конец] к концу восстановление не догоняло, отрезки тяжелее", "[дуга-конец] под финиш пауза не спасала, шло тяжелее") : "[дуга-конец] к концу отрезки шли тяжелее");
-  notes.push(vary(wid, 25, "[совет] первые отрезки не гнать, тогда конец легче", "[совет] первые не частить, и концовка пойдёт ровнее", "[совет] сдержаннее в начале серии, конец дастся легче"));
+  if (hrClimb) {
+    // Pace faded AND pulse rose → genuine fatigue; the honest "harder to the end" story.
+    notes.push(vary(wid, 24, "[дуга-перелом] к концу темп просел, пульс подрос — восстановление уже не так успевало, тяжелее", "[дуга-перелом] к концу отрезки медленнее и пульс выше — усилие росло, шло тяжелее", "[дуга-перелом] под финиш темп сел, пульс подрос — пауза не спасала, тяжелее"));
+    notes.push(vary(wid, 25, "[совет] первые отрезки не гнать, тогда конец легче", "[совет] первые не частить, и концовка пойдёт ровнее", "[совет] сдержаннее в начале серии, конец дастся легче"));
+  } else {
+    // Pace eased in the back half but the pulse did NOT rise → held effort even, NOT fatigue. Do not
+    // say «тяжелее» — that would be the Sorokin/Olga false-fatigue narrative.
+    notes.push(vary(wid, 26, "[дуга-конец] к концу темп чуть мягче, но пульс не рос — держал усилие ровно, не разгонялся", "[дуга-конец] под финиш темп спокойнее при том же пульсе — ровное усилие, не устал", "[дуга-конец] концовку сбавил по темпу, но пульс держался — экономно, без провала"));
+  }
   return { notes, rich: true };
 }
 

@@ -8,13 +8,13 @@
 // Health never overrides or substitutes for words — it only enriches a
 // tired-confirmation that already came from the student.
 //
-// Trigger ("was this pulse elevated") is either avg_hr above this student's own
-// easy-run history, or hr_decoupling_pct high on an easy run (signal-type-table's
-// evaluateEasyHrDrift — the design explicitly routes that case through C4, "если
-// высок → причина, не вина", same as a high avg_hr).
+// Trigger ("was this pulse elevated") is avg_hr above this student's own easy-run history — and ONLY
+// that. Within-run decoupling (hr_decoupling_pct) used to also fire it, but decoupling is DRIFT
+// inside one run, not a "vs your usual" claim: a run whose avg_hr sits BELOW the student's easy median
+// still decoupled, so it produced a false «пульс выше обычного» (Mariyet). Signal honesty — the sign
+// must match the claim — so decoupling no longer routes here.
 
 import { computeHealthBaseline, resolveRecentMetricValue, computeHrvTrend } from "./health-baseline.ts";
-import { evaluateEasyHrDrift } from "./signal-type-table.ts";
 import type { AdviceKey } from "./advice-keys.ts";
 import type { ContextPacket, PlannerDerivedMetrics, PlannerMemoryItem, SessionType } from "./types.ts";
 
@@ -78,11 +78,6 @@ function computeEasyAvgHrBaseline(history: PlannerDerivedMetrics[]): { median: n
 }
 
 function evaluatePulseTrigger(current: PlannerDerivedMetrics, sessionType: SessionType, history: PlannerDerivedMetrics[]): { fired: boolean; numbers: Record<string, number>; reason: string } {
-  const drift = evaluateEasyHrDrift({ current, sessionType });
-  if (drift.fired) {
-    return { fired: true, numbers: { hrDecouplingPct: drift.decouplingPct }, reason: `hr_decoupling_pct=${drift.decouplingPct} elevated on an easy run` };
-  }
-
   if (sessionType === "easy" && current.avgHr !== null) {
     const baseline = computeEasyAvgHrBaseline(history);
     if (baseline !== null) {
