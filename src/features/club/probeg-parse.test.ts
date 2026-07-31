@@ -128,6 +128,20 @@ describe("matchRace", () => {
     assert.equal(matchRace(race, finishes, hadizhat).verdict, "probable"); // strict name fails → not auto-linked
   });
 
+  test("a CONFIRMED spelling makes «Хади Муртазалиева» exact (auto-link, no re-queue)", () => {
+    const race = { date: "2026-05-23", ourSeconds: at(0, 55, 0), ourKm: 21.1 };
+    const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 55, 5), distanceKm: 21.1, name: "Хади Муртазалиева", place: "5", city: "", event: "" }];
+    const r = matchRace(race, finishes, hadizhat, { exact: 60, probable: 900 }, ["хади муртазалиева"]);
+    assert.equal(r.verdict, "exact");
+    assert.equal(r.byConfirmedName, true);
+  });
+
+  test("a confirmed spelling does NOT bypass date/distance/time — a wrong-distance same-day finish stays out", () => {
+    const race = { date: "2026-05-23", ourSeconds: at(0, 55, 0), ourKm: 10 }; // our 10k
+    const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 55, 5), distanceKm: 42.2, name: "Хади Муртазалиева", place: "5", city: "", event: "" }];
+    assert.equal(matchRace(race, finishes, hadizhat, { exact: 60, probable: 900 }, ["хади муртазалиева"]).verdict, "none");
+  });
+
   test("unreadable finisher name is NOT a reject: perfect time+distance → probable «имя не распозналось»", () => {
     const race = { date: "2025-06-15", ourSeconds: at(0, 50, 2), ourKm: 10 };
     const finishes: ProbegFinish[] = [{ date: "2025-06-15", seconds: at(0, 50, 0), distanceKm: 10, name: "", place: "10", city: "", event: "Арена Марафон" }];

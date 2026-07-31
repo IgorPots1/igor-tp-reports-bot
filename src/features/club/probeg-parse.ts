@@ -169,9 +169,15 @@ export function nameGate(studentVariants: string[][], finisherName: string, opts
   return assign(0, false);
 }
 
+/** Canonical key for a finisher name: lowercase, ё→е, collapsed spaces. The same normalization backs
+ *  the confirmed-spelling memory (club_probeg_athlete_links.confirmed_name_normalized). */
+export function normalizeFinisherName(name: string): string {
+  return name.toLowerCase().replace(/ё/gu, "е").replace(/\s+/gu, " ").trim();
+}
+
 export type MatchVerdict = "exact" | "probable" | "none";
 export type OurRaceInput = { date: string; ourSeconds: number | null; ourKm: number | null };
-export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean };
+export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean; byConfirmedName: boolean };
 
 /**
  * Classify one of our races against a person's probeg finishes. Requires BOTH a result match (date +
@@ -184,28 +190,35 @@ export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; 
  *   NONE     — otherwise. `nameRejected` carries a same-date time+distance hit whose name was PRESENT
  *              but FOREIGN, so the report shows why it was dropped. `nameUnrecognized` flags a probable
  *              whose finisher name was blank (shown to the coach as «имя не распозналось»).
+ *
+ * `confirmedSpellings` is the identifier memory: finisher spellings the coach has already confirmed
+ * belong to THIS student (club_probeg_athlete_links). A confirmed spelling counts as name-EXACT, so a
+ * shortened name like «Хади Муртазалиева» — forever PROBABLE on its own — auto-links once confirmed and
+ * never returns to the queue. `byConfirmedName` marks such a match.
  */
-export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentVariants: string[][], tol: { exact: number; probable: number } = { exact: 60, probable: 900 }): MatchResult {
+export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentVariants: string[][], tol: { exact: number; probable: number } = { exact: 60, probable: 900 }, confirmedSpellings: string[] = []): MatchResult {
+  const confirmedSet = new Set(confirmedSpellings.map(normalizeFinisherName).filter((s) => s.length > 0));
   const sameDate = finishes.filter((f) => f.date === race.date);
-  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected: null, nameUnrecognized: false };
+  if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: false };
   const scored = sameDate
     .map((f) => {
       const dt = Math.abs(f.seconds - race.ourSeconds!);
       const bothKnown = race.ourKm != null && f.distanceKm != null;
       const nameKnown = f.name.trim().length > 0;
+      const confirmed = nameKnown && confirmedSet.has(normalizeFinisherName(f.name));
       return {
-        f, dt, nameKnown,
+        f, dt, nameKnown, confirmed,
         distOk: !bothKnown || distanceMatch(race.ourKm, f.distanceKm),
         distMatch: bothKnown && distanceMatch(race.ourKm, f.distanceKm),
-        nameStrict: nameKnown && nameGate(studentVariants, f.name, { strict: true }),
-        nameOk: nameKnown && nameGate(studentVariants, f.name),
+        nameStrict: confirmed || (nameKnown && nameGate(studentVariants, f.name, { strict: true })),
+        nameOk: confirmed || (nameKnown && nameGate(studentVariants, f.name)),
       };
     })
     .sort((a, b) => a.dt - b.dt);
   const exact = scored.find((c) => c.dt <= tol.exact && c.distOk && c.nameStrict);
-  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, sameDate, nameRejected: null, nameUnrecognized: false };
+  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: exact.confirmed };
   const probable = scored.find((c) => c.dt <= tol.probable && c.distMatch && (c.nameOk || !c.nameKnown));
-  if (probable) return { verdict: "probable", finish: probable.f, deltaSeconds: probable.dt, sameDate, nameRejected: null, nameUnrecognized: !probable.nameKnown };
+  if (probable) return { verdict: "probable", finish: probable.f, deltaSeconds: probable.dt, sameDate, nameRejected: null, nameUnrecognized: !probable.nameKnown, byConfirmedName: false };
   const nameRejected = scored.find((c) => c.dt <= tol.probable && (c.distMatch || c.distOk) && c.nameKnown && !c.nameOk)?.f ?? null;
-  return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected, nameUnrecognized: false };
+  return { verdict: "none", finish: null, deltaSeconds: null, sameDate, nameRejected, nameUnrecognized: false, byConfirmedName: false };
 }

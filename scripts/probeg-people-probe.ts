@@ -18,6 +18,9 @@
  *   --candidates                      List our finishers of the seed events (pick a sample).
  *   --check --students=<path.json>    students.json = ["<studentId>", ...]; report per-student + total.
  *   --check-all                       Whole club (every student with a past race), report-only.
+ *   --confirmed=<path.json>           Optional. {"<studentId>": ["Хади Муртазалиева", ...]} — confirmed
+ *                                     spellings (previews club_probeg_athlete_links): such a name counts
+ *                                     as EXACT, so a shortened name auto-links instead of re-queuing.
  *
  *   node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
  *     --env-file=/Users/igor/igor-tp-reports-bot/.env.local scripts/probeg-people-probe.ts --check-all
@@ -33,6 +36,21 @@ const MODE_CANDIDATES = process.argv.includes("--candidates");
 const MODE_CHECK = process.argv.includes("--check");
 const MODE_CHECK_ALL = process.argv.includes("--check-all");
 const STUDENTS_PATH = process.argv.find((a) => a.startsWith("--students="))?.slice("--students=".length).trim() || "";
+const CONFIRMED_PATH = process.argv.find((a) => a.startsWith("--confirmed="))?.slice("--confirmed=".length).trim() || "";
+
+/** { "<studentId>": ["Хади Муртазалиева", ...] } — confirmed spellings memory (previews the DB table). */
+function loadConfirmedSpellings(): Record<string, string[]> {
+  if (!CONFIRMED_PATH || !existsSync(CONFIRMED_PATH)) return {};
+  try {
+    const raw = JSON.parse(readFileSync(CONFIRMED_PATH, "utf8")) as Record<string, unknown>;
+    const out: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(raw)) if (Array.isArray(v)) out[k] = v.filter((x): x is string => typeof x === "string");
+    return out;
+  } catch {
+    console.error(`--confirmed=${CONFIRMED_PATH} не читается (ждём {"studentId":["написание",...]})`);
+    return {};
+  }
+}
 
 const SEED_EVENTS = [
   { date: "2026-07-04", label: "Белые ночи" },
@@ -161,19 +179,21 @@ function fmtKm(km: number | null): string {
   return km == null ? "?км" : `${km}км`;
 }
 
-async function checkStudent(studentId: string, name: string, diagnose: boolean, probablesOut: ProbableDetail[]): Promise<StudentTally> {
+async function checkStudent(studentId: string, name: string, diagnose: boolean, probablesOut: ProbableDetail[], confirmed: string[]): Promise<StudentTally> {
   const { finishes, tried } = await fetchFinishesForName(name, diagnose);
   const variants = studentNameVariantSets(name); // имя должно СОВПАСТЬ (фамилия), иначе не матч
   const ourRaces = await loadOurRaces(studentId); // прошедшие гонки
   const tally: StudentTally = { total: 0, exact: 0, probable: 0, notFound: 0, probables: [] };
-  console.log(`\n=== ${name} · probeg попытки [${tried.join(" ; ")}] · строк финишей: ${finishes.length} · наших гонок: ${ourRaces.length} ===`);
+  const conf = confirmed.length ? ` · подтв. написаний: ${confirmed.length}` : "";
+  console.log(`\n=== ${name} · probeg попытки [${tried.join(" ; ")}] · строк финишей: ${finishes.length} · наших гонок: ${ourRaces.length}${conf} ===`);
   for (const race of ourRaces) {
     tally.total += 1;
-    const res: MatchResult = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S });
+    const res: MatchResult = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
     const ours = `наше ${race.date} ${fmtKm(race.ourKm)} ${fmtHms(race.ourSeconds)}`;
     if (res.verdict === "exact" && res.finish) {
       tally.exact += 1;
-      console.log(`  ТОЧНО   ${race.title || fmtKm(race.ourKm)} · ${ours} ↔ probeg ${res.finish.name} ${fmtKm(res.finish.distanceKm)} ${fmtHms(res.finish.seconds)} (Δ${res.deltaSeconds}с)`);
+      const via = res.byConfirmedName ? " [по подтверждённому имени]" : "";
+      console.log(`  ТОЧНО   ${race.title || fmtKm(race.ourKm)} · ${ours} ↔ probeg ${res.finish.name} ${fmtKm(res.finish.distanceKm)} ${fmtHms(res.finish.seconds)} (Δ${res.deltaSeconds}с)${via}`);
     } else if (res.verdict === "probable" && res.finish) {
       tally.probable += 1;
       const detail: ProbableDetail = { studentName: name, race, finish: res.finish, deltaSeconds: res.deltaSeconds, nameUnrecognized: res.nameUnrecognized };
@@ -259,12 +279,13 @@ async function runCheck(): Promise<void> {
     process.exit(1);
   }
   const ids = JSON.parse(readFileSync(STUDENTS_PATH, "utf8")) as string[];
+  const confirmedMap = loadConfirmedSpellings();
   const totals: StudentTally = { total: 0, exact: 0, probable: 0, notFound: 0, probables: [] };
   const probables: ProbableDetail[] = [];
   let first = true;
   for (const studentId of ids) {
     const name = await studentName(studentId);
-    foldTally(totals, await checkStudent(studentId, name, first, probables));
+    foldTally(totals, await checkStudent(studentId, name, first, probables, confirmedMap[studentId] ?? []));
     first = false;
   }
   printSummary(totals, ids.length, probables);
@@ -273,12 +294,13 @@ async function runCheck(): Promise<void> {
 
 async function runCheckAll(): Promise<void> {
   const students = await loadClubStudents();
+  const confirmedMap = loadConfirmedSpellings();
   console.log(`=== ПРОГОН ПО ВСЕМУ КЛУБУ · учеников с прошедшими гонками: ${students.length} · до ~${students.length * 6} запросов (кэш переиспользуется) ===`);
   const totals: StudentTally = { total: 0, exact: 0, probable: 0, notFound: 0, probables: [] };
   const probables: ProbableDetail[] = [];
   let first = true;
   for (const s of students) {
-    foldTally(totals, await checkStudent(s.id, s.name, first, probables));
+    foldTally(totals, await checkStudent(s.id, s.name, first, probables, confirmedMap[s.id] ?? []));
     first = false;
   }
   printSummary(totals, students.length, probables);
