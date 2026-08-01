@@ -312,6 +312,17 @@ export function isClubDayoffAsAvailabilityEnabled(): boolean {
   return process.env.CLUB_DAYOFF_AS_AVAILABILITY === "true";
 }
 /**
+ * Auto-approve a day_off the moment the student marks it (like a race), so the runner sends it to TP
+ * without a coach-approval wait. OFF by default. When ON, createCalendarEntry sets status=approved AND
+ * raises the Injury/Sick health signal itself (the admin approval path is bypassed, so the signal must
+ * be raised at creation to preserve parity). Keep OFF until the coach has the day_off visibility screen
+ * (a coach who stops confirming each one must still be able to SEE them). Notes/preferences are
+ * unaffected — they still wait for coach confirmation.
+ */
+export function isClubDayoffAutoApproveEnabled(): boolean {
+  return process.env.CLUB_DAYOFF_AUTO_APPROVE === "true";
+}
+/**
  * Day-off reasons — the TP Availability `reason` enum, stored verbatim (they go straight
  * to TP). "No reason selected" = null/empty (no reason). Injury/Sick are the health-signal
  * triggers (see docs/club-health-signal-from-availability.md — plan only, not wired).

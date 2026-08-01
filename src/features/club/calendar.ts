@@ -5,8 +5,9 @@
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
-import { CLUB_CALENDAR_DAYS, CLUB_DAYOFF_REASONS, CLUB_TIMEZONE, type ClubDayoffReason } from "./constants";
+import { CLUB_CALENDAR_DAYS, CLUB_DAYOFF_REASONS, CLUB_TIMEZONE, isClubDayoffAutoApproveEnabled, type ClubDayoffReason } from "./constants";
 import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "./db-errors";
+import { raiseClubDayoffHealthSignal } from "./health-signal";
 import type {
   ClubCalendarDay,
   ClubCalendarEntry,
@@ -232,6 +233,11 @@ export async function createCalendarEntry(
       ? (input.dayOffReason as ClubDayoffReason)
       : null;
     row.day_off_reason = reason;
+    // Optional auto-approve (like races): the student's day off is trusted, no coach-approval wait.
+    // The Injury/Sick health signal is raised below (this bypasses the admin approval path that
+    // normally raises it). OFF by default — flip CLUB_DAYOFF_AUTO_APPROVE only once the coach has the
+    // day_off visibility screen. Notes/preferences stay pending (coach confirmation) unchanged.
+    if (isClubDayoffAutoApproveEnabled()) row.status = "approved";
   } else if (kind === "preference") {
     const pref = typeof input.preferredType === "string" && VALID_PREF.includes(input.preferredType as ClubCalendarPreferredType) ? input.preferredType : null;
     if (!pref) return { ok: false, error: "Выбери тип: длительная, интервальная или отдых." };
@@ -264,6 +270,7 @@ export async function createCalendarEntry(
   // partial index still blocks accidental duplicates.
   const singleton = kind === "day_off" || kind === "preference";
   let error: { code?: string | null; message?: string | null } | null = null;
+  let singletonId: string | null = null; // captured so an auto-approved day_off can raise its health signal
   if (singleton) {
     const { data: existing } = await supabase
       .from("club_calendar_entries")
@@ -273,9 +280,14 @@ export async function createCalendarEntry(
       .eq("kind", kind)
       .maybeSingle();
     const existingId = (existing as { id: string } | null)?.id;
-    ({ error } = existingId
-      ? await supabase.from("club_calendar_entries").update(row).eq("id", existingId)
-      : await supabase.from("club_calendar_entries").insert(row));
+    if (existingId) {
+      ({ error } = await supabase.from("club_calendar_entries").update(row).eq("id", existingId));
+      singletonId = existingId;
+    } else {
+      const ins = await supabase.from("club_calendar_entries").insert(row).select("id").maybeSingle();
+      error = ins.error;
+      singletonId = (ins.data as { id: string } | null)?.id ?? null;
+    }
   } else if (kind === "race") {
     // Dedup: same student + date + normalized race name must not create a second race.
     // Pre-check for a friendly no-op; the partial unique index (migration 20260816000000)
@@ -302,6 +314,16 @@ export async function createCalendarEntry(
     // one, so the two states never look identical.
     const kind = logClubDbError("createCalendarEntry", error);
     return { ok: false, error: kind === "missing_table" ? "Календарь ещё не настроен. Напиши тренеру." : CLUB_DB_ERROR_STUDENT_MESSAGE };
+  }
+  // An auto-approved day_off skips the admin approval path (which normally raises the Injury/Sick
+  // health signal), so raise it here to preserve parity. Best-effort + idempotent (dedupe by entry id);
+  // self-skips when CLUB_HEALTH_SIGNALS_ENABLED is off or the reason is not Injury/Sick.
+  if (kind === "day_off" && row.status === "approved" && singletonId) {
+    try {
+      await raiseClubDayoffHealthSignal({ entryId: singletonId, studentId, startDate: date, endDate: date, reason: (row.day_off_reason as string | null) ?? null });
+    } catch (e) {
+      logClubDbError("createCalendarEntry.health_signal", (e ?? {}) as { code?: string | null; message?: string | null });
+    }
   }
   return { ok: true };
 }
