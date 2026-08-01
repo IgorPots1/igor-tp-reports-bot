@@ -37,9 +37,14 @@ export type BillingPaymentStatus =
   // Month predates the billing system (admin launched 2026-05), so it was never
   // actually billed. Not a debt: the debt aggregates allowlist
   // pending/overdue/manual_review, which excludes this by construction.
-  // NB: computeReminderCandidates (club-reminders.ts) skips only "paid" — it needs
-  // this value added to its guard when it gets wired to a caller.
-  | "waived_presystem";
+  | "waived_presystem"
+  // Month deliberately not billed because an earlier payment still covers it: a
+  // paid period is really N days of work, and a training pause slides it forward
+  // until the next calendar month falls inside the window already paid for.
+  | "waived_covered";
+// NB for both waived_* values: computeReminderCandidates (club-reminders.ts) skips
+// only "paid", so it would let these through. It has no caller today — add them to
+// its guard when it gets wired to one.
 export type BillingPaymentSource = "manual" | "email_import";
 export type BillingImportedPaymentStatus = "new" | "matched" | "ignored";
 export type BillingPayerIdentityType = "payer_hint" | "description_hint" | "payment_description";
