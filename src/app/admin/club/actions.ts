@@ -230,6 +230,26 @@ export async function setCalendarEntryStatusAction(formData: FormData): Promise<
   redirect(withNotice(redirectTo, "notice", status === "approved" ? "Подтверждено." : "Отклонено."));
 }
 
+export async function confirmProtocolMatchAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const pendingId = req(formData, "pendingId");
+  const { confirmProtocolMatch } = await import("@/features/club-admin/repository");
+  const res = await confirmProtocolMatch(pendingId, COACH);
+  revalidateClub();
+  redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? "Привязано: рекорд + журнал + написание запомнено." : res.error ?? "Ошибка."));
+}
+
+export async function rejectProtocolMatchAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const pendingId = req(formData, "pendingId");
+  const { rejectProtocolMatch } = await import("@/features/club-admin/repository");
+  const res = await rejectProtocolMatch(pendingId, COACH);
+  revalidateClub();
+  redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? "Отклонено, больше не предлагается." : res.error ?? "Ошибка."));
+}
+
 export async function approveAllPendingCalendarAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);

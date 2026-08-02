@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getClubTpSendStatus, isClubAdminEnabled } from "@/features/club-admin/repository";
+import { getClubTpSendStatus, countClubProtocolPending, isClubAdminEnabled } from "@/features/club-admin/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +15,18 @@ export default async function ClubHubPage() {
       </section>
     );
   }
-  const tpSend = await getClubTpSendStatus();
+  const [tpSend, protocolQueue] = await Promise.all([getClubTpSendStatus(), countClubProtocolPending()]);
   return (
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Клуб</h1>
         <p className="admin-section-subtitle">Тренерская панель: ревизия результатов, очередь заявок, привязки, управление.</p>
       </div>
+      {protocolQueue > 0 ? (
+        <div className="admin-alert admin-alert-warning">
+          <strong>Очередь протоколов: {protocolQueue}</strong> — вероятные привязки ждут подтверждения. <Link href="/admin/club/protocols">Открыть</Link>
+        </div>
+      ) : null}
       {tpSend.queued > 0 ? (
         <div className={tpSend.failed > 0 ? "admin-alert admin-alert-warning" : "admin-alert"}>
           <strong>Ожидают отправки в TrainingPeaks: {tpSend.queued}</strong>
@@ -67,6 +72,7 @@ export default async function ClubHubPage() {
       <div className="admin-actions">
         <Link className="admin-button admin-button-primary" href="/admin/club/requests">Заявки на доступ</Link>
         <Link className="admin-button admin-button-primary" href="/admin/club/forms">Рассылка форм</Link>
+        <Link className={protocolQueue > 0 ? "admin-button admin-button-primary" : "admin-button admin-button-secondary"} href="/admin/club/protocols">Очередь протоколов{protocolQueue > 0 ? ` (${protocolQueue})` : ""}</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/results">Ревизия результатов</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/race-fill">Дотяжка гонок</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/queue">Очередь заявок</Link>

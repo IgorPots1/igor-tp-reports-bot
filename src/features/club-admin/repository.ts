@@ -5,6 +5,7 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
 import { raiseClubDayoffHealthSignal } from "@/features/club/health-signal";
+import { distanceKeyOf, normalizeFinisherName } from "@/features/club/probeg-parse";
 import {
   classifyRecordType,
   evaluateAllRecordsForValidation,
@@ -576,6 +577,141 @@ export async function listClubOfficialResults(studentId: string): Promise<ClubOf
     city: (r.city as string | null) ?? null,
     distanceDoubtful: Boolean(r.distance_doubtful),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Protocol match confirmation queue (club_protocol_pending)
+// ---------------------------------------------------------------------------
+
+const PROTO_KM_OF_KEY: Record<string, number> = { "5k": 5, "10k": 10, "21k": 21.0975, "42k": 42.195 };
+
+export type ClubPendingMatch = {
+  id: string;
+  studentId: string;
+  studentName: string;
+  raceDate: string;
+  ourSeconds: number | null;
+  ourDistanceKm: number | null;
+  ourTitle: string | null;
+  protocolName: string | null;
+  protocolEvent: string | null;
+  protocolCity: string | null;
+  protocolPlace: string | null;
+  protocolSeconds: number | null;
+  protocolDistanceKm: number | null;
+  protocolUrl: string | null;
+  distanceDoubtful: boolean;
+  nameUnrecognized: boolean;
+  weakName: boolean;
+};
+
+/** PROBABLE protocol matches awaiting coach confirmation, newest race first. Tolerant of an absent table. */
+export async function listClubProtocolPending(): Promise<ClubPendingMatch[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_protocol_pending")
+    .select("id, student_id, race_date, our_seconds, our_distance_km, our_title, protocol_name, protocol_event, protocol_city, protocol_place, protocol_seconds, protocol_distance_km, protocol_url, distance_doubtful, name_unrecognized, weak_name")
+    .eq("status", "pending")
+    .order("race_date", { ascending: false });
+  if (error || !data) return [];
+  const rows = data as Array<Record<string, unknown>>;
+  const ids = [...new Set(rows.map((r) => r.student_id as string))];
+  const nameById = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: studs } = await supabase.from("trainingpeaks_students").select("id, student_name").in("id", ids);
+    for (const s of (studs as Array<{ id: string; student_name: string }> | null) ?? []) nameById.set(s.id, s.student_name);
+  }
+  return rows.map((r) => {
+    const studentId = r.student_id as string;
+    return {
+      id: r.id as string,
+      studentId,
+      studentName: nameById.get(studentId) ?? studentId.slice(0, 8),
+      raceDate: (r.race_date as string) ?? "",
+      ourSeconds: (r.our_seconds as number | null) ?? null,
+      ourDistanceKm: (r.our_distance_km as number | null) ?? null,
+      ourTitle: (r.our_title as string | null) ?? null,
+      protocolName: (r.protocol_name as string | null) ?? null,
+      protocolEvent: (r.protocol_event as string | null) ?? null,
+      protocolCity: (r.protocol_city as string | null) ?? null,
+      protocolPlace: (r.protocol_place as string | null) ?? null,
+      protocolSeconds: (r.protocol_seconds as number | null) ?? null,
+      protocolDistanceKm: (r.protocol_distance_km as number | null) ?? null,
+      protocolUrl: (r.protocol_url as string | null) ?? null,
+      distanceDoubtful: Boolean(r.distance_doubtful),
+      nameUnrecognized: Boolean(r.name_unrecognized),
+      weakName: Boolean(r.weak_name),
+    };
+  });
+}
+
+/** Count of pending protocol matches (for the nav badge). 0 if the table is absent. */
+export async function countClubProtocolPending(): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { count, error } = await supabase.from("club_protocol_pending").select("id", { count: "exact", head: true }).eq("status", "pending");
+  return error ? 0 : count ?? 0;
+}
+
+/**
+ * Confirm a pending protocol match. Writes the FULL journal (club_official_results) always, the best-4
+ * record (club_records, official_protocol/verified) only for a standard distance and only if that slot
+ * is not coach_confirmed (never overwritten), remembers the probeg spelling (club_probeg_athlete_links)
+ * so the person never re-queues, and marks the pending row confirmed.
+ */
+export async function confirmProtocolMatch(pendingId: string, coach: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = createSupabaseServerClient();
+  const { data: row } = await supabase.from("club_protocol_pending").select("*").eq("id", pendingId).eq("status", "pending").maybeSingle();
+  if (!row) return { ok: false, error: "Запись не найдена или уже обработана." };
+  const r = row as Record<string, unknown>;
+  const studentId = r.student_id as string;
+  const date = r.race_date as string;
+  const seconds = r.protocol_seconds as number | null;
+  const km = (r.protocol_distance_km as number | null) ?? null;
+  const url = (r.protocol_url as string | null) ?? null;
+  const name = (r.protocol_name as string | null) ?? "";
+  if (seconds == null) return { ok: false, error: "У протокола нет времени." };
+  const nowIso = new Date().toISOString();
+
+  // 1. Full journal (any distance) — always.
+  const jr = await supabase.from("club_official_results").upsert({
+    student_id: studentId, race_date: date, distance_km: km, distance_label: km != null ? `${km} км` : null,
+    result_seconds: seconds, protocol_url: url, protocol_name: name, place: r.protocol_place, city: r.protocol_city, event: r.protocol_event,
+    source: "official_protocol", trust: "verified", distance_doubtful: Boolean(r.distance_doubtful), confirmed_by: coach, updated_at: nowIso,
+  }, { onConflict: "student_id,race_date,protocol_url" });
+  if (jr.error) return { ok: false, error: `journal: ${jr.error.message}` };
+
+  // 2. Best-4 record — standard distance only, never over a coach_confirmed slot.
+  const dkey = distanceKeyOf(km);
+  if (dkey) {
+    const { data: ex } = await supabase.from("club_records").select("source").eq("student_id", studentId).eq("distance_key", dkey).maybeSingle();
+    if ((ex as { source: string } | null)?.source !== "coach_confirmed") {
+      const dkm = PROTO_KM_OF_KEY[dkey];
+      const rr = await supabase.from("club_records").upsert({
+        student_id: studentId, distance_key: dkey, duration_seconds: seconds, pace_sec_per_km: dkm ? Math.round(seconds / dkm) : null,
+        record_date: date, trust: "verified", source: "official_protocol", protocol_url: url, protocol_result_time_seconds: seconds,
+        verified_at: nowIso, race_name: r.protocol_event,
+      }, { onConflict: "student_id,distance_key" });
+      if (rr.error) return { ok: false, error: `record: ${rr.error.message}` };
+    }
+  }
+
+  // 3. Remember the spelling → future races under it auto-link, never re-queue.
+  const norm = normalizeFinisherName(name);
+  if (norm) {
+    await supabase.from("club_probeg_athlete_links").upsert({ student_id: studentId, confirmed_name: name, confirmed_name_normalized: norm, confirmed_by: coach }, { onConflict: "student_id,confirmed_name_normalized" });
+  }
+
+  // 4. Mark confirmed.
+  const up = await supabase.from("club_protocol_pending").update({ status: "confirmed", resolved_by: coach, resolved_at: nowIso }).eq("id", pendingId);
+  if (up.error) return { ok: false, error: up.error.message };
+  return { ok: true };
+}
+
+/** Reject a pending protocol match — it is never proposed again (the writer skips resolved rows). */
+export async function rejectProtocolMatch(pendingId: string, coach: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.from("club_protocol_pending").update({ status: "rejected", resolved_by: coach, resolved_at: new Date().toISOString() }).eq("id", pendingId).eq("status", "pending");
+  return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 export async function setCalendarEntryStatus(id: string, status: "approved" | "rejected"): Promise<void> {
