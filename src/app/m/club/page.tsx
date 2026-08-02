@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ClubIcon, type ClubIconName } from "@/features/club/icons";
+import { fitView, projectToImage, endFadeOpacity, TRACK_IMG_W, TRACK_IMG_H } from "@/features/club/track-projection";
 import type {
   ClubBillingView,
   ClubCalendarEntry,
@@ -807,6 +808,40 @@ function TrackSilhouette({ track, height }: { track: ClubTrack; height: number }
   );
 }
 
+// Phase 4c — route drawn client-side as an SVG overlay with tapered ends. The Mapbox static is now
+// TILES ONLY (see track-maps.ts); we project the SAME polyline onto it via the shared fitView/
+// projectToImage (identical center+zoom → pixel-aligned to the tiles), and fade both cropped ends
+// to 0 so they read as "continues off-frame" rather than an abrupt stop. viewBox matches the
+// image's logical size with preserveAspectRatio="slice" to mirror the <img> objectFit:cover.
+function TrackFadeOverlay({ track, loaded }: { track: ClubTrack; loaded: boolean }) {
+  const { polyline } = track;
+  if (!polyline || polyline.length < 2) return null;
+  const view = fitView(polyline);
+  const pts = polyline.map(([lat, lng]) => projectToImage(lng, lat, view));
+  const op = endFadeOpacity(pts.length);
+  const segments = pts.slice(0, -1).map((p, i) => {
+    const o = Math.min(op(i), op(i + 1));
+    if (o <= 0.02) return null;
+    const q = pts[i + 1]!;
+    return (
+      <line
+        key={i}
+        x1={p.x.toFixed(1)} y1={p.y.toFixed(1)} x2={q.x.toFixed(1)} y2={q.y.toFixed(1)}
+        stroke={C.accent} strokeWidth={5} strokeLinecap="round" strokeLinejoin="round" strokeOpacity={o}
+      />
+    );
+  });
+  return (
+    <svg
+      viewBox={`0 0 ${TRACK_IMG_W} ${TRACK_IMG_H}`}
+      preserveAspectRatio="xMidYMid slice"
+      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: loaded ? 1 : 0, transition: "opacity 200ms", pointerEvents: "none" }}
+    >
+      {segments}
+    </svg>
+  );
+}
+
 // Phase 4b — route on a real map. The SVG silhouette is drawn immediately as a right-sized
 // placeholder (no layout shift, meaningful shape, and the fallback if the image never arrives);
 // the Mapbox image lazy-loads over it and fades in. The image URL is our signed proxy path, so
@@ -829,6 +864,7 @@ function TrackMap({ track, height }: { track: ClubTrack; height: number }) {
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: loaded ? 1 : 0, transition: "opacity 200ms" }}
         />
       ) : null}
+      {track.mapImageUrl ? <TrackFadeOverlay track={track} loaded={loaded} /> : null}
       {track.city ? (
         <div style={{ position: "absolute", left: 8, bottom: 6, padding: "2px 7px", borderRadius: 6, background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 11, letterSpacing: 0.2 }}>
           {track.city}

@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { CLUB_TRACK_MAPS_BUCKET, clubMapboxToken } from "@/features/club/constants";
+import { fitView } from "@/features/club/track-projection";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 // Club maps (Phase 4b). The stored track polyline (already privacy-cropped) is rendered on a
@@ -12,8 +13,9 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 // feed (an <img> GET cannot carry Telegram initData), plus a live club_routes_visible check.
 
 const MAPBOX_STYLE = "mapbox/light-v11";
-const MAPBOX_IMAGE_SIZE = "600x300@2x";
-const MAPBOX_ROUTE_STYLE = "path-5+2563eb-0.9"; // width 5, colour #2563eb, opacity 0.9 (Run Club)
+const MAPBOX_IMAGE_SIZE = "600x300@2x"; // logical 600x300 (Retina @2x); must match TRACK_IMG_W/H
+// The route is NO LONGER baked into the raster — it is drawn client-side as an SVG overlay with
+// tapered ends (see track-projection.ts + TrackMap), so the static image is TILES ONLY.
 const GEOCODE_TIMEOUT_MS = 3000;
 const IMAGE_TIMEOUT_MS = 8000;
 // Signature bucketed to the hour so every mint within the hour yields the SAME URL (the browser
@@ -38,7 +40,9 @@ function asPolyline(value: unknown): LatLng[] | null {
 /** Cache key: a recompute of the same track (re-ingest / new privacy radius) changes the
  *  polyline, hence the hash, forcing city + image to rebuild rather than serving the old route. */
 export function polylineHash(polyline: LatLng[]): string {
-  return createHash("sha256").update(JSON.stringify(polyline)).digest("hex").slice(0, 16);
+  // "v2" busts every cached image ONCE so the old baked-line PNGs rebuild as tiles-only (the route
+  // moved to the client SVG overlay). Bump this tag on any future change to the rendered raster.
+  return createHash("sha256").update("v2|" + JSON.stringify(polyline)).digest("hex").slice(0, 16);
 }
 
 /** Google polyline encode, precision 5 — the format a Mapbox `path(...)` overlay accepts. */
@@ -68,10 +72,14 @@ export function encodePolyline(points: LatLng[]): string {
 
 function buildMapboxStaticUrl(polyline: LatLng[], token: string): string | null {
   if (polyline.length < 2) return null;
-  const overlay = encodeURIComponent(encodePolyline(polyline));
+  // TILES ONLY (no baked route): the track is overlaid as an SVG client-side. Use an EXPLICIT
+  // center+zoom (not /auto/, which needs an overlay to frame) so the client can project the same
+  // polyline onto these exact tiles via the shared fitView/projectToImage.
+  const view = fitView(polyline);
   return (
-    `https://api.mapbox.com/styles/v1/${MAPBOX_STYLE}/static/${MAPBOX_ROUTE_STYLE}(${overlay})` +
-    `/auto/${MAPBOX_IMAGE_SIZE}?padding=80&logo=false&attribution=false&access_token=${token}`
+    `https://api.mapbox.com/styles/v1/${MAPBOX_STYLE}/static/` +
+    `${view.centerLng.toFixed(6)},${view.centerLat.toFixed(6)},${view.zoom.toFixed(4)},0/` +
+    `${MAPBOX_IMAGE_SIZE}?logo=false&attribution=false&access_token=${token}`
   );
 }
 
