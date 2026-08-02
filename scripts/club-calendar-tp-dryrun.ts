@@ -21,7 +21,7 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import {
   planCalendarEntryAction,
   CLUB_MARKER_TITLE_STYLE,
-  CLUB_RACE_SET_PLANNED_TIME,
+  isClubRaceSetPlannedTime,
   type ClubActionPlan,
   type ClubCalendarEntryRow,
 } from "@/features/club/tp-execution";
@@ -192,8 +192,8 @@ async function main(): Promise<void> {
     ? "РОДНАЯ заметка TP (POST /calendarNote), заголовок «[Клуб] <текст>»; в кэш тренировок НЕ попадает (guard не нужен)"
     : "тип Other(100), «[Клуб] Заметка · клубная пометка». Включи CLUB_NOTES_AS_NOTE=true, чтобы создавать как родную заметку"}.`);
   L.push(`- race → ${RACE_AS_EVENT
-    ? "РОДНОЙ TP Event (RunningRoad, POST /event); в кэш тренировок НЕ попадает, не считается тренировкой; клуб видит старт из club_calendar_entries. Цель " + (CLUB_RACE_SET_PLANNED_TIME ? "в goals.time + описании" : "в описании (goals.time за CLUB_RACE_SET_PLANNED_TIME)")
-    : "запланированный бег (Run) с названием и дистанцией; цель " + (CLUB_RACE_SET_PLANNED_TIME ? "в поле totalTimePlanned + описании" : "в описании") + ". Включи CLUB_RACE_AS_EVENT=true, чтобы создавать как Event"}.`);
+    ? "РОДНОЙ TP Event (RunningRoad, POST /event); в кэш тренировок НЕ попадает, не считается тренировкой; клуб видит старт из club_calendar_entries. Цель " + (isClubRaceSetPlannedTime() ? "в goals.time + описании" : "в описании (goals.time за CLUB_RACE_SET_PLANNED_TIME)")
+    : "запланированный бег (Run) с названием и дистанцией; цель " + (isClubRaceSetPlannedTime() ? "в поле totalTimePlanned + описании" : "в описании") + ". Включи CLUB_RACE_AS_EVENT=true, чтобы создавать как Event"}.`);
   L.push("");
   L.push("## Идемпотентность и отмена");
   L.push("- После успеха id созданной тренировки пишется в club_calendar_entries.applied_tp_workout_id;");

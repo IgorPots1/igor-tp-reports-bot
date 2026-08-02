@@ -68,16 +68,19 @@ function markerPrefix(kind: "day_off" | "preference" | "note" | "race"): string 
  * 1.4 — whether to write a race's target time into the TP field `totalTimePlanned`.
  * TP time fields are HOURS (confirmed by fact: the cache's completed_time_raw is hours,
  * see rawHoursToSeconds in service.ts), so the value sent is targetSeconds / 3600.
- * DEFAULT false: the write must be confirmed by a capability probe (a real create + read
- * back, which is Igor's hand) before we send a value on the first real execution. Until
- * then the target time stays only in the description. Flip to true AFTER the probe
- * confirms TP stores/returns totalTimePlanned on a race.
+ * DEFAULT off: the write must be confirmed by a capability probe (a real create + read back,
+ * which is Igor's hand) before we send a value on the first real execution. Until then the target
+ * time stays only in the description. Now an ENV flag (was a hardcoded const) so the probe is a
+ * one-line toggle, not a redeploy: set CLUB_RACE_SET_PLANNED_TIME=true, send ONE test race, check
+ * whether TP stores/shows the goal in its Goals field, then keep it or flip back.
  */
-export const CLUB_RACE_SET_PLANNED_TIME = false;
+export function isClubRaceSetPlannedTime(): boolean {
+  return process.env.CLUB_RACE_SET_PLANNED_TIME === "true";
+}
 
 /** Race target seconds → the value for totalTimePlanned (TP hours), or null when disabled. */
 function racePlannedTimeHours(targetSeconds: number | null): number | null {
-  if (!CLUB_RACE_SET_PLANNED_TIME || !targetSeconds || targetSeconds <= 0) return null;
+  if (!isClubRaceSetPlannedTime() || !targetSeconds || targetSeconds <= 0) return null;
   return Math.round((targetSeconds / 3600) * 1000) / 1000; // hours, 3 dp
 }
 
