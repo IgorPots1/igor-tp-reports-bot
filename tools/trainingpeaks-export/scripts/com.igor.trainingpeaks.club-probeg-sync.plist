@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Weekly probeg protocol sync (Sunday 03:20). Auto-links safe matches, queues the uncertain into
+     club_protocol_pending (surfaced as a count in the club admin), journals every official result.
+     Idempotent + polite. Install by Igor AFTER the first manual --write review:
+       chmod +x .../run-club-probeg-sync-weekly.sh   # (git already tracks it +x)
+       cp .../com.igor.trainingpeaks.club-probeg-sync.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.club-probeg-sync.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.club-probeg-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-club-probeg-sync-weekly.sh"</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>3</integer>
+    <key>Minute</key><integer>20</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-probeg-sync.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-probeg-sync.launchd.err.log</string>
+</dict>
+</plist>
