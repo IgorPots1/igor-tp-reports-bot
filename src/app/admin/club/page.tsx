@@ -70,6 +70,7 @@ export default async function ClubHubPage() {
         <Link className="admin-button admin-button-secondary" href="/admin/club/results">Ревизия результатов</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/race-fill">Дотяжка гонок</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/queue">Очередь заявок</Link>
+        <Link className="admin-button admin-button-primary" href="/admin/club/upcoming">Все заявки (видимость)</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/calendar">Календарь клуба</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/challenges">Челленджи</Link>
         <Link className="admin-button admin-button-secondary" href="/admin/club/comments">Комментарии</Link>

@@ -473,6 +473,74 @@ export async function listClubCalendarAdmin(): Promise<ClubCalendarAdminEntry[]>
   });
 }
 
+export type ClubUpcomingRequest = ClubCalendarAdminEntry & {
+  reason: string | null; // day_off reason (Injury/Sick surfaced)
+  appliedEntityType: string | null; // event | availability | note | workout — what it became in TP
+  sentToTp: boolean; // has an applied_tp_workout_id
+  plannedConflict: boolean; // a planned training workout exists that day (a day_off collides with it)
+};
+
+/**
+ * Visibility board for the coach who no longer confirms each request: ALL calendar entries in the
+ * forward window (any kind, any status), with whether each went to TP and a planned-workout conflict
+ * flag. Read-only — actions still live on the calendar inbox. Native club entities (event/availability/
+ * note) do NOT enter the workout cache, so a planned row there is a coach TRAINING plan, i.e. a real
+ * conflict for a day_off, not the club entry itself.
+ */
+export async function listClubUpcomingRequests(days = 45): Promise<ClubUpcomingRequest[]> {
+  const supabase = createSupabaseServerClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const to = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from("club_calendar_entries")
+    .select("id, student_id, entry_date, kind, preferred_workout_type, note, race_name, race_city, race_distance_label, day_off_reason, status, applied_entity_type, applied_tp_workout_id")
+    .gte("entry_date", today)
+    .lte("entry_date", to)
+    .order("entry_date", { ascending: true });
+  if (error || !data) return [];
+  const rows = data as Array<Record<string, unknown>>;
+  const ids = [...new Set(rows.map((r) => r.student_id as string))];
+  const nameById = new Map<string, string>();
+  const conflict = new Set<string>();
+  if (ids.length > 0) {
+    const { data: studs } = await supabase.from("trainingpeaks_students").select("id, student_name").in("id", ids);
+    for (const s of (studs as Array<{ id: string; student_name: string }> | null) ?? []) nameById.set(s.id, s.student_name);
+    const { data: wk } = await supabase
+      .from("trainingpeaks_workout_cache")
+      .select("student_id, workout_date")
+      .in("student_id", ids)
+      .gte("workout_date", today)
+      .lte("workout_date", to)
+      .eq("is_planned", true);
+    for (const w of (wk as Array<{ student_id: string; workout_date: string | null }> | null) ?? []) {
+      if (w.workout_date) conflict.add(`${w.student_id}|${w.workout_date.slice(0, 10)}`);
+    }
+  }
+  return rows.map((r) => {
+    const kind = (r.kind as ClubCalendarAdminEntry["kind"]) ?? "note";
+    let detail = "";
+    if (kind === "day_off") detail = "Выходной";
+    else if (kind === "preference") detail = `Тип: ${CAL_PREF_LABEL[r.preferred_workout_type as string] ?? r.preferred_workout_type}`;
+    else if (kind === "note") detail = (r.note as string) ?? "";
+    else if (kind === "race") detail = `${r.race_name ?? "Забег"}${r.race_city ? ` · ${r.race_city}` : ""}${r.race_distance_label ? ` · ${r.race_distance_label}` : ""}`;
+    const studentId = r.student_id as string;
+    const date = r.entry_date as string;
+    return {
+      id: r.id as string,
+      studentId,
+      studentName: nameById.get(studentId) ?? studentId.slice(0, 8),
+      date,
+      kind,
+      detail,
+      reason: (r.day_off_reason as string | null) ?? null,
+      status: (r.status as ClubCalendarAdminEntry["status"]) ?? "pending",
+      appliedEntityType: (r.applied_entity_type as string | null) ?? null,
+      sentToTp: Boolean(r.applied_tp_workout_id),
+      plannedConflict: conflict.has(`${studentId}|${date.slice(0, 10)}`),
+    };
+  });
+}
+
 export async function setCalendarEntryStatus(id: string, status: "approved" | "rejected"): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.from("club_calendar_entries").update({ status }).eq("id", id);

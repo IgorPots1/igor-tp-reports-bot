@@ -5,7 +5,7 @@
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
-import { CLUB_CALENDAR_DAYS, CLUB_DAYOFF_REASONS, CLUB_TIMEZONE, isClubDayoffAutoApproveEnabled, type ClubDayoffReason } from "./constants";
+import { CLUB_CALENDAR_DAYS, CLUB_DAYOFF_REASONS, CLUB_TIMEZONE, isClubDayoffAutoApproveEnabled, isClubNotesAutoApproveEnabled, type ClubDayoffReason } from "./constants";
 import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "./db-errors";
 import { raiseClubDayoffHealthSignal } from "./health-signal";
 import type {
@@ -242,10 +242,12 @@ export async function createCalendarEntry(
     const pref = typeof input.preferredType === "string" && VALID_PREF.includes(input.preferredType as ClubCalendarPreferredType) ? input.preferredType : null;
     if (!pref) return { ok: false, error: "Выбери тип: длительная, интервальная или отдых." };
     row.preferred_workout_type = pref;
+    if (isClubNotesAutoApproveEnabled()) row.status = "approved"; // own preference on own calendar, no identity risk
   } else if (kind === "note") {
     const note = cleanText(input.note, 500);
     if (!note) return { ok: false, error: "Напиши заметку." };
     row.note = note;
+    if (isClubNotesAutoApproveEnabled()) row.status = "approved"; // own note on own calendar, no identity risk
   } else if (kind === "race") {
     const name = cleanText(input.raceName, 120);
     if (!name) return { ok: false, error: "Укажи точное название забега." };

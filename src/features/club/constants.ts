@@ -323,6 +323,16 @@ export function isClubDayoffAutoApproveEnabled(): boolean {
   return process.env.CLUB_DAYOFF_AUTO_APPROVE === "true";
 }
 /**
+ * Auto-approve notes and preferences the moment the student saves them (like races), so they reach TP
+ * without a coach-approval wait. OFF by default. These are the student's own words on their own calendar
+ * (a note → TP Note, a preference → TP Note) — no identity/attribution risk — so this only removes a
+ * review step. Keep OFF until the coach has the visibility screen (a coach who stops confirming must
+ * still SEE what went out). Covers kind='note' AND kind='preference'.
+ */
+export function isClubNotesAutoApproveEnabled(): boolean {
+  return process.env.CLUB_NOTES_AUTO_APPROVE === "true";
+}
+/**
  * Day-off reasons — the TP Availability `reason` enum, stored verbatim (they go straight
  * to TP). "No reason selected" = null/empty (no reason). Injury/Sick are the health-signal
  * triggers (see docs/club-health-signal-from-availability.md — plan only, not wired).
