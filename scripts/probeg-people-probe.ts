@@ -425,6 +425,7 @@ async function runWrite(): Promise<void> {
   // collapse to ONE row. Keep the FASTEST (best) — deterministic, never last-processed. Show each collision.
   const collisions: string[] = [];
   const slowerThanOurs: string[] = [];
+  const coachVsProtocol: string[] = []; // где твоё coach_confirmed расходится с официальным протоколом
   const groups = new Map<string, ExactCand[]>();
   for (const c of exactCands) { const k = `${c.studentId}|${c.dkey}`; const g = groups.get(k); if (g) g.push(c); else groups.set(k, [c]); }
   for (const [k, group] of groups) {
@@ -435,7 +436,20 @@ async function runWrite(): Promise<void> {
       collisions.push(`${studentName} [${dkey}]: ${group.length} результата (${group.map((c) => fmtHms(c.finish.seconds)).join(", ")}) → берём ЛУЧШИЙ ${fmtHms(winner.finish.seconds)} (${winner.date}, ${winner.finish.protocolUrl ?? "url?"})`);
     }
     const url = winner.finish.protocolUrl ?? null;
-    if (ex?.source === "coach_confirmed") { skips.push(`${studentName}: ${dkey} уже coach_confirmed → не трогаю (${group.length} проток. пропущено)`); continue; }
+    if (ex?.source === "coach_confirmed") {
+      // Правило верное (не перезаписываем), но показываем расхождение: если ты вносил по памяти и ошибся,
+      // протокол точнее — решишь точечно.
+      const cs = ex.seconds;
+      if (cs != null) {
+        const d = winner.finish.seconds - cs;
+        const rel = d === 0 ? "совпадает" : d > 0 ? `протокол медленнее на ${d}с` : `протокол БЫСТРЕЕ на ${-d}с`;
+        coachVsProtocol.push(`${studentName} [${dkey}]: твоё ${fmtHms(cs)} vs протокол ${fmtHms(winner.finish.seconds)} — ${rel}  ${winner.finish.protocolUrl ?? ""}`);
+      } else {
+        coachVsProtocol.push(`${studentName} [${dkey}]: твоё coach_confirmed без времени vs протокол ${fmtHms(winner.finish.seconds)}  ${winner.finish.protocolUrl ?? ""}`);
+      }
+      skips.push(`${studentName}: ${dkey} уже coach_confirmed → не трогаю (${group.length} проток. пропущено)`);
+      continue;
+    }
     if (ex?.source === "official_protocol") {
       if (ex.url === url) { skips.push(`${studentName}: ${dkey} уже привязан к тому же протоколу → без изменений`); continue; }
       if (ex.seconds != null && ex.seconds <= winner.finish.seconds) { skips.push(`${studentName}: ${dkey} уже official ${fmtHms(ex.seconds)} не хуже ${fmtHms(winner.finish.seconds)} → оставляю`); continue; }
@@ -455,6 +469,8 @@ async function runWrite(): Promise<void> {
   for (const l of collisions) console.log(`  ${l}`);
   console.log(`\n--- ОФИЦИАЛЬНЫЙ МЕДЛЕННЕЕ НАШЕГО (правило: пишем официальный — он проверенный факт): ${slowerThanOurs.length} ---`);
   for (const l of slowerThanOurs) console.log(`  ${l}`);
+  console.log(`\n--- COACH_CONFIRMED vs ПРОТОКОЛ (${coachVsProtocol.length}) — твоё подтверждённое НЕ трогаем; смотри расхождения, если вносил по памяти ---`);
+  for (const l of coachVsProtocol) console.log(`  ${l}`);
   console.log(`\n--- АВТО-ПРИВЯЗКИ → club_records (official_protocol/verified), по одному лучшему на (ученик,дистанция): ${recordPlans.length} ---`);
   for (const p of recordPlans) console.log(`  ${p.studentName}: [${p.dkey}] ${p.action} → ${fmtHms(p.finish.seconds)}${p.ourSeconds != null && p.finish.seconds > p.ourSeconds ? ` (наше ${fmtHms(p.ourSeconds)})` : ""} ${p.finish.protocolUrl ?? "(url?)"} (гонка ${p.date}, ${p.finish.event})`);
   console.log(`\n--- ПАМЯТЬ НАПИСАНИЙ → club_probeg_athlete_links: ${linkPlans.length} ---`);
