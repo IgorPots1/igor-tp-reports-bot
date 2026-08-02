@@ -369,7 +369,7 @@ async function selectSafe<T>(table: string, columns: string): Promise<T[] | null
   return (data as T[] | null) ?? [];
 }
 
-type ExactCand = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; ourSeconds: number | null };
+type ExactCand = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; ourSeconds: number | null; byConfirmedName: boolean; byShortenedName: boolean; distanceDoubtful: boolean };
 type RecPlan = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; action: "insert" | "upgrade"; ourSeconds: number | null };
 type LinkPlan = { studentId: string; studentName: string; name: string; norm: string };
 type PendPlan = { studentId: string; studentName: string; race: OurRace; res: MatchResult };
@@ -411,7 +411,7 @@ async function runWrite(): Promise<void> {
       if (res.verdict === "exact" && res.finish) {
         const dkey = distanceKeyOf(res.finish.distanceKm);
         if (!dkey) { skips.push(`${s.name}: ТОЧНО ${race.date}, но дистанция ${res.finish.distanceKm}км не 5/10/21/42к → club_records не хранит`); continue; }
-        exactCands.push({ studentId: s.id, studentName: s.name, dkey, finish: res.finish, date: race.date, ourSeconds: race.ourSeconds });
+        exactCands.push({ studentId: s.id, studentName: s.name, dkey, finish: res.finish, date: race.date, ourSeconds: race.ourSeconds, byConfirmedName: res.byConfirmedName, byShortenedName: res.byShortenedName, distanceDoubtful: res.distanceDoubtful });
       } else if (res.verdict === "probable" && res.finish) {
         const pkey = `${s.id}|${race.date}|${res.finish.seconds}`;
         if (pendSet.has(pkey)) { skips.push(`${s.name}: ВЕРОЯТНОЕ ${race.date} уже в очереди → без изменений`); continue; }
@@ -466,6 +466,25 @@ async function runWrite(): Promise<void> {
   }
   console.log(`\n--- ПРОПУЩЕНО (coach_confirmed / уже привязано / нестанд. дистанция / уже в очереди): ${skips.length} ---`);
   for (const l of skips) console.log(`  ${l}`);
+  // Разбивка по причинам — что уходит в АВТО, что в очередь на подтверждение.
+  const winners = [...new Map(exactCands.map((c) => [`${c.studentId}|${c.dkey}`, c])).values()]; // по одному лучшему на (ученик,дистанция)
+  const autoConfirmed = winners.filter((c) => c.byConfirmedName).length;
+  const autoShortened = winners.filter((c) => !c.byConfirmedName && c.byShortenedName).length; // сокращённое имя, фамилия точная
+  const autoDistDoubt = winners.filter((c) => !c.byConfirmedName && !c.byShortenedName && c.distanceDoubtful).length; // наша дистанция сомнительна
+  const autoStrict = winners.length - autoConfirmed - autoShortened - autoDistDoubt; // имя+дистанция+время строго
+  const qWeak = pendPlans.filter((p) => p.res.weakName).length; // ученик без фамилии → на подтверждение
+  const qUnrec = pendPlans.filter((p) => !p.res.weakName && p.res.nameUnrecognized).length; // имя не распозналось
+  const qWide = pendPlans.length - qWeak - qUnrec; // широкое время / fuzzy-фамилия / прочее → на подтверждение
+  console.log(`\n=== РАЗБИВКА ПО ПРИЧИНАМ ===`);
+  console.log(`АВТО-ПРИВЯЗКА (${winners.length}):`);
+  console.log(`  строгое совпадение (имя+дистанция+время): ${autoStrict}`);
+  console.log(`  сокращённое имя, фамилия точная, время в секунды: ${autoShortened}`);
+  console.log(`  наша дистанция сомнительна, имя+время идеальны: ${autoDistDoubt}`);
+  console.log(`  по ранее подтверждённому написанию: ${autoConfirmed}`);
+  console.log(`НА ПОДТВЕРЖДЕНИЕ (${pendPlans.length}):`);
+  console.log(`  ученик без фамилии: ${qWeak}`);
+  console.log(`  имя не распозналось: ${qUnrec}`);
+  console.log(`  широкое время / неточная фамилия / прочее: ${qWide}`);
   console.log(`\n=== К ЗАПИСИ: ${recordPlans.length} авто-привязок + ${linkPlans.length} написаний + ${pendPlans.length} в очередь = ${recordPlans.length + linkPlans.length + pendPlans.length} ===`);
 
   if (!COMMIT) {

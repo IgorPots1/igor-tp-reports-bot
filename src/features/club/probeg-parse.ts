@@ -191,20 +191,27 @@ function relToken(variants: string[], f: string): "exact" | "fuzzy" | "prefix" |
  *   Татьяна Бучкина vs {Бучкина,Татьяна}: both exact via the given-name dictionary → passes.
  *   Хади Муртазалиева vs {Хадижат,Муртазалиева}: surname exact + given prefix → passes (non-strict).
  */
-export function nameGate(studentVariants: string[][], finisherName: string, opts: { strict?: boolean } = {}): boolean {
+export function nameGate(studentVariants: string[][], finisherName: string, opts: { strict?: boolean; exactSurname?: boolean } = {}): boolean {
   const norm = (s: string): string => s.toLowerCase().replace(/ё/gu, "е");
   const fTokens = norm(finisherName).split(/\s+/u).map((t) => t.replace(/[^a-zа-яё-]/gu, "")).filter((t) => t.length >= 2);
   const sTokens = studentVariants.map((vs) => vs.map(norm).filter((v) => v.length >= 2)).filter((vs) => vs.length > 0);
   if (sTokens.length === 0 || fTokens.length === 0) return false;
+  // strict: all tokens exact. exactSurname: surname EXACT, given may be a shortening (prefix), but NO
+  // fuzzy — the auto-link tier the coach approved ("если фамилия точная"). default: exact|fuzzy|prefix.
+  const allowFuzzy = !opts.strict && !opts.exactSurname;
+  const allowPrefix = !opts.strict;
   const used = new Array<boolean>(fTokens.length).fill(false);
-  const assign = (i: number, hasStrong: boolean): boolean => {
-    if (i === sTokens.length) return hasStrong;
+  const assign = (i: number, hasAnchor: boolean): boolean => {
+    if (i === sTokens.length) return hasAnchor; // ≥1 EXACT anchor (or fuzzy, only in default mode)
     for (let j = 0; j < fTokens.length; j++) {
       if (used[j]) continue;
       const r = relToken(sTokens[i], fTokens[j]);
-      if (r === "none" || (opts.strict && r !== "exact")) continue;
+      if (r === "none") continue;
+      if (r === "fuzzy" && !allowFuzzy) continue;
+      if (r === "prefix" && !allowPrefix) continue;
       used[j] = true;
-      if (assign(i + 1, hasStrong || r === "exact" || r === "fuzzy")) return true;
+      const strong = r === "exact" || (allowFuzzy && r === "fuzzy");
+      if (assign(i + 1, hasAnchor || strong)) return true;
       used[j] = false;
     }
     return false;
@@ -255,7 +262,7 @@ export function isForeignRace(title: string | null | undefined): boolean {
 
 export type MatchVerdict = "exact" | "probable" | "none";
 export type OurRaceInput = { date: string; ourSeconds: number | null; ourKm: number | null };
-export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean; byConfirmedName: boolean; distanceDoubtful: boolean; weakName: boolean };
+export type MatchResult = { verdict: MatchVerdict; finish: ProbegFinish | null; deltaSeconds: number | null; sameDate: ProbegFinish[]; nameRejected: ProbegFinish | null; nameUnrecognized: boolean; byConfirmedName: boolean; distanceDoubtful: boolean; weakName: boolean; byShortenedName: boolean };
 
 /**
  * Classify one of our races against a person's probeg finishes. The NAME proves the person; the
@@ -282,7 +289,7 @@ export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentV
   // TIGHT hit: distance matches AND |Δtime| ≤ exactTol.
   const weak = studentVariants.length < 2;
   const sameDate = finishes.filter((f) => f.date === race.date);
-  const base = { sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: false, distanceDoubtful: false, weakName: weak };
+  const base = { sameDate, nameRejected: null, nameUnrecognized: false, byConfirmedName: false, distanceDoubtful: false, weakName: weak, byShortenedName: false };
   if (race.ourSeconds == null) return { verdict: "none", finish: null, deltaSeconds: null, ...base };
   const scored = sameDate
     .map((f) => {
@@ -296,14 +303,18 @@ export function matchRace(race: OurRaceInput, finishes: ProbegFinish[], studentV
         distMatch: bothKnown && distanceMatch(race.ourKm, f.distanceKm),
         distConflict: bothKnown && !distanceMatch(race.ourKm, f.distanceKm),
         nameStrict: confirmed || (nameKnown && nameGate(studentVariants, f.name, { strict: true })),
+        // surname EXACT, given may be a shortening (Хади) but not fuzzy — the auto-link tier the coach OK'd
+        nameExactSurname: confirmed || (nameKnown && nameGate(studentVariants, f.name, { exactSurname: true })),
         nameOk: confirmed || (nameKnown && nameGate(studentVariants, f.name)),
       };
     })
     .sort((a, b) => a.dt - b.dt);
-  // Auto-link only when the distance ALSO corroborates — a distance conflict drops to probable for review.
-  // A surname-less student never auto-links unless the spelling was already confirmed.
-  const exact = scored.find((c) => c.dt <= tol.exact && c.nameStrict && c.distOk && (!weak || c.confirmed));
-  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, ...base, byConfirmedName: exact.confirmed };
+  // AUTO-LINK when |Δtime| ≤ exactTol AND the surname is EXACT (given may be a shortening) — the coach
+  // approved this for a surname-less-safe person: a shortened name at second-level time, and «distance
+  // doubtful» (our GPS conflicts) at a perfect time, both auto-link. `distanceDoubtful` still records the
+  // distance conflict on the row. A surname-less student never auto-links unless the spelling is confirmed.
+  const exact = scored.find((c) => c.dt <= tol.exact && (c.confirmed || (!weak && c.nameExactSurname)));
+  if (exact) return { verdict: "exact", finish: exact.f, deltaSeconds: exact.dt, ...base, byConfirmedName: exact.confirmed, distanceDoubtful: exact.distConflict, byShortenedName: !exact.confirmed && !exact.nameStrict };
   if (weak) {
     // Surname-less: name alone pulls random namesakes, so demand distance match AND a tight time.
     const w = scored.find((c) => c.dt <= tol.exact && c.distMatch && c.nameOk);

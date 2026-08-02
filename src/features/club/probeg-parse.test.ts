@@ -142,15 +142,15 @@ describe("matchRace", () => {
   const kristina = studentNameVariantSets("Kristina Pamparaite");
   const hadizhat = studentNameVariantSets("Murtazalieva Hadizhat");
 
-  test("Назаров: matching name+date, Δ1s, but conflicting distance → probable «дистанция сомнительна» (not dropped)", () => {
+  test("Назаров: exact surname + Δ1s, conflicting distance → AUTO-LINK (exact, distanceDoubtful)", () => {
     const race = { date: "2026-07-04", ourSeconds: at(3, 43, 57), ourKm: 47.641 }; // our GPS distance is garbage
     const finishes: ProbegFinish[] = [{ date: "2026-07-04", seconds: at(3, 43, 58), distanceKm: 42.2, name: "Дмитрий Назаров", place: "1", city: "", event: "" }];
     const r = matchRace(race, finishes, studentNameVariantSets("Nazarov Dmitry"));
-    assert.equal(r.verdict, "probable");
+    assert.equal(r.verdict, "exact"); // name+time perfect, only distance doubtful → coach OK'd auto-link
     assert.equal(r.distanceDoubtful, true);
   });
 
-  test("Головко: matching name+date, Δ2min, conflicting distance → probable «дистанция сомнительна»", () => {
+  test("Головко: Δ2min (wide time) → stays PROBABLE, not auto-linked even with an exact surname", () => {
     const race = { date: "2026-07-04", ourSeconds: at(4, 31, 37), ourKm: 57.618 };
     const finishes: ProbegFinish[] = [{ date: "2026-07-04", seconds: at(4, 29, 23), distanceKm: 42.2, name: "Екатерина Головко", place: "1", city: "", event: "" }];
     const r = matchRace(race, finishes, studentNameVariantSets("Golovko Ekaterina"));
@@ -192,10 +192,12 @@ describe("matchRace", () => {
     assert.equal(matchRace(race, finishes, malyk).verdict, "exact");
   });
 
-  test("shortened given (Хади) demotes a perfect time+distance from exact to probable (no auto-link)", () => {
+  test("shortened given (Хади) + exact surname + Δ5s → AUTO-LINK (exact, byShortenedName)", () => {
     const race = { date: "2026-05-23", ourSeconds: at(0, 55, 0), ourKm: 21.1 };
     const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 55, 5), distanceKm: 21.1, name: "Хади Муртазалиева", place: "5", city: "", event: "" }];
-    assert.equal(matchRace(race, finishes, hadizhat).verdict, "probable"); // strict name fails → not auto-linked
+    const r = matchRace(race, finishes, hadizhat);
+    assert.equal(r.verdict, "exact"); // surname exact + time in seconds → coach OK'd auto-link
+    assert.equal(r.byShortenedName, true);
   });
 
   test("a CONFIRMED spelling makes «Хади Муртазалиева» exact (auto-link, no re-queue)", () => {
@@ -206,12 +208,11 @@ describe("matchRace", () => {
     assert.equal(r.byConfirmedName, true);
   });
 
-  test("a confirmed spelling with a conflicting distance is PROBABLE «дистанция сомнительна», never auto-linked", () => {
+  test("confirmed spelling + Δ5s + conflicting distance → AUTO-LINK (exact, distanceDoubtful)", () => {
     const race = { date: "2026-05-23", ourSeconds: at(0, 55, 0), ourKm: 10 };
     const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 55, 5), distanceKm: 42.2, name: "Хади Муртазалиева", place: "5", city: "", event: "" }];
     const r = matchRace(race, finishes, hadizhat, { exact: 60, probable: 900 }, ["хади муртазалиева"]);
-    assert.notEqual(r.verdict, "exact"); // distance conflict blocks auto-link even for a confirmed name
-    assert.equal(r.verdict, "probable");
+    assert.equal(r.verdict, "exact"); // confirmed name + perfect time; distance conflict only flags doubt
     assert.equal(r.distanceDoubtful, true);
   });
 
@@ -242,11 +243,18 @@ describe("matchRace", () => {
     assert.equal(tight.verdict, "probable");
   });
 
-  test("conflicting distance with a matching name blocks EXACT but yields probable «дистанция сомнительна»", () => {
+  test("exact surname + Δ12s + conflicting distance → AUTO-LINK (exact, distanceDoubtful)", () => {
     const race = { date: "2026-05-23", ourSeconds: at(0, 45, 8), ourKm: 10 };
     const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 45, 20), distanceKm: 42.2, name: "Антон Малык", place: "1", city: "", event: "" }];
     const r = matchRace(race, finishes, malyk);
-    assert.equal(r.verdict, "probable");
+    assert.equal(r.verdict, "exact");
     assert.equal(r.distanceDoubtful, true);
+  });
+
+  test("FUZZY surname (one letter off) does NOT auto-link — «если фамилия точная» → stays probable", () => {
+    const race = { date: "2026-05-23", ourSeconds: at(0, 45, 8), ourKm: 10 };
+    // «Сорокино» is one edit from roster «Сорокина» → fuzzy surname, allowed for a probable but not auto-link
+    const finishes: ProbegFinish[] = [{ date: "2026-05-23", seconds: at(0, 45, 20), distanceKm: 10, name: "Анна Сорокино", place: "1", city: "", event: "" }];
+    assert.equal(matchRace(race, finishes, studentNameVariantSets("Sorokina Anna")).verdict, "probable");
   });
 });
