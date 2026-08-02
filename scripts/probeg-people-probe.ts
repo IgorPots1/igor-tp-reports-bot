@@ -370,6 +370,7 @@ async function selectSafe<T>(table: string, columns: string): Promise<T[] | null
 }
 
 type ExactCand = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; ourSeconds: number | null; byConfirmedName: boolean; byShortenedName: boolean; distanceDoubtful: boolean };
+type OfficialPlan = { studentId: string; studentName: string; date: string; finish: ProbegFinish; distanceDoubtful: boolean }; // журнал: ЛЮБАЯ дистанция
 type RecPlan = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; action: "insert" | "upgrade"; ourSeconds: number | null };
 type LinkPlan = { studentId: string; studentName: string; name: string; norm: string };
 type PendPlan = { studentId: string; studentName: string; race: OurRace; res: MatchResult };
@@ -395,6 +396,7 @@ async function runWrite(): Promise<void> {
   const pendSet = new Set((pend ?? []).map((p) => `${p.student_id}|${p.race_date}|${p.protocol_seconds}`));
 
   const exactCands: ExactCand[] = [];
+  const officialPlans: OfficialPlan[] = [];
   const recordPlans: RecPlan[] = [];
   const linkPlans: LinkPlan[] = [];
   const pendPlans: PendPlan[] = [];
@@ -409,8 +411,11 @@ async function runWrite(): Promise<void> {
       if (race.ourSeconds == null || race.foreign) continue; // вне знаменателя — не пишем
       const res = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
       if (res.verdict === "exact" && res.finish) {
+        // Full journal: EVERY official (protocol-verified) result, any distance → club_official_results.
+        officialPlans.push({ studentId: s.id, studentName: s.name, date: race.date, finish: res.finish, distanceDoubtful: res.distanceDoubtful });
         const dkey = distanceKeyOf(res.finish.distanceKm);
-        if (!dkey) { skips.push(`${s.name}: ТОЧНО ${race.date}, но дистанция ${res.finish.distanceKm}км не 5/10/21/42к → club_records не хранит`); continue; }
+        // club_records is the best-4 showcase; only the standard buckets go there (collapsed to best below).
+        if (!dkey) { skips.push(`${s.name}: ТОЧНО ${race.date} дистанция ${res.finish.distanceKm}км нестандартная → только в журнал club_official_results`); continue; }
         exactCands.push({ studentId: s.id, studentName: s.name, dkey, finish: res.finish, date: race.date, ourSeconds: race.ourSeconds, byConfirmedName: res.byConfirmedName, byShortenedName: res.byShortenedName, distanceDoubtful: res.distanceDoubtful });
       } else if (res.verdict === "probable" && res.finish) {
         const pkey = `${s.id}|${race.date}|${res.finish.seconds}`;
@@ -473,6 +478,8 @@ async function runWrite(): Promise<void> {
   for (const l of coachVsProtocol) console.log(`  ${l}`);
   console.log(`\n--- АВТО-ПРИВЯЗКИ → club_records (official_protocol/verified), по одному лучшему на (ученик,дистанция): ${recordPlans.length} ---`);
   for (const p of recordPlans) console.log(`  ${p.studentName}: [${p.dkey}] ${p.action} → ${fmtHms(p.finish.seconds)}${p.ourSeconds != null && p.finish.seconds > p.ourSeconds ? ` (наше ${fmtHms(p.ourSeconds)})` : ""} ${p.finish.protocolUrl ?? "(url?)"} (гонка ${p.date}, ${p.finish.event})`);
+  console.log(`\n--- ЖУРНАЛ → club_official_results (ВСЕ официальные результаты, любая дистанция): ${officialPlans.length} ---`);
+  for (const p of officialPlans) console.log(`  ${p.studentName}: ${p.date} ${fmtKm(p.finish.distanceKm)} ${fmtHms(p.finish.seconds)} место ${p.finish.place ?? "?"} ${p.finish.city ?? ""} ${p.finish.protocolUrl ?? ""}${p.distanceDoubtful ? " [дист.сомнит.]" : ""}`);
   console.log(`\n--- ПАМЯТЬ НАПИСАНИЙ → club_probeg_athlete_links: ${linkPlans.length} ---`);
   for (const p of linkPlans) console.log(`  ${p.studentName}: «${p.name}»`);
   console.log(`\n--- В ОЧЕРЕДЬ ПОДТВЕРЖДЕНИЯ → club_protocol_pending: ${pendPlans.length} ---`);
@@ -501,10 +508,10 @@ async function runWrite(): Promise<void> {
   console.log(`  ученик без фамилии: ${qWeak}`);
   console.log(`  имя не распозналось: ${qUnrec}`);
   console.log(`  широкое время / неточная фамилия / прочее: ${qWide}`);
-  console.log(`\n=== К ЗАПИСИ: ${recordPlans.length} авто-привязок + ${linkPlans.length} написаний + ${pendPlans.length} в очередь = ${recordPlans.length + linkPlans.length + pendPlans.length} ===`);
+  console.log(`\n=== К ЗАПИСИ: ${recordPlans.length} рекордов + ${officialPlans.length} в журнал + ${linkPlans.length} написаний + ${pendPlans.length} в очередь ===`);
 
   if (!COMMIT) {
-    console.log("\nDRY-RUN: ничего не записано. Проверь список глазами, примени миграции 20260823/20260824, затем повтори с --commit.");
+    console.log("\nDRY-RUN: ничего не записано. Проверь список глазами, примени миграции 20260823/20260824/20260825, затем повтори с --commit.");
     process.exit(0);
   }
 
@@ -536,6 +543,14 @@ async function runWrite(): Promise<void> {
       protocol_seconds: f.seconds, protocol_distance_km: f.distanceKm,
       distance_doubtful: p.res.distanceDoubtful, name_unrecognized: p.res.nameUnrecognized, weak_name: p.res.weakName,
     }, { onConflict: "student_id,race_date,protocol_seconds" }));
+  }
+  for (const p of officialPlans) {
+    const f = p.finish;
+    await run(`journal ${p.studentName}`, () => supabase.from("club_official_results").upsert({
+      student_id: p.studentId, race_date: p.date, distance_km: f.distanceKm, distance_label: f.distanceKm != null ? `${f.distanceKm} км` : null,
+      result_seconds: f.seconds, protocol_url: f.protocolUrl ?? null, protocol_name: f.name, place: f.place, city: f.city, event: f.event,
+      source: "official_protocol", trust: "verified", distance_doubtful: p.distanceDoubtful, confirmed_by: "probeg-writer", updated_at: nowIso,
+    }, { onConflict: "student_id,race_date,protocol_url" }));
   }
   console.log(`\n=== COMMIT завершён: ${ok} записано, ${failed} ошибок ===`);
   process.exit(failed ? 1 : 0);
