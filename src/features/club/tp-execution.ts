@@ -81,6 +81,15 @@ function racePlannedTimeHours(targetSeconds: number | null): number | null {
   return Math.round((targetSeconds / 3600) * 1000) / 1000; // hours, 3 dp
 }
 
+/** Race target seconds → human time. h:mm:ss, hours dropped on short distances (46:18, not 0:46:18).
+ *  6599s → 1:49:59, 2778s → 46:18. Used in the event/workout description so «цель» is readable. */
+export function fmtRaceTarget(targetSeconds: number): string {
+  const s = Math.max(0, Math.round(targetSeconds));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const ss = String(sec).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
 export type ClubRaceRow = {
   id: string;
   studentId: string;
@@ -273,7 +282,7 @@ export function planClubRaceAction(row: ClubRaceRow, athleteId: number | null): 
   const baseDesc = [row.distanceLabel, row.city, row.country].filter((x) => x && x.trim()).join(", ");
   // Keep the target time in the description as a human-readable dup regardless of the field.
   const description = row.targetResultSeconds && row.targetResultSeconds > 0
-    ? [baseDesc, `цель ${row.targetResultSeconds}s`].filter(Boolean).join(" · ")
+    ? [baseDesc, `цель ${fmtRaceTarget(row.targetResultSeconds)}`].filter(Boolean).join(" · ")
     : (baseDesc || null);
   const unresolved: string[] = [];
   if (row.targetResultSeconds && row.targetResultSeconds > 0 && plannedTime === null) {
@@ -389,7 +398,7 @@ export function planCalendarEntryAction(
     const evUnresolved: string[] = [];
     let goals: Record<string, unknown> = {};
     if (row.raceTargetSeconds && row.raceTargetSeconds > 0) {
-      descParts.push(`цель ${row.raceTargetSeconds}s`);
+      descParts.push(`цель ${fmtRaceTarget(row.raceTargetSeconds)}`);
       // goals.time is a REAL field on the event (confirmed by read), but whether CREATE
       // accepts it is unverified, so gate it behind CLUB_RACE_SET_PLANNED_TIME. Default:
       // goals {} (the verified-working shape) + target time in the description.
@@ -484,7 +493,7 @@ export function planCalendarEntryAction(
       if (racePlannedTimeHours(row.raceTargetSeconds) === null) {
         unresolved.push("targetTime не в поле (CLUB_RACE_SET_PLANNED_TIME=false до capability probe) - целевое время в описании");
       }
-      description += ` · цель ${row.raceTargetSeconds}s`;
+      description += ` · цель ${fmtRaceTarget(row.raceTargetSeconds)}`;
     }
   } else if (row.kind === "day_off") {
     // day_off → TP NATIVE Day Off type (7), not the generic Other. Keeps a custom title
