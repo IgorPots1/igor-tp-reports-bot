@@ -33,8 +33,11 @@ comment on column public.club_probeg_athlete_links.probeg_user_id is
   'Optional probeg /user/<id>/ the coach resolved. A shortcut to skip name search on later scans; disambiguation is still date+distance+time.';
 
 -- Coach/admin only. RLS on with no anon/authenticated policies → default-deny; the app reaches it via
--- service_role (which bypasses RLS), exactly like the other club server-side tables.
+-- service_role (which bypasses RLS), exactly like the other club server-side tables. In THIS project
+-- service_role gets NO default privilege on a new public table, so grant it explicitly (same as
+-- club_calendar_entries) — without this every read/write is "permission denied for table".
 alter table public.club_probeg_athlete_links enable row level security;
+grant select, insert, update, delete on table public.club_probeg_athlete_links to service_role;
 
 create index if not exists club_probeg_athlete_links_student_idx
   on public.club_probeg_athlete_links (student_id);

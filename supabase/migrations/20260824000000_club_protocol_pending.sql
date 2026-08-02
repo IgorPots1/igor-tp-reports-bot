@@ -38,6 +38,9 @@ comment on table public.club_protocol_pending is
   'PROBABLE protocol matches awaiting coach confirmation. On confirm → club_records (official_protocol/verified) + club_probeg_athlete_links (remembered spelling). UNIQUE(student, date, protocol time) makes the writer idempotent.';
 
 alter table public.club_protocol_pending enable row level security;
+-- service_role gets NO default privilege on a new public table in this project — grant explicitly, or
+-- every read/write is "permission denied for table" (same pattern as club_calendar_entries).
+grant select, insert, update, delete on table public.club_protocol_pending to service_role;
 
 create index if not exists club_protocol_pending_status_idx
   on public.club_protocol_pending (status, student_id);
