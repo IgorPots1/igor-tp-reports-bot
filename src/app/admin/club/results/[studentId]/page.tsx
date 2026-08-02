@@ -7,6 +7,7 @@ import {
   getStudentRevisionCard,
   getRaceFillSuggestions,
   listActiveStudentsForRevision,
+  listClubOfficialResults,
   DISTANCE_LABELS,
 } from "@/features/club-admin/repository";
 import {
@@ -43,10 +44,11 @@ export default async function ClubResultBulkPage({
   const notice = getSingleSearchParam(sp.notice);
   const error = getSingleSearchParam(sp.error);
 
-  const [card, active, suggestions] = await Promise.all([
+  const [card, active, suggestions, official] = await Promise.all([
     getStudentRevisionCard(studentId),
     listActiveStudentsForRevision(),
     getRaceFillSuggestions(studentId),
+    listClubOfficialResults(studentId),
   ]);
   const suggestionByKey = new Map(suggestions.map((s) => [s.distanceKey, s]));
   const idx = active.findIndex((s) => s.id === studentId);
@@ -117,6 +119,32 @@ export default async function ClubResultBulkPage({
           </div>
         );
       })}
+
+      <div className="admin-card" style={{ marginTop: 16 }}>
+        <div className="admin-badge-row"><strong>Официальные результаты (журнал, все дистанции)</strong> <span className="admin-badge admin-badge-muted">{official.length}</span></div>
+        <p className="admin-section-subtitle" style={{ margin: "4px 0 8px" }}>Подтверждённые по протоколу probeg гонки, любая дистанция - полный список по датам. Рекорды (4 бакета выше) остаются витриной; это журнал.</p>
+        {official.length === 0 ? (
+          <span className="admin-summary-label">Пока нет (заполняется привязкой протоколов).</span>
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-table admin-table-compact">
+              <thead><tr><th>Дата</th><th>Дистанция</th><th>Время</th><th>Место</th><th>Город</th><th>Протокол</th></tr></thead>
+              <tbody>
+                {official.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.raceDate}</td>
+                    <td>{r.distanceLabel ?? (r.distanceKm != null ? `${r.distanceKm} км` : "?")}{r.distanceDoubtful ? <span className="admin-badge admin-badge-warning" style={{ marginLeft: 6 }}>дистанция сомнительна</span> : null}</td>
+                    <td>{fmt(r.resultSeconds)}</td>
+                    <td>{r.place ?? "-"}</td>
+                    <td>{r.city ?? "-"}</td>
+                    <td>{r.protocolUrl ? <a href={r.protocolUrl} target="_blank" rel="noreferrer">открыть</a> : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

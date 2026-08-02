@@ -541,6 +541,43 @@ export async function listClubUpcomingRequests(days = 45): Promise<ClubUpcomingR
   });
 }
 
+export type ClubOfficialResult = {
+  id: string;
+  raceDate: string;
+  distanceKm: number | null;
+  distanceLabel: string | null;
+  resultSeconds: number;
+  protocolUrl: string | null;
+  event: string | null;
+  place: string | null;
+  city: string | null;
+  distanceDoubtful: boolean;
+};
+
+/** Full journal of a student's official (protocol-verified) results, any distance, newest first.
+ *  Tolerant: returns [] if the club_official_results table is not applied yet. */
+export async function listClubOfficialResults(studentId: string): Promise<ClubOfficialResult[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_official_results")
+    .select("id, race_date, distance_km, distance_label, result_seconds, protocol_url, event, place, city, distance_doubtful")
+    .eq("student_id", studentId)
+    .order("race_date", { ascending: false });
+  if (error || !data) return [];
+  return (data as Array<Record<string, unknown>>).map((r) => ({
+    id: r.id as string,
+    raceDate: (r.race_date as string) ?? "",
+    distanceKm: (r.distance_km as number | null) ?? null,
+    distanceLabel: (r.distance_label as string | null) ?? null,
+    resultSeconds: (r.result_seconds as number) ?? 0,
+    protocolUrl: (r.protocol_url as string | null) ?? null,
+    event: (r.event as string | null) ?? null,
+    place: (r.place as string | null) ?? null,
+    city: (r.city as string | null) ?? null,
+    distanceDoubtful: Boolean(r.distance_doubtful),
+  }));
+}
+
 export async function setCalendarEntryStatus(id: string, status: "approved" | "rejected"): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.from("club_calendar_entries").update({ status }).eq("id", id);
