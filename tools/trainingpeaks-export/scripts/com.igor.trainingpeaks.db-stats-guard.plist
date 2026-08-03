@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Сторож статистики планировщика, раз в сутки в 06:40.
+     2026-08-03 статистика слетала ТРИЖДЫ за день после перезапусков инстанса Supabase, и каждый
+     раз это обнаруживалось руками по симптомам (500-е на админке, statement timeout, CPU 100%).
+     Сторож находит непроанализированные непустые таблицы и прогоняет по ним ANALYZE поимённо;
+     если что-то нашлось или сломалось — пишет тренеру в Telegram.
+     Данные не меняет: ANALYZE только пересобирает статистику.
+
+     06:40 выбрано намеренно: раньше первых утренних сканов (07:00 health-metrics) и после
+     ночного окна, чтобы день начинался на здоровых планах.
+
+     НЕ УСТАНОВЛЕН. Ставит Игорь, ПОСЛЕ применения миграции
+     20260905000000_analyze_stale_tables_rpc.sql и ручной проверки:
+       tools/trainingpeaks-export/scripts/run-db-stats-guard.sh --dry-run
+       cp .../com.igor.trainingpeaks.db-stats-guard.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.db-stats-guard.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.db-stats-guard</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-db-stats-guard.sh"</string>
+  </array>
+
+  <!-- RunAtLoad намеренно true: перезапуск инстанса и перезагрузка Мака часто идут парой,
+       и первый же запуск после загрузки — ровно тот момент, когда статистика могла слететь. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>40</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/db-stats-guard.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/db-stats-guard.launchd.err.log</string>
+</dict>
+</plist>
