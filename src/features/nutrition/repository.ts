@@ -2239,6 +2239,8 @@ export async function getNutritionTrainingPeaksCacheWindow(input: {
   studentId: string;
   from: string;
   to: string;
+  /** Pass false when the caller only reads scalars — see the repository function for the contract. */
+  includeSourceSnapshot?: boolean;
 }): Promise<TrainingPeaksWorkoutCacheRow[]> {
   return listTrainingPeaksWorkoutCacheForStudentDateRange(input);
 }

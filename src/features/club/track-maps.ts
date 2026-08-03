@@ -16,11 +16,17 @@ const MAPBOX_IMAGE_SIZE = "600x300@2x";
 const MAPBOX_ROUTE_STYLE = "path-5+2563eb-0.9"; // width 5, colour #2563eb, opacity 0.9 (Run Club)
 const GEOCODE_TIMEOUT_MS = 3000;
 const IMAGE_TIMEOUT_MS = 8000;
-// Signature bucketed to the hour so every mint within the hour yields the SAME URL (the browser
-// caches it across feed re-opens); valid ~25h, far beyond the 1h browser max-age, so a cached
-// image is never re-requested after the signature expires (no broken tiles near the boundary).
-const SIGNATURE_BUCKET_SECONDS = 3600;
-const SIGNATURE_VALID_SECONDS = 90000;
+// Signature bucketed to the DAY so every mint within the day yields the SAME URL (the browser
+// caches it across feed re-opens). Was hourly until 2026-08-03: with a 1h bucket and a 1h browser
+// max-age the same PNG was re-downloaded from Storage once per user per hour, which is what blew
+// the Supabase egress quota. Daily is safe here because the URL is CONTENT-ADDRESSED
+// (?h=<polylineHash>): a re-ingest or a privacy-radius change alters the hash, hence the URL, so a
+// rebuilt track invalidates instantly regardless of the time bucket.
+//
+// Validity must outlive bucket + browser max-age, so a URL minted at the start of a bucket is
+// still valid on its last cached use — otherwise tiles break near the boundary.
+const SIGNATURE_BUCKET_SECONDS = 86400;
+const SIGNATURE_VALID_SECONDS = 172800;
 
 type LatLng = [number, number];
 
@@ -94,13 +100,13 @@ function signingSecret(): string {
   return process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 }
 
-/** Stable-per-hour, content-addressed signed path. The polyline hash in the URL cache-busts a
- *  recompute; the hour-bucketed expiry keeps the URL identical within the hour so the browser
+/** Stable-per-day, content-addressed signed path. The polyline hash in the URL cache-busts a
+ *  recompute; the day-bucketed expiry keeps the URL identical within the day so the browser
  *  caches the image instead of re-fetching on every feed open. */
 export function signTrackImagePath(workoutCacheId: string, polyline: LatLng[]): string {
   const hash = polylineHash(polyline);
-  const hourStart = Math.floor(Date.now() / 1000 / SIGNATURE_BUCKET_SECONDS) * SIGNATURE_BUCKET_SECONDS;
-  const exp = hourStart + SIGNATURE_VALID_SECONDS;
+  const bucketStart = Math.floor(Date.now() / 1000 / SIGNATURE_BUCKET_SECONDS) * SIGNATURE_BUCKET_SECONDS;
+  const exp = bucketStart + SIGNATURE_VALID_SECONDS;
   const sig = createHmac("sha256", signingSecret()).update(`${workoutCacheId}:${hash}:${exp}`).digest("hex").slice(0, 32);
   return `/api/m/club/track-image/${encodeURIComponent(workoutCacheId)}?h=${hash}&e=${exp}&s=${sig}`;
 }

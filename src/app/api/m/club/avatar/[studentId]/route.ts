@@ -29,8 +29,11 @@ export async function GET(
     status: 200,
     headers: {
       "Content-Type": "image/jpeg",
-      // Signed + short-lived URL; a brief private cache is fine and spares repeat Storage reads.
-      "Cache-Control": "private, max-age=3600",
+      // Stable-for-the-day signed URL, so a full day of private caching spares a Storage read per
+      // user per hour (was 1h until 2026-08-03). The photo is only re-checked against Telegram
+      // weekly, so this hides no change the server had actually noticed — but note the URL carries
+      // no content hash, so an opt-out reaches an already-cached browser only after this window.
+      "Cache-Control": "private, max-age=86400",
     },
   });
 }

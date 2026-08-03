@@ -30,8 +30,11 @@ export async function GET(
     status: 200,
     headers: {
       "Content-Type": "image/png",
-      // Signed + short-lived URL; a brief private cache is fine and spares repeat Storage reads.
-      "Cache-Control": "private, max-age=3600",
+      // The URL is content-addressed (?h=<polylineHash>) and stable for the day, so a full day of
+      // private caching is safe: a rebuilt track changes the hash and the browser fetches the new
+      // URL immediately. Was 1h until 2026-08-03, which made every user re-download every PNG
+      // hourly — a top contributor to the blown Supabase egress quota.
+      "Cache-Control": "private, max-age=86400",
     },
   });
 }

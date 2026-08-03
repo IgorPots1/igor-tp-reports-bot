@@ -2237,24 +2237,6 @@ export async function upsertTrainingPeaksHealthMetricsScanStatuses(
   }
 }
 
-export async function listTrainingPeaksWorkoutCacheForDate(
-  date: string
-): Promise<TrainingPeaksWorkoutCacheRow[]> {
-  const supabase = createSupabaseServerClient();
-  const { data, error } = await withSupabaseNetworkRetry(() => supabase
-    .from("trainingpeaks_workout_cache")
-    .select("*")
-    .eq("workout_date", date)
-    .order("student_name", { ascending: true })
-    .order("trainingpeaks_workout_id", { ascending: true }));
-
-  if (error) {
-    throw new Error(`Failed to list TrainingPeaks workout cache for date ${date}: ${error.message}`);
-  }
-
-  return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
-}
-
 export async function listTrainingPeaksWorkoutCacheForDateRange(input: {
   from: string;
   to: string;
@@ -2412,15 +2394,58 @@ export async function listTrainingPeaksStudentsEligibleForHealthMetrics(input?: 
   });
 }
 
+/**
+ * Every column of trainingpeaks_workout_cache EXCEPT source_snapshot — the raw TrainingPeaks
+ * payload, which dominates the row size (kilobytes of jsonb against tens of bytes of scalars).
+ * Callers that only need the scalars can skip it and pay a fraction of the egress.
+ */
+const TRAININGPEAKS_WORKOUT_CACHE_COLUMNS_WITHOUT_SNAPSHOT = [
+  "id",
+  "student_id",
+  "student_name",
+  "trainingpeaks_athlete_id",
+  "trainingpeaks_workout_id",
+  "workout_date",
+  "title",
+  "sport_or_type_code",
+  "workout_type_value_id",
+  "workout_sub_type_id",
+  "is_planned",
+  "is_completed",
+  "planned_time_raw",
+  "completed_time_raw",
+  "planned_distance_raw",
+  "completed_distance_raw",
+  "compliance_duration_percent",
+  "compliance_distance_percent",
+  "start_time_planned",
+  "start_time",
+  "source_updated_at",
+  "order_on_day",
+  "scanned_at",
+  "scan_job_id",
+  "normalization_warnings",
+  "created_at",
+  "updated_at",
+].join(", ");
+
 export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
   studentId: string;
   from: string;
   to: string;
+  /**
+   * Set false to skip the source_snapshot jsonb. Defaults to TRUE so every existing caller keeps
+   * the exact rows it had — opt OUT only where it is proven unused, because a caller that reaches
+   * for row.sourceSnapshot would silently get null instead of failing loudly.
+   */
+  includeSourceSnapshot?: boolean;
 }): Promise<TrainingPeaksWorkoutCacheRow[]> {
   const supabase = createSupabaseServerClient();
+  const columns =
+    input.includeSourceSnapshot === false ? TRAININGPEAKS_WORKOUT_CACHE_COLUMNS_WITHOUT_SNAPSHOT : "*";
   const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_cache")
-    .select("*")
+    .select(columns)
     .eq("student_id", input.studentId)
     .gte("workout_date", input.from)
     .lte("workout_date", input.to)
@@ -2433,7 +2458,12 @@ export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
     );
   }
 
-  return ((data as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map(mapTrainingPeaksWorkoutCacheRow);
+  // When the snapshot column was skipped the mapper still reads row.source_snapshot — absent here,
+  // so sourceSnapshot lands as undefined. Normalise to null: the field is typed `unknown` and every
+  // consumer already guards it, and an explicit null reads as "not fetched" rather than "lost".
+  return ((data as unknown as TrainingPeaksWorkoutCacheDbRow[]) ?? []).map((row) =>
+    mapTrainingPeaksWorkoutCacheRow({ ...row, source_snapshot: row.source_snapshot ?? null })
+  );
 }
 
 export type TrainingPeaksRaceEventRow = {

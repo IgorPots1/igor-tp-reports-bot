@@ -1376,6 +1376,10 @@ export async function buildNutritionStudentContext(input: {
       studentId: input.studentId,
       from: addDays(input.weekFrom, -28),
       to: addDays(input.weekTo, 28),
+      // Widest window in the codebase (56 days) read for the single boolean just below — "is there
+      // any non-marker workout nearby?" — and it looks at row.title only. No reason to haul the raw
+      // TrainingPeaks payload for every workout across two months.
+      includeSourceSnapshot: false,
     });
     // Phase A: a club marker (day_off/preference/note pometka) is not real training —
     // exclude it so a nearby marker does not fake "rest week" for a genuine data gap.

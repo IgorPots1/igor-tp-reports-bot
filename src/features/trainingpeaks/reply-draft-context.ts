@@ -85,6 +85,11 @@ export async function buildTrainingPeaksReplyDraftContext(
       studentId: input.studentUuid,
       from: periodFrom,
       to: periodTo,
+      // This module never touches row.sourceSnapshot (summarizeWorkoutRow, resolveWorkoutStatus and
+      // collectMissedPlannedRunningDates read scalars only), and it runs on the hottest path in the
+      // product — one reply draft per incoming student message. Skipping the jsonb payload cuts the
+      // bytes per draft by roughly an order of magnitude.
+      includeSourceSnapshot: false,
     }),
     listTrainingPeaksStudentHealthMetricProfiles(),
   ]);
