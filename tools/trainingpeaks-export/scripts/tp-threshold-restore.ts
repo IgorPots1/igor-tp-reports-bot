@@ -35,7 +35,7 @@ import process from "node:process";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { getAthleteSettings } from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import { getAthleteSettings, getWorkoutsByDateRange } from "../../../src/features/trainingpeaks/tp-api-client.ts";
 import { readSessionSnapshot } from "../../../src/features/trainingpeaks/tp-session-snapshot.ts";
 import { toolRoot } from "./lib/paths.ts";
 import { authedWriteOnce, COACH_ID_SETUP_HINT, findActiveHold, findWt0Set, formatMpsAsPace, isRecord, loadCoachUserId, parsePaceToSecPerKm, secPerKmToMps, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
@@ -237,12 +237,37 @@ async function main(): Promise<void> {
   console.log(`\n=== tp-threshold-restore — ${name} (${id}) · режим ${apply ? "APPLY" : "DRY-RUN"} ===`);
   console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"}`);
 
-  // TODAY and later — NOT "tomorrow and later". A `.gt(today)` here silently skipped today's
-  // planned workouts, leaving them on OLD %-targets after a threshold change (a student could run
-  // today at the wrong pace). Completed today-workouts are excluded by the is_planned/completed filter.
-  const { data: futRows } = await supabase.from("trainingpeaks_workout_cache").select("workout_date, title, trainingpeaks_workout_id, is_planned, completed_time_raw, workout_type_value_id, description:source_snapshot->>description, structure:source_snapshot->structure").eq("trainingpeaks_athlete_id", id).gte("workout_date", todayIso()).order("workout_date");
-  const planned = (futRows ?? []).filter((r) => r.is_planned === true && (r.completed_time_raw == null || r.completed_time_raw === 0) && r.workout_type_value_id === 3);
-  console.log(`плановых бегов (сегодня и позже): ${planned.length}\n`);
+  // ALL UNCOMPLETED planned workouts of ANY date — NOT just today+. A threshold change re-renders
+  // the athlete's PAST-dated planned workouts too; if a student opens an old un-run planned workout
+  // it must show the right pace. COMPLETED workouts are NEVER touched (history was correct under the
+  // threshold that was live at run time). --since=YYYY-MM-DD optionally bounds the lower date (e.g.
+  // recompute only recent stale planned, skip year-old ones nobody opens).
+  const since = getFlag("since");
+  // Variant C (2026-08-03): enumerate uncompleted planned runs from LIVE TP, not the cache. The cache
+  // undercounts freshly-authored workouts (Kalakutok: cache 0 vs live 4), which SILENTLY skipped the
+  // recompute — threshold got set while structures kept stale %. List (getWorkoutsByDateRange) filtered
+  // to run + not-completed, then per-workout live detail for structure+description. Everything downstream
+  // (recompute/gates/write) unchanged. Completed workouts are excluded (never touched).
+  // default lower bound = today−14d: only workouts an athlete may still open (future + recent past)
+  // actually render wrong on a threshold change; year-old skipped planned records are aged off and
+  // pointless to rewrite. --since=YYYY-MM-DD overrides (wider or narrower).
+  const fromDate = since ?? daysAgo(14);
+  const toDate = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+  const liveList = await getWorkoutsByDateRange(id, fromDate, toDate);
+  const summaries = (liveList ?? []).filter((w) => isRecord(w) && (w.workoutTypeValueId === 3 || w.workoutTypeId === 3) && w.completed !== true);
+  const planned: Array<{ workout_date: string; title: string; trainingpeaks_workout_id: number; description: string; structure: unknown }> = [];
+  for (const sm of summaries) {
+    const rec = sm as Record<string, unknown>;
+    const wid = Number(rec.workoutId ?? rec.id);
+    if (!Number.isInteger(wid) || wid <= 0) continue;
+    let det: Record<string, unknown>;
+    try { det = await getWorkout(id, wid); } catch { continue; }
+    // hard guard: NEVER touch a completed workout (actual data present) — even if the summary missed it.
+    if (det.completed === true || (typeof det.totalTime === "number" && det.totalTime > 0)) continue;
+    planned.push({ workout_date: String(det.workoutDay ?? "").slice(0, 10), title: typeof det.title === "string" ? det.title : "", trainingpeaks_workout_id: wid, description: typeof det.description === "string" ? det.description : "", structure: det.structure });
+  }
+  planned.sort((a, b) => a.workout_date.localeCompare(b.workout_date));
+  console.log(`плановых бегов (невыполненные, ${fromDate}..${toDate}, LIVE): ${planned.length}\n`);
 
   type Wk = { wid: number; date: string; title: string; desc: string; rc: { isEasy: boolean; plans: Plan[] } };
   const wks: Wk[] = []; let defer = false; const flags: string[] = [];
