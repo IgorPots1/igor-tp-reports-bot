@@ -17,16 +17,20 @@ const MAPBOX_ROUTE_STYLE = "path-5+2563eb-0.9"; // width 5, colour #2563eb, opac
 const GEOCODE_TIMEOUT_MS = 3000;
 const IMAGE_TIMEOUT_MS = 8000;
 // Signature bucketed to the DAY so every mint within the day yields the SAME URL (the browser
-// caches it across feed re-opens). Was hourly until 2026-08-03: with a 1h bucket and a 1h browser
-// max-age the same PNG was re-downloaded from Storage once per user per hour, which is what blew
-// the Supabase egress quota. Daily is safe here because the URL is CONTENT-ADDRESSED
-// (?h=<polylineHash>): a re-ingest or a privacy-radius change alters the hash, hence the URL, so a
-// rebuilt track invalidates instantly regardless of the time bucket.
+// caches it across feed re-opens). Was hourly until 2026-08-03, which meant the same PNG was
+// re-downloaded from Storage once per viewer per hour.
 //
-// Validity must outlive bucket + browser max-age, so a URL minted at the start of a bucket is
-// still valid on its last cached use — otherwise tiles break near the boundary.
+// Daily is safe HERE — and only here — because this URL is CONTENT-ADDRESSED (?h=<polylineHash>):
+// a re-ingest or a privacy-radius change alters the hash, hence the URL, so a rebuilt track
+// invalidates instantly regardless of the time bucket. The avatar URL carries no such hash and is
+// deliberately kept on the old hourly bucket (see avatars.ts) so an opt-out is not delayed.
+//
+// Validity budget: bucket (86400) + browser max-age (86400) = 172800 is the floor — a URL minted
+// at the very start of a bucket must still verify on its last cached use. Images are `loading=lazy`,
+// so a feed opened just before the bucket rolls can fetch a tile much later, when the user finally
+// scrolls to it; 259200 adds a full extra day over the floor to cover a long-open mini-app.
 const SIGNATURE_BUCKET_SECONDS = 86400;
-const SIGNATURE_VALID_SECONDS = 172800;
+const SIGNATURE_VALID_SECONDS = 259200;
 
 type LatLng = [number, number];
 

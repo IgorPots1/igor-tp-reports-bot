@@ -12,12 +12,18 @@ import { downloadTelegramFile, getTelegramUserProfilePhotoFileId } from "@/featu
 // changed photo without hammering the Bot API.
 
 const CLUB_AVATARS_BUCKET = "club-avatars";
-// Day-bucketed (was hourly until 2026-08-03): with a 1h bucket and a 1h browser max-age the same
-// JPEG was re-downloaded from Storage once per user per hour — a top contributor to the blown
-// Supabase egress quota. The photo itself is only re-checked against Telegram weekly (REFRESH_MS),
-// so a daily URL never hides a change the server had actually noticed.
-const SIGNATURE_BUCKET_SECONDS = 86400;
-const SIGNATURE_VALID_SECONDS = 172800; // must outlive bucket + browser max-age (24h + 24h)
+// DELIBERATELY still hour-bucketed, unlike the route image (track-maps.ts), which moved to a day.
+// The difference is invalidation: the track URL carries a content hash (?h=<polylineHash>), so a
+// long TTL costs nothing — a changed track changes the URL. This URL carries no hash (one photo per
+// student, always at `<studentId>.jpg`), so the ONLY thing that expires a browser's copy is time.
+// Stretching that to a day would delay the club_avatar_visible opt-out by a day for every viewer
+// who had already loaded the face — a privacy delay, not just a stale thumbnail. Not worth the
+// egress: avatars are a fraction of the traffic and the resize below already cuts them ~10x.
+//
+// Validity budget: bucket (3600) + browser max-age (3600) = 7200 is the floor; 90000 (25h) is the
+// original generous slack, kept so a lazily-loaded image in a long-open mini-app never 403s.
+const SIGNATURE_BUCKET_SECONDS = 3600;
+const SIGNATURE_VALID_SECONDS = 90000;
 const REFRESH_MS = 7 * 24 * 60 * 60 * 1000; // re-check Telegram at most once a week
 const IMAGE_CONTENT_TYPE = "image/jpeg"; // Telegram profile photos are JPEG
 // Rendered at ~32-48 px in the feed, so the stored original (40-80 KB straight off the Telegram
@@ -29,14 +35,10 @@ function signingSecret(): string {
   return process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 }
 
-/** Stable-per-day signed proxy URL for a student's avatar. No content hash (one photo per student,
- *  always at `<studentId>.jpg`); the day-bucketed expiry keeps the URL identical within the day so
- *  the browser caches the image instead of re-fetching it on every feed open.
- *
- *  NOTE — unlike the route image, this URL is NOT content-addressed, so a browser that already
- *  cached it keeps showing the old bytes for up to bucket+max-age even if the photo changed or the
- *  student opted out. The server side is unaffected (club_avatar_visible is re-checked live on
- *  every request that reaches us). See the report for the version-token follow-up. */
+/** Stable-per-hour signed proxy URL for a student's avatar. No content hash (one photo per student,
+ *  always at `<studentId>.jpg`), so the hour is what bounds how long a browser can keep showing a
+ *  face after the student opted out — see the constants above for why this stays hourly while the
+ *  route image went daily. */
 export function signAvatarPath(studentId: string): string {
   const bucketStart = Math.floor(Date.now() / 1000 / SIGNATURE_BUCKET_SECONDS) * SIGNATURE_BUCKET_SECONDS;
   const exp = bucketStart + SIGNATURE_VALID_SECONDS;
