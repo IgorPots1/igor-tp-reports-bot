@@ -1953,24 +1953,66 @@ async function getLatestReportsByStudent(studentIds: string[]): Promise<Map<stri
   return map;
 }
 
-async function getLatestAnalysesByStudent(studentIds: string[]): Promise<Map<string, NutritionWeeklyAnalysis>> {
+// Дашборд тренера читает по строке на ученицу и берёт из разбора восемь полей. `select("*")`
+// тянул сюда ещё и пять jsonb (internal_summary, tp_past_week_context, tp_next_week_context,
+// nutrition_summary, context_snapshot) плюс coach_edits — самые тяжёлые колонки таблицы, и все
+// шесть выбрасывались. Отдельный УЗКИЙ тип, а не NutritionWeeklyAnalysis: если завтра кто-то
+// прочитает здесь nutritionSummary, TypeScript обязан упасть на компиляции. С общим типом
+// невыбранное поле молча стало бы undefined и сломалось только в бою.
+type NutritionDashboardAnalysis = {
+  id: string;
+  studentId: string;
+  reportId: string | null;
+  weekFrom: string;
+  weekTo: string;
+  status: NutritionWeeklyAnalysisStatus;
+  safetyFlags: Record<string, unknown>;
+  createdAt: string;
+};
+
+type NutritionDashboardAnalysisRow = {
+  id: string;
+  student_id: string;
+  report_id: string | null;
+  week_from: string;
+  week_to: string;
+  status: NutritionWeeklyAnalysisStatus;
+  safety_flags: unknown;
+  created_at: string;
+};
+
+const NUTRITION_DASHBOARD_ANALYSIS_COLUMNS =
+  "id,student_id,report_id,week_from,week_to,status,safety_flags,created_at";
+
+async function getLatestAnalysesByStudent(studentIds: string[]): Promise<Map<string, NutritionDashboardAnalysis>> {
   if (studentIds.length === 0) {
     return new Map();
   }
   const supabase = createSupabaseServerClient();
+  // archived_at не в списке колонок, но фильтровать по нему можно — PostgREST не требует,
+  // чтобы колонка фильтра попала в select.
   const { data, error } = await supabase
     .from("nutrition_weekly_analyses")
-    .select("*")
+    .select(NUTRITION_DASHBOARD_ANALYSIS_COLUMNS)
     .in("student_id", studentIds)
     .is("archived_at", null)
     .order("created_at", { ascending: false });
   if (error) {
     throw new Error(`Failed to load nutrition dashboard analyses: ${error.message}`);
   }
-  const map = new Map<string, NutritionWeeklyAnalysis>();
-  for (const row of (data as NutritionWeeklyAnalysisRow[]) ?? []) {
+  const map = new Map<string, NutritionDashboardAnalysis>();
+  for (const row of (data as unknown as NutritionDashboardAnalysisRow[]) ?? []) {
     if (!map.has(row.student_id)) {
-      map.set(row.student_id, mapNutritionWeeklyAnalysisRow(row));
+      map.set(row.student_id, {
+        id: row.id,
+        studentId: row.student_id,
+        reportId: row.report_id,
+        weekFrom: row.week_from,
+        weekTo: row.week_to,
+        status: row.status,
+        safetyFlags: toObject(row.safety_flags),
+        createdAt: row.created_at,
+      });
     }
   }
   return map;
@@ -2045,7 +2087,7 @@ export async function getNutritionWeightLogsByStudent(
   return result;
 }
 
-function hasHardSafetyFlag(analysis: NutritionWeeklyAnalysis | null): boolean {
+function hasHardSafetyFlag(analysis: NutritionDashboardAnalysis | null): boolean {
   if (!analysis) {
     return false;
   }
@@ -2057,7 +2099,7 @@ function hasHardSafetyFlag(analysis: NutritionWeeklyAnalysis | null): boolean {
 function resolveNextAction(row: {
   profile: NutritionStudentProfile | null;
   report: NutritionReport | null;
-  analysis: NutritionWeeklyAnalysis | null;
+  analysis: NutritionDashboardAnalysis | null;
   hasSafetyFlag: boolean;
 }): string {
   if (!row.profile?.enabled) {
