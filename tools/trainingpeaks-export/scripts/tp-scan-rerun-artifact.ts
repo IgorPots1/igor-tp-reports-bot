@@ -45,7 +45,7 @@ function findSet(arr: unknown, id: number): ZoneSet | null { if (!Array.isArray(
 type Lap = { lapIndex: number; timerTimeS: number | null; elapsedTimeS: number | null; isWork: boolean | null };
 function repBlockDurations(laps: Lap[]): number[] { const sorted = [...laps].sort((a, b) => a.lapIndex - b.lapIndex); const blocks: Lap[][] = []; let cur: Lap[] = []; for (const lap of sorted) { if (lap.isWork === true) cur.push(lap); else if (lap.isWork === false && cur.length) { blocks.push(cur); cur = []; } } if (cur.length) blocks.push(cur); return blocks.map((b) => b.reduce((s, l) => s + (l.timerTimeS ?? l.elapsedTimeS ?? 0), 0)).filter((d) => d >= MIN_REP_BLOCK_S); }
 
-type Est = { src: "забег" | "темпо-тест" | "интервалы" | "темпо"; rank: number; pace: number; conf: string; basis: string; date: string; lessReliable?: boolean };
+type Est = { src: "забег" | "забег без события" | "темпо-тест" | "интервалы" | "темпо"; rank: number; pace: number; conf: string; basis: string; date: string; lessReliable?: boolean };
 type Row = {
   aid: number; name: string; current: number | null; runSet?: { def: number | null; run: number | null }; anchor: number | null;
   ests: Est[]; proposed: number | null; propSrc: string | null; propBasis: string | null; propConf: string | null; propDate: string | null; lessReliable: boolean;
@@ -104,8 +104,9 @@ async function main(): Promise<void> {
   console.log(`race_events: ${(raceRows ?? []).length} · дистанция из названия (было null): ${raceDistFromTitle}`);
   const classify = (km: number): { tier: string; rank: number } => { if (km >= 9.5 && km <= 10.5) return { tier: "10к", rank: 0 }; if (km >= 20 && km <= 21.6) return { tier: "полумарафон", rank: 0 }; if (km >= 4.5 && km <= 5.5) return { tier: "5к", rank: 1 }; if (km >= 41.5 && km <= 43) return { tier: "марафон", rank: 1 }; return { tier: `${km}км`, rank: 2 }; };
   let racesDroppedSlow = 0, racesRecovered = 0;
-  type RaceCand = { proposed: number; rank: number; tier: string; conf: string; date: string; lessReliable: boolean; racePace: number; timeSec: number; recovered: boolean };
+  type RaceCand = { proposed: number; rank: number; tier: string; conf: string; date: string; lessReliable: boolean; racePace: number; timeSec: number; recovered: boolean; noEvent: boolean };
   const raceCands = new Map<number, RaceCand[]>(); // ALL eligible races per athlete (change 3 picks the best)
+  const eventMatched = new Set<string>(); // `${id}|${date}` of a real event's matched workout — the event-less pass skips these
   for (const r of races) {
     const id = Number(r.trainingpeaks_athlete_id); const officialM = (r.distance_km as number) * 1000;
     const { data: wc } = await sb.from("trainingpeaks_workout_cache").select("id, completed_distance_raw, completed_time_raw").eq("trainingpeaks_athlete_id", id).eq("workout_date", r.event_date);
@@ -129,14 +130,52 @@ async function main(): Promise<void> {
     const cls = classify(r.distance_km as number);
     const lessReliable = best.timeSec < RACE_REF_LOW_S || best.timeSec > RACE_REF_HIGH_S;
     const conf = cls.rank === 0 ? (lessReliable ? "medium" : "high") : lessReliable ? "low" : "medium";
-    const arr = raceCands.get(id) ?? []; arr.push({ proposed, rank: cls.rank, tier: cls.tier, conf, date: r.event_date as string, lessReliable, racePace, timeSec: best.timeSec, recovered }); raceCands.set(id, arr);
+    const arr = raceCands.get(id) ?? []; arr.push({ proposed, rank: cls.rank, tier: cls.tier, conf, date: r.event_date as string, lessReliable, racePace, timeSec: best.timeSec, recovered, noEvent: false }); raceCands.set(id, arr); eventMatched.add(`${id}|${r.event_date}`);
   }
+
+  // ── change 7 (2026-08-03): EVENT-LESS races — a fast CONTINUOUS run at a standard race distance that
+  // was never tagged as a race_event. Same VDOT→FTPa as a real race, flagged «забег без события» so
+  // Igor sees it is inferred and can reject. Gate: reps=0 (continuous), measured within ±5% of
+  // 5/10/21.1/42.2 km, pace ≥12% faster than the easy anchor (a hard effort, not a moderate long run).
+  // (Recovers Lobus 10.10км@42:53, Shorokh 10.10км@42:02 — real 10к that live as untagged workouts.)
+  {
+    const STD = [{ m: 5000, km: 5 }, { m: 10000, km: 10 }, { m: 21097.5, km: 21.0975 }, { m: 42195, km: 42.195 }];
+    const contMeta = new Map<string, { aid: number; date: string }>();
+    for (let f = 0; ; f += 1000) { const { data } = await sb.from("trainingpeaks_workout_derived_metrics").select("trainingpeaks_athlete_id, workout_cache_id, workout_date").eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", fromIso).lte("workout_date", today).range(f, f + 999); if (!data || !data.length) break; for (const r of data) contMeta.set(r.workout_cache_id as string, { aid: Number(r.trainingpeaks_athlete_id), date: r.workout_date as string }); if (data.length < 1000) break; }
+    const cids = [...contMeta.keys()]; let noEventAdded = 0;
+    for (let i = 0; i < cids.length; i += 300) {
+      const { data } = await sb.from("trainingpeaks_workout_cache").select("id, completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300));
+      for (const w of data ?? []) {
+        const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const tH = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm <= 0 || tH <= 0) continue;
+        const std = STD.find((s) => Math.abs(mm - s.m) / s.m <= 0.05); if (!std) continue;
+        const info = contMeta.get(w.id as string); if (!info) continue; const id = info.aid;
+        if (eventMatched.has(`${id}|${info.date}`)) continue; // this workout is already a real event's matched effort
+        const timeSec = tH * 3600; const racePace = timeSec / (std.m / 1000); if (!(racePace > 120 && racePace < 600)) continue;
+        const gateRef = anchor.get(id) ?? baseline.get(id);
+        // band: «заметно быстрее обычного» (≤ якорь×0.88 = ≥12% быстрее лёгкого) но НЕ быстрее якорь×0.62
+        // (>38% быстрее лёгкого на дистанции 5–42км физически невозможно = GPS-инфляция дистанции /
+        // не тот вид спорта — иначе «марафон 2:51» и подобный мусор попадают как самый быстрый «забег»).
+        if (gateRef === undefined || racePace > gateRef * 0.88 || racePace < gateRef * 0.62) continue;
+        const proposed = ftpaSecPerKm(vdotFromRace(std.m, timeSec)); if (!(proposed > 150 && proposed < 540)) continue;
+        const cls = classify(std.km); const lessReliable = timeSec < RACE_REF_LOW_S || timeSec > RACE_REF_HIGH_S;
+        const conf = cls.rank === 0 ? (lessReliable ? "low" : "medium") : "low"; // на ступень ниже подтверждённого забега
+        const arr = raceCands.get(id) ?? []; arr.push({ proposed, rank: cls.rank, tier: cls.tier, conf, date: info.date, lessReliable, racePace, timeSec, recovered: false, noEvent: true }); raceCands.set(id, arr); noEventAdded += 1;
+      }
+    }
+    console.log(`event-less races (забег без события): ${noEventAdded} candidate efforts`);
+  }
+
   // change 3: pick the BEST race per athlete = fastest derived threshold; recency is the tiebreak.
+  // PRIORITY (2026-08-03): a CONFIRMED race (race_events) always wins; an event-less workout is used
+  // ONLY when the athlete has no confirmed race at all. So a confirmed event is never overridden by an
+  // inferred effort — the event-less tier fills the gap, it does not compete with a real event.
   let raceMatched = 0;
   for (const [id, cands] of raceCands) {
-    cands.sort((a, b) => a.proposed - b.proposed || b.date.localeCompare(a.date));
-    const c = cands[0]; raceMatched += 1; if (c.recovered) racesRecovered += 1;
-    addEst(id, { src: "забег", rank: c.rank, pace: c.proposed, conf: c.conf, date: c.date, lessReliable: c.lessReliable, basis: `${c.date} · ${c.tier} · ${fmtClock(c.timeSec)} (темп ${fmtPace(c.racePace)})${c.recovered ? " ·GPS-восст" : ""}${c.lessReliable ? " ·⚠далеко от часа" : ""}${cands.length > 1 ? ` · лучший из ${cands.length}` : ""}` });
+    const confirmed = cands.filter((x) => !x.noEvent);
+    const pool = confirmed.length ? confirmed : cands; // event-less only when no confirmed race exists
+    pool.sort((a, b) => a.proposed - b.proposed || b.date.localeCompare(a.date));
+    const c = pool[0]; raceMatched += 1; if (c.recovered) racesRecovered += 1;
+    addEst(id, { src: c.noEvent ? "забег без события" : "забег", rank: c.rank, pace: c.proposed, conf: c.conf, date: c.date, lessReliable: c.lessReliable, basis: `${c.date} · ${c.tier} · ${fmtClock(c.timeSec)} (темп ${fmtPace(c.racePace)})${c.recovered ? " ·GPS-восст" : ""}${c.lessReliable ? " ·⚠далеко от часа" : ""}${c.noEvent ? " ·без события (быстрый воркаут на дистанции, не помечен забегом)" : ""}${pool.length > 1 ? ` · лучший из ${pool.length}` : ""}` });
   }
   console.log(`races matched: ${raceMatched} · dropped too-slow: ${racesDroppedSlow} · recovered(distMismatch): ${racesRecovered}`);
 
@@ -202,8 +241,13 @@ async function main(): Promise<void> {
     const sIds = [...new Set((splitRows ?? []).map((r) => r.workout_cache_id as string))]; const sLaps = new Map<string, Lap[]>();
     for (let i = 0; i < sIds.length; i += 150) { const { data } = await sb.from("trainingpeaks_workout_laps").select("workout_cache_id, lap_index, timer_time_s, elapsed_time_s, is_work").in("workout_cache_id", sIds.slice(i, i + 150)); for (const l of data ?? []) { const key = l.workout_cache_id as string; const lap: Lap = { lapIndex: l.lap_index as number, timerTimeS: l.timer_time_s as number, elapsedTimeS: l.elapsed_time_s as number, isWork: l.is_work as boolean }; const arr = sLaps.get(key); if (arr) arr.push(lap); else sLaps.set(key, [lap]); } }
     for (const dm of splitRows ?? []) { if (!Array.isArray(dm.rep_paces) || !dm.rep_paces.length) continue; const durs = repBlockDurations(sLaps.get(dm.workout_cache_id as string) ?? []); if (durs.length !== dm.rep_paces.length) continue; const total = durs.reduce((s, d) => s + d, 0); if (!durs.every((d) => d >= 600) || total < 1200 || total > 2700) continue; const paces = dm.rep_paces.filter((p) => p > 150 && p < 540); if (!paces.length) continue; considerTT(Number(dm.trainingpeaks_athlete_id), median(paces), dm.workout_date as string, total, `сплит ${durs.length}×блок`); } }
-  for (const [id, x] of tt) addEst(id, { src: "темпо-тест", rank: 3, pace: x.pace, conf: x.n >= 2 ? "medium" : "low", date: x.date, basis: `тест ${Math.round(x.dur / 60)}мин напрямую (${x.how}${x.n > 1 ? `, лучший из ${x.n}` : ""}), посл. ${x.date}` });
-  console.log(`tempo-test (rank3): ${tt.size} athletes`);
+  // change 4 ОТКЛЮЧЕНО (2026-08-03): темпо-тест (rank 3) выключен целиком. Проверено 11/11 — детектор
+  // режет ровную середину ЛЁГКОГО/ДЛИТЕЛЬНОГО бега (темп сегмента ≈ средний темп всей тренировки),
+  // это не пороговый тест, а систематическое занижение. Вернуть, когда тренер назначает тесты явно
+  // и их можно узнать по названию тренировки.
+  const TEMPO_TEST_ENABLED: boolean = false;
+  if (TEMPO_TEST_ENABLED) for (const [id, x] of tt) addEst(id, { src: "темпо-тест", rank: 3, pace: x.pace, conf: x.n >= 2 ? "medium" : "low", date: x.date, basis: `тест ${Math.round(x.dur / 60)}мин напрямую (${x.how}${x.n > 1 ? `, лучший из ${x.n}` : ""}), посл. ${x.date}` });
+  console.log(`tempo-test (rank3): ОТКЛЮЧЁН (${TEMPO_TEST_ENABLED ? tt.size : 0} added)`);
 
   // ── change 5: calibrate the interval tier against the race tier ──
   // k = race_pace / interval_pace over athletes with BOTH sources. Exclude sensor garbage (an interval
@@ -250,9 +294,9 @@ async function main(): Promise<void> {
     const propDate = best?.date ?? null;
     const ratio = anc !== null && proposed ? anc / proposed : null;
     // dual-path: two INDEPENDENT numeric paths (race + interval/tempo). anchor-ratio is the self-check, not a path.
-    const numeric = es.filter((e) => e.src === "забег" || e.src === "темпо-тест" || e.src === "интервалы" || e.src === "темпо");
+    const numeric = es.filter((e) => e.src === "забег" || e.src === "забег без события" || e.src === "темпо-тест" || e.src === "интервалы" || e.src === "темпо");
     let dual: Row["dual"] = { second: null, secondSrc: null, deltaSec: null, dispute: false };
-    const raceEst = numeric.find((e) => e.src === "забег");
+    const raceEst = numeric.find((e) => e.src === "забег" || e.src === "забег без события");
     const fitEst = numeric.find((e) => e.src === "темпо-тест" || e.src === "интервалы" || e.src === "темпо");
     if (raceEst && fitEst) {
       // the meaningful cross-check: race (E-Predictor) vs measured FIT effort. Disagreement >20s
