@@ -1,4 +1,5 @@
 import { isClubAdminEnabled, listClubUpcomingRequests, type ClubUpcomingRequest } from "@/features/club-admin/repository";
+import { isClubNotesAutoApproveEnabled, isClubDayoffAutoApproveEnabled } from "@/features/club/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,16 @@ export default async function ClubUpcomingPage() {
   const sentCount = entries.filter((e) => e.sentToTp).length;
   const conflictCount = entries.filter((e) => e.plannedConflict && e.kind === "day_off").length;
 
+  // Auto-approve flags live in TWO runtimes: Vercel (this admin page + request CREATION via the
+  // mini-app) and the Mac runner (.env.local, TP sending). Requests are CREATED on Vercel, so
+  // auto-approve must be set HERE. This page reads Vercel's env — so if a flag is off here while
+  // matching requests pile up in pending, the flag was set only on the runner (the mismatch Igor hit).
+  const pendingSoft = entries.filter((e) => e.status === "pending" && (e.kind === "note" || e.kind === "preference")).length;
+  const pendingDayoff = entries.filter((e) => e.status === "pending" && e.kind === "day_off").length;
+  const autoApproveGaps: string[] = [];
+  if (pendingSoft > 0 && !isClubNotesAutoApproveEnabled()) autoApproveGaps.push("заметки и пожелания (CLUB_NOTES_AUTO_APPROVE)");
+  if (pendingDayoff > 0 && !isClubDayoffAutoApproveEnabled()) autoApproveGaps.push("выходные (CLUB_DAYOFF_AUTO_APPROVE)");
+
   return (
     <section className="admin-section">
       <div className="admin-section-header">
@@ -43,6 +54,12 @@ export default async function ClubUpcomingPage() {
         <span><strong>Ушло в TP:</strong> {sentCount}</span>
         {conflictCount > 0 ? <span className="admin-badge admin-badge-warning">конфликтов с тренировкой: {conflictCount}</span> : null}
       </div>
+
+      {autoApproveGaps.length > 0 ? (
+        <div className="admin-alert admin-alert-warning" style={{ marginTop: 12 }}>
+          <strong>⚠ Авто-подтверждение не выставлено на Vercel.</strong> Флаг читается в ДВУХ рантаймах: на Vercel (где ученики создают заявки) и у раннера (<code>.env.local</code>, отправка в TP). Заявки создаются на Vercel — значит авто-подтверждение должно стоять именно там. Сейчас на этой стороне (Vercel) выключено: {autoApproveGaps.join(", ")}. Пока не выставишь флаг в Vercel и не передеплоишь, новые заявки будут копиться в pending; старые подтверди вручную на «Календаре».
+        </div>
+      ) : null}
 
       {dates.length === 0 ? (
         <div className="admin-card" style={{ marginTop: 12 }}><span className="admin-summary-label">Заявок на ближайшие 45 дней нет.</span></div>

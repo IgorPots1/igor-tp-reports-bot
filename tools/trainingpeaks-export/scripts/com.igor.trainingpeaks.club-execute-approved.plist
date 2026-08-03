@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Auto-drain approved club_calendar_entries into TrainingPeaks every 30 min (on :10 and :40,
-     offset from the cache/fit/materialize runners). Executes ONLY when CLUB_TP_EXECUTION_ENABLED=true
-     (set in ~/.bash_profile, read via bash -lc). Flag off → the runner dry-runs, writes nothing.
+<!-- Auto-drain approved club_calendar_entries into TrainingPeaks every 5 min (StartInterval 300s),
+     so a student's start / day-off reaches TP within ~5 min instead of up to 30. Safe to run often:
+     an idle run is just a DB query — club-execute-approved-once.ts logs into TP ONLY when the
+     approved queue is non-empty, so TP-login frequency is bounded by real submissions, not poll rate.
+     Executes ONLY when CLUB_TP_EXECUTION_ENABLED=true (set in ~/.bash_profile, read via bash -lc).
+     Flag off → the runner dry-runs, writes nothing.
      Install by Igor AFTER a manual dry-run review:
        cp .../com.igor.trainingpeaks.club-execute-approved.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.club-execute-approved.plist -->
@@ -21,11 +24,8 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <key>StartCalendarInterval</key>
-  <array>
-    <dict><key>Minute</key><integer>10</integer></dict>
-    <dict><key>Minute</key><integer>40</integer></dict>
-  </array>
+  <key>StartInterval</key>
+  <integer>300</integer>
 
   <key>StandardOutPath</key>
   <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-execute-approved.launchd.out.log</string>
