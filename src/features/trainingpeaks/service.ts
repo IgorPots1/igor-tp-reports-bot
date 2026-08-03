@@ -1070,10 +1070,23 @@ export async function createTrainingPeaksGroupMoveRequestCase(
       };
     }
 
-    const existingObservation = await getTrainingPeaksTelegramContextObservationByChatMessage({
+    const observationLookup = await getTrainingPeaksTelegramContextObservationByChatMessage({
       chatId,
       messageId: String(messageId),
     });
+
+    // The lookup no longer throws on its own (it reports "unavailable" instead), but this
+    // path must keep the old contract: if we cannot tell whether an observation already
+    // exists, do NOT fall through to insert — that would duplicate it. Rethrow so the
+    // surrounding handler treats it exactly as it treated a failed lookup before.
+    if (observationLookup.status === "unavailable") {
+      throw new Error(
+        `Failed to get TrainingPeaks context observation by chat/message ${chatId}/${messageId}: ${observationLookup.reason}`
+      );
+    }
+
+    const existingObservation =
+      observationLookup.status === "found" ? observationLookup.observation : null;
 
     const contextObservationId =
       existingObservation?.id ??

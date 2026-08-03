@@ -21,7 +21,7 @@ function generateToken(): string {
 
 export type ClubTokenResolution =
   | { ok: true; studentId: string; displayName: string }
-  | { ok: false; reason: "not_found" | "used" | "expired" | "revoked" };
+  | { ok: false; reason: "not_found" | "used" | "expired" | "revoked" | "unavailable" };
 
 /**
  * Resolve a token to its student WITHOUT burning it (used by the non-binding peek).
@@ -37,9 +37,14 @@ export async function resolveClubLinkToken(token: string): Promise<ClubTokenReso
     .select("student_id, expires_at, used_at, revoked_at")
     .eq("token", clean)
     .maybeSingle();
-  if (error || !data) {
-    // A real DB error (permission/schema) must not read as "invalid link" to the student.
+  if (error) {
+    // A real DB error (permission/schema/timeout) must not read as "invalid link" to the student —
+    // the comment here always said so, but the code returned not_found anyway and the student was
+    // told their perfectly good link was dead. Report it as an outage and let the caller answer 503.
     logClubDbError("resolveClubLinkToken", error);
+    return { ok: false, reason: "unavailable" };
+  }
+  if (!data) {
     return { ok: false, reason: "not_found" };
   }
   const row = data as { student_id: string; expires_at: string; used_at: string | null; revoked_at: string | null };

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
-import { createSupabaseServerClient, withSupabaseNetworkRetry } from "@/features/supabase/server";
+import {
+  createSupabaseServerClient,
+  describeSupabaseError,
+  withSupabaseNetworkRetry,
+} from "@/features/supabase/server";
 import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
 import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import type { ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
@@ -3148,7 +3152,7 @@ export async function getTrainingPeaksStudentByTelegramUserId(
 
   if (error) {
     throw new Error(
-      `Failed to get TrainingPeaks student by telegram_user_id ${telegramUserId}: ${error.message}`
+      `Failed to get TrainingPeaks student by telegram_user_id ${telegramUserId}: ${describeSupabaseError(error)}`
     );
   }
 
@@ -3200,7 +3204,7 @@ export async function linkTelegramUserIdToStudent(
 
   if (existingByUserError) {
     throw new Error(
-      `Failed to look up student by telegram_user_id ${telegramUserId}: ${existingByUserError.message}`
+      `Failed to look up student by telegram_user_id ${telegramUserId}: ${describeSupabaseError(existingByUserError)}`
     );
   }
 
@@ -3282,7 +3286,7 @@ export async function getTrainingPeaksStudentByTelegramChatId(
 
   if (error) {
     throw new Error(
-      `Failed to get TrainingPeaks student by telegram_chat_id ${normalizedChatId}: ${error.message}`
+      `Failed to get TrainingPeaks student by telegram_chat_id ${normalizedChatId}: ${describeSupabaseError(error)}`
     );
   }
 
@@ -3312,7 +3316,7 @@ export async function listTrainingPeaksStudentsByTelegramChatId(
 
   if (error) {
     throw new Error(
-      `Failed to list TrainingPeaks students by telegram_chat_id ${normalizedChatId}: ${error.message}`
+      `Failed to list TrainingPeaks students by telegram_chat_id ${normalizedChatId}: ${describeSupabaseError(error)}`
     );
   }
 
@@ -3634,7 +3638,7 @@ export async function upsertTrainingPeaksBusinessChatFromMessage(
     .single());
 
   if (error) {
-    throw new Error(`Failed to upsert TrainingPeaks business chat: ${error.message}`);
+    throw new Error(`Failed to upsert TrainingPeaks business chat: ${describeSupabaseError(error)}`);
   }
 
   return mapTrainingPeaksBusinessChatRow(data as TrainingPeaksBusinessChatRow);
@@ -6768,7 +6772,9 @@ export async function insertTrainingPeaksTelegramContextObservation(
     .single();
 
   if (error) {
-    throw new Error(`Failed to insert TrainingPeaks telegram context observation: ${error.message}`);
+    throw new Error(
+      `Failed to insert TrainingPeaks telegram context observation: ${describeSupabaseError(error)}`
+    );
   }
 
   let contactSource: TrainingPeaksStudentContactEventSource | null = null;
@@ -7127,33 +7133,56 @@ export async function hasTrainingPeaksTelegramContextObservationForChatTextHash(
   return Boolean(data);
 }
 
+/**
+ * Three outcomes, not two. "Not found" and "could not check" are different facts
+ * and the caller must be able to tell them apart: on 2026-08-03 the DB answered
+ * Cloudflare 522 for ~50 minutes, this lookup failed 36 times, and the webhook read
+ * every failure as "no duplicate" and re-processed the message (confirmed double
+ * pass on chat 444252056 / message 852639 at 10:44:50 and 10:46:10 UTC).
+ *
+ * This function therefore never throws and never collapses the two: a caller that
+ * gets "unavailable" must NOT run side effects on the assumption the message is new.
+ */
+export type TrainingPeaksContextObservationLookup =
+  | { status: "found"; observation: { id: string } }
+  | { status: "not_found" }
+  | { status: "unavailable"; reason: string };
+
 export async function getTrainingPeaksTelegramContextObservationByChatMessage(input: {
   chatId: string;
   messageId: string;
-}): Promise<{ id: string } | null> {
+}): Promise<TrainingPeaksContextObservationLookup> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await withSupabaseNetworkRetry(() =>
-    supabase
-      .from("trainingpeaks_telegram_context_observations")
-      .select("id")
-      .eq("chat_id", input.chatId)
-      .eq("message_id", input.messageId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-  );
+
+  let data: unknown = null;
+  let error: unknown = null;
+
+  try {
+    ({ data, error } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_telegram_context_observations")
+        .select("id")
+        .eq("chat_id", input.chatId)
+        .eq("message_id", input.messageId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    ));
+  } catch (thrown) {
+    // The request never produced a result at all (socket / DNS / gateway). Same
+    // class of "unknown" as a PostgREST error — report it, never guess.
+    return { status: "unavailable", reason: describeSupabaseError(thrown) };
+  }
 
   if (error) {
-    throw new Error(
-      `Failed to get TrainingPeaks context observation by chat/message ${input.chatId}/${input.messageId}: ${error.message}`
-    );
+    return { status: "unavailable", reason: describeSupabaseError(error) };
   }
 
   if (!data) {
-    return null;
+    return { status: "not_found" };
   }
 
-  return { id: (data as { id: string }).id };
+  return { status: "found", observation: { id: (data as { id: string }).id } };
 }
 
 export async function updateTrainingPeaksStudentTelegramContextById(
@@ -10908,7 +10937,9 @@ export async function recordTrainingPeaksStudentContactEvent(
     .single();
 
   if (error) {
-    throw new Error(`Failed to record TrainingPeaks student contact event: ${error.message}`);
+    throw new Error(
+      `Failed to record TrainingPeaks student contact event: ${describeSupabaseError(error)}`
+    );
   }
 
   return mapTrainingPeaksStudentContactEventRow(data as TrainingPeaksStudentContactEventRow);
@@ -10967,7 +10998,7 @@ export async function listRecentTrainingPeaksStudentContactEvents(input: {
 
   if (error) {
     throw new Error(
-      `Failed to list recent TrainingPeaks student contact events for ${input.studentId}: ${error.message}`
+      `Failed to list recent TrainingPeaks student contact events for ${input.studentId}: ${describeSupabaseError(error)}`
     );
   }
 

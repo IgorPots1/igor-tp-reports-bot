@@ -69,6 +69,15 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // Not bound → a VALID token is required.
   const resolved = await resolveClubLinkToken(token);
+  // Infrastructure failure is not a bad link: do NOT log a conflict against this student and do not
+  // tell them the link is dead — that sends them to the coach over a database blip.
+  if (!resolved.ok && resolved.reason === "unavailable") {
+    return jsonResponse(503, {
+      ok: false,
+      error: "Клуб временно недоступен, попробуй через пару минут.",
+      code: "unavailable",
+    });
+  }
   if (!resolved.ok) {
     await logClubLinkEvent({
       telegramUserId: tgUser.id,

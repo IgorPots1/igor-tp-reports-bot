@@ -24,6 +24,7 @@ import {
 } from "@/features/trainingpeaks/context-observer";
 import { handleTrainingPeaksGroupProbe } from "@/features/trainingpeaks/group-probe";
 import { handleClubStartCommand } from "@/features/club/start-onboarding";
+import { describeSupabaseError } from "@/features/supabase/server";
 import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
@@ -157,30 +158,41 @@ export async function POST(request: Request) {
 
     // Dedup guard: Telegram retries the webhook with the same update_id if it does not receive
     // a timely 200. The observation table records each processed (chat_id, message_id) pair, so
-    // a non-null hit here means this exact message was already handled — skip everything
+    // a "found" hit here means this exact message was already handled — skip everything
     // (including any Haiku call) and return 200 immediately.
+    //
+    // FAIL CLOSED. Until 2026-08-03 a failed check was treated as "no duplicate" and processing
+    // continued: during the ~50 min Supabase 522 outage that fired 36 times and produced a real
+    // double pass (chat 444252056 / message 852639 at 10:44:50 and 10:46:10 UTC). When we cannot
+    // tell whether this message was already handled, the only safe answer is to run NO side
+    // effects and let Telegram redeliver — its retry is the designed recovery path, and a delayed
+    // update is strictly better than a duplicated one (duplicate coach memory, duplicate contact
+    // events, a second Haiku extraction).
     if (bmChatId) {
-      try {
-        const alreadyProcessed = await getTrainingPeaksTelegramContextObservationByChatMessage({
+      const dedupLookup = await getTrainingPeaksTelegramContextObservationByChatMessage({
+        chatId: bmChatId,
+        messageId: bmMessageId,
+      });
+
+      if (dedupLookup.status === "found") {
+        console.info("Telegram business message dedup: skipping already-processed message", {
+          event: "telegram_business_message_dedup_skip",
+          updateId: update.update_id,
           chatId: bmChatId,
           messageId: bmMessageId,
         });
-        if (alreadyProcessed) {
-          console.info("Telegram business message dedup: skipping already-processed message", {
-            event: "telegram_business_message_dedup_skip",
-            updateId: update.update_id,
-            chatId: bmChatId,
-            messageId: bmMessageId,
-          });
-          return okResponse();
-        }
-      } catch (dedupError) {
-        // Dedup check failure is non-fatal: let processing continue rather than silently dropping.
-        console.warn("Telegram business message dedup check failed, processing anyway", {
-          event: "telegram_business_message_dedup_error",
+        return okResponse();
+      }
+
+      if (dedupLookup.status === "unavailable") {
+        console.error("Telegram business message dedup check unavailable, refusing to process", {
+          event: "telegram_business_message_dedup_unavailable",
+          updateId: update.update_id,
           chatId: bmChatId,
-          error: dedupError,
+          messageId: bmMessageId,
+          reason: dedupLookup.reason,
         });
+        return errorResponse(503, "Dedup check unavailable, retry later.");
       }
     }
 
@@ -190,14 +202,27 @@ export async function POST(request: Request) {
       textPreview: buildTelegramContextTextPreview(businessMessageText),
     });
 
+    // FAIL CLOSED, part two — and this is where the 2026-08-03 messages were actually lost. The
+    // dedup guard above was only half the story: handling threw (35x "Failed to upsert TrainingPeaks
+    // business chat"), the catch swallowed it, and we still answered 200. Telegram takes 200 as
+    // "delivered", stops retrying, and the message is gone for good — no observation row, no coach
+    // memory, no operational signal. Measured aftermath: business observations fell from 25/h and
+    // 20/h before the outage to 2, 2 and 1 in the outage hours, with ZERO duplicates in the table.
+    //
+    // Answering 503 instead hands the update back to Telegram, which redelivers it — and the dedup
+    // guard above makes that redelivery safe, because a first pass that DID write the observation
+    // is recognised and skipped. Loss is permanent; a retry is not.
     try {
       await handleTrainingPeaksTelegramBusinessMessage(update.business_message);
     } catch (error) {
-      console.warn("Failed to handle Telegram business message", {
+      console.error("Failed to handle Telegram business message, asking Telegram to redeliver", {
+        event: "telegram_business_message_handling_failed",
+        updateId: update.update_id,
         businessConnectionId: update.business_message.business_connection_id,
         chatId: update.business_message.chat?.id,
-        error,
+        error: describeSupabaseError(error),
       });
+      return errorResponse(503, "Business message handling failed, retry later.");
     }
 
     return okResponse();

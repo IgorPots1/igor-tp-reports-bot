@@ -28,6 +28,7 @@ import { isClubLinkTokensEnabled, clubCoachParticipantStudentId } from "./consta
 import { recordClubAccessRequest } from "./access-requests";
 import { recordClubOpen, deriveOpenSection } from "./club-open";
 import { getTrainingPeaksStudentById } from "@/features/trainingpeaks/repository";
+import { describeSupabaseError } from "@/features/supabase/server";
 
 /** Outer mini-app gate + club feature flag. Both must be on. */
 export function isClubEnabled(): boolean {
@@ -57,7 +58,10 @@ export type ClubStudentResolution =
         | "needs_link"
         | "wrong_target"
         | "invalid_link"
-        | "needs_request";
+        | "needs_request"
+        // Infrastructure said "I don't know", not "you may not". Kept separate from every code
+        // above it so the student is never told they lack access because the DB blinked.
+        | "unavailable";
       /** Present with needs_confirm: who the link says this account is. */
       candidate?: { studentId: string; displayName: string };
     };
@@ -123,7 +127,23 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
     // change to the guard for any other account. Without the env, the 403 stands.
     const participantId = clubCoachParticipantStudentId();
     if (participantId) {
-      const participant = await getTrainingPeaksStudentById(participantId).catch(() => null);
+      // Same rule as below: a failed lookup must not silently degrade into "no such participant",
+      // which would show the coach the coach_account 403 for a row that exists and is fine.
+      let participant: TrainingPeaksStudent | null = null;
+      try {
+        participant = await getTrainingPeaksStudentById(participantId);
+      } catch (error) {
+        console.error("[club.resolve] coach participant lookup unavailable", {
+          event: "club_resolve_participant_unavailable",
+          error: describeSupabaseError(error),
+        });
+        return {
+          ok: false,
+          httpStatus: 503,
+          error: "Клуб временно недоступен, попробуй через пару минут.",
+          code: "unavailable",
+        };
+      }
       if (participant) {
         console.info(`[club.resolve] coach_participant user=${user.id} student=${participant.id}`);
         await recordClubOpen(participant.id, user.id, deriveOpenSection(startParamToken(initData)));
@@ -142,7 +162,29 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
 
   const token = startParamToken(initData);
   const tokensOn = isClubLinkTokensEnabled();
-  const existing = await getTrainingPeaksStudentByTelegramUserId(user.id).catch(() => null);
+
+  // A failed lookup is NOT "this account is unbound". Until 2026-08-03 the error was swallowed to
+  // null, so during the Supabase outage a properly bound student fell through to the bottom of this
+  // function, had a bogus access request written for them, and was told "Заявка отправлена — тренер
+  // подтвердит доступ" (403) — a member locked out of their own club by a database blip, with a
+  // spurious row in club_access_requests for the coach to sort out. Report the outage as an outage.
+  let existing: TrainingPeaksStudent | null = null;
+  try {
+    existing = await getTrainingPeaksStudentByTelegramUserId(user.id);
+  } catch (error) {
+    console.error("[club.resolve] student lookup unavailable", {
+      event: "club_resolve_lookup_unavailable",
+      telegramUserId: user.id,
+      error: describeSupabaseError(error),
+    });
+    return {
+      ok: false,
+      httpStatus: 503,
+      error: "Клуб временно недоступен, попробуй через пару минут.",
+      code: "unavailable",
+    };
+  }
+
   if (existing) {
     console.info(`[club.resolve] ok user=${user.id} student=${existing.id}`);
     // Already bound → own data only. Under the token flow, a token naming a DIFFERENT
@@ -165,6 +207,14 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
   // Token flow (only when CLUB_LINK_TOKENS_ENABLED): personal one-time link → confirm.
   if (token && tokensOn) {
     const resolved = await resolveClubLinkToken(token);
+    if (!resolved.ok && resolved.reason === "unavailable") {
+      return {
+        ok: false,
+        httpStatus: 503,
+        error: "Клуб временно недоступен, попробуй через пару минут.",
+        code: "unavailable",
+      };
+    }
     if (!resolved.ok) {
       return {
         ok: false,
@@ -184,12 +234,28 @@ export async function resolveClubStudent(initDataRaw: unknown): Promise<ClubStud
 
   // Default flow: general link → record an access request, show the waiting screen.
   // No club data is exposed; the coach matches the request to a student in the admin.
-  await recordClubAccessRequest({
+  const requestRecorded = await recordClubAccessRequest({
     id: user.id,
     username: user.username,
     first_name: user.firstName,
     last_name: user.lastName,
   });
+
+  // If the request could not even be written, telling the student "заявка отправлена" is a lie —
+  // the coach will never see it and the student will wait forever. Infrastructure failure, say so.
+  if (requestRecorded === "unavailable") {
+    console.error("[club.resolve] access request could not be recorded", {
+      event: "club_access_request_unavailable",
+      telegramUserId: user.id,
+    });
+    return {
+      ok: false,
+      httpStatus: 503,
+      error: "Клуб временно недоступен, попробуй через пару минут.",
+      code: "unavailable",
+    };
+  }
+
   return {
     ok: false,
     httpStatus: 403,
