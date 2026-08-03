@@ -1,3 +1,4 @@
+import { describeSupabaseError } from "@/features/supabase/server";
 import {
   getTrainingPeaksCoachCaseById,
   getTrainingPeaksCoachCaseDetailsById,
@@ -4140,13 +4141,27 @@ export async function applyTrainingPeaksRosterImportSelection(
   const results: ApplyTrainingPeaksRosterImportResult["results"] = [];
 
   for (const row of rows) {
-    const created = await createTrainingPeaksStudent({
-      studentId: row.student_id,
-      studentName: row.student_name,
-      trainingPeaksAthleteUrl: row.trainingpeaks_athlete_url,
-      weeklyReportEnabled: false,
-      dataQualityStatus: "ok",
-    });
+    // Импорт ростера идёт построчно: падение на пятой строке из тридцати оставляло двадцать пять
+    // неимпортированными, а тренер видел «импорт прошёл» по первым четырём. Теперь сбойная строка
+    // отмечается в результате, остальные импортируются.
+    let created: Awaited<ReturnType<typeof createTrainingPeaksStudent>> | null = null;
+    try {
+      created = await createTrainingPeaksStudent({
+        studentId: row.student_id,
+        studentName: row.student_name,
+        trainingPeaksAthleteUrl: row.trainingpeaks_athlete_url,
+        weeklyReportEnabled: false,
+        dataQualityStatus: "ok",
+      });
+    } catch (error) {
+      results.push({
+        student_id: row.student_id,
+        student_name: row.student_name,
+        outcome: "failed",
+        message: describeSupabaseError(error),
+      });
+      continue;
+    }
 
     if (created.ok) {
       results.push({ student_id: row.student_id, student_name: row.student_name, outcome: "inserted" });

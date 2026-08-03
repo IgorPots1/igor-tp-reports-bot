@@ -18,6 +18,7 @@ import {
 import { getFinalTrainingPeaksReportMarkdown, sendTrainingPeaksWeeklyReportToStudent } from "@/features/trainingpeaks/report-delivery";
 import type { TrainingPeaksRegistryStudentSnapshot } from "@/features/trainingpeaks/service";
 import {
+  getTrainingPeaksStudentContactStatus as getTrainingPeaksStudentContactStatusInService,
   listAllTrainingPeaksReports,
   type TrainingPeaksStudentContactStatus,
   type TrainingPeaksWeeklyReport,
@@ -491,15 +492,25 @@ export async function getTrainingPeaksAdminReportById(
 export async function getTrainingPeaksAdminStudentById(
   studentId: string
 ): Promise<TrainingPeaksAdminStudentRecord | null> {
-  const [students, contactStatuses] = await Promise.all([
+  // Карточка ОДНОГО ученика читала контактный статус ВСЕХ активных через вью
+  // trainingpeaks_student_contact_status, а вью — агрегат по всей таблице событий
+  // (22 428 строк ради 114 на выходе, Seq Scan). Из 114 строк 113 выбрасывались.
+  // Это не «неоптимально», а лишняя работа по ошибке: нужен ровно один student_id, и точечная
+  // выборка по нему (getTrainingPeaksStudentContactStatus) существовала всё это время.
+  // Чинит сразу двух вызывающих: /admin/students/[studentId] и /admin/billing/clients/[id].
+  const [students, contactStatus] = await Promise.all([
     getTrainingPeaksStudentsRegistryWithLatestReportStatus({
       includeArchived: true,
     }),
-    listTrainingPeaksStudentContactStatusInService(),
+    getTrainingPeaksStudentContactStatusInService(studentId),
   ]);
-  const hydratedStudents = mergeTrainingPeaksAdminStudentContactStatus(students, contactStatuses);
 
-  return hydratedStudents.find((student) => student.id === studentId) ?? null;
+  const student = students.find((candidate) => candidate.id === studentId);
+  if (!student) {
+    return null;
+  }
+
+  return { ...student, contactStatus: contactStatus ?? null };
 }
 
 export async function listTrainingPeaksAdminReportsForStudent(

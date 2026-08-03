@@ -202,11 +202,25 @@ async function run(): Promise<void> {
     return;
   }
 
+  let linkFailures = 0;
   for (const candidate of candidates) {
-    const updated = await updateBillingClientById(candidate.billingClientId, {
-      studentId: candidate.studentId,
-      updatedBy: "script:billing-auto-link-trainingpeaks-students",
-    });
+    // Сбой связывания ОДНОГО клиента не должен уносить остальных: undici бросает «fetch failed»
+    // мимо проверки error, и падение на третьем из двадцати оставляло семнадцать несвязанными
+    // без единой строки в логе о том, что они вообще были.
+    let updated: Awaited<ReturnType<typeof updateBillingClientById>> | null = null;
+    try {
+      updated = await updateBillingClientById(candidate.billingClientId, {
+        studentId: candidate.studentId,
+        updatedBy: "script:billing-auto-link-trainingpeaks-students",
+      });
+    } catch (error) {
+      linkFailures += 1;
+      console.error(
+        `Не смог связать billing client ${candidate.billingClientId} → ${candidate.studentId}, продолжаю: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+      continue;
+    }
 
     if (!updated || updated.studentId !== candidate.studentId) {
       throw new Error(

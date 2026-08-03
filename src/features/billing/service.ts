@@ -1,3 +1,4 @@
+import { describeSupabaseError } from "@/features/supabase/server";
 import {
   getBillingImportedPaymentsByExternalHashes,
   getBillingClientById,
@@ -845,11 +846,21 @@ export async function setBillingClientActive(input: {
     const months = await listBillingMonthlyPaymentsForClient(input.clientId);
     for (const month of months) {
       if (month.status === "pending" || month.status === "overdue" || month.status === "manual_review") {
-        await updateBillingMonthlyPaymentById(month.id, {
-          status: "paused",
-          updated_by: input.actor,
-        });
-        pausedMonths += 1;
+        // Приостановка месяцев идёт циклом: сбой на одном не должен оставлять остальные
+        // активными и молча — иначе клиент выглядит частично приостановленным без следа.
+        try {
+          await updateBillingMonthlyPaymentById(month.id, {
+            status: "paused",
+            updated_by: input.actor,
+          });
+          pausedMonths += 1;
+        } catch (error) {
+          console.error("[billing] месяц не приостановлен, продолжаю остальные", {
+            event: "billing_pause_month_failed",
+            monthId: month.id,
+            error: describeSupabaseError(error),
+          });
+        }
       }
     }
   }

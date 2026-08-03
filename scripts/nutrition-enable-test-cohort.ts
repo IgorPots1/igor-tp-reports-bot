@@ -276,15 +276,24 @@ async function run(): Promise<void> {
       continue;
     }
 
-    await upsertNutritionStudentProfile({
-      studentId: item.studentId,
-      enabled: true,
-      goal: profile?.goal ?? null,
-      trackingApp: profile?.trackingApp ?? null,
-      currentWeightKg: profile?.currentWeightKg ?? null,
-      toleranceNotes: profile?.toleranceNotes ?? null,
-      coachNotes: profile?.coachNotes ?? null,
-    });
+    // Один сбой не должен обрывать включение остальной когорты.
+    try {
+      await upsertNutritionStudentProfile({
+        studentId: item.studentId,
+        enabled: true,
+        goal: profile?.goal ?? null,
+        trackingApp: profile?.trackingApp ?? null,
+        currentWeightKg: profile?.currentWeightKg ?? null,
+        toleranceNotes: profile?.toleranceNotes ?? null,
+        coachNotes: profile?.coachNotes ?? null,
+      });
+    } catch (error) {
+      console.error(
+        `${LOG_PREFIX} enable_failed student=${item.studentName} slug=${item.studentSlug}: ` +
+          `${error instanceof Error ? error.message : String(error)}`
+      );
+      continue;
+    }
     enabledCount += 1;
     if (!profile) {
       createdProfilesCount += 1;

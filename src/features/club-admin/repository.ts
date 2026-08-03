@@ -2,7 +2,7 @@
 // admin server actions. Service-role client; all functions throw on error.
 // Additive: does not touch /m/desk, /m/n, or the student mini-app surface.
 
-import { createSupabaseServerClient } from "@/features/supabase/server";
+import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
 import { raiseClubDayoffHealthSignal } from "@/features/club/health-signal";
 import { distanceKeyOf, normalizeFinisherName } from "@/features/club/probeg-parse";
@@ -1280,13 +1280,23 @@ export async function generateClubLinksForUnbound(coach: string): Promise<BulkLi
 
   const out: BulkLinkRow[] = [];
   for (const s of unbound) {
-    const { token, expiresAt } = await createClubLinkToken(s.studentId, coach);
-    out.push({
-      studentId: s.studentId,
-      name: s.name,
-      link: configured ? clubTokenLinkStr(username!, shortName!, token) : null,
-      expiresAt,
-    });
+    // Сбой выдачи токена одному ученику не должен обрывать всю пачку ссылок: тренер получал бы
+    // усечённый список и не знал, что часть учеников в него просто не доехала.
+    try {
+      const { token, expiresAt } = await createClubLinkToken(s.studentId, coach);
+      out.push({
+        studentId: s.studentId,
+        name: s.name,
+        link: configured ? clubTokenLinkStr(username!, shortName!, token) : null,
+        expiresAt,
+      });
+    } catch (error) {
+      console.error("[club-admin] ссылка не выдана, продолжаю пачку", {
+        event: "club_bulk_link_failed",
+        studentId: s.studentId,
+        error: describeSupabaseError(error),
+      });
+    }
   }
   return out;
 }
