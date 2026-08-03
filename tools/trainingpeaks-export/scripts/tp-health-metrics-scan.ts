@@ -465,7 +465,13 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("tp-health-metrics-scan failed.");
-  console.error(error);
+  // Раньше здесь печатался объект ошибки целиком, и когда Supabase отвечал страницей
+  // Cloudflare, в лог уезжали сотни строк HTML — прогон становился нечитаемым, а сам текст
+  // ошибки в нём тонул. toCompactErrorMessage схлопывает пробелы и режет до 240 символов;
+  // стек печатаем отдельно и только его, без тела ответа.
+  console.error(`tp-health-metrics-scan failed: ${toCompactErrorMessage(error)}`);
+  if (error instanceof Error && error.stack) {
+    console.error(error.stack.split("\n").slice(0, 6).join("\n"));
+  }
   process.exit(1);
 });

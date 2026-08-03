@@ -2195,6 +2195,91 @@ export async function upsertTrainingPeaksStudentHealthMetricProfiles(
   }
 }
 
+/**
+ * Размер батча для health-metrics upsert'ов.
+ *
+ * Посчитано, а не подобрано (замеры 2026-08-03):
+ *   trainingpeaks_health_metrics_cache        — 150 001 строка, средняя строка 463 Б
+ *   trainingpeaks_health_metrics_scan_status  — средняя строка 302 Б
+ * На проводе JSON примерно вдвое толще хранения (ключи повторяются в каждом объекте, числа и
+ * даты едут текстом), то есть ~950 Б на строку кэша. 500 строк ≈ 460 КБ тела — с запасом ниже
+ * лимитов шлюза и достаточно мало, чтобы повтор упавшего батча стоил дёшево.
+ */
+const HEALTH_METRICS_UPSERT_BATCH_ROWS = 500;
+
+/** Пауза между батчами: не долбить базу пачкой подряд идущих запросов. */
+const HEALTH_METRICS_UPSERT_BATCH_PAUSE_MS = 100;
+
+function sleepBetweenHealthMetricsBatches(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Батчевый upsert для health-metrics.
+ *
+ * ЗАЧЕМ. 2026-08-03 скан ходил в базу одним куском на весь результат. Пока инстанс был нездоров,
+ * финальный вызов падал с «TypeError: fetch failed» — и вместе с ним терялась бухгалтерия скана
+ * СРАЗУ ПО ВСЕМ ученикам, хотя метрики уже были записаны, а прогон занимал до десяти минут.
+ * Батчи превращают полную потерю в частичную: упавший батч не уносит соседние, а в конце видно,
+ * сколько прошло и сколько нет.
+ *
+ * Оговорка, чтобы не было ложных ожиданий: размер тела причиной ТОГО падения не был — финальный
+ * вызов весил ~36 КБ. Причиной была недоступность базы. Это устойчивость к следующему эпизоду,
+ * а не лечение первопричины.
+ */
+async function upsertHealthMetricsInBatches(input: {
+  table: "trainingpeaks_health_metrics_cache" | "trainingpeaks_health_metrics_scan_status";
+  onConflict: string;
+  label: string;
+  rows: Record<string, unknown>[];
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const total = input.rows.length;
+  const failures: string[] = [];
+  let okRows = 0;
+
+  for (let offset = 0; offset < total; offset += HEALTH_METRICS_UPSERT_BATCH_ROWS) {
+    const batch = input.rows.slice(offset, offset + HEALTH_METRICS_UPSERT_BATCH_ROWS);
+    const batchNo = Math.floor(offset / HEALTH_METRICS_UPSERT_BATCH_ROWS) + 1;
+
+    let failure: string | null = null;
+    try {
+      const { error } = await withSupabaseNetworkRetry(() =>
+        supabase.from(input.table).upsert(batch, { onConflict: input.onConflict })
+      );
+      if (error) {
+        failure = describeSupabaseError(error);
+      }
+    } catch (thrown) {
+      // Сетевой отказ (undici «fetch failed») прилетает броском, а не полем error — ловим здесь,
+      // иначе один мёртвый батч уронит весь прогон вместе с уже записанными соседями.
+      failure = describeSupabaseError(thrown);
+    }
+
+    if (failure) {
+      failures.push(`батч ${batchNo} (строк ${batch.length}): ${failure}`);
+      console.error(`[${input.label}] батч ${batchNo} не прошёл, продолжаю: ${failure}`);
+    } else {
+      okRows += batch.length;
+    }
+
+    if (offset + HEALTH_METRICS_UPSERT_BATCH_ROWS < total) {
+      await sleepBetweenHealthMetricsBatches(HEALTH_METRICS_UPSERT_BATCH_PAUSE_MS);
+    }
+  }
+
+  if (failures.length > 0) {
+    // Что записалось — записалось, но прогон всё равно неуспешен: иначе раннер отрапортует
+    // код 0 при потерянных строках.
+    throw new Error(
+      `Failed to upsert ${input.label}: записано ${okRows} из ${total} строк, ` +
+        `не прошло батчей ${failures.length}. ${failures.join(" | ")}`
+    );
+  }
+
+  console.log(`[${input.label}] записано ${okRows} из ${total} строк`);
+}
+
 export async function upsertTrainingPeaksHealthMetricsCacheRows(
   rows: TrainingPeaksHealthMetricCacheUpsertRow[]
 ): Promise<void> {
@@ -2202,20 +2287,13 @@ export async function upsertTrainingPeaksHealthMetricsCacheRows(
     return;
   }
 
-  const supabase = createSupabaseServerClient();
   const updatedAt = new Date().toISOString();
-  const payload = rows.map((row) => ({
-    ...row,
-    updated_at: updatedAt,
-  }));
-
-  const { error } = await withSupabaseNetworkRetry(() => supabase.from("trainingpeaks_health_metrics_cache").upsert(payload, {
+  await upsertHealthMetricsInBatches({
+    table: "trainingpeaks_health_metrics_cache",
     onConflict: "student_id,metric_timestamp,metric_type_id,metric_key",
-  }));
-
-  if (error) {
-    throw new Error(`Failed to upsert TrainingPeaks health metrics cache rows: ${error.message}`);
-  }
+    label: "TrainingPeaks health metrics cache rows",
+    rows: rows.map((row) => ({ ...row, updated_at: updatedAt })),
+  });
 }
 
 export async function upsertTrainingPeaksHealthMetricsScanStatuses(
@@ -2225,20 +2303,13 @@ export async function upsertTrainingPeaksHealthMetricsScanStatuses(
     return;
   }
 
-  const supabase = createSupabaseServerClient();
   const updatedAt = new Date().toISOString();
-  const payload = rows.map((row) => ({
-    ...row,
-    updated_at: updatedAt,
-  }));
-
-  const { error } = await withSupabaseNetworkRetry(() => supabase.from("trainingpeaks_health_metrics_scan_status").upsert(payload, {
+  await upsertHealthMetricsInBatches({
+    table: "trainingpeaks_health_metrics_scan_status",
     onConflict: "student_id,scan_from,scan_to",
-  }));
-
-  if (error) {
-    throw new Error(`Failed to upsert TrainingPeaks health metrics scan statuses: ${error.message}`);
-  }
+    label: "TrainingPeaks health metrics scan statuses",
+    rows: rows.map((row) => ({ ...row, updated_at: updatedAt })),
+  });
 }
 
 export async function listTrainingPeaksWorkoutCacheForDateRange(input: {
