@@ -2,6 +2,8 @@ import Link from "next/link";
 
 import { listTrainingPeaksAdminWeeklyReportRoster } from "@/features/trainingpeaks/admin";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminWeeklyReportsRosterPage() {
   const { inGeneration, activeReportsDisabled, archived } =
     await listTrainingPeaksAdminWeeklyReportRoster();

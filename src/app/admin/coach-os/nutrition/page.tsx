@@ -19,6 +19,8 @@ import {
 } from "@/features/nutrition/admin-labels";
 import type { NutritionDashboardViewMode } from "@/features/nutrition/repository";
 
+export const dynamic = "force-dynamic";
+
 type NutritionDashboardPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

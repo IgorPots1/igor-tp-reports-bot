@@ -6,6 +6,8 @@ import { getBillingPaymentMethodLabel, getSingleSearchParam } from "@/app/admin/
 import { listBillingAvailableStudentsForManualLink } from "@/features/billing/admin";
 import { BILLING_CURRENCY_VALUES, BILLING_PAYMENT_METHOD_VALUES } from "@/features/billing/types";
 
+export const dynamic = "force-dynamic";
+
 type NewBillingClientPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

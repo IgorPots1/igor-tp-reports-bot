@@ -19,6 +19,8 @@ import {
   type TrainingPeaksAdminTelegramFilter,
 } from "@/features/trainingpeaks/admin";
 
+export const dynamic = "force-dynamic";
+
 type ReportsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

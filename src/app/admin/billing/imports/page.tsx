@@ -15,6 +15,8 @@ import {
 import { getAdminImportedPaymentsOverview } from "@/features/billing/admin";
 import { BILLING_TIME_ZONE, type BillingImportedPaymentReviewStatusFilter } from "@/features/billing/types";
 
+export const dynamic = "force-dynamic";
+
 type AdminBillingImportsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

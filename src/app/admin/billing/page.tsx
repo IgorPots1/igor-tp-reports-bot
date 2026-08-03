@@ -11,6 +11,8 @@ import {
 import { getAdminBillingMonthOverview, getEffectiveBillingRowStatus } from "@/features/billing/admin";
 import { BILLING_TIME_ZONE, type BillingMonthStatusFilter } from "@/features/billing/types";
 
+export const dynamic = "force-dynamic";
+
 type AdminBillingPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

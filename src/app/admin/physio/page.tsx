@@ -13,6 +13,8 @@ import {
   type ReadinessState,
 } from "@/features/physio/repository";
 
+export const dynamic = "force-dynamic";
+
 type PhysioPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

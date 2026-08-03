@@ -19,6 +19,8 @@ import {
   buildTrainingPeaksContactDisplay,
 } from "@/features/trainingpeaks/contact-display";
 
+export const dynamic = "force-dynamic";
+
 type StudentsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

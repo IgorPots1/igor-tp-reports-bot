@@ -8,6 +8,8 @@ import {
   listUnlinkedBillingClientsWithSuggestions,
 } from "@/features/billing/admin";
 
+export const dynamic = "force-dynamic";
+
 type BillingMatchingPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

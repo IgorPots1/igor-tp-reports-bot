@@ -11,6 +11,8 @@ import {
   type TrainingPeaksAdminTelegramLinksTab,
 } from "@/features/trainingpeaks/admin";
 
+export const dynamic = "force-dynamic";
+
 type TelegramLinksPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

@@ -13,6 +13,8 @@ import {
   resolveOperationalSignalDisplaySummary,
 } from "@/features/trainingpeaks/service";
 
+export const dynamic = "force-dynamic";
+
 type SignalsAdminPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };

@@ -11,6 +11,8 @@ import {
 } from "@/features/trainingpeaks/workout-template-catalog";
 import { listCurrentAthleteTrainingBaselinesWithStudentNames } from "@/features/trainingpeaks/athlete-training-baselines";
 
+export const dynamic = "force-dynamic";
+
 type CoachOsPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
