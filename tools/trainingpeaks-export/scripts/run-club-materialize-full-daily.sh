@@ -11,6 +11,9 @@
 # не раскатан. || true — пересчёт никогда не валит ничего.
 set -euo pipefail
 
+RUNNER_TIMEOUT_SECONDS=3600
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 REPO="${REPO:-$HOME/igor-tp-reports-bot}"
 cd "$REPO"
 
@@ -22,3 +25,9 @@ fi
 echo "[$(date '+%F %T')] club full materialize --all (суточный, закрывает пробел с удалёнными из TP)"
 npm run --silent materialize-club-records -- --all || true
 echo "[$(date '+%F %T')] club full materialize --all done"
+
+# Хартбит: отметка «прогон состоялся» в trainingpeaks_cron_run_logs, чтобы монитор
+# отличал живой поток от тихо вставшего. `|| true` — отметка не важнее самой работы;
+# сбой записи виден в логе (tp-heartbeat печатает причину и не глотает её).
+npm --prefix "$HOME/igor-tp-reports-bot/tools/trainingpeaks-export" run --silent tp-heartbeat -- \
+  --job=club_materialize_full --status=sent || true

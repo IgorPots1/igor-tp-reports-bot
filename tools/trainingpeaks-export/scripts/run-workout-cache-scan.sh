@@ -5,6 +5,9 @@
 #   PAST_DAYS=60 FUTURE_DAYS=14 ./run-workout-cache-scan.sh          # глубокий бэкфилл
 set -euo pipefail
 
+RUNNER_TIMEOUT_SECONDS=3600
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 REPO="${REPO:-$HOME/igor-tp-reports-bot}"
 PAST_DAYS="${PAST_DAYS:-10}"
 FUTURE_DAYS="${FUTURE_DAYS:-10}"

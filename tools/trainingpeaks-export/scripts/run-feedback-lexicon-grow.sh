@@ -7,6 +7,9 @@
 # READ-ONLY по БД (только SELECT). Пишет ТОЛЬКО локальные JSON в репозитории.
 # ВАЖНО: словарь бандлится в сборку, поэтому рост применится в прод ТОЛЬКО после commit+deploy
 # этих JSON. Раннер лишь копит и подсказывает, что накопилось; пуш/деплой — рука Игоря.
+RUNNER_TIMEOUT_SECONDS=1800
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 set -uo pipefail
 
 REPO="${REPO:-$HOME/igor-tp-reports-bot}"
@@ -24,3 +27,9 @@ if ! git diff --quiet -- "$LEX/living-lexicon.json" "$LEX/blacklist.json" 2>/dev
 else
   echo "[$(date '+%F %T')] новых слов нет, файлы не изменились"
 fi
+
+# Хартбит: отметка «прогон состоялся» в trainingpeaks_cron_run_logs, чтобы монитор
+# отличал живой поток от тихо вставшего. `|| true` — отметка не важнее самой работы;
+# сбой записи виден в логе (tp-heartbeat печатает причину и не глотает её).
+npm --prefix "$HOME/igor-tp-reports-bot/tools/trainingpeaks-export" run --silent tp-heartbeat -- \
+  --job=feedback_lexicon_grow --status=sent || true

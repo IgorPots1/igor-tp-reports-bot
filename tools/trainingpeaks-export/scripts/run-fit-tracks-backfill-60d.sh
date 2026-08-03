@@ -14,6 +14,9 @@
 #
 # It re-downloads/parses FIT for the window (same cost as a normal ingest over 60 days)
 # and writes only the track rows differ; laps/derived are re-upserted identically.
+RUNNER_TIMEOUT_SECONDS=7200
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 set -uo pipefail
 
 REPO="${REPO:-$HOME/igor-tp-reports-bot}"

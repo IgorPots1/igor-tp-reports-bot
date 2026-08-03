@@ -9,6 +9,9 @@
 #   - воткнули зарядку (AC)             → маркеры сбрасываются, следующий разряд снова алертнёт
 # ВАЖНО: это не мешает маку спать (это `sudo pmset -c sleep 0` на AC) — только предупреждает.
 # Если мак УЖЕ в глубоком сне на батарее, launchd не запустит и сторожа — потому и шлём заранее.
+RUNNER_TIMEOUT_SECONDS=120
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 set -uo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 

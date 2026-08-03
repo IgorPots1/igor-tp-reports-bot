@@ -6073,20 +6073,37 @@ export async function createBatchTrainingPeaksAction(
     coachChatId: input.coachChatId ?? null,
   });
 
+  // Родитель уже создан. Если ребёнок падает посреди веера, БЕЗ обработки наверх уходит
+  // исключение (undici бросает «fetch failed» мимо проверки error), а в базе остаётся
+  // родитель с частью детей — тренер видит неполный разбор группового сообщения и не знает,
+  // что часть просьб потерялась. Дочитываем веер до конца и падаем ОДИН раз, с перечнем
+  // недосозданных: частичное состояние остаётся тем же, но оно хотя бы названо.
   const children: TrainingPeaksAction[] = [];
+  const failedChildren: string[] = [];
   for (const child of fanOut.children) {
-    children.push(
-      await createTrainingPeaksAction({
-        studentId: input.studentId ?? null,
-        actionType: child.actionType,
-        sourceChatId: input.sourceChatId,
-        sourceMessageId: input.sourceMessageId,
-        sourceUserId: input.sourceUserId ?? null,
-        rawText: child.label,
-        parsedPayload: child.payload,
-        coachChatId: input.coachChatId ?? null,
-        parentBatchActionId: parent.id,
-      }),
+    try {
+      children.push(
+        await createTrainingPeaksAction({
+          studentId: input.studentId ?? null,
+          actionType: child.actionType,
+          sourceChatId: input.sourceChatId,
+          sourceMessageId: input.sourceMessageId,
+          sourceUserId: input.sourceUserId ?? null,
+          rawText: child.label,
+          parsedPayload: child.payload,
+          coachChatId: input.coachChatId ?? null,
+          parentBatchActionId: parent.id,
+        }),
+      );
+    } catch (error) {
+      failedChildren.push(`${child.actionType}/${child.label}: ${describeSupabaseError(error)}`);
+    }
+  }
+
+  if (failedChildren.length > 0) {
+    throw new Error(
+      `Failed to create TrainingPeaks batch children: создано ${children.length} из ` +
+        `${fanOut.children.length}, batch=${parent.id}. Недосозданы: ${failedChildren.join(" | ")}`
     );
   }
 

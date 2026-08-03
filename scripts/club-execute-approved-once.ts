@@ -101,14 +101,25 @@ async function loadApproved(): Promise<Loaded[]> {
 }
 
 async function recordFailure(entryId: string, message: string): Promise<void> {
-  const supabase = createSupabaseServerClient();
-  // Increment attempts + record the reason so the coach admin can list failures. Best-effort.
-  const { data } = await supabase.from("club_calendar_entries").select("tp_send_attempts").eq("id", entryId).maybeSingle();
-  const attempts = Number((data as { tp_send_attempts?: number } | null)?.tp_send_attempts ?? 0) + 1;
-  await supabase
-    .from("club_calendar_entries")
-    .update({ tp_send_attempts: attempts, tp_send_attempted_at: new Date().toISOString(), tp_send_error: message.slice(0, 500) })
-    .eq("id", entryId);
+  // Комментарий обещал best-effort, но обещание не выполнялось: при сетевом сбое undici бросает
+  // «fetch failed» мимо проверки error, исключение уходило из recordFailure наверх — прямо в цикл
+  // по одобренным стартам — и роняло ВЕСЬ прогон. То есть неудача записи причины по одному старту
+  // отменяла отправку в TP всех оставшихся. Теперь обещание держится.
+  try {
+    const supabase = createSupabaseServerClient();
+    // Increment attempts + record the reason so the coach admin can list failures.
+    const { data } = await supabase.from("club_calendar_entries").select("tp_send_attempts").eq("id", entryId).maybeSingle();
+    const attempts = Number((data as { tp_send_attempts?: number } | null)?.tp_send_attempts ?? 0) + 1;
+    await supabase
+      .from("club_calendar_entries")
+      .update({ tp_send_attempts: attempts, tp_send_attempted_at: new Date().toISOString(), tp_send_error: message.slice(0, 500) })
+      .eq("id", entryId);
+  } catch (error) {
+    console.error(
+      `[club-execute-approved] причину неудачи записать не смог (entry=${entryId}), продолжаю очередь: ` +
+        `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 async function main(): Promise<void> {

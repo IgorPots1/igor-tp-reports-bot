@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { isClubAvatarsEnabled } from "@/features/club/constants";
-import { createSupabaseServerClient } from "@/features/supabase/server";
+import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 import { downloadTelegramFile, getTelegramUserProfilePhotoFileId } from "@/features/telegram/telegram-client";
 
 // Club member avatars from Telegram. Same shape as the route maps (track-maps.ts): the SHORT-LIVED
@@ -258,5 +258,20 @@ export async function purgeStudentAvatar(studentId: string): Promise<void> {
   } catch {
     /* best-effort: the live club_avatar_visible=false already blocks the route */
   }
-  await supabase.from("trainingpeaks_students").update({ club_avatar_path: null, club_avatar_checked_at: null }).eq("id", studentId);
+  // Удаление файла обёрнуто, а очистка указателя — нет, хотя это тот же путь отказа от показа
+  // лица. При сетевом сбое undici бросает мимо проверки error, исключение уходило наверх, и
+  // club_avatar_path оставался заполненным: файла уже нет, а строка утверждает, что он есть.
+  // Ошибку не глотаем — она видна в логе, — но и не роняем отказ от показа целиком.
+  try {
+    await supabase
+      .from("trainingpeaks_students")
+      .update({ club_avatar_path: null, club_avatar_checked_at: null })
+      .eq("id", studentId);
+  } catch (error) {
+    console.error("[club.avatars] указатель на аватар не очищен", {
+      event: "club_avatar_pointer_clear_failed",
+      studentIdPrefix: studentId.slice(0, 8),
+      error: describeSupabaseError(error),
+    });
+  }
 }

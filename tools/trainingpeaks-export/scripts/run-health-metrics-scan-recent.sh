@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+RUNNER_TIMEOUT_SECONDS=3600
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 REPO_DIR="/Users/igor/igor-tp-reports-bot"

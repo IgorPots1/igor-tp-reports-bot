@@ -4,6 +4,9 @@
 # shell / env). Flag off → it is a harmless dry-run. Idempotent: applied entries are skipped, so
 # repeated 30-min runs never duplicate in TP. Install via the launchd plist next to this file.
 set -euo pipefail
+RUNNER_TIMEOUT_SECONDS=600
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 cd "$HOME/igor-tp-reports-bot"
 
 # Entity-type mapping is now FIXED policy: Event for races, Availability for day_offs, Note for notes.
@@ -27,3 +30,9 @@ node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
 echo "[$(date '+%F %T')] club-rollback-requested (CLUB_TP_EXECUTION_ENABLED=${CLUB_TP_EXECUTION_ENABLED:-unset})"
 node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
   --env-file=.env.local scripts/club-rollback-requested-once.ts --apply || true
+
+# Хартбит: отметка «прогон состоялся» в trainingpeaks_cron_run_logs, чтобы монитор
+# отличал живой поток от тихо вставшего. `|| true` — отметка не важнее самой работы;
+# сбой записи виден в логе (tp-heartbeat печатает причину и не глотает её).
+npm --prefix "$HOME/igor-tp-reports-bot/tools/trainingpeaks-export" run --silent tp-heartbeat -- \
+  --job=club_execute_approved --status=sent || true

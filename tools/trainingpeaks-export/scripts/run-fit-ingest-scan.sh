@@ -19,6 +19,9 @@
 #
 # ГРАБЛИ (учтены): рабочая папка REPO=$HOME/igor-tp-reports-bot (код из main, не worktree);
 # окружение службы (плист bash -lc); токен TP протух → алерт «перелогинься» (npm run tp-login).
+RUNNER_TIMEOUT_SECONDS=3600
+source "$(dirname "$0")/lib/runner-prelude.sh"
+
 set -uo pipefail
 
 REPO="${REPO:-$HOME/igor-tp-reports-bot}"

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { describeSupabaseError } from "@/features/supabase/server";
 import {
   getTrainingPeaksStudentByTelegramChatId,
   insertTrainingPeaksTelegramContextObservation,
@@ -311,7 +312,10 @@ export type RecordCoachOutgoingBusinessDmContactResult =
         | "ignored_missing_chat_id"
         | "ignored_no_student_match"
         | "ignored_ambiguous_student_match"
-        | "ignored_duplicate";
+        | "ignored_duplicate"
+        // Ученик найден и дублем не является, но запись отметки не прошла (сбой БД).
+        // Отдельно от прочих ignored: те — решения, это — потеря учёта.
+        | "ignored_record_failed";
     };
 
 function hasTelegramServiceMessagePayload(message: BusinessDmMessageLike): boolean {
@@ -448,19 +452,35 @@ export async function recordCoachOutgoingBusinessDmContactIfSafe(input: {
       ? new Date(dateSeconds * 1000).toISOString()
       : new Date().toISOString();
 
-  await input.recordContactEvent({
-    studentId,
-    eventType: "coach_message",
-    source: "telegram_business_dm",
-    referenceId: messageId,
-    occurredAt,
-    metadata: {
-      chat_id: chatId,
-      message_id: input.message.message_id,
-      has_business_connection_id: Boolean(input.message.business_connection_id?.trim()),
-      direction: "coach_outgoing_manual",
-    },
-  });
+  // Это учёт «тренер ответил», а не сам ответ: ответ уже ушёл ученице через Telegram, и запись
+  // контакта — бухгалтерия поверх свершившегося факта. При сетевом сбое undici бросает мимо
+  // проверки error, исключение уходило в handleTrainingPeaksTelegramBusinessMessage и обрывало
+  // обработку сообщения ДО записи наблюдения — то есть неудача второстепенного учёта стоила
+  // основной записи. Логируем и идём дальше: пропущенная отметка о контакте стоит дешевле
+  // потерянного наблюдения.
+  try {
+    await input.recordContactEvent({
+      studentId,
+      eventType: "coach_message",
+      source: "telegram_business_dm",
+      referenceId: messageId,
+      occurredAt,
+      metadata: {
+        chat_id: chatId,
+        message_id: input.message.message_id,
+        has_business_connection_id: Boolean(input.message.business_connection_id?.trim()),
+        direction: "coach_outgoing_manual",
+      },
+    });
+  } catch (error) {
+    console.error("[tp-context] отметка о контакте не записана, обработку продолжаю", {
+      event: "contact_event_record_failed",
+      chatId,
+      messageId,
+      error: describeSupabaseError(error),
+    });
+    return { kind: "ignored_record_failed" };
+  }
 
   return { kind: "recorded", studentId };
 }

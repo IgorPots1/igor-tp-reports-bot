@@ -4,6 +4,7 @@ import {
   type TrainingPeaksStudentMemoryItem,
   type TrainingPeaksStudentMemoryType,
 } from "@/features/trainingpeaks/repository";
+import { describeSupabaseError } from "@/features/supabase/server";
 import { logAiCall } from "@/features/trainingpeaks/ai-call-log";
 
 const CLAUDE_MODEL =
@@ -157,6 +158,8 @@ export type ProcessCoachMemoryForObservationResult =
       skipped: number;
       belowConfidence: number;
       duplicate: number;
+      /** Хотели записать, но не смогли (сбой БД). Отдельно от skipped — это не решение, а потеря. */
+      failedInserts: number;
       reason: string;
       applyWrites: boolean;
     };
@@ -1409,6 +1412,9 @@ export async function processCoachMemoryForObservation(
   let skipped = 0;
   let belowConfidence = 0;
   let duplicate = 0;
+  // Факты, которые не удалось записать из-за сбоя БД. Считаются отдельно от skipped:
+  // skipped — «решили не писать», это — «хотели, но не смогли». Разные вещи.
+  let failedInserts = 0;
   const insertedItems: CoachMemoryInsertedItem[] = [];
 
   for (const rawItem of extraction.memoryItems) {
@@ -1489,23 +1495,39 @@ export async function processCoachMemoryForObservation(
     }
 
     if (applyWrites) {
-      const insertedItem = await insertTrainingPeaksStudentMemoryItem({
-        studentId: input.studentId,
-        memoryType: adjustedItem.memoryType,
-        summaryText: adjustedItem.summaryText,
-        structured: adjustedItem.structured,
-        source: "ai_extraction",
-        confidence: adjustedItem.confidence,
-        validFrom: adjustedItem.validFrom,
-        validUntil: adjustedItem.validUntil,
-        sourceObservationId: input.observationId,
-        sourceMessagePreview: input.textPreview?.slice(0, 160) ?? null,
-        metadata: {
-          affects_planning: adjustedItem.affectsPlanning,
-          requires_coach_attention: adjustedItem.requiresCoachAttention,
-          notification_level: adjustedItem.notificationLevel,
-        },
-      });
+      // Один сетевой сбой не должен уносить остальные факты. undici бросает «fetch failed»
+      // ИСКЛЮЧЕНИЕМ мимо привычной проверки error, а этот цикл идёт по фактам, извлечённым из
+      // сообщения ученицы: без try/catch падение на третьем из десяти теряло и седьмой, и
+      // десятый, и весь результат извлечения разом. Пропускаем сбойный, продолжаем остальные.
+      let insertedItem: Awaited<ReturnType<typeof insertTrainingPeaksStudentMemoryItem>>;
+      try {
+        insertedItem = await insertTrainingPeaksStudentMemoryItem({
+          studentId: input.studentId,
+          memoryType: adjustedItem.memoryType,
+          summaryText: adjustedItem.summaryText,
+          structured: adjustedItem.structured,
+          source: "ai_extraction",
+          confidence: adjustedItem.confidence,
+          validFrom: adjustedItem.validFrom,
+          validUntil: adjustedItem.validUntil,
+          sourceObservationId: input.observationId,
+          sourceMessagePreview: input.textPreview?.slice(0, 160) ?? null,
+          metadata: {
+            affects_planning: adjustedItem.affectsPlanning,
+            requires_coach_attention: adjustedItem.requiresCoachAttention,
+            notification_level: adjustedItem.notificationLevel,
+          },
+        });
+      } catch (error) {
+        failedInserts += 1;
+        console.error("[coach-memory] факт не записан, продолжаю остальные", {
+          event: "coach_memory_item_insert_failed",
+          studentIdPrefix: input.studentId?.slice(0, 8) ?? null,
+          memoryType: adjustedItem.memoryType,
+          error: describeSupabaseError(error),
+        });
+        continue;
+      }
       exactByTypeAndSummary.set(exactKey, insertedItem);
       if (structuredKey) {
         structuredByTypeAndKey.set(structuredKey, insertedItem);
@@ -1523,6 +1545,15 @@ export async function processCoachMemoryForObservation(
     inserted += 1;
   }
 
+  if (failedInserts > 0) {
+    console.error("[coach-memory] часть фактов не записана из-за сбоя БД", {
+      event: "coach_memory_insert_partial",
+      failedInserts,
+      inserted,
+      studentIdPrefix: input.studentId?.slice(0, 8) ?? null,
+    });
+  }
+
   return {
     status: "processed",
     inserted,
@@ -1531,6 +1562,7 @@ export async function processCoachMemoryForObservation(
     skipped,
     belowConfidence,
     duplicate,
+    failedInserts,
     reason: extraction.reason,
     applyWrites,
   };
