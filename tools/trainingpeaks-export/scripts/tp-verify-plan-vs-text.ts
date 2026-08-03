@@ -34,7 +34,15 @@ function ranges(desc: string): Rng[] {
   const push = (a: number, b: number, idx: number): void => { const fast = Math.min(a, b), slow = Math.max(a, b); if (fast < 150 || slow > 600) return; out.push({ fast, slow, idx }); };
   let m: RegExpExecArray | null;
   const dash = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi;
-  while ((m = dash.exec(desc)) !== null) push(S(m[1]), S(m[2]), m.index);
+  // "X:XX–00:00" = open floor (X is the ceiling, no slow limit) → one-sided ceiling point range,
+  // same as "X и медленнее". Without this the pair collapses to fast=0 and is dropped (undercounts
+  // ranges vs steps and mislabels the step). Keep in sync with tp-threshold-restore.ts ranges().
+  while ((m = dash.exec(desc)) !== null) {
+    const a = S(m[1]), b = S(m[2]);
+    if (a > 0 && b === 0) { if (a >= 150 && a <= 600) out.push({ fast: a, slow: a, idx: m.index }); }
+    else if (a === 0 && b > 0) { if (b >= 150 && b <= 600) out.push({ fast: b, slow: b, idx: m.index }); }
+    else push(a, b, m.index);
+  }
   const slower = /(\d{1,2}:\d{2})\s*(?:и|или)\s+(?:медленн|тише|легче|спокойн)/gi; // Cyrillic stems (no \w/\b)
   while ((m = slower.exec(desc)) !== null) { const t = S(m[1]); if (t >= 150 && t <= 600) out.push({ fast: t, slow: t, idx: m.index }); }
   if (out.length === 0) {

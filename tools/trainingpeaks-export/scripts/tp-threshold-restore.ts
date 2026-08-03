@@ -79,9 +79,19 @@ function ranges(desc: string): Rng[] {
   const out: Rng[] = [];
   const push = (a: number, b: number, idx: number): void => { const fast = Math.min(a, b), slow = Math.max(a, b); if (fast < 150 || slow > 600) return; out.push({ fast, slow, idx }); };
   let m: RegExpExecArray | null;
-  // 1) explicit range via dash / @ / до: "6:05–6:32", "05:16-05:26"
+  // 1) explicit range via dash / @ / до: "6:05–6:32", "05:16-05:26".
+  //    OPEN FLOOR "X:XX–00:00": the 00:00 side means "no slow limit" — X is the fastest allowed
+  //    (a ceiling with an open floor). Represent it as a one-sided ceiling POINT range (fast=slow=X),
+  //    the same shape as "X и медленнее" below — recompute keeps the authored floor and sets the
+  //    ceiling from X. Without this the pair collapses to fast=0 and is dropped, losing the segment
+  //    (the Nazarov defer: 7 duration-steps but only 5 counted ranges).
   const dash = /(\d{1,2}:\d{2})\s*(?:[-–—−]|@|до)\s*(\d{1,2}:\d{2})/gi;
-  while ((m = dash.exec(desc)) !== null) push(S(m[1]), S(m[2]), m.index);
+  while ((m = dash.exec(desc)) !== null) {
+    const a = S(m[1]), b = S(m[2]);
+    if (a > 0 && b === 0) { if (a >= 150 && a <= 600) out.push({ fast: a, slow: a, idx: m.index }); }       // "X–00:00" open floor → ceiling X
+    else if (a === 0 && b > 0) { if (b >= 150 && b <= 600) out.push({ fast: b, slow: b, idx: m.index }); }   // "00:00–X" (rare) → ceiling X
+    else push(a, b, m.index);
+  }
   // 2) one-sided prose CEILING: "6:23 и медленнее" / "6:23 или тише" — the number is the fastest
   //    allowed, the floor is open. A POINT range (fast=slow); open-floor steps compare the ceiling.
   //    (JS \w/\b miss Cyrillic — match stems: медленн covers медленнее/медленней.)
@@ -198,14 +208,20 @@ function recompute(structObj: unknown, desc: string, title: string, thrSec: numb
     // the %-targets EXACTLY as authored. Targets are threshold-relative, so the new threshold already
     // rescales the pace ceiling proportionally; rewriting to an anchor would speed a walk up.
     const openFloor = st.min === 0;
+    // A segment's «шагом/пауза» keyword must NOT freeze a step that has its OWN explicit pace range.
+    // parseSegments cuts a segment's text up to the NEXT duration token, so a following "⏸ Пауза 1–2
+    // минуты шагом" bleeds its walk-word into the preceding paced segment (Alex «20 х 1 мин»: the
+    // 3-мин «07:04–07:24» warm-up was frozen at old % → rendered 6:53–7:12 instead of 7:02–7:23).
+    // Honor the range when there is one; walk-untouch applies only to no-range (anchor/keep) steps.
+    const isRange = a !== "anchor" && a !== "keep";
     let nMin: number, nMax: number, src: string;
-    if (openFloor || walk) { nMin = st.min; nMax = st.max; src = openFloor ? "открытый пол — не трогаем (порог сам масштабирует потолок)" : "шагом/пауза — не трогаем"; }
+    if (openFloor || (walk && !isRange)) { nMin = st.min; nMax = st.max; src = openFloor ? "открытый пол — не трогаем (порог сам масштабирует потолок)" : "шагом/пауза — не трогаем"; }
     else if (a === "keep") { nMin = st.min; nMax = st.max; src = "без темпа (RPE/по ощущ.) — не трогаем"; }
     else if (a === "anchor") { const an = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (an - 8)) * 100); nMin = Math.round((thrSec / (an + 12)) * 100); src = `якорь ${fp(an)}`; }
     else if (a.fast === a.slow) { nMax = Math.round((thrSec / a.fast) * 100); nMin = Number.isFinite(st.min) ? st.min : nMax; src = `≤${fp(a.fast)} (потолок; пол сохранён)`; } // one-sided "X и медленнее": set ceiling, keep floor
     else { nMax = Math.round((thrSec / a.fast) * 100); nMin = Math.round((thrSec / a.slow) * 100); src = `${fp(a.slow)}–${fp(a.fast)}`; }
     const [lo, hi] = band();
-    const untouched = openFloor || walk || a === "keep";
+    const untouched = openFloor || (walk && !isRange) || a === "keep";
     const ok = untouched ? true : nMin >= lo && nMax <= hi; // untouched steps → not gated on band
     plans.push({ block: st.block, step: st.step, role: st.role, oldMin: st.min, oldMax: st.max, newMin: nMin, newMax: nMax, lo, hi, ok, src });
   });
