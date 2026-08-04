@@ -32,6 +32,7 @@ import {
   computeBillingRowStatusAfterPayment,
   isSlotOpen,
   resolvePaymentSlot,
+  validateSlotChoice,
 } from "@/features/billing/nutrition-slots";
 import {
   BILLING_CSV_COLUMNS,
@@ -1045,8 +1046,17 @@ export async function confirmImportedPaymentMatch(
     throw new Error(`Billing payment ${input.monthlyPaymentId} not found.`);
   }
 
-  // По умолчанию base — путь из админки сохраняет прежнее поведение байт-в-байт.
-  const slot: BillingPaymentSlot = input.slot ?? "base";
+  // Для клиента без отдельного питания поведение остаётся байт-в-байт прежним:
+  // слот не спрашивается и молча равен base.
+  const slotChoice = validateSlotChoice({
+    nutritionBillingMode: monthly.client.nutritionBillingMode,
+    slot: input.slot,
+    nutritionPlannedAmount: monthly.nutritionPlannedAmount,
+  });
+  if (!slotChoice.ok) {
+    throw new Error(slotChoice.message);
+  }
+  const slot: BillingPaymentSlot = slotChoice.slot;
 
   if (monthly.status === "paid") {
     throw new Error("Этот месяц уже оплачен для данного клиента.");

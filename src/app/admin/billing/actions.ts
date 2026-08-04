@@ -20,7 +20,11 @@ import {
   unlinkBillingClientFromStudent,
   updateBillingClientById,
 } from "@/features/billing/service";
-import { BILLING_CURRENCY_VALUES, type BillingCurrency } from "@/features/billing/types";
+import {
+  BILLING_CURRENCY_VALUES,
+  type BillingCurrency,
+  type BillingPaymentSlot,
+} from "@/features/billing/types";
 import {
   ADMIN_ACCESS_COOKIE_NAME,
   hasValidAdminAccessCookie,
@@ -306,6 +310,12 @@ export async function unlinkBillingClientFromStudentAction(formData: FormData): 
 export async function confirmImportedPaymentAction(formData: FormData): Promise<void> {
   const importedPaymentId = getRequiredFormValue(formData, "importedPaymentId");
   const monthlyPaymentId = getRequiredFormValue(formData, "monthlyPaymentId");
+  // Слот необязателен на стороне формы: у обычного клиента его не показывают, а форма
+  // «Засчитать вручную» охватывает разных клиентов и не может знать заранее, нужен ли
+  // он. Решает сервер — по фактической строке месяца.
+  const slotRaw = getOptionalFormValue(formData, "slot");
+  const slot: BillingPaymentSlot | undefined =
+    slotRaw === "base" || slotRaw === "nutrition" ? slotRaw : undefined;
   const redirectTo = getOptionalFormValue(formData, "redirectTo") ?? buildBillingImportsRedirect("new");
 
   await ensureAdminAccess(redirectTo);
@@ -318,6 +328,7 @@ export async function confirmImportedPaymentAction(formData: FormData): Promise<
       importedPaymentId,
       monthlyPaymentId,
       actor: BILLING_IMPORTS_ACTION_ACTOR,
+      slot,
     });
     clientId = result.monthlyPayment.client.id;
     if (result.identityLearningWarnings.length > 0) {

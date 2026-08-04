@@ -45,6 +45,22 @@ function formatBillingMonthLabel(billingMonth: string): string {
   return billingMonth.slice(0, 7);
 }
 
+// Предвыбор слота — ПОДСКАЗКА по сумме, а не решение: тренер всегда может изменить.
+// Если сумма не совпала ни с базой, ни с питанием — не предвыбираем ничего
+// и требуем явного выбора. Разметки по номиналу здесь нет: слот питания вообще
+// показывается только клиенту с nutrition_billing_mode='separate'.
+function preselectPaymentSlot(
+  amount: number,
+  client: { monthlyAmount: number; nutritionAmount: number | null }
+): "base" | "nutrition" | null {
+  const matchesBase = amount === client.monthlyAmount;
+  const matchesNutrition = client.nutritionAmount != null && amount === client.nutritionAmount;
+  if (matchesBase === matchesNutrition) {
+    return null;
+  }
+  return matchesBase ? "base" : "nutrition";
+}
+
 // Возвращает ключи "YYYY-MM" для месяца платежа и соседних (±1),
 // чтобы ручной список кандидатов закрывал задержанные/авансовые оплаты.
 function getAdjacentBillingMonthKeys(paymentDate: string): Set<string> {
@@ -233,6 +249,39 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
                             {suggestion.reasons.length > 0 && (
                               <span className="admin-muted">{suggestion.reasons.join("; ")}</span>
                             )}
+                            {suggestion.monthlyPayment.client.nutritionBillingMode === "separate" && (
+                              <label className="admin-field">
+                                <span>Куда засчитать</span>
+                                <select
+                                  className="admin-input"
+                                  name="slot"
+                                  defaultValue={
+                                    preselectPaymentSlot(imported.amount, suggestion.monthlyPayment.client) ?? ""
+                                  }
+                                  required
+                                >
+                                  <option value="" disabled>
+                                    Выбери слот
+                                  </option>
+                                  <option value="base">
+                                    База ·{" "}
+                                    {formatBillingAmount(
+                                      suggestion.monthlyPayment.plannedAmount,
+                                      suggestion.monthlyPayment.currency
+                                    )}
+                                    {suggestion.monthlyPayment.paidAmount ? " · уже оплачена" : ""}
+                                  </option>
+                                  <option value="nutrition">
+                                    Питание ·{" "}
+                                    {formatBillingAmount(
+                                      suggestion.monthlyPayment.nutritionPlannedAmount ?? 0,
+                                      suggestion.monthlyPayment.currency
+                                    )}
+                                    {suggestion.monthlyPayment.nutritionPaidAmount ? " · уже оплачено" : ""}
+                                  </option>
+                                </select>
+                              </label>
+                            )}
                           </div>
                           <FormActionButton
                             className="admin-button admin-button-secondary"
@@ -268,10 +317,26 @@ export default async function AdminBillingImportsPage({ searchParams }: AdminBil
                                 {candidate.client.groupName ? ` [${candidate.client.groupName}]` : ""} —{" "}
                                 {formatBillingMonthLabel(candidate.billingMonth)} —{" "}
                                 {formatBillingAmount(candidate.plannedAmount, candidate.currency)}
+                                {candidate.client.nutritionBillingMode === "separate" ? " · питание отдельно" : ""}
                               </option>
                             ))}
                           </select>
                         </label>
+                        {manualCandidates.some((candidate) => candidate.client.nutritionBillingMode === "separate") && (
+                          <label className="admin-field">
+                            <span>Куда засчитать</span>
+                            <select className="admin-input" name="slot" defaultValue="">
+                              <option value="">По умолчанию — база</option>
+                              <option value="base">База</option>
+                              <option value="nutrition">Питание</option>
+                            </select>
+                            <span className="admin-muted">
+                              Нужно только клиентам с пометкой «питание отдельно». Список охватывает разных
+                              клиентов, поэтому предвыбрать слот по сумме здесь нельзя — сервер проверит выбор
+                              по фактической строке и отобьёт, если слот не подходит.
+                            </span>
+                          </label>
+                        )}
                         <div className="admin-import-manual-actions">
                           <FormActionButton
                             className="admin-button"

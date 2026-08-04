@@ -2,6 +2,7 @@ import {
   computeBillingRowStatusAfterPayment,
   isSlotOpen,
   resolvePaymentSlot,
+  validateSlotChoice,
 } from "@/features/billing/nutrition-slots";
 import type { BillingPaymentStatus } from "@/features/billing/types";
 
@@ -214,6 +215,67 @@ const NONE = {
     }) === "paid",
     "Без питания полная база обязана давать paid"
   );
+}
+
+// ---------------------------------------------------------------------------
+// 5) ВЫБОР СЛОТА ПРИ РУЧНОЙ ПРИВЯЗКЕ — обе стороны, а не одна.
+// ---------------------------------------------------------------------------
+{
+  // separate + слот не назван -> требуем явный выбор. Молчаливый дефолт base здесь
+  // и есть поломка Хади: платёж питания закрыл базовый слот.
+  const noSlot = validateSlotChoice({
+    nutritionBillingMode: "separate",
+    slot: undefined,
+    nutritionPlannedAmount: 2000,
+  });
+  assert(!noSlot.ok, "У separate-клиента слот обязан требоваться явно");
+
+  // ЗЕРКАЛЬНАЯ ошибка: у обычного клиента слота питания не существует.
+  // nutritionPlannedAmount намеренно НЕ null, иначе срабатывала бы проверка
+  // «питание не начислено» и маскировала бы отсутствие зеркального правила.
+  const wrongSlot = validateSlotChoice({
+    nutritionBillingMode: "none",
+    slot: "nutrition",
+    nutritionPlannedAmount: 2000,
+  });
+  assert(!wrongSlot.ok, "Обычному клиенту нельзя засчитать в слот питания");
+  assert(
+    !wrongSlot.ok && wrongSlot.message.includes("нет отдельного платежа за питание"),
+    `Должно сработать ИМЕННО зеркальное правило, получено: ${!wrongSlot.ok ? wrongSlot.message : "ok"}`
+  );
+
+  const includedWrongSlot = validateSlotChoice({
+    nutritionBillingMode: "included",
+    slot: "nutrition",
+    nutritionPlannedAmount: 2000,
+  });
+  assert(!includedWrongSlot.ok, "При mode='included' слота питания на строке нет");
+
+  // Обычный клиент без слота — прежнее поведение байт-в-байт: молча base.
+  const legacy = validateSlotChoice({
+    nutritionBillingMode: "none",
+    slot: undefined,
+    nutritionPlannedAmount: null,
+  });
+  assert(legacy.ok && legacy.slot === "base", "Обычный клиент без слота обязан идти в базу как раньше");
+
+  // separate + явный слот — проходит.
+  for (const slot of ["base", "nutrition"] as const) {
+    const chosen = validateSlotChoice({
+      nutritionBillingMode: "separate",
+      slot,
+      nutritionPlannedAmount: 2000,
+    });
+    assert(chosen.ok && chosen.slot === slot, `Явный выбор ${slot} обязан проходить`);
+  }
+
+  // separate, но питание за месяц не начислено — класть некуда.
+  const noPlan = validateSlotChoice({
+    nutritionBillingMode: "separate",
+    slot: "nutrition",
+    nutritionPlannedAmount: null,
+  });
+  assert(!noPlan.ok, "Без начисленного питания слот питания принимать нельзя");
 }
 
 console.log("check-nutrition-slots: OK");

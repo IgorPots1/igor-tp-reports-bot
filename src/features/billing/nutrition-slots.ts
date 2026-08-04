@@ -77,3 +77,38 @@ export function computeBillingRowStatusAfterPayment(input: {
   const received = (input.paidAmount ?? 0) + (input.nutritionPaidAmount ?? 0);
   return received >= expected ? "paid" : "partial";
 }
+
+// Выбор слота при ручной привязке. Обе стороны, а не одна:
+//   separate + слот не назван     -> молчаливый дефолт base это поломка Хади;
+//   НЕ separate + слот 'nutrition' -> у такого клиента слота питания не существует.
+// Второе — то же правило, что «2000 не означает питание автоматически», с другого конца.
+export function validateSlotChoice(input: {
+  nutritionBillingMode: BillingNutritionBillingMode;
+  slot: BillingPaymentSlot | undefined;
+  nutritionPlannedAmount: number | null;
+}): { ok: true; slot: BillingPaymentSlot } | { ok: false; message: string } {
+  const isSeparate = input.nutritionBillingMode === "separate";
+
+  if (isSeparate && input.slot == null) {
+    return {
+      ok: false,
+      message:
+        "У этого клиента питание оплачивается отдельным платежом — укажи, в какой слот засчитать: база или питание.",
+    };
+  }
+
+  if (!isSeparate && input.slot === "nutrition") {
+    return {
+      ok: false,
+      message: "У этого клиента нет отдельного платежа за питание — засчитать в слот питания нельзя.",
+    };
+  }
+
+  const slot: BillingPaymentSlot = input.slot ?? "base";
+
+  if (slot === "nutrition" && input.nutritionPlannedAmount == null) {
+    return { ok: false, message: "За этот месяц питание не начислено — засчитать в слот питания нельзя." };
+  }
+
+  return { ok: true, slot };
+}
