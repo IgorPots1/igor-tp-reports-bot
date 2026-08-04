@@ -103,6 +103,7 @@ async function main(): Promise<void> {
   const driftByAthlete = new Map<number, { name: string; items: { wk: string; date: string; changed: number; shift: number }[]; maxShift: number }>();
   const deferByAthlete = new Map<number, { name: string; reasons: string[] }>();
   const underfetch: { id: number; name: string; live: number; cache: number; only: number }[] = [];
+  const verifyFailList: { name: string; wk: string; steps: string }[] = [];
 
   for (const id of ids) {
     let thrSec: number | null = null;
@@ -141,6 +142,7 @@ async function main(): Promise<void> {
       if (decision === "verify_fail") verifyFail++; else if (decision === "drift") drift++; else clean++;
       logs.push({ ...base, decision, steps_total: rc.plans.length, steps_changed: changed.length, max_shift_sec: maxShift, anchor_steps: anchorSteps, defer_reason: null, detail });
       if (decision === "drift") { const e = driftByAthlete.get(id) ?? { name, items: [], maxShift: 0 }; e.items.push({ wk: `${base.workout_date} «${base.title}»`, date: base.workout_date ?? "", changed: changed.length, shift: maxShift }); e.maxShift = Math.max(e.maxShift, maxShift); driftByAthlete.set(id, e); }
+      if (decision === "verify_fail") { const bad = rc.plans.filter((p) => !p.ok).map((p) => `[b${p.block}s${p.step}] ${p.role} ${p.newMin}-${p.newMax}% (вне 55-140, из ${p.src})`).join("; "); verifyFailList.push({ name, wk: `${base.workout_date} «${base.title}»`, steps: bad }); }
     }
   }
 
@@ -158,6 +160,8 @@ async function main(): Promise<void> {
   console.log(`атлетов ${athScanned} · осмотрено тренировок ${scanned} (пропущено без изменений ${skipped}) · drift ${drift} · clean ${clean} · defer ${defer} · verify_fail ${verifyFail}`);
   console.log(`сдвиги: 20-40с ×${b2040} · 40-60с ×${b4060} · >60с ×${b60}`);
   if (underfetch.length) console.log(`\n⚠ НЕДОБОР ПЕРЕЧИСЛЕНИЯ (живое отдало меньше кэша — добрано из кэша, проверено детателью): ${underfetch.length} атл. — ${underfetch.slice(0, 8).map((u) => `${u.name} (живое ${u.live}/кэш ${u.cache} +${u.only})`).join(" · ")}${underfetch.length > 8 ? " …" : ""}`);
+  else console.log(`сверка по кэшу: расхождений нет (живое ≥ кэш у всех — недобора не найдено)`);
+  if (verifyFailList.length) { console.log(`\n⛔ VERIFY_FAIL (${verifyFailList.length}) — шаг вне полосы 55-140% (стоп-условие, разобрать ДО применения):`); for (const v of verifyFailList) console.log(`   ${v.name}: ${v.wk} — ${v.steps}`); }
   if (anomaly) { console.log(`\n⚠ АНОМАЛИЯ: доля drift ${Math.round((drift / scanned) * 100)}% > 50% — ОСТАНОВЛЕНО, проверь глазами (не применяю списком).`); return; }
   if (deferByAthlete.size) { console.log(`\n▸ РУЧНОЕ (defer — не привязать, ${deferByAthlete.size} атл.):`); for (const [id, e] of deferByAthlete) console.log(`   ${e.name} (${id}): ${e.reasons[0]}`); }
   if (!driftByAthlete.size) { console.log(`\n✅ дрейфа нет — применять нечего.`); return; }
@@ -169,7 +173,7 @@ async function main(): Promise<void> {
   const pastOnly = [...driftByAthlete.entries()].filter(([, e]) => !e.items.some((x) => x.date >= applyFrom));
   if (apply.length) {
     console.log(`\n═══ ПРИМЕНЯЕМ — дрейф на ${applyFrom} и позже ═══`);
-    for (const [id, e] of apply) { const fut = e.items.filter((x) => x.date >= applyFrom); console.log(`   ${e.name} (${id}) — ${fut.length} трен., макс сдвиг ${e.maxShift}с${fut.length <= 3 ? " · " + fut.map((x) => x.wk).join(" · ") : ""}`); }
+    for (const [id, e] of apply) { const fut = e.items.filter((x) => x.date >= applyFrom).sort((a, b) => a.date.localeCompare(b.date)); console.log(`   ${e.name} (${id}) — ${fut.length} трен., макс сдвиг ${e.maxShift}с · даты: ${fut.slice(0, 10).map((x) => x.date).join(" ")}${fut.length > 10 ? " …" : ""}`); }
     console.log(`   КОМАНДА (по одному, гейты; --since=${applyFrom} рвёт только ${applyFrom}+):`);
     console.log(`     for aid in ${apply.map(([id]) => id).join(" ")}; do TP_ATHLETE_REAL_WRITE=1 npx tsx tools/trainingpeaks-export/scripts/tp-threshold-restore.ts --athlete=$aid --since=${applyFrom} --apply --confirm "RESTORE $aid"; done`);
     const big = apply.flatMap(([, e]) => e.items.filter((x) => x.date >= applyFrom && x.shift > 40).map((x) => `${e.name}: ${x.wk} Δ${x.shift}с`));
