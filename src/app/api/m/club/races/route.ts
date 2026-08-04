@@ -2,7 +2,7 @@ import type { NextRequest } from "next/server";
 
 import { isClubEnabled, jsonResponse, resolveClubStudent } from "@/features/club/miniapp-guard";
 import { isRacesEnabled } from "@/features/club/constants";
-import { cancelClubRace, createClubRace, listClubRaces } from "@/features/club/cabinet";
+import { cancelClubRace, createClubRace, getClubStartsView } from "@/features/club/cabinet";
 
 export const runtime = "nodejs";
 
@@ -31,8 +31,8 @@ export async function POST(request: NextRequest): Promise<Response> {
       if (!res.ok) {
         return jsonResponse(400, { ok: false, error: res.error });
       }
-      const races = await listClubRaces(auth.student.id);
-      return jsonResponse(200, { ok: true, view: { races } });
+      const view = await getClubStartsView(auth.student.id);
+      return jsonResponse(200, { ok: true, view });
     }
     if (body.action === "cancel") {
       // Student cancels their own start. Not-yet-in-TP → deleted now; already-in-TP → a rollback
@@ -41,11 +41,11 @@ export async function POST(request: NextRequest): Promise<Response> {
       if (!res.ok) {
         return jsonResponse(400, { ok: false, error: res.error });
       }
-      const races = await listClubRaces(auth.student.id);
-      return jsonResponse(200, { ok: true, view: { races }, pending: res.pending ?? false });
+      const view = await getClubStartsView(auth.student.id);
+      return jsonResponse(200, { ok: true, view, pending: res.pending ?? false });
     }
-    const races = await listClubRaces(auth.student.id);
-    return jsonResponse(200, { ok: true, view: { races } });
+    const view = await getClubStartsView(auth.student.id);
+    return jsonResponse(200, { ok: true, view });
   } catch (error) {
     console.error("[m.club.races] failed", error);
     return jsonResponse(500, { ok: false, error: "Не удалось загрузить старты." });

@@ -15,6 +15,7 @@ import { buildClubTbankPayUrl } from "./billing-links";
 import type {
   ClubBillingView,
   ClubDayoffRequest,
+  ClubPastResult,
   ClubRace,
   ClubWish,
 } from "./types";
@@ -142,6 +143,91 @@ export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
 
   out.sort((a, b) => (a.raceDate < b.raceDate ? 1 : a.raceDate > b.raceDate ? -1 : 0));
   return out.slice(0, 50);
+}
+
+/** seconds -> "H:MM:SS" (or "M:SS" under an hour); null for empty/non-positive. */
+function fmtResult(sec: number | null): string | null {
+  if (sec == null || !Number.isFinite(sec) || sec <= 0) return null;
+  const t = Math.round(sec), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// When several club_official_results rows describe the same (date, distance), the highest-priority
+// source wins — mirrors the records hierarchy (coach_confirmed > official_protocol > strava_best_effort).
+const RESULT_SOURCE_RANK: Record<string, number> = { coach_confirmed: 3, official_protocol: 2, strava_best_effort: 1 };
+
+/**
+ * Past starts WITH a recorded result, for the student's «Старты» view. Source is club_official_results
+ * (the per-race journal — the only source with a protocol link + place; 299 rows today, previously
+ * invisible to students). Deduped per (date, distance) keeping the highest-priority source, newest first.
+ * Read-only; never written here.
+ */
+export async function listClubPastResults(studentId: string): Promise<ClubPastResult[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_official_results")
+    .select("id, race_date, distance_km, distance_label, result_seconds, protocol_url, place, city, event, source")
+    .eq("student_id", studentId)
+    .order("race_date", { ascending: false })
+    .limit(200);
+  if (error || !data) return [];
+  type Row = { id: string; race_date: string | null; distance_km: number | string | null; distance_label: string | null; result_seconds: number | string | null; protocol_url: string | null; place: number | string | null; city: string | null; event: string | null; source: string | null };
+  const rank = (r: Row): number => (RESULT_SOURCE_RANK[r.source ?? ""] ?? 0) * 10 + (r.protocol_url ? 1 : 0);
+  // «Старты» = реальные гонки: с протоколом / местом, либо из официального/тренерского источника.
+  // Strava-журнальные не-стандартные сегменты (1 mile / 2 mile / 15K / 10 mile…) — это тренировочные
+  // bests, не старты: их сюда не пускаем (их место — рекорды, не «Старты»).
+  const isRace = (r: Row): boolean =>
+    r.protocol_url != null || r.place != null || r.source === "official_protocol" || r.source === "coach_confirmed";
+  const best = new Map<string, Row>();
+  for (const r of data as Row[]) {
+    const date = ymd(r.race_date);
+    if (!date || !isRace(r)) continue;
+    const distKey = (r.distance_label ?? "").trim() || (r.distance_km != null ? String(Math.round(Number(r.distance_km) * 10) / 10) : "?");
+    const key = `${date}|${distKey}`;
+    const prev = best.get(key);
+    if (!prev || rank(r) > rank(prev)) best.set(key, r);
+  }
+  const kmLabel = (label: unknown, km: unknown): string | null => {
+    if (typeof label === "string" && label.trim()) return label.trim();
+    const n = Number(km);
+    return Number.isFinite(n) && n > 0 ? `${n} км` : null;
+  };
+  return [...best.values()]
+    .map((r) => {
+      const date = ymd(r.race_date) as string;
+      return {
+        id: r.id,
+        name: (r.event ?? "").trim() || (r.distance_label ?? "").trim() || "Старт",
+        raceDate: date,
+        // Результаты охватывают несколько лет — год в подписи обязателен, иначе «16 мая» и «24 авг»
+        // из разных лет выглядят непоследовательно (сортировка по полной дате при этом верна).
+        dateLabel: `${formatRuDate(date)} ${date.slice(0, 4)}`,
+        distanceLabel: kmLabel(r.distance_label, r.distance_km),
+        city: (r.city as string | null) ?? null,
+        resultLabel: fmtResult(intOrNull(r.result_seconds)),
+        place: intOrNull(r.place),
+        protocolUrl: (r.protocol_url as string | null) ?? null,
+      };
+    })
+    .sort((a, b) => (a.raceDate < b.raceDate ? 1 : a.raceDate > b.raceDate ? -1 : 0));
+}
+
+/**
+ * Unified «Старты» view: upcoming declarations / coach-placed starts on top (nearest first), past
+ * results below (newest first). Upcoming = declared+TP starts dated today-or-later; past results come
+ * from club_official_results. Past declared starts without a recorded result are not shown here (the
+ * coach sees them in /admin/club). No dedup collision: upcoming is future-dated, results are past.
+ */
+export async function getClubStartsView(
+  studentId: string
+): Promise<{ upcoming: ClubRace[]; results: ClubPastResult[] }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [all, results] = await Promise.all([listClubRaces(studentId), listClubPastResults(studentId)]);
+  const upcoming = all
+    .filter((r) => r.raceDate >= today)
+    .sort((a, b) => (a.raceDate < b.raceDate ? -1 : a.raceDate > b.raceDate ? 1 : 0));
+  return { upcoming, results };
 }
 
 /**

@@ -297,6 +297,21 @@ export type ClubRace = {
   source?: "club" | "tp";
 };
 
+/** A PAST start with a recorded result — surfaced from club_official_results (the per-race journal:
+ *  the only source carrying a protocol link + place). Shown below the upcoming starts. */
+export type ClubPastResult = {
+  id: string;
+  name: string;
+  raceDate: string;
+  dateLabel: string;
+  distanceLabel: string | null;
+  city: string | null;
+  /** Formatted finish time ("H:MM:SS" / "M:SS"); null when a result row exists without a time. */
+  resultLabel: string | null;
+  place: number | null;
+  protocolUrl: string | null;
+};
+
 export type ClubDayoffStatus = "pending" | "approved" | "rejected" | "applied";
 export type ClubDayoffRequest = {
   id: string;

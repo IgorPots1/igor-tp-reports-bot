@@ -13,6 +13,7 @@ import type {
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
+  ClubPastResult,
   ClubPrediction,
   ClubProfileDetailView,
   ClubPublicProfileView,
@@ -2213,6 +2214,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
   const [status, setStatus] = useState<Status>("loading");
   const [inactive, setInactive] = useState(false);
   const [races, setRaces] = useState<ClubRace[]>([]);
+  const [pastResults, setPastResults] = useState<ClubPastResult[]>([]);
   const [requests, setRequests] = useState<ClubDayoffRequest[]>([]);
   const [wishes, setWishes] = useState<ClubWish[]>([]);
   const [billing, setBilling] = useState<ClubBillingView | null>(null);
@@ -2255,7 +2257,7 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
         return;
       }
       const v = json.view ?? {};
-      if (section === "races") setRaces(v.races ?? []);
+      if (section === "races") { setRaces(v.upcoming ?? []); setPastResults(v.results ?? []); }
       else if (section === "dayoff") setRequests(v.requests ?? []);
       else if (section === "wishes") setWishes(v.wishes ?? []);
       else if (section === "billing") setBilling(v as ClubBillingView);
@@ -2342,7 +2344,27 @@ function CabinetOverlay({ section, initData, onClose }: { section: CabinetSectio
                 ) : null}
               </div>
             ))}
-            {races.length === 0 ? <Empty text="Пока нет заявленных стартов" /> : null}
+            {races.length === 0 && pastResults.length > 0 ? <div style={S.hint}>Нет предстоящих стартов.</div> : null}
+
+            {pastResults.length > 0 ? (
+              <div style={{ marginTop: 18 }}>
+                <div style={{ fontFamily: HEAD, fontSize: 15, color: C.ink, marginBottom: 8 }}>Результаты</div>
+                {pastResults.map((r) => (
+                  <div key={r.id} style={S.listRow}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={S.cardName}>{r.name}</div>
+                      <div style={S.cardMeta}>{r.dateLabel}{r.distanceLabel && r.distanceLabel !== r.name ? ` · ${r.distanceLabel}` : ""}{r.city ? ` · ${r.city}` : ""}{r.place ? ` · ${r.place} место` : ""}</div>
+                    </div>
+                    {r.resultLabel ? <span style={S.statusChip}>{r.resultLabel}</span> : null}
+                    {r.protocolUrl ? (
+                      <a href={r.protocolUrl} target="_blank" rel="noreferrer" style={{ flex: "0 0 auto", fontSize: 11.5, color: "#1D9E75", textDecoration: "none", border: "1px solid #1D9E75", borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" }}>протокол</a>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {races.length === 0 && pastResults.length === 0 ? <Empty text="Пока нет стартов" /> : null}
           </div>
         ) : null}
 
