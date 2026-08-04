@@ -2381,23 +2381,36 @@ export async function getClubRecords(input: {
 /** Reusable: current student's records (best per distance, verified|preliminary). */
 async function studentRecordsFromRows(
   rows: ClubWorkoutRow[],
-  studentId: string
+  studentId: string,
+  overrides?: Map<string, CoachRecord>
 ): Promise<ClubRecordEntry[]> {
   const own = rows.filter((r) => r.studentId === studentId);
   const { candidates, quality } = await buildRecordInputs(own, C.isBestSplitEnabled());
   const byStudent = reconstructRecords(candidates, quality);
-  const [raceDates, coach] = await Promise.all([loadRaceDatesByStudent(), loadCoachRecords()]);
+  // A DISPLAY caller passes `overrides` (coach + official + strava) so this live path matches the
+  // materialized «Результаты» tab. Without it (E-Predictor) we load coach-only — the predictor's anchor
+  // set stays exactly as before (official_protocol is NOT silently added as a prediction anchor).
+  const [raceDates, clubRecs] = await Promise.all([
+    loadRaceDatesByStudent(),
+    overrides ? Promise.resolve(overrides) : loadCoachRecords(),
+  ]);
   const perDist = byStudent.get(studentId);
   const out: ClubRecordEntry[] = [];
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    const c = coach.get(`${studentId}|${target.key}`);
-    if (c) {
+    const c = clubRecs.get(`${studentId}|${target.key}`);
+    // coach_confirmed overrides the WHOLE distance (hidden suppresses). Coach-only map → all rows are this.
+    if (c?.source === "coach_confirmed") {
       if (c.trust !== "hidden") out.push(coachRaceEntry(target, c));
-      continue; // coach override wins over reconstruction for this distance
+      continue;
     }
     const split = splitByType(perDist?.get(target.key)?.evaluated ?? [], studentId, raceDates);
-    if (split.race) out.push(toRecordEntry(split.race, "race"));
-    if (split.training) out.push(toRecordEntry(split.training, "training_split"));
+    // RACE slot: official_protocol (display path only) beats the reconstructed race.
+    if (c?.source === "official_protocol") out.push(clubRecordOverrideEntry(target, c, "race"));
+    else if (split.race) out.push(toRecordEntry(split.race, "race"));
+    // TRAINING slot: strava_best_effort (display path only) beats reconstruction; kept as a segment,
+    // so «Гонки» и «Лучшие отрезки» stay distinct here too.
+    if (c?.source === "strava_best_effort") out.push(clubRecordOverrideEntry(target, c, "training_split"));
+    else if (split.training) out.push(toRecordEntry(split.training, "training_split"));
   }
   return out;
 }
@@ -2944,7 +2957,9 @@ export async function getClubPublicProfile(input: {
     if (row.workoutDate >= month.from && row.workoutDate <= month.to) monthKm += km;
     activeDays.add(row.workoutDate);
   }
-  const records = await studentRecordsFromRows(ownRunning, input.targetStudentId);
+  // Pass club_records overrides so the profile screen shows official_protocol / strava_best_effort
+  // consistently with the «Результаты» tab (no discrepancy between the two record surfaces).
+  const records = await studentRecordsFromRows(ownRunning, input.targetStudentId, await loadClubRecordOverrides());
   annotateRaceSegments(records, await loadRaceEventsByDate(input.targetStudentId));
 
   // Screen 2 enrichment. Last-7-days activity strip (oldest → newest).
