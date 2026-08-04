@@ -125,7 +125,11 @@ async function main(): Promise<void> {
     if (cacheOnly.length) underfetch.push({ id, name, live: liveWids.size, cache: cacheWids.size, only: cacheOnly.length });
     for (const wid of [...new Set([...liveWids, ...cacheWids])]) {
       let det: Record<string, unknown>; try { det = await getWorkoutDetail(id, wid); } catch { continue; }
-      if (det.completed === true) continue;
+      // NEVER touch a workout that was actually RUN: completed flag OR real time logged (totalTime>0).
+      // TP sometimes leaves completed=null on a run session but sets totalTime — the apply tool skips
+      // both, and the job MUST match, else it flags done workouts as false drift (Trofimova 08-03:
+      // totalTime 1.5h, completed null → the job counted it as drift the apply correctly never touched).
+      if (det.completed === true || (typeof det.totalTime === "number" && det.totalTime > 0)) continue;
       const lmUtc = det.lastModifiedDate ? new Date(new Date(String(det.lastModifiedDate)).getTime() + 6 * 3600000).toISOString() : null; // TP UTC-6 → UTC
       const prev = cursor.get(wid);
       if (prev && prev.lastMod && prev.lastMod === lmUtc && prev.thr === Math.round(thrSec) && prev.decision === "clean") { skipped++; clean++; continue; } // incremental skip
