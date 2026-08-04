@@ -2809,7 +2809,8 @@ export type TrainingPeaksWorkoutTrackUpsertRow = {
   bbox: { minLat: number; minLng: number; maxLat: number; maxLng: number };
   /** Phase 5: downsampled HR+pace over-time series for the detail chart (running only). */
   series?: Array<{ t: number; hr: number | null; pace: number | null }> | null;
-  source?: "fit";
+  // 'strava' = Run Club импорт старых полилиний на существующие TP-записи (ФАЗА 3); FIT-ингест пишет 'fit'.
+  source?: "fit" | "strava";
   scanned_at?: string;
   scan_job_id?: string | null;
 };
