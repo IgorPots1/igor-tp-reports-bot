@@ -276,8 +276,21 @@ async function main(): Promise<void> {
   // pointless to rewrite. --since=YYYY-MM-DD overrides (wider or narrower).
   const fromDate = since ?? daysAgo(14);
   const toDate = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
-  const liveList = await getWorkoutsByDateRange(id, fromDate, toDate);
-  const summaries = (liveList ?? []).filter((w) => isRecord(w) && (w.workoutTypeValueId === 3 || w.workoutTypeId === 3) && w.completed !== true);
+  // SANITY-RETRY (2026-08-03): the batch apply under-fetched planned workouts under load
+  // (getWorkoutsByDateRange returned partial lists — Rishko 3/8, Morozov 0/N — silently skipping
+  // their recompute → stale % under the new threshold). Enumerate TWICE independently and compare
+  // the workoutId sets; on divergence retry up to 3 times; if never stable → STOP LOUDLY (exit 5).
+  // A silent under-fetch is never acceptable — halt rather than apply on a partial list.
+  const enumKey = (l: unknown[]): string => [...new Set((l ?? []).map((w) => Number((w as Record<string, unknown>).workoutId ?? (w as Record<string, unknown>).id)).filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b).join(",");
+  let liveList: unknown[] | null = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const a = (await getWorkoutsByDateRange(id, fromDate, toDate)) ?? [];
+    const b = (await getWorkoutsByDateRange(id, fromDate, toDate)) ?? [];
+    if (enumKey(a) === enumKey(b)) { liveList = a; break; }
+    console.error(`⚠ перечисление разошлось (попытка ${attempt}/3): A=${a.length} vs B=${b.length} — повтор`);
+  }
+  if (liveList == null) { console.error(`✗ СТОП: перечисление плановых не стабилизировалось за 3 попытки (недобор TP-API). НЕ применяю — молчаливый недобор недопустим.`); process.exit(5); }
+  const summaries = liveList.filter((w) => isRecord(w) && (w.workoutTypeValueId === 3 || w.workoutTypeId === 3) && w.completed !== true);
   const planned: Array<{ workout_date: string; title: string; trainingpeaks_workout_id: number; description: string; structure: unknown }> = [];
   for (const sm of summaries) {
     const rec = sm as Record<string, unknown>;
@@ -290,7 +303,7 @@ async function main(): Promise<void> {
     planned.push({ workout_date: String(det.workoutDay ?? "").slice(0, 10), title: typeof det.title === "string" ? det.title : "", trainingpeaks_workout_id: wid, description: typeof det.description === "string" ? det.description : "", structure: det.structure });
   }
   planned.sort((a, b) => a.workout_date.localeCompare(b.workout_date));
-  console.log(`плановых бегов (невыполненные, ${fromDate}..${toDate}, LIVE): ${planned.length}\n`);
+  console.log(`перечислено LIVE всего ${liveList.length} (стабильно, сверено 2×) → плановых бегов (невыполненные, ${fromDate}..${toDate}): ${planned.length}\n`);
 
   type Wk = { wid: number; date: string; title: string; desc: string; rc: { isEasy: boolean; plans: Plan[] } };
   const wks: Wk[] = []; let defer = false; const flags: string[] = [];
