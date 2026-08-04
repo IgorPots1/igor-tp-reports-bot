@@ -92,6 +92,8 @@ export type ClubWorkoutRow = {
   completedTimeRaw: number | string | null;
   completedDistanceRaw: number | string | null;
   startTime: string | null;
+  /** Sort key = coalesce(start_time, workout_date). Non-null; feeds keyset ordering by fact time. */
+  feedTs: string;
   distanceKm: number | null;
   durationSeconds: number | null;
   isRunning: boolean;
@@ -399,6 +401,8 @@ function mapWorkoutCacheRow(row: Record<string, unknown>): ClubWorkoutRow {
     completedTimeRaw: (row.completed_time_raw as number | string | null) ?? null,
     completedDistanceRaw: (row.completed_distance_raw as number | string | null) ?? null,
     startTime: (row.start_time as string | null) ?? null,
+    // feed_ts is selected only by the feed loader; other readers omit it → fall back to workout_date.
+    feedTs: (row.feed_ts as string | null) ?? (row.workout_date as string),
     distanceKm: normalizeDistanceKm(row.completed_distance_raw as number | string | null),
     durationSeconds: rawHoursToSeconds(row.completed_time_raw as number | string | null),
     isRunning: classification.isRunning,
@@ -600,40 +604,62 @@ export async function loadClubWorkoutRows(input: {
 
 /**
  * Keyset page of COMPLETED workouts for the feed, newest first, filtered + ordered +
- * limited IN POSTGRES (Phase 1.2). Ordering key is (workout_date DESC, id DESC); the
- * cursor resumes strictly after (beforeDate, beforeId). is_completed is filtered in
- * SQL; the "running / visible / non-empty" predicate is a JS post-filter on this
- * bounded batch (it depends on classification, not a column), so the caller over-fetches.
+ * limited IN POSTGRES. Ordering key is (feed_ts DESC, id DESC) where feed_ts =
+ * coalesce(start_time, workout_date) — so within a day workouts sort by FACT start time
+ * (an evening run no longer floats above a morning one just by insertion order), and a
+ * late-uploaded workout lands at its real time, not at the top. Untimed rows (feed_ts =
+ * workout_date, ~0.75%) fall to the bottom of their day. The cursor resumes strictly after
+ * (beforeFeedTs, beforeId). is_completed is filtered in SQL; the "running / visible /
+ * non-empty" predicate is a JS post-filter on this bounded batch, so the caller over-fetches.
  */
 async function loadFeedCandidates(input: {
   from: string;
   to: string;
-  beforeDate: string | null;
+  beforeFeedTs: string | null;
   beforeId: string | null;
   limit: number;
 }): Promise<ClubWorkoutRow[]> {
   const supabase = createSupabaseServerClient();
-  let q = supabase
-    .from("trainingpeaks_workout_cache")
-    .select(WORKOUT_CACHE_COLUMNS)
-    .gte("workout_date", input.from)
-    .lte("workout_date", input.to)
-    .eq("is_completed", true)
-    // Phase A defense-in-depth: club markers are planned Other(100), so is_completed=true
-    // already excludes them from the feed; still filter the sentinel here so a marker can
-    // never surface in the feed even if a future path marks one completed.
-    .not("title", "ilike", `%${CLUB_MARKER_TITLE_SENTINEL}%`);
-  if (input.beforeDate && input.beforeId) {
-    // (workout_date, id) < (beforeDate, beforeId) in DESC order — keyset, no offset.
-    q = q.or(
-      `workout_date.lt.${input.beforeDate},and(workout_date.eq.${input.beforeDate},id.lt.${input.beforeId})`
-    );
+  // Shared filter (select FIRST, then the SQL predicates). Called with different column lists for the
+  // primary (with feed_ts) and the fallback (without), so it can't bake in the select.
+  const filtered = (cols: string) =>
+    supabase
+      .from("trainingpeaks_workout_cache")
+      .select(cols)
+      .gte("workout_date", input.from)
+      .lte("workout_date", input.to)
+      .eq("is_completed", true)
+      // Phase A defense-in-depth: club markers are planned Other(100), so is_completed=true
+      // already excludes them from the feed; still filter the sentinel here so a marker can
+      // never surface in the feed even if a future path marks one completed.
+      .not("title", "ilike", `%${CLUB_MARKER_TITLE_SENTINEL}%`);
+
+  // PRIMARY: order by fact start time. Keyset on (feed_ts, id), both non-null → no NULL edge cases.
+  let q = filtered(`${WORKOUT_CACHE_COLUMNS}, feed_ts`);
+  if (input.beforeFeedTs && input.beforeId) {
+    q = q.or(`feed_ts.lt.${input.beforeFeedTs},and(feed_ts.eq.${input.beforeFeedTs},id.lt.${input.beforeId})`);
   }
-  const { data, error } = await withSupabaseNetworkRetry(() =>
-    q.order("workout_date", { ascending: false }).order("id", { ascending: false }).limit(input.limit)
+  const primary = await withSupabaseNetworkRetry(() =>
+    q.order("feed_ts", { ascending: false }).order("id", { ascending: false }).limit(input.limit)
   );
-  if (error) throw new Error(`club: feed candidates failed: ${error.message}`);
-  return ((data as Record<string, unknown>[] | null) ?? []).map(mapWorkoutCacheRow);
+  // feed_ts is a new generated column absent from the generated Supabase types → cast through unknown.
+  if (!primary.error) return ((primary.data as unknown as Record<string, unknown>[] | null) ?? []).map(mapWorkoutCacheRow);
+
+  // FALLBACK (feed_ts column not migrated yet — deploy-before-migrate): old (workout_date, id) order.
+  // feed_ts ≡ workout_date here, so the same cursor works via its date prefix; the feed stays alive.
+  if (!/feed_ts|column|schema cache|42703|does not exist/iu.test(primary.error.message)) {
+    throw new Error(`club: feed candidates failed: ${primary.error.message}`);
+  }
+  let fq = filtered(WORKOUT_CACHE_COLUMNS);
+  const beforeDate = input.beforeFeedTs ? input.beforeFeedTs.slice(0, 10) : null;
+  if (beforeDate && input.beforeId) {
+    fq = fq.or(`workout_date.lt.${beforeDate},and(workout_date.eq.${beforeDate},id.lt.${input.beforeId})`);
+  }
+  const fb = await withSupabaseNetworkRetry(() =>
+    fq.order("workout_date", { ascending: false }).order("id", { ascending: false }).limit(input.limit)
+  );
+  if (fb.error) throw new Error(`club: feed candidates failed: ${fb.error.message}`);
+  return ((fb.data as unknown as Record<string, unknown>[] | null) ?? []).map(mapWorkoutCacheRow);
 }
 
 /**
@@ -1669,17 +1695,19 @@ function computeAutoGoalKmFromRollup(rows: WeekRollup[], visibleIds: Set<string>
 // Public view builders
 // ---------------------------------------------------------------------------
 
-/** Keyset feed cursor: "<workout_date>|<id>" of the last returned card. */
-function decodeFeedCursor(cursor: string | null | undefined): { date: string; id: string } | null {
+/** Keyset feed cursor: "<feed_ts>|<id>" of the last returned card. feed_ts (an ISO wall-clock or a
+ *  bare date) never contains "|", so the first "|" splits it cleanly. Old "<date>|<id>" cursors in
+ *  flight during a deploy still decode (feed_ts = the date), self-healing on the next page. */
+function decodeFeedCursor(cursor: string | null | undefined): { feedTs: string; id: string } | null {
   if (!cursor) return null;
   const i = cursor.indexOf("|");
   if (i <= 0) return null;
-  const date = cursor.slice(0, i);
+  const feedTs = cursor.slice(0, i);
   const id = cursor.slice(i + 1);
-  return date && id ? { date, id } : null;
+  return feedTs && id ? { feedTs, id } : null;
 }
-function encodeFeedCursor(row: { workoutDate: string; id: string }): string {
-  return `${row.workoutDate}|${row.id}`;
+function encodeFeedCursor(row: { feedTs: string; id: string }): string {
+  return `${row.feedTs}|${row.id}`;
 }
 
 /** Feed post-filter (depends on classification, so it can't be a SQL column filter). */
@@ -1708,16 +1736,16 @@ export async function getClubFeed(input: {
   const pageSize = C.CLUB_FEED_PAGE_SIZE;
   const batchLimit = pageSize * 4;
   const decoded = decodeFeedCursor(input.cursor);
-  let cursorDate = decoded?.date ?? null;
+  let cursorFeedTs = decoded?.feedTs ?? null;
   let cursorId = decoded?.id ?? null;
   const pageRows: ClubWorkoutRow[] = [];
   let exhausted = false;
 
   while (pageRows.length < pageSize && !exhausted) {
-    const batch = await loadFeedCandidates({ from, to: today, beforeDate: cursorDate, beforeId: cursorId, limit: batchLimit });
+    const batch = await loadFeedCandidates({ from, to: today, beforeFeedTs: cursorFeedTs, beforeId: cursorId, limit: batchLimit });
     if (batch.length < batchLimit) exhausted = true;
     for (const row of batch) {
-      cursorDate = row.workoutDate;
+      cursorFeedTs = row.feedTs;
       cursorId = row.id;
       if (!isFeedRow(row, visibleIds)) continue;
       pageRows.push(row);
