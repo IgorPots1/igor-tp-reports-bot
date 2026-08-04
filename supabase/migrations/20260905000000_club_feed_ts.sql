@@ -7,19 +7,22 @@
 -- лексикографически = хронологически; строки без времени падают в НИЗ своего дня ("2026-08-04" < любой
 -- "2026-08-04T..."). Непустота держит keyset-пагинацию простой (два непустых поля feed_ts, id).
 --
--- ВАЖНО про immutability: workout_date::text и to_char() НЕ immutable (зависят от DateStyle/lc_time),
--- а generated-колонке нужно IMMUTABLE-выражение (иначе 42P17). Поэтому ISO-дату собираем из
--- extract(year/month/day) — date_part(text, date) IMMUTABLE, как и ::int/::text/lpad/||/coalesce.
+-- IMMUTABILITY (иначе 42P17): generated-колонке нужно IMMUTABLE-выражение. И workout_date::text, и
+-- голый to_char() ядро помечает STABLE (зависят от DateStyle/lc_time для форматов с названиями месяцев
+-- и т.п.). Но to_char(date,'YYYY-MM-DD') использует ТОЛЬКО числовые поля — результат детерминирован,
+-- от локали не зависит. Заворачиваем в СОБСТВЕННУЮ функцию, честно помеченную IMMUTABLE: Postgres
+-- доверяет объявленной волатильности функции и берёт её в generated-колонку. Это канонический фикс 42P17.
+create or replace function public.club_feed_iso_date(d date)
+  returns text
+  language sql
+  immutable
+  strict
+  parallel safe
+  as $$ select to_char(d, 'YYYY-MM-DD') $$;
+
 alter table public.trainingpeaks_workout_cache
   add column if not exists feed_ts text
-  generated always as (
-    coalesce(
-      start_time,
-      lpad(extract(year  from workout_date)::int::text, 4, '0') || '-' ||
-      lpad(extract(month from workout_date)::int::text, 2, '0') || '-' ||
-      lpad(extract(day   from workout_date)::int::text, 2, '0')
-    )
-  ) stored;
+  generated always as (coalesce(start_time, public.club_feed_iso_date(workout_date))) stored;
 
 -- Индекс ровно под новый ORDER BY (feed_ts desc, id desc) и SQL-фильтр ленты (is_completed=true):
 -- частичный, покрывает и порядок, и предикат — index scan вместо seq scan + sort.
