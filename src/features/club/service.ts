@@ -2330,20 +2330,48 @@ function planStructureSteps(structure: unknown): string[] {
     if (unit === "kilometer" && v > 0) return `${v} км`;
     return "";
   };
-  const roleName = (st: Obj): string => {
+  // Easy step? <=90% of threshold ≈ warm-up/cool-down/recovery; work reps are 94%+. Falls back to
+  // intensityClass when a step has no target.
+  const isLow = (st: Obj): boolean => {
     const cls = String(st.intensityClass ?? "");
-    const nm = String(st.name ?? "");
+    if (cls === "warmUp" || cls === "coolDown" || cls === "rest") return true;
+    const t = Array.isArray(st.targets) && st.targets.length && isObj(st.targets[0]) ? st.targets[0] : null;
+    const mx = t && typeof t.maxValue === "number" ? t.maxValue : null;
+    return mx != null && mx <= 90;
+  };
+  // Flatten in order (keep block grouping for rep-collapse). POSITION wins over intensityClass: the
+  // FIRST easy standalone step is the warm-up, the LAST is the cool-down — some plans tag the warm-up
+  // "active", so intensityClass alone mislabels it «работа». The reps===1 guard keeps rep steps out of it.
+  type Flat = { blockIdx: number; reps: number; st: Obj };
+  const flat: Flat[] = [];
+  (structure.structure as unknown[]).forEach((block, bi) => {
+    if (!isObj(block) || !Array.isArray(block.steps)) return;
+    const reps = block.type === "repetition" && isObj(block.length) && typeof block.length.value === "number" ? block.length.value : 1;
+    (block.steps as unknown[]).filter(isObj).forEach((st) => flat.push({ blockIdx: bi, reps, st }));
+  });
+  if (!flat.length) return [];
+  // Position-based warm-up/cool-down only makes sense when there IS a work middle. An all-easy run
+  // («лёгкий бег») has no work → its blocks are just running, not «разминка/заминка».
+  const hasWork = flat.some((f) => !isLow(f.st));
+  const roleOf = (f: Flat, i: number): string => {
+    const cls = String(f.st.intensityClass ?? "");
+    const nm = String(f.st.name ?? "");
+    const low = isLow(f.st);
+    if (hasWork && i === 0 && f.reps === 1 && low) return "Разминка";
+    if (hasWork && i === flat.length - 1 && f.reps === 1 && low) return "Заминка";
     if (/warm|размин/i.test(nm) || cls === "warmUp") return "Разминка";
     if (/cool|замин/i.test(nm) || cls === "coolDown") return "Заминка";
     if (cls === "rest") return "Отдых";
-    return "Работа";
+    return low ? "Бег" : "Работа"; // easy segment → «Бег»; hard effort → «Работа»
   };
+  const roles = flat.map((f, i) => roleOf(f, i));
   const out: string[] = [];
-  for (const block of structure.structure as unknown[]) {
-    if (!isObj(block) || !Array.isArray(block.steps)) continue;
-    const reps = block.type === "repetition" && isObj(block.length) && typeof block.length.value === "number" ? block.length.value : 1;
-    const labels = (block.steps as unknown[]).filter(isObj).map((st) => { const l = lenLabel(st); return `${roleName(st)}${l ? " " + l : ""}`; });
-    if (!labels.length) continue;
+  let i = 0;
+  while (i < flat.length) {
+    const bi = flat[i].blockIdx;
+    const reps = flat[i].reps;
+    const labels: string[] = [];
+    while (i < flat.length && flat[i].blockIdx === bi) { const l = lenLabel(flat[i].st); labels.push(`${roles[i]}${l ? " " + l : ""}`); i++; }
     if (reps > 1) out.push(`${reps} × (${labels.join(" + ")})`);
     else out.push(...labels);
   }
