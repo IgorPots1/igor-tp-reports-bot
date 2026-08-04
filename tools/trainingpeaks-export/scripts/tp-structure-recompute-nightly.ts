@@ -68,6 +68,16 @@ function stepShift(thrSec: number, p: Plan): number {
   return Math.max(Number.isFinite(oF) && Number.isFinite(nF) ? Math.abs(oF - nF) : 0, Number.isFinite(oS) && Number.isFinite(nS) ? Math.abs(oS - nS) : 0);
 }
 
+/** Completeness cross-check source: planned uncompleted run workout_ids from the CACHE for the same
+ *  window. The cache LAGS on fresh workouts but holds the older ones — so cache-ids the LIVE
+ *  enumeration missed are the under-fetch signal. Each is validated later by fetching its detail. */
+async function cachePlannedWids(id: number): Promise<Set<number>> {
+  const { data } = await sb.from("trainingpeaks_workout_cache").select("trainingpeaks_workout_id, is_planned, completed_time_raw, workout_type_value_id, workout_date").eq("trainingpeaks_athlete_id", id).gte("workout_date", fromDate).lte("workout_date", toDate);
+  const out = new Set<number>();
+  for (const r of data ?? []) { if (r.is_planned === true && (r.completed_time_raw == null || r.completed_time_raw === 0) && r.workout_type_value_id === 3) { const w = Number(r.trainingpeaks_workout_id); if (Number.isInteger(w) && w > 0) out.add(w); } }
+  return out;
+}
+
 type LogRow = { run_id: string; trainingpeaks_athlete_id: number; athlete_name: string | null; trainingpeaks_workout_id: number; workout_date: string | null; title: string | null; tp_last_modified: string | null; threshold_sec: number; anchor_sec: number | null; decision: string; steps_total: number; steps_changed: number; max_shift_sec: number; anchor_steps: number; defer_reason: string | null; detail: unknown };
 
 async function main(): Promise<void> {
@@ -92,6 +102,7 @@ async function main(): Promise<void> {
   let b2040 = 0, b4060 = 0, b60 = 0;
   const driftByAthlete = new Map<number, { name: string; items: { wk: string; date: string; changed: number; shift: number }[]; maxShift: number }>();
   const deferByAthlete = new Map<number, { name: string; reasons: string[] }>();
+  const underfetch: { id: number; name: string; live: number; cache: number; only: number }[] = [];
 
   for (const id of ids) {
     let thrSec: number | null = null;
@@ -103,9 +114,15 @@ async function main(): Promise<void> {
     const anchor = await easyAnchor(id, thrSec);
 
     let list: unknown[]; try { list = await enumeratePlanned(id); } catch (e) { console.error(`⚠ ${name} (${id}): ${(e as Error).message} — пропущен`); continue; }
-    const planned = list.filter((w) => isRecord(w) && (w.workoutTypeValueId === 3 || w.workoutTypeId === 3) && w.completed !== true);
-    for (const sm of planned) {
-      const wid = Number((sm as Record<string, unknown>).workoutId ?? (sm as Record<string, unknown>).id); if (!Number.isInteger(wid) || wid <= 0) continue;
+    const liveWids = new Set(list.filter((w) => isRecord(w) && (w.workoutTypeValueId === 3 || w.workoutTypeId === 3) && w.completed !== true).map((w) => Number((w as Record<string, unknown>).workoutId ?? (w as Record<string, unknown>).id)).filter((n) => Number.isInteger(n) && n > 0));
+    // COMPLETENESS CROSS-CHECK: live enumeration can under-fetch (a partial list that varies run to
+    // run; sanity-retry only catches within-run instability). Union with the cache's planned ids and
+    // validate each by fetching detail below (a stale/deleted cache id fails the fetch → dropped). The
+    // cache-only ids the live missed are the under-fetch signal — surfaced in the report, not a week later.
+    const cacheWids = await cachePlannedWids(id);
+    const cacheOnly = [...cacheWids].filter((w) => !liveWids.has(w));
+    if (cacheOnly.length) underfetch.push({ id, name, live: liveWids.size, cache: cacheWids.size, only: cacheOnly.length });
+    for (const wid of [...new Set([...liveWids, ...cacheWids])]) {
       let det: Record<string, unknown>; try { det = await getWorkoutDetail(id, wid); } catch { continue; }
       if (det.completed === true) continue;
       const lmUtc = det.lastModifiedDate ? new Date(new Date(String(det.lastModifiedDate)).getTime() + 6 * 3600000).toISOString() : null; // TP UTC-6 → UTC
@@ -140,6 +157,7 @@ async function main(): Promise<void> {
   console.log(`\n═══ Непрерывный пересчёт — прогон ${now.toISOString().slice(0, 16)} ${DRY ? "(DRY, лог не писан)" : `run ${runId.slice(0, 8)}`} ═══`);
   console.log(`атлетов ${athScanned} · осмотрено тренировок ${scanned} (пропущено без изменений ${skipped}) · drift ${drift} · clean ${clean} · defer ${defer} · verify_fail ${verifyFail}`);
   console.log(`сдвиги: 20-40с ×${b2040} · 40-60с ×${b4060} · >60с ×${b60}`);
+  if (underfetch.length) console.log(`\n⚠ НЕДОБОР ПЕРЕЧИСЛЕНИЯ (живое отдало меньше кэша — добрано из кэша, проверено детателью): ${underfetch.length} атл. — ${underfetch.slice(0, 8).map((u) => `${u.name} (живое ${u.live}/кэш ${u.cache} +${u.only})`).join(" · ")}${underfetch.length > 8 ? " …" : ""}`);
   if (anomaly) { console.log(`\n⚠ АНОМАЛИЯ: доля drift ${Math.round((drift / scanned) * 100)}% > 50% — ОСТАНОВЛЕНО, проверь глазами (не применяю списком).`); return; }
   if (deferByAthlete.size) { console.log(`\n▸ РУЧНОЕ (defer — не привязать, ${deferByAthlete.size} атл.):`); for (const [id, e] of deferByAthlete) console.log(`   ${e.name} (${id}): ${e.reasons[0]}`); }
   if (!driftByAthlete.size) { console.log(`\n✅ дрейфа нет — применять нечего.`); return; }
