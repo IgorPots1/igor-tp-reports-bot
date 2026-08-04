@@ -2334,46 +2334,48 @@ export async function getClubRecords(input: {
   const clubTops: ClubRecordsView["clubTops"] = [];
 
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    // Club top: ONLY real races (verified). Coach-confirmed verified races count;
-    // materialized best_verified races count; coach-hidden distance excluded.
-    const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null; date: string | null; isCoach: boolean }> = [];
-    // Iterate ALL visible students (not just those with a snapshot): a runner with an official_protocol
-    // race but no reconstructed snapshot must still make the tops.
+    // Club leaderboard = FASTEST time per person on this distance, INCLUDING Strava best-efforts
+    // (measured training segments). The personal card keeps the «Гонки / Лучшие отрезки» split;
+    // the leaderboard answers "who is fastest in the club", so a Strava best competes here. Each row
+    // carries its `source` so a Strava/training best is MARKED, never passed off as a protocol race.
+    type Cand = { studentId: string; name: string; sec: number; pace: number | null; date: string | null; source: RecordSource; kind: "race" | "training_split" };
+    const cands: Cand[] = [];
+    // Iterate ALL visible students (not just those with a snapshot): a runner with only an
+    // official_protocol race or a Strava best (no reconstruction) must still make the leaderboard.
     for (const [studentId, student] of visibleById) {
       const perStudent = snapshots.get(studentId);
       const c = overrides.get(`${studentId}|${target.key}`);
-      // coach_confirmed: verified → race top; hidden/preliminary excluded. Overrides the distance.
+      const name = student.name ?? "";
+      const pool: Cand[] = [];
       if (c?.source === "coach_confirmed") {
-        if (c.trust === "verified") {
-          raceRows.push({ studentId, name: student.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
-        }
-        continue;
+        // coach governs the distance: verified → a race candidate; hidden/preliminary → excluded, no fallback.
+        if (c.trust === "verified") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "coach_confirmed", kind: "race" });
+      } else {
+        if (c?.source === "official_protocol") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "official_protocol", kind: "race" });
+        if (c?.source === "strava_best_effort") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "strava_best_effort", kind: "training_split" });
+        const rv = perStudent?.get(target.key)?.raceVerified;
+        if (rv) pool.push({ studentId, name, sec: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, source: "race_events", kind: "race" });
       }
-      // official_protocol: a real race result — authoritative race top; occupies the race slot.
-      if (c?.source === "official_protocol") {
-        raceRows.push({ studentId, name: student.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
-        continue;
-      }
-      // strava_best_effort is a TRAINING segment, NOT a race → never enters the tops; fall through to
-      // the student's reconstructed race (raceVerified), exactly as with no override.
-      const rv = perStudent?.get(target.key)?.raceVerified;
-      if (rv) raceRows.push({ studentId, name: student.name ?? "", durationSeconds: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, isCoach: false });
+      if (pool.length) cands.push(pool.reduce((a, b) => (b.sec < a.sec ? b : a))); // this student's FASTEST
     }
-    raceRows.sort((a, b) => a.durationSeconds - b.durationSeconds);
-    const topRows: ClubRecordsClubTopRow[] = raceRows.slice(0, C.CLUB_RECORDS_TOP_N).map((r, index) => ({
+    cands.sort((a, b) => a.sec - b.sec);
+    // Return the FULL ranked list (task: «показать всех»); the UI shows 10 by default and expands.
+    const rows: ClubRecordsClubTopRow[] = cands.map((r, index) => ({
       distanceKey: target.key,
       rank: index + 1,
       studentId: r.studentId,
       displayName: visibleById.get(r.studentId)?.displayName ?? fullName(r.name),
       monogram: monogram(r.name),
-      durationSeconds: r.durationSeconds,
+      durationSeconds: r.sec,
       paceSecPerKm: r.pace,
       isCurrentStudent: r.studentId === input.currentStudentId,
       trust: "verified",
-      recordType: "race",
+      recordType: r.kind,
+      source: r.source,
       date: r.date,
-      // Segment caption is filled in a post-pass below (needs each student's race_events).
-      raceSegmentLabel: r.isCoach ? null : undefined,
+      // Only a reconstructed race (race_events) can be a within-race SEGMENT; coach/official/strava
+      // rows get no caption (null → skipped by the post-pass below).
+      raceSegmentLabel: r.source === "race_events" ? undefined : null,
       // Signed avatar URL for everyone; the proxy re-checks the member's opt-out live (403 →
       // monogram) and a missing photo 404s → monogram. So the UI always keeps a monogram fallback.
       avatarUrl: C.isClubAvatarsEnabled() ? signAvatarPath(r.studentId) : null,
@@ -2382,7 +2384,7 @@ export async function getClubRecords(input: {
       distanceKey: target.key,
       distanceLabel: target.label,
       alwaysPreliminary: target.alwaysPreliminary,
-      rows: topRows,
+      rows,
     });
   }
 

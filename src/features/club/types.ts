@@ -170,8 +170,11 @@ export type ClubRecordsClubTopRow = {
   isCurrentStudent: boolean;
   /** Club tops only ever contain verified records. */
   trust: RecordTrust;
-  /** Club tops only ever contain real races. */
-  recordType: "race";
+  /** Leaderboard ranks by fastest time regardless of race/training, so a row can be a Strava
+   *  training best (training_split) as well as a race. The UI marks the non-race ones. */
+  recordType: "race" | "training_split";
+  /** Source of the leaderboard time — the UI shows a «Strava / тренировка» mark for strava_best_effort. */
+  source?: RecordSource;
   /** Record date (for segment detection); null for coach rows without a stored date. */
   date?: string | null;
   /** Set when this top result is a within-race segment (same caption as the card). */
