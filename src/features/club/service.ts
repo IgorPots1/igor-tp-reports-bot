@@ -615,6 +615,9 @@ export async function loadClubWorkoutRows(input: {
 async function loadFeedCandidates(input: {
   from: string;
   to: string;
+  /** Belgrade "now" (naive). Workouts with feed_ts > this are a timezone artifact (athlete east of
+   *  Belgrade, local start_time still in the future) and are dropped until Belgrade time reaches them. */
+  notAfterFeedTs: string;
   beforeFeedTs: string | null;
   beforeId: string | null;
   limit: number;
@@ -635,7 +638,9 @@ async function loadFeedCandidates(input: {
       .not("title", "ilike", `%${CLUB_MARKER_TITLE_SENTINEL}%`);
 
   // PRIMARY: order by fact start time. Keyset on (feed_ts, id), both non-null → no NULL edge cases.
-  let q = filtered(`${WORKOUT_CACHE_COLUMNS}, feed_ts`);
+  // `feed_ts <= now` drops "from the future" timezone artifacts (index-friendly range; date-only rows
+  // are a prefix of the naive-now string, so they compare <= and are never dropped).
+  let q = filtered(`${WORKOUT_CACHE_COLUMNS}, feed_ts`).lte("feed_ts", input.notAfterFeedTs);
   if (input.beforeFeedTs && input.beforeId) {
     q = q.or(`feed_ts.lt.${input.beforeFeedTs},and(feed_ts.eq.${input.beforeFeedTs},id.lt.${input.beforeId})`);
   }
@@ -980,6 +985,25 @@ function isoInTz(date: Date): string {
 
 function clubTodayIso(): string {
   return isoInTz(new Date());
+}
+/** Belgrade "now" as a naive ISO "YYYY-MM-DDTHH:MM:SS" — same naive-local shape as feed_ts, so a
+ *  string compare `feed_ts <= clubNowIso()` cleanly drops workouts whose athlete-local start_time is
+ *  still in the future relative to Belgrade (a timezone artifact — the athlete is east of Belgrade).
+ *  Date-only feed_ts ("2026-08-04") are a prefix of the naive-now, so they always compare <= and are
+ *  never dropped. */
+function clubNowIso(): string {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: C.CLUB_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+    .format(new Date())
+    .replace(" ", "T");
 }
 /** Test-only: club "today" (Europe/Belgrade) so a harness can match the streak anchor. */
 export function __clubTodayIsoForTest(): string {
@@ -1746,6 +1770,7 @@ export async function getClubFeed(input: {
   currentStudentId: string;
 }): Promise<ClubFeedView> {
   const today = clubTodayIso();
+  const nowIso = clubNowIso(); // Belgrade "now" — cap so timezone-ahead workouts don't sort from the future
   const from = addDaysIso(today, -C.CLUB_FEED_WINDOW_DAYS);
   const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visibleIds = new Set(students.filter(isVisible).map((s) => s.id));
@@ -1763,7 +1788,7 @@ export async function getClubFeed(input: {
   let exhausted = false;
 
   while (pageRows.length < pageSize && !exhausted) {
-    const batch = await loadFeedCandidates({ from, to: today, beforeFeedTs: cursorFeedTs, beforeId: cursorId, limit: batchLimit });
+    const batch = await loadFeedCandidates({ from, to: today, notAfterFeedTs: nowIso, beforeFeedTs: cursorFeedTs, beforeId: cursorId, limit: batchLimit });
     if (batch.length < batchLimit) exhausted = true;
     for (const row of batch) {
       cursorFeedTs = row.feedTs;
