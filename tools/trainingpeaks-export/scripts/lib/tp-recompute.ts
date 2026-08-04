@@ -48,7 +48,7 @@ export function ranges(desc: string): Rng[] {
   return out;
 }
 export type Role = "разминка" | "заминка" | "отдых" | "работа";
-export type FlatStep = { role: Role; min: number; max: number; block: number; step: number; durSec: number };
+export type FlatStep = { role: Role; min: number; max: number; block: number; step: number; durSec: number; distM: number };
 /** flatten a structure OBJECT (structure.structure[].steps[]) into ordered steps with roles.
  *  durSec = the step's duration in seconds (0 for a distance-based step) — the key for matching
  *  a step to its description SEGMENT by duration. */
@@ -57,10 +57,10 @@ export function flatSteps(structObj: unknown): { metric: string; isRep: boolean;
   const metric = String(structObj.primaryIntensityMetric ?? "");
   const isRep = structObj.structure.some((b: unknown) => isRecord(b) && b.type === "repetition");
   const steps: FlatStep[] = [];
-  structObj.structure.forEach((block: unknown, bi: number) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st: unknown, si: number) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; const len = isRecord(st.length) ? st.length : null; const durSec = len && String(len.unit ?? "") === "second" && typeof len.value === "number" ? len.value : 0; steps.push({ role, min: isRecord(tg) && typeof tg.minValue === "number" ? tg.minValue : NaN, max: isRecord(tg) && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si, durSec }); }); });
+  structObj.structure.forEach((block: unknown, bi: number) => { if (!isRecord(block) || !Array.isArray(block.steps)) return; block.steps.forEach((st: unknown, si: number) => { if (!isRecord(st)) return; const tg = Array.isArray(st.targets) && st.targets.length ? st.targets[0] : null; const cls = String(st.intensityClass ?? ""); const nm = String(st.name ?? ""); const role: Role = /warm|размин/i.test(nm) || cls === "warmUp" ? "разминка" : /cool|замин/i.test(nm) || cls === "coolDown" ? "заминка" : cls === "rest" ? "отдых" : "работа"; const len = isRecord(st.length) ? st.length : null; const lu = len ? String(len.unit ?? "") : ""; const lv = len && typeof len.value === "number" ? len.value : 0; const durSec = lu === "second" ? lv : 0; const distM = lu === "meter" || lu === "metre" ? lv : (lu === "kilometer" || lu === "km") ? lv * 1000 : 0; steps.push({ role, min: isRecord(tg) && typeof tg.minValue === "number" ? tg.minValue : NaN, max: isRecord(tg) && typeof tg.maxValue === "number" ? tg.maxValue : NaN, block: bi, step: si, durSec, distM }); }); });
   return { metric, isRep, steps };
 }
-export type Seg = { durSec: number; range: Rng | null; text: string };
+export type Seg = { durSec: number; distM: number; range: Rng | null; text: string };
 /** One step's assignment: the description pace (Rng), or "anchor"/"keep" when the text gives no
  *  pace, plus `walk` = this step's description segment says шагом/пауза/стоя (leave it untouched). */
 export type Assign = { ref: Rng | "anchor" | "keep"; walk: boolean };
@@ -70,12 +70,18 @@ export type Assign = { ref: Rng | "anchor" | "keep"; walk: boolean };
  *  segments and could not reconcile the count. */
 export function parseSegments(desc: string): Seg[] {
   // NB: JS \w / \b do NOT cover Cyrillic — match the stems directly (минут covers минут/минуты/минуту).
+  // Маркер сегмента — ДЛИТЕЛЬНОСТЬ ("3 минуты", "90 секунд") ИЛИ ДИСТАНЦИЯ ("2000 м", "3 км",
+  // "2000 метров"), вперемешку по позиции. Дистанционные репы привязываются к дистанционным шагам
+  // параллельно длительности. Отрицательный lookahead (?![а-яё]) не даёт «м» съесть «минут»/«метро…».
   const durRe = /(\d+(?:[.,]\d+)?)\s*(секунд|сек|минут|мин)/gi;
-  const durs: { pos: number; sec: number }[] = []; let m: RegExpExecArray | null;
-  while ((m = durRe.exec(desc)) !== null) { const n = parseFloat(m[1].replace(",", ".")); if (!Number.isFinite(n) || n <= 0) continue; const sec = /сек/i.test(m[2]) ? n : n * 60; durs.push({ pos: m.index, sec }); }
+  const distRe = /(\d+(?:[.,]\d+)?)\s*(км|метр(?:ов|а)?|м)(?![а-яё])/gi;
+  const marks: { pos: number; durSec: number; distM: number }[] = []; let m: RegExpExecArray | null;
+  while ((m = durRe.exec(desc)) !== null) { const n = parseFloat(m[1].replace(",", ".")); if (!Number.isFinite(n) || n <= 0) continue; marks.push({ pos: m.index, durSec: /сек/i.test(m[2]) ? n : n * 60, distM: 0 }); }
+  while ((m = distRe.exec(desc)) !== null) { const n = parseFloat(m[1].replace(",", ".")); if (!Number.isFinite(n) || n <= 0) continue; marks.push({ pos: m.index, durSec: 0, distM: /км/i.test(m[2]) ? n * 1000 : n }); }
+  marks.sort((a, b) => a.pos - b.pos);
   const rs = ranges(desc);
   const segs: Seg[] = [];
-  for (let i = 0; i < durs.length; i++) { const start = durs[i].pos; const end = i + 1 < durs.length ? durs[i + 1].pos : desc.length; const r = rs.find((x) => x.idx >= start && x.idx < end); segs.push({ durSec: durs[i].sec, range: r ? { fast: r.fast, slow: r.slow, idx: r.idx } : null, text: desc.slice(start, end) }); }
+  for (let i = 0; i < marks.length; i++) { const start = marks[i].pos; const end = i + 1 < marks.length ? marks[i + 1].pos : desc.length; const r = rs.find((x) => x.idx >= start && x.idx < end); segs.push({ durSec: marks[i].durSec, distM: marks[i].distM, range: r ? { fast: r.fast, slow: r.slow, idx: r.idx } : null, text: desc.slice(start, end) }); }
   return segs;
 }
 /** Match each structure step to a description SEGMENT by DURATION, order-preserving (a later step
@@ -87,11 +93,23 @@ export function parseSegments(desc: string): Seg[] {
 export function matchByDuration(steps: FlatStep[], segs: Seg[]): Assign[] | null {
   const out: Assign[] = []; let ptr = 0;
   for (const st of steps) {
-    if (st.durSec <= 0) return null; // distance-based step — no duration key
-    const tol = Math.max(10, st.durSec * 0.08);
+    // Ключ шага — ДЛИТЕЛЬНОСТЬ (durSec) или ДИСТАНЦИЯ (distM); ищем сегмент ТОГО ЖЕ рода в допуске,
+    // порядок сохраняем (поздний шаг не берёт ранний сегмент). Допуск дистанции — 8% или 50 м.
+    const kind: "dur" | "dist" | null = st.durSec > 0 ? "dur" : st.distM > 0 ? "dist" : null;
+    const kv = kind === "dur" ? st.durSec : st.distM;
     let found = -1;
-    for (let j = ptr; j < segs.length; j++) { if (Math.abs(segs[j].durSec - st.durSec) <= tol) { found = j; break; } }
-    if (found < 0) return null;
+    if (kind) {
+      const tol = kind === "dur" ? Math.max(10, kv * 0.08) : Math.max(50, kv * 0.08);
+      for (let j = ptr; j < segs.length; j++) { const sk: "dur" | "dist" | null = segs[j].durSec > 0 ? "dur" : segs[j].distM > 0 ? "dist" : null; const sv = sk === "dur" ? segs[j].durSec : segs[j].distM; if (sk === kind && Math.abs(sv - kv) <= tol) { found = j; break; } }
+    }
+    if (found < 0) {
+      // Нет подходящего сегмента. РАБОЧИЙ шаг без явного темпа привязать нельзя → дефер (null).
+      // Шаг без темпа (разминка/заминка/отдых) и так берёт якорь — расхождение длительности/дистанции
+      // на нём НЕ должно ронять всю тренировку: ставим якорь и идём дальше, сегмент не потребляя.
+      if (st.role === "работа") return null;
+      out.push({ ref: "anchor", walk: false });
+      continue;
+    }
     const seg = segs[found]; ptr = found + 1;
     const walk = /шагом|пауз|стоя/i.test(seg.text); // #4: walk / pause step — recompute leaves it untouched
     out.push({ ref: seg.range ? seg.range : st.role === "работа" ? "keep" : "anchor", walk });
