@@ -47,7 +47,15 @@ export type BillingPaymentStatus =
 // its guard when it gets wired to one.
 export type BillingPaymentSource = "manual" | "email_import";
 export type BillingImportedPaymentStatus = "new" | "matched" | "ignored";
-export type BillingPayerIdentityType = "payer_hint" | "description_hint" | "payment_description";
+// Порядок важен: он же порядок приоритета в buildTrustedAutoMatchDecision
+// (телефон -> email -> имя). Телефон и email — точные ключи, остальные — текстовые
+// подсказки.
+export type BillingPayerIdentityType =
+  | "phone"
+  | "email"
+  | "payer_hint"
+  | "description_hint"
+  | "payment_description";
 export type BillingPayerIdentityConfidence = "trusted_manual";
 
 export type BillingClient = {
@@ -143,6 +151,10 @@ export type BillingImportedPaymentRawRow = {
   paymentId: string | null;
   terminalName: string | null;
   descriptionRaw: string | null;
+  // Необязательные: платежи, импортированные до появления этих полей, их не содержат,
+  // и переразбирать выписки задним числом мы не будем.
+  payerEmail?: string | null;
+  payerPhone?: string | null;
   dataFlags: BillingImportedPaymentDataFlags;
 };
 
@@ -437,6 +449,9 @@ export type IgnoreImportedPaymentInput = {
 export type BillingTrustedAutoMatchSkipReason =
   | "skipped_no_identity"
   | "skipped_multiple_identities"
+  // Ключи разного приоритета ведут к разным клиентам (например, телефон к одному,
+  // имя плательщика к другому). Уводим в ручной разбор, а не доверяем старшему ключу.
+  | "skipped_identity_conflict"
   | "skipped_inactive_client"
   | "skipped_non_rub"
   | "skipped_amount_mismatch"
@@ -468,6 +483,7 @@ export type AutoMatchTrustedImportedPaymentsResult = {
   matched: number;
   skippedNoIdentity: number;
   skippedMultipleIdentities: number;
+  skippedIdentityConflict: number;
   skippedInactiveClient: number;
   skippedNonRub: number;
   skippedAmountMismatch: number;

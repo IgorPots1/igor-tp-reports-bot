@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
+import { normalizeBillingPhone } from "@/features/billing/phone";
 import type {
   BillingImportedPaymentDataFlags,
   BillingImportedPaymentRawRow,
@@ -237,6 +238,8 @@ function sanitizeTerminalName(value: string | null): string | null {
 
 function parseDataField(data: string | null): {
   payerHint: string | null;
+  payerEmail: string | null;
+  payerPhone: string | null;
   dataFlags: BillingImportedPaymentDataFlags;
 } {
   const dataFlags: BillingImportedPaymentDataFlags = {
@@ -246,15 +249,24 @@ function parseDataField(data: string | null): {
   };
 
   if (!data) {
-    return { payerHint: null, dataFlags };
+    return { payerHint: null, payerEmail: null, payerPhone: null, dataFlags };
   }
 
-  dataFlags.hasEmail = /(?:^|\|)Email=/i.test(data);
-  dataFlags.hasPhone = /(?:^|\|)Phone=/i.test(data);
+  // Раньше отсюда забирались только булевы флаги, а сами значения выбрасывались —
+  // поэтому плательщика нельзя было опознать иначе как по имени, и опечатка в имени
+  // расщепляла человека надвое. Теперь значения сохраняются в raw_row и служат
+  // точными ключами (identity_type 'phone' / 'email').
+  const emailMatch = data.match(/(?:^|\|)Email=([^|]*)/i);
+  const phoneMatch = data.match(/(?:^|\|)Phone=([^|]*)/i);
+  dataFlags.hasEmail = emailMatch != null;
+  dataFlags.hasPhone = phoneMatch != null;
+
+  const payerEmail = normalizeCell(emailMatch?.[1])?.toLowerCase() ?? null;
+  const payerPhone = normalizeBillingPhone(normalizeCell(phoneMatch?.[1]));
 
   const nameMatch = data.match(/(?:^|\|)Name=([^|]+)/i);
   if (!nameMatch) {
-    return { payerHint: null, dataFlags };
+    return { payerHint: null, payerEmail, payerPhone, dataFlags };
   }
 
   const payerHint = normalizeCell(nameMatch[1]);
@@ -262,7 +274,7 @@ function parseDataField(data: string | null): {
     dataFlags.hasName = true;
   }
 
-  return { payerHint, dataFlags };
+  return { payerHint, payerEmail, payerPhone, dataFlags };
 }
 
 function canonicalizeHashText(value: string | null): string {
@@ -362,7 +374,7 @@ export function parseTBankStatementBuffer(buffer: Buffer): ParseTBankStatementRe
       continue;
     }
 
-    const { payerHint, dataFlags } = parseDataField(dataCell);
+    const { payerHint, payerEmail, payerPhone, dataFlags } = parseDataField(dataCell);
     const description = sanitizeDescription(descriptionCell);
 
     const rawRow: BillingImportedPaymentRawRow = {
@@ -378,6 +390,8 @@ export function parseTBankStatementBuffer(buffer: Buffer): ParseTBankStatementRe
       paymentId,
       terminalName,
       descriptionRaw: description,
+      payerEmail,
+      payerPhone,
       dataFlags,
     };
 

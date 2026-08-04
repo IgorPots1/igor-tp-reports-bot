@@ -24,7 +24,10 @@ import {
   updateBillingMonthlyPaymentById,
   updateBillingPayerIdentityById,
 } from "@/features/billing/repository";
-import { derivePayerIdentitiesFromImportedPayment } from "@/features/billing/payer-identity";
+import {
+  BILLING_PAYER_IDENTITY_TYPES,
+  derivePayerIdentitiesFromImportedPayment,
+} from "@/features/billing/payer-identity";
 import {
   BILLING_CSV_COLUMNS,
   BILLING_CURRENCY_VALUES,
@@ -1185,6 +1188,7 @@ function incrementTrustedAutoMatchSkipCounter(
     AutoMatchTrustedImportedPaymentsResult,
     | "skippedNoIdentity"
     | "skippedMultipleIdentities"
+    | "skippedIdentityConflict"
     | "skippedInactiveClient"
     | "skippedNonRub"
     | "skippedAmountMismatch"
@@ -1195,6 +1199,7 @@ function incrementTrustedAutoMatchSkipCounter(
   reason:
     | "skipped_no_identity"
     | "skipped_multiple_identities"
+    | "skipped_identity_conflict"
     | "skipped_inactive_client"
     | "skipped_non_rub"
     | "skipped_amount_mismatch"
@@ -1208,6 +1213,9 @@ function incrementTrustedAutoMatchSkipCounter(
       return;
     case "skipped_multiple_identities":
       counters.skippedMultipleIdentities += 1;
+      return;
+    case "skipped_identity_conflict":
+      counters.skippedIdentityConflict += 1;
       return;
     case "skipped_inactive_client":
       counters.skippedInactiveClient += 1;
@@ -1248,6 +1256,7 @@ type TrustedAutoMatchDecision =
       reason:
         | "skipped_no_identity"
         | "skipped_multiple_identities"
+        | "skipped_identity_conflict"
         | "skipped_inactive_client"
         | "skipped_non_rub"
         | "skipped_amount_mismatch"
@@ -1293,12 +1302,32 @@ async function buildTrustedAutoMatchDecision(input: {
     return { kind: "skip", reason: "skipped_no_identity" };
   }
 
-  const identityKeys = new Set(matchedIdentities.map((identity) => `${identity.identityType}:${identity.identityHash}`));
+  // Приоритет ключей: телефон -> email -> имя. Берём совпадения ТОЛЬКО высшего
+  // доступного приоритета. Без этого платёж, дающий и phone, и payer_hint, давал бы
+  // два разных identityKey и уходил в skipped_multiple_identities — то есть добавление
+  // телефонов молча выключило бы авто-зачёт для всех.
+  const topType = BILLING_PAYER_IDENTITY_TYPES.find((type) =>
+    matchedIdentities.some((identity) => identity.identityType === type)
+  );
+  const topIdentities = matchedIdentities.filter((identity) => identity.identityType === topType);
+
+  // Расхождение приоритетов НЕ решаем молча в пользу телефона. Уникальный индекс
+  // (identity_type, identity_hash) допускает у номера только одного владельца, а семья
+  // платит с одного телефона — тогда платёж жены ушёл бы на мужа автоматически. Если
+  // старший ключ ведёт к одному клиенту, а младший к другому — это ручной разбор.
+  const conflictingIdentity = matchedIdentities.find(
+    (identity) => !topIdentities.some((top) => top.billingClientId === identity.billingClientId)
+  );
+  if (conflictingIdentity) {
+    return { kind: "skip", reason: "skipped_identity_conflict" };
+  }
+
+  const identityKeys = new Set(topIdentities.map((identity) => `${identity.identityType}:${identity.identityHash}`));
   if (identityKeys.size !== 1) {
     return { kind: "skip", reason: "skipped_multiple_identities" };
   }
 
-  const clientIds = Array.from(new Set(matchedIdentities.map((identity) => identity.billingClientId)));
+  const clientIds = Array.from(new Set(topIdentities.map((identity) => identity.billingClientId)));
   if (clientIds.length !== 1) {
     return { kind: "skip", reason: "skipped_ambiguous" };
   }
@@ -1368,6 +1397,7 @@ export async function autoMatchTrustedImportedPayments(
     matched: 0,
     skippedNoIdentity: 0,
     skippedMultipleIdentities: 0,
+    skippedIdentityConflict: 0,
     skippedInactiveClient: 0,
     skippedNonRub: 0,
     skippedAmountMismatch: 0,

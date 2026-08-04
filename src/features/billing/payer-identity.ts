@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
 
+import { maskBillingEmail, maskBillingPhone } from "@/features/billing/phone";
 import type { BillingImportedPayment } from "@/features/billing/types";
 
 export const BILLING_PAYER_IDENTITY_TYPES = [
+  "phone",
+  "email",
   "payer_hint",
   "description_hint",
   "payment_description",
@@ -91,14 +94,38 @@ function maybeBuildIdentity(
   };
 }
 
+// Телефон и email — ТОЧНЫЕ ключи, а не текстовые подсказки, и через strip-логику их
+// пропускать нельзя: stripSensitivePatterns вырезает цифровые последовательности и
+// адреса, а hasSensitiveNumericDensity отвергает всё, где 10+ цифр, — то есть ровно
+// любой телефон. Поэтому у них отдельный конструктор. Логика payer_hint не меняется.
+function buildExactIdentity(
+  identityType: "phone" | "email",
+  value: string | null | undefined
+): DerivedBillingPayerIdentity | null {
+  if (!value) {
+    return null;
+  }
+
+  return {
+    identityType,
+    identityHash: createHash("sha256").update(`${identityType}:${value}`, "utf8").digest("hex"),
+    displayHint: identityType === "phone" ? maskBillingPhone(value) : maskBillingEmail(value),
+  };
+}
+
 export function derivePayerIdentitiesFromImportedPayment(
   imported: BillingImportedPayment
 ): DerivedBillingPayerIdentity[] {
-  // Запоминаем/матчим плательщика ТОЛЬКО по имени (payer_hint). Описание из банка
+  // Приоритет: телефон -> email -> имя. Телефон и email берём из raw_row (парсер
+  // сохраняет их с 2026-08); имя — как раньше, из payer_hint. Описание из банка
   // (например, «Товар 1») generic и одинаково у разных людей — по нему нельзя
   // привязывать плательщика, иначе один платёж ложно «узнаётся» как другой клиент
   // (и может быть ошибочно авто-засчитан).
-  const candidates = [maybeBuildIdentity("payer_hint", imported.payerHint)];
+  const candidates = [
+    buildExactIdentity("phone", imported.rawRow?.payerPhone),
+    buildExactIdentity("email", imported.rawRow?.payerEmail),
+    maybeBuildIdentity("payer_hint", imported.payerHint),
+  ];
 
   const seen = new Set<string>();
   const result: DerivedBillingPayerIdentity[] = [];
