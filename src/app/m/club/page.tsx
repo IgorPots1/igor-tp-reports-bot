@@ -13,6 +13,7 @@ import type {
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
+  ClubNextWorkoutView,
   ClubPastResult,
   ClubPrediction,
   ClubProfileDetailView,
@@ -1314,6 +1315,15 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
   const privacyBusyRef = useRef(false);
   const routesBusyRef = useRef(false);
   const avatarBusyRef = useRef(false);
+  const [plan, setPlan] = useState<ClubNextWorkoutView | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/m/club/next-workout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initData: props.initData }) })
+      .then((r) => (r.ok ? r.json() : { ok: false }))
+      .then((j) => { if (alive && j.ok) setPlan(j.view ?? null); })
+      .catch(() => { /* plan card is best-effort — feature off / offline → just no card */ });
+    return () => { alive = false; };
+  }, [props.initData]);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
@@ -1392,6 +1402,27 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
           </div>
         </div>
       </div>
+
+      {plan ? (
+        <div style={{ ...S.card, border: `1px solid ${C.accent}` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontFamily: HEAD, fontSize: 13, letterSpacing: ".04em", textTransform: "uppercase", color: C.sub }}>План · {plan.whenLabel}</span>
+            {plan.isDayOff ? <span style={{ fontSize: 11, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>выходной</span> : null}
+          </div>
+          <div style={{ fontFamily: HEAD, fontSize: 18, color: C.ink, fontWeight: 600 }}>{plan.title}</div>
+          <div style={S.cardMeta}>{[plan.typeLabel, plan.durationLabel, plan.distanceLabel].filter(Boolean).join(" · ")}</div>
+          {plan.description ? (
+            <div style={{ marginTop: 10, fontSize: 14, color: C.ink, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{plan.description}</div>
+          ) : plan.steps.length ? (
+            <div style={{ marginTop: 10 }}>
+              {plan.steps.map((s, i) => (
+                <div key={i} style={{ fontSize: 14, color: C.ink, padding: "4px 0", borderTop: i ? `1px solid ${C.line}` : "none" }}>{s}</div>
+              ))}
+            </div>
+          ) : null}
+          {plan.isDayOff ? <div style={{ ...S.cardMeta, marginTop: 8 }}>Ты отметил этот день выходным. Если передумаешь, план ждёт.</div> : null}
+        </div>
+      ) : null}
 
       <div style={S.card}>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>

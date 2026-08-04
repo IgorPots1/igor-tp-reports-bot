@@ -45,6 +45,7 @@ import type {
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
+  ClubNextWorkoutView,
   ClubPrediction,
   ClubProfileDetailView,
   ClubPublicProfileView,
@@ -2310,6 +2311,104 @@ function topRowSegmentLabel(
   if (ev?.title) return `отрезок гонки «${ev.title}»`;
   const parentKm = ev?.maxKm ?? (sameDayLongerKm > 0 ? sameDayLongerKm : null);
   return parentKm != null ? `в составе ${nearestStandardKm(parentKm)} км` : "отрезок более длинной гонки";
+}
+
+// ── Next planned workout (the student's own plan, shown on entry) ──────────────
+type Obj = Record<string, unknown>;
+const isObj = (x: unknown): x is Obj => typeof x === "object" && x !== null && !Array.isArray(x);
+
+/** Human one-liners for a planned workout's structure — the FALLBACK shown when the coach left the
+ *  description empty. Repetition blocks render «N × (…)»; each step shows its name + duration/distance. */
+function planStructureSteps(structure: unknown): string[] {
+  if (!isObj(structure) || !Array.isArray(structure.structure)) return [];
+  const lenLabel = (st: Obj): string => {
+    const len = isObj(st.length) ? st.length : null;
+    const unit = len ? String(len.unit ?? "") : "";
+    const v = len && typeof len.value === "number" ? len.value : 0;
+    if (unit === "second" && v > 0) return `${Math.round(v / 60)} мин`;
+    if (unit === "meter" && v > 0) return v >= 1000 ? `${(v / 1000).toFixed(v % 1000 ? 1 : 0)} км` : `${v} м`;
+    if (unit === "kilometer" && v > 0) return `${v} км`;
+    return "";
+  };
+  const roleName = (st: Obj): string => {
+    const cls = String(st.intensityClass ?? "");
+    const nm = String(st.name ?? "");
+    if (/warm|размин/i.test(nm) || cls === "warmUp") return "Разминка";
+    if (/cool|замин/i.test(nm) || cls === "coolDown") return "Заминка";
+    if (cls === "rest") return "Отдых";
+    return "Работа";
+  };
+  const out: string[] = [];
+  for (const block of structure.structure as unknown[]) {
+    if (!isObj(block) || !Array.isArray(block.steps)) continue;
+    const reps = block.type === "repetition" && isObj(block.length) && typeof block.length.value === "number" ? block.length.value : 1;
+    const labels = (block.steps as unknown[]).filter(isObj).map((st) => { const l = lenLabel(st); return `${roleName(st)}${l ? " " + l : ""}`; });
+    if (!labels.length) continue;
+    if (reps > 1) out.push(`${reps} × (${labels.join(" + ")})`);
+    else out.push(...labels);
+  }
+  return out;
+}
+
+/**
+ * The student's NEXT planned workout (today or the nearest upcoming). Description shown in full (coach
+ * text is written for the student — a scan of the plan corpus found no coach-only markers); `steps` is
+ * the structure fallback for the ~5% empty descriptions. A day-off on the workout's date is surfaced as
+ * a MARK (isDayOff), never hidden. Read-only; nothing is written.
+ */
+export async function getClubNextWorkout(input: { currentStudentId: string }): Promise<ClubNextWorkoutView | null> {
+  const supabase = createSupabaseServerClient();
+  const today = clubTodayIso();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache")
+    .select("workout_date, title, sport_or_type_code, workout_type_value_id, workout_sub_type_id, planned_time_raw, planned_distance_raw, source_snapshot, order_on_day")
+    .eq("student_id", input.currentStudentId)
+    .eq("is_planned", true)
+    .gte("workout_date", today)
+    .order("workout_date", { ascending: true })
+    .order("order_on_day", { ascending: true, nullsFirst: true })
+    .limit(1);
+  if (error || !data || !data.length) return null;
+  const w = data[0] as Obj;
+  const date = String(w.workout_date ?? "");
+  if (!date) return null;
+  const family = classifyTrainingPeaksWorkoutActivity({
+    title: (w.title as string | null) ?? null,
+    sportOrTypeCode: (w.sport_or_type_code as string | null) ?? null,
+    workoutTypeValueId: (w.workout_type_value_id as number | null) ?? null,
+    workoutSubTypeId: (w.workout_sub_type_id as number | null) ?? null,
+  }).family;
+  const ss = isObj(w.source_snapshot) ? w.source_snapshot : null;
+  const descRaw = ss && typeof ss.description === "string" ? ss.description.trim() : "";
+  const durSec = rawHoursToSeconds(w.planned_time_raw as number | string | null);
+  const distKm = normalizeDistanceKm(w.planned_distance_raw as number | string | null);
+  const whenLabel = date === today ? "сегодня" : date === addDaysIso(today, 1) ? "завтра" : formatRuDate(date);
+  let isDayOff = false;
+  try {
+    const { data: off } = await supabase
+      .from("club_calendar_entries")
+      .select("id")
+      .eq("student_id", input.currentStudentId)
+      .eq("kind", "day_off")
+      .eq("entry_date", date)
+      .neq("status", "rejected")
+      .limit(1);
+    isDayOff = Boolean(off && off.length);
+  } catch {
+    /* calendar table absent → no day-off mark */
+  }
+  return {
+    date,
+    whenLabel,
+    title: cleanTitle((w.title as string | null) ?? null) ?? "Тренировка",
+    typeLabel: typeLabel(family),
+    durationLabel: durSec && durSec > 0 ? `${Math.round(durSec / 60)} мин` : null,
+    distanceLabel: distKm && distKm > 0 ? `${distKm.toFixed(1)} км` : null,
+    // Club UI rule: no long dashes in the student-facing surface — normalise em/en/minus to a hyphen.
+    description: descRaw ? descRaw.replace(/[—–−]/gu, "-") : null,
+    steps: planStructureSteps(ss?.structure),
+    isDayOff,
+  };
 }
 
 export async function getClubRecords(input: {

@@ -315,6 +315,21 @@ export type ClubPastResult = {
   protocolUrl: string | null;
 };
 
+/** The student's NEXT planned workout (today or the nearest upcoming), shown on entry. Description is
+ *  shown in full (coach text is student-facing); `steps` is the structure fallback for empty descriptions.
+ *  `isDayOff` = the student marked this date as a day-off (shown WITH a mark, not hidden). */
+export type ClubNextWorkoutView = {
+  date: string;
+  whenLabel: string;
+  title: string;
+  typeLabel: string;
+  durationLabel: string | null;
+  distanceLabel: string | null;
+  description: string | null;
+  steps: string[];
+  isDayOff: boolean;
+};
+
 export type ClubDayoffStatus = "pending" | "approved" | "rejected" | "applied";
 export type ClubDayoffRequest = {
   id: string;
