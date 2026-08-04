@@ -143,20 +143,20 @@ async function main(): Promise<void> {
   if (anomaly) { console.log(`\n⚠ АНОМАЛИЯ: доля drift ${Math.round((drift / scanned) * 100)}% > 50% — ОСТАНОВЛЕНО, проверь глазами (не применяю списком).`); return; }
   if (deferByAthlete.size) { console.log(`\n▸ РУЧНОЕ (defer — не привязать, ${deferByAthlete.size} атл.):`); for (const [id, e] of deferByAthlete) console.log(`   ${e.name} (${id}): ${e.reasons[0]}`); }
   if (!driftByAthlete.size) { console.log(`\n✅ дрейфа нет — применять нечего.`); return; }
-  // ДЕТЕКТ ШИРОКИЙ, ПРИМЕНЕНИЕ УЗКОЕ: считаем дрейф по всему окну (картина), но применяем только
-  // на сегодня-или-будущее. Прошлую тренировку переписывать бессмысленно — день прошёл, её не побегут,
-  // а история верна под тем порогом, что стоял тогда. Команда идёт с --since=<сегодня>.
-  const today = todayIso();
-  const apply = [...driftByAthlete.entries()].filter(([, e]) => e.items.some((x) => x.date >= today)).sort((a, b) => b[1].maxShift - a[1].maxShift);
-  const pastOnly = [...driftByAthlete.entries()].filter(([, e]) => !e.items.some((x) => x.date >= today));
+  // ДЕТЕКТ ШИРОКИЙ, ПРИМЕНЕНИЕ УЗКОЕ. Применяем на today-2 и позже: тренировку, не пробежанную
+  // вчера, сегодня ещё могут открыть. От позавчера и раньше — день прошёл, переписывать бессмысленно
+  // (её не побегут, история верна под тем порогом, что стоял тогда). Команда идёт с --since=<today-2>.
+  const applyFrom = daysAgo(2);
+  const apply = [...driftByAthlete.entries()].filter(([, e]) => e.items.some((x) => x.date >= applyFrom)).sort((a, b) => b[1].maxShift - a[1].maxShift);
+  const pastOnly = [...driftByAthlete.entries()].filter(([, e]) => !e.items.some((x) => x.date >= applyFrom));
   if (apply.length) {
-    console.log(`\n▸ ПЕРЕПРИМЕНИТЬ (drift на сегодня/будущее, по атлетам):`);
-    for (const [id, e] of apply) { const fut = e.items.filter((x) => x.date >= today); console.log(`   ${e.name} (${id}) — ${fut.length} трен. сегодня+, макс сдвиг ${e.maxShift}с${fut.length <= 3 ? " · " + fut.map((x) => x.wk).join(" · ") : ""}`); }
-    console.log(`\n▸ КОМАНДА (по одному, гейты; --since=${today} рвёт только сегодня+будущее):`);
-    console.log(`   for aid in ${apply.map(([id]) => id).join(" ")}; do TP_ATHLETE_REAL_WRITE=1 npx tsx tools/trainingpeaks-export/scripts/tp-threshold-restore.ts --athlete=$aid --since=${today} --apply --confirm "RESTORE $aid"; done`);
-  } else console.log(`\n✅ дрейфа на сегодня/будущее нет — применять нечего.`);
-  if (pastOnly.length) console.log(`\n▸ только ПРОШЛОЕ (информация, НЕ применяем — дни прошли): ${pastOnly.map(([, e]) => `${e.name} (${e.items.length})`).join(" · ")}`);
-  const big = apply.flatMap(([, e]) => e.items.filter((x) => x.date >= today && x.shift > 40).map((x) => `${e.name}: ${x.wk} Δ${x.shift}с`));
-  if (big.length) { console.log(`\n▸ СДВИГИ >40с на сегодня/будущее (это ошибка, не округление):`); for (const s of big) console.log(`   ${s}`); }
+    console.log(`\n═══ ПРИМЕНЯЕМ — дрейф на ${applyFrom} и позже ═══`);
+    for (const [id, e] of apply) { const fut = e.items.filter((x) => x.date >= applyFrom); console.log(`   ${e.name} (${id}) — ${fut.length} трен., макс сдвиг ${e.maxShift}с${fut.length <= 3 ? " · " + fut.map((x) => x.wk).join(" · ") : ""}`); }
+    console.log(`   КОМАНДА (по одному, гейты; --since=${applyFrom} рвёт только ${applyFrom}+):`);
+    console.log(`     for aid in ${apply.map(([id]) => id).join(" ")}; do TP_ATHLETE_REAL_WRITE=1 npx tsx tools/trainingpeaks-export/scripts/tp-threshold-restore.ts --athlete=$aid --since=${applyFrom} --apply --confirm "RESTORE $aid"; done`);
+    const big = apply.flatMap(([, e]) => e.items.filter((x) => x.date >= applyFrom && x.shift > 40).map((x) => `${e.name}: ${x.wk} Δ${x.shift}с`));
+    if (big.length) { console.log(`   сдвиги >40с (это ошибка, не округление):`); for (const s of big) console.log(`     ${s}`); }
+  } else console.log(`\n═══ ПРИМЕНЯЕМ ═══\n   (на ${applyFrom}+ дрейфа нет — применять нечего)`);
+  if (pastOnly.length) console.log(`\n═══ ТОЛЬКО ИНФОРМАЦИЯ — день прошёл, НЕ применяем ═══\n   ${pastOnly.map(([, e]) => `${e.name} (${e.items.length} трен.)`).join(" · ")}`);
 }
 main().catch((e) => { console.error(e); process.exit(1); });
