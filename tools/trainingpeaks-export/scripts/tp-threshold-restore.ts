@@ -198,7 +198,12 @@ async function main(): Promise<void> {
       const st = isRecord(block) && Array.isArray(block.steps) ? block.steps[p.step] : null;
       const tg = isRecord(st) && Array.isArray(st.targets) ? st.targets[0] : null;
       if (!isRecord(tg)) { console.error(`  ✗ ${wk.title}: не нашёл шаг b${p.block}s${p.step} в живой структуре — СТОП.`); process.exit(2); }
-      (tg as Record<string, unknown>).minValue = p.newMin; (tg as Record<string, unknown>).maxValue = p.newMax;
+      // Пишем ТОЛЬКО конечные значения. Открытый шаг «шагом/пауза» имеет target {minValue:75} без
+      // maxValue (recompute помечает его «не трогаем», newMax=null). Раньше писали maxValue=null →
+      // TP отбивал весь PUT как 400 (Lobus «6х6»). Не трогаем поле, если новое значение не число —
+      // живой target остаётся как есть, лишний null не появляется.
+      if (Number.isFinite(p.newMin)) (tg as Record<string, unknown>).minValue = p.newMin;
+      if (Number.isFinite(p.newMax)) (tg as Record<string, unknown>).maxValue = p.newMax;
     }
     const before = { title: live.title, description: live.description, workoutId: live.workoutId, nSteps: fx.steps.length };
     live.structure = JSON.stringify(structObj); // PUT expects structure as STRING
