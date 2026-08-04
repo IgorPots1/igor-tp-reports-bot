@@ -31,8 +31,12 @@ alter table public.club_official_results add constraint club_official_results_so
 -- 3) идемпотентность журнала для Strava (у неё нет protocol_url — текущего ключа дедупа):
 --    свой ключ strava_best_effort_id (глобально уникальный id отрезка в Strava, строкой).
 alter table public.club_official_results add column if not exists strava_best_effort_id text;
+-- ПОЛНЫЙ (не partial) unique-индекс. supabase-js upsert шлёт ON CONFLICT (...) БЕЗ WHERE-предиката,
+-- а partial-индекс Postgres арбитром без его предиката не берёт ("no unique or exclusion constraint
+-- matching the ON CONFLICT specification"). Существующие official/coach строки имеют NULL в этой
+-- колонке; NULL в unique-индексе различимы (NULLs distinct) — коллизии между ними нет.
+drop index if exists club_official_results_strava_be_id;
 create unique index if not exists club_official_results_strava_be_id
-  on public.club_official_results (student_id, strava_best_effort_id)
-  where strava_best_effort_id is not null;
+  on public.club_official_results (student_id, strava_best_effort_id);
 
 notify pgrst, 'reload schema';
