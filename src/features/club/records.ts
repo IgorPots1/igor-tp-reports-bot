@@ -37,7 +37,9 @@ export type RecordSource =
   | "official_protocol"
   | "coach_confirmed"
   | "race_events"
-  | "club_races";
+  | "club_races"
+  // A measured segment from a training run (Strava best_effort import) — a TRAINING split, not a race.
+  | "strava_best_effort";
 
 export type RecordHiddenReason =
   | "interval"

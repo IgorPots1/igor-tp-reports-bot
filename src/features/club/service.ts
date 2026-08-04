@@ -1342,6 +1342,27 @@ function coachRaceEntry(
   };
 }
 
+/** Entry from a club_records override: official_protocol → race, strava_best_effort → training_split.
+ *  (coach_confirmed keeps its own builder above.) The row's source flows through unchanged. */
+function clubRecordOverrideEntry(
+  target: (typeof C.CLUB_RECORD_DISTANCES)[number],
+  c: CoachRecord,
+  recordType: ClubRecordType
+): ClubRecordEntry {
+  return {
+    distanceKey: target.key,
+    distanceLabel: target.label,
+    durationSeconds: c.durationSeconds,
+    paceSecPerKm: c.paceSecPerKm,
+    date: c.recordDate ?? "",
+    dateLabel: c.recordDate ? formatRuDate(c.recordDate) : recordType === "race" ? "гонка" : "тренировка",
+    trust: c.trust === "preliminary" ? "preliminary" : "verified",
+    source: c.source as RecordSource,
+    calcMethod: "whole_workout",
+    recordType,
+  };
+}
+
 /** Best non-hidden EvaluatedRecord per record type (race / training_split) for a student+distance. */
 function splitByType(
   evaluated: EvaluatedRecord[],
@@ -2102,19 +2123,25 @@ export async function getClubChallenge(input: {
 function personalRecordsFromSnapshots(
   studentId: string,
   snapshots: Map<string, StudentSnapshot>,
-  coach: Map<string, CoachRecord>
+  overrides: Map<string, CoachRecord>
 ): ClubRecordEntry[] {
   const ownSnap = snapshots.get(studentId);
   const out: ClubRecordEntry[] = [];
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    const ownCoach = coach.get(`${studentId}|${target.key}`);
-    if (ownCoach) {
-      if (ownCoach.trust !== "hidden") out.push(coachRaceEntry(target, ownCoach));
-    } else {
-      const slot = ownSnap?.get(target.key);
-      if (slot?.race) out.push(snapshotToEntry(target.key, slot.race, "race"));
-      if (slot?.training) out.push(snapshotToEntry(target.key, slot.training, "training_split"));
+    const ov = overrides.get(`${studentId}|${target.key}`);
+    const slot = ownSnap?.get(target.key);
+    // coach_confirmed: unchanged — overrides the WHOLE distance (hidden suppresses both slots).
+    if (ov?.source === "coach_confirmed") {
+      if (ov.trust !== "hidden") out.push(coachRaceEntry(target, ov));
+      continue;
     }
+    // RACE slot: official_protocol (a real race result) beats the reconstructed race snapshot.
+    if (ov?.source === "official_protocol") out.push(clubRecordOverrideEntry(target, ov, "race"));
+    else if (slot?.race) out.push(snapshotToEntry(target.key, slot.race, "race"));
+    // TRAINING slot: strava_best_effort (a measured segment) beats reconstruction. Kept SEPARATE from
+    // the race slot, so «Гонки» и «Лучшие отрезки тренировок» stay distinct.
+    if (ov?.source === "strava_best_effort") out.push(clubRecordOverrideEntry(target, ov, "training_split"));
+    else if (slot?.training) out.push(snapshotToEntry(target.key, slot.training, "training_split"));
   }
   return out;
 }
@@ -2267,16 +2294,17 @@ export async function getClubRecords(input: {
   // is now a few small reads instead of ~20k workouts + all laps. Snapshots are
   // refreshed by materializeClubRecords after each cache/FIT scan. Coach overrides
   // (club_records) still win at read time.
-  const [students, snapshots, coach, freshness] = await Promise.all([
+  const [students, snapshots, overrides, freshness] = await Promise.all([
     loadClubStudents(),
     loadRecordSnapshots(),
-    loadCoachRecords(),
+    loadClubRecordOverrides(),
     buildFreshness(),
   ]);
   const visibleById = new Map(students.filter(isVisible).map((s) => [s.id, s]));
 
-  // Personal card uses the shared snapshot source (identical to the Profile tab).
-  const personal = personalRecordsFromSnapshots(input.currentStudentId, snapshots, coach);
+  // Personal card uses the shared snapshot source (identical to the Profile tab), now with
+  // club_records overrides (coach/official → race slot, strava → training slot) layered on.
+  const personal = personalRecordsFromSnapshots(input.currentStudentId, snapshots, overrides);
   annotateRaceSegments(personal, await loadRaceEventsByDate(input.currentStudentId));
   const clubTops: ClubRecordsView["clubTops"] = [];
 
@@ -2284,17 +2312,27 @@ export async function getClubRecords(input: {
     // Club top: ONLY real races (verified). Coach-confirmed verified races count;
     // materialized best_verified races count; coach-hidden distance excluded.
     const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null; date: string | null; isCoach: boolean }> = [];
-    for (const [studentId, perStudent] of snapshots) {
-      if (!visibleById.has(studentId)) continue; // student turned non-visible after last materialize
-      const c = coach.get(`${studentId}|${target.key}`);
-      if (c) {
+    // Iterate ALL visible students (not just those with a snapshot): a runner with an official_protocol
+    // race but no reconstructed snapshot must still make the tops.
+    for (const [studentId, student] of visibleById) {
+      const perStudent = snapshots.get(studentId);
+      const c = overrides.get(`${studentId}|${target.key}`);
+      // coach_confirmed: verified → race top; hidden/preliminary excluded. Overrides the distance.
+      if (c?.source === "coach_confirmed") {
         if (c.trust === "verified") {
-          raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
+          raceRows.push({ studentId, name: student.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
         }
-        continue; // coach override (verified pushed above, hidden/preliminary excluded from tops)
+        continue;
       }
-      const rv = perStudent.get(target.key)?.raceVerified;
-      if (rv) raceRows.push({ studentId, name: visibleById.get(studentId)?.name ?? "", durationSeconds: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, isCoach: false });
+      // official_protocol: a real race result — authoritative race top; occupies the race slot.
+      if (c?.source === "official_protocol") {
+        raceRows.push({ studentId, name: student.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
+        continue;
+      }
+      // strava_best_effort is a TRAINING segment, NOT a race → never enters the tops; fall through to
+      // the student's reconstructed race (raceVerified), exactly as with no override.
+      const rv = perStudent?.get(target.key)?.raceVerified;
+      if (rv) raceRows.push({ studentId, name: student.name ?? "", durationSeconds: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, isCoach: false });
     }
     raceRows.sort((a, b) => a.durationSeconds - b.durationSeconds);
     const topRows: ClubRecordsClubTopRow[] = raceRows.slice(0, C.CLUB_RECORDS_TOP_N).map((r, index) => ({
@@ -3526,6 +3564,42 @@ export async function loadCoachRecords(): Promise<Map<string, CoachRecord>> {
     }
   } catch {
     /* table/columns absent → no coach overrides */
+  }
+  return out;
+}
+
+/**
+ * ALL authoritative club_records for the records tab — one row per (student,distance) (club_records is
+ * UNIQUE on that pair), so the row's `source` alone decides its slot:
+ *   coach_confirmed / official_protocol → RACE slot (a race); strava_best_effort → TRAINING slot
+ *   (a measured segment from a TRAINING, not a race). Hierarchy inside a slot: coach_confirmed >
+ *   official_protocol > (snapshot race_events); strava_best_effort > (snapshot reconstruction).
+ * ONE query — a broader IN filter than loadCoachRecords, so NO extra round-trip vs the old coach read
+ * (the records tab already paid for exactly one club_records query; this is the same query, wider).
+ */
+export async function loadClubRecordOverrides(): Promise<Map<string, CoachRecord>> {
+  const out = new Map<string, CoachRecord>();
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("club_records")
+      .select("student_id, distance_key, duration_seconds, pace_sec_per_km, record_date, race_name, trust, source")
+      .in("source", ["coach_confirmed", "official_protocol", "strava_best_effort"]);
+    if (error || !data) {
+      return out;
+    }
+    for (const r of data as Array<Record<string, unknown>>) {
+      out.set(`${r.student_id as string}|${r.distance_key as string}`, {
+        durationSeconds: Number(r.duration_seconds ?? 0),
+        paceSecPerKm: r.pace_sec_per_km != null ? Number(r.pace_sec_per_km) : null,
+        recordDate: (r.record_date as string | null) ?? null,
+        raceName: (r.race_name as string | null) ?? null,
+        trust: (r.trust as CoachRecord["trust"]) ?? "verified",
+        source: (r.source as string) ?? "",
+      });
+    }
+  } catch {
+    /* table/columns absent → no overrides */
   }
   return out;
 }
