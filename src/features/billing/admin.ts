@@ -86,11 +86,14 @@ function getCurrentBelgradeMonth(now = new Date()): string {
 }
 
 export function isBillingRowEffectivelyOverdue(row: BillingMonthStatusRow): boolean {
-  return row.status === "overdue" || (row.status === "pending" && row.daysOverdue != null && row.daysOverdue > 0);
+  // partial просрочивается по тому же правилу, что pending: пришла часть ожидаемого,
+  // и если плановая дата прошла — это просрочка, а не закрытый месяц.
+  const isOpenStatus = row.status === "pending" || row.status === "partial";
+  return row.status === "overdue" || (isOpenStatus && row.daysOverdue != null && row.daysOverdue > 0);
 }
 
 export function getEffectiveBillingRowStatus(row: BillingMonthStatusRow): BillingMonthStatusRow["status"] | "overdue" {
-  if (row.status === "pending" && row.daysOverdue != null && row.daysOverdue > 0) {
+  if ((row.status === "pending" || row.status === "partial") && row.daysOverdue != null && row.daysOverdue > 0) {
     return "overdue";
   }
 
@@ -102,6 +105,7 @@ function isBillingRowUnpaid(row: BillingMonthStatusRow): boolean {
     row.status === "pending" ||
     row.status === "manual_review" ||
     row.status === "overdue" ||
+    row.status === "partial" ||
     isBillingRowEffectivelyOverdue(row)
   );
 }
@@ -113,6 +117,8 @@ function getBillingRowSortBucket(row: BillingMonthStatusRow): number {
 
   switch (row.status) {
     case "manual_review":
+      return 1;
+    case "partial":
       return 1;
     case "pending":
       return 2;

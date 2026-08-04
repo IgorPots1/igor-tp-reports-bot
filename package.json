@@ -331,6 +331,7 @@
     "check:nutrition-protein-sources": "npx tsx scripts/check-nutrition-protein-sources.ts",
     "check:nutrition-krupa-rewriter": "npx tsx scripts/check-nutrition-krupa-rewriter.ts",
     "check:billing-month": "npx tsx scripts/check-billing-month.ts",
+    "check:nutrition-slots": "npx tsx scripts/check-nutrition-slots.ts",
     "check:trainingpeaks-coach-case-feedback": "npx tsx scripts/check-trainingpeaks-coach-case-feedback.ts",
     "check:trainingpeaks-contact-status": "npx tsx scripts/check-trainingpeaks-contact-status.ts",
     "check:trainingpeaks-group-case-action-proposals": "npx tsx scripts/check-trainingpeaks-group-case-action-proposals.ts",

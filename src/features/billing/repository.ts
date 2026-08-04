@@ -10,6 +10,8 @@ import type {
   BillingPayerIdentity,
   BillingPayerIdentityConfidence,
   BillingPayerIdentityType,
+  BillingNutritionBillingMode,
+  BillingImportedPaymentAppliedTo,
   BillingImportedPaymentRawRow,
   BillingImportedPaymentStatus,
   BillingImportedPaymentUpdateInput,
@@ -31,6 +33,8 @@ type BillingClientRow = {
   planned_payment_day: number | null;
   payment_method: BillingPaymentMethod;
   is_active: boolean;
+  nutrition_billing_mode: BillingNutritionBillingMode;
+  nutrition_amount: number | null;
   notes: string | null;
   created_by: string | null;
   updated_by: string | null;
@@ -46,6 +50,8 @@ type BillingMonthlyPaymentRow = {
   actual_payment_date: string | null;
   planned_amount: number;
   paid_amount: number | null;
+  nutrition_planned_amount: number | null;
+  nutrition_paid_amount: number | null;
   currency: BillingCurrency;
   status: BillingPaymentStatus;
   source: BillingPaymentSource;
@@ -79,6 +85,8 @@ type UpdateBillingMonthlyPaymentRow = Partial<{
   currency: string;
   actual_payment_date: string | null;
   paid_amount: number | null;
+  nutrition_planned_amount: number | null;
+  nutrition_paid_amount: number | null;
   status: BillingPaymentStatus;
   source: BillingPaymentSource;
   external_payment_hash: string | null;
@@ -114,6 +122,7 @@ type BillingImportedPaymentRow = {
   matched_monthly_payment_id: string | null;
   matched_at: string | null;
   matched_by_coach_chat_id: string | null;
+  applied_to: BillingImportedPaymentAppliedTo | null;
   source_file_name: string | null;
   email_message_id: string | null;
   notes: string | null;
@@ -143,6 +152,7 @@ type UpdateBillingImportedPaymentRow = Partial<{
   matched_monthly_payment_id: string | null;
   matched_at: string | null;
   matched_by_coach_chat_id: string | null;
+  applied_to: BillingImportedPaymentAppliedTo | null;
   notes: string | null;
 }>;
 
@@ -253,6 +263,8 @@ function mapBillingClientRow(row: BillingClientRow): BillingClient {
     plannedPaymentDay: row.planned_payment_day,
     paymentMethod: row.payment_method,
     isActive: row.is_active,
+    nutritionBillingMode: row.nutrition_billing_mode,
+    nutritionAmount: row.nutrition_amount,
     notes: row.notes,
     createdBy: row.created_by,
     updatedBy: row.updated_by,
@@ -270,6 +282,8 @@ function mapBillingMonthlyPaymentRow(row: BillingMonthlyPaymentRow): BillingMont
     actualPaymentDate: row.actual_payment_date,
     plannedAmount: row.planned_amount,
     paidAmount: row.paid_amount,
+    nutritionPlannedAmount: row.nutrition_planned_amount,
+    nutritionPaidAmount: row.nutrition_paid_amount,
     currency: row.currency,
     status: row.status,
     source: row.source,
@@ -299,6 +313,7 @@ function mapBillingImportedPaymentRow(row: BillingImportedPaymentRow): BillingIm
     matchedMonthlyPaymentId: row.matched_monthly_payment_id,
     matchedAt: row.matched_at,
     matchedByCoachChatId: row.matched_by_coach_chat_id,
+    appliedTo: row.applied_to,
     sourceFileName: row.source_file_name,
     emailMessageId: row.email_message_id,
     notes: row.notes,
@@ -859,6 +874,9 @@ function mapBillingImportedPaymentUpdateInput(
   if ("matchedByCoachChatId" in patch) {
     rowPatch.matched_by_coach_chat_id = patch.matchedByCoachChatId ?? null;
   }
+  if ("appliedTo" in patch) {
+    rowPatch.applied_to = patch.appliedTo ?? null;
+  }
   if ("notes" in patch) {
     rowPatch.notes = patch.notes ?? null;
   }
@@ -1090,7 +1108,7 @@ export async function listUnpaidBillingMonthlyPaymentsWithClients(): Promise<Bil
   const { data, error } = await supabase
     .from("billing_monthly_payments")
     .select("*, billing_clients(*)")
-    .in("status", ["pending", "overdue", "manual_review"])
+    .in("status", ["pending", "overdue", "manual_review", "partial"])
     .gte("billing_month", minBillingMonth)
     .order("planned_payment_date", { ascending: false });
 

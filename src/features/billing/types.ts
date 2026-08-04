@@ -34,6 +34,11 @@ export type BillingPaymentStatus =
   | "paused"
   | "manual_review"
   | "refunded"
+  // Пришла часть ожидаемого: например, база есть, а питание отдельным платежом ещё
+  // не дошло. paid означает «пришло ВСЁ, что ожидалось» — иначе месяц закрывается
+  // первым же платежом и недобор становится невидимым, потому что все агрегаты
+  // долга смотрят на статус, а не на суммы.
+  | "partial"
   // Month predates the billing system (admin launched 2026-05), so it was never
   // actually billed. Not a debt: the debt aggregates allowlist
   // pending/overdue/manual_review, which excludes this by construction.
@@ -57,6 +62,12 @@ export type BillingPayerIdentityType =
   | "description_hint"
   | "payment_description";
 export type BillingPayerIdentityConfidence = "trusted_manual";
+// Питание бывает двух РАЗНЫХ видов: included — внутри monthly_amount одним платежом;
+// separate — база и питание приходят разными транзакциями в разные дни (с июля 2026).
+export type BillingNutritionBillingMode = "none" | "included" | "separate";
+// В какой слот строки месяца лёг импортированный платёж.
+export type BillingImportedPaymentAppliedTo = "base" | "nutrition";
+export type BillingPaymentSlot = BillingImportedPaymentAppliedTo;
 
 export type BillingClient = {
   id: string;
@@ -68,6 +79,10 @@ export type BillingClient = {
   plannedPaymentDay: number | null;
   paymentMethod: BillingPaymentMethod;
   isActive: boolean;
+  // nutritionAmount — РАЗБИВКА monthly_amount при mode='included' и ОТДЕЛЬНАЯ сумма
+  // при mode='separate'. В обоих случаях monthly_amount остаётся базой и не меняется.
+  nutritionBillingMode: BillingNutritionBillingMode;
+  nutritionAmount: number | null;
   notes: string | null;
   createdBy: string | null;
   updatedBy: string | null;
@@ -119,6 +134,9 @@ export type BillingMonthlyPayment = {
   actualPaymentDate: string | null;
   plannedAmount: number;
   paidAmount: number | null;
+  // Слот питания. null у всех, кроме клиентов с mode='separate', и только с июля 2026.
+  nutritionPlannedAmount: number | null;
+  nutritionPaidAmount: number | null;
   currency: BillingCurrency;
   status: BillingPaymentStatus;
   source: BillingPaymentSource;
@@ -172,6 +190,7 @@ export type BillingImportedPayment = {
   matchedMonthlyPaymentId: string | null;
   matchedAt: string | null;
   matchedByCoachChatId: string | null;
+  appliedTo: BillingImportedPaymentAppliedTo | null;
   sourceFileName: string | null;
   emailMessageId: string | null;
   notes: string | null;
@@ -392,6 +411,7 @@ export type BillingImportedPaymentUpdateInput = Partial<{
   matchedMonthlyPaymentId: string | null;
   matchedAt: string | null;
   matchedByCoachChatId: string | null;
+  appliedTo: BillingImportedPaymentAppliedTo | null;
   notes: string | null;
 }>;
 
@@ -432,6 +452,9 @@ export type ConfirmImportedPaymentMatchInput = {
   importedPaymentId: string;
   monthlyPaymentId: string;
   actor: string;
+  // В какой слот класть платёж. По умолчанию base — так путь из админки сохраняет
+  // прежнее поведение байт-в-байт. Автоматч передаёт слот явно.
+  slot?: BillingPaymentSlot;
 };
 
 export type ConfirmImportedPaymentMatchResult = {

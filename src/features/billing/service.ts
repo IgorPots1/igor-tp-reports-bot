@@ -29,6 +29,11 @@ import {
   derivePayerIdentitiesFromImportedPayment,
 } from "@/features/billing/payer-identity";
 import {
+  computeBillingRowStatusAfterPayment,
+  isSlotOpen,
+  resolvePaymentSlot,
+} from "@/features/billing/nutrition-slots";
+import {
   BILLING_CSV_COLUMNS,
   BILLING_CURRENCY_VALUES,
   BILLING_PAYMENT_METHOD_VALUES,
@@ -51,6 +56,7 @@ import {
   type BillingMonthInput,
   type BillingMonthStatusRow,
   type BillingImportedPayment,
+  type BillingPaymentSlot,
   type BillingMonthlyPayment,
   type BuildBillingCsvForMonthResult,
   type EnsureBillingMonthRowsResult,
@@ -299,6 +305,29 @@ export function getBillingMonthGenerationPreview(
   })();
 }
 
+// Питание отдельным платежом появилось в июле 2026 — раньше его не было ни у кого.
+// Генерация прошлых месяцев не должна выдумывать слот питания задним числом: это
+// создало бы долг, которого не существовало. Флаг на клиенте даты начала НЕ ИМЕЕТ,
+// а явление имеет — та же ловушка, что была с ошибочным планом 5000 у Есении.
+//
+// ОГРАНИЧЕНИЕ, ИЗВЕСТНОЕ: этот пол глобальный, а не по клиенту. ensure-month умеет
+// создавать строки задним числом (админка с ?month=, /bill list в Telegram,
+// scripts/billing-ensure-month.ts --month), поэтому клиенту, начавшему separate
+// позже июля 2026, слот питания насыплется за все месяцы с июля. Для нынешних пяти
+// это безопасно — раньше июля питания не было ни у кого. Правильное решение —
+// nutrition_started_at на клиенте; заведём, когда появится такой клиент.
+const NUTRITION_SEPARATE_FIRST_MONTH = "2026-07-01";
+
+function resolveNutritionPlannedAmount(client: BillingClient, billingMonth: string): number | null {
+  if (client.nutritionBillingMode !== "separate") {
+    return null;
+  }
+  if (billingMonth < NUTRITION_SEPARATE_FIRST_MONTH) {
+    return null;
+  }
+  return client.nutritionAmount;
+}
+
 type MonthlyInsertPreparationResult =
   | {
       kind: "creatable";
@@ -307,6 +336,7 @@ type MonthlyInsertPreparationResult =
         billing_month: string;
         planned_payment_date: string | null;
         planned_amount: number;
+        nutrition_planned_amount: number | null;
         currency: BillingClient["currency"];
         status: "pending" | "manual_review";
         source: "manual";
@@ -343,6 +373,7 @@ function buildMonthlyInsertRow(
         billing_month: billingMonth,
         planned_payment_date: null,
         planned_amount: client.monthlyAmount,
+        nutrition_planned_amount: resolveNutritionPlannedAmount(client, billingMonth),
         currency: client.currency,
         status: "manual_review",
         source: "manual",
@@ -370,6 +401,7 @@ function buildMonthlyInsertRow(
       billing_month: billingMonth,
       planned_payment_date: computePlannedPaymentDate(billingMonth, client.plannedPaymentDay),
       planned_amount: client.monthlyAmount,
+      nutrition_planned_amount: resolveNutritionPlannedAmount(client, billingMonth),
       currency: client.currency,
       status: "pending",
       source: "manual",
@@ -517,7 +549,10 @@ function isBillingPaymentOverdueCandidate(
   todayIso: string,
   includeAlreadyReminded: boolean
 ): boolean {
-  const isCandidateStatus = payment.status === "pending" || payment.status === "overdue";
+  // partial — это тоже незакрытый месяц: пришла часть ожидаемого. Не включить его сюда
+  // значит потерять ровно тот долг, ради видимости которого статус и заводился.
+  const isCandidateStatus =
+    payment.status === "pending" || payment.status === "overdue" || payment.status === "partial";
   if (!isCandidateStatus) {
     return false;
   }
@@ -848,7 +883,12 @@ export async function setBillingClientActive(input: {
   if (!input.isActive) {
     const months = await listBillingMonthlyPaymentsForClient(input.clientId);
     for (const month of months) {
-      if (month.status === "pending" || month.status === "overdue" || month.status === "manual_review") {
+      if (
+        month.status === "pending" ||
+        month.status === "overdue" ||
+        month.status === "manual_review" ||
+        month.status === "partial"
+      ) {
         // Приостановка месяцев идёт циклом: сбой на одном не должен оставлять остальные
         // активными и молча — иначе клиент выглядит частично приостановленным без следа.
         try {
@@ -1005,12 +1045,27 @@ export async function confirmImportedPaymentMatch(
     throw new Error(`Billing payment ${input.monthlyPaymentId} not found.`);
   }
 
+  // По умолчанию base — путь из админки сохраняет прежнее поведение байт-в-байт.
+  const slot: BillingPaymentSlot = input.slot ?? "base";
+
   if (monthly.status === "paid") {
     throw new Error("Этот месяц уже оплачен для данного клиента.");
   }
 
-  if (monthly.externalPaymentHash) {
-    throw new Error("Этот месячный платёж уже связан с другой импортированной оплатой.");
+  if (
+    !isSlotOpen({
+      slot,
+      status: monthly.status,
+      paidAmount: monthly.paidAmount,
+      externalPaymentHash: monthly.externalPaymentHash,
+      nutritionPaidAmount: monthly.nutritionPaidAmount,
+    })
+  ) {
+    throw new Error(
+      slot === "base"
+        ? "Этот месячный платёж уже связан с другой импортированной оплатой."
+        : "Питание за этот месяц уже оплачено."
+    );
   }
 
   if (imported.currency !== monthly.currency) {
@@ -1020,12 +1075,27 @@ export async function confirmImportedPaymentMatch(
   }
 
   const matchedAt = new Date().toISOString();
+  // Считаем итог ПОСЛЕ зачисления в слот: paid только когда пришло всё ожидаемое,
+  // иначе partial. Так недобор остаётся видимым — агрегаты долга смотрят на статус.
+  const nextPaidAmount = slot === "base" ? imported.amount : monthly.paidAmount;
+  const nextNutritionPaidAmount = slot === "nutrition" ? imported.amount : monthly.nutritionPaidAmount;
+  const nextStatus = computeBillingRowStatusAfterPayment({
+    plannedAmount: monthly.plannedAmount,
+    paidAmount: nextPaidAmount,
+    nutritionPlannedAmount: monthly.nutritionPlannedAmount,
+    nutritionPaidAmount: nextNutritionPaidAmount,
+  });
+
   const updatedMonthly = await updateBillingMonthlyPaymentById(monthly.id, {
-    status: "paid",
-    paid_amount: imported.amount,
-    actual_payment_date: imported.paymentDate,
+    status: nextStatus,
+    ...(slot === "base"
+      ? {
+          paid_amount: imported.amount,
+          actual_payment_date: imported.paymentDate,
+          external_payment_hash: imported.externalHash,
+        }
+      : { nutrition_paid_amount: imported.amount }),
     source: "email_import",
-    external_payment_hash: imported.externalHash,
     marked_paid_by: input.actor,
     updated_by: input.actor,
   });
@@ -1039,6 +1109,7 @@ export async function confirmImportedPaymentMatch(
     matchedMonthlyPaymentId: monthly.id,
     matchedAt,
     matchedByCoachChatId: input.actor,
+    appliedTo: slot,
   });
 
   if (!updatedImported) {
@@ -1247,6 +1318,7 @@ type TrustedAutoMatchCandidate = {
   billingClientId: string;
   billingClientName: string;
   targetMonth: string;
+  slot: BillingPaymentSlot;
 };
 
 type TrustedAutoMatchDecision =
@@ -1341,7 +1413,15 @@ async function buildTrustedAutoMatchDecision(input: {
     return { kind: "skip", reason: "skipped_non_rub" };
   }
 
-  if (billingClient.monthlyAmount !== imported.amount) {
+  // Раньше сверка была плоской: сумма обязана равняться monthly_amount. Теперь
+  // ожиданий два, и платёж адресуется в конкретный слот.
+  const slot = resolvePaymentSlot({
+    amount: imported.amount,
+    monthlyAmount: billingClient.monthlyAmount,
+    nutritionBillingMode: billingClient.nutritionBillingMode,
+    nutritionAmount: billingClient.nutritionAmount,
+  });
+  if (slot == null) {
     return { kind: "skip", reason: "skipped_amount_mismatch" };
   }
 
@@ -1353,15 +1433,30 @@ async function buildTrustedAutoMatchDecision(input: {
     return { kind: "skip", reason: "skipped_no_monthly_payment" };
   }
 
+  // paid означает «пришло всё ожидаемое», значит оба слота закрыты.
   if (monthlyPayment.status === "paid") {
     return { kind: "skip", reason: "skipped_already_paid" };
   }
 
+  // Проверяем ТОЛЬКО свой слот. Плоская проверка строки ломалась на втором платеже
+  // месяца: база уже проставила хеш и paid_amount, и питание отбивалось как
+  // «строка занята». partial при этом не блокирует ничего — он и возникает оттого,
+  // что второй платёж ещё не пришёл.
   if (
-    monthlyPayment.externalPaymentHash ||
-    (monthlyPayment.paidAmount != null && monthlyPayment.paidAmount !== 0) ||
-    monthlyPayment.status === "refunded"
+    !isSlotOpen({
+      slot,
+      status: monthlyPayment.status,
+      paidAmount: monthlyPayment.paidAmount,
+      externalPaymentHash: monthlyPayment.externalPaymentHash,
+      nutritionPaidAmount: monthlyPayment.nutritionPaidAmount,
+    })
   ) {
+    return { kind: "skip", reason: "skipped_ambiguous" };
+  }
+
+  // Слот питания открыт только тем, кому его завели: если ожидания питания на строке
+  // нет, класть туда нечего.
+  if (slot === "nutrition" && monthlyPayment.nutritionPlannedAmount == null) {
     return { kind: "skip", reason: "skipped_ambiguous" };
   }
 
@@ -1380,6 +1475,7 @@ async function buildTrustedAutoMatchDecision(input: {
       billingClientId: billingClient.id,
       billingClientName: billingClient.clientName,
       targetMonth: input.targetMonth,
+      slot,
     },
   };
 }
@@ -1431,9 +1527,13 @@ export async function autoMatchTrustedImportedPayments(
       importedList.push(decision.candidate);
       perImported.set(decision.candidate.importedPaymentId, importedList);
 
-      const monthlyList = perMonthly.get(decision.candidate.monthlyPaymentId) ?? [];
+      // Ключ конкуренции — (строка месяца, СЛОТ). По одной только строке база и
+      // питание одного месяца выглядели бы конкурентами, и оба ушли бы в ambiguous:
+      // при mode='separate' они законно садятся в одну строку, но в разные слоты.
+      const monthlySlotKey = `${decision.candidate.monthlyPaymentId}:${decision.candidate.slot}`;
+      const monthlyList = perMonthly.get(monthlySlotKey) ?? [];
       monthlyList.push(decision.candidate);
-      perMonthly.set(decision.candidate.monthlyPaymentId, monthlyList);
+      perMonthly.set(monthlySlotKey, monthlyList);
     } catch {
       result.errors += 1;
     }
@@ -1444,15 +1544,16 @@ export async function autoMatchTrustedImportedPayments(
       competingImportedIds.add(importedPaymentId);
     }
   }
-  for (const [monthlyPaymentId, mapped] of perMonthly.entries()) {
+  for (const [monthlySlotKey, mapped] of perMonthly.entries()) {
     if (mapped.length > 1) {
-      competingMonthlyIds.add(monthlyPaymentId);
+      competingMonthlyIds.add(monthlySlotKey);
     }
   }
 
   const trustedCandidates = candidates.filter(
     (candidate) =>
-      !competingImportedIds.has(candidate.importedPaymentId) && !competingMonthlyIds.has(candidate.monthlyPaymentId)
+      !competingImportedIds.has(candidate.importedPaymentId) &&
+      !competingMonthlyIds.has(`${candidate.monthlyPaymentId}:${candidate.slot}`)
   );
 
   const ambiguousCompetingCount = candidates.length - trustedCandidates.length;
@@ -1480,6 +1581,7 @@ export async function autoMatchTrustedImportedPayments(
         importedPaymentId: candidate.importedPaymentId,
         monthlyPaymentId: candidate.monthlyPaymentId,
         actor: BILLING_AUTO_MATCH_SCRIPT_ACTOR,
+        slot: candidate.slot,
       });
       result.matched += 1;
     } catch {
