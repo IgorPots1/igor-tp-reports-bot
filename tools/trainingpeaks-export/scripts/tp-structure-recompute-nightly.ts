@@ -90,7 +90,7 @@ async function main(): Promise<void> {
   const logs: LogRow[] = [];
   let scanned = 0, clean = 0, drift = 0, defer = 0, verifyFail = 0, skipped = 0, athScanned = 0;
   let b2040 = 0, b4060 = 0, b60 = 0;
-  const driftByAthlete = new Map<number, { name: string; items: { wk: string; changed: number; shift: number }[]; maxShift: number }>();
+  const driftByAthlete = new Map<number, { name: string; items: { wk: string; date: string; changed: number; shift: number }[]; maxShift: number }>();
   const deferByAthlete = new Map<number, { name: string; reasons: string[] }>();
 
   for (const id of ids) {
@@ -123,7 +123,7 @@ async function main(): Promise<void> {
       const decision = bandFail ? "verify_fail" : changed.length ? "drift" : "clean";
       if (decision === "verify_fail") verifyFail++; else if (decision === "drift") drift++; else clean++;
       logs.push({ ...base, decision, steps_total: rc.plans.length, steps_changed: changed.length, max_shift_sec: maxShift, anchor_steps: anchorSteps, defer_reason: null, detail });
-      if (decision === "drift") { const e = driftByAthlete.get(id) ?? { name, items: [], maxShift: 0 }; e.items.push({ wk: `${base.workout_date} «${base.title}»`, changed: changed.length, shift: maxShift }); e.maxShift = Math.max(e.maxShift, maxShift); driftByAthlete.set(id, e); }
+      if (decision === "drift") { const e = driftByAthlete.get(id) ?? { name, items: [], maxShift: 0 }; e.items.push({ wk: `${base.workout_date} «${base.title}»`, date: base.workout_date ?? "", changed: changed.length, shift: maxShift }); e.maxShift = Math.max(e.maxShift, maxShift); driftByAthlete.set(id, e); }
     }
   }
 
@@ -143,11 +143,20 @@ async function main(): Promise<void> {
   if (anomaly) { console.log(`\n⚠ АНОМАЛИЯ: доля drift ${Math.round((drift / scanned) * 100)}% > 50% — ОСТАНОВЛЕНО, проверь глазами (не применяю списком).`); return; }
   if (deferByAthlete.size) { console.log(`\n▸ РУЧНОЕ (defer — не привязать, ${deferByAthlete.size} атл.):`); for (const [id, e] of deferByAthlete) console.log(`   ${e.name} (${id}): ${e.reasons[0]}`); }
   if (!driftByAthlete.size) { console.log(`\n✅ дрейфа нет — применять нечего.`); return; }
-  console.log(`\n▸ ПЕРЕПРИМЕНИТЬ (drift, по атлетам):`);
-  for (const [id, e] of [...driftByAthlete.entries()].sort((a, b) => b[1].maxShift - a[1].maxShift)) console.log(`   ${e.name} (${id}) — ${e.items.length} трен., макс сдвиг ${e.maxShift}с${e.items.length <= 3 ? " · " + e.items.map((x) => x.wk).join(" · ") : ""}`);
-  console.log(`\n▸ КОМАНДА (по одному, гейты):`);
-  console.log(`   for aid in ${[...driftByAthlete.keys()].join(" ")}; do TP_ATHLETE_REAL_WRITE=1 npx tsx tools/trainingpeaks-export/scripts/tp-threshold-restore.ts --athlete=$aid --apply --confirm "RESTORE $aid"; done`);
-  const big = [...driftByAthlete.values()].flatMap((e) => e.items.filter((x) => x.shift > 40).map((x) => `${e.name}: ${x.wk} Δ${x.shift}с`));
-  if (big.length) { console.log(`\n▸ СДВИГИ >40с (это ошибка, не округление):`); for (const s of big) console.log(`   ${s}`); }
+  // ДЕТЕКТ ШИРОКИЙ, ПРИМЕНЕНИЕ УЗКОЕ: считаем дрейф по всему окну (картина), но применяем только
+  // на сегодня-или-будущее. Прошлую тренировку переписывать бессмысленно — день прошёл, её не побегут,
+  // а история верна под тем порогом, что стоял тогда. Команда идёт с --since=<сегодня>.
+  const today = todayIso();
+  const apply = [...driftByAthlete.entries()].filter(([, e]) => e.items.some((x) => x.date >= today)).sort((a, b) => b[1].maxShift - a[1].maxShift);
+  const pastOnly = [...driftByAthlete.entries()].filter(([, e]) => !e.items.some((x) => x.date >= today));
+  if (apply.length) {
+    console.log(`\n▸ ПЕРЕПРИМЕНИТЬ (drift на сегодня/будущее, по атлетам):`);
+    for (const [id, e] of apply) { const fut = e.items.filter((x) => x.date >= today); console.log(`   ${e.name} (${id}) — ${fut.length} трен. сегодня+, макс сдвиг ${e.maxShift}с${fut.length <= 3 ? " · " + fut.map((x) => x.wk).join(" · ") : ""}`); }
+    console.log(`\n▸ КОМАНДА (по одному, гейты; --since=${today} рвёт только сегодня+будущее):`);
+    console.log(`   for aid in ${apply.map(([id]) => id).join(" ")}; do TP_ATHLETE_REAL_WRITE=1 npx tsx tools/trainingpeaks-export/scripts/tp-threshold-restore.ts --athlete=$aid --since=${today} --apply --confirm "RESTORE $aid"; done`);
+  } else console.log(`\n✅ дрейфа на сегодня/будущее нет — применять нечего.`);
+  if (pastOnly.length) console.log(`\n▸ только ПРОШЛОЕ (информация, НЕ применяем — дни прошли): ${pastOnly.map(([, e]) => `${e.name} (${e.items.length})`).join(" · ")}`);
+  const big = apply.flatMap(([, e]) => e.items.filter((x) => x.date >= today && x.shift > 40).map((x) => `${e.name}: ${x.wk} Δ${x.shift}с`));
+  if (big.length) { console.log(`\n▸ СДВИГИ >40с на сегодня/будущее (это ошибка, не округление):`); for (const s of big) console.log(`   ${s}`); }
 }
 main().catch((e) => { console.error(e); process.exit(1); });
