@@ -25,6 +25,7 @@ import { getCoachedAthletesRoster, getWorkoutsByDateRange, getWorkoutDetail, get
 import { findWt0Set, isRecord } from "./lib/tp-athlete-helpers.ts";
 import { toolRoot } from "./lib/paths.ts";
 import { recompute, median, type Plan } from "./lib/tp-recompute.ts";
+import { loadManualAnchors, loadRecomputeExceptions } from "./lib/tp-manual-overrides.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p);
@@ -113,15 +114,21 @@ async function main(): Promise<void> {
   const deferByAthlete = new Map<number, { name: string; reasons: string[] }>();
   const underfetch: { id: number; name: string; live: number; cache: number; only: number }[] = [];
   const verifyFailList: { name: string; wk: string; steps: string }[] = [];
+  // Ручные оверрайды (единый источник, [[lib/tp-manual-overrides]]): якорь стора перебивает вычисленный
+  // (n<5 больше не деферит), а атлеты-исключения полностью выпадают из скана — тренер ведёт их вручную.
+  const manualAnchors = await loadManualAnchors(sb);
+  const exceptions = await loadRecomputeExceptions(sb);
+  const excludedSeen: string[] = [];
 
   for (const id of ids) {
+    if (exceptions.has(id)) { const { data: nmx } = await sb.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1); excludedSeen.push((nmx?.[0]?.student_name as string) ?? String(id)); continue; }
     let thrSec: number | null = null;
     try { const s = await getAthleteSettings(id); const w0 = findWt0Set(s.speedZones); const mps = w0 && typeof w0.threshold === "number" ? w0.threshold : NaN; thrSec = mps ? 1000 / mps : null; } catch { /* skip */ }
     if (!thrSec) continue;
     athScanned++;
     const { data: nm } = await sb.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1);
     const name = (nm?.[0]?.student_name as string) ?? String(id);
-    const anchor = await easyAnchor(id, thrSec);
+    const anchor = manualAnchors.get(id) ?? await easyAnchor(id, thrSec); // ручной якорь > вычисленный
 
     let list: unknown[]; try { list = await enumeratePlanned(id); } catch (e) { console.error(`⚠ ${name} (${id}): ${(e as Error).message} — пропущен`); continue; }
     const liveWids = new Set(list.filter((w) => isRecord(w) && (w.workoutTypeValueId === 3 || w.workoutTypeId === 3) && w.completed !== true).map((w) => Number((w as Record<string, unknown>).workoutId ?? (w as Record<string, unknown>).id)).filter((n) => Number.isInteger(n) && n > 0));
@@ -180,6 +187,7 @@ async function main(): Promise<void> {
   if (verifyFailList.length) { console.log(`\n⛔ VERIFY_FAIL (${verifyFailList.length}) — шаг вне полосы 55-140% (стоп-условие, разобрать ДО применения):`); for (const v of verifyFailList) console.log(`   ${v.name}: ${v.wk} — ${v.steps}`); notify = true; }
   if (anomaly) { console.log(`\n⚠ АНОМАЛИЯ: доля drift ${Math.round((drift / scanned) * 100)}% > 50% — ОСТАНОВЛЕНО, проверь глазами (не применяю списком).`); console.log("⟦NOTIFY⟧"); return; }
   if (deferByAthlete.size) { console.log(`\n▸ РУЧНОЕ (defer — не привязать, ${deferByAthlete.size} атл.):`); for (const [id, e] of deferByAthlete) console.log(`   ${e.name} (${id}): ${e.reasons[0]}`); }
+  if (excludedSeen.length) console.log(`\n▸ намеренно не чиним (${excludedSeen.length}, тренер ведёт вручную — вне активных деферов): ${excludedSeen.join(" · ")}`);
   if (!driftByAthlete.size) { console.log(`\n✅ дрейфа нет — применять нечего.`); if (notify) console.log("⟦NOTIFY⟧"); return; }
   // ДЕТЕКТ ШИРОКИЙ, ПРИМЕНЕНИЕ УЗКОЕ. Применяем на today-2 и позже: тренировку, не пробежанную
   // вчера, сегодня ещё могут открыть. От позавчера и раньше — день прошёл, переписывать бессмысленно.

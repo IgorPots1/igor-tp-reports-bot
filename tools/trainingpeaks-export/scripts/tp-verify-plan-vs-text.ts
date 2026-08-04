@@ -18,6 +18,7 @@ import { readSessionSnapshot } from "../../../src/features/trainingpeaks/tp-sess
 import { findWt0Set, isRecord, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
 import { toolRoot } from "./lib/paths.ts";
 import { ranges, flatSteps, parseSegments, matchByDuration, positionalFallback, type Rng, type FlatStep } from "./lib/tp-recompute.ts";
+import { loadRecomputeExceptions } from "./lib/tp-manual-overrides.ts";
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p);
 const sb = createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } });
@@ -55,8 +56,10 @@ async function main(): Promise<void> {
     ids = [...new Set((rb ?? []).map((r) => Number(r.trainingpeaks_athlete_id)))];
     scopeLabel = "restore";
   }
+  const exceptions = await loadRecomputeExceptions(sb); let excluded = 0; // намеренно не чиним — вне активных деферов
   const bad: { date: string; line: string }[] = []; let ok = 0, wk = 0, skippedSteps = 0, deferWk = 0;
   for (const id of ids) {
+    if (exceptions.has(id)) { excluded++; continue; }
     let s; try { s = await getAthleteSettings(id); } catch { scopeErr++; continue; }
     const w0 = findWt0Set(s.speedZones); const thrMps = w0 && typeof w0.threshold === "number" ? w0.threshold : NaN; if (!thrMps) continue; const thrSec = 1000 / thrMps;
     const { data: nm } = await sb.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1); const name = (nm?.[0]?.student_name as string) ?? String(id);
@@ -96,6 +99,6 @@ async function main(): Promise<void> {
   console.log(`\n======== РАСХОЖДЕНИЯ СТРУКТУРЫ И ТЕКСТА — ${bad.length} тренировок ========`);
   if (!bad.length) console.log("  (нет — все шаги с явным темпом совпадают с описанием)");
   for (const x of bad) console.log(`  ${x.date === today ? "🔴СЕГОДНЯ " : ""}${x.line}`);
-  console.log(`\nчисто: ${ok} тренировок · дефер: ${deferWk}`);
+  console.log(`\nчисто: ${ok} тренировок · дефер: ${deferWk}${excluded ? ` · намеренно не чиним (пропущено атлетов): ${excluded}` : ""}`);
 }
 main().catch((e: unknown) => { console.error(e instanceof Error ? e.stack : String(e)); process.exit(1); });

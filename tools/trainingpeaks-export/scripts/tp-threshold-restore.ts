@@ -42,6 +42,7 @@ import { authedWriteOnce, COACH_ID_SETUP_HINT, findActiveHold, findWt0Set, forma
 import { planType } from "./lib/tp-athlete-set-threshold.ts";
 import { pickWhitelistedSettings } from "./lib/tp-settings-whitelist.ts";
 import { fp, median, flatSteps, deepDiff, recompute, type Plan } from "./lib/tp-recompute.ts";
+import { loadManualAnchors } from "./lib/tp-manual-overrides.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 function getSupabase(): SupabaseClient { const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), path.join(toolRoot, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p); return createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } }); }
@@ -105,13 +106,15 @@ async function main(): Promise<void> {
   const cids = dm.map((r) => r.workout_cache_id); const ps: number[] = [];
   for (let i = 0; i < cids.length; i += 300) { const { data } = await supabase.from("trainingpeaks_workout_cache").select("completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300)); for (const w of data ?? []) { const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm < 3000 || h <= 0) continue; const pc = (h * 3600) / (mm / 1000); if (pc > thrSec + 30 && pc < 540) ps.push(pc); } } // exclude ~threshold-pace runs (tempo mislabeled reps=0): they contaminate the easy anchor
   const srt = [...ps].sort((a, b) => a - b); const autoAnchor = srt.length >= 5 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null; // n<5 → авто-якорь ненадёжен → recompute деферит
-  // --anchor=mm:ss — РУЧНОЙ якорь: тренер одобрил число по атлету с n<5 лёгких бегов (иначе он вечно в
-  // ручном списке). Перебивает авто-якорь. Порог и все гейты записи не меняются — только anchor.
-  const anchorFlag = getFlag("anchor"); const anchorManual = anchorFlag ? parsePaceToSecPerKm(anchorFlag) : null;
-  const anchor = anchorManual ?? autoAnchor;
+  // Ручной якорь ПЕРЕБИВАЕТ вычисленный (n<5 больше не блокирует). Приоритет: --anchor > стор > авто.
+  // --anchor=mm:ss — разовый; стор tp_manual_anchors — постоянный (одобрен тренером, читают все).
+  const anchorFlag = getFlag("anchor"); const flagAnchor = anchorFlag ? parsePaceToSecPerKm(anchorFlag) : null;
+  const storeAnchor = flagAnchor ? null : (await loadManualAnchors(supabase)).get(id) ?? null;
+  const anchor = flagAnchor ?? storeAnchor ?? autoAnchor;
+  const anchorSrc = flagAnchor ? "--anchor, ручной" : storeAnchor ? "стор, ручной" : autoAnchor ? "авто (FIT)" : "нет";
 
   console.log(`\n=== tp-threshold-restore — ${name} (${id}) · режим ${apply ? "APPLY" : "DRY-RUN"} ===`);
-  console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · источник: ${thrSource} · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"}${anchorManual ? " (--anchor, ручной)" : ""}`);
+  console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · источник: ${thrSource} · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"} (${anchorSrc})`);
 
   // ALL UNCOMPLETED planned workouts of ANY date — NOT just today+. A threshold change re-renders
   // the athlete's PAST-dated planned workouts too; if a student opens an old un-run planned workout
