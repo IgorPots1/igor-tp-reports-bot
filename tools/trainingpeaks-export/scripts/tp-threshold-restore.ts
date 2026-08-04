@@ -104,10 +104,14 @@ async function main(): Promise<void> {
   const dm: { workout_cache_id: string }[] = []; for (let f = 0; ; f += 1000) { const { data } = await supabase.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id").eq("trainingpeaks_athlete_id", id).eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", daysAgo(90)).lte("workout_date", todayIso()).range(f, f + 999); if (!data || !data.length) break; dm.push(...(data as { workout_cache_id: string }[])); if (data.length < 1000) break; }
   const cids = dm.map((r) => r.workout_cache_id); const ps: number[] = [];
   for (let i = 0; i < cids.length; i += 300) { const { data } = await supabase.from("trainingpeaks_workout_cache").select("completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300)); for (const w of data ?? []) { const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm < 3000 || h <= 0) continue; const pc = (h * 3600) / (mm / 1000); if (pc > thrSec + 30 && pc < 540) ps.push(pc); } } // exclude ~threshold-pace runs (tempo mislabeled reps=0): they contaminate the easy anchor
-  const srt = [...ps].sort((a, b) => a - b); const anchor = srt.length >= 5 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null; // n<5 → якорь ненадёжен → атлет уходит в ручной список (recompute деферит)
+  const srt = [...ps].sort((a, b) => a - b); const autoAnchor = srt.length >= 5 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null; // n<5 → авто-якорь ненадёжен → recompute деферит
+  // --anchor=mm:ss — РУЧНОЙ якорь: тренер одобрил число по атлету с n<5 лёгких бегов (иначе он вечно в
+  // ручном списке). Перебивает авто-якорь. Порог и все гейты записи не меняются — только anchor.
+  const anchorFlag = getFlag("anchor"); const anchorManual = anchorFlag ? parsePaceToSecPerKm(anchorFlag) : null;
+  const anchor = anchorManual ?? autoAnchor;
 
   console.log(`\n=== tp-threshold-restore — ${name} (${id}) · режим ${apply ? "APPLY" : "DRY-RUN"} ===`);
-  console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · источник: ${thrSource} · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"}`);
+  console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · источник: ${thrSource} · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"}${anchorManual ? " (--anchor, ручной)" : ""}`);
 
   // ALL UNCOMPLETED planned workouts of ANY date — NOT just today+. A threshold change re-renders
   // the athlete's PAST-dated planned workouts too; if a student opens an old un-run planned workout
