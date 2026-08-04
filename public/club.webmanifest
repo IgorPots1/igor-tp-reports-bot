@@ -1,0 +1,15 @@
+{
+  "name": "XO Runners",
+  "short_name": "XO Runners",
+  "description": "Беговой клуб XO Runners",
+  "start_url": "/m/club",
+  "scope": "/m/club",
+  "display": "standalone",
+  "background_color": "#04342C",
+  "theme_color": "#04342C",
+  "icons": [
+    { "src": "/icons/xo-runners-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/xo-runners-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/xo-runners-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
