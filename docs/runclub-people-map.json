@@ -1,0 +1,330 @@
+[
+  {
+    "profileId": "119b85bb-7748-42d4-b666-52802b284727",
+    "profileName": "Любовь Селезнева",
+    "studentId": "bea7aad5-f1f6-4aaa-8145-6602a130b8d7",
+    "studentName": "Любовь Селезнева",
+    "tier": "exact",
+    "overlap": 14
+  },
+  {
+    "profileId": "12bd14f6-1842-445c-9514-e5068eb830b9",
+    "profileName": "Анастасия",
+    "studentId": "eb073a94-0198-4c10-bdeb-dc5be8d4903f",
+    "studentName": "Polyakova Anastasia",
+    "tier": "hint",
+    "overlap": 48
+  },
+  {
+    "profileId": "17af0c01-f905-484f-bbe8-21ba7c5b01f8",
+    "profileName": "Татьяна Бучкина",
+    "studentId": "2a10d457-8fd8-4ef9-be18-8c741a5023ae",
+    "studentName": "Tatiana Buchkina",
+    "tier": "exact",
+    "overlap": 94
+  },
+  {
+    "profileId": "1a537510-7cf9-4a79-876c-1a99f7ca22d9",
+    "profileName": "Анастасия Грушевская",
+    "studentId": "3b57509b-be55-417d-9e28-c795e69a96e8",
+    "studentName": "Anastasiya Grushevskaya",
+    "tier": "exact",
+    "overlap": 33
+  },
+  {
+    "profileId": "1dc201b2-68e9-4b44-b589-07d14df3e292",
+    "profileName": "Svelana Nesterova",
+    "studentId": "4ab4be4d-f05b-4d4e-be83-1588bbacb800",
+    "studentName": "Svetlana Nesterova",
+    "tier": "hint",
+    "overlap": 57
+  },
+  {
+    "profileId": "21c838dc-c745-40af-b9fe-27ce494c8c1f",
+    "profileName": "Надежда",
+    "studentId": "9d3e1c0f-935b-4dbf-820a-693362c842ea",
+    "studentName": "Nadezhda Ponomareva",
+    "tier": "hint",
+    "overlap": 56
+  },
+  {
+    "profileId": "22c259e3-2aae-4601-ad11-ed4c2e8a6bee",
+    "profileName": "Yulia",
+    "studentId": "3ec3ae89-25b6-4012-b0b9-3de0d0d7a115",
+    "studentName": "Yulia Rasnitsova",
+    "tier": "hint",
+    "overlap": 104
+  },
+  {
+    "profileId": "25fb101d-3f27-4780-b4d7-ec1595477eee",
+    "profileName": "Хади",
+    "studentId": "158d1936-92e1-4be4-9710-26a8bef7bb66",
+    "studentName": "Khadizhat Murtazalieva",
+    "tier": "hint",
+    "overlap": 73
+  },
+  {
+    "profileId": "2a141b23-a2c4-4660-8908-d3872905001d",
+    "profileName": "Наталья Эрикенова",
+    "studentId": "06e0f691-b461-4c6b-9577-7e1d43102d93",
+    "studentName": "Natalia Erikenova",
+    "tier": "hint",
+    "overlap": 60
+  },
+  {
+    "profileId": "2a1fbf47-3240-42f9-8db3-4a31badd357d",
+    "profileName": "Stepan Trofimov",
+    "studentId": "fcb0f9ab-cae8-412e-8142-fcd87a89cc8a",
+    "studentName": "Stepan Trofimov",
+    "tier": "exact",
+    "overlap": 53
+  },
+  {
+    "profileId": "2cdae6ba-d992-475d-bbd0-d9c3fbf81015",
+    "profileName": "AlenkaGrill",
+    "studentId": "763f98a3-c815-41f2-a8fe-6bfd09f0e501",
+    "studentName": "Alena Grill",
+    "tier": "hint",
+    "overlap": 83
+  },
+  {
+    "profileId": "3860c2b4-898c-4872-959b-538354df0506",
+    "profileName": "Анастасия Ил",
+    "studentId": "b3d25f76-a0c7-4324-a02a-f580960bfd53",
+    "studentName": "Anastasia Il",
+    "tier": "exact",
+    "overlap": 19
+  },
+  {
+    "profileId": "3a7cd6f9-b9d4-4ffb-818b-707fe6380c1e",
+    "profileName": "Настя Бунякина",
+    "studentId": "13b86a47-5727-4b86-8260-cf867f497b30",
+    "studentName": "Nastya Bunyakina",
+    "tier": "exact",
+    "overlap": 28
+  },
+  {
+    "profileId": "3cff0ac3-0e4c-4be3-947c-142bd49a6709",
+    "profileName": "Дарья Хмелькова",
+    "studentId": "5df7db0b-0f5f-40dd-808f-8311c3eedfd7",
+    "studentName": "Darya Khmelkova",
+    "tier": "exact",
+    "overlap": 14
+  },
+  {
+    "profileId": "48ac46e6-f843-47ff-a745-c47470d0b112",
+    "profileName": "Юлия",
+    "studentId": "faa8ef04-c05e-4175-b308-61d8b7a21f16",
+    "studentName": "Yulia Krylova",
+    "tier": "exact",
+    "overlap": 71
+  },
+  {
+    "profileId": "4cec94f8-20a3-4dc2-b17b-3704482d5cc6",
+    "profileName": "Татьяна",
+    "studentId": "4e83c525-1c27-4d32-8b04-e08fcd739c28",
+    "studentName": "Tatiana Trofimova",
+    "tier": "hint",
+    "overlap": 54
+  },
+  {
+    "profileId": "4d802baf-bdbe-4d78-9e2b-10ee52ac9e93",
+    "profileName": "Лилия Кудрявцева",
+    "studentId": "8383031a-2d7f-42bf-adc9-aa668aeabf7c",
+    "studentName": "Kudryavtseva Liliya",
+    "tier": "exact",
+    "overlap": 78
+  },
+  {
+    "profileId": "4e0c833f-ef5a-4f80-90f6-2602071351bc",
+    "profileName": "Надежда Старостина",
+    "studentId": "e3012f0e-7c8f-4455-b823-fe59b636eeff",
+    "studentName": "Nadezhda Starostina",
+    "tier": "exact",
+    "overlap": 49
+  },
+  {
+    "profileId": "51b50d24-f78a-4f24-a28f-005fbaf5ee19",
+    "profileName": "Виктория Кононова",
+    "studentId": "50b415c6-d5e0-4feb-9662-c81d01069e9c",
+    "studentName": "Viktoriya Kononova",
+    "tier": "exact",
+    "overlap": 71
+  },
+  {
+    "profileId": "56e6071b-dd50-45c6-853d-5caa356651c1",
+    "profileName": "Есения Дегтярёва",
+    "studentId": "a595327e-be91-4740-8028-1ec14ed0535a",
+    "studentName": "Eseniya Degtyareva",
+    "tier": "exact",
+    "overlap": 43
+  },
+  {
+    "profileId": "64806e86-39eb-472e-989f-903ab67f9999",
+    "profileName": "Александр Лаврентьев",
+    "studentId": "0816aae8-cfec-4c50-8547-12d84378b589",
+    "studentName": "Alexander Lavrentyev",
+    "tier": "exact",
+    "overlap": 90
+  },
+  {
+    "profileId": "6ed2baad-5f9b-4610-ad0d-286d9bc462cb",
+    "profileName": "Ольга Карчевская",
+    "studentId": "b042c097-ed36-4e48-b9f5-d28d5257876b",
+    "studentName": "Olga",
+    "tier": "exact",
+    "overlap": 44
+  },
+  {
+    "profileId": "70a58e52-22e5-48b0-bdac-ebe1d770c575",
+    "profileName": "Анна Чернышева",
+    "studentId": "fe369bc9-5423-46ac-ad74-346ecaa2461f",
+    "studentName": "Anna Chernysheva",
+    "tier": "exact",
+    "overlap": 48
+  },
+  {
+    "profileId": "70af1188-034d-4d9e-997d-c753c9a09acf",
+    "profileName": "Татьяна Ришко",
+    "studentId": "98924047-5fc0-408f-9493-c584c8a837ed",
+    "studentName": "Tatyana Rishko",
+    "tier": "exact",
+    "overlap": 32
+  },
+  {
+    "profileId": "7352823d-118b-4f26-a4ad-634a860d1e8b",
+    "profileName": "Лена Ярулина",
+    "studentId": "8180a050-a883-42d7-ad13-4fb9da03c7ee",
+    "studentName": "Elena Yarulina",
+    "tier": "hint",
+    "overlap": 31
+  },
+  {
+    "profileId": "77e7b39d-c95a-445f-ad7c-078406fead55",
+    "profileName": "Лена",
+    "studentId": "fbaa6e6d-91ad-472c-b741-2ba02729e7b9",
+    "studentName": "Elena Vasileva",
+    "tier": "hint",
+    "overlap": 56
+  },
+  {
+    "profileId": "7d2fa58b-d6bd-40fd-89b4-0d59d22734a6",
+    "profileName": "Nadya Hoffman",
+    "studentId": "f8b96028-4ea4-4cdf-86f4-d9ea89ef718e",
+    "studentName": "Nadya Hoffman",
+    "tier": "exact",
+    "overlap": 102
+  },
+  {
+    "profileId": "9c831c40-928d-4d0c-99f7-393b2b985290",
+    "profileName": "Игорь Поцелуев",
+    "studentId": "7cb54839-7e3b-4726-8023-1f49bd004168",
+    "studentName": "Igor Potseluev",
+    "tier": "exact",
+    "overlap": 83
+  },
+  {
+    "profileId": "a3eea861-110b-48fc-8c43-8f18ef52b179",
+    "profileName": "Марина Николаева",
+    "studentId": "1af7d1cb-e792-4ff8-a249-15b98786d163",
+    "studentName": "Marina Nikolaeva",
+    "tier": "exact",
+    "overlap": 69
+  },
+  {
+    "profileId": "a757e72c-5ca3-4c29-8ddf-2c250b4874ee",
+    "profileName": "Анна Кукушкина",
+    "studentId": "404d7528-d424-4e2a-a890-530cef375c8c",
+    "studentName": "Anna Kukushkina",
+    "tier": "exact",
+    "overlap": 81
+  },
+  {
+    "profileId": "a9bf768c-ef62-4b6e-89b5-e25bf934a1ad",
+    "profileName": "Александр",
+    "studentId": "f5f2c862-326f-4dd9-a5da-f555816a225b",
+    "studentName": "Aleksandr Sorokin",
+    "tier": "hint",
+    "overlap": 59
+  },
+  {
+    "profileId": "ac32eb0b-e6d2-4fba-80dd-d428cb80d2f5",
+    "profileName": "Юлия Григорьева",
+    "studentId": "234d0fcb-8014-4019-998a-21270bffe169",
+    "studentName": "Yulia Grigoreva",
+    "tier": "exact",
+    "overlap": 41
+  },
+  {
+    "profileId": "cda0fdf3-7a66-4c75-ba80-1dc8da4f3d4c",
+    "profileName": "Ольга Сластная",
+    "studentId": "0ee97744-43c0-4bb0-89a0-5a93def16b69",
+    "studentName": "Olga Slastnaia",
+    "tier": "hint",
+    "overlap": 30
+  },
+  {
+    "profileId": "d75d2659-3b06-4ae9-817c-4406189ad357",
+    "profileName": "Anastasiia",
+    "studentId": "0d05c6c9-7d75-4757-9e58-0abd8e081cea",
+    "studentName": "Anastasia Utenkova",
+    "tier": "hint",
+    "overlap": 43
+  },
+  {
+    "profileId": "d787e23b-8235-4dc7-995d-e27878a03b2e",
+    "profileName": "Маргарита Ларионова",
+    "studentId": "02c0c9d4-2528-4d6e-abc1-4b19ba8680b0",
+    "studentName": "Larionova",
+    "tier": "exact",
+    "overlap": 51
+  },
+  {
+    "profileId": "da4d542e-464c-4399-973c-92cff33cae8f",
+    "profileName": "Виктория Сергеева",
+    "studentId": "53428a4e-3fdf-4862-8e69-2bcdd54b9dc4",
+    "studentName": "Viktoria Sergeeva",
+    "tier": "exact",
+    "overlap": 60
+  },
+  {
+    "profileId": "daba22ec-3666-428c-aafe-f478c35c389a",
+    "profileName": "Anton Malyk",
+    "studentId": "d70f254b-fd46-4a56-a55b-9c38fee2e484",
+    "studentName": "Anton Malyk",
+    "tier": "exact",
+    "overlap": 85
+  },
+  {
+    "profileId": "e336f81c-e11d-4415-9cc8-2502acdefe3e",
+    "profileName": "Игорь Климович",
+    "studentId": "55fb25a2-c2c6-42a0-bb36-f434c542fab5",
+    "studentName": "Igor Klimovich",
+    "tier": "exact",
+    "overlap": 39
+  },
+  {
+    "profileId": "e788dc38-0e0e-43cd-8813-df37a9b30f75",
+    "profileName": "Александр Паутов",
+    "studentId": "f8073c46-a383-4aa8-b7e1-5ed2fdb9f9fb",
+    "studentName": "Alexander Pautov",
+    "tier": "exact",
+    "overlap": 88
+  },
+  {
+    "profileId": "e9c91b56-8cfd-4b62-b2ed-d2cca4deb59f",
+    "profileName": "Мария Туркина",
+    "studentId": "515ce410-e186-450a-9b2d-d906ee9b8843",
+    "studentName": "Maria Turkina",
+    "tier": "exact",
+    "overlap": 35
+  },
+  {
+    "profileId": "f506485e-4a35-4fb9-ab52-5e8f27eb6604",
+    "profileName": "Grigori Bereznoi",
+    "studentId": "33dcf076-539c-439f-8d12-bb0b508e604d",
+    "studentName": "grigori bereznoi",
+    "tier": "exact",
+    "overlap": 112
+  }
+]
