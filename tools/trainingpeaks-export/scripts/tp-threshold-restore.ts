@@ -201,6 +201,11 @@ function recompute(structObj: unknown, desc: string, title: string, thrSec: numb
   let assigned: Assign[] | null = matchByDuration(fx.steps, segs);
   if (!assigned) assigned = positionalFallback(fx.steps, ranges(desc)); // no-duration descriptions (simple easy runs)
   if (!assigned) return { isEasy, plans: [], defer: `шаги (${fx.steps.length}) не привязать: сегментов по длительности ${segs.length}, диапазонов ${ranges(desc).length}` };
+  // A step consumes the anchor only if it reaches the anchor branch: ref === "anchor" AND it is not
+  // an open-floor step (min=0 stays open-floor untouched). If any such step exists but the athlete
+  // has no reliable anchor (sample n<5 → anchor is null), DO NOT guess — defer to the manual list.
+  const needsAnchor = fx.steps.some((st, i) => assigned![i].ref === "anchor" && st.min !== 0);
+  if (needsAnchor && anchor == null) return { isEasy, plans: [], defer: `якорь недоступен (выборка лёгких бегов n<5) — ручной список` };
   const plans: Plan[] = [];
   fx.steps.forEach((st, i) => {
     const a = assigned[i].ref; const walk = assigned[i].walk;
@@ -217,12 +222,14 @@ function recompute(structObj: unknown, desc: string, title: string, thrSec: numb
     let nMin: number, nMax: number, src: string;
     if (openFloor || (walk && !isRange)) { nMin = st.min; nMax = st.max; src = openFloor ? "открытый пол — не трогаем (порог сам масштабирует потолок)" : "шагом/пауза — не трогаем"; }
     else if (a === "keep") { nMin = st.min; nMax = st.max; src = "без темпа (RPE/по ощущ.) — не трогаем"; }
-    else if (a === "anchor") { const an = anchor ?? thrSec * 1.3; nMax = Math.round((thrSec / (an - 8)) * 100); nMin = Math.round((thrSec / (an + 12)) * 100); src = `якорь ${fp(an)}`; }
+    else if (a === "anchor" && st.role === "отдых") { const an = anchor!; nMax = Math.round((thrSec / an) * 100); nMin = 0; src = `восстановление: открытый пол ≤${fp(an)} (не быстрее лёгкого, дальше как пойдёт)`; } // rest between reps: deliberately no floor
+    else if (a === "anchor") { const an = anchor!; nMax = Math.round((thrSec / (an - 8)) * 100); nMin = Math.round((thrSec / (an + 12)) * 100); src = `якорь ${fp(an)}`; } // whole easy run by-feel: tight anchor is apt
     else if (a.fast === a.slow) { nMax = Math.round((thrSec / a.fast) * 100); nMin = Number.isFinite(st.min) ? st.min : nMax; src = `≤${fp(a.fast)} (потолок; пол сохранён)`; } // one-sided "X и медленнее": set ceiling, keep floor
     else { nMax = Math.round((thrSec / a.fast) * 100); nMin = Math.round((thrSec / a.slow) * 100); src = `${fp(a.slow)}–${fp(a.fast)}`; }
     const [lo, hi] = band();
+    const restOpenFloor = a === "anchor" && st.role === "отдых"; // set to 0..anchor% — floor 0 is intentional
     const untouched = openFloor || (walk && !isRange) || a === "keep";
-    const ok = untouched ? true : nMin >= lo && nMax <= hi; // untouched steps → not gated on band
+    const ok = untouched ? true : restOpenFloor ? nMax <= hi : nMin >= lo && nMax <= hi; // band-gate the ceiling only for rest open-floor
     plans.push({ block: st.block, step: st.step, role: st.role, oldMin: st.min, oldMax: st.max, newMin: nMin, newMax: nMax, lo, hi, ok, src });
   });
   return { isEasy, plans };
@@ -247,8 +254,8 @@ async function main(): Promise<void> {
   // easy anchor (FIT reps=0 continuous 90d)
   const dm: { workout_cache_id: string }[] = []; for (let f = 0; ; f += 1000) { const { data } = await supabase.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id").eq("trainingpeaks_athlete_id", id).eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", daysAgo(90)).lte("workout_date", todayIso()).range(f, f + 999); if (!data || !data.length) break; dm.push(...(data as { workout_cache_id: string }[])); if (data.length < 1000) break; }
   const cids = dm.map((r) => r.workout_cache_id); const ps: number[] = [];
-  for (let i = 0; i < cids.length; i += 300) { const { data } = await supabase.from("trainingpeaks_workout_cache").select("completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300)); for (const w of data ?? []) { const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm < 3000 || h <= 0) continue; const pc = (h * 3600) / (mm / 1000); if (pc > 240 && pc < 540) ps.push(pc); } }
-  const srt = [...ps].sort((a, b) => a - b); const anchor = srt.length >= 3 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null;
+  for (let i = 0; i < cids.length; i += 300) { const { data } = await supabase.from("trainingpeaks_workout_cache").select("completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300)); for (const w of data ?? []) { const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm < 3000 || h <= 0) continue; const pc = (h * 3600) / (mm / 1000); if (pc > thrSec + 30 && pc < 540) ps.push(pc); } } // exclude ~threshold-pace runs (tempo mislabeled reps=0): they contaminate the easy anchor
+  const srt = [...ps].sort((a, b) => a - b); const anchor = srt.length >= 5 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null; // n<5 → якорь ненадёжен → атлет уходит в ручной список (recompute деферит)
 
   console.log(`\n=== tp-threshold-restore — ${name} (${id}) · режим ${apply ? "APPLY" : "DRY-RUN"} ===`);
   console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"}`);
