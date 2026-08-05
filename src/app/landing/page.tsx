@@ -754,6 +754,58 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* СТОИМОСТЬ */}
+      <section id="price">
+        <div className="wrap">
+          <div className="head">
+            <span className="eyebrow">Стоимость</span>
+            <h2>Сколько стоит</h2>
+          </div>
+          <div className="price-wrap">
+            <div className="price-card">
+              <div className="price-main">
+                <b>5 000 &#8381;</b>
+                <span>в месяц</span>
+              </div>
+              <p className="price-note">
+                Одна цена за всё сопровождение. Никаких пакетов на полгода
+                и доплат за разборы.
+              </p>
+              <ul className="price-list">
+                <li>
+                  <span className="mk">&#10003;</span> Индивидуальный план,
+                  разбор каждой тренировки и связь с тренером каждый день
+                </li>
+                <li>
+                  <span className="mk">&#10003;</span> Силовые, растяжка,
+                  восстановление и разбор техники
+                </li>
+                <li>
+                  <span className="mk">&#10003;</span> Оплата помесячно,
+                  остановиться можно в любой момент
+                </li>
+                <li>
+                  <span className="mk">&#10003;</span> Для тех, кто живёт не
+                  в России, есть оплата в евро
+                </li>
+              </ul>
+              <a href="#join" className="btn btn--lg">
+                Записаться в клуб &rarr;
+              </a>
+            </div>
+            <div className="price-aside">
+              <span className="eyebrow">Первый шаг</span>
+              <h3>Начать можно с тестовой недели за 1 000 &#8381;</h3>
+              <p>
+                Неделя тренировок с полным сопровождением, чтобы спокойно
+                попробовать формат. Если продолжаем, эта сумма идёт в счёт
+                первого месяца.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* FAQ */}
       <section>
         <div className="wrap">
@@ -762,6 +814,16 @@ export default function LandingPage() {
             <h2>Что обычно спрашивают</h2>
           </div>
           <div className="faq">
+            <details className="q">
+              <summary>Сколько стоит и как оплачивать?</summary>
+              <div className="a">
+                5 000 &#8381; в месяц за всё сопровождение: план, разборы
+                тренировок и связь с тренером. Оплата помесячно, остановиться
+                можно в любой момент. Попробовать формат можно с тестовой
+                недели за 1 000 &#8381;, она идёт в счёт первого месяца. Для
+                учеников не из России есть оплата в евро.
+              </div>
+            </details>
             <details className="q">
               <summary>Подойдёт ли клуб новичку?</summary>
               <div className="a">
@@ -886,7 +948,8 @@ export default function LandingPage() {
             </h2>
             <p className="sub">
               Оставь заявку — познакомимся, обсудим твои цели и подберём формат
-              работы. Присоединиться можно в любой момент.
+              работы. Присоединиться можно в любой момент. Стоимость 5 000 &#8381;
+              в месяц, начать можно с тестовой недели за 1 000 &#8381;.
             </p>
           </div>
           <LeadForm />
