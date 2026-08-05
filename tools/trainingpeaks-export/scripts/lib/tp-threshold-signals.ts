@@ -79,6 +79,17 @@ export async function loadHeldAthletes(sb: SupabaseClient): Promise<Set<number>>
   return held;
 }
 
+/** Пороги, подтверждённые 30-мин тестом (прямое измерение). Для них ЗАБЕГОВЫЙ сигнал НЕ поднимается —
+ *  забег лишь оценка через конверсию, спорить с прямым тестом нельзя. Прочие сигналы (перерыв) остаются.
+ *  Fail-open, если таблицы нет (миграция не применена). */
+export async function loadTestConfirmed(sb: SupabaseClient): Promise<Set<number>> {
+  const s = new Set<number>();
+  const { data, error } = await sb.from("tp_threshold_test_confirmed").select("trainingpeaks_athlete_id").eq("active", true);
+  if (error) { console.warn(`  (test-confirmed не прочитаны — таблица tp_threshold_test_confirmed применена? ${error.message})`); return s; }
+  for (const r of data ?? []) s.add(Number(r.trainingpeaks_athlete_id));
+  return s;
+}
+
 /** Одно решение на атлета: собирает перерыв+забег, агрегирует в story, считает проекцию отношения,
  *  фильтрует анти-спамом. TP не читается напрямую — thrSec/anchor приходят из джоба (уже посчитаны). */
 export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx[], opts: { runId: string | null }): Promise<Proposal[]> {
@@ -87,6 +98,7 @@ export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx
   const today = new Date().toISOString().slice(0, 10);
   const ids = ctx.map((c) => c.id);
   const held = await loadHeldAthletes(sb);
+  const testConfirmed = await loadTestConfirmed(sb); // порог с 30-мин теста → забеговый сигнал не поднимаем
   const active = ctx.filter((c) => !held.has(c.id));
   const byId = new Map(active.map((c) => [c.id, c]));
 
@@ -115,6 +127,7 @@ export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx
   const raceSig = new Map<number, Signal>();
   for (const [aid, races] of racesByAth) {
     const c = byId.get(aid); if (!c) continue; // held/inactive
+    if (testConfirmed.has(aid)) continue; // порог подтверждён 30-мин тестом → забег (оценка) сигнал не поднимает
     const cur = c.thrSec;
     const usable: UsableRace[] = [];
     for (const r of races) {
