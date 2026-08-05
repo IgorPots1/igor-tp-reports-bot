@@ -40,7 +40,13 @@ export const ILLNESS_TAIL_DAYS = 14; // spec §1.4: recovery tail after a health
  *  one observation. Grading uses effN, not n. */
 export const MIN_EFFECTIVE_SAMPLES = 3;
 
-export type EasySample = { date: string; fast: number; slow: number };
+/** One pooled prescription. `ceilingOnly` marks the open-floor forms — "X и медленнее" and
+ *  "X–00:00" — where the coach fixed only the FAST edge and left the floor open. tp-recompute's
+ *  ranges() represents both as a point range {fast:X, slow:X}; that X is a ceiling, NOT evidence
+ *  that the easy pace is X. Such a sample feeds easy_fast only (spec §1.4, форма 2) — letting it
+ *  into the slow median would drag the slow edge toward the ceiling and make easy look narrower
+ *  and faster than prescribed. */
+export type EasySample = { date: string; fast: number; slow: number; ceilingOnly?: boolean };
 export type DateWindow = { from: string; to: string };
 export type Anchor = {
   fast: number; slow: number;
@@ -48,6 +54,8 @@ export type Anchor = {
   n: number;
   /** sum of recency weights over the pool — "how many fresh observations is this really worth" */
   effectiveN: number;
+  /** how many pooled samples were open-floor ceilings (excluded from the slow edge) */
+  ceilingOnlyN: number;
   trendSlopeSPerDay: number;
 };
 
@@ -61,7 +69,7 @@ export function anchorConfidence(effectiveN: number): "high" | "medium" | "low" 
 /** Extract ONE easy sample from a workout: the prescribed range. Long runs contribute ONLY their
  *  slowest range (spec §1.2 — a marathon block's fast range would poison the easy anchor). Returns
  *  null if the workout is not an easy/steady continuous run or has no plausible prescribed range. */
-export function extractEasySample(title: string, desc: string): { fast: number; slow: number } | null {
+export function extractEasySample(title: string, desc: string): { fast: number; slow: number; ceilingOnly: boolean } | null {
   if (!title || INTERVAL_TITLE_RE.test(title)) return null;
   if (!isEasyRunTitle(title) && !CONTROL_MODE_EASY_RE.test(title)) return null;
   const rs = ranges(desc);
@@ -70,7 +78,9 @@ export function extractEasySample(title: string, desc: string): { fast: number; 
   const r = rs.reduce((a, b) => (b.slow > a.slow ? b : a));
   if (r.fast < MIN_PACE_S || r.slow > MAX_PACE_S) return null; // implausible → typo/garbage
   if (r.slow - r.fast > MAX_RANGE_SPREAD_S) return null; // two workouts glued
-  return { fast: r.fast, slow: r.slow };
+  // A point range from ranges() is an open-floor CEILING ("X и медленнее" / "X–00:00"), not a
+  // two-sided prescription: the floor is unknown. Flag it so it feeds easy_fast only.
+  return { fast: r.fast, slow: r.slow, ceilingOnly: r.fast === r.slow };
 }
 
 /** True if `date` (YYYY-MM-DD) falls inside any illness/injury window (+recovery tail already baked). */
@@ -138,13 +148,22 @@ export function buildAnchor(
   if (pool.length < minSamples) return null;
 
   const wf = pool.map((s) => ({ v: s.fast, w: weightForAge(daysBetween(asOf, s.date), opts.halfLifeDays) }));
-  const ws = pool.map((s) => ({ v: s.slow, w: weightForAge(daysBetween(asOf, s.date), opts.halfLifeDays) }));
+  // The SLOW edge is built ONLY from two-sided prescriptions. An open-floor ceiling ("X и медленнее",
+  // "X–00:00") says nothing about the floor; counting its X as a slow observation pulls the slow edge
+  // up toward the ceiling and reports a narrower, faster easy band than the coach prescribed.
+  const twoSided = pool.filter((s) => !s.ceilingOnly);
+  const ws = twoSided.map((s) => ({ v: s.slow, w: weightForAge(daysBetween(asOf, s.date), opts.halfLifeDays) }));
   // effectiveN = Σ recency weights. Raw n treats a 3-month-old range like yesterday's; effN does not,
   // so confidence grading inside easy_description uses effN (see anchorConfidence).
   const effectiveN = wf.reduce((acc, x) => acc + x.w, 0);
+  const fast = Math.round(weightedMedian(wf));
+  // Degenerate case: every pooled prescription is a ceiling → the floor was never stated. Fall back to
+  // slow = fast (a point band) rather than inventing a floor; ceilingOnlyN makes it visible.
+  const slow = ws.length ? Math.round(weightedMedian(ws)) : fast;
   return {
-    fast: Math.round(weightedMedian(wf)), slow: Math.round(weightedMedian(ws)),
+    fast, slow,
     n: pool.length, effectiveN: Math.round(effectiveN * 100) / 100,
+    ceilingOnlyN: pool.length - twoSided.length,
     trendSlopeSPerDay: trendSlope(pool, asOf),
   };
 }
@@ -157,8 +176,12 @@ export function tierOf(weeklyMinutes: number): Tier {
 }
 
 /** Median of a set of same-week samples → the week's "actual prescribed" easy (backtest target). */
-export function weekActual(samples: { fast: number; slow: number }[]): { fast: number; slow: number } {
-  return { fast: Math.round(plainMedian(samples.map((s) => s.fast))), slow: Math.round(plainMedian(samples.map((s) => s.slow))) };
+export function weekActual(samples: { fast: number; slow: number; ceilingOnly?: boolean }[]): { fast: number; slow: number } {
+  // Same open-floor rule as buildAnchor: a ceiling states the fast edge only. If the week contains
+  // nothing but ceilings, the prescribed floor is genuinely unknown → degenerate to a point band.
+  const twoSided = samples.filter((s) => !s.ceilingOnly);
+  const fast = Math.round(plainMedian(samples.map((s) => s.fast)));
+  return { fast, slow: twoSided.length ? Math.round(plainMedian(twoSided.map((s) => s.slow))) : fast };
 }
 
 /** Do two [fast,slow] pace intervals overlap? (backtest match criterion, spec §7.1). */

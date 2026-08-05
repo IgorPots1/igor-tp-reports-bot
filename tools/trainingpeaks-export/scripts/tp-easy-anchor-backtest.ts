@@ -113,7 +113,7 @@ function buildAthletes(rows: Row[]): Map<number, Ath> {
       const s = r.title ? extractEasySample(r.title, desc) : null;
       if (s) {
         const key = `${r.workout_date}|${s.fast}|${s.slow}`;
-        if (!seen.has(key)) { seen.add(key); samples.push({ date: r.workout_date, fast: s.fast, slow: s.slow }); }
+        if (!seen.has(key)) { seen.add(key); samples.push({ date: r.workout_date, fast: s.fast, slow: s.slow, ceilingOnly: s.ceilingOnly }); }
         if (!presByDate.has(r.workout_date)) presByDate.set(r.workout_date, s);
       }
       if (r.is_completed && r.completed_time_raw && r.completed_distance_raw && r.completed_distance_raw > 1000) {
@@ -172,10 +172,10 @@ async function main(): Promise<void> {
 
   // ── П4: v1 population (applied threshold ∩ individual anchor today) ──
   const asOf = addDays(todayIso(), 1);
-  const withAnchor: number[] = []; const anchorRows: string[] = ["athlete_id,tier,weekly_min,n,eff_n,anchor_confidence,easy_fast,easy_slow,has_threshold"];
+  const withAnchor: number[] = []; const anchorRows: string[] = ["athlete_id,tier,weekly_min,n,eff_n,ceiling_only_n,anchor_confidence,easy_fast,easy_slow,has_threshold"];
   for (const a of aths.values()) {
     const anc = buildAnchor(a.samples, asOf, { halfLifeDays: 42, illness: a.sid ? illness.get(a.sid) ?? [] : [] });
-    if (anc) { withAnchor.push(a.aid); anchorRows.push(`${a.aid},${a.tier},${Math.round(a.weeklyMin)},${anc.n},${anc.effectiveN},${anchorConfidence(anc.effectiveN)},${fp(anc.fast)},${fp(anc.slow)},${thr.has(a.aid) ? 1 : 0}`); }
+    if (anc) { withAnchor.push(a.aid); anchorRows.push(`${a.aid},${a.tier},${Math.round(a.weeklyMin)},${anc.n},${anc.effectiveN},${anc.ceilingOnlyN},${anchorConfidence(anc.effectiveN)},${fp(anc.fast)},${fp(anc.slow)},${thr.has(a.aid) ? 1 : 0}`); }
   }
   const withThr = new Set(thr.keys());
   const v1 = withAnchor.filter((id) => withThr.has(id)).sort((a, b) => a - b);
