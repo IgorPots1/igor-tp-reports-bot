@@ -13,12 +13,13 @@
 //            (форма могла просесть — урок Ларионовой). Старый забег для роста НЕ берём.
 //   падение: proposed ≥ порог+10с при любой свежести (слишком тяжело = риск → флагим раньше). Старый
 //            быстрый забег для падения НАОБОРОТ усиливает («полгода назад бежал быстрее»).
-//   перерыв: нет пробежек 10+ дней.
+//   перерыв: нет пробежек 10–60 дней (дольше 60 — не пауза, а прекращение тренировок; не будим).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ftpaSecPerKm, vdotFromRace } from "../../../../src/app/tools/plan/vdot.ts";
 
 // ── пороги срабатывания ──────────────────────────────────────────────────────
 const BREAK_GAP_DAYS = 10;
+const BREAK_GAP_MAX = 60; // дольше 60д — не пауза, а прекращение тренировок; порог там не главный вопрос → не будим
 const RACE_WINDOW_DAYS = 365;
 const RACE_MIN_KM = 3, RACE_MAX_KM = 15; // FTPa (0.913×VDOT) валиден как порог только для ~10к; полу/
 // марафон/ультра дают FTPa СИЛЬНО медленнее порога by design → ложные «падения» (урок dry-run 08-05).
@@ -111,7 +112,7 @@ export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx
     const lr = data?.[0]?.workout_date ? String(data[0].workout_date).slice(0, 10) : null;
     if (!lr) continue; // нет завершённых пробежек — спящий/новый, не наш сигнал (шум)
     const gap = daysBetween(lr, today);
-    if (gap >= BREAK_GAP_DAYS) breakSig.set(c.id, { type: "break", direction: "down", proposed_sec: null, magnitude_sec: null, evidence: `нет пробежек ${gap} дней (последняя ${ruDate(lr, today)})`, features: { gap_days: gap, last_run: lr } });
+    if (gap >= BREAK_GAP_DAYS && gap <= BREAK_GAP_MAX) breakSig.set(c.id, { type: "break", direction: "down", proposed_sec: null, magnitude_sec: null, evidence: `нет пробежек ${gap} дней (последняя ${ruDate(lr, today)})`, features: { gap_days: gap, last_run: lr } });
   }
 
   // ── (B) ЗАБЕГ: E-Predictor proposed vs текущий, свежесть асимметрична ─────────
