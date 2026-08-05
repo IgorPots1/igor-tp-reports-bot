@@ -15,6 +15,13 @@ echo "[$(date '+%F %T')] club-probeg-sync --write --commit"
 node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
   --env-file=.env.local scripts/probeg-people-probe.ts --write --commit || true
 
+# Правило: подтверждённый протокол (official_protocol/coach_confirmed) перекрывает дистанцию
+# race_event. Гонит СРАЗУ после probeg-синка, чтобы новые протоколы автоматически чинили кривые
+# дистанции скана (TP-поле Distance врёт: Пушкин 30 хранился как 21.1, ЗаБег 5 как 10). Идемпотентно.
+echo "[$(date '+%F %T')] reconcile race-event distances from protocol"
+node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
+  --env-file=.env.local scripts/reconcile-race-distances-from-protocol.ts --commit || true
+
 # Хартбит: отметка «прогон состоялся» в trainingpeaks_cron_run_logs, чтобы монитор
 # отличал живой поток от тихо вставшего. `|| true` — отметка не важнее самой работы;
 # сбой записи виден в логе (tp-heartbeat печатает причину и не глотает её).
