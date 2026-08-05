@@ -4,7 +4,7 @@ src = open('marina-case-carousel.html', encoding='utf-8').read()
 style = re.search(r'<style>(.*?)</style>', src, re.S).group(1)
 
 # подменяем фото на версии высокого разрешения
-cover_hi = open('cover-hi.txt').read().strip()
+cover_hi = open('cover-zoom.txt').read().strip()
 half_hi  = open('half-hi.txt').read().strip()
 imgs = re.findall(r'data:image/jpeg;base64,[A-Za-z0-9+/=]+', src)
 if len(imgs) >= 1: src = src.replace(imgs[0], cover_hi)
