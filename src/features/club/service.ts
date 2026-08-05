@@ -45,6 +45,7 @@ import type {
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
+  ClubNextWorkoutView,
   ClubPrediction,
   ClubProfileDetailView,
   ClubPublicProfileView,
@@ -615,6 +616,9 @@ export async function loadClubWorkoutRows(input: {
 async function loadFeedCandidates(input: {
   from: string;
   to: string;
+  /** Belgrade "now" (naive). Workouts with feed_ts > this are a timezone artifact (athlete east of
+   *  Belgrade, local start_time still in the future) and are dropped until Belgrade time reaches them. */
+  notAfterFeedTs: string;
   beforeFeedTs: string | null;
   beforeId: string | null;
   limit: number;
@@ -635,7 +639,9 @@ async function loadFeedCandidates(input: {
       .not("title", "ilike", `%${CLUB_MARKER_TITLE_SENTINEL}%`);
 
   // PRIMARY: order by fact start time. Keyset on (feed_ts, id), both non-null → no NULL edge cases.
-  let q = filtered(`${WORKOUT_CACHE_COLUMNS}, feed_ts`);
+  // `feed_ts <= now` drops "from the future" timezone artifacts (index-friendly range; date-only rows
+  // are a prefix of the naive-now string, so they compare <= and are never dropped).
+  let q = filtered(`${WORKOUT_CACHE_COLUMNS}, feed_ts`).lte("feed_ts", input.notAfterFeedTs);
   if (input.beforeFeedTs && input.beforeId) {
     q = q.or(`feed_ts.lt.${input.beforeFeedTs},and(feed_ts.eq.${input.beforeFeedTs},id.lt.${input.beforeId})`);
   }
@@ -980,6 +986,25 @@ function isoInTz(date: Date): string {
 
 function clubTodayIso(): string {
   return isoInTz(new Date());
+}
+/** Belgrade "now" as a naive ISO "YYYY-MM-DDTHH:MM:SS" — same naive-local shape as feed_ts, so a
+ *  string compare `feed_ts <= clubNowIso()` cleanly drops workouts whose athlete-local start_time is
+ *  still in the future relative to Belgrade (a timezone artifact — the athlete is east of Belgrade).
+ *  Date-only feed_ts ("2026-08-04") are a prefix of the naive-now, so they always compare <= and are
+ *  never dropped. */
+function clubNowIso(): string {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: C.CLUB_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+    .format(new Date())
+    .replace(" ", "T");
 }
 /** Test-only: club "today" (Europe/Belgrade) so a harness can match the streak anchor. */
 export function __clubTodayIsoForTest(): string {
@@ -1746,6 +1771,7 @@ export async function getClubFeed(input: {
   currentStudentId: string;
 }): Promise<ClubFeedView> {
   const today = clubTodayIso();
+  const nowIso = clubNowIso(); // Belgrade "now" — cap so timezone-ahead workouts don't sort from the future
   const from = addDaysIso(today, -C.CLUB_FEED_WINDOW_DAYS);
   const [students, freshness] = await Promise.all([loadClubStudents(), buildFreshness()]);
   const visibleIds = new Set(students.filter(isVisible).map((s) => s.id));
@@ -1763,7 +1789,7 @@ export async function getClubFeed(input: {
   let exhausted = false;
 
   while (pageRows.length < pageSize && !exhausted) {
-    const batch = await loadFeedCandidates({ from, to: today, beforeFeedTs: cursorFeedTs, beforeId: cursorId, limit: batchLimit });
+    const batch = await loadFeedCandidates({ from, to: today, notAfterFeedTs: nowIso, beforeFeedTs: cursorFeedTs, beforeId: cursorId, limit: batchLimit });
     if (batch.length < batchLimit) exhausted = true;
     for (const row of batch) {
       cursorFeedTs = row.feedTs;
@@ -2287,6 +2313,132 @@ function topRowSegmentLabel(
   return parentKm != null ? `в составе ${nearestStandardKm(parentKm)} км` : "отрезок более длинной гонки";
 }
 
+// ── Next planned workout (the student's own plan, shown on entry) ──────────────
+type Obj = Record<string, unknown>;
+const isObj = (x: unknown): x is Obj => typeof x === "object" && x !== null && !Array.isArray(x);
+
+/** Human one-liners for a planned workout's structure — the FALLBACK shown when the coach left the
+ *  description empty. Repetition blocks render «N × (…)»; each step shows its name + duration/distance. */
+function planStructureSteps(structure: unknown): string[] {
+  if (!isObj(structure) || !Array.isArray(structure.structure)) return [];
+  const lenLabel = (st: Obj): string => {
+    const len = isObj(st.length) ? st.length : null;
+    const unit = len ? String(len.unit ?? "") : "";
+    const v = len && typeof len.value === "number" ? len.value : 0;
+    if (unit === "second" && v > 0) return `${Math.round(v / 60)} мин`;
+    if (unit === "meter" && v > 0) return v >= 1000 ? `${(v / 1000).toFixed(v % 1000 ? 1 : 0)} км` : `${v} м`;
+    if (unit === "kilometer" && v > 0) return `${v} км`;
+    return "";
+  };
+  // Easy step? <=90% of threshold ≈ warm-up/cool-down/recovery; work reps are 94%+. Falls back to
+  // intensityClass when a step has no target.
+  const isLow = (st: Obj): boolean => {
+    const cls = String(st.intensityClass ?? "");
+    if (cls === "warmUp" || cls === "coolDown" || cls === "rest") return true;
+    const t = Array.isArray(st.targets) && st.targets.length && isObj(st.targets[0]) ? st.targets[0] : null;
+    const mx = t && typeof t.maxValue === "number" ? t.maxValue : null;
+    return mx != null && mx <= 90;
+  };
+  // Flatten in order (keep block grouping for rep-collapse). POSITION wins over intensityClass: the
+  // FIRST easy standalone step is the warm-up, the LAST is the cool-down — some plans tag the warm-up
+  // "active", so intensityClass alone mislabels it «работа». The reps===1 guard keeps rep steps out of it.
+  type Flat = { blockIdx: number; reps: number; st: Obj };
+  const flat: Flat[] = [];
+  (structure.structure as unknown[]).forEach((block, bi) => {
+    if (!isObj(block) || !Array.isArray(block.steps)) return;
+    const reps = block.type === "repetition" && isObj(block.length) && typeof block.length.value === "number" ? block.length.value : 1;
+    (block.steps as unknown[]).filter(isObj).forEach((st) => flat.push({ blockIdx: bi, reps, st }));
+  });
+  if (!flat.length) return [];
+  // Position-based warm-up/cool-down only makes sense when there IS a work middle. An all-easy run
+  // («лёгкий бег») has no work → its blocks are just running, not «разминка/заминка».
+  const hasWork = flat.some((f) => !isLow(f.st));
+  const roleOf = (f: Flat, i: number): string => {
+    const cls = String(f.st.intensityClass ?? "");
+    const nm = String(f.st.name ?? "");
+    const low = isLow(f.st);
+    if (hasWork && i === 0 && f.reps === 1 && low) return "Разминка";
+    if (hasWork && i === flat.length - 1 && f.reps === 1 && low) return "Заминка";
+    if (/warm|размин/i.test(nm) || cls === "warmUp") return "Разминка";
+    if (/cool|замин/i.test(nm) || cls === "coolDown") return "Заминка";
+    if (cls === "rest") return "Отдых";
+    return low ? "Бег" : "Работа"; // easy segment → «Бег»; hard effort → «Работа»
+  };
+  const roles = flat.map((f, i) => roleOf(f, i));
+  const out: string[] = [];
+  let i = 0;
+  while (i < flat.length) {
+    const bi = flat[i].blockIdx;
+    const reps = flat[i].reps;
+    const labels: string[] = [];
+    while (i < flat.length && flat[i].blockIdx === bi) { const l = lenLabel(flat[i].st); labels.push(`${roles[i]}${l ? " " + l : ""}`); i++; }
+    if (reps > 1) out.push(`${reps} × (${labels.join(" + ")})`);
+    else out.push(...labels);
+  }
+  return out;
+}
+
+/**
+ * The student's NEXT planned workout (today or the nearest upcoming). Description shown in full (coach
+ * text is written for the student — a scan of the plan corpus found no coach-only markers); `steps` is
+ * the structure fallback for the ~5% empty descriptions. A day-off on the workout's date is surfaced as
+ * a MARK (isDayOff), never hidden. Read-only; nothing is written.
+ */
+export async function getClubNextWorkout(input: { currentStudentId: string }): Promise<ClubNextWorkoutView | null> {
+  const supabase = createSupabaseServerClient();
+  const today = clubTodayIso();
+  const { data, error } = await supabase
+    .from("trainingpeaks_workout_cache")
+    .select("workout_date, title, sport_or_type_code, workout_type_value_id, workout_sub_type_id, planned_time_raw, planned_distance_raw, source_snapshot, order_on_day")
+    .eq("student_id", input.currentStudentId)
+    .eq("is_planned", true)
+    .gte("workout_date", today)
+    .order("workout_date", { ascending: true })
+    .order("order_on_day", { ascending: true, nullsFirst: true })
+    .limit(1);
+  if (error || !data || !data.length) return null;
+  const w = data[0] as Obj;
+  const date = String(w.workout_date ?? "");
+  if (!date) return null;
+  const family = classifyTrainingPeaksWorkoutActivity({
+    title: (w.title as string | null) ?? null,
+    sportOrTypeCode: (w.sport_or_type_code as string | null) ?? null,
+    workoutTypeValueId: (w.workout_type_value_id as number | null) ?? null,
+    workoutSubTypeId: (w.workout_sub_type_id as number | null) ?? null,
+  }).family;
+  const ss = isObj(w.source_snapshot) ? w.source_snapshot : null;
+  const descRaw = ss && typeof ss.description === "string" ? ss.description.trim() : "";
+  const durSec = rawHoursToSeconds(w.planned_time_raw as number | string | null);
+  const distKm = normalizeDistanceKm(w.planned_distance_raw as number | string | null);
+  const whenLabel = date === today ? "сегодня" : date === addDaysIso(today, 1) ? "завтра" : formatRuDate(date);
+  let isDayOff = false;
+  try {
+    const { data: off } = await supabase
+      .from("club_calendar_entries")
+      .select("id")
+      .eq("student_id", input.currentStudentId)
+      .eq("kind", "day_off")
+      .eq("entry_date", date)
+      .neq("status", "rejected")
+      .limit(1);
+    isDayOff = Boolean(off && off.length);
+  } catch {
+    /* calendar table absent → no day-off mark */
+  }
+  return {
+    date,
+    whenLabel,
+    title: cleanTitle((w.title as string | null) ?? null) ?? "Тренировка",
+    typeLabel: typeLabel(family),
+    durationLabel: durSec && durSec > 0 ? `${Math.round(durSec / 60)} мин` : null,
+    distanceLabel: distKm && distKm > 0 ? `${distKm.toFixed(1)} км` : null,
+    // Club UI rule: no long dashes in the student-facing surface — normalise em/en/minus to a hyphen.
+    description: descRaw ? descRaw.replace(/[—–−]/gu, "-") : null,
+    steps: planStructureSteps(ss?.structure),
+    isDayOff,
+  };
+}
+
 export async function getClubRecords(input: {
   currentStudentId: string;
 }): Promise<ClubRecordsView> {
@@ -2309,46 +2461,48 @@ export async function getClubRecords(input: {
   const clubTops: ClubRecordsView["clubTops"] = [];
 
   for (const target of C.CLUB_RECORD_DISTANCES) {
-    // Club top: ONLY real races (verified). Coach-confirmed verified races count;
-    // materialized best_verified races count; coach-hidden distance excluded.
-    const raceRows: Array<{ studentId: string; name: string; durationSeconds: number; pace: number | null; date: string | null; isCoach: boolean }> = [];
-    // Iterate ALL visible students (not just those with a snapshot): a runner with an official_protocol
-    // race but no reconstructed snapshot must still make the tops.
+    // Club leaderboard = FASTEST time per person on this distance, INCLUDING Strava best-efforts
+    // (measured training segments). The personal card keeps the «Гонки / Лучшие отрезки» split;
+    // the leaderboard answers "who is fastest in the club", so a Strava best competes here. Each row
+    // carries its `source` so a Strava/training best is MARKED, never passed off as a protocol race.
+    type Cand = { studentId: string; name: string; sec: number; pace: number | null; date: string | null; source: RecordSource; kind: "race" | "training_split" };
+    const cands: Cand[] = [];
+    // Iterate ALL visible students (not just those with a snapshot): a runner with only an
+    // official_protocol race or a Strava best (no reconstruction) must still make the leaderboard.
     for (const [studentId, student] of visibleById) {
       const perStudent = snapshots.get(studentId);
       const c = overrides.get(`${studentId}|${target.key}`);
-      // coach_confirmed: verified → race top; hidden/preliminary excluded. Overrides the distance.
+      const name = student.name ?? "";
+      const pool: Cand[] = [];
       if (c?.source === "coach_confirmed") {
-        if (c.trust === "verified") {
-          raceRows.push({ studentId, name: student.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
-        }
-        continue;
+        // coach governs the distance: verified → a race candidate; hidden/preliminary → excluded, no fallback.
+        if (c.trust === "verified") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "coach_confirmed", kind: "race" });
+      } else {
+        if (c?.source === "official_protocol") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "official_protocol", kind: "race" });
+        if (c?.source === "strava_best_effort") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "strava_best_effort", kind: "training_split" });
+        const rv = perStudent?.get(target.key)?.raceVerified;
+        if (rv) pool.push({ studentId, name, sec: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, source: "race_events", kind: "race" });
       }
-      // official_protocol: a real race result — authoritative race top; occupies the race slot.
-      if (c?.source === "official_protocol") {
-        raceRows.push({ studentId, name: student.name ?? "", durationSeconds: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, isCoach: true });
-        continue;
-      }
-      // strava_best_effort is a TRAINING segment, NOT a race → never enters the tops; fall through to
-      // the student's reconstructed race (raceVerified), exactly as with no override.
-      const rv = perStudent?.get(target.key)?.raceVerified;
-      if (rv) raceRows.push({ studentId, name: student.name ?? "", durationSeconds: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, isCoach: false });
+      if (pool.length) cands.push(pool.reduce((a, b) => (b.sec < a.sec ? b : a))); // this student's FASTEST
     }
-    raceRows.sort((a, b) => a.durationSeconds - b.durationSeconds);
-    const topRows: ClubRecordsClubTopRow[] = raceRows.slice(0, C.CLUB_RECORDS_TOP_N).map((r, index) => ({
+    cands.sort((a, b) => a.sec - b.sec);
+    // Return the FULL ranked list (task: «показать всех»); the UI shows 10 by default and expands.
+    const rows: ClubRecordsClubTopRow[] = cands.map((r, index) => ({
       distanceKey: target.key,
       rank: index + 1,
       studentId: r.studentId,
       displayName: visibleById.get(r.studentId)?.displayName ?? fullName(r.name),
       monogram: monogram(r.name),
-      durationSeconds: r.durationSeconds,
+      durationSeconds: r.sec,
       paceSecPerKm: r.pace,
       isCurrentStudent: r.studentId === input.currentStudentId,
       trust: "verified",
-      recordType: "race",
+      recordType: r.kind,
+      source: r.source,
       date: r.date,
-      // Segment caption is filled in a post-pass below (needs each student's race_events).
-      raceSegmentLabel: r.isCoach ? null : undefined,
+      // Only a reconstructed race (race_events) can be a within-race SEGMENT; coach/official/strava
+      // rows get no caption (null → skipped by the post-pass below).
+      raceSegmentLabel: r.source === "race_events" ? undefined : null,
       // Signed avatar URL for everyone; the proxy re-checks the member's opt-out live (403 →
       // monogram) and a missing photo 404s → monogram. So the UI always keeps a monogram fallback.
       avatarUrl: C.isClubAvatarsEnabled() ? signAvatarPath(r.studentId) : null,
@@ -2357,7 +2511,7 @@ export async function getClubRecords(input: {
       distanceKey: target.key,
       distanceLabel: target.label,
       alwaysPreliminary: target.alwaysPreliminary,
-      rows: topRows,
+      rows,
     });
   }
 

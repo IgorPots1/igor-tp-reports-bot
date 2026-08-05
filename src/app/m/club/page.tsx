@@ -13,6 +13,7 @@ import type {
   ClubFeedItem,
   ClubFeedView,
   ClubFreshness,
+  ClubNextWorkoutView,
   ClubPastResult,
   ClubPrediction,
   ClubProfileDetailView,
@@ -1046,6 +1047,7 @@ function RecordsTab(props: {
   onRetry: () => void;
   onOpenStudent: (id: string) => void;
 }) {
+  const [topsOpen, setTopsOpen] = useState(false);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
@@ -1099,24 +1101,34 @@ function RecordsTab(props: {
       </div>
 
       <div style={S.card}>
-        <div style={S.secHead}>Клубный топ · {clubTop?.distanceLabel} · только гонки</div>
+        <div style={S.secHead}>Клубный топ · {clubTop?.distanceLabel}</div>
         {clubTop && clubTop.rows.length > 0 ? (
-          clubTop.rows.map((row) => (
-            <div key={`${row.rank}-${row.studentId}`} style={S.rankRow(row.isCurrentStudent)}>
-              <span style={S.rankBadge(row.rank - 1)}>{row.rank}</span>
-              <Monogram text={row.monogram} avatarUrl={row.avatarUrl} onClick={() => props.onOpenStudent(row.studentId)} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={S.cardName}>{row.displayName}{row.isCurrentStudent ? " · ты" : ""}</div>
-                <div style={S.cardMeta}>{fmtPace(row.paceSecPerKm) ?? ""}</div>
-                {row.raceSegmentLabel ? <div style={S.segmentNote}>{row.raceSegmentLabel}</div> : null}
+          <>
+            {clubTop.rows.slice(0, topsOpen ? clubTop.rows.length : 10).map((row) => (
+              <div key={`${row.rank}-${row.studentId}`} style={S.rankRow(row.isCurrentStudent)}>
+                <span style={S.rankBadge(row.rank - 1)}>{row.rank}</span>
+                <Monogram text={row.monogram} avatarUrl={row.avatarUrl} onClick={() => props.onOpenStudent(row.studentId)} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={S.cardName}>{row.displayName}{row.isCurrentStudent ? " · ты" : ""}</div>
+                  <div style={S.cardMeta}>{fmtPace(row.paceSecPerKm) ?? ""}</div>
+                  {row.raceSegmentLabel ? <div style={S.segmentNote}>{row.raceSegmentLabel}</div> : null}
+                </div>
+                {row.source === "strava_best_effort" ? (
+                  <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap" }}>Strava</span>
+                ) : null}
+                <span style={S.timeBig}>{fmtDuration(row.durationSeconds)}</span>
               </div>
-              <span style={S.timeBig}>{fmtDuration(row.durationSeconds)}</span>
-            </div>
-          ))
+            ))}
+            {clubTop.rows.length > 10 ? (
+              <button type="button" onClick={() => setTopsOpen((o) => !o)} style={{ width: "100%", marginTop: 10, padding: "9px", background: "transparent", border: `1px solid ${C.line}`, borderRadius: 8, color: C.sub, fontSize: 13, cursor: "pointer" }}>
+                {topsOpen ? "Свернуть" : `Показать всех (${clubTop.rows.length})`}
+              </button>
+            ) : null}
+          </>
         ) : (
-          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет гонок в данных - топ появится, когда забеги подтянутся в TrainingPeaks</div>
+          <div style={{ color: C.sub, fontSize: 14, marginTop: 8 }}>Пока нет данных - топ появится, когда результаты подтянутся</div>
         )}
-        {clubTop?.alwaysPreliminary ? <div style={S.fixtureNote}>5 км - только предварительно по методике, в клубный топ не идёт</div> : null}
+        <div style={S.fixtureNote}>Лучшее время на дистанцию у каждого в клубе. Пометка «Strava» - лучший отрезок из тренировки, не гонка с протоколом.</div>
       </div>
     </div>
   );
@@ -1303,6 +1315,15 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
   const privacyBusyRef = useRef(false);
   const routesBusyRef = useRef(false);
   const avatarBusyRef = useRef(false);
+  const [plan, setPlan] = useState<ClubNextWorkoutView | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/m/club/next-workout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initData: props.initData }) })
+      .then((r) => (r.ok ? r.json() : { ok: false }))
+      .then((j) => { if (alive && j.ok) setPlan(j.view ?? null); })
+      .catch(() => { /* plan card is best-effort — feature off / offline → just no card */ });
+    return () => { alive = false; };
+  }, [props.initData]);
   if (props.status === "loading" || props.status === "idle") return <Loading />;
   if (props.status === "error" || !props.view) return <ErrorState onRetry={props.onRetry} />;
   const v = props.view;
@@ -1381,6 +1402,27 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
           </div>
         </div>
       </div>
+
+      {plan ? (
+        <div style={{ ...S.card, border: `1px solid ${C.accent}` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontFamily: HEAD, fontSize: 13, letterSpacing: ".04em", textTransform: "uppercase", color: C.sub }}>План · {plan.whenLabel}</span>
+            {plan.isDayOff ? <span style={{ fontSize: 11, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "2px 8px", whiteSpace: "nowrap" }}>выходной</span> : null}
+          </div>
+          <div style={{ fontFamily: HEAD, fontSize: 18, color: C.ink, fontWeight: 600 }}>{plan.title}</div>
+          <div style={S.cardMeta}>{[plan.typeLabel, plan.durationLabel, plan.distanceLabel].filter(Boolean).join(" · ")}</div>
+          {plan.description ? (
+            <div style={{ marginTop: 10, fontSize: 14, color: C.ink, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{plan.description}</div>
+          ) : plan.steps.length ? (
+            <div style={{ marginTop: 10 }}>
+              {plan.steps.map((s, i) => (
+                <div key={i} style={{ fontSize: 14, color: C.ink, padding: "4px 0", borderTop: i ? `1px solid ${C.line}` : "none" }}>{s}</div>
+              ))}
+            </div>
+          ) : null}
+          {plan.isDayOff ? <div style={{ ...S.cardMeta, marginTop: 8 }}>Ты отметил этот день выходным. Если передумаешь, план ждёт.</div> : null}
+        </div>
+      ) : null}
 
       <div style={S.card}>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>

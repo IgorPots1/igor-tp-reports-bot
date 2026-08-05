@@ -170,8 +170,11 @@ export type ClubRecordsClubTopRow = {
   isCurrentStudent: boolean;
   /** Club tops only ever contain verified records. */
   trust: RecordTrust;
-  /** Club tops only ever contain real races. */
-  recordType: "race";
+  /** Leaderboard ranks by fastest time regardless of race/training, so a row can be a Strava
+   *  training best (training_split) as well as a race. The UI marks the non-race ones. */
+  recordType: "race" | "training_split";
+  /** Source of the leaderboard time — the UI shows a «Strava / тренировка» mark for strava_best_effort. */
+  source?: RecordSource;
   /** Record date (for segment detection); null for coach rows without a stored date. */
   date?: string | null;
   /** Set when this top result is a within-race segment (same caption as the card). */
@@ -310,6 +313,21 @@ export type ClubPastResult = {
   resultLabel: string | null;
   place: number | null;
   protocolUrl: string | null;
+};
+
+/** The student's NEXT planned workout (today or the nearest upcoming), shown on entry. Description is
+ *  shown in full (coach text is student-facing); `steps` is the structure fallback for empty descriptions.
+ *  `isDayOff` = the student marked this date as a day-off (shown WITH a mark, not hidden). */
+export type ClubNextWorkoutView = {
+  date: string;
+  whenLabel: string;
+  title: string;
+  typeLabel: string;
+  durationLabel: string | null;
+  distanceLabel: string | null;
+  description: string | null;
+  steps: string[];
+  isDayOff: boolean;
 };
 
 export type ClubDayoffStatus = "pending" | "approved" | "rejected" | "applied";

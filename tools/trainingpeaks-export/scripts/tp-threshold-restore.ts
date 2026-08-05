@@ -42,6 +42,7 @@ import { authedWriteOnce, COACH_ID_SETUP_HINT, findActiveHold, findWt0Set, forma
 import { planType } from "./lib/tp-athlete-set-threshold.ts";
 import { pickWhitelistedSettings } from "./lib/tp-settings-whitelist.ts";
 import { fp, median, flatSteps, deepDiff, recompute, type Plan } from "./lib/tp-recompute.ts";
+import { loadManualAnchors } from "./lib/tp-manual-overrides.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 function getSupabase(): SupabaseClient { const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), path.join(toolRoot, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p); return createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } }); }
@@ -79,21 +80,41 @@ async function main(): Promise<void> {
   // Threshold source: --pace=mm:ss APPLIES A DECISION value (scan-candidate apply); recompute
   // structures FOR that pace, then set it. Without --pace: restore the last real logged threshold.
   const paceOverride = getFlag("pace");
-  let thrMps: number | undefined; let thrSec: number | null;
-  if (paceOverride) { thrSec = parsePaceToSecPerKm(paceOverride); thrMps = secPerKmToMps(thrSec); }
-  else { const { data: thr } = await supabase.from("tp_threshold_applications").select("value_after,tier,applied_at").eq("trainingpeaks_athlete_id", id).eq("kind", "pace").neq("tier", "rollback").order("applied_at", { ascending: false }).limit(1); thrMps = thr?.[0]?.value_after as number | undefined; thrSec = thrMps ? 1000 / thrMps : null; }
+  let thrMps: number | undefined; let thrSec: number | null; let thrSource = "";
+  let thrFromLive = false;
+  if (paceOverride) { thrSec = parsePaceToSecPerKm(paceOverride); thrMps = secPerKmToMps(thrSec); thrSource = `--pace=${paceOverride}`; }
+  else {
+    const { data: thr } = await supabase.from("tp_threshold_applications").select("value_after,tier,applied_at").eq("trainingpeaks_athlete_id", id).eq("kind", "pace").neq("tier", "rollback").order("applied_at", { ascending: false }).limit(1);
+    thrMps = thr?.[0]?.value_after as number | undefined; thrSec = thrMps ? 1000 / thrMps : null;
+    if (thrMps) thrSource = `лог value_after (tier=${thr?.[0]?.tier})`;
+    // NO LOG ROW → fall back to the LIVE TP threshold (wt=0). Many athletes' thresholds were set
+    // OUTSIDE this tool (manually / by import), so tp_threshold_applications has no row. The tool used
+    // to refuse (exit 3) — which SILENTLY blocked the nightly recompute for ~20% of the roster (22/112
+    // on 2026-08-04): the job would show drift it could never apply. The live wt0 IS the real threshold
+    // (it is what TP already renders against), so recompute the structures to match it. The log write
+    // below then SEEDS the missing row (tier=restore), so next time we read from the log — self-healing.
+    if (!thrMps) {
+      try { const s0 = await getAthleteSettings(id); const w0 = findWt0Set(s0.speedZones); const liveMps = w0 && typeof w0.threshold === "number" ? w0.threshold : undefined; if (liveMps) { thrMps = liveMps; thrSec = 1000 / liveMps; thrFromLive = true; thrSource = "живой TP порог wt0 (нет записи в логе)"; } } catch { /* fall through to refuse */ }
+    }
+  }
   const { data: nmRow } = await supabase.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1);
   const name = (nmRow?.[0]?.student_name as string) ?? `id ${id}`;
-  if (!thrMps || !thrSec) { console.error(`✗ ${name}: нет порога (${paceOverride ? "плохой --pace" : "нет value_after в логе"}).`); process.exit(3); }
+  if (!thrMps || !thrSec) { console.error(`✗ ${name}: нет порога (${paceOverride ? "плохой --pace" : "ни в логе, ни в живом TP wt0"}).`); process.exit(3); }
 
   // easy anchor (FIT reps=0 continuous 90d)
   const dm: { workout_cache_id: string }[] = []; for (let f = 0; ; f += 1000) { const { data } = await supabase.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id").eq("trainingpeaks_athlete_id", id).eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", daysAgo(90)).lte("workout_date", todayIso()).range(f, f + 999); if (!data || !data.length) break; dm.push(...(data as { workout_cache_id: string }[])); if (data.length < 1000) break; }
   const cids = dm.map((r) => r.workout_cache_id); const ps: number[] = [];
   for (let i = 0; i < cids.length; i += 300) { const { data } = await supabase.from("trainingpeaks_workout_cache").select("completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300)); for (const w of data ?? []) { const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm < 3000 || h <= 0) continue; const pc = (h * 3600) / (mm / 1000); if (pc > thrSec + 30 && pc < 540) ps.push(pc); } } // exclude ~threshold-pace runs (tempo mislabeled reps=0): they contaminate the easy anchor
-  const srt = [...ps].sort((a, b) => a - b); const anchor = srt.length >= 5 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null; // n<5 → якорь ненадёжен → атлет уходит в ручной список (recompute деферит)
+  const srt = [...ps].sort((a, b) => a - b); const autoAnchor = srt.length >= 5 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null; // n<5 → авто-якорь ненадёжен → recompute деферит
+  // Ручной якорь ПЕРЕБИВАЕТ вычисленный (n<5 больше не блокирует). Приоритет: --anchor > стор > авто.
+  // --anchor=mm:ss — разовый; стор tp_manual_anchors — постоянный (одобрен тренером, читают все).
+  const anchorFlag = getFlag("anchor"); const flagAnchor = anchorFlag ? parsePaceToSecPerKm(anchorFlag) : null;
+  const storeAnchor = flagAnchor ? null : (await loadManualAnchors(supabase)).get(id) ?? null;
+  const anchor = flagAnchor ?? storeAnchor ?? autoAnchor;
+  const anchorSrc = flagAnchor ? "--anchor, ручной" : storeAnchor ? "стор, ручной" : autoAnchor ? "авто (FIT)" : "нет";
 
   console.log(`\n=== tp-threshold-restore — ${name} (${id}) · режим ${apply ? "APPLY" : "DRY-RUN"} ===`);
-  console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"}`);
+  console.log(`реальный порог: ${fp(thrSec)} (${thrMps.toFixed(4)} m/s) · источник: ${thrSource} · лёгкий якорь: ${anchor ? fp(anchor) : "НЕТ"} (${anchorSrc})`);
 
   // ALL UNCOMPLETED planned workouts of ANY date — NOT just today+. A threshold change re-renders
   // the athlete's PAST-dated planned workouts too; if a student opens an old un-run planned workout
@@ -180,7 +201,12 @@ async function main(): Promise<void> {
       const st = isRecord(block) && Array.isArray(block.steps) ? block.steps[p.step] : null;
       const tg = isRecord(st) && Array.isArray(st.targets) ? st.targets[0] : null;
       if (!isRecord(tg)) { console.error(`  ✗ ${wk.title}: не нашёл шаг b${p.block}s${p.step} в живой структуре — СТОП.`); process.exit(2); }
-      (tg as Record<string, unknown>).minValue = p.newMin; (tg as Record<string, unknown>).maxValue = p.newMax;
+      // Пишем ТОЛЬКО конечные значения. Открытый шаг «шагом/пауза» имеет target {minValue:75} без
+      // maxValue (recompute помечает его «не трогаем», newMax=null). Раньше писали maxValue=null →
+      // TP отбивал весь PUT как 400 (Lobus «6х6»). Не трогаем поле, если новое значение не число —
+      // живой target остаётся как есть, лишний null не появляется.
+      if (Number.isFinite(p.newMin)) (tg as Record<string, unknown>).minValue = p.newMin;
+      if (Number.isFinite(p.newMax)) (tg as Record<string, unknown>).maxValue = p.newMax;
     }
     const before = { title: live.title, description: live.description, workoutId: live.workoutId, nSteps: fx.steps.length };
     live.structure = JSON.stringify(structObj); // PUT expects structure as STRING
@@ -227,7 +253,7 @@ async function main(): Promise<void> {
   try {
     const zonesW = pickWhitelistedSettings(afterSettings);
     await supabase.from("tp_zone_snapshots").insert({ trainingpeaks_athlete_id: id, captured_at: new Date().toISOString(), zones: Object.keys(zonesW).length ? zonesW : null, source: paceOverride ? "post_candidate_apply" : "post_restore" });
-    await supabase.from("tp_threshold_applications").insert({ trainingpeaks_athlete_id: id, kind: "pace", value_before: beforeThr && typeof beforeThr.threshold === "number" ? beforeThr.threshold : null, value_after: thrMps, value_after_display: formatMpsAsPace(thrMps), evidence: paceOverride ? `scan-decision apply --pace=${paceOverride} (${wks.length} workouts recomputed)` : `restore with structure recompute (${wks.length} workouts)`, tier: paceOverride ? "candidate" : "restore", applied_by: "tp-threshold-restore" });
+    await supabase.from("tp_threshold_applications").insert({ trainingpeaks_athlete_id: id, kind: "pace", value_before: beforeThr && typeof beforeThr.threshold === "number" ? beforeThr.threshold : null, value_after: thrMps, value_after_display: formatMpsAsPace(thrMps), evidence: paceOverride ? `scan-decision apply --pace=${paceOverride} (${wks.length} workouts recomputed)` : thrFromLive ? `recompute to LIVE TP wt0 — no prior log, seeds row (${wks.length} workouts)` : `restore with structure recompute (${wks.length} workouts)`, tier: paceOverride ? "candidate" : "restore", applied_by: "tp-threshold-restore" });
     console.log(`  лог записан (tier=${paceOverride ? "candidate" : "restore"}).`);
   } catch (e) { console.warn(`  (лог не записан: ${e instanceof Error ? e.message : String(e)})`); }
   console.log(`\n✅ ГОТОВО — ${name}: ${wks.length} структур + порог ${fp(thrSec)}. Проверь глазами в TP. Ops-log отдельно.`);

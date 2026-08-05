@@ -239,6 +239,10 @@ export function isStubsEnabled(): boolean {
 export function isRacesEnabled(): boolean {
   return process.env.CLUB_RACES_ENABLED === "true";
 }
+/** Next planned workout card on entry (Profile tab). OFF by default. */
+export function isClubPlanEnabled(): boolean {
+  return process.env.CLUB_PLAN_ENABLED === "true";
+}
 export function isWishesEnabled(): boolean {
   return process.env.CLUB_WISHES_ENABLED === "true";
 }
