@@ -343,6 +343,36 @@ function formatDistanceKm(rawDistance: unknown): { distance: string | null; raw:
   return { distance: `${rendered} км`, raw, km: kilometers };
 }
 
+/**
+ * Explicit distance from the event TITLE ("Bokeski 10 km", "21.1 км", "6000 m"), or null.
+ * TP's structured `Distance` field is unreliable (an athlete leaves a nominal/default value,
+ * so a "10 km" race stores 21100 and a 30km race stores 21100). The title usually carries the
+ * distance the human actually typed, so an EXPLICIT number+unit in the title beats TP's number.
+ * Keyword-only ("марафон"/"полумарафон"/"marathon") is intentionally NOT parsed here: it names
+ * the EVENT (a "Bokeški Maraton" also has half/10k finishers), so it would mis-assign the
+ * athlete's real distance. Only a concrete number+unit is trusted.
+ */
+function titleDistanceKm(title: string | null): number | null {
+  if (!title) return null;
+  const s = title.toLowerCase();
+  const km = s.match(/(\d{1,3}(?:[.,]\d+)?)\s*(?:км|km|k(?![a-zа-яe-z]))/u);
+  if (km) {
+    const n = Number(km[1].replace(",", "."));
+    if (n > 0 && n <= 100) return n;
+  }
+  const m = s.match(/(\d{3,5})\s*(?:м|m)(?![a-zа-яe-zи])/u);
+  if (m) {
+    const n = Number(m[1]);
+    if (n >= 1000 && n <= 100000) return n / 1000;
+  }
+  return null;
+}
+
+function kmToLabel(km: number): string {
+  const r = Math.round(km * 10) / 10;
+  return `${Number.isInteger(r) ? String(r) : r.toFixed(1)} км`;
+}
+
 /** Render one `written` goal entry. TP returns these as objects (e.g. { text, ... }),
  *  so String(item) produced "[object Object]". Pull a human field, else compact JSON. */
 function renderWrittenGoal(item: unknown): string {
@@ -636,6 +666,24 @@ function parseRacesFromPayload(input: {
       distanceSuspect = true;
       distanceSuspectReason = "ultra_verify_gt_100km";
     }
+    // Title override: an EXPLICIT number+unit in the title beats TP's structured Distance
+    // field, which athletes routinely leave at a nominal/default value (the parser defect —
+    // "Bokeski 10 km" stored 21.1, a 30 km race stored 21.1, an ultra stored 100). Fills a
+    // missing distance or corrects a disagreeing one; keyword-only titles are left to TP.
+    let finalDistance = distanceParsed.distance;
+    let titleKmNote: string | null = null;
+    const titleKm = titleDistanceKm(title);
+    if (titleKm !== null) {
+      const tpKm = distanceParsed.km;
+      const missing = tpKm === null || tpKm === 0;
+      const disagrees = !missing && Math.abs(titleKm - tpKm) > Math.max(1, 0.12 * Math.max(titleKm, tpKm));
+      if (missing || disagrees) {
+        finalDistance = kmToLabel(titleKm);
+        distanceSuspect = true;
+        distanceSuspectReason = missing ? "title_filled" : "title_override";
+        titleKmNote = `title_km=${titleKm}${!missing ? `; tp_km=${tpKm}` : ""}`;
+      }
+    }
     const goal = sanitizeGoalValue(goalValue);
     const keyCount = ["eventdate", "eventtitle", "eventname", "name", "sporttype", "eventtype", "distance", "goal", "goals", "description"].filter((k) =>
       Object.keys(eventObj).some((actual) => actual.toLowerCase() === k),
@@ -644,6 +692,9 @@ function parseRacesFromPayload(input: {
     const notesParts = [`event_fields_matched=${keyCount}`];
     if (distanceParsed.raw !== null) {
       notesParts.push(`distance_raw=${distanceParsed.raw}`);
+    }
+    if (titleKmNote !== null) {
+      notesParts.push(titleKmNote);
     }
     if (distanceSuspect) {
       notesParts.push(`distance_suspect=${distanceSuspectReason}`);
@@ -655,7 +706,7 @@ function parseRacesFromPayload(input: {
       event_date: eventDate,
       event_title: title,
       sport_type: sportType,
-      distance: distanceParsed.distance,
+      distance: finalDistance,
       distance_suspect: distanceSuspect,
       distance_suspect_reason: distanceSuspectReason,
       goal,
