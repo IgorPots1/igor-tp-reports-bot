@@ -34,10 +34,29 @@ export const DEFAULT_HALF_LIFE_DAYS = 42; // spec §1.4 hypothesis (tuned by bac
 export const COLLECTION_WINDOW_DAYS = 182; // spec §1.5: 26-week collection window
 export const MIN_SAMPLES = 6; // spec §1.5: sufficiency threshold
 export const ILLNESS_TAIL_DAYS = 14; // spec §1.4: recovery tail after a health signal closes
+/** Effective-sample floor for the TOP confidence grade inside easy_description. Raw n counts a
+ *  3-month-old range the same as yesterday's; effN (sum of recency weights) does not. At HL=21 a
+ *  pool of 6 ranges spread over 26 weeks can carry effN < 1 — nominally sufficient, effectively
+ *  one observation. Grading uses effN, not n. */
+export const MIN_EFFECTIVE_SAMPLES = 3;
 
 export type EasySample = { date: string; fast: number; slow: number };
 export type DateWindow = { from: string; to: string };
-export type Anchor = { fast: number; slow: number; n: number; trendSlopeSPerDay: number };
+export type Anchor = {
+  fast: number; slow: number;
+  /** raw count of pooled ranges (post-filter) */
+  n: number;
+  /** sum of recency weights over the pool — "how many fresh observations is this really worth" */
+  effectiveN: number;
+  trendSlopeSPerDay: number;
+};
+
+/** Confidence grade INSIDE anchor_source=easy_description, from the effective sample size. */
+export function anchorConfidence(effectiveN: number): "high" | "medium" | "low" {
+  if (effectiveN >= MIN_EFFECTIVE_SAMPLES) return "high";
+  if (effectiveN >= MIN_EFFECTIVE_SAMPLES / 2) return "medium";
+  return "low";
+}
 
 /** Extract ONE easy sample from a workout: the prescribed range. Long runs contribute ONLY their
  *  slowest range (spec §1.2 — a marathon block's fast range would poison the easy anchor). Returns
@@ -120,7 +139,14 @@ export function buildAnchor(
 
   const wf = pool.map((s) => ({ v: s.fast, w: weightForAge(daysBetween(asOf, s.date), opts.halfLifeDays) }));
   const ws = pool.map((s) => ({ v: s.slow, w: weightForAge(daysBetween(asOf, s.date), opts.halfLifeDays) }));
-  return { fast: Math.round(weightedMedian(wf)), slow: Math.round(weightedMedian(ws)), n: pool.length, trendSlopeSPerDay: trendSlope(pool, asOf) };
+  // effectiveN = Σ recency weights. Raw n treats a 3-month-old range like yesterday's; effN does not,
+  // so confidence grading inside easy_description uses effN (see anchorConfidence).
+  const effectiveN = wf.reduce((acc, x) => acc + x.w, 0);
+  return {
+    fast: Math.round(weightedMedian(wf)), slow: Math.round(weightedMedian(ws)),
+    n: pool.length, effectiveN: Math.round(effectiveN * 100) / 100,
+    trendSlopeSPerDay: trendSlope(pool, asOf),
+  };
 }
 
 export type Tier = "T1" | "T2" | "T3";

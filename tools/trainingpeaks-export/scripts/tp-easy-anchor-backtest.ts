@@ -17,13 +17,21 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { toolRoot } from "./lib/paths.ts";
 import {
-  buildAnchor, extractEasySample, tierOf, weekActual, rangesOverlap,
+  buildAnchor, extractEasySample, tierOf, weekActual, rangesOverlap, anchorConfidence,
   type EasySample, type DateWindow, type Tier,
 } from "./lib/easy-anchor.ts";
 import { AUTOPLANNER_FIRST_GENERATION_DATE } from "./lib/autoplanner-provenance.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
-function getSupabase(): SupabaseClient { const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env")]) loadEnv(p); return createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } }); }
+// Env lookup mirrors tp-threshold-restore.ts: worktrees have no .env.local (secrets live only in
+// the canonical checkout), so fall back to it by absolute path. Never copy secrets into a worktree.
+function getSupabase(): SupabaseClient {
+  const root = path.resolve(toolRoot, "..", "..");
+  for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p);
+  const url = process.env.SUPABASE_URL?.trim(); const key = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!url || !key) throw new Error("no SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (checked worktree .env.local/.env and the canonical checkout)");
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
 const iso = (d: number): string => new Date(d).toISOString().slice(0, 10);
 const todayIso = (): string => iso(Date.now());
@@ -164,10 +172,10 @@ async function main(): Promise<void> {
 
   // ── П4: v1 population (applied threshold ∩ individual anchor today) ──
   const asOf = addDays(todayIso(), 1);
-  const withAnchor: number[] = []; const anchorRows: string[] = ["athlete_id,tier,weekly_min,n,easy_fast,easy_slow,has_threshold"];
+  const withAnchor: number[] = []; const anchorRows: string[] = ["athlete_id,tier,weekly_min,n,eff_n,anchor_confidence,easy_fast,easy_slow,has_threshold"];
   for (const a of aths.values()) {
     const anc = buildAnchor(a.samples, asOf, { halfLifeDays: 42, illness: a.sid ? illness.get(a.sid) ?? [] : [] });
-    if (anc) { withAnchor.push(a.aid); anchorRows.push(`${a.aid},${a.tier},${Math.round(a.weeklyMin)},${anc.n},${fp(anc.fast)},${fp(anc.slow)},${thr.has(a.aid) ? 1 : 0}`); }
+    if (anc) { withAnchor.push(a.aid); anchorRows.push(`${a.aid},${a.tier},${Math.round(a.weeklyMin)},${anc.n},${anc.effectiveN},${anchorConfidence(anc.effectiveN)},${fp(anc.fast)},${fp(anc.slow)},${thr.has(a.aid) ? 1 : 0}`); }
   }
   const withThr = new Set(thr.keys());
   const v1 = withAnchor.filter((id) => withThr.has(id)).sort((a, b) => a - b);
