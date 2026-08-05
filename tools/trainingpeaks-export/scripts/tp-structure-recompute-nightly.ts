@@ -26,6 +26,7 @@ import { findWt0Set, isRecord } from "./lib/tp-athlete-helpers.ts";
 import { toolRoot } from "./lib/paths.ts";
 import { recompute, median, type Plan } from "./lib/tp-recompute.ts";
 import { loadManualAnchors, loadRecomputeExceptions } from "./lib/tp-manual-overrides.ts";
+import { detectThresholdSignals, proposalToRow, fpSec, type AthleteCtx, type Proposal } from "./lib/tp-threshold-signals.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p);
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
   const manualAnchors = await loadManualAnchors(sb);
   const exceptions = await loadRecomputeExceptions(sb);
   const excludedSeen: string[] = [];
+  const athleteCtx: AthleteCtx[] = []; // контекст детектора сигналов порога (порог/якорь уже посчитаны — не читаем TP дважды)
 
   for (const id of ids) {
     if (exceptions.has(id)) { const { data: nmx } = await sb.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1); excludedSeen.push((nmx?.[0]?.student_name as string) ?? String(id)); continue; }
@@ -129,6 +131,7 @@ async function main(): Promise<void> {
     const { data: nm } = await sb.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1);
     const name = (nm?.[0]?.student_name as string) ?? String(id);
     const anchor = manualAnchors.get(id) ?? await easyAnchor(id, thrSec); // ручной якорь > вычисленный
+    athleteCtx.push({ id, name, thrSec, anchor });
 
     let list: unknown[]; try { list = await enumeratePlanned(id); } catch (e) { console.error(`⚠ ${name} (${id}): ${(e as Error).message} — пропущен`); continue; }
     const liveWids = new Set(list.filter((w) => isRecord(w) && (w.workoutTypeValueId === 3 || w.workoutTypeId === 3) && w.completed !== true).map((w) => Number((w as Record<string, unknown>).workoutId ?? (w as Record<string, unknown>).id)).filter((n) => Number.isInteger(n) && n > 0));
@@ -166,6 +169,15 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── СИГНАЛЫ СМЕЩЕНИЯ ПОРОГА (сосед структурного дрейфа: читает забеги/перерывы/якорь, TP НЕ пишет;
+  //    одно решение на атлета, применяет тренер копи-блоком). Двойной замок как у режима B: реальная
+  //    запись строк + уведомление ТОЛЬКО при env TP_THRESHOLD_SIGNALS=1 и не --dry; иначе — превью в лог.
+  const SIGNALS_ARMED = !DRY && process.env.TP_THRESHOLD_SIGNALS === "1";
+  let proposals: Proposal[] = [];
+  try { proposals = await detectThresholdSignals(sb, athleteCtx, { runId: DRY ? null : runId }); }
+  catch (e) { console.error(`⚠ детектор сигналов порога упал (пересчёт не затронут): ${(e as Error).message}`); }
+  if (SIGNALS_ARMED && proposals.length) { for (let i = 0; i < proposals.length; i += 100) { const { error } = await sb.from("tp_threshold_signals").insert(proposals.slice(i, i + 100).map((p) => proposalToRow(p, runId, true))); if (error) console.error("⚠ insert tp_threshold_signals:", error.message); } }
+
   // anomaly-stop: drift proportion > 50% of examined
   const anomaly = scanned > 0 && drift / scanned > 0.5;
 
@@ -182,6 +194,17 @@ async function main(): Promise<void> {
   console.log(`\n═══ Непрерывный пересчёт — прогон ${now.toISOString().slice(0, 16)} ${DRY ? "(DRY, лог не писан)" : `run ${runId.slice(0, 8)}`}${AUTO_APPLY ? " · РЕЖИМ B" : ""} ═══`);
   console.log(`атлетов ${athScanned} · осмотрено тренировок ${scanned} (пропущено без изменений ${skipped}) · drift ${drift} · clean ${clean} · defer ${defer} · verify_fail ${verifyFail}`);
   console.log(`сдвиги: 20-40с ×${b2040} · 40-60с ×${b4060} · >60с ×${b60}`);
+  // ПОРОГ — сместился? (падение сверху — «слишком тяжело» опаснее «слишком легко»). Основание и проекция
+  // отношения якорь/порог — в каждой строке (быстрая проверка тренера на разумность).
+  if (proposals.length) {
+    const downs = proposals.filter((p) => p.direction === "down");
+    const ups = proposals.filter((p) => p.direction === "up");
+    console.log(`\n═══ ПОРОГ — сместился? (${proposals.length}: падение ${downs.length} · рост ${ups.length})${SIGNALS_ARMED ? "" : " · ПРЕВЬЮ — не вооружено (TP_THRESHOLD_SIGNALS=1)"} ═══`);
+    for (const p of [...downs, ...ups]) console.log(`   ${p.summaryLine}`);
+    const cmds = proposals.filter((p) => p.proposedSec != null);
+    if (cmds.length) { console.log(`   применить (по одному, гейты restore целы; направление проверь глазами):`); for (const p of cmds) console.log(`     TP_ATHLETE_REAL_WRITE=1 npx tsx tools/trainingpeaks-export/scripts/tp-threshold-restore.ts --athlete=${p.athleteId} --pace=${fpSec(p.proposedSec!)} --apply --confirm "RESTORE ${p.athleteId}"`); }
+    if (SIGNALS_ARMED) notify = true;
+  }
   if (underfetch.length) { console.log(`\n⚠ НЕДОБОР ПЕРЕЧИСЛЕНИЯ (живое отдало меньше кэша — добрано из кэша, проверено детателью): ${underfetch.length} атл. — ${underfetch.slice(0, 8).map((u) => `${u.name} (живое ${u.live}/кэш ${u.cache} +${u.only})`).join(" · ")}${underfetch.length > 8 ? " …" : ""}`); notify = true; }
   else console.log(`сверка по кэшу: расхождений нет (живое ≥ кэш у всех — недобора не найдено)`);
   if (verifyFailList.length) { console.log(`\n⛔ VERIFY_FAIL (${verifyFailList.length}) — шаг вне полосы 55-140% (стоп-условие, разобрать ДО применения):`); for (const v of verifyFailList) console.log(`   ${v.name}: ${v.wk} — ${v.steps}`); notify = true; }
