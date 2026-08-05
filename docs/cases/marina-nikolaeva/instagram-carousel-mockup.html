@@ -78,9 +78,31 @@
   .quote .who{color:var(--faint);font-size:10.5px;margin-top:5px;letter-spacing:.06em;text-transform:uppercase}
   .quote em{color:var(--dawn);font-style:normal;font-weight:600}
 
+  .app{background:var(--night-2);border-radius:12px;padding:12px 14px;margin:12px 0 10px;border:1px solid var(--line)}
+  .app-head{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between}
+  .app-stats{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  .app-stats div{background:rgba(147,163,184,.09);border-radius:8px;padding:9px 11px}
+  .app-stats b{display:block;font-size:clamp(17px,5.2cqw,23px);font-variant-numeric:tabular-nums;color:var(--ink);line-height:1.1;letter-spacing:-.01em}
+  .app-stats span{font-size:10.5px;color:var(--muted)}
+  .app-lab{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
+  .app-row{display:grid;grid-template-columns:14px 1fr auto;gap:9px;align-items:center;padding:5px 0;font-size:12px;border-bottom:1px solid rgba(147,163,184,.12)}
+  .app-row:last-child{border-bottom:none}
+  .app-row .p{color:var(--faint);font-variant-numeric:tabular-nums}
+  .app-row .n{color:var(--faint);letter-spacing:.18em}
+  .app-row .t{font-variant-numeric:tabular-nums;font-weight:700;color:var(--muted)}
+  .app-row.me{background:rgba(242,164,92,.14);border-radius:7px;padding:6px;margin:2px -6px;border-bottom:none}
+  .app-row.me .n{color:var(--dawn);font-weight:700;letter-spacing:0}
+  .app-row.me .t,.app-row.me .p{color:var(--dawn);font-weight:800}
   .offer{display:flex;flex-direction:column;gap:9px;margin:14px 0 10px}
   .offer .item{display:grid;grid-template-columns:16px 1fr;gap:9px;font-size:13px;color:var(--ink);line-height:1.35}
   .offer .item i{color:var(--dawn);font-style:normal;font-weight:800}
+  .steps{display:flex;flex-direction:column;gap:7px;margin:12px 0 11px}
+  .steps .s{display:grid;grid-template-columns:18px 1fr;gap:10px;align-items:baseline;font-size:12.5px;color:var(--ink);line-height:1.3}
+  .steps .s i{font-style:normal;font-weight:800;color:var(--dawn);font-variant-numeric:tabular-nums}
+  .proof{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 11px}
+  .proof div{background:var(--night-2);border-radius:9px;padding:9px 7px;text-align:center}
+  .proof b{display:block;font-size:clamp(14px,4.4cqw,19px);color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:-.01em;line-height:1.1}
+  .proof span{font-size:9.5px;color:var(--muted);line-height:1.25;display:block;margin-top:3px}
   .sitebox{background:var(--night-2);border:1px solid rgba(242,164,92,.35);border-radius:10px;padding:12px 14px;text-align:center;margin-top:auto}
   .sitebox .val{font-size:clamp(15px,4.8cqw,21px);font-weight:800;color:var(--dawn);letter-spacing:-.01em}
   .sitebox .lab{font-size:11px;color:var(--muted);margin-top:4px}
@@ -120,7 +142,7 @@
         <div class="cover-bottom">
           <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(243,239,230,.72);margin-bottom:6px">10 км за 14 месяцев</div>
           <div class="hero-num num" style="font-size:clamp(24px,7.6cqw,36px)">1:02:31 <span class="arrow">→</span> <span class="to">48:09</span></div>
-          <div class="foot" style="border-color:rgba(243,239,230,.25)"><span style="color:rgba(243,239,230,.6)">кейс ученицы</span><span class="pageno" style="color:rgba(243,239,230,.75)">1 / 9</span></div>
+          <div class="foot" style="border-color:rgba(243,239,230,.25)"><span style="color:rgba(243,239,230,.6)">кейс ученицы</span><span class="pageno" style="color:rgba(243,239,230,.75)">1 / 10</span></div>
         </div>
       </div>
     </div>
@@ -145,7 +167,7 @@
           <div class="row"><span class="k">10 км накануне</span><span class="v num">1:02:31</span></div>
           <div class="row"><span class="k">Пульс на лёгком беге</span><span class="v num">145 и не падает</span></div>
         </div>
-        <div class="foot"><span>точка отсчёта</span><span class="pageno">2 / 9</span></div>
+        <div class="foot"><span>точка отсчёта</span><span class="pageno">2 / 10</span></div>
       </div>
     </div>
 
@@ -164,7 +186,7 @@
           <div class="row"><span class="d">05.26</span><span class="e">ЗаБег.РФ <small>· 21,1 км</small></span><span class="t num">1:52:13</span></div>
           <div class="row hl"><span class="d">07.26</span><span class="e">Белые ночи <small>· 10 км</small></span><span class="t num">48:09</span></div>
         </div>
-        <div class="foot"><span>все результаты из официальных протоколов</span><span class="pageno">3 / 9</span></div>
+        <div class="foot"><span>все результаты из официальных протоколов</span><span class="pageno">3 / 10</span></div>
       </div>
     </div>
 
@@ -207,7 +229,7 @@
             <text x="38" y="282" fill="#5C6E85" font-size="10.5" font-family="system-ui">все точки из официальных протоколов забегов</text>
           </svg>
         </div>
-        <div class="foot"><span>на «Белых ночах» минус 8:10 за год</span><span class="pageno">4 / 9</span></div>
+        <div class="foot"><span>на «Белых ночах» минус 8:10 за год</span><span class="pageno">4 / 10</span></div>
       </div>
     </div>
 
@@ -242,7 +264,7 @@
             </g>
           </svg>
         </div>
-        <div class="foot"><span>в гонке: 5:38 и 4:38 на км</span><span class="pageno">5 / 9</span></div>
+        <div class="foot"><span>в гонке: 5:38 и 4:38 на км</span><span class="pageno">5 / 10</span></div>
       </div>
     </div>
 
@@ -255,7 +277,7 @@
           <div class="tile was"><div class="lab">Авг 2025 · первый</div><div class="val num">2:10:34</div><div class="note">Северная столица</div></div>
           <div class="tile now"><div class="lab">Май 2026</div><div class="val num">1:52:13</div><div class="note">ЗаБег.РФ</div></div>
         </div>
-        <div class="foot"><span>темп 6:11 и 5:19 на километр</span><span class="pageno">6 / 9</span></div>
+        <div class="foot"><span>темп 6:11 и 5:19 на километр</span><span class="pageno">6 / 10</span></div>
       </div>
     </div>
 
@@ -272,7 +294,7 @@
           <div class="row"><span class="k">Вариабельность пульса</span><span class="v num"><span class="was">58</span> → <span class="now">65</span></span></div>
         </div>
         <p class="sub" style="margin-top:10px">99 процентов выполненного плана и лёгкий бег на низком пульсе. Скорость пришла как следствие.</p>
-        <div class="foot"><span>данные тренировок и часов</span><span class="pageno">7 / 9</span></div>
+        <div class="foot"><span>данные тренировок и часов</span><span class="pageno">7 / 10</span></div>
       </div>
     </div>
 
@@ -302,29 +324,55 @@
             <span class="meta">4 июля 2026, 20:26, после 48:09</span>
           </div>
         </div>
-        <div class="foot"><span>публикуем с разрешения Марины</span><span class="pageno">8 / 9</span></div>
+        <div class="foot"><span>публикуем с разрешения Марины</span><span class="pageno">8 / 10</span></div>
       </div>
     </div>
 
-    <div class="slot"><span class="slot-cap">Слайд 9 · финал (по твоему сайту)</span>
+    <div class="slot"><span class="slot-cap">Слайд 9 · клуб и приложение</span>
+      <div class="slide">
+        <div class="eyebrow">Не в одиночку</div>
+        <h2>Марина бежит не одна</h2>
+        <p class="sub">Команда бегунов из разных городов и стран: поддержка, отчёты и общие победы в чате клуба.</p>
+        <div class="app">
+          <div class="app-head"><span>Приложение клуба</span><span>неделя</span></div>
+          <div class="app-stats">
+            <div><b>2 500 км</b><span>пробежал клуб</span></div>
+            <div><b>95</b><span>человек на неделе</span></div>
+          </div>
+          <div class="app-lab">Топ клуба · 10 км</div>
+          <div class="app-row"><span class="p">1</span><span class="n">•••••</span><span class="t">40:38</span></div>
+          <div class="app-row"><span class="p">2</span><span class="n">•••••</span><span class="t">45:59</span></div>
+          <div class="app-row"><span class="p">3</span><span class="n">•••••</span><span class="t">47:07</span></div>
+          <div class="app-row"><span class="p">4</span><span class="n">•••••</span><span class="t">47:43</span></div>
+          <div class="app-row me"><span class="p">5</span><span class="n">Марина</span><span class="t">48:09</span></div>
+        </div>
+        <p class="sub">Свои рекорды, объёмы, маршруты и результаты всего клуба видно в приложении, прямо в Telegram.</p>
+        <div class="foot"><span>год назад её не было в этом списке</span><span class="pageno">9 / 10</span></div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 10 · финал (продающий)</span>
       <div class="slide">
         <div class="eyebrow">Игорь Поцелуев · Беговой клуб</div>
-        <h2>Марина начала с одного сообщения</h2>
-        <div class="offer">
-          <div class="item"><i>✓</i><span>Индивидуальный план под твой уровень и цели, вся неделя в личном кабинете</span></div>
-          <div class="item"><i>✓</i><span>Разбор и обратная связь по каждой тренировке</span></div>
-          <div class="item"><i>✓</i><span>Тренер на связи каждый день, в чате и лично</span></div>
-          <div class="item"><i>✓</i><span>Силовые, растяжка, восстановление и разбор техники</span></div>
+        <h2>Год назад Марина была там же, где ты сейчас</h2>
+        <p class="sub">Она просто написала мне в директ. Всё остальное вы видели на предыдущих слайдах.</p>
+        <div class="steps">
+          <div class="s"><i>1</i><span>Пишешь мне, знакомимся</span></div>
+          <div class="s"><i>2</i><span>Обсуждаем твои цели, опыт и текущую форму</span></div>
+          <div class="s"><i>3</i><span>Подбираем формат и стартуем уже на этой неделе</span></div>
         </div>
-        <p class="sub">Веду до твоей цели: первый забег, личный рекорд или просто регулярный бег.</p>
+        <div class="proof">
+          <div><b>10+ лет</b><span>тренерской практики</span></div>
+          <div><b>500+</b><span>финишей учеников</span></div>
+          <div><b>2 500 км</b><span>клуб за неделю</span></div>
+        </div>
         <div class="sitebox">
           <div class="val">Записаться в клуб</div>
           <div class="lab">ссылка в шапке профиля</div>
         </div>
-        <div class="foot"><span>присоединиться можно в любой момент</span><span class="pageno">9 / 9</span></div>
+        <div class="foot"><span>без обязательств</span><span class="pageno">10 / 10</span></div>
       </div>
     </div>
-
   </div>
 
   <section class="block">
@@ -369,6 +417,18 @@
 
   <section class="block">
     <div class="checklist">
+      <h3>Финал: что и почему я сделал именно так</h3>
+      <ul>
+        <li><strong>Слайд 9 про клуб.</strong> Комьюнити с твоего сайта («команда бегунов из разных городов и стран: поддержка, отчёты и общие победы в чате клуба») плюс приложение. Цифры реальные: клуб бежит около 2 500 км в неделю, 95 человек на неделе. Марина показана пятой в клубном топе на десятке, остальные без имён, только время. Подпись «год назад её не было в этом списке» превращает демо приложения в продолжение её истории.</li>
+        <li><strong>Слайд 10, приёмы, которые реально работают в продажах:</strong>
+          <br>1. <em>Зеркало.</em> «Год назад Марина была там же, где ты сейчас». После истории читатель уже примерил её на себя, заголовок просто договаривает это вслух. Это сильнее любого «запишись сейчас».
+          <br>2. <em>Минимальный первый шаг.</em> Не «купи тренировки», а «просто написала в директ». Продаём не годовую подготовку, а одно сообщение.
+          <br>3. <em>Прозрачность процесса.</em> Три шага с твоего сайта снимают главный страх: что будет, если я напишу. Человек видит, что дальше разговор, а не счёт на оплату.
+          <br>4. <em>Доказательство рядом с кнопкой.</em> 10+ лет, 500+ финишей, 2 500 км в неделю. Первые два числа с твоего сайта, третье из базы.
+          <br>5. <em>Снятие риска.</em> «Без обязательств» и «начать можно в любой момент», тоже твои формулировки.
+          <br>6. <em>Одно действие.</em> Никаких «пиши, звони, переходи»: только ссылка в шапке.</li>
+        <li><strong>Чего я намеренно НЕ делал:</strong> ложной срочности («осталось 2 места», «набор закрывается»). У тебя на сайте прямо написано, что присоединиться можно в любой момент, и врать ради конверсии в кейсе, который весь построен на честных протоколах, значит убить доверие, которое ты копил девять слайдов.</li>
+      </ul>
       <h3>Что сделано в этой версии</h3>
       <ul>
         <li><strong>Обложка B</strong> принята, варианты A и C убраны.</li>
@@ -388,6 +448,12 @@
         <li><strong>Селфи с медалью</strong> (то, что прислал первым) годится для сторис или для анонса: на обложке теперь фото с Дворцовой. Учти, оно зеркальное, номер читается наоборот, перед публикацией отзеркалить.</li>
         <li>Согласие Марины: имя, цифры, скрины, фото.</li>
         <li>Вторая переписка, о которой ты писал.</li>
+        <li><strong>Решить про тестовую неделю.</strong> Марина в мае 2025 начинала именно с неё за 1000 рублей. Это сильнейший элемент продажи: человек рискует малым. Если формат ещё живой, добавлю строкой на финальный слайд, будет заметно убедительнее. Сам не вписал, потому что не знаю, актуально ли сейчас.</li>
+        <li><strong>Проверить топ клуба.</strong> Времена в списке настоящие, имён кроме Марины нет. Если не хочешь показывать чужие результаты даже обезличенно, заменю на её личную статистику в приложении.</li>
+      </ul>
+      <h3>Нашёл попутно, к посту не относится</h3>
+      <ul>
+        <li>В клубных рекордах у Марины на 10 км стоит <strong>48:14</strong> (coach_confirmed, по часам), а в официальных результатах того же дня <strong>48:09</strong> (протокол). Расхождение 5 секунд, протокол должен побеждать. В карусели везде 48:09. Возможно, стоит поправить запись в клубе.</li>
       </ul>
     </div>
   </section>
