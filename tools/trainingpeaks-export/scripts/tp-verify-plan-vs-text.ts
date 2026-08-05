@@ -17,8 +17,8 @@ import { getAthleteSettings, getCoachedAthletesRoster } from "../../../src/featu
 import { readSessionSnapshot } from "../../../src/features/trainingpeaks/tp-session-snapshot.ts";
 import { findWt0Set, isRecord, TP_API_HOST } from "./lib/tp-athlete-helpers.ts";
 import { toolRoot } from "./lib/paths.ts";
-import { ranges, flatSteps, parseSegments, matchByDuration, positionalFallback, type Rng, type FlatStep } from "./lib/tp-recompute.ts";
-import { loadRecomputeExceptions } from "./lib/tp-manual-overrides.ts";
+import { ranges, flatSteps, parseSegments, matchByDuration, positionalFallback, median, type Rng, type FlatStep } from "./lib/tp-recompute.ts";
+import { loadRecomputeExceptions, loadManualAnchors } from "./lib/tp-manual-overrides.ts";
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p);
 const sb = createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } });
@@ -35,6 +35,16 @@ function assignRefs(steps: FlatStep[], desc: string): (Rng | "anchor" | "keep")[
   let a = matchByDuration(steps, parseSegments(desc));
   if (!a) a = positionalFallback(steps, ranges(desc));
   return a ? a.map((x) => x.ref) : "defer";
+}
+const daysAgo = (n: number): string => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+/** FIT easy anchor (identical to recompute/restore): median of slower-70% of reps=0 continuous runs
+ *  90d, excl ~threshold-pace. n<5 → null. FIX 6 uses it to flag no-pace steps that render faster than easy. */
+async function fitAnchor(id: number, thrSec: number): Promise<number | null> {
+  const dm: { workout_cache_id: string }[] = [];
+  for (let f = 0; ; f += 1000) { const { data } = await sb.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id").eq("trainingpeaks_athlete_id", id).eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", daysAgo(90)).lte("workout_date", todayIso()).range(f, f + 999); if (!data || !data.length) break; dm.push(...(data as { workout_cache_id: string }[])); if (data.length < 1000) break; }
+  const cids = dm.map((r) => r.workout_cache_id); const ps: number[] = [];
+  for (let i = 0; i < cids.length; i += 300) { const { data } = await sb.from("trainingpeaks_workout_cache").select("completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300)); for (const w of data ?? []) { const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0; const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0; if (mm < 3000 || h <= 0) continue; const pc = (h * 3600) / (mm / 1000); if (pc > thrSec + 30 && pc < 540) ps.push(pc); } }
+  const srt = [...ps].sort((a, b) => a - b); return srt.length >= 5 ? median(srt.slice(Math.floor(srt.length * 0.3))) : null;
 }
 
 async function main(): Promise<void> {
@@ -56,25 +66,38 @@ async function main(): Promise<void> {
     ids = [...new Set((rb ?? []).map((r) => Number(r.trainingpeaks_athlete_id)))];
     scopeLabel = "restore";
   }
-  const exceptions = await loadRecomputeExceptions(sb); let excluded = 0; // намеренно не чиним — вне активных деферов
+  const exceptions = await loadRecomputeExceptions(sb); const manualAnchors = await loadManualAnchors(sb); let excluded = 0, holodnaya = 0; // намеренно не чиним; класс Холодной (нет числа, быстрее якоря)
   const bad: { date: string; line: string }[] = []; let ok = 0, wk = 0, skippedSteps = 0, deferWk = 0;
   for (const id of ids) {
     if (exceptions.has(id)) { excluded++; continue; }
     let s; try { s = await getAthleteSettings(id); } catch { scopeErr++; continue; }
     const w0 = findWt0Set(s.speedZones); const thrMps = w0 && typeof w0.threshold === "number" ? w0.threshold : NaN; if (!thrMps) continue; const thrSec = 1000 / thrMps;
+    const anchor = manualAnchors.get(id) ?? await fitAnchor(id, thrSec);
     const { data: nm } = await sb.from("trainingpeaks_workout_cache").select("student_name").eq("trainingpeaks_athlete_id", id).not("student_name", "is", null).limit(1); const name = (nm?.[0]?.student_name as string) ?? String(id);
     const { data: fut } = await sb.from("trainingpeaks_workout_cache").select("title,trainingpeaks_workout_id,is_planned,completed_time_raw,workout_type_value_id,description:source_snapshot->>description,workout_date").eq("trainingpeaks_athlete_id", id).gte("workout_date", today);
     const planned = (fut ?? []).filter((r) => r.is_planned === true && (r.completed_time_raw == null || r.completed_time_raw === 0) && r.workout_type_value_id === 3);
     for (const w of planned) {
       const live = await getWk(id, Number(w.trainingpeaks_workout_id), b); const st = live.structure; if (!isRecord(st) || !/pace/i.test(String(st.primaryIntensityMetric ?? ""))) continue;
       const fx = flatSteps(st); if (!fx) continue; const steps = fx.steps; wk++;
+      const isEasy = !fx.isRep && /лёгк|легк|длительн|восстанов|свободн/i.test(String(w.title ?? ""));
       const refs = assignRefs(steps, typeof w.description === "string" ? w.description : "");
       if (refs === "defer") { deferWk++; bad.push({ date: w.workout_date as string, line: `${w.workout_date} · ${name} «${w.title}» — ⚠ДЕФЕР (описание не привязать к шагам — НЕ ПРОВЕРИТЬ)` }); continue; }
       const diffs: string[] = [];
       steps.forEach((step, i) => {
         const r = refs[i];
-        // no explicit pace in the text for this step → nothing to verify against the DESCRIPTION.
-        if (r === "keep" || r === "anchor") { skippedSteps++; return; }
+        // no explicit pace in the text for this step → nothing to verify against the DESCRIPTION TEXT.
+        if (r === "keep" || r === "anchor") {
+          // FIX 6 (класс Холодной): раньше молча пропускали — это и была слепота. Если шаг ДОЛЖЕН быть
+          // лёгким (isEasy-работа / разминка / заминка) и рендерит быстрее ЯКОРЯ на >30с — лёгкий стал
+          // темповым (пересчёт ещё не застал). Флагим. Интервальные RPE-репы (не isEasy работа) НЕ трогаем
+          // — они и должны быть быстрее лёгкого; открытый пол (min=0) тоже не сюда.
+          const easyImplied = step.role === "разминка" || step.role === "заминка" || (isEasy && step.role === "работа");
+          if (easyImplied && anchor && step.min > 0 && Number.isFinite(step.min) && Number.isFinite(step.max)) {
+            const rendered = thrSec * 100 / ((step.min + step.max) / 2); const d = anchor - rendered;
+            if (d > 30) { diffs.push(`[b${step.block}s${step.step}] ${step.role} @${fp(rendered)} (${step.min}-${step.max}%, НЕТ числа в описании) быстрее якоря ${fp(anchor)} на ${Math.round(d)}с`); holodnaya++; return; }
+          }
+          skippedSteps++; return;
+        }
         if (step.min === 0) {
           // open floor (walk / very-easy) — compare the CEILING only; midpoint of 0–X% is garbage.
           const structCeil = Number.isFinite(step.max) && step.max > 0 ? thrSec * 100 / step.max : null;
@@ -99,6 +122,6 @@ async function main(): Promise<void> {
   console.log(`\n======== РАСХОЖДЕНИЯ СТРУКТУРЫ И ТЕКСТА — ${bad.length} тренировок ========`);
   if (!bad.length) console.log("  (нет — все шаги с явным темпом совпадают с описанием)");
   for (const x of bad) console.log(`  ${x.date === today ? "🔴СЕГОДНЯ " : ""}${x.line}`);
-  console.log(`\nчисто: ${ok} тренировок · дефер: ${deferWk}${excluded ? ` · намеренно не чиним (пропущено атлетов): ${excluded}` : ""}`);
+  console.log(`\nчисто: ${ok} тренировок · дефер: ${deferWk}${excluded ? ` · намеренно не чиним (пропущено атлетов): ${excluded}` : ""}${holodnaya ? ` · класс Холодной (нет числа, быстрее якоря >30с): ${holodnaya}` : ""}`);
 }
 main().catch((e: unknown) => { console.error(e instanceof Error ? e.stack : String(e)); process.exit(1); });

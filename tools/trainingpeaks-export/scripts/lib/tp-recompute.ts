@@ -159,14 +159,21 @@ export function recompute(structObj: unknown, desc: string, title: string, thrSe
   let assigned: Assign[] | null = matchByDuration(fx.steps, segs);
   if (!assigned) assigned = positionalFallback(fx.steps, ranges(desc)); // no-duration descriptions (simple easy runs)
   if (!assigned) return { isEasy, plans: [], defer: `шаги (${fx.steps.length}) не привязать: сегментов по длительности ${segs.length}, диапазонов ${ranges(desc).length}` };
+  // FIX 4 (класс Холодной): у ЛЁГКОЙ тренировки шаг «работа» без числа темпа (ref==="keep") — это сам
+  // лёгкий бег, а не RPE-реп. Считаем его от ЯКОРЯ, а не оставляем старый % (иначе при смене порога
+  // лёгкий рендерит темпо). isEasy СТРОГИЙ (!fx.isRep + лёгкий тайтл) → интервалы (rep-структура) сюда
+  // НЕ попадают; открытый пол (min=0) не трогаем. Ошибка в сторону «не трогать» дороже (интервал от
+  // якоря = плохо), поэтому только строгий isEasy; ненадёжный признак остаётся keep (verify флагнёт).
+  const effRef = (st: FlatStep, ref: Assign["ref"]): Assign["ref"] =>
+    isEasy && ref === "keep" && st.role === "работа" && st.min !== 0 ? "anchor" : ref;
   // A step consumes the anchor only if it reaches the anchor branch: ref === "anchor" AND it is not
   // an open-floor step (min=0 stays open-floor untouched). If any such step exists but the athlete
   // has no reliable anchor (sample n<5 → anchor is null), DO NOT guess — defer to the manual list.
-  const needsAnchor = fx.steps.some((st, i) => assigned![i].ref === "anchor" && st.min !== 0);
+  const needsAnchor = fx.steps.some((st, i) => effRef(st, assigned![i].ref) === "anchor" && st.min !== 0);
   if (needsAnchor && anchor == null) return { isEasy, plans: [], defer: `якорь недоступен (выборка лёгких бегов n<5) — ручной список` };
   const plans: Plan[] = [];
   fx.steps.forEach((st, i) => {
-    const a = assigned[i].ref; const walk = assigned[i].walk;
+    const a = effRef(st, assigned[i].ref); const walk = assigned[i].walk;
     // #3 open floor (minValue=0 — deliberate walk / very-easy) and #4 «шагом»/«пауза» steps: leave
     // the %-targets EXACTLY as authored. Targets are threshold-relative, so the new threshold already
     // rescales the pace ceiling proportionally; rewriting to an anchor would speed a walk up.
