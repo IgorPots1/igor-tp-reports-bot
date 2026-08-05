@@ -361,10 +361,12 @@ export async function logClubLinkEvent(input: {
 }
 
 function isVisible(student: ClubStudent): boolean {
-  // Phase 3.1: a service account participates in the club ONLY when explicitly
-  // allowlisted (CLUB_INCLUDE_SERVICE_STUDENT_IDS) — the coach's own row. The
-  // is_service_account flag itself stays set for every other surface.
-  const serviceOk = !student.isServiceAccount || C.clubIncludedServiceStudentIds().has(student.id);
+  // A service account (the coach's own student row) is NEVER a participant in the
+  // student-facing club — no tops, no feed, no profiles. "Я тренер, а не участник
+  // рейтинга" (Igor, 2026-08). The coach still appears in ADMIN (which queries all
+  // students directly, not through isVisible). The former CLUB_INCLUDE_SERVICE_STUDENT_IDS
+  // opt-in allowlist is intentionally dropped — a coach must not rank against students.
+  const serviceOk = !student.isServiceAccount;
   const base = student.isActive && serviceOk;
   // Opt-out only takes effect when the privacy feature is enabled; otherwise the
   // club_visible flag is stored-but-ignored and everyone participates by default.
