@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { buildAnchor, extractEasySample, tierOf, type EasySample, type DateWindow } from "./easy-anchor.ts";
+import { buildQualityAnchor, extractQualitySample, type QualitySample } from "./quality-anchor.ts";
 import { anchorConfidence } from "./easy-anchor.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
@@ -34,6 +35,12 @@ export type Envelope = {
   rolling4wWeeklyMin: number;
   rolling4wFrequency: number;
   rolling4wQuality: number;
+  /** качественных сессий за 8 недель — потолок качества считается ОТСЮДА, не из baselines */
+  qualityLast8w: number;
+  /** объём последней ФАКТИЧЕСКОЙ недели, мин — потолок прироста считается от него */
+  lastWeekMinutes: number;
+  /** объём работы последней качественной (reps × мин), null — истории нет */
+  lastQualityWorkMinutes: number | null;
   /** потолки из baselines — ТОЛЬКО как потолки, не как цель */
   capWeeklyMin: number | null;
   capLongRunMin: number | null;
@@ -165,15 +172,20 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
 
   const out = new Map<number, AthleteContext>();
   const win4wStart = addDays(asOf, -28);
+  const win8wStart = addDays(asOf, -56);
 
   for (const [aid, rs] of byAth) {
     let sid: string | null = null;
     const samples: EasySample[] = []; const seen = new Set<string>();
     const dayHistogram = [0, 0, 0, 0, 0, 0, 0];
     const weekMin = new Map<string, number>(); const weekFreq = new Map<string, number>(); const weekQual = new Map<string, number>();
+    const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
+    const qSamples: QualitySample[] = [];
 
     for (const r of rs) {
       if (r.student_id) sid = r.student_id;
+      const qs = r.title ? extractQualitySample(r.title, r.description ?? "") : null;
+      if (qs) qSamples.push({ date: r.workout_date, fast: qs.fast, slow: qs.slow, workMinutes: qs.workMinutes, reps: qs.reps });
       const s = r.title ? extractEasySample(r.title, r.description ?? "") : null;
       if (s) {
         const k = `${r.workout_date}|${s.fast}|${s.slow}`;
@@ -183,7 +195,14 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         const wk = mondayOf(r.workout_date);
         weekMin.set(wk, (weekMin.get(wk) ?? 0) + (r.completed_time_raw as number) * 60);
         weekFreq.set(wk, (weekFreq.get(wk) ?? 0) + 1);
-        if (r.title && QUALITY_TITLE_RE.test(r.title)) weekQual.set(wk, (weekQual.get(wk) ?? 0) + 1);
+        if (r.title && QUALITY_TITLE_RE.test(r.title)) {
+          weekQual.set(wk, (weekQual.get(wk) ?? 0) + 1);
+          if (r.workout_date >= win8wStart) {
+            qualityDates.push(r.workout_date);
+            const m = /([0-9]{1,2})\s*[xх×]\s*([0-9]{1,2}(?:[.,][0-9])?)\s*(мин|min)/i.exec(r.title);
+            if (m) { const w = Number(m[1]) * Number(m[2].replace(",", ".")); if (Number.isFinite(w) && w > 0 && w <= 90) lastQ = { date: r.workout_date, work: w }; }
+          }
+        }
         const d = new Date(r.workout_date + "T00:00:00Z");
         dayHistogram[(d.getUTCDay() + 6) % 7] += 1;
       }
@@ -219,14 +238,20 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       }
     }
 
+    const qAnchor = buildQualityAnchor(qSamples, addDays(asOf, 1), { halfLifeDays: 21, illness });
+
     out.set(aid, {
       athleteId: aid, tier, easy, threshold: thresholds.get(aid) ?? null,
+      quality: qAnchor ? { fastSec: qAnchor.fast, slowSec: qAnchor.slow, confidence: anchorConfidence(qAnchor.effectiveN) as Confidence, effectiveN: qAnchor.effectiveN } : null,
       illness, hasActiveIllness,
       envelope: {
         rolling4wWeeklyMin, rolling4wFrequency: Math.round(avg(weekFreq) * 10) / 10,
         rolling4wQuality: Math.round(avg(weekQual) * 10) / 10,
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
+        lastWeekMinutes: (() => { const ks = [...weekMin.keys()].sort(); return ks.length ? Math.round(weekMin.get(ks[ks.length - 1]) ?? 0) : 0; })(),
+        qualityLast8w: qualityDates.length,
+        lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         dayHistogram, weeksObserved: weekMin.size,
       },
     });

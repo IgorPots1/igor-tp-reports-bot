@@ -17,7 +17,8 @@ export type Phase = "maintenance"; // v1: только поддерживающ�
 
 export type AnchorSource =
   | "applied_threshold_coach" | "applied_threshold_bulk_only"
-  | "easy_description" | "tp_zone2" | "cohort_ratio" | "cs_calibrated";
+  | "easy_description" | "tp_zone2" | "cohort_ratio" | "cs_calibrated"
+  | "quality_description";
 
 export type Confidence = "high" | "medium" | "medium_low" | "low";
 export type Tier = "T1" | "T2" | "T3";
@@ -38,6 +39,11 @@ export const RANGE_SPREAD: Record<Confidence, { conservative_pct: number; optimi
  */
 const SPEED_FRACTION = { z3_max: 0.944, z4_max: 1.0, z5_max: 1.033, z6_max: 1.114 } as const;
 
+/** Фолбэк качества от порога: верх ровно на пороге, низ чуть медленнее, ширина ≤ параметра. */
+export const QUALITY_FALLBACK_FAST_MULT = 1.0;
+export const QUALITY_FALLBACK_SLOW_MULT = 1.04;
+export const QUALITY_FALLBACK_MAX_BAND_S = 12;
+
 /** §2.3 — steady считается ОТ ПОРОГА ВНИЗ, в темпе: порог × [1.02 … 1.08]. */
 const STEADY_PACE_MULT = { fast: 1.02, slow: 1.08 } as const;
 
@@ -55,11 +61,19 @@ export type ThresholdAnchor = {
   confidence: Confidence;
 };
 
+/** Якорь качества из описаний — приоритетнее процентов от порога (см. quality-anchor.ts). */
+export type QualityAnchor = {
+  fastSec: number; slowSec: number;
+  confidence: Confidence; effectiveN?: number;
+};
+
 export type AthleteAnchors = {
   athleteId: number;
   tier: Tier;
   easy: EasyAnchor | null;
   threshold: ThresholdAnchor | null;
+  /** null → полоса качества считается от порога узким фолбэком */
+  quality?: QualityAnchor | null;
 };
 
 export type Resolved = {
@@ -160,17 +174,39 @@ export function resolvePace(
         detail: "нет applied-порога: качество не назначаем, лёгкий/длительный — можем" };
     }
     const thr = a.threshold.paceSec;
+
+    // ЯКОРЬ КАЧЕСТВА ИЗ ОПИСАНИЙ — приоритет. Проценты от порога давали полосу 41 с/км,
+    // вдвое шире лёгкого, и перешагивали сам порог. Тренер пишет отрезки узко (медиана 13 с/км).
+    if (a.quality && (intent === "threshold" || intent === "controlled_threshold")) {
+      const q = a.quality;
+      return {
+        ok: true, intent,
+        pctMin: pct(thr, q.slowSec), pctMax: pct(thr, q.fastSec),
+        absPaceMinS: q.fastSec, absPaceMaxS: q.slowSec,
+        targetMode: "pace", rpe: rpeFromPreset,
+        confidence: q.confidence, anchorSource: "quality_description",
+        hardFastCapS: null, warnings,
+      };
+    }
+
     let fast: number, slow: number;
 
+    let skipWiden = false;
     if (intent === "steady_tempo") {
       fast = thr * STEADY_PACE_MULT.fast; slow = thr * STEADY_PACE_MULT.slow;
     } else if (intent === "threshold" || intent === "controlled_threshold") {
-      fast = thr / SPEED_FRACTION.z4_max; slow = thr / SPEED_FRACTION.z3_max;
+      // Фолбэк без своего якоря: полоса ПОД порогом, верхний край не быстрее порога,
+      // ширина ограничена сверху. Расширение по доверию (§2.5) к качеству НЕ применяем —
+      // именно оно раздувало полосу до 41 с/км и выносило верх выше порога.
+      fast = thr * QUALITY_FALLBACK_FAST_MULT;
+      slow = Math.min(thr * QUALITY_FALLBACK_SLOW_MULT, fast + QUALITY_FALLBACK_MAX_BAND_S);
+      skipWiden = true;
+      warnings.push("полоса качества от порога (своего якоря нет), узкая, под порогом");
     } else { // vo2
       fast = thr / SPEED_FRACTION.z6_max; slow = thr / SPEED_FRACTION.z5_max;
     }
 
-    let w = widen(fast, slow, a.threshold.confidence);
+    let w = skipWiden ? { fast, slow } : widen(fast, slow, a.threshold.confidence);
 
     // ЗАЩИТА ОТ ПЕРЕБРОСА ЧЕРЕЗ ПОРОГ. Расширение полосы по доверию (§2.5) само по себе не знает
     // про смысл зоны и при низком доверии выносит край на другую сторону порога: steady получал
