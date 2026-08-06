@@ -11,9 +11,10 @@ const fp = (s: number): string => { const m = Math.floor(s / 60), x = Math.round
 const sb = sbc();
 const { data: zs } = await sb.from("tp_zone_snapshots").select("trainingpeaks_athlete_id, zones, captured_at").order("captured_at", { ascending: false });
 const z2 = new Map<number, { fast: number; slow: number }>();
-for (const r of (zs ?? []) as Array<{ trainingpeaks_athlete_id: number; zones: any }>) {
+type ZoneRow = { trainingpeaks_athlete_id: number; zones: { speedZones?: Array<{ workoutTypeId?: number; zones?: Array<{ minimum?: number; maximum?: number }> }> } | null };
+for (const r of (zs ?? []) as unknown as ZoneRow[]) {
   if (z2.has(r.trainingpeaks_athlete_id)) continue;
-  const set0 = r.zones?.speedZones?.find((s: any) => Number(s.workoutTypeId) === 0);
+  const set0 = r.zones?.speedZones?.find((s) => Number(s.workoutTypeId) === 0);
   const z = set0?.zones?.[1]; if (!z?.minimum || !z?.maximum) continue;
   z2.set(r.trainingpeaks_athlete_id, { fast: Math.round(1000 / z.maximum), slow: Math.round(1000 / z.minimum) });
 }
