@@ -250,6 +250,28 @@ export async function rejectProtocolMatchAction(formData: FormData): Promise<voi
   redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? "Отклонено, больше не предлагается." : res.error ?? "Ошибка."));
 }
 
+/** Batch-confirm every pending match in one race group (event+date) at once — the coach reviews the
+ *  race's finishers together, then binds them all. Idempotent per row (already-confirmed rows skip). */
+export async function confirmProtocolGroupAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const ids = req(formData, "pendingIds").split(",").map((s) => s.trim()).filter(Boolean);
+  const { confirmProtocolMatch } = await import("@/features/club-admin/repository");
+  let ok = 0;
+  let fail = 0;
+  let firstErr: string | null = null;
+  for (const id of ids) {
+    const res = await confirmProtocolMatch(id, COACH);
+    if (res.ok) ok += 1;
+    else {
+      fail += 1;
+      if (!firstErr) firstErr = res.error ?? null;
+    }
+  }
+  revalidateClub();
+  redirect(withNotice(redirectTo, fail === 0 ? "notice" : "error", fail === 0 ? `Привязано ${ok} результатов по гонке.` : `Привязано ${ok}, ошибок ${fail}${firstErr ? ": " + firstErr : ""}.`));
+}
+
 export async function approveAllPendingCalendarAction(formData: FormData): Promise<void> {
   const redirectTo = req(formData, "redirectTo");
   await ensureAdminAccess(redirectTo);
