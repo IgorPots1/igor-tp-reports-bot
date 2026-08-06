@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { buildAnchor, extractEasySample, tierOf, type EasySample, type DateWindow } from "./easy-anchor.ts";
+import { buildQualityAnchor, extractQualitySample, type QualitySample } from "./quality-anchor.ts";
 import { anchorConfidence } from "./easy-anchor.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
@@ -177,9 +178,12 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const dayHistogram = [0, 0, 0, 0, 0, 0, 0];
     const weekMin = new Map<string, number>(); const weekFreq = new Map<string, number>(); const weekQual = new Map<string, number>();
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
+    const qSamples: QualitySample[] = [];
 
     for (const r of rs) {
       if (r.student_id) sid = r.student_id;
+      const qs = r.title ? extractQualitySample(r.title, r.description ?? "") : null;
+      if (qs) qSamples.push({ date: r.workout_date, fast: qs.fast, slow: qs.slow, workMinutes: qs.workMinutes, reps: qs.reps });
       const s = r.title ? extractEasySample(r.title, r.description ?? "") : null;
       if (s) {
         const k = `${r.workout_date}|${s.fast}|${s.slow}`;
@@ -232,8 +236,11 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       }
     }
 
+    const qAnchor = buildQualityAnchor(qSamples, addDays(asOf, 1), { halfLifeDays: 21, illness });
+
     out.set(aid, {
       athleteId: aid, tier, easy, threshold: thresholds.get(aid) ?? null,
+      quality: qAnchor ? { fastSec: qAnchor.fast, slowSec: qAnchor.slow, confidence: anchorConfidence(qAnchor.effectiveN) as Confidence, effectiveN: qAnchor.effectiveN } : null,
       illness, hasActiveIllness,
       envelope: {
         rolling4wWeeklyMin, rolling4wFrequency: Math.round(avg(weekFreq) * 10) / 10,
