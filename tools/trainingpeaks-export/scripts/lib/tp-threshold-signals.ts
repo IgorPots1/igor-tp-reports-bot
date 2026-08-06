@@ -16,6 +16,8 @@
 //   перерыв: нет пробежек 10–60 дней (дольше 60 — не пауза, а прекращение тренировок; не будим).
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ftpaSecPerKm, vdotFromRace } from "../../../../src/app/tools/plan/vdot.ts";
+import { flatSteps, median } from "./tp-recompute.ts";
+import { isRecord } from "./tp-athlete-helpers.ts";
 
 // ── пороги срабатывания ──────────────────────────────────────────────────────
 const BREAK_GAP_DAYS = 10;
@@ -40,10 +42,23 @@ const RATIO_REJECT_LO = 1.12;
 const COOLDOWN_DAYS = 14; // не чаще раза в N дней по человеку+направлению
 const DECLINE_SUPPRESS_DAYS = 45; // отклонённое молчит, пока магнитуда не вырастет
 const DECLINE_MAG_GROW = 6; // с/км: насколько должно усилиться, чтобы предложить снова
+// A — интервалы vs задание (беат ≥6с; асимметрия: рост 4/6, падение 5/6 — недобор шумный, ложный рост опаснее)
+const INTERVAL_WINDOW = 6; // последние N завершённых интервальных
+const INTERVAL_BEAT_SEC = 6; // «беат» задания ≥6с/км
+const INTERVAL_UP_HITS = 4; // рост: ≥4 из 6 быстрее задания
+const INTERVAL_DOWN_HITS = 5; // падение: ≥5 из 6 медленнее задания
+// B — лёгкий уполз (подтверждение-only, сам не будит)
+const EASY_CREPT_SEC = 15; // recent (0–30д) быстрее older (31–90д) на ≥15с
+// аномалия отношения (порог без правдоподобной привязки к лёгкому) — extreme-only, чтобы не шуметь
+const RATIO_ANOMALY_HI = 1.50; // отношение >1.50 → порог выглядит завышенным (down)
+const RATIO_ANOMALY_LO = 1.10; // отношение <1.10 → порог выглядит заниженным (up)
+const MED_RATIO = 1.257; // медиана — оценка предложенного порога из якоря (anchor/MED_RATIO)
+// C — разметка: протухание предложения
+const SIGNAL_EXPIRE_DAYS = 21; // не применил за 3 недели = молчаливый отказ
 
 // ── типы ─────────────────────────────────────────────────────────────────────
 export type Signal = {
-  type: "break" | "race" | "intervals" | "easy_anchor";
+  type: "break" | "race" | "intervals" | "easy_anchor" | "ratio";
   direction: "up" | "down";
   proposed_sec: number | null;
   magnitude_sec: number | null;
@@ -91,8 +106,96 @@ export async function loadTestConfirmed(sb: SupabaseClient): Promise<Set<number>
   return s;
 }
 
-/** Одно решение на атлета: собирает перерыв+забег, агрегирует в story, считает проекцию отношения,
- *  фильтрует анти-спамом. TP не читается напрямую — thrSec/anchor приходят из джоба (уже посчитаны). */
+/** A — интервалы vs ЗАДАНИЕ. Задание = замороженный %-таргет work-шагов из source_snapshot.structure
+ *  (flatSteps) × ТЕКУЩИЙ порог — ровно опора для «занижен ли текущий порог». Исполнено = медиана
+ *  rep_paces. Беат ≥6с. Асимметрия: рост ≥4/6, падение ≥5/6 (недобор шумный, ложный рост опаснее).
+ *  Нужно полное окно из 6 оценённых сессий — иначе не сигнал. */
+async function detectIntervals(sb: SupabaseClient, active: AthleteCtx[], today: string): Promise<Map<number, Signal>> {
+  const out = new Map<number, Signal>();
+  for (const c of active) {
+    const { data } = await sb.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id, workout_date, rep_paces").eq("trainingpeaks_athlete_id", c.id).eq("workout_type", "run").gte("reps_detected_count", 2).gte("workout_date", daysAgoIso(120, today)).order("workout_date", { ascending: false }).limit(INTERVAL_WINDOW);
+    const rows = data ?? [];
+    if (rows.length < INTERVAL_WINDOW) continue;
+    const cids = rows.map((r) => r.workout_cache_id as string);
+    const { data: cc } = await sb.from("trainingpeaks_workout_cache").select("id, source_snapshot").in("id", cids);
+    const snapById = new Map((cc ?? []).map((r) => [r.id as string, r.source_snapshot]));
+    let beat = 0, under = 0, evaluated = 0;
+    const beatMag: number[] = [], underMag: number[] = [];
+    for (const row of rows) {
+      const paces = Array.isArray(row.rep_paces) ? (row.rep_paces as unknown[]).filter((x): x is number => typeof x === "number" && x > 60 && x < 900) : [];
+      if (paces.length < 2) continue;
+      const exec = median(paces);
+      const snap = snapById.get(row.workout_cache_id as string);
+      const fx = flatSteps(isRecord(snap) ? snap.structure : null);
+      if (!fx) continue;
+      const workPct = fx.steps.filter((s) => s.role === "работа" && Number.isFinite(s.min) && Number.isFinite(s.max) && s.min > 0).map((s) => (s.min + s.max) / 2);
+      if (!workPct.length) continue;
+      const prescribed = (c.thrSec * 100) / median(workPct); // текущий порог × замороженный %
+      if (!(prescribed > 120 && prescribed < 600)) continue;
+      evaluated++;
+      const d = exec - prescribed; // <0 = быстрее задания
+      if (d <= -INTERVAL_BEAT_SEC) { beat++; beatMag.push(-d); }
+      else if (d >= INTERVAL_BEAT_SEC) { under++; underMag.push(d); }
+    }
+    if (evaluated < INTERVAL_WINDOW) continue;
+    if (beat >= INTERVAL_UP_HITS) { const m = Math.round(median(beatMag)); out.set(c.id, { type: "intervals", direction: "up", proposed_sec: Math.round(c.thrSec) - m, magnitude_sec: m, evidence: `интервалы ${beat}/${INTERVAL_WINDOW} быстрее задания на ~${m}с`, features: { window: INTERVAL_WINDOW, beat, under, median_beat_sec: m } }); }
+    else if (under >= INTERVAL_DOWN_HITS) { const m = Math.round(median(underMag)); out.set(c.id, { type: "intervals", direction: "down", proposed_sec: Math.round(c.thrSec) + m, magnitude_sec: m, evidence: `интервалы ${under}/${INTERVAL_WINDOW} медленнее задания на ~${m}с`, features: { window: INTERVAL_WINDOW, beat, under, median_under_sec: m } }); }
+  }
+  return out;
+}
+
+/** B — лёгкий уполз (ПОДТВЕРЖДЕНИЕ-only, сам не будит). recent (0–30д) быстрее older (31–90д) на ≥15с
+ *  → рост. Медиана медленных 70% в каждом окне, оба n≥5. Фильтр ~пороговых как у якоря. */
+async function detectEasyCrept(sb: SupabaseClient, active: AthleteCtx[], today: string): Promise<Map<number, Signal>> {
+  const out = new Map<number, Signal>();
+  for (const c of active) {
+    const dm: { workout_cache_id: string; workout_date: string }[] = [];
+    for (let f = 0; ; f += 1000) { const { data } = await sb.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id, workout_date").eq("trainingpeaks_athlete_id", c.id).eq("workout_type", "run").eq("has_fit", true).eq("reps_detected_count", 0).gte("workout_date", daysAgoIso(90, today)).lte("workout_date", today).range(f, f + 999); if (!data || !data.length) break; dm.push(...(data as { workout_cache_id: string; workout_date: string }[])); if (data.length < 1000) break; }
+    if (dm.length < 10) continue;
+    const dateById = new Map(dm.map((r) => [r.workout_cache_id, String(r.workout_date).slice(0, 10)]));
+    const cids = dm.map((r) => r.workout_cache_id);
+    const recent: number[] = [], older: number[] = [];
+    for (let i = 0; i < cids.length; i += 300) {
+      const { data } = await sb.from("trainingpeaks_workout_cache").select("id, completed_distance_raw, completed_time_raw").in("id", cids.slice(i, i + 300));
+      for (const w of data ?? []) {
+        const mm = typeof w.completed_distance_raw === "number" ? w.completed_distance_raw : 0;
+        const h = typeof w.completed_time_raw === "number" ? w.completed_time_raw : 0;
+        if (mm < 3000 || h <= 0) continue;
+        const pc = (h * 3600) / (mm / 1000);
+        if (!(pc > c.thrSec + 30 && pc < 540)) continue;
+        const age = daysBetween(dateById.get(w.id as string) ?? today, today);
+        if (age <= 30) recent.push(pc); else if (age <= 90) older.push(pc);
+      }
+    }
+    if (recent.length < 5 || older.length < 5) continue;
+    const slow70 = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return median(s.slice(Math.floor(s.length * 0.3))); };
+    const rMed = slow70(recent), oMed = slow70(older);
+    if (rMed <= oMed - EASY_CREPT_SEC) out.set(c.id, { type: "easy_anchor", direction: "up", proposed_sec: null, magnitude_sec: Math.round(oMed - rMed), evidence: `лёгкий уполз вверх ${fpSec(oMed)}→${fpSec(rMed)} за месяц`, features: { recent_sec: Math.round(rMed), older_sec: Math.round(oMed), recent_n: recent.length, older_n: older.length } });
+  }
+  return out;
+}
+
+/** C — разметка: замыкает петлю «предложили X → поставили Y». НЕ трогает write-инструмент. Отдельный
+ *  сверщик: открытое предложение → если порог атлета изменился после detected_at (tp_threshold_applications) —
+ *  applied + decided_sec (что реально поставили, может ≠ proposed); старше 21д без применения → expired. */
+export async function reconcileSignalDecisions(sb: SupabaseClient): Promise<{ applied: number; expired: number }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: open } = await sb.from("tp_threshold_signals").select("id, trainingpeaks_athlete_id, current_sec, detected_at").eq("status", "proposed");
+  let applied = 0, expired = 0;
+  for (const p of open ?? []) {
+    const { data: apps } = await sb.from("tp_threshold_applications").select("value_after, applied_at").eq("trainingpeaks_athlete_id", p.trainingpeaks_athlete_id).eq("kind", "pace").neq("tier", "rollback").gt("applied_at", p.detected_at as string).order("applied_at", { ascending: false }).limit(1);
+    const a = (apps ?? [])[0];
+    if (a && typeof a.value_after === "number") {
+      const decidedSec = Math.round(1000 / (a.value_after as number));
+      if (Math.abs(decidedSec - Number(p.current_sec)) >= 2) { await sb.from("tp_threshold_signals").update({ status: "applied", decided_sec: decidedSec, decided_at: a.applied_at }).eq("id", p.id as string); applied++; continue; }
+    }
+    if (daysBetween(String(p.detected_at).slice(0, 10), today) >= SIGNAL_EXPIRE_DAYS) { await sb.from("tp_threshold_signals").update({ status: "expired", decided_at: new Date().toISOString() }).eq("id", p.id as string); expired++; }
+  }
+  return { applied, expired };
+}
+
+/** Одно решение на атлета: собирает перерыв+забег+интервалы+аномалию (лёгкий уполз — подтверждение),
+ *  агрегирует в story, считает проекцию отношения, фильтрует анти-спамом. thrSec/anchor из джоба. */
 export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx[], opts: { runId: string | null }): Promise<Proposal[]> {
   void opts; // runId прокидывает джоб при записи строк
   if (!ctx.length) return [];
@@ -173,21 +276,38 @@ export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx
     }
   }
 
+  // ── детекторы A (интервалы) и B (лёгкий уполз) ───────────────────────────────
+  const intervalSig = await detectIntervals(sb, active, today);
+  const easyCreptSig = await detectEasyCrept(sb, active, today);
+
   // ── (C) АГРЕГАЦИЯ: одно решение на атлета ────────────────────────────────────
+  const prio = (t: Signal["type"]): number => (t === "race" ? 3 : t === "intervals" ? 2 : t === "ratio" ? 1 : 0);
   const proposals: Proposal[] = [];
   for (const c of active) {
-    const sigs: Signal[] = [];
-    const r = raceSig.get(c.id); const b = breakSig.get(c.id);
-    if (r) sigs.push(r);
-    if (b) sigs.push(b);
-    if (!sigs.length) continue;
-    const direction: "up" | "down" = sigs.some((s) => s.direction === "down") ? "down" : "up"; // падение приоритетно (безопасность)
-    const numeric = sigs.find((s) => s.direction === direction && s.proposed_sec != null) ?? null;
-    const proposedSec = numeric?.proposed_sec ?? null;
-    const projRatio = c.anchor != null ? c.anchor / (proposedSec ?? c.thrSec) : null;
-    const ratioInBand = projRatio != null ? projRatio >= RATIO_BAND_LO && projRatio <= RATIO_BAND_HI : null;
-    const summaryLine = buildLine(c, direction, proposedSec, sigs, projRatio, ratioInBand);
-    proposals.push({ athleteId: c.id, name: c.name, direction, currentSec: Math.round(c.thrSec), proposedSec: proposedSec != null ? Math.round(proposedSec) : null, anchorSec: c.anchor != null ? Math.round(c.anchor) : null, projectedRatio: projRatio, ratioInBand, confidence: "strong", signals: sigs, summaryLine });
+    const directional: Signal[] = [];
+    const r = raceSig.get(c.id); const b = breakSig.get(c.id); const iv = intervalSig.get(c.id);
+    if (r) directional.push(r);
+    if (b) directional.push(b);
+    if (iv) directional.push(iv);
+    // аномалия отношения (extreme) — порог выглядит завышенным/заниженным относительно лёгкого (bereznoi)
+    if (c.anchor != null) {
+      const ratio = c.anchor / c.thrSec;
+      if (ratio > RATIO_ANOMALY_HI) directional.push({ type: "ratio", direction: "down", proposed_sec: Math.round(c.anchor / MED_RATIO), magnitude_sec: Math.round(c.anchor / MED_RATIO - c.thrSec), evidence: `лёгкий ${fpSec(c.anchor)} при пороге ${fpSec(c.thrSec)} → отношение ${ratio.toFixed(2)} (порог выглядит завышенным)`, features: { ratio: Number(ratio.toFixed(3)) } });
+      else if (ratio < RATIO_ANOMALY_LO) directional.push({ type: "ratio", direction: "up", proposed_sec: Math.round(c.anchor / MED_RATIO), magnitude_sec: Math.round(c.thrSec - c.anchor / MED_RATIO), evidence: `лёгкий ${fpSec(c.anchor)} при пороге ${fpSec(c.thrSec)} → отношение ${ratio.toFixed(2)} (порог выглядит заниженным)`, features: { ratio: Number(ratio.toFixed(3)) } });
+    }
+    if (!directional.length) continue; // без направляющего сигнала — лёгкий-уполз сам не будит
+    const direction: "up" | "down" = directional.some((s) => s.direction === "down") ? "down" : "up"; // падение приоритетно
+    const sigs = directional.filter((s) => s.direction === direction);
+    const crept = easyCreptSig.get(c.id);
+    if (crept && direction === "up") sigs.push(crept); // лёгкий уполз — только подтверждение роста
+    // предложенный порог: приоритет забег > интервалы > аномалия (забег точнее)
+    const numeric = sigs.filter((s) => s.proposed_sec != null).sort((x, y) => prio(y.type) - prio(x.type))[0] ?? null;
+    let proposedSec = numeric?.proposed_sec ?? null;
+    if (proposedSec != null && c.anchor != null && c.anchor / proposedSec < RATIO_REJECT_LO) proposedSec = null; // неправдоподобный порог — снимаем число, оставляем текст
+    const finalRatio = c.anchor != null ? c.anchor / (proposedSec ?? c.thrSec) : null;
+    const ratioInBand = finalRatio != null ? finalRatio >= RATIO_BAND_LO && finalRatio <= RATIO_BAND_HI : null;
+    const summaryLine = buildLine(c, direction, proposedSec, sigs, finalRatio, ratioInBand);
+    proposals.push({ athleteId: c.id, name: c.name, direction, currentSec: Math.round(c.thrSec), proposedSec: proposedSec != null ? Math.round(proposedSec) : null, anchorSec: c.anchor != null ? Math.round(c.anchor) : null, projectedRatio: finalRatio, ratioInBand, confidence: "strong", signals: sigs, summaryLine });
   }
 
   // ── (D) АНТИ-СПАМ ────────────────────────────────────────────────────────────
@@ -200,18 +320,18 @@ export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx
  *  отношения (обязательно — быстрая проверка Игоря на разумность), с флагом «вне полосы 1.20–1.38». */
 function buildLine(c: AthleteCtx, direction: "up" | "down", proposedSec: number | null, sigs: Signal[], projRatio: number | null, ratioInBand: boolean | null): string {
   const arrow = direction === "up" ? "⬆️" : "⬇️";
-  const race = sigs.find((s) => s.type === "race");
   const brk = sigs.find((s) => s.type === "break");
+  const basisSigs = sigs.filter((s) => s.type !== "break"); // забег/интервалы/аномалия/лёгкий-уполз
+  const basis = basisSigs.map((s) => s.evidence).join("; ");
+  const brkNote = brk ? ` ${cap(brk.evidence)}.` : "";
   const anchorPart = c.anchor != null && projRatio != null
     ? `Лёгкий якорь ${fpSec(c.anchor)}, отношение ${proposedSec != null ? "станет" : "сейчас"} ${projRatio.toFixed(2)}${ratioInBand === false ? " ⚠ вне 1.20–1.38" : ""}.`
     : `Якорь н/д — отношение не проверить.`;
   if (proposedSec != null) {
     const verb = direction === "up" ? "предлагаю" : "предлагаю (порог мог УПАСТЬ)";
-    const basis = race ? `Основание: ${race.evidence}.` : "";
-    const brkNote = brk ? ` ${cap(brk.evidence)}.` : "";
-    return `${arrow} ${c.name} (${c.id}): сейчас ${fpSec(c.thrSec)} → ${verb} ${fpSec(proposedSec)}. ${basis}${brkNote} ${anchorPart}`;
+    return `${arrow} ${c.name} (${c.id}): сейчас ${fpSec(c.thrSec)} → ${verb} ${fpSec(proposedSec)}.${basis ? ` Основание: ${basis}.` : ""}${brkNote} ${anchorPart}`;
   }
-  return `${arrow} ${c.name} (${c.id}): проверь порог — ${brk?.evidence ?? "сигнал"}. ${anchorPart}`;
+  return `${arrow} ${c.name} (${c.id}): проверь порог — ${basis || brk?.evidence || "сигнал"}.${basis && brk ? brkNote : ""} ${anchorPart}`;
 }
 
 /** Анти-спам: молчим, если по человеку+направлению уже был сигнал < COOLDOWN дней назад, или недавнее

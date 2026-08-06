@@ -26,7 +26,7 @@ import { findWt0Set, isRecord } from "./lib/tp-athlete-helpers.ts";
 import { toolRoot } from "./lib/paths.ts";
 import { recompute, median, type Plan } from "./lib/tp-recompute.ts";
 import { loadManualAnchors, loadRecomputeExceptions } from "./lib/tp-manual-overrides.ts";
-import { detectThresholdSignals, proposalToRow, fpSec, type AthleteCtx, type Proposal } from "./lib/tp-threshold-signals.ts";
+import { detectThresholdSignals, proposalToRow, reconcileSignalDecisions, fpSec, type AthleteCtx, type Proposal } from "./lib/tp-threshold-signals.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 const root = path.resolve(toolRoot, "..", ".."); for (const p of [path.join(root, ".env.local"), path.join(root, ".env"), "/Users/igor/igor-tp-reports-bot/.env.local", "/Users/igor/igor-tp-reports-bot/.env"]) loadEnv(p);
@@ -177,6 +177,8 @@ async function main(): Promise<void> {
   try { proposals = await detectThresholdSignals(sb, athleteCtx, { runId: DRY ? null : runId }); }
   catch (e) { console.error(`⚠ детектор сигналов порога упал (пересчёт не затронут): ${(e as Error).message}`); }
   if (SIGNALS_ARMED && proposals.length) { for (let i = 0; i < proposals.length; i += 100) { const { error } = await sb.from("tp_threshold_signals").insert(proposals.slice(i, i + 100).map((p) => proposalToRow(p, runId, true))); if (error) console.error("⚠ insert tp_threshold_signals:", error.message); } }
+  // C — разметка: сверщик решений (предложили X → поставили Y / протухло). Пишет в лог, поэтому за тем же замком.
+  if (SIGNALS_ARMED) { try { const rec = await reconcileSignalDecisions(sb); if (rec.applied || rec.expired) console.log(`⟦разметка⟧ applied ${rec.applied} · expired ${rec.expired}`); } catch (e) { console.error(`⚠ сверщик решений упал: ${(e as Error).message}`); } }
 
   // anomaly-stop: drift proportion > 50% of examined
   const anomaly = scanned > 0 && drift / scanned > 0.5;
