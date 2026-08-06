@@ -11,6 +11,7 @@ import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved }
 import type { Envelope } from "./autoplanner-context.ts";
 import type { Catalog, QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, type QualityDecision } from "./quality-select.ts";
+import type { Band } from "./band-collision.ts";
 
 export const DAY_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 export type Role = "quality" | "long" | "easy" | "easy_strides" | "recovery" | "rest";
@@ -172,6 +173,30 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
 }
 
 export type Week = { athleteId: number; tier: string; weekStart: string; days: number[]; sessions: Session[]; notes: string[]; qualityDecision: string };
+
+/**
+ * Полосы, которые РЕАЛЬНО увидит ученик в готовом описании — вход проверки на слипание.
+ *
+ * Берём из отрендеренных сегментов, а не из якорей: полоса лёгкого перед показом сужается
+ * до потолка ширины (narrowBand), поэтому широкая зона 2 в тексте выглядит иначе, чем в якоре.
+ * null = чисел нет (сессия идёт «по ощущениям» либо такой сессии на неделе нет).
+ */
+export function shownBands(w: Week): { easy: Band | null; quality: Band | null } {
+  const AEROBIC: Role[] = ["easy", "easy_strides", "recovery", "long"];
+  let easy: Band | null = null;
+  for (const s of w.sessions) {
+    if (s.deferred || !AEROBIC.includes(s.role) || s.targetMode !== "pace") continue;
+    const seg = s.segments.find((x) => x.fastSec != null && x.slowSec != null);
+    if (seg) { easy = { fastSec: seg.fastSec!, slowSec: seg.slowSec! }; break; }
+  }
+  let quality: Band | null = null;
+  for (const s of w.sessions) {
+    if (s.deferred || s.role !== "quality" || s.targetMode !== "pace") continue;
+    const seg = s.segments.find((x) => x.label.startsWith("Отрезок") && x.fastSec != null && x.slowSec != null);
+    if (seg) { quality = { fastSec: seg.fastSec!, slowSec: seg.slowSec! }; break; }
+  }
+  return { easy, quality };
+}
 
 export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean): Week {
   const notes: string[] = [];

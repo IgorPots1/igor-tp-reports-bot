@@ -15,9 +15,9 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { toolRoot } from "./lib/paths.ts";
 import { loadAthleteContexts, mondayOf } from "./lib/autoplanner-context.ts";
-import { buildWeek, DAY_RU, type Week } from "./lib/autoplanner-week.ts";
+import { buildWeek, shownBands, DAY_RU, type Week } from "./lib/autoplanner-week.ts";
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
-import { checkEasyAgainstQuality } from "./lib/band-collision.ts";
+import { checkShownBands, MIN_EASY_TO_QUALITY_RATIO } from "./lib/band-collision.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 function getSupabase(): SupabaseClient {
@@ -60,18 +60,23 @@ async function main(): Promise<void> {
 
   const weeks: Week[] = []; const skipped: Array<{ aid: number; why: string }> = [];
   const rejected: Array<{ aid: number; src: string; ratio: number; why: string }> = [];
+  const colStats = new Map<string, number>();
   for (const c of ctx.values()) {
     if (!c.easy) { skipped.push({ aid: c.athleteId, why: "нет якоря лёгкого и фолбэка" }); continue; }
     if (c.envelope.weeksObserved === 0) { skipped.push({ aid: c.athleteId, why: "нет наблюдённых недель" }); continue; }
-    // ПРОВЕРКА НА СЛИПАНИЕ: лёгкий, подошедший вплотную к рабочему темпу, недостоверен.
-    // Неделю не выдаём и полосу молча не подкручиваем — иначе спрячем негодный источник.
-    const col = checkEasyAgainstQuality(c.easy.fastSec, c.easy.slowSec,
-      c.quality ? { fastSec: c.quality.fastSec, slowSec: c.quality.slowSec, isOwnAnchor: true } : null);
+    const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness);
+    // ПРОВЕРКА НА СЛИПАНИЕ — ПОСЛЕ сборки и по ПОКАЗАННЫМ полосам: сравнивать надо то, что
+    // ученик увидит в тексте. Где темп не показывается (лёгкий по ощущениям, качества нет),
+    // слипаться нечему. При срабатывании неделю не выдаём и полосу молча не подкручиваем —
+    // подкрутка спрятала бы негодный источник вместо того, чтобы его показать.
+    const shown = shownBands(w);
+    const col = checkShownBands(shown.easy, shown.quality, c.quality != null);
+    colStats.set(col.status, (colStats.get(col.status) ?? 0) + 1);
     if (col.status === "collision") {
       rejected.push({ aid: c.athleteId, src: c.easy.source, ratio: col.ratio, why: col.message });
       continue;
     }
-    weeks.push(buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness));
+    weeks.push(w);
   }
 
   const all = weeks.flatMap((w) => w.sessions);
@@ -87,6 +92,8 @@ async function main(): Promise<void> {
   out.push(`пропущено атлетов: ${skipped.length}`);
   out.push(`ОТКЛОНЕНО по слипанию лёгкого с качеством: ${rejected.length}`);
   for (const r of rejected) out.push(`- ${r.aid} [${r.src}] отношение ${r.ratio.toFixed(3)} — лёгкий не подтверждён`);
+  out.push(`проверка на слипание, статусы: ${[...colStats.entries()].map(([k, v]) => `${k} ${v}`).join(" · ")}`
+    + ` (граница ${MIN_EASY_TO_QUALITY_RATIO})`);
   out.push(`\n## anchor_source по сессиям`);
   [...bySrc.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
   const qPresets = new Map<string, number>();
@@ -98,13 +105,16 @@ async function main(): Promise<void> {
   if (deferReasons.size === 0) out.push("- нет");
   [...deferReasons.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
 
-  // три показательные недели
-  const withQ = weeks.find((w) => w.athleteId === 5733231);
-  const fallback = weeks.find((w) => w.sessions.some((x) => x.anchorSource === "tp_zone2" && !x.deferred));
-  const t1 = weeks.find((w) => w.tier === "T1" && w.sessions.some((x) => x.targetMode === "rpe" && !x.deferred));
-  const picks: Array<[Week | undefined, string]> = [[withQ, "С КАЧЕСТВОМ"], [fallback, "ФОЛБЭК zone2 (5673496 отклонён по слипанию — см. список выше)"], [t1, "T1 · лёгкий по ощущениям (5847207 отклонён по слипанию)"]];
+  // три недели наряда — именно эти атлеты, не «похожие»
+  const SHOW: Array<[number, string]> = [[5733231, "СВОЙ ЯКОРЬ + КАЧЕСТВО"], [5673496, "ЗОНА 2 (был отклонён старой границей)"], [5847207, "T1 · ПО ОЩУЩЕНИЯМ (был отклонён старой границей)"]];
   const printed: string[] = [];
-  for (const [w, label] of picks) if (w) printed.push(...printWeek(w, label));
+  for (const [aid, label] of SHOW) {
+    const w = weeks.find((x) => x.athleteId === aid);
+    if (w) { printed.push(...printWeek(w, label)); continue; }
+    const r = rejected.find((x) => x.aid === aid);
+    printed.push(`\n${"─".repeat(78)}`, `${label} · атлет ${aid}`, "─".repeat(78),
+      r ? `НЕДЕЛИ НЕТ: ${r.why}` : `НЕДЕЛИ НЕТ: ${skipped.find((x) => x.aid === aid)?.why ?? "атлет не в выборке"}`);
+  }
   out.push("\n## Три недели целиком"); out.push(...printed);
 
   const dir = path.join(path.resolve(toolRoot, "..", ".."), "reports", "autoplanner-week", `${weekStart.replace(/-/g, "")}-${Date.now().toString().slice(-4)}`);
