@@ -17,6 +17,7 @@ import { toolRoot } from "./lib/paths.ts";
 import { loadAthleteContexts, mondayOf } from "./lib/autoplanner-context.ts";
 import { buildWeek, DAY_RU, type Week } from "./lib/autoplanner-week.ts";
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
+import { checkEasyAgainstQuality } from "./lib/band-collision.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const line of readFileSync(p, "utf8").split(/\r?\n/)) { const t = line.trim(); if (!t || t.startsWith("#")) continue; const eq = t.indexOf("="); if (eq < 0) continue; const k = t.slice(0, eq).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(eq + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 function getSupabase(): SupabaseClient {
@@ -58,9 +59,18 @@ async function main(): Promise<void> {
   console.log(`[week] атлетов ${ctx.size}, неделя с ${weekStart}`);
 
   const weeks: Week[] = []; const skipped: Array<{ aid: number; why: string }> = [];
+  const rejected: Array<{ aid: number; src: string; ratio: number; why: string }> = [];
   for (const c of ctx.values()) {
     if (!c.easy) { skipped.push({ aid: c.athleteId, why: "нет якоря лёгкого и фолбэка" }); continue; }
     if (c.envelope.weeksObserved === 0) { skipped.push({ aid: c.athleteId, why: "нет наблюдённых недель" }); continue; }
+    // ПРОВЕРКА НА СЛИПАНИЕ: лёгкий, подошедший вплотную к рабочему темпу, недостоверен.
+    // Неделю не выдаём и полосу молча не подкручиваем — иначе спрячем негодный источник.
+    const col = checkEasyAgainstQuality(c.easy.fastSec, c.easy.slowSec,
+      c.quality ? { fastSec: c.quality.fastSec, slowSec: c.quality.slowSec, isOwnAnchor: true } : null);
+    if (col.status === "collision") {
+      rejected.push({ aid: c.athleteId, src: c.easy.source, ratio: col.ratio, why: col.message });
+      continue;
+    }
     weeks.push(buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness));
   }
 
@@ -75,6 +85,8 @@ async function main(): Promise<void> {
   out.push(`# Первая сгенерированная неделя — ${weekStart}`);
   out.push(`\nатлетов с неделей: ${weeks.length} · сессий: ${all.length} · в defer: ${deferred.length}`);
   out.push(`пропущено атлетов: ${skipped.length}`);
+  out.push(`ОТКЛОНЕНО по слипанию лёгкого с качеством: ${rejected.length}`);
+  for (const r of rejected) out.push(`- ${r.aid} [${r.src}] отношение ${r.ratio.toFixed(3)} — лёгкий не подтверждён`);
   out.push(`\n## anchor_source по сессиям`);
   [...bySrc.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
   const qPresets = new Map<string, number>();
@@ -98,7 +110,7 @@ async function main(): Promise<void> {
   const dir = path.join(path.resolve(toolRoot, "..", ".."), "reports", "autoplanner-week", `${weekStart.replace(/-/g, "")}-${Date.now().toString().slice(-4)}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "week.md"), out.join("\n") + "\n");
-  writeFileSync(path.join(dir, "weeks.json"), JSON.stringify({ weekStart, weeks, skipped }, null, 2) + "\n");
+  writeFileSync(path.join(dir, "weeks.json"), JSON.stringify({ weekStart, weeks, skipped, rejected }, null, 2) + "\n");
 
   console.log(out.join("\n"));
   console.log(`\n[week] отчёт → ${dir}`);
