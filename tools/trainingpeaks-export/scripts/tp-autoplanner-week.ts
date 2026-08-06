@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   [...deferReasons.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
 
   // три показательные недели
-  const withQ = weeks.find((w) => w.sessions.some((s) => s.role === "quality" && !s.deferred));
+  const withQ = weeks.find((w) => w.athleteId !== 5673496 && w.sessions.some((s) => s.role === "quality" && !s.deferred) && w.sessions.some((s) => s.anchorSource === "easy_description"));
   const fallback = weeks.find((w) => w.athleteId === 5673496);
   const t1 = weeks.find((w) => w.tier === "T1" && w.sessions.some((s) => s.targetMode === "rpe" && !s.deferred));
   const picks: Array<[Week | undefined, string]> = [[withQ, "С КАЧЕСТВОМ"], [fallback, "ФОЛБЭК zone2 · атлет 5673496 (для сравнения)"], [t1, "T1 · лёгкий по ощущениям"]];
