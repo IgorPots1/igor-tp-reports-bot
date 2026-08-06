@@ -37,6 +37,8 @@ export type Envelope = {
   rolling4wQuality: number;
   /** качественных сессий за 8 недель — потолок качества считается ОТСЮДА, не из baselines */
   qualityLast8w: number;
+  /** объём последней ФАКТИЧЕСКОЙ недели, мин — потолок прироста считается от него */
+  lastWeekMinutes: number;
   /** объём работы последней качественной (reps × мин), null — истории нет */
   lastQualityWorkMinutes: number | null;
   /** потолки из baselines — ТОЛЬКО как потолки, не как цель */
@@ -247,6 +249,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         rolling4wQuality: Math.round(avg(weekQual) * 10) / 10,
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
+        lastWeekMinutes: (() => { const ks = [...weekMin.keys()].sort(); return ks.length ? Math.round(weekMin.get(ks[ks.length - 1]) ?? 0) : 0; })(),
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         dayHistogram, weeksObserved: weekMin.size,

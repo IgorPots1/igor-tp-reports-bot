@@ -21,6 +21,10 @@ export const ROUND_TO_MIN = 5;
 export const LONG_OVER_EASY_MIN = 20;
 /** Шаг 4: ширина полосы лёгкого сверху ограничена (сек/км), параметр. */
 export const EASY_BAND_MAX_S = 25;
+/** Прирост недельного объёма к предыдущей ФАКТИЧЕСКОЙ неделе — не более этого (параметр). */
+export const WEEKLY_GROWTH_MAX = 1.10;
+/** Разминка по наблюдаемому шаблону: 86% реальных качественных — 10 минут (n=2710). */
+export const WARMUP_CANON_MINUTES = 10;
 const round5 = (m: number): number => Math.max(ROUND_TO_MIN, Math.round(m / ROUND_TO_MIN) * ROUND_TO_MIN);
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
@@ -147,12 +151,16 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
   }
   const w = work as Resolved, e = easy as Resolved;
   const eb = narrowBand(e.absPaceMinS, e.absPaceMaxS);
-  const segs: Segment[] = [{ minutes: p.warmupMinutes, label: "Разминка", fastSec: eb.fast, slowSec: eb.slow }];
+  // Разминка по методологии из РЕАЛЬНЫХ описаний (замер: 86% качественных — 10 минут,
+  // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно»). Ускорения внутри разминки
+  // встречаются лишь в 15% — по умолчанию НЕ ставим.
+  const warmMin = p.warmupMinutes || WARMUP_CANON_MINUTES;
+  const segs: Segment[] = [{ minutes: warmMin, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
   for (let i = 0; i < p.reps; i++) {
     segs.push({ minutes: p.workMinutes, label: `Отрезок ${i + 1}`, fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS });
     if (i < p.reps - 1) segs.push({ minutes: p.recoveryMinutes, label: "Трусца", fastSec: eb.fast, slowSec: eb.slow });
   }
-  segs.push({ minutes: p.cooldownMinutes, label: "Заминка", fastSec: eb.fast, slowSec: eb.slow });
+  segs.push({ minutes: p.cooldownMinutes, label: "Заминка, свободно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow });
   const total = segs.reduce((s, x) => s + x.minutes, 0);
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);
@@ -193,7 +201,13 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const roles = assignRoles(days, counts, longDayHint);
 
   // ДЛИТЕЛЬНОСТИ (шаг 4): округление до 5, лёгкие разные, длительная выше самого длинного лёгкого
-  const weekly = Math.min(env.rolling4wWeeklyMin || 0, env.capWeeklyMin ?? Infinity) || 150;
+  // ОБЪЁМ НЕДЕЛИ: конверт сверху И не более +10% к предыдущей фактической неделе.
+  // Раньше правило «длительная +20 мин к лёгкому» раздувало неделю вверх (у T1 80 → 120 мин).
+  let weekly = Math.min(env.rolling4wWeeklyMin || 0, env.capWeeklyMin ?? Infinity) || 150;
+  if (env.lastWeekMinutes > 0) {
+    const ceil = Math.round(env.lastWeekMinutes * WEEKLY_GROWTH_MAX);
+    if (weekly > ceil) { weekly = ceil; notes.push(`объём подрезан до +${Math.round((WEEKLY_GROWTH_MAX - 1) * 100)}% к прошлой неделе (${env.lastWeekMinutes} мин)`); }
+  }
   const qMin = dec.selected ? dec.preset.warmupMinutes + dec.preset.reps * dec.preset.workMinutes
     + (dec.preset.reps - 1) * dec.preset.recoveryMinutes + dec.preset.cooldownMinutes : 0;
   const easyRoles = [...roles.values()].filter((r) => r === "easy" || r === "easy_strides").length;

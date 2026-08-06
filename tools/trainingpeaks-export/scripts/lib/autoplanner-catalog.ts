@@ -64,7 +64,7 @@ type RefRow = { duration_min_approx?: number | null };
 type CatalogRow = {
   preset_code: string; display_name_ru: string; coach_only: boolean | null;
   coach_review_required: boolean | null; requires_explicit_vo2_intensity: boolean | null;
-  athlete_level_min: string | null;
+  athlete_level_min: string | null; enabled_by_default: boolean | null;
   workout_template_variants: { variant_code: string; intensity_intent: string; workout_template_families: { family_code: string } };
   workout_template_preset_parameters: ParamRow | ParamRow[] | null;
   workout_template_warmup_refs: RefRow | RefRow[] | null;
@@ -109,6 +109,9 @@ export async function loadCatalog(sb: SupabaseClient): Promise<Catalog> {
     // не существует (аудит 06.08), поэтому всё, что требует L2+, автоматике недоступно.
     const lvl = r.athlete_level_min as string | null;
     if (r.coach_only === true) continue;
+    // enabled_by_default читается КАК ФИЛЬТР: раньше он лежал в выборке, но не применялся,
+    // и выключенный thr_7x4 выбирался автогенерацией 7 раз.
+    if (r.enabled_by_default === false) continue;
     if (lvl !== null && lvl !== "L0") continue;
     if (!pp?.reps || !pp?.work_duration_min) continue;
 
