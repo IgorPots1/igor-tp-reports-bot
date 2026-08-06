@@ -40,6 +40,8 @@ export type QualityPreset = {
   cooldownMinutes: number;
   /** суммарный объём работы, мин — по нему строится лестница прогрессии */
   totalWorkMinutes: number;
+  /** L0…L4M или null. НЕ фильтр отбора (уровня у учеников нет) — по нему выбирается разминка. */
+  athleteLevelMin: string | null;
 };
 
 export type Guardrail = {
@@ -105,14 +107,19 @@ export async function loadCatalog(sb: SupabaseClient): Promise<Catalog> {
     }
     if (fam !== "intervals" && fam !== "race_specific") continue;
 
-    // Кандидат автогенерации: не coach_only и без гейта уровня выше L0 — уровня у учеников
-    // не существует (аудит 06.08), поэтому всё, что требует L2+, автоматике недоступно.
-    const lvl = r.athlete_level_min as string | null;
+    // Кандидат автогенерации: не coach_only, не выключенный.
+    //
+    // ГЕЙТ ПО УРОВНЮ ВЫКЛЮЧЕН НАМЕРЕННО. Раньше здесь стояло `lvl !== "L0" → continue`, и пока
+    // уровни в каталоге были пустые, оно ничего не делало. После применения миграции уровней
+    // (06.08) гейт ОЖИЛ САМ И МОЛЧА: из 14 пресетов остались бы thr_4x5 и thr_5x4, то есть один
+    // формат на всех. Уровня у УЧЕНИКОВ не существует (аудит 06.08) — сопоставлять пресет не с
+    // чем, значит отбирать по уровню нельзя. Уровень пресета всё равно поднимаем наверх: по нему
+    // выбирается протокол разминки (простая для L0–L1, каноническая для L2–L3).
+    const lvl = (r.athlete_level_min as string | null) ?? null;
     if (r.coach_only === true) continue;
     // enabled_by_default читается КАК ФИЛЬТР: раньше он лежал в выборке, но не применялся,
     // и выключенный thr_7x4 выбирался автогенерацией 7 раз.
     if (r.enabled_by_default === false) continue;
-    if (lvl !== null && lvl !== "L0") continue;
     if (!pp?.reps || !pp?.work_duration_min) continue;
 
     const warm = Array.isArray(r.workout_template_warmup_refs) ? r.workout_template_warmup_refs[0] : r.workout_template_warmup_refs;
@@ -129,6 +136,7 @@ export async function loadCatalog(sb: SupabaseClient): Promise<Catalog> {
       warmupMinutes: Number(warm?.duration_min_approx ?? 12),
       cooldownMinutes: Number(cool?.duration_min_approx ?? 10),
       totalWorkMinutes: reps * work,
+      athleteLevelMin: lvl,
     });
   }
 

@@ -24,8 +24,22 @@ export const LONG_OVER_EASY_MIN = 20;
 export const EASY_BAND_MAX_S = 25;
 /** Прирост недельного объёма к предыдущей ФАКТИЧЕСКОЙ неделе — не более этого (параметр). */
 export const WEEKLY_GROWTH_MAX = 1.10;
-/** Разминка по наблюдаемому шаблону: 86% реальных качественных — 10 минут (n=2710). */
+/** Простая разминка по наблюдаемому шаблону: 86% реальных качественных — 10 минут (n=2710). */
 export const WARMUP_CANON_MINUTES = 10;
+
+/**
+ * Каноническая разминка (решение Игоря 06.08). Части фиксированы, длительности — середина
+ * тренерского диапазона: 10 спокойно → 3–5 чуть быстрее → 2 в темпе → 3–4 ускорения →
+ * 3–5 спокойно → 5–10 пауза перед работой.
+ */
+export const CANONICAL_WARMUP = { easyIn: 10, faster: 4, tempo: 2, strides: 2, easyOut: 4, pause: 5 };
+
+/**
+ * Уровни пресета, которым положена КАНОНИЧЕСКАЯ разминка. Уровень берётся С ПРЕСЕТА —
+ * у учеников поля уровня не существует (аудит 06.08). L0–L1 и пресеты без уровня — простая.
+ */
+const CANONICAL_WARMUP_LEVELS = new Set(["L2", "L3", "L4", "L4M"]);
+export const needsCanonicalWarmup = (level: string | null): boolean => level != null && CANONICAL_WARMUP_LEVELS.has(level);
 const round5 = (m: number): number => Math.max(ROUND_TO_MIN, Math.round(m / ROUND_TO_MIN) * ROUND_TO_MIN);
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
@@ -60,7 +74,11 @@ export function assignRoles(days: number[], counts: { quality: number; long: num
   return roles;
 }
 
-export type Segment = { minutes: number; fastSec: number | null; slowSec: number | null; label: string };
+export type Segment = {
+  minutes: number; fastSec: number | null; slowSec: number | null; label: string;
+  /** чем заменить «по ощущениям» у сегмента без темпа (пауза, ускорения) */
+  noPaceText?: string;
+};
 
 export const fp = (sec: number): string => {
   const m = Math.floor(sec / 60), s = Math.round(sec % 60);
@@ -72,7 +90,7 @@ export function renderDescription(segs: Segment[]): string {
   return segs.map((s) => {
     const dur = `${s.minutes} ${s.minutes === 1 ? "минута" : s.minutes < 5 ? "минуты" : "минут"}`;
     if (s.fastSec != null && s.slowSec != null) return `${s.label}: ${dur} ${rangeText(s.fastSec, s.slowSec)}`;
-    return `${s.label}: ${dur} по ощущениям`;
+    return `${s.label}: ${dur} ${s.noPaceText ?? "по ощущениям"}`;
   }).join(". ") + ".";
 }
 
@@ -138,6 +156,42 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
     deferReason: rt.ok ? null : "round_trip_mismatch", warnings, coachReview: [] };
 }
 
+/**
+ * Каноническая разминка (пресеты L2–L3). Темпы: «спокойно» — из якоря лёгкого, «чуть быстрее»
+ * и «в темпе» — ОТ ПОРОГА, ускорения — по ощущениям, без цифр.
+ *
+ * «В темпе» считается резолвером с ПРИНУДИТЕЛЬНО снятым якорем качества (`quality: null`):
+ * иначе двухминутка получила бы ровно ту же полосу, что и рабочие отрезки, а по решению
+ * тренера этот кусок идёт от порога. Второй формулы это не заводит — путь тот же, что у
+ * фолбэка качества в резолвере.
+ *
+ * Запрет VO2 сюда НЕ относится: он про ВЫБОР СЕССИИ, а разминочные ускорения идут без темпа.
+ *
+ * Если порога нет, «чуть быстрее» и «в темпе» опускаются — разминка вырождается в спокойный
+ * бег с ускорениями, но сессия не падает в defer из-за разминки.
+ */
+function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }): Segment[] {
+  const C = CANONICAL_WARMUP;
+  const segs: Segment[] = [{ minutes: C.easyIn, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
+  const faster = resolvePace(a, "steady_tempo", "maintenance", null);
+  const tempo = resolvePace({ ...a, quality: null }, "controlled_threshold", "maintenance", null);
+  const t = tempo.ok ? (tempo as Resolved) : null;
+  if (faster.ok) {
+    const f = faster as Resolved;
+    // «Чуть быстрее» обязано остаться МЕДЛЕННЕЕ «в темпе»: это лестница разминки, а не две
+    // равные части. Расширение полосы по доверию (§2.5) подтягивает steady вплотную к порогу,
+    // и без подрезки обе части начинались с одного числа — в тексте это читается как ошибка.
+    let ff = f.absPaceMinS, fs = f.absPaceMaxS;
+    if (t && ff < t.absPaceMaxS) { ff = t.absPaceMaxS; if (fs <= ff) fs = ff + 10; }
+    segs.push({ minutes: C.faster, label: "Чуть быстрее", fastSec: ff, slowSec: fs });
+  }
+  if (t) segs.push({ minutes: C.tempo, label: "В темпе", fastSec: t.absPaceMinS, slowSec: t.absPaceMaxS });
+  segs.push({ minutes: C.strides, label: "Ускорения, 3–4 коротких по пятнадцать секунд", fastSec: null, slowSec: null, noPaceText: "свободно, по ощущениям" });
+  segs.push({ minutes: C.easyOut, label: "Спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow });
+  segs.push({ minutes: C.pause, label: "Пауза перед работой", fastSec: null, slowSec: null, noPaceText: "полный отдых, часы на паузу" });
+  return segs;
+}
+
 function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityDecision, { selected: true }>): Session {
   const p: QualityPreset = dec.preset;
   const intent: IntensityIntent = p.intensityIntent === "threshold" ? "threshold" : "controlled_threshold";
@@ -152,11 +206,13 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
   }
   const w = work as Resolved, e = easy as Resolved;
   const eb = narrowBand(e.absPaceMinS, e.absPaceMaxS);
-  // Разминка по методологии из РЕАЛЬНЫХ описаний (замер: 86% качественных — 10 минут,
-  // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно»). Ускорения внутри разминки
-  // встречаются лишь в 15% — по умолчанию НЕ ставим.
   const warmMin = p.warmupMinutes || WARMUP_CANON_MINUTES;
-  const segs: Segment[] = [{ minutes: warmMin, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
+  const segs: Segment[] = needsCanonicalWarmup(p.athleteLevelMin)
+    ? canonicalWarmup(a, eb)
+    // Простая разминка (L0–L1) по методологии из РЕАЛЬНЫХ описаний: 86% качественных — 10 минут,
+    // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно». Ускорения внутри разминки
+    // встречаются лишь в 15% — в простой разминке НЕ ставим.
+    : [{ minutes: warmMin, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
   for (let i = 0; i < p.reps; i++) {
     segs.push({ minutes: p.workMinutes, label: `Отрезок ${i + 1}`, fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS });
     if (i < p.reps - 1) segs.push({ minutes: p.recoveryMinutes, label: "Трусца", fastSec: eb.fast, slowSec: eb.slow });
