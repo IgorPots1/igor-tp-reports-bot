@@ -43,8 +43,12 @@ const COOLDOWN_DAYS = 14; // не чаще раза в N дней по чело�
 const DECLINE_SUPPRESS_DAYS = 45; // отклонённое молчит, пока магнитуда не вырастет
 const DECLINE_MAG_GROW = 6; // с/км: насколько должно усилиться, чтобы предложить снова
 // A — интервалы vs задание (беат ≥6с; асимметрия: рост 4/6, падение 5/6 — недобор шумный, ложный рост опаснее)
-const INTERVAL_WINDOW = 6; // последние N завершённых интервальных
+const INTERVAL_WINDOW = 6; // окно из N ПОРОГОВЫХ сессий
+const INTERVAL_SCAN = 15; // сколько последних интервальных просмотреть, чтобы набрать окно пороговых
+const INTERVAL_TARGET_LO = 92, INTERVAL_TARGET_HI = 108; // считаем ТОЛЬКО пороговые репы (%-таргет у порога);
+// VO2 (>108%) и суб-порог (<92%) исключаем — их исполнение отражает тип/усилие, а не точность порога.
 const INTERVAL_BEAT_SEC = 6; // «беат» задания ≥6с/км
+const INTERVAL_CAP_SEC = 30; // |дельта|>30с — шум детекции, считаем «в задании» (ни beat, ни under)
 const INTERVAL_UP_HITS = 4; // рост: ≥4 из 6 быстрее задания
 const INTERVAL_DOWN_HITS = 5; // падение: ≥5 из 6 медленнее задания
 // B — лёгкий уполз (подтверждение-only, сам не будит)
@@ -113,33 +117,33 @@ export async function loadTestConfirmed(sb: SupabaseClient): Promise<Set<number>
 async function detectIntervals(sb: SupabaseClient, active: AthleteCtx[], today: string): Promise<Map<number, Signal>> {
   const out = new Map<number, Signal>();
   for (const c of active) {
-    const { data } = await sb.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id, workout_date, rep_paces").eq("trainingpeaks_athlete_id", c.id).eq("workout_type", "run").gte("reps_detected_count", 2).gte("workout_date", daysAgoIso(120, today)).order("workout_date", { ascending: false }).limit(INTERVAL_WINDOW);
+    const { data } = await sb.from("trainingpeaks_workout_derived_metrics").select("workout_cache_id, workout_date, rep_paces").eq("trainingpeaks_athlete_id", c.id).eq("workout_type", "run").gte("reps_detected_count", 2).gte("workout_date", daysAgoIso(120, today)).order("workout_date", { ascending: false }).limit(INTERVAL_SCAN);
     const rows = data ?? [];
     if (rows.length < INTERVAL_WINDOW) continue;
     const cids = rows.map((r) => r.workout_cache_id as string);
     const { data: cc } = await sb.from("trainingpeaks_workout_cache").select("id, source_snapshot").in("id", cids);
     const snapById = new Map((cc ?? []).map((r) => [r.id as string, r.source_snapshot]));
-    let beat = 0, under = 0, evaluated = 0;
-    const beatMag: number[] = [], underMag: number[] = [];
+    // окно = последние INTERVAL_WINDOW сессий с ПОРОГОВЫМИ репами (%-таргет 92–108%); прочие пропускаем
+    const deltas: number[] = []; // exec − prescribed; <0 = быстрее задания
     for (const row of rows) {
+      if (deltas.length >= INTERVAL_WINDOW) break;
       const paces = Array.isArray(row.rep_paces) ? (row.rep_paces as unknown[]).filter((x): x is number => typeof x === "number" && x > 60 && x < 900) : [];
       if (paces.length < 2) continue;
-      const exec = median(paces);
       const snap = snapById.get(row.workout_cache_id as string);
       const fx = flatSteps(isRecord(snap) ? snap.structure : null);
       if (!fx) continue;
-      const workPct = fx.steps.filter((s) => s.role === "работа" && Number.isFinite(s.min) && Number.isFinite(s.max) && s.min > 0).map((s) => (s.min + s.max) / 2);
-      if (!workPct.length) continue;
-      const prescribed = (c.thrSec * 100) / median(workPct); // текущий порог × замороженный %
+      const bandPct = fx.steps.filter((s) => s.role === "работа" && Number.isFinite(s.min) && Number.isFinite(s.max) && (s.min + s.max) / 2 >= INTERVAL_TARGET_LO && (s.min + s.max) / 2 <= INTERVAL_TARGET_HI).map((s) => (s.min + s.max) / 2);
+      if (!bandPct.length) continue; // не пороговая сессия — не наш класс
+      const prescribed = (c.thrSec * 100) / median(bandPct);
       if (!(prescribed > 120 && prescribed < 600)) continue;
-      evaluated++;
-      const d = exec - prescribed; // <0 = быстрее задания
-      if (d <= -INTERVAL_BEAT_SEC) { beat++; beatMag.push(-d); }
-      else if (d >= INTERVAL_BEAT_SEC) { under++; underMag.push(d); }
+      deltas.push(median(paces) - prescribed);
     }
-    if (evaluated < INTERVAL_WINDOW) continue;
-    if (beat >= INTERVAL_UP_HITS) { const m = Math.round(median(beatMag)); out.set(c.id, { type: "intervals", direction: "up", proposed_sec: Math.round(c.thrSec) - m, magnitude_sec: m, evidence: `интервалы ${beat}/${INTERVAL_WINDOW} быстрее задания на ~${m}с`, features: { window: INTERVAL_WINDOW, beat, under, median_beat_sec: m } }); }
-    else if (under >= INTERVAL_DOWN_HITS) { const m = Math.round(median(underMag)); out.set(c.id, { type: "intervals", direction: "down", proposed_sec: Math.round(c.thrSec) + m, magnitude_sec: m, evidence: `интервалы ${under}/${INTERVAL_WINDOW} медленнее задания на ~${m}с`, features: { window: INTERVAL_WINDOW, beat, under, median_under_sec: m } }); }
+    if (deltas.length < INTERVAL_WINDOW) continue; // мало пороговых сессий — не сигнал (редко и по делу)
+    // кап 30с: |дельта|>30с — шум, ни beat, ни under
+    const beatMag = deltas.filter((d) => d <= -INTERVAL_BEAT_SEC && d >= -INTERVAL_CAP_SEC).map((d) => -d);
+    const underMag = deltas.filter((d) => d >= INTERVAL_BEAT_SEC && d <= INTERVAL_CAP_SEC);
+    if (beatMag.length >= INTERVAL_UP_HITS) { const m = Math.round(median(beatMag)); out.set(c.id, { type: "intervals", direction: "up", proposed_sec: Math.round(c.thrSec) - m, magnitude_sec: m, evidence: `интервалы ${beatMag.length}/${INTERVAL_WINDOW} быстрее задания на ~${m}с (пороговые репы)`, features: { window: INTERVAL_WINDOW, beat: beatMag.length, under: underMag.length, median_beat_sec: m } }); }
+    else if (underMag.length >= INTERVAL_DOWN_HITS) { const m = Math.round(median(underMag)); out.set(c.id, { type: "intervals", direction: "down", proposed_sec: Math.round(c.thrSec) + m, magnitude_sec: m, evidence: `интервалы ${underMag.length}/${INTERVAL_WINDOW} медленнее задания на ~${m}с (пороговые репы)`, features: { window: INTERVAL_WINDOW, beat: beatMag.length, under: underMag.length, median_under_sec: m } }); }
   }
   return out;
 }
@@ -202,8 +206,8 @@ export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx
   const today = new Date().toISOString().slice(0, 10);
   const ids = ctx.map((c) => c.id);
   const held = await loadHeldAthletes(sb);
-  const testConfirmed = await loadTestConfirmed(sb); // порог с 30-мин теста → забеговый сигнал не поднимаем
-  const active = ctx.filter((c) => !held.has(c.id));
+  const testConfirmed = await loadTestConfirmed(sb); // порог с 30-мин теста → НИ ОДИН сигнал не поднимаем (тест — прямое измерение, косвенный вывод его не оспаривает)
+  const active = ctx.filter((c) => !held.has(c.id) && !testConfirmed.has(c.id));
   const byId = new Map(active.map((c) => [c.id, c]));
 
   // ── (A) ПЕРЕРЫВ: последняя завершённая пробежка на атлета ─────────────────────
@@ -230,8 +234,7 @@ export async function detectThresholdSignals(sb: SupabaseClient, ctx: AthleteCtx
   }
   const raceSig = new Map<number, Signal>();
   for (const [aid, races] of racesByAth) {
-    const c = byId.get(aid); if (!c) continue; // held/inactive
-    if (testConfirmed.has(aid)) continue; // порог подтверждён 30-мин тестом → забег (оценка) сигнал не поднимает
+    const c = byId.get(aid); if (!c) continue; // held/test-confirmed/inactive (active уже отфильтрован)
     const cur = c.thrSec;
     const usable: UsableRace[] = [];
     for (const r of races) {
