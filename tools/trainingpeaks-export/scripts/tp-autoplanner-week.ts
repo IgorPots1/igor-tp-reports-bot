@@ -100,9 +100,9 @@ async function main(): Promise<void> {
 
   // три показательные недели
   const withQ = weeks.find((w) => w.athleteId === 5733231);
-  const fallback = weeks.find((w) => w.athleteId === 5673496);
-  const t1 = weeks.find((w) => w.athleteId === 5847207);
-  const picks: Array<[Week | undefined, string]> = [[withQ, "С КАЧЕСТВОМ"], [fallback, "ФОЛБЭК zone2 · атлет 5673496 (для сравнения)"], [t1, "T1 · лёгкий по ощущениям"]];
+  const fallback = weeks.find((w) => w.sessions.some((x) => x.anchorSource === "tp_zone2" && !x.deferred));
+  const t1 = weeks.find((w) => w.tier === "T1" && w.sessions.some((x) => x.targetMode === "rpe" && !x.deferred));
+  const picks: Array<[Week | undefined, string]> = [[withQ, "С КАЧЕСТВОМ"], [fallback, "ФОЛБЭК zone2 (5673496 отклонён по слипанию — см. список выше)"], [t1, "T1 · лёгкий по ощущениям (5847207 отклонён по слипанию)"]];
   const printed: string[] = [];
   for (const [w, label] of picks) if (w) printed.push(...printWeek(w, label));
   out.push("\n## Три недели целиком"); out.push(...printed);
