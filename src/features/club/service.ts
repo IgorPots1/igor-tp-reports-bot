@@ -361,10 +361,12 @@ export async function logClubLinkEvent(input: {
 }
 
 function isVisible(student: ClubStudent): boolean {
-  // Phase 3.1: a service account participates in the club ONLY when explicitly
-  // allowlisted (CLUB_INCLUDE_SERVICE_STUDENT_IDS) — the coach's own row. The
-  // is_service_account flag itself stays set for every other surface.
-  const serviceOk = !student.isServiceAccount || C.clubIncludedServiceStudentIds().has(student.id);
+  // A service account (the coach's own student row) is NEVER a participant in the
+  // student-facing club — no tops, no feed, no profiles. "Я тренер, а не участник
+  // рейтинга" (Igor, 2026-08). The coach still appears in ADMIN (which queries all
+  // students directly, not through isVisible). The former CLUB_INCLUDE_SERVICE_STUDENT_IDS
+  // opt-in allowlist is intentionally dropped — a coach must not rank against students.
+  const serviceOk = !student.isServiceAccount;
   const base = student.isActive && serviceOk;
   // Opt-out only takes effect when the privacy feature is enabled; otherwise the
   // club_visible flag is stored-but-ignored and everyone participates by default.
@@ -1364,6 +1366,7 @@ function coachRaceEntry(
     source: "coach_confirmed",
     calcMethod: "whole_workout",
     recordType: "race",
+    raceName: c.raceName ?? null,
   };
 }
 
@@ -1385,6 +1388,9 @@ function clubRecordOverrideEntry(
     source: c.source as RecordSource,
     calcMethod: "whole_workout",
     recordType,
+    // A named race (official_protocol) shows its name; a Strava training split stays nameless
+    // (the «Strava» mark labels it), so it never masquerades as a named race.
+    raceName: recordType === "race" ? c.raceName ?? null : null,
   };
 }
 
@@ -2240,7 +2246,12 @@ function annotateRaceSegments(
       sameDayLongerKm > nominal * SEGMENT_RATIO ||
       (ev?.maxKm != null && ev.maxKm > nominal * SEGMENT_RATIO) ||
       (r.calcMethod === "best_split" && workoutKm != null && workoutKm > nominal * SEGMENT_RATIO);
-    if (!isSegment) continue;
+    if (!isSegment) {
+      // Standalone reconstructed race: show the day's event name so it is not nameless
+      // (override rows already carry raceName from the builder; don't overwrite them).
+      if (ev?.title && !r.raceName) r.raceName = ev.title;
+      continue;
+    }
     if (ev?.title) {
       r.raceSegmentLabel = `отрезок гонки «${ev.title}»`;
     } else {
@@ -2465,7 +2476,7 @@ export async function getClubRecords(input: {
     // (measured training segments). The personal card keeps the «Гонки / Лучшие отрезки» split;
     // the leaderboard answers "who is fastest in the club", so a Strava best competes here. Each row
     // carries its `source` so a Strava/training best is MARKED, never passed off as a protocol race.
-    type Cand = { studentId: string; name: string; sec: number; pace: number | null; date: string | null; source: RecordSource; kind: "race" | "training_split" };
+    type Cand = { studentId: string; name: string; sec: number; pace: number | null; date: string | null; source: RecordSource; kind: "race" | "training_split"; raceName: string | null };
     const cands: Cand[] = [];
     // Iterate ALL visible students (not just those with a snapshot): a runner with only an
     // official_protocol race or a Strava best (no reconstruction) must still make the leaderboard.
@@ -2476,12 +2487,12 @@ export async function getClubRecords(input: {
       const pool: Cand[] = [];
       if (c?.source === "coach_confirmed") {
         // coach governs the distance: verified → a race candidate; hidden/preliminary → excluded, no fallback.
-        if (c.trust === "verified") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "coach_confirmed", kind: "race" });
+        if (c.trust === "verified") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "coach_confirmed", kind: "race", raceName: c.raceName ?? null });
       } else {
-        if (c?.source === "official_protocol") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "official_protocol", kind: "race" });
-        if (c?.source === "strava_best_effort") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "strava_best_effort", kind: "training_split" });
+        if (c?.source === "official_protocol") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "official_protocol", kind: "race", raceName: c.raceName ?? null });
+        if (c?.source === "strava_best_effort") pool.push({ studentId, name, sec: c.durationSeconds, pace: c.paceSecPerKm, date: c.recordDate ?? null, source: "strava_best_effort", kind: "training_split", raceName: null });
         const rv = perStudent?.get(target.key)?.raceVerified;
-        if (rv) pool.push({ studentId, name, sec: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, source: "race_events", kind: "race" });
+        if (rv) pool.push({ studentId, name, sec: rv.durationSeconds, pace: rv.paceSecPerKm, date: rv.date, source: "race_events", kind: "race", raceName: null });
       }
       if (pool.length) cands.push(pool.reduce((a, b) => (b.sec < a.sec ? b : a))); // this student's FASTEST
     }
@@ -2500,6 +2511,7 @@ export async function getClubRecords(input: {
       recordType: r.kind,
       source: r.source,
       date: r.date,
+      raceName: r.raceName,
       // Only a reconstructed race (race_events) can be a within-race SEGMENT; coach/official/strava
       // rows get no caption (null → skipped by the post-pass below).
       raceSegmentLabel: r.source === "race_events" ? undefined : null,
@@ -2525,7 +2537,13 @@ export async function getClubRecords(input: {
   for (const top of clubTops) {
     for (const row of top.rows) {
       if (row.raceSegmentLabel !== undefined) continue; // coach row (null) already decided
-      row.raceSegmentLabel = topRowSegmentLabel(row, snapshots.get(row.studentId), eventsByStudent.get(row.studentId));
+      const evForStudent = eventsByStudent.get(row.studentId);
+      row.raceSegmentLabel = topRowSegmentLabel(row, snapshots.get(row.studentId), evForStudent);
+      // A standalone reconstructed race carries the event's name too, so it is not shown nameless.
+      if (!row.raceSegmentLabel && !row.raceName && row.date) {
+        const ev = evForStudent?.get(row.date.slice(0, 10));
+        if (ev?.title) row.raceName = ev.title;
+      }
     }
   }
 

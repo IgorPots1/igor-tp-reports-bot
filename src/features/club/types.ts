@@ -157,6 +157,10 @@ export type ClubRecordEntry = {
    *  results. Shown to make clear the record is not a standalone start (records still
    *  appear everywhere — nothing is hidden). */
   raceSegmentLabel?: string | null;
+  /** Name of a STANDALONE race result, e.g. «Белые ночи» — so an official/coach result is not
+   *  shown nameless (a segment uses raceSegmentLabel instead). Null for Strava training splits
+   *  (the «Strava» mark covers those) and unnamed reconstructions. */
+  raceName?: string | null;
 };
 
 export type ClubRecordsClubTopRow = {
@@ -179,6 +183,9 @@ export type ClubRecordsClubTopRow = {
   date?: string | null;
   /** Set when this top result is a within-race segment (same caption as the card). */
   raceSegmentLabel?: string | null;
+  /** Standalone race name (e.g. «Белые ночи») so a leaderboard result is not shown nameless.
+   *  Null for Strava training bests (the «Strava» mark covers those). */
+  raceName?: string | null;
   /** Signed proxy URL of the member's avatar, or null (feature off / opted out / no photo). */
   avatarUrl?: string | null;
 };

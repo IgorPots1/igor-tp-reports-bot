@@ -1063,7 +1063,7 @@ function RecordsTab(props: {
         <span style={S.bigNumber}>{fmtDuration(rec.durationSeconds)}</span>
         {rec.paceSecPerKm ? <span style={{ color: C.sub, fontSize: 14 }}>{fmtPace(rec.paceSecPerKm)}</span> : null}
       </div>
-      <div style={S.cardMeta}>{rec.dateLabel}</div>
+      <div style={S.cardMeta}>{rec.raceName ? `${rec.raceName} · ` : ""}{rec.dateLabel}</div>
       {rec.raceSegmentLabel ? <div style={S.segmentNote}>{rec.raceSegmentLabel}</div> : null}
       <div style={{ marginTop: 8 }}><TrustBadge trust={rec.trust} /></div>
     </div>
@@ -1111,7 +1111,7 @@ function RecordsTab(props: {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={S.cardName}>{row.displayName}{row.isCurrentStudent ? " · ты" : ""}</div>
                   <div style={S.cardMeta}>{fmtPace(row.paceSecPerKm) ?? ""}</div>
-                  {row.raceSegmentLabel ? <div style={S.segmentNote}>{row.raceSegmentLabel}</div> : null}
+                  {row.raceSegmentLabel ? <div style={S.segmentNote}>{row.raceSegmentLabel}</div> : row.raceName ? <div style={S.segmentNote}>{row.raceName}</div> : null}
                 </div>
                 {row.source === "strava_best_effort" ? (
                   <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 600, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap" }}>Strava</span>
@@ -1473,7 +1473,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
                 <span style={{ flex: 1, fontFamily: HEAD, fontSize: 17, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
                 <span style={{ color: r.trust === "verified" ? C.good : C.warn, fontSize: 12 }}>{r.trust === "verified" ? "подтв." : "предв."}</span>
               </div>
-              {r.raceSegmentLabel ? <div style={{ ...S.segmentNote, marginLeft: 18 }}>{r.raceSegmentLabel}</div> : null}
+              {r.raceSegmentLabel ? <div style={{ ...S.segmentNote, marginLeft: 18 }}>{r.raceSegmentLabel}</div> : r.raceName ? <div style={{ ...S.segmentNote, marginLeft: 18 }}>{r.raceName}</div> : null}
             </div>
           ))
         )}
@@ -1652,7 +1652,7 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
                         <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
                         <span style={{ fontSize: 12, color: C.faint, whiteSpace: "nowrap" }}>{r.dateLabel}</span>
                       </div>
-                      {r.raceSegmentLabel ? <div style={{ ...S.segmentNote, marginLeft: 16 }}>{r.raceSegmentLabel}</div> : null}
+                      {r.raceSegmentLabel ? <div style={{ ...S.segmentNote, marginLeft: 16 }}>{r.raceSegmentLabel}</div> : r.raceName ? <div style={{ ...S.segmentNote, marginLeft: 16 }}>{r.raceName}</div> : null}
                     </div>
                   ))}
                 </div>
