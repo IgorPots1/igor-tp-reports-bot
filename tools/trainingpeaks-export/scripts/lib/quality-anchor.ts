@@ -42,10 +42,15 @@ export function extractQualitySample(title: string, desc: string): { fast: numbe
   if (!Number.isFinite(reps) || !Number.isFinite(workMin) || reps < 2 || workMin <= 0 || workMin > 30) return null;
 
   const segs = parseSegments(desc);
-  if (segs.length === 0) return null;
+  // Разминка и заминка стоят С КРАЁВ описания и часто ТОЙ ЖЕ длительности, что и отрезок
+  // («4 x 10 мин»: разминка 10 мин, работа 10 мин, заминка 10 мин). Одной длительности мало —
+  // края надо снимать ПО ПОЗИЦИИ, иначе медиана берёт лёгкий темп заминки за рабочий.
+  // Замер до правки: у 5953351 «работой» вышла заминка 6:15–6:47 — МЕДЛЕННЕЕ его же лёгкого.
+  if (segs.length < 3) return null; // без краёв работу от разминки не отделить — сэмпл не берём
+  const inner = segs.slice(1, -1);
 
   // рабочие сегменты: длительность совпадает с M из заголовка И есть прописанный темп
-  const work = segs.filter((s) => Math.abs(s.durSec / 60 - workMin) <= DURATION_TOL_MIN && s.range != null);
+  const work = inner.filter((s) => Math.abs(s.durSec / 60 - workMin) <= DURATION_TOL_MIN && s.range != null);
   if (work.length === 0) return null;
 
   const fasts = work.map((s) => s.range!.fast).sort((a, b) => a - b);
@@ -55,6 +60,13 @@ export function extractQualitySample(title: string, desc: string): { fast: numbe
 
   if (fast < MIN_WORK_PACE_S || slow > MAX_WORK_PACE_S) return null;
   if (slow - fast > MAX_WORK_BAND_S) return null;
+
+  // Санити: работа не может быть МЕДЛЕННЕЕ разминки или заминки — там лёгкий бег.
+  // Если оказалась — значит за работу принят не тот сегмент, сэмпл выбрасываем.
+  const edges = [segs[0], segs[segs.length - 1]]
+    .filter((s) => s.range != null).map((s) => (s.range!.fast + s.range!.slow) / 2);
+  if (edges.length > 0 && (fast + slow) / 2 >= Math.min(...edges)) return null;
+
   return { fast, slow, workMinutes: workMin, reps };
 }
 
