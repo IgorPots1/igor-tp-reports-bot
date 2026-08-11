@@ -343,7 +343,14 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const EASY_FLOOR = EASY_FLOOR_MIN;                    // гейт: короче не бывает
   const easyTarget = EASY_TARGET_BY_TIER[a.tier];       // цель: типичная длина лёгкой
   const ratioEasy = LONG_OVER_EASY_TARGET[a.tier];      // цель
-  const ratioQual = LONG_OVER_QUALITY_TARGET[a.tier];   // цель
+  // ЦЕЛЬ, НО БОЛЬШЕ НЕ МНОЖИТЕЛЬ ДЛИНЫ ДЛИТЕЛЬНОЙ (правка 16.08). Кратность замерена на
+  // качественных ТРЕНЕРА (медиана полной длительности у T3 — 61 мин), а машина ставит сессию
+  // с канонической разминкой на 96 мин. 96 × 1.64 = 157 мин длительной — так тренер не пишет,
+  // и в пакете на приёмку это дало неделю «длительная 155 при лёгких 30». Применять кратность
+  // к сессии вне того диапазона, на котором она замерена, нельзя. Инвариант «длительная длиннее
+  // качественной» держится отдельно (см. начальное значение longMin). Расхождение с кратностью
+  // не прячем — оно уходит ПОМЕТКОЙ тренеру.
+  const ratioQual = LONG_OVER_QUALITY_TARGET[a.tier];
   let nWant = Math.round(env.rolling4wFrequency || 0);
   if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
   if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
@@ -518,14 +525,31 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // после того, как подняли цели лёгких. Лёгкий день — расходный, длительная — смысл недели;
   // платить длительной за лёгкие нельзя. Ориентир длительной — ФУНКЦИЯ от длины лёгкого, а не
   // число, посчитанное один раз: иначе лёгкие подрастают следом и кратность молча съезжает.
-  const longTargetFor = (easy: number): number =>
-    round5(Math.max(capLong, easy * ratioEasy, qLongest > 0 ? qLongest * ratioQual : 0));
+  // ФОРМА НЕДЕЛИ СЧИТАЕТСЯ ПРОПОРЦИЕЙ, А НЕ «КТО ПЕРВЫЙ ВСТАЛ» (правка 16.08, вторая итерация).
+  //
+  // Первый заход этого пункта просто отдал длительной приоритет — и получилось ХУЖЕ, чем было:
+  // в пакете на приёмку T3-неделя вышла «длительная 155 мин при лёгких по 30–35», кратность 4.4
+  // при замеренной по практике 1.80. Причина в том, что ориентиром длительной служил её ПОТОЛОК:
+  // взяв приоритет, она забирала весь бюджет, а лёгкие оставались на полу.
+  //
+  // Правильно — сначала разделить бюджет в ЗАМЕРЕННОЙ пропорции, и уже потом подгонять под
+  // полы и потолки:  длительная = ratioEasy × лёгкий,  лёгкие × их число + длительная = бюджет.
+  const shapeBudget = Math.max(0, weekly - qTotal);
+  const easyShape = easyRoles > 0 ? shapeBudget / (easyRoles + ratioEasy) : 0;
+  const longShape = easyRoles > 0 ? ratioEasy * easyShape : shapeBudget;
 
-  // (1) длительная до своего ориентира
+  // ПОТОЛОК ДЛИТЕЛЬНОЙ — ПОТОЛОК, А НЕ ЦЕЛЬ. Прежде он входил в ориентир через Math.max и
+  // работал как ПОЛ: длительная всегда дорастала минимум до него. Правило Игоря обратное —
+  // потолок объёма главнее полов.
+  const longTargetFor = (easy: number): number =>
+    round5(Math.min(capLong, Math.max(LONG_FLOOR, easy * ratioEasy, longShape)));
+
+  // (1) длительная до своей доли — раньше лёгких, но именно до ДОЛИ, а не до потолка
   while (spare >= ROUND_TO_MIN && longMin < longTargetFor(easyBase)) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
-  // (2) лёгкие до ЦЕЛИ тира. Шаг лёгкого, который ломает кратность, СНАЧАЛА оплачивает
-  //     длительную — так лёгкие не растут за её счёт.
-  while (canGrowEasy() && easyBase < easyTarget) {
+  // (2) лёгкие до ЦЕЛИ тира, но не выше своей доли в пропорции. Шаг лёгкого, который ломает
+  //     кратность, СНАЧАЛА оплачивает длительную — так лёгкие не растут за её счёт.
+  const easyCeilShape = Math.max(EASY_FLOOR, round5(easyShape));
+  while (canGrowEasy() && easyBase < Math.min(easyTarget, easyCeilShape)) {
     const need = longTargetFor(easyBase + ROUND_TO_MIN);
     if (longMin < need) {
       if (spare < ROUND_TO_MIN) break;
@@ -550,11 +574,17 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const longRoom = longMin < capLong && spare >= ROUND_TO_MIN;
     const easyRoom = canGrowEasy() && easyBase < EASY_MAX && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy;
     if (!longRoom && !easyRoom) break;
-    // ДЛИТЕЛЬНАЯ ПРИОРИТЕТНЕЕ и здесь: пока у неё есть место до потолка, добор идёт ей.
-    // Прежде шаг отдавался «тому, кто дальше от ориентира», и лёгкие выигрывали почти всегда —
-    // длительная к этому моменту уже стояла на своём потолке, а лёгким было куда расти до 70.
-    if (longRoom) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
+    // ДОБОР ДЕРЖИТ ФОРМУ, а не отдаёт всё одному. Шаг получает тот, кто отстаёт от замеренной
+    // кратности: если длительная сейчас короче ratioEasy × лёгкий — ей, иначе лёгким.
+    // Прежде шаг шёл «тому, кто дальше от ориентира», и лёгкие выигрывали всегда (длительная
+    // уже стояла на потолке); безусловный приоритет длительной ломал неделю в другую сторону.
+    const behindOnLong = easyBase > 0 && longMin < easyBase * ratioEasy;
+    if (longRoom && (!easyRoom || behindOnLong)) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
     else { easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles; }
+  }
+  if (qLongest > 0 && longMin < qLongest * ratioQual) {
+    notes.push(`длительная ${longMin} мин против ориентира ${Math.round(qLongest * ratioQual)} (×${ratioQual} к качественной ${qLongest} мин)`
+      + ` — в бюджет недели такая не входит, кратность к качественной не выдержана`);
   }
   if (total() < targetWeekly * VOLUME_TARGET_TOL) {
     notes.push(`объём ${total()} мин ниже цели ${targetWeekly}: упёрлись в потолки сессий, не в потолок недели`);
