@@ -11,7 +11,6 @@ import type { BillingMonthStatusRow } from "@/features/billing/types";
 
 import { formatRuDate } from "./service";
 import { createCalendarEntry } from "./calendar";
-import { buildClubTbankPayUrl } from "./billing-links";
 import type {
   ClubBillingView,
   ClubDayoffRequest,
@@ -465,7 +464,15 @@ export async function getClubBilling(studentId: string): Promise<ClubBillingView
 
   const current = detail.currentMonthStatus;
   const status = current ? billingStatusLabel(current) : null;
-  const payUrl = buildClubTbankPayUrl(client.clientName ?? studentId);
+  // Per-student pay link (наряд ч.5.2): the student's OWN payment_url, никакого общего фолбэка.
+  // Нет ссылки → payUrl=null → мини-апп прячет кнопку «Оплатить» (а не ведёт на общую).
+  const supabase = createSupabaseServerClient();
+  const { data: stRow } = await supabase
+    .from("trainingpeaks_students")
+    .select("payment_url")
+    .eq("id", studentId)
+    .maybeSingle();
+  const payUrl = ((stRow?.payment_url as string | null) ?? "").trim() || null;
 
   const history = detail.paymentHistory
     .slice(-6)
