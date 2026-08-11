@@ -47,6 +47,8 @@ export type Envelope = {
   complianceRatio: number | null;
   /** сколько последних недель подряд выполнение ниже порога */
   lowComplianceWeeks: number;
+  /** медиана длительности ОБЫЧНОЙ лёгкой пробежки этого атлета, мин (0 — таких нет) */
+  typicalEasyMinutes: number;
   /** объём работы последней качественной (reps × мин), null — истории нет */
   lastQualityWorkMinutes: number | null;
   /** потолки из baselines — ТОЛЬКО как потолки, не как цель */
@@ -206,6 +208,8 @@ async function pullIllness(sb: SupabaseClient): Promise<Map<string, DateWindow[]
 }
 
 const QUALITY_TITLE_RE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|повтор|порог|фартлек|vo\s?2|мпк|темп выше)/i;
+/** Так тренер называет длительные. Нужен, чтобы отделить их от обычных лёгких. */
+const LONG_TITLE_RE = /длительн|длинн/i;
 
 /** Собрать контекст по всем атлетам. asOf = дата, «на которую» считаем (обычно сегодня). */
 export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = todayIso()): Promise<Map<number, AthleteContext>> {
@@ -226,6 +230,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const dayHistogram = [0, 0, 0, 0, 0, 0, 0];
     const weekMin = new Map<string, number>(); const weekFreq = new Map<string, number>(); const weekQual = new Map<string, number>();
     const weekPlanned = new Map<string, number>();
+    const easyPlannedMinutes: number[] = [];
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
 
@@ -243,6 +248,13 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       if (r.is_planned && (r.planned_time_raw ?? 0) > 0) {
         const wkp = mondayOf(r.workout_date);
         weekPlanned.set(wkp, (weekPlanned.get(wkp) ?? 0) + (r.planned_time_raw as number) * 60);
+        // «Обычная лёгкая» этого атлета: нужна, чтобы не называть длительной сессию, которая
+        // на самом деле обычная лёгкая (у T1 длительных в практике нет вовсе).
+        const t = r.title ?? "";
+        if (t && !QUALITY_TITLE_RE.test(t) && !LONG_TITLE_RE.test(t)) {
+          const m = Math.round((r.planned_time_raw as number) * 60);
+          if (m > 0 && m <= 300) easyPlannedMinutes.push(m);
+        }
       }
       if (r.is_completed && (r.completed_time_raw ?? 0) > 0) {
         const wk = mondayOf(r.workout_date);
@@ -284,6 +296,12 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       const pl = weekPlanned.get(w) ?? 0; if (pl <= 0) continue;
       if ((weekMin.get(w) ?? 0) / pl < LOW_COMPLIANCE_RATIO) lowComplianceWeeks++; else break;
     }
+
+    const sortedEasy = easyPlannedMinutes.sort((x, y) => x - y);
+    const typicalEasyMinutes = sortedEasy.length
+      ? (sortedEasy.length % 2 ? sortedEasy[(sortedEasy.length - 1) / 2]
+        : Math.round((sortedEasy[sortedEasy.length / 2 - 1] + sortedEasy[sortedEasy.length / 2]) / 2))
+      : 0;
 
     const b = baselines.get(aid);
 
@@ -337,7 +355,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
         lastWeekMinutes: lastWeekMin,
-        rolling4wPlannedMin, lastWeekPlannedMinutes, complianceRatio, lowComplianceWeeks,
+        rolling4wPlannedMin, lastWeekPlannedMinutes, complianceRatio, lowComplianceWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         dayHistogram, weeksObserved: weekMin.size,

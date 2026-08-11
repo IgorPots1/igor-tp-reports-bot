@@ -150,6 +150,8 @@ async function main(): Promise<void> {
   out.push(`- выдано:  p10 ${Math.round(q(mins, 0.1))} · медиана ${Math.round(q(mins, 0.5))} · p90 ${Math.round(q(mins, 0.9))}`);
   const lowCompliance = weeks.filter((w) => w.notes.some((nt) => nt.includes("выполнение ниже"))).length;
   out.push(`- недель с пометкой по низкому выполнению: ${lowCompliance} (объём им НЕ срезан)`);
+  const renamedLong = weeks.filter((w) => w.notes.some((nt) => nt.includes("назван лёгким"))).length;
+  out.push(`- недель, где длинный день назван лёгким (не длиннее обычной лёгкой): ${renamedLong}`);
 
   const overCap = weeks.filter((w) => w.plannedMinutes > w.weeklyCap);
   out.push(`\n## потолок объёма`);

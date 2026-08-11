@@ -453,7 +453,15 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   for (const d of days) {
     const role = roles.get(d) ?? "easy";
     if (role === "quality" && qIdx < qSessions.length) sessions.push(qSessions[qIdx++]);
-    else if (role === "long") sessions.push(aerobicSession(d, "long", a, cat, longMin));
+    // НАЗЫВАЕМ ВЕЩИ СВОИМИ ИМЕНАМИ. У T1 длительных в практике нет вовсе (пар в замере n=0),
+    // и единственная сессия недели выходила «Длительный аэробный 30 минут» при том, что
+    // обычная лёгкая у этого же атлета ровно 30. Если сессия не длиннее его обычной лёгкой —
+    // это лёгкий бег, а не длительная.
+    else if (role === "long") {
+      const isReallyLong = env.typicalEasyMinutes <= 0 || longMin > env.typicalEasyMinutes;
+      if (!isReallyLong) notes.push(`длинный день назван лёгким: ${longMin} мин не больше обычной лёгкой (${env.typicalEasyMinutes} мин)`);
+      sessions.push(aerobicSession(d, isReallyLong ? "long" : "easy", a, cat, longMin));
+    }
     else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, easyVariants[easyIdx % easyVariants.length])); easyIdx++; }
   }
   return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, refused: null, refusedKind: null,
