@@ -139,6 +139,18 @@ async function main(): Promise<void> {
   const thinShown = all.filter((s) => !s.deferred && s.warnings.some((x) => x.includes("якорь качества тонкий"))).length;
   out.push(`- сессий с явной пометкой «якорь тонкий»: ${thinShown}`);
 
+  const q = (xs: number[], p: number): number => {
+    const s = [...xs].sort((a, b) => a - b); if (!s.length) return NaN;
+    const i = (s.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+    return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo);
+  };
+  const caps = weeks.map((w) => w.weeklyCap), mins = weeks.map((w) => w.plannedMinutes);
+  out.push(`\n## объёмы недель, мин`);
+  out.push(`- потолок: p10 ${Math.round(q(caps, 0.1))} · медиана ${Math.round(q(caps, 0.5))} · p90 ${Math.round(q(caps, 0.9))}`);
+  out.push(`- выдано:  p10 ${Math.round(q(mins, 0.1))} · медиана ${Math.round(q(mins, 0.5))} · p90 ${Math.round(q(mins, 0.9))}`);
+  const lowCompliance = weeks.filter((w) => w.notes.some((nt) => nt.includes("выполнение ниже"))).length;
+  out.push(`- недель с пометкой по низкому выполнению: ${lowCompliance} (объём им НЕ срезан)`);
+
   const overCap = weeks.filter((w) => w.plannedMinutes > w.weeklyCap);
   out.push(`\n## потолок объёма`);
   out.push(`- недель выше потолка: ${overCap.length} (должно быть 0)`);

@@ -8,7 +8,7 @@
  */
 import { ranges, parseSegments } from "./tp-recompute.ts";
 import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, type Tier } from "./pace-resolver.ts";
-import type { Envelope } from "./autoplanner-context.ts";
+import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, type Envelope } from "./autoplanner-context.ts";
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, type QualityDecision } from "./quality-select.ts";
 import type { Band } from "./band-collision.ts";
@@ -298,14 +298,23 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
 
   const longDayHint = env.dayHistogram.indexOf(Math.max(...env.dayHistogram));
 
-  // ПОТОЛОК НЕДЕЛИ — НЕПРИКОСНОВЕНЕН (правило Игоря 11.08). Конверт сверху И не более +10%
-  // к предыдущей ФАКТИЧЕСКОЙ неделе. Раньше полы сессий побеждали потолок и неделя вылезала
-  // за него (5847207: потолок 28 мин, выдавалось 80 при активной травме). Теперь наоборот:
-  // не помещается — сокращаем ЧИСЛО ДНЕЙ, а если и одна сессия не влезает, неделю не выдаём.
-  let weekly = Math.min(env.rolling4wWeeklyMin || 0, env.capWeeklyMin ?? Infinity) || 150;
-  if (env.lastWeekMinutes > 0) {
-    const ceil = Math.round(env.lastWeekMinutes * WEEKLY_GROWTH_MAX);
-    if (weekly > ceil) { weekly = ceil; notes.push(`объём подрезан до +${Math.round((WEEKLY_GROWTH_MAX - 1) * 100)}% к прошлой неделе (${env.lastWeekMinutes} мин)`); }
+  // ПОТОЛОК НЕДЕЛИ — НЕПРИКОСНОВЕНЕН (правило Игоря 11.08) И СЧИТАЕТСЯ ОТ ПЛАНА (12.08).
+  //
+  // Раньше он считался от ЗАВЕРШЁННЫХ минут, а полы сессий измерены по ПЛАНАМ тренера. Две
+  // валюты в одной формуле сжимали неделю на каждом прогоне: медиана выполнено/запланировано
+  // 0.83, у 41 атлета из 119 ниже 70%, третий день переставал влезать и качество отменялось
+  // (12 недель с качеством из 110). Теперь и потолок, и полы — в плановых минутах.
+  //
+  // Выполнение НЕ выбрасываем: низкое выполнение уходит ПОМЕТКОЙ тренеру ниже, но объём им
+  // не режется — иначе пропуск недели навсегда занижает план.
+  let weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;
+  if (env.lastWeekPlannedMinutes > 0) {
+    const ceil = Math.round(env.lastWeekPlannedMinutes * WEEKLY_GROWTH_MAX);
+    if (weekly > ceil) { weekly = ceil; notes.push(`объём подрезан до +${Math.round((WEEKLY_GROWTH_MAX - 1) * 100)}% к плану прошлой недели (${env.lastWeekPlannedMinutes} мин)`); }
+  }
+  if (env.lowComplianceWeeks >= LOW_COMPLIANCE_WEEKS) {
+    notes.push(`✋ выполнение ниже ${Math.round(LOW_COMPLIANCE_RATIO * 100)}% ${env.lowComplianceWeeks} нед подряд`
+      + `${env.complianceRatio != null ? ` (за окно ${Math.round(env.complianceRatio * 100)}%)` : ""} — объём НЕ срезан, нужен взгляд тренера`);
   }
 
   const qualityCap = qualityCapFromHistory(env.qualityLast8w);

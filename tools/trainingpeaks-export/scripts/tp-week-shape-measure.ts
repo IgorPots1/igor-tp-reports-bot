@@ -126,8 +126,9 @@ async function main(): Promise<void> {
 
   const line = (label: string, xs: number[], fmt: (n: number) => string): string => {
     const s = [...xs].sort((a, b) => a - b);
-    return `${label.padEnd(6)} n=${String(s.length).padStart(5)}  p05 ${fmt(pct(s, 0.05)).padStart(6)}  p10 ${fmt(pct(s, 0.10)).padStart(6)}`
-      + `  p25 ${fmt(pct(s, 0.25)).padStart(6)}  медиана ${fmt(pct(s, 0.5)).padStart(6)}  p75 ${fmt(pct(s, 0.75)).padStart(6)}  max ${fmt(s[s.length - 1] ?? NaN).padStart(6)}`;
+    // min и p01 нужны, чтобы отличать ИНВАРИАНТ (ниже НЕ БЫВАЕТ) от ПЕРЦЕНТИЛЯ (бывает, но редко).
+    return `${label.padEnd(6)} n=${String(s.length).padStart(5)}  min ${fmt(s[0] ?? NaN).padStart(6)}  p01 ${fmt(pct(s, 0.01)).padStart(6)}  p05 ${fmt(pct(s, 0.05)).padStart(6)}`
+      + `  p10 ${fmt(pct(s, 0.10)).padStart(6)}  p25 ${fmt(pct(s, 0.25)).padStart(6)}  медиана ${fmt(pct(s, 0.5)).padStart(6)}  max ${fmt(s[s.length - 1] ?? NaN).padStart(6)}`;
   };
 
   console.log(`ИЗМЕРЕНИЕ ФОРМЫ НЕДЕЛИ ПО ПРАКТИКЕ · окно ${WEEKS_BACK} недель · только coach_authored (is_planned)`);

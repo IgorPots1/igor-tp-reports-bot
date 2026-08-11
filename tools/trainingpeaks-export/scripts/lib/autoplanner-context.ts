@@ -37,8 +37,16 @@ export type Envelope = {
   rolling4wQuality: number;
   /** качественных сессий за 8 недель — потолок качества считается ОТСЮДА, не из baselines */
   qualityLast8w: number;
-  /** объём последней ФАКТИЧЕСКОЙ недели, мин — потолок прироста считается от него */
+  /** объём последней ФАКТИЧЕСКОЙ недели, мин — используется для сигналов, НЕ для потолка */
   lastWeekMinutes: number;
+  /** катящийся 4-нед ПЛАНОВЫЙ объём, мин — та же валюта, что у полов сессий */
+  rolling4wPlannedMin: number;
+  /** плановый объём последней недели, мин — ОТ НЕГО считается потолок прироста */
+  lastWeekPlannedMinutes: number;
+  /** выполнено/запланировано за окно, null — планов не было */
+  complianceRatio: number | null;
+  /** сколько последних недель подряд выполнение ниже порога */
+  lowComplianceWeeks: number;
   /** объём работы последней качественной (reps × мин), null — истории нет */
   lastQualityWorkMinutes: number | null;
   /** потолки из baselines — ТОЛЬКО как потолки, не как цель */
@@ -64,6 +72,11 @@ export type AthleteContext = AthleteAnchors & {
  * 0.6 — то есть человек пробежал меньше 60% своей нормы. Параметр, не зашит в логику.
  */
 export const TIER_DROP_VOLUME_RATIO = 0.6;
+
+/** Выполнение ниже этой доли считается низким. Параметр, не зашит в логику. */
+export const LOW_COMPLIANCE_RATIO = 0.7;
+/** Столько недель подряд низкого выполнения — и неделя получает пометку тренеру. */
+export const LOW_COMPLIANCE_WEEKS = 3;
 
 const TIER_DOWN: Record<Tier, Tier> = { T3: "T2", T2: "T1", T1: "T1" };
 
@@ -93,6 +106,7 @@ type Row = {
   trainingpeaks_athlete_id: number; student_id: string | null; workout_date: string;
   title: string | null; is_completed: boolean | null; completed_time_raw: number | null;
   completed_distance_raw: number | null; description: string | null;
+  is_planned: boolean | null; planned_time_raw: number | null;
 };
 
 async function pullRuns(sb: SupabaseClient, sinceDays: number): Promise<Row[]> {
@@ -100,7 +114,7 @@ async function pullRuns(sb: SupabaseClient, sinceDays: number): Promise<Row[]> {
   const out: Row[] = [];
   for (let f = 0; ; f += 1000) {
     const { data, error } = await sb.from("trainingpeaks_workout_cache")
-      .select("trainingpeaks_athlete_id, student_id, workout_date, title, is_completed, completed_time_raw, completed_distance_raw, description:source_snapshot->>description")
+      .select("trainingpeaks_athlete_id, student_id, workout_date, title, is_completed, completed_time_raw, completed_distance_raw, is_planned, planned_time_raw, description:source_snapshot->>description")
       .eq("workout_type_value_id", 3).gte("workout_date", since).order("workout_date").range(f, f + 999);
     if (error) throw error;
     out.push(...((data ?? []) as unknown as Row[]));
@@ -211,6 +225,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const samples: EasySample[] = []; const seen = new Set<string>();
     const dayHistogram = [0, 0, 0, 0, 0, 0, 0];
     const weekMin = new Map<string, number>(); const weekFreq = new Map<string, number>(); const weekQual = new Map<string, number>();
+    const weekPlanned = new Map<string, number>();
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
 
@@ -222,6 +237,12 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       if (s) {
         const k = `${r.workout_date}|${s.fast}|${s.slow}`;
         if (!seen.has(k)) { seen.add(k); samples.push({ date: r.workout_date, fast: s.fast, slow: s.slow, ceilingOnly: s.ceilingOnly }); }
+      }
+      // ПЛАНОВЫЙ объём копим отдельно: потолок недели считается в ТОЙ ЖЕ валюте, что и полы
+      // сессий (полы измерены по планам тренера). Смешение с фактом сжимало неделю каждый прогон.
+      if (r.is_planned && (r.planned_time_raw ?? 0) > 0) {
+        const wkp = mondayOf(r.workout_date);
+        weekPlanned.set(wkp, (weekPlanned.get(wkp) ?? 0) + (r.planned_time_raw as number) * 60);
       }
       if (r.is_completed && (r.completed_time_raw ?? 0) > 0) {
         const wk = mondayOf(r.workout_date);
@@ -245,10 +266,34 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const avg = (m: Map<string, number>): number =>
       recentWeeks.length ? recentWeeks.reduce((a, w) => a + (m.get(w) ?? 0), 0) / recentWeeks.length : 0;
     const rolling4wWeeklyMin = Math.round(avg(weekMin));
+    const recentPlannedWeeks = [...weekPlanned.keys()].filter((w) => w >= win4wStart).sort();
+    const rolling4wPlannedMin = recentPlannedWeeks.length
+      ? Math.round(recentPlannedWeeks.reduce((a, w) => a + (weekPlanned.get(w) ?? 0), 0) / recentPlannedWeeks.length) : 0;
+    const lastWeekPlannedMinutes = (() => {
+      const ks = [...weekPlanned.keys()].sort(); return ks.length ? Math.round(weekPlanned.get(ks[ks.length - 1]) ?? 0) : 0;
+    })();
+
+    // ВЫПОЛНЕНИЕ НЕ ВЫБРАСЫВАЕМ, но объём им НЕ режем: низкое выполнение — повод показать
+    // тренеру, а не молча ужать план (замер 12.08: медиана выполнено/запланировано 0.83,
+    // у 41 атлета из 119 ниже 70% — на факте потолок сжимался каждый прогон).
+    const plannedTotal = recentPlannedWeeks.reduce((a, w) => a + (weekPlanned.get(w) ?? 0), 0);
+    const doneTotal = recentPlannedWeeks.reduce((a, w) => a + (weekMin.get(w) ?? 0), 0);
+    const complianceRatio = plannedTotal > 0 ? Math.round((doneTotal / plannedTotal) * 100) / 100 : null;
+    let lowComplianceWeeks = 0;
+    for (const w of [...weekPlanned.keys()].sort().reverse()) {
+      const pl = weekPlanned.get(w) ?? 0; if (pl <= 0) continue;
+      if ((weekMin.get(w) ?? 0) / pl < LOW_COMPLIANCE_RATIO) lowComplianceWeeks++; else break;
+    }
+
     const b = baselines.get(aid);
 
-    const tierByVolume: Tier = tierOf(rolling4wWeeklyMin > 0 ? rolling4wWeeklyMin
-      : ([...weekMin.values()].reduce((a, x) => a + x, 0) / Math.max([...weekMin.size ? weekMin.keys() : []].length, 1) || 0));
+    // ТИР — ТОЖЕ ОТ ПЛАНА. Полы сессий по тирам измерены на ПЛАНОВЫХ неделях (tp-week-shape-measure
+    // тирует по медианному плановому объёму). Считать тир по факту — значит выдавать атлету полы
+    // чужого тира: выполнение систематически ниже (медиана 0.83). Это та же ошибка валюты, что
+    // и с потолком. Факт остаётся входом ПОНИЖЕНИЯ тира ниже — там ему и место.
+    const tierByVolume: Tier = tierOf(rolling4wPlannedMin > 0 ? rolling4wPlannedMin
+      : (rolling4wWeeklyMin > 0 ? rolling4wWeeklyMin
+        : ([...weekMin.values()].reduce((a, x) => a + x, 0) / Math.max([...weekMin.size ? weekMin.keys() : []].length, 1) || 0)));
 
     const illness = sid ? illnessByStudent.get(sid) ?? [] : [];
     const hasActiveIllness = illness.some((w) => asOf >= w.from && asOf <= w.to);
@@ -292,6 +337,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
         lastWeekMinutes: lastWeekMin,
+        rolling4wPlannedMin, lastWeekPlannedMinutes, complianceRatio, lowComplianceWeeks,
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         dayHistogram, weeksObserved: weekMin.size,
