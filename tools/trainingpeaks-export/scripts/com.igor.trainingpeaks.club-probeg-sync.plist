@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Weekly probeg protocol sync (Sunday 03:20). Auto-links safe matches, queues the uncertain into
-     club_protocol_pending (surfaced as a count in the club admin), journals every official result.
-     Idempotent + polite. Install by Igor AFTER the first manual --write review:
+<!-- probeg protocol sync — Monday & Thursday 03:20. Sunday-morning races publish their protocols hours
+     to days later, so the old Sunday-03:20 run always fired BEFORE the weekend's races and their results
+     waited a full week. Monday catches most weekend protocols (~1 day latency); Thursday is a second pass
+     for slower-publishing ones. Sync is idempotent (skips already-linked/confirmed/rejected) + polite
+     (disk cache, delays), so a second weekly run only re-checks and never duplicates.
+     Auto-links safe matches, queues the uncertain into club_protocol_pending (surfaced as a count in the
+     club admin), journals every official result. Install by Igor AFTER the first manual --write review:
        chmod +x .../run-club-probeg-sync-weekly.sh   # (git already tracks it +x)
        cp .../com.igor.trainingpeaks.club-probeg-sync.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.club-probeg-sync.plist -->
@@ -18,12 +22,20 @@
     <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-club-probeg-sync-weekly.sh"</string>
   </array>
 
+  <!-- launchd Weekday: 0=Sun, 1=Mon … 4=Thu. Array = fire at each listed time. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Weekday</key><integer>0</integer>
-    <key>Hour</key><integer>3</integer>
-    <key>Minute</key><integer>20</integer>
-  </dict>
+  <array>
+    <dict>
+      <key>Weekday</key><integer>1</integer>
+      <key>Hour</key><integer>3</integer>
+      <key>Minute</key><integer>20</integer>
+    </dict>
+    <dict>
+      <key>Weekday</key><integer>4</integer>
+      <key>Hour</key><integer>3</integer>
+      <key>Minute</key><integer>20</integer>
+    </dict>
+  </array>
 
   <key>StandardOutPath</key>
   <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/club-probeg-sync.launchd.out.log</string>
