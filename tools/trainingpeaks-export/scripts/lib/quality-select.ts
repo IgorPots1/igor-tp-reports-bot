@@ -13,7 +13,7 @@
  *
  * Чистый модуль: ни БД, ни сети.
  */
-import type { Guardrail, QualityPreset, ReviewRule } from "./autoplanner-catalog.ts";
+import { presetSessionMinutes, type Guardrail, type QualityPreset, type ReviewRule } from "./autoplanner-catalog.ts";
 
 export type QualityContext = {
   /** качественных сессий за последние 8 недель (считается на лету из кэша) */
@@ -26,6 +26,12 @@ export type QualityContext = {
   hasRaceContext: boolean;
   contextFlags: string[];           // injury | acute_pain | insufficient_data | returning | …
   rolling4wWeeklyMin: number;
+  /**
+   * Потолок ПОЛНОЙ длительности качественной сессии, мин. Считает сборщик из потолка недели
+   * с учётом того, что длительная обязана перерасти качественную, а у лёгких дней есть пол.
+   * null — ограничения нет (диагностика, тесты).
+   */
+  sessionBudgetMin?: number | null;
 };
 
 /** Пороги потолка качества — параметры, не зашиты в логику (шаг 3 наряда). */
@@ -91,9 +97,26 @@ export function selectQualityFromCatalog(
   const withinWeekly = pool.filter((p) => p.totalWorkMinutes <= workCeil);
   const warnings: string[] = [];
   if (withinWeekly.length === 0) {
-    warnings.push(`все кандидаты выше потолка объёма (${Math.round(workCeil)} мин), взят самый лёгкий`);
+    warnings.push(`все кандидаты выше потолка объёма работы (${Math.round(workCeil)} мин), взят самый лёгкий`);
     pool = [pool[0]];
   } else pool = withinWeekly;
+
+  // ── потолок ПОЛНОЙ длительности сессии ──
+  // Минуты работы — не вся сессия: у thr_3x12 работы 36, а с канонической разминкой сессия 81.
+  // Если не отсечь здесь, сборщик получит формат, который в неделю не влезает, и начнёт резать
+  // разминку и лёгкие дни. Разминку резать НЕЛЬЗЯ (она задана уровнем пресета) — значит выбор
+  // должен сразу падать на формат покороче.
+  if (ctx.sessionBudgetMin != null) {
+    const fits = pool.filter((p) => presetSessionMinutes(p) <= ctx.sessionBudgetMin!);
+    if (fits.length === 0) {
+      return { selected: false, reason: "no_preset_fits_week",
+        detail: `ни один формат не помещается: самый короткий ${presetSessionMinutes(pool[0])} мин при бюджете ${Math.round(ctx.sessionBudgetMin)} мин` };
+    }
+    if (fits.length < pool.length) {
+      warnings.push(`формат подобран под бюджет недели: не помещались ${pool.length - fits.length} из ${pool.length}`);
+    }
+    pool = fits;
+  }
 
   // ── прогрессия от прошлой качественной ──
   let chosen: QualityPreset; let reason: string;
@@ -101,13 +124,14 @@ export function selectQualityFromCatalog(
     chosen = pool[0]; // истории нет — начинаем с самого лёгкого доступного
     reason = "истории качества нет — стартовый объём";
   } else {
-    const target = ctx.lastQualityWorkMinutes * PROGRESSION_STEP_MAX;
-    const ahead = pool.filter((p) => p.totalWorkMinutes > ctx.lastQualityWorkMinutes && p.totalWorkMinutes <= target);
-    if (ahead.length > 0) { chosen = ahead[ahead.length - 1]; reason = `прогрессия от ${ctx.lastQualityWorkMinutes} мин работы (+до 20%)`; }
+    const last = ctx.lastQualityWorkMinutes;
+    const target = last * PROGRESSION_STEP_MAX;
+    const ahead = pool.filter((p) => p.totalWorkMinutes > last && p.totalWorkMinutes <= target);
+    if (ahead.length > 0) { chosen = ahead[ahead.length - 1]; reason = `прогрессия от ${last} мин работы (+до 20%)`; }
     else {
       // шага вперёд нет — держим ближайший к прошлому объёму
-      chosen = pool.reduce((a, b) => Math.abs(b.totalWorkMinutes - ctx.lastQualityWorkMinutes!) < Math.abs(a.totalWorkMinutes - ctx.lastQualityWorkMinutes!) ? b : a);
-      reason = `удержание объёма ${ctx.lastQualityWorkMinutes} мин (шага вперёд нет в пределах потолка)`;
+      chosen = pool.reduce((a, b) => Math.abs(b.totalWorkMinutes - last) < Math.abs(a.totalWorkMinutes - last) ? b : a);
+      reason = `удержание объёма ${last} мин (шага вперёд нет в пределах потолка)`;
     }
   }
 

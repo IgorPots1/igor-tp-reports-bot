@@ -78,6 +78,41 @@ export type Catalog = {
  */
 export const LEVEL_GATE_ENABLED = false;
 
+/** Простая разминка по наблюдаемому шаблону: 86% реальных качественных — 10 минут (n=2710). */
+export const WARMUP_CANON_MINUTES = 10;
+
+/**
+ * Каноническая разминка (решение Игоря 06.08). Части фиксированы, длительности — середина
+ * тренерского диапазона: 10 спокойно → 3–5 чуть быстрее → 2 в темпе → 3–4 ускорения →
+ * 3–5 спокойно → 5–10 пауза перед работой.
+ *
+ * СВОРАЧИВАТЬ ЕЁ ЗАПРЕЩЕНО (решение Игоря 11.08): протокол задан уровнем пресета, это решение
+ * тренера, а не резерв для экономии минут. Не помещается в неделю — берём пресет поменьше.
+ */
+export const CANONICAL_WARMUP = { easyIn: 10, faster: 4, tempo: 2, strides: 2, easyOut: 4, pause: 5 };
+const CANONICAL_WARMUP_MINUTES = Object.values(CANONICAL_WARMUP).reduce((s, x) => s + x, 0);
+
+/**
+ * Уровни пресета, которым положена КАНОНИЧЕСКАЯ разминка. Уровень берётся С ПРЕСЕТА —
+ * у учеников поля уровня не существует (аудит 06.08). L0–L1 и пресеты без уровня — простая.
+ */
+const CANONICAL_WARMUP_LEVELS = new Set(["L2", "L3", "L4", "L4M"]);
+export const needsCanonicalWarmup = (level: string | null): boolean => level != null && CANONICAL_WARMUP_LEVELS.has(level);
+
+/**
+ * ПОЛНАЯ длительность качественной сессии: разминка + работа + трусца между отрезками + заминка.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНО ОТ totalWorkMinutes. Отбор смотрел только на минуты РАБОТЫ: у thr_3x12 это
+ * 36 мин, а сессия целиком с канонической разминкой — 81. Из-за расхождения выбирался формат,
+ * который в неделю не влезает, и сборщик потом резал разминку и лёгкие дни вместо того, чтобы
+ * сразу взять формат покороче. Живёт здесь, а не в autoplanner-week: quality-select
+ * импортируется сборщиком, обратный импорт дал бы цикл.
+ */
+export function presetSessionMinutes(p: QualityPreset): number {
+  const warm = needsCanonicalWarmup(p.athleteLevelMin) ? CANONICAL_WARMUP_MINUTES : (p.warmupMinutes || WARMUP_CANON_MINUTES);
+  return warm + p.reps * p.workMinutes + Math.max(0, p.reps - 1) * p.recoveryMinutes + p.cooldownMinutes;
+}
+
 /** Порядок шкалы уровней по возрастанию требований. */
 const LEVEL_ORDER = ["L0", "L1", "L2", "L3", "L4", "L4M"];
 

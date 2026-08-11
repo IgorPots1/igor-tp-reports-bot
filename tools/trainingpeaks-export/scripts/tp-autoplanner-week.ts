@@ -61,10 +61,14 @@ async function main(): Promise<void> {
   const weeks: Week[] = []; const skipped: Array<{ aid: number; why: string }> = [];
   const rejected: Array<{ aid: number; src: string; ratio: number; why: string }> = [];
   const colStats = new Map<string, number>();
+  const refusedByCeiling: Array<{ aid: number; why: string; week: Week }> = [];
   for (const c of ctx.values()) {
     if (!c.easy) { skipped.push({ aid: c.athleteId, why: "нет якоря лёгкого и фолбэка" }); continue; }
     if (c.envelope.weeksObserved === 0) { skipped.push({ aid: c.athleteId, why: "нет наблюдённых недель" }); continue; }
     const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness);
+    // ОТКАЗ ПО НЕВМЕСТИМОСТИ: потолок объёма неприкосновенен. Если даже минимальная неделя в
+    // него не влезает, неделю НЕ выдаём — случай уходит тренеру.
+    if (w.refused) { refusedByCeiling.push({ aid: c.athleteId, why: w.refused, week: w }); continue; }
     // ПРОВЕРКА НА СЛИПАНИЕ — ПОСЛЕ сборки и по ПОКАЗАННЫМ полосам: сравнивать надо то, что
     // ученик увидит в тексте. Где темп не показывается (лёгкий по ощущениям, качества нет),
     // слипаться нечему. При срабатывании неделю не выдаём и полосу молча не подкручиваем —
@@ -90,6 +94,8 @@ async function main(): Promise<void> {
   out.push(`# Первая сгенерированная неделя — ${weekStart}`);
   out.push(`\nатлетов с неделей: ${weeks.length} · сессий: ${all.length} · в defer: ${deferred.length}`);
   out.push(`пропущено атлетов: ${skipped.length}`);
+  out.push(`ОТКАЗАНО по невместимости в потолок объёма: ${refusedByCeiling.length}`);
+  for (const r of refusedByCeiling) out.push(`- ${r.aid}: ${r.why}${r.week.notes.length ? ` · ${r.week.notes.join("; ")}` : ""}`);
   out.push(`ОТКЛОНЕНО по слипанию лёгкого с качеством: ${rejected.length}`);
   for (const r of rejected) out.push(`- ${r.aid} [${r.src}] отношение ${r.ratio.toFixed(3)} — лёгкий не подтверждён`);
   out.push(`проверка на слипание, статусы: ${[...colStats.entries()].map(([k, v]) => `${k} ${v}`).join(" · ")}`
@@ -119,6 +125,13 @@ async function main(): Promise<void> {
   out.push(`\n## лестница сокращения — что срабатывало`);
   [...noteHist.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
 
+  const overCap = weeks.filter((w) => w.plannedMinutes > w.weeklyCap);
+  out.push(`\n## потолок объёма`);
+  out.push(`- недель выше потолка: ${overCap.length} (должно быть 0)`);
+  for (const w of overCap.slice(0, 10)) out.push(`  - ${w.athleteId}: ${w.plannedMinutes} мин при потолке ${w.weeklyCap}`);
+  const warmupCollapsed = weeks.filter((w) => w.notes.some((nt) => nt.includes("разминка свёрнута"))).length;
+  out.push(`- разминка свёрнута до простой: ${warmupCollapsed} (должно быть 0)`);
+
   out.push(`\n## длительная — самая длинная сессия недели`);
   out.push(`- недель с длительной: ${withLong.length}`);
   out.push(`- НЕ самая длинная: ${notLongest.length}`);
@@ -135,8 +148,17 @@ async function main(): Promise<void> {
     const w = weeks.find((x) => x.athleteId === aid);
     if (w) { printed.push(...printWeek(w, label)); continue; }
     const r = rejected.find((x) => x.aid === aid);
+    const rc = refusedByCeiling.find((x) => x.aid === aid);
     printed.push(`\n${"─".repeat(78)}`, `${label} · атлет ${aid}`, "─".repeat(78),
-      r ? `НЕДЕЛИ НЕТ: ${r.why}` : `НЕДЕЛИ НЕТ: ${skipped.find((x) => x.aid === aid)?.why ?? "атлет не в выборке"}`);
+      rc ? `НЕДЕЛЯ НЕ ВЫДАНА (не помещается): ${rc.why}${rc.week.notes.length ? `\n   ${rc.week.notes.join("; ")}` : ""}`
+        : r ? `НЕДЕЛИ НЕТ: ${r.why}` : `НЕДЕЛИ НЕТ: ${skipped.find((x) => x.aid === aid)?.why ?? "атлет не в выборке"}`);
+  }
+  // Одна отказная неделя целиком — как выглядит отказ.
+  if (refusedByCeiling.length > 0) {
+    const ex = refusedByCeiling.find((x) => !SHOW.some(([aid]) => aid === x.aid)) ?? refusedByCeiling[0];
+    printed.push(`\n${"─".repeat(78)}`, `ОБРАЗЕЦ ОТКАЗА · атлет ${ex.aid}`, "─".repeat(78),
+      `причина: ${ex.why}`, `заметки сборщика: ${ex.week.notes.join("; ") || "нет"}`,
+      `сессий не выдано ни одной — случай уходит тренеру`);
   }
   out.push("\n## Три недели целиком"); out.push(...printed);
 
