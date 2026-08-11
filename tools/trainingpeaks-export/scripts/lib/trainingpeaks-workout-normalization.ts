@@ -1,3 +1,5 @@
+import { STRENGTH_WORKOUT_TYPE_VALUE_ID } from "../../../../src/features/trainingpeaks/workout-activity-classification.ts";
+
 export type TrainingPeaksWorkoutRaw = {
   workoutId?: unknown;
   workoutDay?: unknown;
@@ -97,12 +99,30 @@ export function normalizeTrainingPeaksWorkoutItem(input: {
   const completedTimeRaw = toFiniteNumber(raw.totalTime);
   const plannedDistanceRaw = toFiniteNumber(raw.distancePlanned);
   const completedDistanceRaw = toFiniteNumber(raw.distance);
+  const workoutTypeValueId = toFiniteInteger(raw.workoutTypeValueId);
+  const title = toSafeString(raw.title);
 
-  const isPlanned = Boolean((plannedTimeRaw ?? 0) > 0 || (plannedDistanceRaw ?? 0) > 0);
+  const isPlannedByMetrics = Boolean((plannedTimeRaw ?? 0) > 0 || (plannedDistanceRaw ?? 0) > 0);
   const isCompleted = Boolean((completedTimeRaw ?? 0) > 0 || (completedDistanceRaw ?? 0) > 0);
+  // A coach-planned STRENGTH session carries no metrics at all. Verified live against the
+  // real API (2026-08-11, 112 athletes, 41 days): TrainingPeaks returns it with only
+  // workoutId / athleteId / title / workoutTypeValueId / workoutDay (+ lastModifiedDate,
+  // orderOnDay) — no totalTimePlanned, no distancePlanned, no tssPlanned, no structure.
+  // So the metric rule above can never see it, and the plan sat in the cache flagged
+  // neither planned nor completed, invisible to every consumer.
+  //
+  // SCOPED TO STRENGTH ON PURPOSE. Day off (type 7) and the club's Other (type 100)
+  // markers also arrive metric-less, and both MUST stay planned=false/completed=false —
+  // club marker и Day off не должны считаться тренировкой (docs/club-tp-exec-validation.md).
+  // Требование непустого заголовка отсекает пустые огрызки удалённых записей.
+  const isMetriclessStrengthPlan =
+    workoutTypeValueId === STRENGTH_WORKOUT_TYPE_VALUE_ID &&
+    !isPlannedByMetrics &&
+    !isCompleted &&
+    title !== null;
+  const isPlanned = isPlannedByMetrics || isMetriclessStrengthPlan;
 
   const warnings: string[] = [];
-  const title = toSafeString(raw.title);
   if (!title) {
     warnings.push("Missing title.");
   }
@@ -128,7 +148,7 @@ export function normalizeTrainingPeaksWorkoutItem(input: {
     workoutDate,
     title,
     sportOrTypeCode: toSafeString(raw.code),
-    workoutTypeValueId: toFiniteInteger(raw.workoutTypeValueId),
+    workoutTypeValueId,
     workoutSubTypeId: toFiniteInteger(raw.workoutSubTypeId),
     isPlanned,
     isCompleted,
