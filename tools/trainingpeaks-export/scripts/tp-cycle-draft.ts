@@ -45,6 +45,19 @@ const GROUP: Array<[number, string]> = [
   [5475968, "Хофман"], [5461678, "Расницова"], [5807145, "Семешина"], [6290336, "Столова"],
 ];
 
+/**
+ * РУЧНЫЕ БАЗЫ ТРЕНЕРА. До появления интерфейса живут здесь списком; поля под них заведены
+ * миграцией 20260919000000 (base_aerobic_min_manual / base_quality_min_manual).
+ *
+ * Расницова: снизилась по семейным обстоятельствам — это НОВАЯ НОРМА, а не провал,
+ * и база за 26 недель её завышает. Верна восьминедельная — 179 мин [решение Игоря].
+ * Пономарева в списке НЕТ намеренно: у неё сорвавшаяся марафонская подготовка,
+ * то есть провал, и 26-недельная база верна.
+ */
+const MANUAL_BASE: Record<number, { aerobic?: number; quality?: number; reason: string }> = {
+  5461678: { aerobic: 179, reason: "снизилась по семейным обстоятельствам — новая норма, не провал" },
+};
+
 /** База считается за 8 недель — то же окно, что у истории качества в сборщике. */
 const BASE_WEEKS = 8;
 
@@ -150,14 +163,18 @@ async function main(): Promise<void> {
     const ordered = [...wk26].filter((w) => w.aer + w.qual > 0).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
     const flat = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.aer, hasTraining: w.aer + w.qual > 0 })), today, illness, CYCLE_BASE_HALF_LIFE_DAYS);
     const halfLife = halfLifeForTrend(ordered.map((w) => w.aer), flat || base8Aerobic);
-    const baseAerobicMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.aer, hasTraining: w.aer + w.qual > 0 })), today, illness, halfLife)
+    const manual = MANUAL_BASE[aid] ?? null;
+    const baseAerobicComputed = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.aer, hasTraining: w.aer + w.qual > 0 })), today, illness, halfLife)
       || base8Aerobic;
+    const baseAerobicMin = manual?.aerobic ?? baseAerobicComputed;
     const illWeeks = wk26.filter((w) => w.aer + w.qual > 0).length
       - wk26.filter((w) => w.aer + w.qual > 0 && !illness.some((iw) => w.weekStart >= iw.from && w.weekStart <= iw.to)).length;
     // Потолок роста — собственный исторический максимум аэробной недели [практика].
     // Считается по ВСЕМУ окну наблюдения, а не по 8 неделям базы.
     const histMax = Math.round(Math.max(baseAerobicMin, ...(histAer.get(aid) ?? [baseAerobicMin])));
-    const baseQualityMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.qual, hasTraining: w.aer + w.qual > 0 })), today, illness, halfLife);
+    const baseQualityComputed = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.qual, hasTraining: w.aer + w.qual > 0 })), today, illness, halfLife);
+    const baseQualityMin = manual?.quality ?? baseQualityComputed;
+    if (manual) gaps.push(`база задана ТРЕНЕРОМ: ${manual.reason}`);
     // ЛИЧНЫЙ потолок качества — собственный исторический максимум минут работы [практика].
     // Когортные 20% доли остаются последней защитой, но рабочий предел теперь личный.
     const histQualRaw = Math.round(Math.max(baseQualityMin, ...(histQual.get(aid) ?? [baseQualityMin])));
@@ -193,6 +210,9 @@ async function main(): Promise<void> {
       taperProfile: TAPER_PROFILE[intent], days,
       peakCapAerobicMin, historicMaxAerobicMin: histMax, peakCapQualityMin: histQualMax,
       historicMaxQualityMin: histQualRaw, aerobicIfFromMax, base8Aerobic, base8Quality, illWeeks,
+      baseAerobicManual: manual?.aerobic ?? null, baseQualityManual: manual?.quality ?? null,
+      baseManualReason: manual?.reason ?? null,
+      baseAerobicComputed, baseQualityComputed,
       ownSharePct: 100 * baseQualityMin / Math.max(baseAerobicMin + baseQualityMin, 1),
       halfLifeDays: halfLife, base42Aerobic: flat || base8Aerobic,
       slopeMinPerWeek: weeklySlope(ordered.map((w) => w.aer)), gaps,
@@ -222,7 +242,8 @@ async function main(): Promise<void> {
     console.log(`  тип цикла:        ${INTENT_RU[d.intent]}${d.targetDate ? ` · старт ${d.targetDate}` : " · старта в базе нет"}`);
     console.log(`  что цикл делает:  ${cycleMode(d, addDays(mondayOf(today), 7))}`);
     console.log(`  длина:            ${d.lengthWeeks} нед`);
-    console.log(`  база аэробная:    ${d.baseAerobicMin} мин/нед`);
+    console.log(`  база аэробная:    ${d.baseAerobicMin} мин/нед`
+      + (d.baseAerobicManual != null ? `  ← ЗАДАНА ТРЕНЕРОМ (расчётная была ${d.baseAerobicComputed})` : ""));
     console.log(`  база качества:    ${d.baseQualityMin} мин работы/нед`
       + (d.baseAerobicMin + d.baseQualityMin > 0 ? ` (${(100 * d.baseQualityMin / (d.baseAerobicMin + d.baseQualityMin)).toFixed(1)}% недели)` : ""));
     console.log(`  беговых дней:     ${d.days}`);

@@ -54,6 +54,8 @@ function draft(over: Partial<CycleDraft> = {}): CycleDraft {
     peakCapQualityMin: 60, historicMaxQualityMin: 70, aerobicIfFromMax: 418,
     base8Aerobic: baseAerobicMin, base8Quality: baseQualityMin, illWeeks: 0,
     halfLifeDays: 42, base42Aerobic: baseAerobicMin, slopeMinPerWeek: 0,
+    baseAerobicManual: null, baseQualityManual: null, baseManualReason: null,
+    baseAerobicComputed: baseAerobicMin, baseQualityComputed: baseQualityMin,
     ownSharePct: 100 * baseQualityMin / (baseAerobicMin + baseQualityMin),
     gaps: [],
     ...over,

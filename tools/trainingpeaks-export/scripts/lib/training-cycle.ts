@@ -334,6 +334,13 @@ export type CycleDraft = {
   slopeMinPerWeek: number;
   /** личная обычная доля качества, % — от неё считается допуск отклонения */
   ownSharePct: number;
+  /** база, заданная тренером вручную (null — считается из истории) */
+  baseAerobicManual: number | null;
+  baseQualityManual: number | null;
+  baseManualReason: string | null;
+  /** база, посчитанная из истории — показывается рядом с ручной для сверки */
+  baseAerobicComputed: number;
+  baseQualityComputed: number;
   /** прежняя база за 8 недель — только для сравнения в отчёте */
   base8Aerobic: number;
   base8Quality: number;
