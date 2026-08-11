@@ -55,7 +55,39 @@ export type AthleteContext = AthleteAnchors & {
   envelope: Envelope;
   illness: DateWindow[];
   hasActiveIllness: boolean;
+  /** null — тир по объёму не понижался. Иначе почему понижен (видно в отчёте и в сессии). */
+  tierNote: string | null;
 };
+
+/**
+ * Фактический объём последней недели ниже этой доли от скользящего среднего = «резко ниже».
+ * 0.6 — то есть человек пробежал меньше 60% своей нормы. Параметр, не зашит в логику.
+ */
+export const TIER_DROP_VOLUME_RATIO = 0.6;
+
+const TIER_DOWN: Record<Tier, Tier> = { T3: "T2", T2: "T1", T1: "T1" };
+
+/**
+ * Понижение тира: активный health-сигнал — сразу в T1 (контроль по ощущениям), резкое падение
+ * фактического объёма — на ступень вниз. Скользящее среднее за 4 недели инерционно и держит
+ * тир высоким, когда человек уже не бегает.
+ */
+export function downgradeTier(
+  base: Tier,
+  ctx: { hasActiveIllness: boolean; lastWeekMinutes: number; rolling4wWeeklyMin: number },
+): { tier: Tier; tierNote: string | null } {
+  if (ctx.hasActiveIllness) {
+    return base === "T1" ? { tier: "T1", tierNote: null }
+      : { tier: "T1", tierNote: `тир ${base} → T1: активный health-сигнал, контроль по ощущениям` };
+  }
+  const drop = ctx.rolling4wWeeklyMin > 0 && ctx.lastWeekMinutes > 0
+    && ctx.lastWeekMinutes < ctx.rolling4wWeeklyMin * TIER_DROP_VOLUME_RATIO;
+  if (drop && base !== "T1") {
+    return { tier: TIER_DOWN[base],
+      tierNote: `тир ${base} → ${TIER_DOWN[base]}: прошлая неделя ${ctx.lastWeekMinutes} мин против средних ${ctx.rolling4wWeeklyMin}` };
+  }
+  return { tier: base, tierNote: null };
+}
 
 type Row = {
   trainingpeaks_athlete_id: number; student_id: string | null; workout_date: string;
@@ -215,11 +247,21 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const rolling4wWeeklyMin = Math.round(avg(weekMin));
     const b = baselines.get(aid);
 
-    const tier: Tier = tierOf(rolling4wWeeklyMin > 0 ? rolling4wWeeklyMin
+    const tierByVolume: Tier = tierOf(rolling4wWeeklyMin > 0 ? rolling4wWeeklyMin
       : ([...weekMin.values()].reduce((a, x) => a + x, 0) / Math.max([...weekMin.size ? weekMin.keys() : []].length, 1) || 0));
 
     const illness = sid ? illnessByStudent.get(sid) ?? [] : [];
     const hasActiveIllness = illness.some((w) => asOf >= w.from && asOf <= w.to);
+
+    // ТИР ПОСЛЕ ПАДЕНИЯ ОБЪЁМА (правило Игоря 11.08). Скользящее среднее за 4 недели держит
+    // тир высоким ещё долго после того, как человек фактически перестал бегать: 5847207 имел
+    // тир T2 и получал темп ЦИФРАМИ, при фактической прошлой неделе 25 мин и активной травме.
+    // Тир — не заслуга, а описание текущей формы, поэтому он понижается, а контроль уходит
+    // на ощущения.
+    const lastWeekMin = (() => { const ks = [...weekMin.keys()].sort(); return ks.length ? Math.round(weekMin.get(ks[ks.length - 1]) ?? 0) : 0; })();
+    const { tier, tierNote } = downgradeTier(tierByVolume, {
+      hasActiveIllness, lastWeekMinutes: lastWeekMin, rolling4wWeeklyMin,
+    });
 
     // ЯКОРЬ ЛЁГКОГО: свой → зона 2 → когортное отношение (§1.6)
     const own = buildAnchor(samples, addDays(asOf, 1), { halfLifeDays: 21, illness });
@@ -243,13 +285,13 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     out.set(aid, {
       athleteId: aid, tier, easy, threshold: thresholds.get(aid) ?? null,
       quality: qAnchor ? { fastSec: qAnchor.fast, slowSec: qAnchor.slow, confidence: anchorConfidence(qAnchor.effectiveN) as Confidence, effectiveN: qAnchor.effectiveN } : null,
-      illness, hasActiveIllness,
+      illness, hasActiveIllness, tierNote,
       envelope: {
         rolling4wWeeklyMin, rolling4wFrequency: Math.round(avg(weekFreq) * 10) / 10,
         rolling4wQuality: Math.round(avg(weekQual) * 10) / 10,
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
-        lastWeekMinutes: (() => { const ks = [...weekMin.keys()].sort(); return ks.length ? Math.round(weekMin.get(ks[ks.length - 1]) ?? 0) : 0; })(),
+        lastWeekMinutes: lastWeekMin,
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         dayHistogram, weeksObserved: weekMin.size,

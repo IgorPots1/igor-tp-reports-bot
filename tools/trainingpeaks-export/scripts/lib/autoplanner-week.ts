@@ -252,8 +252,10 @@ export function shownBands(w: Week): { easy: Band | null; quality: Band | null }
 /** Пол лёгкого дня и пол длительной, мин. Ниже этого сессия перестаёт быть тренировкой. */
 export const EASY_FLOOR = 20, LONG_FLOOR = 30;
 
-export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean): Week {
+export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
+  tierNote: string | null = null): Week {
   const notes: string[] = [];
+  if (tierNote) notes.push(tierNote);
   let nWant = Math.round(env.rolling4wFrequency || 0);
   if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
   if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
