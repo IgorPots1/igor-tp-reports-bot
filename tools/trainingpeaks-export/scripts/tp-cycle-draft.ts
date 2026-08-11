@@ -263,7 +263,10 @@ async function main(): Promise<void> {
     .map(([aid, sur]) => [aid, sur, drafts.get(aid)] as const)
     .filter((x) => x[2]?.targetDate)
     .sort((a, b) => Date.parse(a[2]!.targetDate!) - Date.parse(b[2]!.targetDate!))[0];
+  // Пономарева — главный случай по потолку качества (норма 20, максимум 60).
+  const ponomareva = GROUP.find(([a]) => a === 5475652) ?? null;
   const cases = [pick("marathon"), pick("half"), pick("maintenance"),
+    ponomareva ? [ponomareva[0], ponomareva[1]] as [number, string] : null,
     shortest ? [shortest[0], shortest[1]] as [number, string] : null]
     .filter((x): x is [number, string] => x != null)
     .filter((x, i, arr) => arr.findIndex((y) => y[0] === x[0]) === i);

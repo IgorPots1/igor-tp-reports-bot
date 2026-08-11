@@ -244,6 +244,11 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
   // ПИК — максимум РЕАЛЬНО НАЗНАЧЕННЫХ недель роста, а не то, куда ушла бы арифметика,
   // если бы рост продолжался: подводка может начаться раньше, чем рост дойдёт до цифры.
   let peakAer = 0;
+  // Аэробный объём ПРЕДЫДУЩЕЙ ПОКАЗАННОЙ недели. Нужен, чтобы предел одного перехода
+  // работал на том, что видит тренер, а не на внутренней переменной роста: после
+  // разгрузки цикл возвращался к дореразгрузочному уровню одним прыжком (330 -> 415,
+  // то есть x1.26 при заявленном пределе x1.22 — страховка не срабатывала).
+  let prevShownAer = 0;
 
   const taperLen = draft.taperProfile.length;
   const weeksToRace = draft.targetDate
@@ -306,6 +311,7 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
         qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
         note: `аэробный ×${draft.deloadDepthAerobic.toFixed(2)}, работа ×${draft.deloadQualityFactor.toFixed(2)}`
           + ` · день НЕ убран, качество НЕ снято, темп на ступень мягче` });
+      prevShownAer = a;
       continue;
     }
     if (draft.intent === "maintenance") {
@@ -320,7 +326,12 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
     // Когда аэробный упёрся в личный потолок, рост НЕ останавливается: дальше растёт
     // качество, пока не упрётся в свой личный потолок. У Богачева это единственный
     // доступный рычаг — самый большой объём в группе при самой низкой доле работы.
-    const a = round5(aer), q = round5(qual);
+    // предел одного перехода считается от ПОКАЗАННОЙ прошлой недели
+    const ceilStep = prevShownAer > 0 ? prevShownAer * MAX_SINGLE_STEP : Infinity;
+    // когда связывает предел перехода — округляем ВНИЗ, иначе округление к пяти
+    // само по себе выводит за предел (330 x1.22 = 402.6, а round5 даёт 405 = x1.227)
+    const a = aer > ceilStep ? Math.floor(ceilStep / 5) * 5 : round5(aer);
+    const q = round5(qual);
     const aerRoom = a < draft.peakCapAerobicMin;
     const qualRoom = q < draft.peakCapQualityMin && q < (a + q) * WORK_SHARE_MAX;
     const lever: GrowthLever = aerRoom && qualRoom ? "оба" : aerRoom ? "аэробный" : qualRoom ? "качество" : "упёрлись";
