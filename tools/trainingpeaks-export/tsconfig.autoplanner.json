@@ -11,6 +11,8 @@
     "scripts/lib/easy-anchor.ts",
     "scripts/lib/band-collision.ts",
     "scripts/lib/autoplanner-roster.ts",
+    "scripts/lib/quality-volume.ts",
+    "scripts/tp-quality-volume-check.ts",
     "scripts/tp-autoplanner-week.ts",
     "scripts/tp-week-shape-measure.ts",
     "scripts/tp-heuristics-measure.ts",
