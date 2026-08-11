@@ -1,0 +1,171 @@
+-- training_cycles — объект тренировочного цикла. ТОЛЬКО ХРАНЕНИЕ И ЧТЕНИЕ.
+--
+-- НЕ ПРИМЕНЯЕТСЯ ЭТИМ НАРЯДОМ — только файл.
+--
+-- ЗАЧЕМ. Спецификация ops-log/2026-08-11-training-cycle-model.md, часть C1. Цикл — это
+-- НАМЕРЕНИЕ по объёму и дням, а не расписание тренировок. Конкретных сессий, дат и темпов
+-- здесь намеренно НЕТ: они решаются в момент сборки недели (C2), и в TP заранее ничего
+-- не пишется. Устройство выбрано «параметры + правило», не жёсткое расписание
+-- (решение Игоря): в практике 65% спадов объёма не совпадают ни со стартом, ни с
+-- health-сигналом [практика, n=966], поэтому жёсткий план ломался бы каждую вторую неделю.
+--
+-- НА ГЕНЕРАЦИЮ ЭТА ТАБЛИЦА НЕ ВЛИЯЕТ. Сборщик недель её не читает. Подключение — следующий наряд.
+--
+-- ПОМЕТКИ ИСТОЧНИКА в комментариях к колонкам обязательны:
+--   [практика]       — измерено по данным Игоря, с n
+--   [решение Игоря]  — принято тренером, практикой НЕ подтверждается
+--   [выведено]       — ни то ни другое
+
+create table if not exists public.training_cycles (
+  id uuid primary key default gen_random_uuid(),
+  trainingpeaks_athlete_id bigint not null,
+
+  -- ── ЧТО ЗАДАЁТ ТРЕНЕР ──
+  intent text not null check (intent in ('5k', '10k', 'half', 'marathon', 'maintenance')),
+  target_race_id uuid references public.trainingpeaks_race_events (id) on delete set null,
+  target_date date,
+  status text not null default 'draft' check (status in ('draft', 'active', 'done', 'cancelled')),
+
+  -- ── ЧТО СЧИТАЕТ СИСТЕМА, А ТРЕНЕР МОЖЕТ ПЕРЕОПРЕДЕЛИТЬ ──
+  length_weeks integer not null check (length_weeks between 1 and 40),
+
+  base_aerobic_min integer not null check (base_aerobic_min >= 0),
+  base_quality_min integer not null check (base_quality_min >= 0),
+
+  step_aerobic numeric(4,3) not null default 1.220,
+  step_quality numeric(4,3) not null default 1.170,
+
+  peak_aerobic_min integer,
+
+  -- ── ПЛАНОВАЯ РАЗГРУЗКА ──
+  deload_every_n integer not null default 4 check (deload_every_n between 2 and 8),
+  deload_depth_aerobic numeric(4,3) not null default 0.800,
+  deload_quality_factor numeric(4,3) not null default 0.700,
+  deload_quality_policy text not null default 'keep_softer'
+    check (deload_quality_policy in ('keep_softer', 'zero')),
+
+  -- ── ПОДВОДКА ──
+  taper_profile jsonb not null default '[]'::jsonb,
+
+  -- ── ОТОБРАЖЕНИЕ ──
+  week_plan jsonb not null default '[]'::jsonb,
+
+  -- ── ЗАДЕЛ НА БУДУЩЕЕ (см. ниже) ──
+  actual_taper_profile jsonb,
+  actual_taper_depth_pct numeric(5,2),
+  outcome_result_seconds integer,
+  outcome_source text,
+  outcome_recorded_at timestamptz,
+
+  notes text,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+comment on table public.training_cycles is
+  'Тренировочный цикл как НАМЕРЕНИЕ по объёму и дням. Сессий, дат и темпов не содержит — они решаются при сборке недели. На генерацию не влияет до отдельного наряда.';
+
+comment on column public.training_cycles.intent is
+  'Тип цикла. Пять заготовок: 5k, 10k, half, marathon, maintenance. [решение Игоря]';
+
+comment on column public.training_cycles.length_weeks is
+  'Длина цикла. Дефолты по типу: 5k 10-12, 10k 12-16 [литература], half 14-18 [литература], marathon 16-20 [литература, по аналогии с half], maintenance бессрочный с пересмотром каждые 8 недель [выведено].';
+
+comment on column public.training_cycles.base_aerobic_min is
+  'База аэробного объёма, мин/нед. Дефолт — медиана плановых АЭРОБНЫХ минут атлета за 8 недель [практика]. Аэробное = всё, кроме рабочих отрезков: разминка, трусца между отрезками и заминка сюда, правило Игоря, реализовано в lib/quality-volume.ts.';
+
+comment on column public.training_cycles.base_quality_min is
+  'База качественного объёма, мин/нед. ТОЛЬКО РАБОЧИЕ ОТРЕЗКИ [решение Игоря]. Дефолт — медиана за 8 недель [практика]. Ориентир доли: 11.4% недельного объёма по ростеру, 11.6% по группе 12 [практика, n=112 атлетов / 2342 недели].';
+
+comment on column public.training_cycles.step_aerobic is
+  'Множитель аэробного объёма на неделю роста. Дефолт 1.220 — p90 роста от НОРМАЛЬНОЙ базы [практика, n=1715]. Возврат из провала (медиана x1.65, p90 x3.00, n=574) сюда НЕ входит: это не прогрессия.';
+
+comment on column public.training_cycles.step_quality is
+  'Множитель качественного объёма на неделю роста. Дефолт 1.170 — медиана роста качества [практика, n=488]. Верхний край практики p90 = 1.50.';
+
+comment on column public.training_cycles.deload_every_n is
+  'Период ПЛАНОВОЙ разгрузки, недель. Дефолт 4 — совпал с замером: медианный период между спадами объёма 4.0 недели [практика, n=16 атлетов с выраженной волной].';
+
+comment on column public.training_cycles.deload_depth_aerobic is
+  'ПЛАНОВАЯ разгрузка: доля аэробного объёма от предыдущей недели. Дефолт 0.800 = минус 20% [решение Игоря]. ЭТО НОВОЕ ПОВЕДЕНИЕ: в нынешней практике такой недели НЕТ. Фактическая разгрузка Игоря — это РЕАКТИВНАЯ разгрузка (см. ниже), она глубже и устроена иначе.';
+
+comment on column public.training_cycles.deload_quality_factor is
+  'ПЛАНОВАЯ разгрузка: доля минут РАБОТЫ от предыдущей недели. Дефолт 0.700 = минус 30% [решение Игоря]. Формат качества берётся на шаг короче, темп отрезков на ступень мягче, беговой день НЕ убирается, качество НЕ снимается.';
+
+comment on column public.training_cycles.deload_quality_policy is
+  'keep_softer (плановая разгрузка, качество остаётся, но мягче) или zero (качество снимается). Дефолт keep_softer [решение Игоря]. Значение zero описывает РЕАКТИВНУЮ разгрузку и здесь оставлено только для полноты.';
+
+comment on column public.training_cycles.taper_profile is
+  'Профиль подводки ПО НЕДЕЛЯМ, не одно число. Массив объектов: [{"weeks_out":2,"aerobic_factor":0.85,"quality_minutes_factor":0.80}, ...]. Считается от предстартового ПИКА объёма, а не от обычной недели.';
+
+comment on column public.training_cycles.week_plan is
+  'Прогноз недель для ОТОБРАЖЕНИЯ: роль, целевые объёмы, число дней. Ни к чему не обязывает и в TP не пишется — роль недели пересчитывается при сборке с учётом того, как прошла предыдущая (C2).';
+
+comment on column public.training_cycles.actual_taper_profile is
+  'ЗАДЕЛ. Фактическая подводка, как она получилась по факту. Заполняется ПОСЛЕ старта, сейчас всегда null.';
+
+comment on column public.training_cycles.actual_taper_depth_pct is
+  'ЗАДЕЛ. Фактическая глубина подводки в процентах от пика. Нужна, чтобы через год сопоставить глубину с результатом и понять, какая подводка ЭТОМУ человеку даёт лучший результат. Сейчас всегда null, ничего не вычисляется.';
+
+comment on column public.training_cycles.outcome_result_seconds is
+  'ЗАДЕЛ. Результат целевого старта, секунды. Источник — club_official_results. Связь цикл→результат нужна для той же будущей задачи. На 11.08 материал для неё уже копится: 244 завершённых старта с историей тренировок [практика].';
+
+create index if not exists training_cycles_athlete_idx
+  on public.training_cycles (trainingpeaks_athlete_id, status);
+create index if not exists training_cycles_target_date_idx
+  on public.training_cycles (target_date) where target_date is not null;
+
+-- Один активный цикл на атлета: два активных намерения одновременно бессмысленны.
+create unique index if not exists training_cycles_one_active_per_athlete
+  on public.training_cycles (trainingpeaks_athlete_id) where status = 'active';
+
+alter table public.training_cycles enable row level security;
+grant select, insert, update, delete on table public.training_cycles to service_role;
+
+-- ПОЛИТИК ДЛЯ anon/authenticated НЕТ И БЫТЬ НЕ ДОЛЖНО: таблица тренерская, наружу не смотрит.
+-- GRANT выдан явно: RLS без GRANT не работает — обход RLS у service_role не помогает,
+-- запись падает на «permission denied». Этот урок уже стоил одного наряда
+-- (autoplanner_shadow_results, миграция 20260914000000).
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ДВА ВИДА РАЗГРУЗКИ — НЕ ПУТАТЬ. В таблице параметризована только ПЛАНОВАЯ.
+--
+-- (а) РЕАКТИВНАЯ — health-сигнал или провал выполнения. НЕ хранится в цикле: это
+--     поведение сборщика недели, которое срабатывает поверх любого цикла и тратит одну
+--     неделю, не сдвигая остальной план. Фактические параметры [практика, n=16 атлетов /
+--     90 недель спада]: качество В НОЛЬ, аэробный −36%, минус один беговой день,
+--     длиннейшая сессия 90 -> 50 мин.
+--
+-- (б) ПЛАНОВАЯ — раз в deload_every_n недель, человек здоров [решение Игоря].
+--     Аэробный −20%, минуты работы −30%, формат качества на шаг короче, темп отрезков
+--     на ступень мягче, беговой день НЕ убирается, качество НЕ снимается.
+--     ЭТО НОВОЕ ПОВЕДЕНИЕ — в нынешней практике такой недели нет вовсе.
+--
+-- ─────────────────────────────────────────────────────────────────────────────
+-- ПОДВОДКА: ПРОФИЛЬ ГЛУБЖЕ НЫНЕШНЕЙ ПРАКТИКИ — ЭТО ОСОЗНАННОЕ ИЗМЕНЕНИЕ.
+--
+-- Все числа профиля — [решение Игоря], практикой НЕ подтверждаются. Считается от
+-- предстартового ПИКА объёма. Форма ЭКСПОНЕНЦИАЛЬНАЯ: срез нарастает к старту, не ступенька.
+--
+--   5 км      5–7 дней    −20%, почти весь срез в последние 3 дня
+--   10 км     7–10 дней   −25%, основной срез в последние 4 дня
+--   21.1 км   10–14 дней  −20% / −35%
+--   42.2 км   14–17 дней  −15% / −35% / −50%
+--
+-- НА ВСЕХ ДИСТАНЦИЯХ НЕИЗМЕННО:
+--   - интенсивность СОХРАНЯЕТСЯ: темпы отрезков те же, режется число минут работы
+--     (вместо 4x12 берётся 3x8 — тот же темп, меньше объём);
+--   - число беговых дней НЕ уменьшается;
+--   - объём режется за счёт лёгких и длительной, НЕ за счёт отрезков.
+--
+-- ФАКТИЧЕСКАЯ ПРАКТИКА ДЛЯ СВЕРКИ [практика], главные старты, падение недели −1 от пика:
+--   42.2 −32% (n=12) · 21.1 −15% (n=36) · 10 км +3%, то есть подводки нет вовсе (n=13)
+--   5 км n=2 — мерить нечем
+--   проходные старты не подводятся: от пика −8%, неделя −1 = x1.00 (n=169)
+-- Новый профиль ГЛУБЖЕ практики на всех дистанциях, кроме марафона, где он близок.
+-- Расхождение принято сознательно, а не по недосмотру.
+--
+-- ГЕЙТ КАЧЕСТВА: при активном цикле ЦИКЛ ГЛАВНЕЕ, гейт (3 качественных за 8 недель)
+-- становится пометкой тренеру [решение Игоря]. У кого цикла нет — гейт работает как прежде.
+-- Реализация в сборщике, отдельным нарядом.
