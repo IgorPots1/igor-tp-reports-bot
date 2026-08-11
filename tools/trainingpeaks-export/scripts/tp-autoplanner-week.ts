@@ -105,6 +105,29 @@ async function main(): Promise<void> {
   if (deferReasons.size === 0) out.push("- нет");
   [...deferReasons.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
 
+  // ДЛИТЕЛЬНАЯ ОБЯЗАНА БЫТЬ САМОЙ ДЛИННОЙ СЕССИЕЙ НЕДЕЛИ (правило Игоря 11.08).
+  const withLong = weeks.filter((w) => w.sessions.some((s2) => s2.role === "long" && !s2.deferred));
+  const notLongest = withLong.filter((w) => {
+    const long = w.sessions.find((s2) => s2.role === "long" && !s2.deferred)!;
+    return w.sessions.some((s2) => !s2.deferred && s2.role !== "long" && s2.minutes >= long.minutes);
+  });
+  const noteHist = new Map<string, number>();
+  for (const w of weeks) for (const nt of w.notes) {
+    const key = nt.replace(/\(\d+ мин\)/, "(…)").replace(/на \d+ мин/, "на … мин");
+    noteHist.set(key, (noteHist.get(key) ?? 0) + 1);
+  }
+  out.push(`\n## лестница сокращения — что срабатывало`);
+  [...noteHist.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
+
+  out.push(`\n## длительная — самая длинная сессия недели`);
+  out.push(`- недель с длительной: ${withLong.length}`);
+  out.push(`- НЕ самая длинная: ${notLongest.length}`);
+  for (const w of notLongest.slice(0, 12)) {
+    const long = w.sessions.find((s2) => s2.role === "long" && !s2.deferred)!;
+    const worst = w.sessions.filter((s2) => !s2.deferred && s2.role !== "long").sort((x, y) => y.minutes - x.minutes)[0];
+    out.push(`  - ${w.athleteId}: длительная ${long.minutes} мин против ${worst.role} ${worst.minutes} мин [${worst.presetCode}]`);
+  }
+
   // три недели наряда — именно эти атлеты, не «похожие»
   const SHOW: Array<[number, string]> = [[5733231, "СВОЙ ЯКОРЬ + КАЧЕСТВО"], [5673496, "ЗОНА 2 (был отклонён старой границей)"], [5847207, "T1 · ПО ОЩУЩЕНИЯМ (был отклонён старой границей)"]];
   const printed: string[] = [];

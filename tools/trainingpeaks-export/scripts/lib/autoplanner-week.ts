@@ -192,7 +192,8 @@ function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }):
   return segs;
 }
 
-function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityDecision, { selected: true }>): Session {
+function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityDecision, { selected: true }>,
+  forceSimpleWarmup = false): Session {
   const p: QualityPreset = dec.preset;
   const intent: IntensityIntent = p.intensityIntent === "threshold" ? "threshold" : "controlled_threshold";
   const work = resolvePace(a, intent, "maintenance", p.rpeTarget);
@@ -207,7 +208,7 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
   const w = work as Resolved, e = easy as Resolved;
   const eb = narrowBand(e.absPaceMinS, e.absPaceMaxS);
   const warmMin = p.warmupMinutes || WARMUP_CANON_MINUTES;
-  const segs: Segment[] = needsCanonicalWarmup(p.athleteLevelMin)
+  const segs: Segment[] = needsCanonicalWarmup(p.athleteLevelMin) && !forceSimpleWarmup
     ? canonicalWarmup(a, eb)
     // Простая разминка (L0–L1) по методологии из РЕАЛЬНЫХ описаний: 86% качественных — 10 минут,
     // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно». Ускорения внутри разминки
@@ -289,18 +290,74 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const ceil = Math.round(env.lastWeekMinutes * WEEKLY_GROWTH_MAX);
     if (weekly > ceil) { weekly = ceil; notes.push(`объём подрезан до +${Math.round((WEEKLY_GROWTH_MAX - 1) * 100)}% к прошлой неделе (${env.lastWeekMinutes} мин)`); }
   }
-  const qMin = dec.selected ? dec.preset.warmupMinutes + dec.preset.reps * dec.preset.workMinutes
-    + (dec.preset.reps - 1) * dec.preset.recoveryMinutes + dec.preset.cooldownMinutes : 0;
-  const easyRoles = [...roles.values()].filter((r) => r === "easy" || r === "easy_strides").length;
-  const easyBudget = Math.max(weekly - qMin, easyRoles * 20);
-  const easyBase = round5(clamp(easyBudget / Math.max(easyRoles + 1, 1), 20, 70));
-  const easyVariants = [easyBase, Math.max(20, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые
-  const longMin = round5(clamp(Math.min(env.capLongRunMin ?? weekly * 0.35, weekly * 0.45), easyBase + LONG_OVER_EASY_MIN, 180));
+  // КАЧЕСТВЕННУЮ СОБИРАЕМ ДО РАСКЛАДКИ ОБЪЁМА. Раньше её длина оценивалась по warmupMinutes из
+  // каталога и недобирала: каноническая разминка (L2–L3) на 15 мин длиннее простой, эти минуты
+  // в бюджет не попадали, а потолок объёма отнимал их у ДЛИТЕЛЬНОЙ. У 5673496 длительная упала
+  // 70 → 55 и оказалась короче качественной. Теперь вход бюджета — фактическая длина сессии.
+  const qDays = [...roles.entries()].filter(([, r]) => r === "quality").map(([d]) => d);
+  const buildQuality = (simpleWarmup: boolean): Session[] =>
+    dec.selected ? qDays.map((d) => qualitySession(d, a, dec, simpleWarmup)) : [];
+  const sumMinutes = (ss: Session[]): number => ss.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);
+  let qSessions = buildQuality(false);
+  let qMin = sumMinutes(qSessions);
 
-  const sessions: Session[] = []; let easyIdx = 0;
+  const easyRoles = [...roles.values()].filter((r) => r === "easy" || r === "easy_strides").length;
+  const EASY_FLOOR = 20, LONG_FLOOR = 30;
+  const longWant = round5(clamp(Math.min(env.capLongRunMin ?? weekly * 0.35, weekly * 0.45), LONG_FLOOR, 180));
+
+  // ЛЕСТНИЦА СОКРАЩЕНИЯ ПРИ УПОРЕ В ПОТОЛОК (правило Игоря 11.08): сначала лёгкие дни, потом
+  // качественная, ДЛИТЕЛЬНАЯ — В ПОСЛЕДНЮЮ ОЧЕРЕДЬ. И жёстко: длительная всегда самая длинная
+  // сессия недели. Не помещается — режем другое, а не её.
+  const easyFor = (budget: number): number =>
+    round5(clamp(budget / Math.max(easyRoles, 1), EASY_FLOOR, 70));
+  /** Пол длительной, при котором правило «самая длинная» соблюдено. Сравнение с САМОЙ ДЛИННОЙ
+   *  качественной, а не с их суммой: правило про отдельные сессии. */
+  const longestQ = (ss: Session[]): number => ss.reduce((m, x) => (x.deferred ? m : Math.max(m, x.minutes)), 0);
+  const longFloor = (easyBase: number, ss: Session[]): number =>
+    Math.max(LONG_FLOOR, easyBase + LONG_OVER_EASY_MIN, longestQ(ss) > 0 ? longestQ(ss) + ROUND_TO_MIN : 0);
+
+  let easyBase = easyFor(weekly - qMin - longWant);
+  let longMin = round5(clamp(Math.max(longWant, longFloor(easyBase, qSessions)), LONG_FLOOR, 180));
+  let total = qMin + longMin + easyBase * easyRoles;
+
+  // Ступень 1 — лёгкие дни до пола.
+  if (total > weekly && easyBase > EASY_FLOOR) {
+    easyBase = EASY_FLOOR;
+    longMin = round5(clamp(Math.max(longWant, longFloor(easyBase, qSessions)), LONG_FLOOR, 180));
+    total = qMin + longMin + easyBase * easyRoles;
+    notes.push("лёгкие дни срезаны до пола, чтобы не отнимать у длительной");
+  }
+  // Ступень 2 — каноническая разминка сворачивается в простую (это и есть те 15 минут).
+  if (total > weekly && dec.selected && needsCanonicalWarmup(dec.preset.athleteLevelMin)) {
+    const simple = buildQuality(true);
+    const simpleMin = sumMinutes(simple);
+    if (simple.length > 0 && simpleMin < qMin) {
+      qSessions = simple; qMin = simpleMin;
+      longMin = round5(clamp(Math.max(longWant, longFloor(easyBase, qSessions)), LONG_FLOOR, 180));
+      total = qMin + longMin + easyBase * easyRoles;
+      notes.push("разминка свёрнута до простой: каноническая не помещается в потолок объёма");
+    }
+  }
+  // Ступень 3 — длительная. Ниже пола «самая длинная» НЕ опускается: это и есть жёсткое правило.
+  if (total > weekly) {
+    const floor = longFloor(easyBase, qSessions);
+    if (longMin > floor) { longMin = round5(Math.max(floor, weekly - qMin - easyBase * easyRoles)); total = qMin + longMin + easyBase * easyRoles; }
+  }
+  if (total > weekly) {
+    // Кто именно выталкивает за потолок: новое правило (длительная должна перерасти
+    // КАЧЕСТВЕННУЮ) или пол, существовавший и раньше (длительная ≥ лёгкий + 20 при поле
+    // лёгкого 20). Второе — не следствие этого наряда, и это должно быть видно в отчёте.
+    const driver = longestQ(qSessions) + ROUND_TO_MIN > easyBase + LONG_OVER_EASY_MIN
+      ? "из-за качественной" : "из-за пола лёгких (было и раньше)";
+    notes.push(`объём выше потолка на ${total - weekly} мин: длительная обязана быть самой длинной — ${driver}`);
+  }
+
+  const easyVariants = [easyBase, Math.max(EASY_FLOOR, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые
+
+  const sessions: Session[] = []; let easyIdx = 0; let qIdx = 0;
   for (const d of days) {
     const role = roles.get(d) ?? "easy";
-    if (role === "quality" && dec.selected) sessions.push(qualitySession(d, a, dec));
+    if (role === "quality" && qIdx < qSessions.length) sessions.push(qSessions[qIdx++]);
     else if (role === "long") sessions.push(aerobicSession(d, "long", a, cat, longMin));
     else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, easyVariants[easyIdx % easyVariants.length])); easyIdx++; }
   }
