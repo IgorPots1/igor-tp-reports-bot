@@ -27,6 +27,46 @@ import { DEFAULT_HALF_LIFE_DAYS, inAnyWindow, weightForAge, weightedMedian, type
 export const CYCLE_BASE_WINDOW_WEEKS = 26;
 export const CYCLE_BASE_HALF_LIFE_DAYS = DEFAULT_HALF_LIFE_DAYS;
 
+/**
+ * ОКНО БАЗЫ КОРОЧЕ У РАСТУЩЕГО. Фиксированные 42 дня не поспевали за теми, кто реально
+ * набирает: у Семешиной тренд +4.9 мин/нед, а база опустилась на 18 мин против
+ * восьминедельной — окно тянуло вниз старыми, более лёгкими неделями.
+ *
+ * МЕХАНИКА. Считаем, на сколько процентов от базы объём изменился ЗА ВСЁ окно
+ * (наклон × число недель ÷ база). Растёт заметно — окно укорачиваем, стоит на месте —
+ * оставляем 42 дня. Падение окно НЕ укорачивает: там короткое окно закрепило бы провал
+ * как норму, а это ровно та ошибка, из-за которой базу и переводили на 26 недель
+ * (случай Лобуса: 8 недель дали бы 180 вместо верных 223).
+ *
+ * ПОРОГ 25% взят как «рост, заметный на глаз за полгода»; ниже него в практике живёт
+ * подавляющее большинство — медиана роста за 26 недель ×1.01 [практика, n=93], то есть
+ * укорочение сработает только у настоящих исключений, а не у всех подряд.
+ * НИЖНЯЯ ГРАНИЦА 21 день [выведено] — половина дефолта и всё ещё три недели, то есть
+ * больше одной тренировочной недели; короче делать нельзя, окно выродится в фазу.
+ */
+export const TREND_SHORTENING_AT_PCT = 25;
+export const CYCLE_BASE_HALF_LIFE_MIN_DAYS = 21;
+
+/** Наклон недельного ряда, единиц в неделю. Обычный МНК. */
+export function weeklySlope(values: number[]): number {
+  const n = values.length;
+  if (n < 4) return 0;
+  const mx = (n - 1) / 2;
+  const my = values.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (i - mx) * (values[i] - my); den += (i - mx) ** 2; }
+  return den === 0 ? 0 : num / den;
+}
+
+/** Период полураспада для базы: короче у растущего, обычный у стабильного и падающего. */
+export function halfLifeForTrend(values: number[], base: number): number {
+  if (!(base > 0) || values.length < 4) return CYCLE_BASE_HALF_LIFE_DAYS;
+  const growthPct = 100 * weeklySlope(values) * values.length / base;
+  if (growthPct <= 0) return CYCLE_BASE_HALF_LIFE_DAYS;
+  const k = Math.min(1, growthPct / TREND_SHORTENING_AT_PCT);
+  return Math.round(CYCLE_BASE_HALF_LIFE_DAYS - k * (CYCLE_BASE_HALF_LIFE_DAYS - CYCLE_BASE_HALF_LIFE_MIN_DAYS));
+}
+
 /** Взвешенная по свежести медиана недельных величин, с выбросом больных недель. */
 export function weightedWeeklyBase(
   weeks: Array<{ weekStart: string; value: number; hasTraining: boolean }>,
@@ -181,6 +221,59 @@ export const capBetween = (base: number, max: number): number =>
  */
 export const TAPER_NO_PEAK_FACTOR = 0.90;
 
+/**
+ * ПОТОЛОК ПО ДОЛЕ, А НЕ ПО МИНУТАМ. Доля качества не уходит от личной обычной больше
+ * чем на столько процентных пунктов НИ НА ОДНОЙ неделе цикла [решение Игоря].
+ *
+ * ЗАЧЕМ ОТДЕЛЬНО ОТ ПОТОЛКА МИНУТ. Личный потолок минут работы стоял, но не спасал:
+ * у Пономаревой марафонская подводка режет аэробный ×0.50 против работы ×0.55, минуты
+ * при этом ПАДАЮТ и потолка не касаются, а доля уезжает с 13.5% до 15.5%. Минуты и доля —
+ * разные величины, и ограничивать надо ту, которая уезжает.
+ *
+ * При упоре режутся МИНУТЫ РАБОТЫ, а не добавляется аэробный объём: объём недели задан
+ * ролью недели (рост/разгрузка/подводка), и подтягивать его ради доли значило бы ломать
+ * смысл этой роли.
+ */
+export const MAX_SHARE_DEVIATION_PP = 2.0;
+
+/**
+ * Прижать минуты работы так, чтобы доля не ушла от обычной больше допустимого.
+ * Возвращает исправленные минуты и пометку, если пришлось вмешаться.
+ */
+export function clampShare(
+  aerobicMin: number,
+  qualityMin: number,
+  ownSharePct: number,
+  capQualityMin: number,
+): { q: number; note: string | null } {
+  const total = aerobicMin + qualityMin;
+  if (total <= 0) return { q: qualityMin, note: null };
+  const share = 100 * qualityMin / total;
+  const hi = ownSharePct + MAX_SHARE_DEVIATION_PP;
+  const lo = Math.max(0, ownSharePct - MAX_SHARE_DEVIATION_PP);
+  // q такое, что q/(a+q) = s  =>  q = s·a/(1−s)
+  // ВНИЗ, а не к ближайшему: округление к пяти само выводило за допуск
+  // (у Пономаревой оставалось 2.1 п.п. при пороге 2.0).
+  const qFor = (sPct: number, dir: "down" | "up"): number => {
+    const s = sPct / 100;
+    if (s >= 1) return qualityMin;
+    const raw = (s * aerobicMin) / (1 - s);
+    return (dir === "down" ? Math.floor(raw / 5) : Math.ceil(raw / 5)) * 5;
+  };
+  if (share > hi) {
+    const q = Math.min(qualityMin, qFor(hi, "down"));
+    return { q, note: `работа срезана до ${q} мин: доля упиралась в +${MAX_SHARE_DEVIATION_PP} п.п. к обычной` };
+  }
+  if (share < lo) {
+    // мирроринг вверх, но не выше личного потолка минут
+    const q = Math.min(capQualityMin, Math.max(qualityMin, qFor(lo, "up")));
+    return q > qualityMin
+      ? { q, note: `работа поднята до ${q} мин: доля проваливалась ниже −${MAX_SHARE_DEVIATION_PP} п.п.` }
+      : { q: qualityMin, note: null };
+  }
+  return { q: qualityMin, note: null };
+}
+
 /** Каким рычагом идёт рост на неделе — для прогноза. */
 export type GrowthLever = "аэробный" | "качество" | "оба" | "упёрлись";
 
@@ -233,6 +326,14 @@ export type CycleDraft = {
   historicMaxQualityMin: number;
   /** каким был бы аэробный потолок, если брать его просто от максимума — для проверки перекоса */
   aerobicIfFromMax: number;
+  /** выбранный период полураспада, дн — 42 у стабильного, короче у растущего */
+  halfLifeDays: number;
+  /** база при фиксированных 42 днях — для сравнения в отчёте */
+  base42Aerobic: number;
+  /** наклон недельного аэробного, мин/нед */
+  slopeMinPerWeek: number;
+  /** личная обычная доля качества, % — от неё считается допуск отклонения */
+  ownSharePct: number;
   /** прежняя база за 8 недель — только для сравнения в отчёте */
   base8Aerobic: number;
   base8Quality: number;
@@ -359,14 +460,17 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
         const qF = noPeak ? TAPER_NO_PEAK_FACTOR : tw.qualityMinutesFactor;
         const a = round5(from * aF);
         // Доля в подводке растёт намеренно (объём режется, интенсивность держим),
-        // но минуты работы не должны перескочить личный потолок качества.
-        const q = round5(Math.min(qual * qF, draft.peakCapQualityMin));
+        // но не больше допуска: минуты работы не выше личного потолка И доля не дальше
+        // MAX_SHARE_DEVIATION_PP от обычной.
+        const qRaw = round5(Math.min(qual * qF, draft.peakCapQualityMin));
+        const cl = clampShare(a, qRaw, draft.ownSharePct, draft.peakCapQualityMin);
+        const q = cl.q;
         out.push({ index: i, weekStart, role: "подводка", aerobicMin: a, qualityMin: q, days: draft.days,
           qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
           note: noPeak
             ? `ПОДВОДКА ОТ БАЗЫ, ПИКА НЕ БЫЛО: ×${aF.toFixed(2)} символически — роста не было, сбрасывать нечего`
             : `от ПИКА ${from} мин: аэробный ×${aF.toFixed(2)}, работа ×${qF.toFixed(2)}`
-              + ` · темпы отрезков ТЕ ЖЕ, дней столько же` });
+              + ` · темпы отрезков ТЕ ЖЕ, дней столько же` + (cl.note ? ` · ${cl.note}` : "") });
         continue;
       }
     }
@@ -377,17 +481,20 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
       const fromA = prevShownAer > 0 ? prevShownAer : aer;
       const fromQ = prevShownQual > 0 ? prevShownQual : qual;
       const a = round5(fromA * draft.deloadDepthAerobic);
-      const q = round5(fromQ * draft.deloadQualityFactor);
+      const qRawD = round5(fromQ * draft.deloadQualityFactor);
+      const clD = clampShare(a, qRawD, draft.ownSharePct, draft.peakCapQualityMin);
+      const q = clD.q;
       out.push({ index: i, weekStart, role: "плановая разгрузка", aerobicMin: a, qualityMin: q, days: draft.days,
         qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
         note: `аэробный ×${draft.deloadDepthAerobic.toFixed(2)}, работа ×${draft.deloadQualityFactor.toFixed(2)}`
-          + ` · день НЕ убран, качество НЕ снято, темп на ступень мягче` });
+          + ` · день НЕ убран, качество НЕ снято, темп на ступень мягче` + (clD.note ? ` · ${clD.note}` : "") });
       prevShownAer = a; prevShownQual = q;
       returningFromDeload = true;
       continue;
     }
     if (draft.intent === "maintenance") {
-      const a = round5(aer), q = round5(qual);
+      const a = round5(aer);
+      const q = clampShare(a, round5(qual), draft.ownSharePct, draft.peakCapQualityMin).q;
       out.push({ index: i, weekStart, role: "поддержание", aerobicMin: a, qualityMin: q, days: draft.days,
         qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
         note: "шаг ×1.00 — поддержание, не прогрессия" });
@@ -408,7 +515,9 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
     // когда связывает предел перехода — округляем ВНИЗ, иначе округление к пяти
     // само по себе выводит за предел (330 x1.22 = 402.6, а round5 даёт 405 = x1.227)
     const a = aerWanted > ceilStep ? Math.floor(ceilStep / 5) * 5 : round5(Math.min(aerWanted, draft.peakCapAerobicMin));
-    const q = round5(Math.min(qualWanted, draft.peakCapQualityMin));
+    const qBeforeClamp = round5(Math.min(qualWanted, draft.peakCapQualityMin));
+    const clG = clampShare(a, qBeforeClamp, draft.ownSharePct, draft.peakCapQualityMin);
+    const q = clG.q;
     // после возврата внутренняя переменная роста тоже подтягивается на прежний уровень
     if (returningFromDeload) { aer = Math.max(aer, a); qual = Math.max(qual, q); }
     returningFromDeload = false;
@@ -422,6 +531,7 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
     else if (lever === "качество") notes.push(`аэробный на потолке ${draft.peakCapAerobicMin} мин — растём качеством`);
     else notes.push(`оба на потолке — дальше только решением тренера`);
     if (overHist) notes.push(`ВЫШЕ исторического максимума ${draft.historicMaxAerobicMin} мин`);
+    if (clG.note) notes.push(clG.note);
     out.push({ index: i, weekStart, role: "рост", aerobicMin: a, qualityMin: q, days: draft.days,
       qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever, note: notes.join(" · ") });
 

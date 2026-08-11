@@ -27,7 +27,7 @@ import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, LENGTH_WEEKS,
   STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, WORK_SHARE_MAX,
   PEAK_OVER_BASE_MAX, PEAK_OVER_HISTORIC_MAX, capBetween, forecast, intentFromDistance,
-  CYCLE_BASE_HALF_LIFE_DAYS, weightedWeeklyBase,
+  CYCLE_BASE_HALF_LIFE_DAYS, weightedWeeklyBase, halfLifeForTrend, weeklySlope,
   type CycleMode,
   type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
@@ -146,14 +146,18 @@ async function main(): Promise<void> {
     // НОВАЯ база: 26 недель со взвешиванием по свежести, больные недели исключены.
     const wk26 = weekly.get(aid) ?? [];
     const illness = ctx.get(aid)?.illness ?? [];
-    const baseAerobicMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.aer, hasTraining: w.aer + w.qual > 0 })), today, illness)
+    // Период полураспада зависит от тренда: у растущего окно короче (см. halfLifeForTrend).
+    const ordered = [...wk26].filter((w) => w.aer + w.qual > 0).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+    const flat = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.aer, hasTraining: w.aer + w.qual > 0 })), today, illness, CYCLE_BASE_HALF_LIFE_DAYS);
+    const halfLife = halfLifeForTrend(ordered.map((w) => w.aer), flat || base8Aerobic);
+    const baseAerobicMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.aer, hasTraining: w.aer + w.qual > 0 })), today, illness, halfLife)
       || base8Aerobic;
     const illWeeks = wk26.filter((w) => w.aer + w.qual > 0).length
       - wk26.filter((w) => w.aer + w.qual > 0 && !illness.some((iw) => w.weekStart >= iw.from && w.weekStart <= iw.to)).length;
     // Потолок роста — собственный исторический максимум аэробной недели [практика].
     // Считается по ВСЕМУ окну наблюдения, а не по 8 неделям базы.
     const histMax = Math.round(Math.max(baseAerobicMin, ...(histAer.get(aid) ?? [baseAerobicMin])));
-    const baseQualityMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.qual, hasTraining: w.aer + w.qual > 0 })), today, illness);
+    const baseQualityMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.qual, hasTraining: w.aer + w.qual > 0 })), today, illness, halfLife);
     // ЛИЧНЫЙ потолок качества — собственный исторический максимум минут работы [практика].
     // Когортные 20% доли остаются последней защитой, но рабочий предел теперь личный.
     const histQualRaw = Math.round(Math.max(baseQualityMin, ...(histQual.get(aid) ?? [baseQualityMin])));
@@ -167,7 +171,7 @@ async function main(): Promise<void> {
     // как качественный. Если бы потолок брался просто от максимума — куда бы он ушёл.
     const aerobicIfFromMax = Math.round(histMax * PEAK_OVER_HISTORIC_MAX / 5) * 5;
     if (baseQualityMin === 0) gaps.push("качественных минут за окно нет — база качества 0, цикл начнётся с нуля");
-    const days = Math.round(weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.days, hasTraining: w.aer + w.qual > 0 })), today, illness))
+    const days = Math.round(weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.days, hasTraining: w.aer + w.qual > 0 })), today, illness, halfLife))
       || Math.round(med(ws.map((w) => w.days))) || 3;
 
     const mine = races.filter((r) => r.trainingpeaks_athlete_id === aid).sort((a, b) => a.event_date.localeCompare(b.event_date));
@@ -188,7 +192,10 @@ async function main(): Promise<void> {
       deloadEveryN: DELOAD_EVERY_N, deloadDepthAerobic: DELOAD_AEROBIC_FACTOR, deloadQualityFactor: DELOAD_QUALITY_FACTOR,
       taperProfile: TAPER_PROFILE[intent], days,
       peakCapAerobicMin, historicMaxAerobicMin: histMax, peakCapQualityMin: histQualMax,
-      historicMaxQualityMin: histQualRaw, aerobicIfFromMax, base8Aerobic, base8Quality, illWeeks, gaps,
+      historicMaxQualityMin: histQualRaw, aerobicIfFromMax, base8Aerobic, base8Quality, illWeeks,
+      ownSharePct: 100 * baseQualityMin / Math.max(baseAerobicMin + baseQualityMin, 1),
+      halfLifeDays: halfLife, base42Aerobic: flat || base8Aerobic,
+      slopeMinPerWeek: weeklySlope(ordered.map((w) => w.aer)), gaps,
     };
   }
 
@@ -237,17 +244,19 @@ async function main(): Promise<void> {
   console.log(`\n${"═".repeat(78)}`);
   console.log(`БАЗА ЦИКЛА: 8 НЕДЕЛЬ (было) ПРОТИВ 26 СО СВЕЖЕСТЬЮ (стало), период полураспада ${CYCLE_BASE_HALF_LIFE_DAYS} дн`);
   console.log(`${"═".repeat(78)}`);
-  console.log(`  фамилия      аэробн 8н -> 26н   сдвиг   работа 8н -> 26н   доля 8н -> 26н   больных нед`);
+  console.log(`  фамилия      8н    26н@42  26н@тренд  полураспад  тренд   доля 8н -> итог   больн`);
   for (const [aid, sur] of GROUP) {
     const d = drafts.get(aid)!;
     const sh8 = 100 * d.base8Quality / Math.max(d.base8Aerobic + d.base8Quality, 1);
     const sh26 = 100 * d.baseQualityMin / Math.max(d.baseAerobicMin + d.baseQualityMin, 1);
     const dA = d.baseAerobicMin - d.base8Aerobic;
-    console.log(`  ${sur.padEnd(13)}${String(d.base8Aerobic).padStart(6)} -> ${String(d.baseAerobicMin).padEnd(5)}`
-      + `${((dA >= 0 ? "+" : "") + dA).padStart(7)}   ${String(d.base8Quality).padStart(4)} -> ${String(d.baseQualityMin).padEnd(4)}`
+    console.log(`  ${sur.padEnd(13)}${String(d.base8Aerobic).padStart(4)}${String(d.base42Aerobic).padStart(8)}`
+      + `${String(d.baseAerobicMin).padStart(10)}${String(d.halfLifeDays + " дн").padStart(12)}`
+      + `${d.slopeMinPerWeek.toFixed(1).padStart(8)}`
       + `   ${(sh8.toFixed(1) + "%").padStart(6)} -> ${(sh26.toFixed(1) + "%").padEnd(6)}`
-      + `${String(d.illWeeks).padStart(6)}`
-      + (Math.abs(dA) > 25 ? "   ⚠ сильный сдвиг" : ""));
+      + `${String(d.illWeeks).padStart(5)}`
+      + (d.halfLifeDays < CYCLE_BASE_HALF_LIFE_DAYS ? "  окно укорочено" : "")
+      + (Math.abs(dA) > 25 ? "  ⚠ сильный сдвиг" : ""));
   }
 
   // ПРОВЕРКА: не занижает ли новая база тех, кто РЕАЛЬНО вырос за последние месяцы.
