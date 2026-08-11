@@ -12,6 +12,8 @@
     "scripts/lib/band-collision.ts",
     "scripts/lib/autoplanner-roster.ts",
     "scripts/lib/quality-volume.ts",
+    "scripts/lib/training-cycle.ts",
+    "scripts/tp-cycle-draft.ts",
     "scripts/tp-quality-volume-check.ts",
     "scripts/tp-taper-check.ts",
     "scripts/tp-autoplanner-week.ts",
