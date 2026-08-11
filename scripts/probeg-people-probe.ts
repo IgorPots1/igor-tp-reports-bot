@@ -199,18 +199,39 @@ async function loadOurRaces(studentId: string): Promise<OurRace[]> {
   const rows = (races as Array<{ event_date: string | null; title: string | null; distance_raw: number | string | null }> | null) ?? [];
   const out: OurRace[] = [];
   for (const r of rows) {
-    const date = (r.event_date ?? "").slice(0, 10);
-    if (!date) continue;
-    // The race workout = the longest completed run that day. Its GPS distance/time is what a protocol row mirrors.
-    const { data: wk } = await supabase
+    const calDate = (r.event_date ?? "").slice(0, 10);
+    if (!calDate) continue;
+    // The TP calendar date drifts by a day for night races (start crosses midnight) and TZ-edge foreign
+    // races, which left the race with NO time anchor (the exact-date workout lookup missed the shifted run)
+    // so it never matched a protocol. Look up the race workout in a ±1 day WINDOW and NORMALISE the race
+    // date to the actual completed run — the run is the ground truth for the activity day and lines up with
+    // the protocol's date. The exact-date run always wins (all correctly-dated races are unchanged); an
+    // adjacent run is taken only when it corroborates by DISTANCE (declared distance matches), or when the
+    // race has no declared distance and it is the sole completed run in the window — never a random grab.
+    const d0 = new Date(`${calDate}T00:00:00Z`).getTime();
+    const prevDay = new Date(d0 - 86400000).toISOString().slice(0, 10);
+    const nextDay = new Date(d0 + 86400000).toISOString().slice(0, 10);
+    const { data: wkWin } = await supabase
       .from("trainingpeaks_workout_cache")
-      .select("completed_time_raw, completed_distance_raw")
+      .select("workout_date, completed_time_raw, completed_distance_raw")
       .eq("student_id", studentId)
-      .eq("workout_date", date)
-      .order("completed_distance_raw", { ascending: false })
-      .limit(1);
-    const w = (wk as Array<{ completed_time_raw: number | string | null; completed_distance_raw: number | string | null }> | null)?.[0] ?? null;
-    const ourKm = normalizeKm(w?.completed_distance_raw) ?? normalizeKm(r.distance_raw); // actual GPS first, planned distance fallback
+      .in("workout_date", [prevDay, calDate, nextDay])
+      .eq("is_completed", true)
+      .order("completed_distance_raw", { ascending: false });
+    type Wk = { workout_date: string; completed_time_raw: number | string | null; completed_distance_raw: number | string | null };
+    const runs = ((wkWin as Wk[] | null) ?? []).filter((x) => (Number(x.completed_distance_raw) || 0) > 0);
+    const raceKm = normalizeKm(r.distance_raw);
+    const onDay = runs.filter((x) => x.workout_date === calDate);
+    const adj = runs.filter((x) => x.workout_date !== calDate);
+    let w: Wk | null = onDay[0] ?? null; // exact-date run always wins → correctly-dated races unchanged
+    let date = calDate;
+    if (!w && adj.length > 0) {
+      // no run on the calendar day → take an adjacent run only if it corroborates by distance, or is unique
+      const distOk = raceKm != null ? adj.find((x) => distanceMatch(normalizeKm(x.completed_distance_raw), raceKm)) : null;
+      const pick = distOk ?? (raceKm == null && adj.length === 1 ? adj[0] : null);
+      if (pick) { w = pick; date = pick.workout_date; }
+    }
+    const ourKm = normalizeKm(w?.completed_distance_raw) ?? raceKm; // actual GPS first, planned distance fallback
     const title = (r.title ?? "").trim();
     out.push({ date, title, ourKm, ourSeconds: rawHoursToSeconds(w?.completed_time_raw), foreign: isForeignRace(title) });
   }
