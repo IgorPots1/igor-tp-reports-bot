@@ -92,12 +92,15 @@ function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
 }
 
-function weightForAge(ageDays: number, halfLifeDays: number): number {
+/** Экспортируется, чтобы цикл считал свою базу ТЕМ ЖЕ взвешиванием по свежести,
+ *  что и якорь лёгкого, а не заводил своё. Чистая функция, поведение не меняется. */
+export function weightForAge(ageDays: number, halfLifeDays: number): number {
   if (!Number.isFinite(halfLifeDays)) return 1; // HALF_LIFE = ∞ → flat weighting
   return Math.pow(0.5, ageDays / halfLifeDays);
 }
 
-function weightedMedian(items: { v: number; w: number }[]): number {
+/** Экспортируется по той же причине, что и weightForAge. Чистая функция. */
+export function weightedMedian(items: { v: number; w: number }[]): number {
   const s = [...items].sort((a, b) => a.v - b.v);
   const total = s.reduce((acc, x) => acc + x.w, 0);
   let cum = 0;

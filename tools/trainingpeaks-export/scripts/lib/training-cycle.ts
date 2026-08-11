@@ -10,6 +10,44 @@
  * тренером и практикой НЕ подтверждается; [выведено] — ни то ни другое.
  */
 
+import { DEFAULT_HALF_LIFE_DAYS, inAnyWindow, weightForAge, weightedMedian, type DateWindow } from "./easy-anchor.ts";
+
+/**
+ * БАЗА ЦИКЛА СЧИТАЕТСЯ ОТ НОРМЫ, А НЕ ОТ ФАЗЫ.
+ *
+ * Медиана за 8 недель наследовала то состояние, в котором человек оказался в момент
+ * заведения цикла: у Кудрявцевой она дала долю качества 15.6% против её же медианы
+ * за 26 недель 12.6% (p25 5.5%, p75 14.2%) — то есть закрепила хвост тяжёлого блока.
+ * Заведи цикл после болезни — так же закрепился бы провал.
+ *
+ * Берём окно 26 недель со взвешиванием по свежести — тем же, что у якоря лёгкого
+ * (период полураспада 42 дня): недавнее весит больше, но одна фаза уже не решает.
+ * Недели с активным health-сигналом исключаются, как и для якоря.
+ */
+export const CYCLE_BASE_WINDOW_WEEKS = 26;
+export const CYCLE_BASE_HALF_LIFE_DAYS = DEFAULT_HALF_LIFE_DAYS;
+
+/** Взвешенная по свежести медиана недельных величин, с выбросом больных недель. */
+export function weightedWeeklyBase(
+  weeks: Array<{ weekStart: string; value: number; hasTraining: boolean }>,
+  asOf: string,
+  illness: DateWindow[] = [],
+  halfLifeDays: number = CYCLE_BASE_HALF_LIFE_DAYS,
+): number {
+  // ОТБИРАЕМ ПО «БЫЛА ЛИ НЕДЕЛЯ», А НЕ ПО «БЫЛА ЛИ ЭТА ВЕЛИЧИНА».
+  // Первая версия отбрасывала недели с нулевым качеством, и база качества считалась
+  // только по тем неделям, где отрезки были: у Пономаревой это подняло её с 20 до 40 мин,
+  // а долю с 9.1% до 14.8%. Неделя без отрезков — это настоящая неделя, в которой
+  // качества просто не было, и в норму она входит нулём.
+  const pool = weeks.filter((w) => w.hasTraining && !inAnyWindow(w.weekStart, illness));
+  if (pool.length === 0) return 0;
+  const items = pool.map((w) => ({
+    v: w.value,
+    w: weightForAge(Math.round((Date.parse(asOf) - Date.parse(w.weekStart)) / 86400000), halfLifeDays),
+  }));
+  return Math.round(weightedMedian(items));
+}
+
 export type CycleIntent = "5k" | "10k" | "half" | "marathon" | "maintenance";
 export type WeekRole = "рост" | "плановая разгрузка" | "подводка" | "старт" | "поддержание";
 
@@ -195,6 +233,11 @@ export type CycleDraft = {
   historicMaxQualityMin: number;
   /** каким был бы аэробный потолок, если брать его просто от максимума — для проверки перекоса */
   aerobicIfFromMax: number;
+  /** прежняя база за 8 недель — только для сравнения в отчёте */
+  base8Aerobic: number;
+  base8Quality: number;
+  /** сколько недель выброшено как больные */
+  illWeeks: number;
   /** чего не хватило, чтобы черновик был полным */
   gaps: string[];
 };
@@ -262,6 +305,14 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
   // то есть x1.26 при заявленном пределе x1.22 — страховка не срабатывала).
   let prevShownAer = 0;
   let prevShownQual = 0;
+  // Уровень последней недели РОСТА до плановой разгрузки. После неё разрешён возврат
+  // ровно на него — без шага и без предела перехода: разгрузка ПЛАНОВАЯ, форму человек
+  // не терял, и заставлять его отыгрывать её ×1.22 неверно (у Богачева получалось
+  // 310 -> 375 при том, что до разгрузки было 390). Предел остаётся для роста
+  // и для реактивных случаев.
+  let preDeloadAer = 0;
+  let preDeloadQual = 0;
+  let returningFromDeload = false;
 
   const taperLen = draft.taperProfile.length;
   const weeksToRace = draft.targetDate
@@ -307,7 +358,9 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
         const aF = noPeak ? TAPER_NO_PEAK_FACTOR : tw.aerobicFactor;
         const qF = noPeak ? TAPER_NO_PEAK_FACTOR : tw.qualityMinutesFactor;
         const a = round5(from * aF);
-        const q = round5(qual * qF);
+        // Доля в подводке растёт намеренно (объём режется, интенсивность держим),
+        // но минуты работы не должны перескочить личный потолок качества.
+        const q = round5(Math.min(qual * qF, draft.peakCapQualityMin));
         out.push({ index: i, weekStart, role: "подводка", aerobicMin: a, qualityMin: q, days: draft.days,
           qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
           note: noPeak
@@ -330,6 +383,7 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
         note: `аэробный ×${draft.deloadDepthAerobic.toFixed(2)}, работа ×${draft.deloadQualityFactor.toFixed(2)}`
           + ` · день НЕ убран, качество НЕ снято, темп на ступень мягче` });
       prevShownAer = a; prevShownQual = q;
+      returningFromDeload = true;
       continue;
     }
     if (draft.intent === "maintenance") {
@@ -344,12 +398,20 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
     // Когда аэробный упёрся в личный потолок, рост НЕ останавливается: дальше растёт
     // качество, пока не упрётся в свой личный потолок. У Богачева это единственный
     // доступный рычаг — самый большой объём в группе при самой низкой доле работы.
-    // предел одного перехода считается от ПОКАЗАННОЙ прошлой недели
-    const ceilStep = prevShownAer > 0 ? prevShownAer * MAX_SINGLE_STEP : Infinity;
+    // ВОЗВРАТ ПОСЛЕ ПЛАНОВОЙ РАЗГРУЗКИ ИДЁТ БЕЗ ШАГА И БЕЗ ПРЕДЕЛА ПЕРЕХОДА.
+    // Разгрузка ПЛАНОВАЯ, форму человек не терял, и заставлять его отыгрывать её
+    // по ×1.22 неверно: у Богачева получалось 310 -> 375 при том, что до разгрузки
+    // было 415. Предел остаётся для обычного роста и для реактивных случаев.
+    const ceilStep = returningFromDeload || prevShownAer <= 0 ? Infinity : prevShownAer * MAX_SINGLE_STEP;
+    const aerWanted = returningFromDeload && preDeloadAer > 0 ? Math.max(aer, preDeloadAer) : aer;
+    const qualWanted = returningFromDeload && preDeloadQual > 0 ? Math.max(qual, preDeloadQual) : qual;
     // когда связывает предел перехода — округляем ВНИЗ, иначе округление к пяти
     // само по себе выводит за предел (330 x1.22 = 402.6, а round5 даёт 405 = x1.227)
-    const a = aer > ceilStep ? Math.floor(ceilStep / 5) * 5 : round5(aer);
-    const q = round5(qual);
+    const a = aerWanted > ceilStep ? Math.floor(ceilStep / 5) * 5 : round5(Math.min(aerWanted, draft.peakCapAerobicMin));
+    const q = round5(Math.min(qualWanted, draft.peakCapQualityMin));
+    // после возврата внутренняя переменная роста тоже подтягивается на прежний уровень
+    if (returningFromDeload) { aer = Math.max(aer, a); qual = Math.max(qual, q); }
+    returningFromDeload = false;
     const aerRoom = a < draft.peakCapAerobicMin;
     const qualRoom = q < draft.peakCapQualityMin && q < (a + q) * WORK_SHARE_MAX;
     const lever: GrowthLever = aerRoom && qualRoom ? "оба" : aerRoom ? "аэробный" : qualRoom ? "качество" : "упёрлись";
@@ -365,6 +427,7 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
 
     peakAer = Math.max(peakAer, a);
     prevShownAer = a; prevShownQual = q;
+    preDeloadAer = a; preDeloadQual = q;
     // Страховка: ни один переход не превышает предел одного шага [практика, p90, n=1715].
     // Обычный шаг (+6%) её и близко не касается — она ловит добор к потолку после разгрузки.
     if (aerRoom) aer = Math.min(aer * Math.min(draft.stepAerobic, MAX_SINGLE_STEP), draft.peakCapAerobicMin);

@@ -21,11 +21,13 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { toolRoot } from "./lib/paths.ts";
 import { mondayOf } from "./lib/autoplanner-context.ts";
 import { loadRoster } from "./lib/autoplanner-roster.ts";
+import { loadAthleteContexts } from "./lib/autoplanner-context.ts";
 import { splitSessionVolume } from "./lib/quality-volume.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, LENGTH_WEEKS,
   STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, WORK_SHARE_MAX,
   PEAK_OVER_BASE_MAX, PEAK_OVER_HISTORIC_MAX, capBetween, forecast, intentFromDistance,
+  CYCLE_BASE_HALF_LIFE_DAYS, weightedWeeklyBase,
   type CycleMode,
   type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
@@ -57,6 +59,8 @@ type Race = { id: string; trainingpeaks_athlete_id: number; event_date: string; 
 async function main(): Promise<void> {
   const sb = sbc();
   const roster = await loadRoster(sb);
+  // Контексты нужны РАДИ ОКОН БОЛЕЗНИ: база цикла исключает их так же, как якорь лёгкого.
+  const ctx = await loadAthleteContexts(sb);
   const today = iso(Date.now());
   const since = addDays(today, -BASE_WEEKS * 7);
 
@@ -110,8 +114,10 @@ async function main(): Promise<void> {
   // Исторические аэробные недели за всё окно — из них берётся потолок роста.
   const histAer = new Map<number, number[]>();
   const histQual = new Map<number, number[]>();
+  /** те же 26 недель, но С ДАТАМИ — нужны для взвешивания по свежести */
+  const weekly = new Map<number, Array<{ weekStart: string; aer: number; qual: number; days: number }>>();
   {
-    const perWeek = new Map<number, Map<string, { aer: number; qual: number }>>();
+    const perWeek = new Map<number, Map<string, { aer: number; qual: number; days: number }>>();
     for (const r of allRows) {
       if (!roster.active.has(r.trainingpeaks_athlete_id)) continue;
       const minutes = Math.round((r.planned_time_raw ?? 0) * 60);
@@ -119,12 +125,13 @@ async function main(): Promise<void> {
       const s = splitSessionVolume(r.title, minutes, thr.get(r.trainingpeaks_athlete_id) ?? null);
       const wk = mondayOf(r.workout_date);
       const M = perWeek.get(r.trainingpeaks_athlete_id) ?? perWeek.set(r.trainingpeaks_athlete_id, new Map()).get(r.trainingpeaks_athlete_id)!;
-      const w = M.get(wk) ?? M.set(wk, { aer: 0, qual: 0 }).get(wk)!;
-      w.aer += s.aerobicMin; w.qual += s.qualityMin;
+      const w = M.get(wk) ?? M.set(wk, { aer: 0, qual: 0, days: 0 }).get(wk)!;
+      w.aer += s.aerobicMin; w.qual += s.qualityMin; w.days += 1;
     }
     for (const [aid, M] of perWeek) {
       histAer.set(aid, [...M.values()].map((w) => w.aer).filter((x) => x > 0));
       histQual.set(aid, [...M.values()].map((w) => w.qual).filter((x) => x > 0));
+      weekly.set(aid, [...M.entries()].map(([weekStart, w]) => ({ weekStart, aer: w.aer, qual: w.qual, days: w.days })));
     }
   }
 
@@ -133,11 +140,20 @@ async function main(): Promise<void> {
     const M = byAth.get(aid);
     const ws = M ? [...M.values()].filter((w) => w.aer + w.qual > 0) : [];
     if (ws.length < 4) gaps.push(`плановых недель за ${BASE_WEEKS} нед всего ${ws.length} — база ненадёжна`);
-    const baseAerobicMin = Math.round(med(ws.map((w) => w.aer)));
+    // СТАРАЯ база за 8 недель — оставлена ТОЛЬКО для сравнения в отчёте.
+    const base8Aerobic = Math.round(med(ws.map((w) => w.aer)));
+    const base8Quality = Math.round(med(ws.map((w) => w.qual)));
+    // НОВАЯ база: 26 недель со взвешиванием по свежести, больные недели исключены.
+    const wk26 = weekly.get(aid) ?? [];
+    const illness = ctx.get(aid)?.illness ?? [];
+    const baseAerobicMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.aer, hasTraining: w.aer + w.qual > 0 })), today, illness)
+      || base8Aerobic;
+    const illWeeks = wk26.filter((w) => w.aer + w.qual > 0).length
+      - wk26.filter((w) => w.aer + w.qual > 0 && !illness.some((iw) => w.weekStart >= iw.from && w.weekStart <= iw.to)).length;
     // Потолок роста — собственный исторический максимум аэробной недели [практика].
     // Считается по ВСЕМУ окну наблюдения, а не по 8 неделям базы.
     const histMax = Math.round(Math.max(baseAerobicMin, ...(histAer.get(aid) ?? [baseAerobicMin])));
-    const baseQualityMin = Math.round(med(ws.map((w) => w.qual)));
+    const baseQualityMin = weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.qual, hasTraining: w.aer + w.qual > 0 })), today, illness);
     // ЛИЧНЫЙ потолок качества — собственный исторический максимум минут работы [практика].
     // Когортные 20% доли остаются последней защитой, но рабочий предел теперь личный.
     const histQualRaw = Math.round(Math.max(baseQualityMin, ...(histQual.get(aid) ?? [baseQualityMin])));
@@ -151,7 +167,8 @@ async function main(): Promise<void> {
     // как качественный. Если бы потолок брался просто от максимума — куда бы он ушёл.
     const aerobicIfFromMax = Math.round(histMax * PEAK_OVER_HISTORIC_MAX / 5) * 5;
     if (baseQualityMin === 0) gaps.push("качественных минут за окно нет — база качества 0, цикл начнётся с нуля");
-    const days = Math.round(med(ws.map((w) => w.days))) || 3;
+    const days = Math.round(weightedWeeklyBase(wk26.map((w) => ({ weekStart: w.weekStart, value: w.days, hasTraining: w.aer + w.qual > 0 })), today, illness))
+      || Math.round(med(ws.map((w) => w.days))) || 3;
 
     const mine = races.filter((r) => r.trainingpeaks_athlete_id === aid).sort((a, b) => a.event_date.localeCompare(b.event_date));
     const race = mine[0] ?? null;
@@ -171,7 +188,7 @@ async function main(): Promise<void> {
       deloadEveryN: DELOAD_EVERY_N, deloadDepthAerobic: DELOAD_AEROBIC_FACTOR, deloadQualityFactor: DELOAD_QUALITY_FACTOR,
       taperProfile: TAPER_PROFILE[intent], days,
       peakCapAerobicMin, historicMaxAerobicMin: histMax, peakCapQualityMin: histQualMax,
-      historicMaxQualityMin: histQualRaw, aerobicIfFromMax, gaps,
+      historicMaxQualityMin: histQualRaw, aerobicIfFromMax, base8Aerobic, base8Quality, illWeeks, gaps,
     };
   }
 
@@ -216,6 +233,44 @@ async function main(): Promise<void> {
   }
 
   const firstWeekAll = addDays(mondayOf(today), 7);
+
+  console.log(`\n${"═".repeat(78)}`);
+  console.log(`БАЗА ЦИКЛА: 8 НЕДЕЛЬ (было) ПРОТИВ 26 СО СВЕЖЕСТЬЮ (стало), период полураспада ${CYCLE_BASE_HALF_LIFE_DAYS} дн`);
+  console.log(`${"═".repeat(78)}`);
+  console.log(`  фамилия      аэробн 8н -> 26н   сдвиг   работа 8н -> 26н   доля 8н -> 26н   больных нед`);
+  for (const [aid, sur] of GROUP) {
+    const d = drafts.get(aid)!;
+    const sh8 = 100 * d.base8Quality / Math.max(d.base8Aerobic + d.base8Quality, 1);
+    const sh26 = 100 * d.baseQualityMin / Math.max(d.baseAerobicMin + d.baseQualityMin, 1);
+    const dA = d.baseAerobicMin - d.base8Aerobic;
+    console.log(`  ${sur.padEnd(13)}${String(d.base8Aerobic).padStart(6)} -> ${String(d.baseAerobicMin).padEnd(5)}`
+      + `${((dA >= 0 ? "+" : "") + dA).padStart(7)}   ${String(d.base8Quality).padStart(4)} -> ${String(d.baseQualityMin).padEnd(4)}`
+      + `   ${(sh8.toFixed(1) + "%").padStart(6)} -> ${(sh26.toFixed(1) + "%").padEnd(6)}`
+      + `${String(d.illWeeks).padStart(6)}`
+      + (Math.abs(dA) > 25 ? "   ⚠ сильный сдвиг" : ""));
+  }
+
+  // ПРОВЕРКА: не занижает ли новая база тех, кто РЕАЛЬНО вырос за последние месяцы.
+  // Тренд — наклон недельного аэробного объёма по 26 неделям, мин/нед. Если человек растёт,
+  // свежесть должна тянуть базу вверх, а не вниз.
+  console.log(`\n  тренд объёма за 26 недель против сдвига базы (растущих база занижать не должна):`);
+  console.log(`  фамилия      тренд мин/нед   сдвиг базы   вердикт`);
+  for (const [aid, sur] of GROUP) {
+    const d = drafts.get(aid)!;
+    const ws = (weekly.get(aid) ?? []).filter((w) => w.aer + w.qual > 0).sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+    if (ws.length < 8) { console.log(`  ${sur.padEnd(13)}мало недель (${ws.length})`); continue; }
+    const xs = ws.map((_, i) => i), ys = ws.map((w) => w.aer);
+    const n = xs.length, mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) ** 2; }
+    const slope = den === 0 ? 0 : num / den;
+    const dA = d.baseAerobicMin - d.base8Aerobic;
+    const verdict = slope > 1 && dA < -10 ? "⚠ растёт, а база занижена"
+      : slope > 1 ? "растёт, база не занижена"
+      : slope < -1 && dA > 10 ? "падает, база подтянута вверх"
+      : "тренда почти нет";
+    console.log(`  ${sur.padEnd(13)}${slope.toFixed(1).padStart(10)}${((dA >= 0 ? "+" : "") + dA).padStart(13)}   ${verdict}`);
+  }
 
   console.log(`\n${"═".repeat(78)}`);
   console.log(`ДОЛЯ КАЧЕСТВА: СВОЯ ОБЫЧНАЯ ПРОТИВ ПИКОВОЙ В ЦИКЛЕ`);
