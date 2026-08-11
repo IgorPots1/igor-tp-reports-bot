@@ -56,19 +56,6 @@ const distKey = (km: number | null): DistKey =>
 
 type Race = { trainingpeaks_athlete_id: number; event_date: string; distance_km: number | null };
 
-async function pageAll<T>(sb: SupabaseClient, table: string, select: string, tune?: (q: any) => any): Promise<T[]> {
-  const out: T[] = [];
-  for (let f = 0; ; f += 1000) {
-    let q = sb.from(table).select(select).range(f, f + 999);
-    if (tune) q = tune(q);
-    const { data, error } = await q;
-    if (error) throw new Error(`${table}: ${error.message}`);
-    out.push(...((data ?? []) as unknown as T[]));
-    if (!data || data.length < 1000) break;
-  }
-  return out;
-}
-
 async function main(): Promise<void> {
   const sb = sbc();
   const roster = await loadRoster(sb);
@@ -76,13 +63,27 @@ async function main(): Promise<void> {
   const since = addDays(today, -365);
 
   type Row = { trainingpeaks_athlete_id: number; workout_date: string; planned_time_raw: number | null };
-  const rows = (await pageAll<Row>(sb, "trainingpeaks_workout_cache",
-    "trainingpeaks_athlete_id, workout_date, planned_time_raw",
-    (q) => q.eq("workout_type_value_id", 3).eq("is_planned", true).gte("workout_date", since).order("workout_date")))
-    .filter((r) => roster.active.has(r.trainingpeaks_athlete_id));
+  const allRows: Row[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await sb.from("trainingpeaks_workout_cache")
+      .select("trainingpeaks_athlete_id, workout_date, planned_time_raw")
+      .eq("workout_type_value_id", 3).eq("is_planned", true).gte("workout_date", since).order("workout_date").range(f, f + 999);
+    if (error) throw error;
+    allRows.push(...((data ?? []) as unknown as Row[]));
+    if (!data || data.length < 1000) break;
+  }
+  const rows = allRows.filter((r) => roster.active.has(r.trainingpeaks_athlete_id));
 
-  const races = (await pageAll<Race>(sb, "trainingpeaks_race_events", "trainingpeaks_athlete_id, event_date, distance_km"))
-    .filter((r) => roster.active.has(r.trainingpeaks_athlete_id) && r.event_date && r.event_date < today && r.event_date >= since);
+  const allRaces: Race[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await sb.from("trainingpeaks_race_events")
+      .select("trainingpeaks_athlete_id, event_date, distance_km").range(f, f + 999);
+    if (error) throw error;
+    allRaces.push(...((data ?? []) as unknown as Race[]));
+    if (!data || data.length < 1000) break;
+  }
+  const races = allRaces.filter((r) => roster.active.has(r.trainingpeaks_athlete_id)
+    && r.event_date && r.event_date < today && r.event_date >= since);
 
   // Недельные плановые минуты. День самого забега исключаем: проверка версии (а) наряда.
   const raceDates = new Map<number, Set<string>>();
