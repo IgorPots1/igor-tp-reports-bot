@@ -63,6 +63,8 @@ export type Envelope = {
   rolling4wPlannedMin: number;
   /** плановый объём последней недели, мин — ОТ НЕГО считается потолок прироста */
   lastWeekPlannedMinutes: number;
+  /** медиана планового объёма недели за всё окно, мин — «обычная» неделя атлета (0 — планов нет) */
+  typicalPlannedWeekMin: number;
   /** выполнено/запланировано за окно, null — планов не было */
   complianceRatio: number | null;
   /** сколько последних недель подряд выполнение ниже порога */
@@ -93,11 +95,31 @@ export type AthleteContext = AthleteAnchors & {
 
 /**
  * Фактический объём последней недели ниже этой доли от скользящего среднего = «резко ниже».
- * 0.6 — то есть человек пробежал меньше 60% своей нормы. Параметр, не зашит в логику.
+ *
+ * ЗАМЕРЕНО 16.08 ПО РЕАКЦИИ ТРЕНЕРА, не угадано. Прямых меток тира в данных нет, поэтому мерили
+ * поведение: после недели с провалом факта — насколько Игорь режет ПЛАН следующей недели.
+ *   факт/среднее <0.3    → план следующей недели ×0.82 (p25 0.47), урезка >20% в 47% случаев
+ *   факт/среднее 0.3–0.5 → ×0.96, урезка в 36%
+ *   факт/среднее 0.5–0.7 → ×1.00, урезка в 25%   ← НЕОТЛИЧИМО от нормы
+ *   факт/среднее >=0.9   → ×1.03, урезка в 22%
+ * То есть на провале до 60% тренер не реагирует ВООБЩЕ, а прежний порог 0.6 понижал тир.
+ * Практика ломается на 0.3 — туда порог и ставится.
  */
-export const TIER_DROP_VOLUME_RATIO = 0.6;
+export const TIER_DROP_VOLUME_RATIO = 0.3;
 
-/** Выполнение ниже этой доли считается низким. Параметр, не зашит в логику. */
+/**
+ * Выполнение ниже этой доли считается низким. Параметр, не зашит в логику.
+ *
+ * ЗАМЕР 16.08 ОСТАВИЛ ВОПРОС ТРЕНЕРУ. Выполнение факт/план по неделям (n=2487): медиана 0.98;
+ * среди недель с ненулевым фактом p25 0.69, p10 0.42. Ровно нулевой факт у 12% недель.
+ * Гейт срабатывает по ТРЁМ неделям подряд, поэтому мерили серии:
+ *   порог 0.80 → задет 67 атлет из 123      порог 0.70 → 56      порог 0.60 → 46
+ *   порог 0.50 → 30                          порог 0.40 → 26
+ * При нынешних 0.70 пометку хоть раз получает почти половина ростера — для «обрати внимание»
+ * это много. Но это ПОМЕТКА ТРЕНЕРУ, а не урезка объёма (объём режет только NOT_RUNNING_RATIO),
+ * и насколько чувствительным должен быть личный сигнал — решает Игорь, а не распределение.
+ * ОСТАВЛЕНО 0.70 до явного решения.
+ */
 export const LOW_COMPLIANCE_RATIO = 0.7;
 /** Столько недель подряд низкого выполнения — и неделя получает пометку тренеру. */
 export const LOW_COMPLIANCE_WEEKS = 3;
@@ -340,6 +362,17 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       const ks = [...weekPlanned.keys()].filter(completeWeek).sort();
       return ks.length ? Math.round(weekPlanned.get(ks[ks.length - 1]) ?? 0) : 0;
     })();
+    // ОБЫЧНАЯ неделя атлета — медиана планового объёма за ВСЁ окно, а не за 4 недели.
+    // Нужна, чтобы отличить «прошлая неделя была нормальной» от «прошлая неделя была провалом»:
+    // потолок прироста меряется от нормы, а провал нормой не является (замер 16.08: рост от
+    // нормальной базы p90 = 1.22, а возврат из провала — медиана 1.65, p90 = 3.00).
+    const typicalPlannedWeekMin = (() => {
+      const xs = [...weekPlanned.keys()].filter(completeWeek).map((w) => weekPlanned.get(w) ?? 0)
+        .filter((x) => x > 0).sort((a, b) => a - b);
+      if (xs.length === 0) return 0;
+      const i = (xs.length - 1) / 2;
+      return Math.round(Number.isInteger(i) ? xs[i] : (xs[Math.floor(i)] + xs[Math.ceil(i)]) / 2);
+    })();
 
     // ВЫПОЛНЕНИЕ НЕ ВЫБРАСЫВАЕМ, но объём им НЕ режем: низкое выполнение — повод показать
     // тренеру, а не молча ужать план (замер 12.08: медиана выполнено/запланировано 0.83,
@@ -416,7 +449,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
         lastWeekMinutes: lastWeekMin,
-        rolling4wPlannedMin, lastWeekPlannedMinutes, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
+        rolling4wPlannedMin, lastWeekPlannedMinutes, typicalPlannedWeekMin, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         // weeksObserved — про то, есть ли из чего считать КОНВЕРТ, а конверт плановый.
