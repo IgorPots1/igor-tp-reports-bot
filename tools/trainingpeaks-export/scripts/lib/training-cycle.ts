@@ -510,16 +510,21 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
     // по ×1.22 неверно: у Богачева получалось 310 -> 375 при том, что до разгрузки
     // было 415. Предел остаётся для обычного роста и для реактивных случаев.
     const ceilStep = returningFromDeload || prevShownAer <= 0 ? Infinity : prevShownAer * MAX_SINGLE_STEP;
-    const aerWanted = returningFromDeload && preDeloadAer > 0 ? Math.max(aer, preDeloadAer) : aer;
-    const qualWanted = returningFromDeload && preDeloadQual > 0 ? Math.max(qual, preDeloadQual) : qual;
+    // Возврат идёт РОВНО на уровень последней недели роста, БЕЗ шага: шаг возобновляется
+    // со следующей недели. Первая версия брала max(aer, preDeload), где aer уже включал
+    // шаг, и неделя возврата выходила ВЫШЕ дореразгрузочной (355 -> 380 вместо 355).
+    // Поймано проверкой чисел, а не глазами.
+    const aerWanted = returningFromDeload && preDeloadAer > 0 ? preDeloadAer : aer;
+    const qualWanted = returningFromDeload && preDeloadQual > 0 ? preDeloadQual : qual;
     // когда связывает предел перехода — округляем ВНИЗ, иначе округление к пяти
     // само по себе выводит за предел (330 x1.22 = 402.6, а round5 даёт 405 = x1.227)
     const a = aerWanted > ceilStep ? Math.floor(ceilStep / 5) * 5 : round5(Math.min(aerWanted, draft.peakCapAerobicMin));
     const qBeforeClamp = round5(Math.min(qualWanted, draft.peakCapQualityMin));
     const clG = clampShare(a, qBeforeClamp, draft.ownSharePct, draft.peakCapQualityMin);
     const q = clG.q;
-    // после возврата внутренняя переменная роста тоже подтягивается на прежний уровень
-    if (returningFromDeload) { aer = Math.max(aer, a); qual = Math.max(qual, q); }
+    // после возврата внутренняя переменная встаёт РОВНО на показанный уровень,
+    // чтобы следующий шаг пошёл от него, а не от «догнавшей» арифметики
+    if (returningFromDeload) { aer = a; qual = q; }
     returningFromDeload = false;
     const aerRoom = a < draft.peakCapAerobicMin;
     const qualRoom = q < draft.peakCapQualityMin && q < (a + q) * WORK_SHARE_MAX;

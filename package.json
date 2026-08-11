@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "check:cycle-forecast": "tsx tools/trainingpeaks-export/scripts/tp-cycle-forecast-check.ts",
     "typecheck:autoplanner": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.autoplanner.json",
     "typecheck:tools": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.json",
     "check:runner-import-health": "bash tools/trainingpeaks-export/scripts/check-runner-import-health.sh",
