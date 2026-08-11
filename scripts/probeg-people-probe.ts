@@ -431,6 +431,12 @@ async function runWrite(): Promise<void> {
   const pend = await selectSafe<{ student_id: string; race_date: string; protocol_seconds: number | null }>("club_protocol_pending", "student_id, race_date, protocol_seconds");
   const pendSet = new Set((pend ?? []).map((p) => `${p.student_id}|${p.race_date}|${p.protocol_seconds}`));
 
+  // Отклонённые тренером привязки (tombstone club_protocol_rejections): синк НЕ пишет их снова.
+  // Ключ (student_id, race_date, protocol_url) совпадает с onConflict-ключом журнала. selectSafe вернёт
+  // null, если миграция не применена → набор пуст → старое поведение, без 500.
+  const rej = await selectSafe<{ student_id: string; race_date: string; protocol_url: string | null }>("club_protocol_rejections", "student_id, race_date, protocol_url");
+  const rejectedSet = new Set((rej ?? []).map((x) => `${x.student_id}|${(x.race_date ?? "").slice(0, 10)}|${x.protocol_url ?? ""}`));
+
   const exactCands: ExactCand[] = [];
   const officialPlans: OfficialPlan[] = [];
   const recordPlans: RecPlan[] = [];
@@ -446,6 +452,11 @@ async function runWrite(): Promise<void> {
     for (const race of await loadOurRaces(s.id)) {
       if (race.ourSeconds == null || race.foreign) continue; // вне знаменателя — не пишем
       const res = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
+      // Отклонённое тренером (tombstone) — молча пропускаем ДО любой записи: ни журнал, ни рекорд, ни очередь.
+      if (res.finish && rejectedSet.has(`${s.id}|${race.date}|${res.finish.protocolUrl ?? ""}`)) {
+        skips.push(`${s.name}: ${race.date} отклонено тренером → пропуск (tombstone)`);
+        continue;
+      }
       if (res.verdict === "exact" && res.finish) {
         const dkey = distanceKeyOf(res.finish.distanceKm);
         // Наряд: СОМНИТЕЛЬНАЯ ДИСТАНЦИЯ никогда не привязывается автоматом. Даже при идеальном имени+времени

@@ -707,11 +707,72 @@ export async function confirmProtocolMatch(pendingId: string, coach: string): Pr
   return { ok: true };
 }
 
-/** Reject a pending protocol match — it is never proposed again (the writer skips resolved rows). */
+function pgErr(e: { message?: string; code?: string } | null): { missingTable: boolean; unique: boolean } {
+  const code = e?.code ?? "";
+  const msg = e?.message ?? "";
+  return {
+    missingTable: code === "42P01" || code === "PGRST205" || /does not exist|schema cache/i.test(msg),
+    unique: code === "23505" || /duplicate key|already exists/i.test(msg),
+  };
+}
+
+/**
+ * Reject a pending protocol match AND unbind it: (1) write a permanent tombstone into
+ * club_protocol_rejections so the weekly sync skips this (student, date, protocol_url) forever,
+ * (2) delete the journal row (club_official_results) so the feed/starts/profile stop showing it,
+ * (3) delete the record (club_records) ONLY if it came from THIS protocol, (4) mark the queue row
+ * rejected. Resilient: if the tombstone table isn't migrated yet, falls back to the old behaviour
+ * (just mark rejected — no delete, so nothing can be re-bound unprotected) and never 500s.
+ */
 export async function rejectProtocolMatch(pendingId: string, coach: string): Promise<{ ok: boolean; error?: string }> {
   const supabase = createSupabaseServerClient();
-  const { error } = await supabase.from("club_protocol_pending").update({ status: "rejected", resolved_by: coach, resolved_at: new Date().toISOString() }).eq("id", pendingId).eq("status", "pending");
-  return error ? { ok: false, error: error.message } : { ok: true };
+  const nowIso = new Date().toISOString();
+  const { data: row } = await supabase.from("club_protocol_pending").select("*").eq("id", pendingId).eq("status", "pending").maybeSingle();
+  if (!row) return { ok: false, error: "Запись не найдена или уже обработана." };
+  const r = row as Record<string, unknown>;
+  const studentId = r.student_id as string;
+  const date = r.race_date as string;
+  const url = (r.protocol_url as string | null) ?? null;
+  const km = (r.protocol_distance_km as number | null) ?? null;
+  const seconds = (r.protocol_seconds as number | null) ?? null;
+  const dkey = distanceKeyOf(km);
+
+  const markRejected = () =>
+    supabase.from("club_protocol_pending").update({ status: "rejected", resolved_by: coach, resolved_at: nowIso }).eq("id", pendingId).eq("status", "pending");
+
+  // 1. Permanent tombstone. If the table isn't migrated yet → old behaviour (mark rejected only).
+  const tomb = await supabase.from("club_protocol_rejections").insert({
+    student_id: studentId, race_date: date, protocol_url: url, distance_key: dkey, result_seconds: seconds, reason: "coach_reject", rejected_by: coach,
+  });
+  if (tomb.error) {
+    const { missingTable, unique } = pgErr(tomb.error);
+    if (missingTable) { const up = await markRejected(); return up.error ? { ok: false, error: up.error.message } : { ok: true }; }
+    if (!unique) return { ok: false, error: `tombstone: ${tomb.error.message}` };
+    // already tombstoned → продолжаем очистку идемпотентно
+  }
+
+  // 2. Delete the journal binding with the SAME key (null url handled via .is).
+  const jd = supabase.from("club_official_results").delete().eq("student_id", studentId).eq("race_date", date);
+  await (url == null ? jd.is("protocol_url", null) : jd.eq("protocol_url", url));
+  // 3. Delete the record ONLY if it is THIS protocol (never a record from another source/url).
+  if (dkey && url != null) {
+    await supabase.from("club_records").delete().eq("student_id", studentId).eq("distance_key", dkey).eq("source", "official_protocol").eq("protocol_url", url);
+  }
+  // 4. Mark the queue row rejected.
+  const up = await markRejected();
+  return up.error ? { ok: false, error: up.error.message } : { ok: true };
+}
+
+/**
+ * Undo a rejection (тренер передумал): remove the tombstone so the next weekly sync re-binds the
+ * protocol normally. Does not itself re-write the journal/record — that happens on the next sync run.
+ */
+export async function unrejectProtocolMatch(studentId: string, raceDate: string, protocolUrl: string | null): Promise<{ ok: boolean; error?: string }> {
+  const supabase = createSupabaseServerClient();
+  const d = supabase.from("club_protocol_rejections").delete().eq("student_id", studentId).eq("race_date", raceDate);
+  const { error } = await (protocolUrl == null ? d.is("protocol_url", null) : d.eq("protocol_url", protocolUrl));
+  if (error) { const { missingTable } = pgErr(error); if (missingTable) return { ok: true }; return { ok: false, error: error.message }; }
+  return { ok: true };
 }
 
 export async function setCalendarEntryStatus(id: string, status: "approved" | "rejected"): Promise<void> {
