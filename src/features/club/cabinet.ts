@@ -214,16 +214,59 @@ export async function listClubPastResults(studentId: string): Promise<ClubPastRe
 }
 
 /**
+ * Full PAST-starts list, merged and deduped by date. club_official_results (verified: time + protocol)
+ * is the strong source (listClubPastResults); race_events — the TP-calendar race scan — fills in races
+ * that happened but have no protocol on file yet, shown WITHOUT a time. STRICTLY past (event_date <=
+ * today): a future race_events row is the athlete's PLAN and must never leak onto another member's
+ * profile. Newest first. SHARED by the owner «Старты» screen and the public profile so the complete
+ * dated list is identical on both — no truncated 4-bucket variant anywhere.
+ */
+export async function listClubStarts(studentId: string): Promise<ClubPastResult[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const results = await listClubPastResults(studentId);
+  const coveredDates = new Set(results.map((r) => r.raceDate));
+  const supabase = createSupabaseServerClient();
+  const { data } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("event_date, title, distance_km, distance_raw")
+    .eq("student_id", studentId)
+    .lte("event_date", today);
+  type Ev = { event_date: string | null; title: string | null; distance_km: number | string | null; distance_raw: string | null };
+  // one entry per still-uncovered date = that day's longest event
+  const byDate = new Map<string, { title: string | null; km: number | null; raw: string | null }>();
+  for (const e of (data as Ev[] | null) ?? []) {
+    const d = ymd(e.event_date);
+    if (!d || coveredDates.has(d)) continue;
+    const km = e.distance_km != null && Number.isFinite(Number(e.distance_km)) ? Number(e.distance_km) : null;
+    const cur = byDate.get(d);
+    if (!cur || (km != null && (cur.km == null || km > cur.km))) byDate.set(d, { title: e.title, km, raw: e.distance_raw });
+    else if (cur && cur.title == null && e.title) cur.title = e.title;
+  }
+  const extras: ClubPastResult[] = [...byDate.entries()].map(([date, v]) => ({
+    id: `race-event-${date}`,
+    name: (v.title ?? "").trim() || "Старт",
+    raceDate: date,
+    dateLabel: `${formatRuDate(date)} ${date.slice(0, 4)}`,
+    distanceLabel: v.km != null && v.km > 0 ? `${v.km} км` : ((v.raw ?? "").trim() || null),
+    city: null,
+    resultLabel: null, // no protocol on file yet → result to be confirmed
+    place: null,
+    protocolUrl: null,
+  }));
+  return [...results, ...extras].sort((a, b) => (a.raceDate < b.raceDate ? 1 : a.raceDate > b.raceDate ? -1 : 0));
+}
+
+/**
  * Unified «Старты» view: upcoming declarations / coach-placed starts on top (nearest first), past
- * results below (newest first). Upcoming = declared+TP starts dated today-or-later; past results come
- * from club_official_results. Past declared starts without a recorded result are not shown here (the
- * coach sees them in /admin/club). No dedup collision: upcoming is future-dated, results are past.
+ * results below (newest first). Upcoming = declared+TP starts dated today-or-later; past results are
+ * the FULL merged list (official protocols + scanned races without a protocol). No dedup collision:
+ * upcoming is future-dated, results are past.
  */
 export async function getClubStartsView(
   studentId: string
 ): Promise<{ upcoming: ClubRace[]; results: ClubPastResult[] }> {
   const today = new Date().toISOString().slice(0, 10);
-  const [all, results] = await Promise.all([listClubRaces(studentId), listClubPastResults(studentId)]);
+  const [all, results] = await Promise.all([listClubRaces(studentId), listClubStarts(studentId)]);
   const upcoming = all
     .filter((r) => r.raceDate >= today)
     .sort((a, b) => (a.raceDate < b.raceDate ? -1 : a.raceDate > b.raceDate ? 1 : 0));

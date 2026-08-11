@@ -187,6 +187,10 @@ export const CLUB_PUBLIC_PROFILE_FIXTURE: ClubPublicProfileView = {
   month30: { runs: 18, km: 214.5, movingSeconds: 64800, avgPaceSecPerKm: 302, ascentM: 1240 },
   records: CLUB_RECORDS_FIXTURE.personal,
   pastRaces: CLUB_RECORDS_FIXTURE.personal.filter((r) => r.recordType === "race"),
+  starts: [
+    { id: "s1", name: "Марафон «Белые ночи»", raceDate: "2026-06-29", dateLabel: "29 июн 2026", distanceLabel: "42.2 км", city: "Санкт-Петербург", resultLabel: "3:12:40", place: 34, protocolUrl: null },
+    { id: "s2", name: "ЗаБег.РФ", raceDate: "2026-05-18", dateLabel: "18 мая 2026", distanceLabel: "10 км", city: null, resultLabel: "44:05", place: null, protocolUrl: null },
+  ],
   achievements: [],
   recentFeed: CLUB_FEED_FIXTURE.items.slice(0, 2),
   weeklySeries: [

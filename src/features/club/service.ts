@@ -13,6 +13,7 @@ import {
 } from "@/features/supabase/server";
 import { fetchAllRows, fetchAllInChunks, chunkIds } from "@/features/supabase/paginate";
 import { logClubDbError } from "./db-errors";
+import { listClubStarts } from "./cabinet";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
 import {
   classifyTrainingPeaksWorkoutActivity,
@@ -3184,6 +3185,7 @@ export async function getClubPublicProfile(input: {
       month30: { runs: 0, km: 0, movingSeconds: 0, avgPaceSecPerKm: null, ascentM: null },
       records: [],
       pastRaces: [],
+      starts: [],
       achievements: [],
       recentFeed: [],
       weeklySeries: [],
@@ -3233,6 +3235,10 @@ export async function getClubPublicProfile(input: {
   // Past races with a real result = race-type records (date + distance + finish time).
   // Upcoming DECLARED races are intentionally NOT exposed on another member's profile.
   const pastRaces = records.filter((r) => r.recordType === "race");
+  // The COMPLETE dated list of past starts (same source as the owner «Старты» screen): the full
+  // official-results journal + scanned races without a protocol. Replaces the truncated 4-bucket
+  // pastRaces in the UI. Strictly past — listClubStarts never returns upcoming (privacy).
+  const starts = await listClubStarts(input.targetStudentId);
   const joinDateLabel = firstDate ? formatRuDate(firstDate) : null;
 
   // Phase 3.9 weekly trend: last 12 ISO weeks of running volume (same shape as the
@@ -3294,6 +3300,7 @@ export async function getClubPublicProfile(input: {
     month30,
     records,
     pastRaces,
+    starts,
     achievements,
     recentFeed,
     weeklySeries,

@@ -483,8 +483,13 @@ export type ClubPublicProfileView = {
   /** Rolling 30-day running summary. */
   month30: ClubMonthSummary;
   records: ClubRecordEntry[];
-  /** Past races with a real result (race-type records: date + distance + finish time). */
+  /** Past races with a real result (race-type records: date + distance + finish time).
+   *  @deprecated superseded by `starts` (the full dated list); kept for back-compat. */
   pastRaces: ClubRecordEntry[];
+  /** COMPLETE dated list of the member's past starts (official protocols + scanned races without a
+   *  protocol yet), newest first — the same source as the owner's «Старты» screen. Visible to every
+   *  club member. Upcoming starts are the athlete's plans and are intentionally NOT included here. */
+  starts: ClubPastResult[];
   /** Achievements with rule + earned state (shown to everyone: club social layer). */
   achievements: ClubAchievement[];
   recentFeed: ClubFeedItem[];

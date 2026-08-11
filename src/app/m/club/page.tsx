@@ -1586,6 +1586,7 @@ function ProfileTab(props: { status: Status; view: ClubProfileDetailView | null;
 function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: { studentId: string; initData: string; onClose: () => void; onOpenWorkout: (id: string) => void }) {
   const [view, setView] = useState<ClubPublicProfileView | null>(null);
   const [status, setStatus] = useState<Status>("loading");
+  const [showAllStarts, setShowAllStarts] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -1659,20 +1660,26 @@ function PublicProfileOverlay({ studentId, initData, onClose, onOpenWorkout }: {
                   <VolumeChart series={view.weeklySeries} />
                 </div>
               ) : null}
-              {view.pastRaces.length > 0 ? (
+              {view.starts.length > 0 ? (
                 <div style={{ marginBottom: 14 }}>
-                  <div style={S.secHead}>Прошедшие старты</div>
-                  {view.pastRaces.map((r) => (
-                    <div key={`race-${r.distanceKey}`} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <div style={S.recRow}>
-                        <span style={{ width: 16, display: "inline-flex" }}><ClubIcon name="flag" size={12} color={C.sub} /></span>
-                        <span style={{ fontFamily: HEAD, fontSize: 14, color: C.ink, width: 60 }}>{r.distanceLabel}</span>
-                        <span style={{ flex: 1, fontFamily: HEAD, fontSize: 16, color: C.ink }}>{fmtDuration(r.durationSeconds)}</span>
-                        <span style={{ fontSize: 12, color: C.faint, whiteSpace: "nowrap" }}>{r.dateLabel}</span>
+                  <div style={S.secHead}>Старты</div>
+                  {(showAllStarts ? view.starts : view.starts.slice(0, 3)).map((r) => (
+                    <div key={r.id} style={S.listRow}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={S.cardName}>{r.name}</div>
+                        <div style={S.cardMeta}>{r.dateLabel}{r.distanceLabel && r.distanceLabel !== r.name ? ` · ${r.distanceLabel}` : ""}{r.city ? ` · ${r.city}` : ""}{r.place ? ` · ${r.place} место` : ""}</div>
                       </div>
-                      {r.raceSegmentLabel ? <div style={{ ...S.segmentNote, marginLeft: 16 }}>{r.raceSegmentLabel}</div> : r.raceName ? <div style={{ ...S.segmentNote, marginLeft: 16 }}>{r.raceName}</div> : null}
+                      {r.resultLabel ? <span style={S.statusChip}>{r.resultLabel}</span> : null}
+                      {r.protocolUrl ? (
+                        <a href={r.protocolUrl} target="_blank" rel="noreferrer" style={{ flex: "0 0 auto", fontSize: 11.5, color: "#1D9E75", textDecoration: "none", border: "1px solid #1D9E75", borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" }}>протокол</a>
+                      ) : null}
                     </div>
                   ))}
+                  {view.starts.length > 3 ? (
+                    <button type="button" style={{ ...S.linkAction, marginTop: 8, background: "transparent", border: "none", padding: 0 }} onClick={() => setShowAllStarts((s) => !s)}>
+                      {showAllStarts ? "Свернуть" : `Показать все (${view.starts.length})`}
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               {view.records.filter((r) => r.recordType !== "race").length > 0 ? (
