@@ -16,7 +16,27 @@ import { anchorConfidence } from "./easy-anchor.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
 const ILLNESS_TYPES = ["health_issue_started", "health_issue_improving", "pain_injury", "pause_training"];
-const ILLNESS_TAIL_DAYS = 14;
+
+/**
+ * ХВОСТ ПОСЛЕ ЗАКРЫТИЯ СИГНАЛА. Было 14 дней — данными не подтверждается.
+ *
+ * Замер (247 закрытых сигналов, отношение недельного объёма к среднему ДО сигнала):
+ * первая неделя после закрытия 0.99, вторая 1.04, третья 1.24. То есть провала после закрытия
+ * НЕТ ВООБЩЕ — человек возвращается к прежнему объёму сразу. Двухнедельный хвост держал
+ * половину ростера (48 из 107) на урезанном потолке без всякого основания в данных.
+ *
+ * Оставляем 3 дня — не «на всякий случай», а под конкретный край: сигнал может быть закрыт
+ * задним числом в день, когда тренировка уже пропущена. Данные допускают и 0.
+ */
+const ILLNESS_TAIL_DAYS = 3;
+
+/**
+ * Сколько длится сигнал, у которого не проставлено окончание. Было 21 день.
+ * Замер по типам (медиана): недомогание 5, улучшение 3, боль/травма 9.5, пауза 3; максимум 25.
+ * Незакрытых сигналов почти нет (199 из 200 «недомоганий» закрыты), так что дефолт срабатывает
+ * редко — но 21 день был втрое выше реальной медианы.
+ */
+const ILLNESS_DEFAULT_DAYS = 7;
 /** §1.6: аварийный путь, когда нет ни своего якоря, ни зоны 2. Ground truth n=53. */
 export const K_COHORT = 1.231;
 /** Полоса вокруг когортной середины, чтобы получить пару краёв (узкая — доверие и так low). */
@@ -211,7 +231,7 @@ async function pullIllness(sb: SupabaseClient): Promise<Map<string, DateWindow[]
     const from = (s.valid_from ?? s.source_date ?? s.target_date ?? (typeof s.created_at === "string" ? (s.created_at as string).slice(0, 10) : null)) as string | null;
     if (!from) continue;
     let to = (s.valid_until ?? (typeof s.resolved_at === "string" ? (s.resolved_at as string).slice(0, 10) : null)) as string | null;
-    if (!to || to < from) to = addDays(from, 21);
+    if (!to || to < from) to = addDays(from, ILLNESS_DEFAULT_DAYS);
     to = addDays(to, ILLNESS_TAIL_DAYS);
     (m.get(sid) ?? m.set(sid, []).get(sid)!).push({ from, to });
   }
@@ -261,40 +281,51 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       }
       // ПЛАНОВЫЙ объём копим отдельно: потолок недели считается в ТОЙ ЖЕ валюте, что и полы
       // сессий (полы измерены по планам тренера). Смешение с фактом сжимало неделю каждый прогон.
+      // ── ПЛАНОВАЯ ВАЛЮТА: объём, ЧАСТОТА, дни недели и история качества ──
+      // Всё, что задаёт ФОРМУ будущей недели, берётся из планов тренера — той же валютой,
+      // что потолок и полы сессий. Раньше форму задавали ЗАВЕРШЁННЫЕ пробежки: частота была
+      // медианой того, что человек добежал, и малообъёмные получали на день-полтора меньше,
+      // а вместе с днём терялось качество (замер 13.08: T1 объём ×0.57, качество 3 против 258
+      // у тренера; T3, который добегает почти всё, — ×0.97 и 32 против 28).
       if (r.is_planned && (r.planned_time_raw ?? 0) > 0) {
         const wkp = mondayOf(r.workout_date);
         weekPlanned.set(wkp, (weekPlanned.get(wkp) ?? 0) + (r.planned_time_raw as number) * 60);
+        weekFreq.set(wkp, (weekFreq.get(wkp) ?? 0) + 1);
+        const d = new Date(r.workout_date + "T00:00:00Z");
+        dayHistogram[(d.getUTCDay() + 6) % 7] += 1;
+        const t = r.title ?? "";
+        if (t && QUALITY_TITLE_RE.test(t)) {
+          weekQual.set(wkp, (weekQual.get(wkp) ?? 0) + 1);
+          if (r.workout_date >= win8wStart) {
+            qualityDates.push(r.workout_date);
+            const m = /([0-9]{1,2})\s*[xх×]\s*([0-9]{1,2}(?:[.,][0-9])?)\s*(мин|min)/i.exec(t);
+            if (m) { const w = Number(m[1]) * Number(m[2].replace(",", ".")); if (Number.isFinite(w) && w > 0 && w <= 90) lastQ = { date: r.workout_date, work: w }; }
+          }
+        }
         // «Обычная лёгкая» этого атлета: нужна, чтобы не называть длительной сессию, которая
         // на самом деле обычная лёгкая (у T1 длительных в практике нет вовсе).
-        const t = r.title ?? "";
         if (t && !QUALITY_TITLE_RE.test(t) && !LONG_TITLE_RE.test(t)) {
           const m = Math.round((r.planned_time_raw as number) * 60);
           if (m > 0 && m <= 300) easyPlannedMinutes.push(m);
         }
       }
+      // ── ФАКТИЧЕСКАЯ ВАЛЮТА: только там, где вопрос именно «что человек СДЕЛАЛ» ──
+      // потолок при травме, понижение тира, выполнение плана. Форму недели факт не задаёт.
       if (r.is_completed && (r.completed_time_raw ?? 0) > 0) {
         const wk = mondayOf(r.workout_date);
         weekMin.set(wk, (weekMin.get(wk) ?? 0) + (r.completed_time_raw as number) * 60);
-        weekFreq.set(wk, (weekFreq.get(wk) ?? 0) + 1);
-        if (r.title && QUALITY_TITLE_RE.test(r.title)) {
-          weekQual.set(wk, (weekQual.get(wk) ?? 0) + 1);
-          if (r.workout_date >= win8wStart) {
-            qualityDates.push(r.workout_date);
-            const m = /([0-9]{1,2})\s*[xх×]\s*([0-9]{1,2}(?:[.,][0-9])?)\s*(мин|min)/i.exec(r.title);
-            if (m) { const w = Number(m[1]) * Number(m[2].replace(",", ".")); if (Number.isFinite(w) && w > 0 && w <= 90) lastQ = { date: r.workout_date, work: w }; }
-          }
-        }
-        const d = new Date(r.workout_date + "T00:00:00Z");
-        dayHistogram[(d.getUTCDay() + 6) % 7] += 1;
       }
     }
 
     // катящийся 4-нед (§4.1): считаем на лету, персистированное не читаем
     const recentWeeks = [...weekMin.keys()].filter((w) => w >= win4wStart).sort();
-    const avg = (m: Map<string, number>): number =>
-      recentWeeks.length ? recentWeeks.reduce((a, w) => a + (m.get(w) ?? 0), 0) / recentWeeks.length : 0;
-    const rolling4wWeeklyMin = Math.round(avg(weekMin));
+    const rolling4wWeeklyMin = recentWeeks.length
+      ? Math.round(recentWeeks.reduce((a, w) => a + (weekMin.get(w) ?? 0), 0) / recentWeeks.length) : 0;
     const recentPlannedWeeks = [...weekPlanned.keys()].filter((w) => w >= win4wStart).sort();
+    // Частота и качество усредняются по ПЛАНОВЫМ неделям: они и накоплены в плановой валюте,
+    // а деление на число ФАКТИЧЕСКИХ недель дало бы бессмысленную смесь.
+    const avgPlanned = (m: Map<string, number>): number =>
+      recentPlannedWeeks.length ? recentPlannedWeeks.reduce((a, w) => a + (m.get(w) ?? 0), 0) / recentPlannedWeeks.length : 0;
     const rolling4wPlannedMin = recentPlannedWeeks.length
       ? Math.round(recentPlannedWeeks.reduce((a, w) => a + (weekPlanned.get(w) ?? 0), 0) / recentPlannedWeeks.length) : 0;
     const lastWeekPlannedMinutes = (() => {
@@ -371,15 +402,16 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       quality: qAnchor ? { fastSec: qAnchor.fast, slowSec: qAnchor.slow, confidence: anchorConfidence(qAnchor.effectiveN) as Confidence, effectiveN: qAnchor.effectiveN } : null,
       illness, hasActiveIllness, tierNote,
       envelope: {
-        rolling4wWeeklyMin, rolling4wFrequency: Math.round(avg(weekFreq) * 10) / 10,
-        rolling4wQuality: Math.round(avg(weekQual) * 10) / 10,
+        rolling4wWeeklyMin, rolling4wFrequency: Math.round(avgPlanned(weekFreq) * 10) / 10,
+        rolling4wQuality: Math.round(avgPlanned(weekQual) * 10) / 10,
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
         lastWeekMinutes: lastWeekMin,
         rolling4wPlannedMin, lastWeekPlannedMinutes, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
-        dayHistogram, weeksObserved: weekMin.size,
+        // weeksObserved — про то, есть ли из чего считать КОНВЕРТ, а конверт плановый.
+        dayHistogram, weeksObserved: weekPlanned.size,
       },
     });
   }
