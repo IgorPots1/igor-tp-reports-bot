@@ -2620,8 +2620,14 @@ function RequestSentScreen() {
 // Styles
 // ---------------------------------------------------------------------------
 
+// Bottom tab-bar geometry, single source of truth so the shell reservation can
+// never drift from the bar's real height (audit C9). TABBAR_H is the tab strip's
+// own height; the safe-area inset is added on top of it via env() in both places.
+const TABBAR_H = 56; // px, tab strip height excluding the safe-area inset below it
+const CONTENT_GAP = 24; // px, breathing room so page content never kisses the bar
+
 const S = {
-  shell: { minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: BODY, paddingBottom: "calc(78px + env(safe-area-inset-bottom))" } as React.CSSProperties,
+  shell: { minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: BODY, paddingBottom: `calc(${TABBAR_H + CONTENT_GAP}px + env(safe-area-inset-bottom))` } as React.CSSProperties,
   header: { padding: "16px 16px 8px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 } as React.CSSProperties,
   h1: { fontFamily: HEAD, fontSize: 26, fontWeight: 700, letterSpacing: "0.06em", margin: 0, color: C.ink } as React.CSSProperties,
   fresh: { color: C.faint, fontSize: 12 } as React.CSSProperties,
@@ -2649,7 +2655,7 @@ const S = {
   pctBig: { fontFamily: HEAD, fontSize: 18, fontWeight: 700, color: C.ink } as React.CSSProperties,
   timeBig: { fontFamily: HEAD, fontSize: 17, fontWeight: 600, color: C.ink } as React.CSSProperties,
   tabsRow: { display: "flex", gap: 8, marginBottom: 12 } as React.CSSProperties,
-  pill: (active: boolean): React.CSSProperties => ({ flex: 1, padding: "8px 0", borderRadius: 999, border: `1px solid ${active ? C.accent : C.line}`, background: active ? C.accent : C.card, color: active ? C.accentInk : C.sub, fontSize: 13, fontWeight: 600, fontFamily: HEAD, cursor: "pointer" }),
+  pill: (active: boolean): React.CSSProperties => ({ flex: 1, padding: "8px 16px", borderRadius: 999, border: `1px solid ${active ? C.accent : C.line}`, background: active ? C.accent : C.card, color: active ? C.accentInk : C.sub, fontSize: 13, fontWeight: 600, fontFamily: HEAD, cursor: "pointer", whiteSpace: "nowrap", textAlign: "center" }),
   recRow: { display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderTop: `1px solid ${C.line}`, marginTop: 2 } as React.CSSProperties,
   badgeCard: (earned: boolean): React.CSSProperties => ({ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, width: "calc(33% - 6px)", padding: "10px 4px", borderRadius: 10, background: earned ? "rgba(245,197,24,0.10)" : C.cardAlt, border: `1px solid ${earned ? C.accent : C.line}`, color: earned ? C.ink : C.sub, textAlign: "center" }),
   more: { width: "100%", padding: "12px 0", borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, color: C.accentText, fontFamily: HEAD, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 } as React.CSSProperties,
@@ -2689,6 +2695,6 @@ const S = {
   listRow: { display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderTop: `1px solid ${C.line}` } as React.CSSProperties,
   statusChip: { fontSize: 11.5, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap" } as React.CSSProperties,
   rowCancelBtn: { flex: "0 0 auto", fontSize: 11.5, color: C.sub, background: "transparent", border: `1px solid ${C.line}`, borderRadius: 999, padding: "3px 10px", whiteSpace: "nowrap", cursor: "pointer" } as React.CSSProperties,
-  tabBar: { position: "fixed", left: 0, right: 0, bottom: 0, display: "flex", background: C.card, borderTop: `1px solid ${C.line}`, paddingBottom: "env(safe-area-inset-bottom)" } as React.CSSProperties,
-  tab: (active: boolean): React.CSSProperties => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 0 6px", background: "transparent", border: "none", color: active ? C.accentText : C.faint, cursor: "pointer", fontFamily: BODY }),
+  tabBar: { position: "fixed", left: 0, right: 0, bottom: 0, height: TABBAR_H, boxSizing: "content-box", display: "flex", background: C.card, borderTop: `1px solid ${C.line}`, paddingBottom: "env(safe-area-inset-bottom)" } as React.CSSProperties,
+  tab: (active: boolean): React.CSSProperties => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: "6px 0", background: "transparent", border: "none", color: active ? C.accentText : C.faint, cursor: "pointer", fontFamily: BODY }),
 };
