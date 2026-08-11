@@ -34,7 +34,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import path from "node:path";
 
 import { nameSearchSpecs, studentNameVariantSets } from "@/features/club/name-translit";
-import { distanceKeyOf, extractFinishes, fmtHms, isForeignRace, matchRace, normalizeFinisherName, normalizeKm, type MatchResult, type ProbegFinish } from "@/features/club/probeg-parse";
+import { distanceKeyOf, distanceMatch, extractFinishes, fmtHms, isForeignRace, matchRace, normalizeFinisherName, normalizeKm, type MatchResult, type ProbegFinish } from "@/features/club/probeg-parse";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const MODE_CANDIDATES = process.argv.includes("--candidates");
@@ -42,6 +42,13 @@ const MODE_CHECK = process.argv.includes("--check");
 const MODE_CHECK_ALL = process.argv.includes("--check-all");
 const MODE_WRITE = process.argv.includes("--write");
 const COMMIT = process.argv.includes("--commit"); // без него --write делает ТОЛЬКО dry-run, ничего не пишет
+// Block D — opt-in name-match FALLBACK. OFF by default so the weekly plist sync (--write) is UNCHANGED:
+// the primary time-anchored matching is never weakened. When --name-fallback is passed, races that the
+// time match missed BUT that have a coach-CONFIRMED spelling on the same date are queued (never
+// auto-linked). Hard volume gate: if the fallback would add more than NAME_FALLBACK_MAX cards, it writes
+// NOTHING and prints the count + a by-year breakdown, so the queue can never be flooded into uselessness.
+const MODE_NAME_FALLBACK = process.argv.includes("--name-fallback");
+const NAME_FALLBACK_MAX = Number(process.argv.find((a) => a.startsWith("--name-fallback-max="))?.slice("--name-fallback-max=".length)) || 40;
 const STUDENTS_PATH = process.argv.find((a) => a.startsWith("--students="))?.slice("--students=".length).trim() || "";
 const CONFIRMED_PATH = process.argv.find((a) => a.startsWith("--confirmed="))?.slice("--confirmed=".length).trim() || "";
 
@@ -409,7 +416,7 @@ type ExactCand = { studentId: string; studentName: string; dkey: string; finish:
 type OfficialPlan = { studentId: string; studentName: string; date: string; finish: ProbegFinish; distanceDoubtful: boolean }; // журнал: ЛЮБАЯ дистанция
 type RecPlan = { studentId: string; studentName: string; dkey: string; finish: ProbegFinish; date: string; action: "insert" | "upgrade"; ourSeconds: number | null };
 type LinkPlan = { studentId: string; studentName: string; name: string; norm: string };
-type PendPlan = { studentId: string; studentName: string; race: OurRace; res: MatchResult };
+type PendPlan = { studentId: string; studentName: string; race: OurRace; res: MatchResult; matchKind?: "time" | "name_fallback"; ambiguous?: boolean; anchorNote?: string };
 
 /**
  * Build the write plan (EXACT → club_records official_protocol; PROBABLE → confirmation queue; both →
@@ -450,7 +457,11 @@ async function runWrite(): Promise<void> {
     const variants = studentNameVariantSets(s.name);
     const confirmed = confirmedByStudent.get(s.id) ?? [];
     for (const race of await loadOurRaces(s.id)) {
-      if (race.ourSeconds == null || race.foreign) continue; // вне знаменателя — не пишем
+      // Foreign races are never on probeg → foreign backlog, never name-matched. A missing time is
+      // still passed to matchRace (it returns 'none' + sameDate), so the name-fallback below can see
+      // the same-date finishers; it does NOT feed the ordinary time-matched write path.
+      if (race.foreign) continue;
+      if (race.ourSeconds == null && !MODE_NAME_FALLBACK) continue; // вне знаменателя — не пишем (обычный проход)
       const res = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
       // Отклонённое тренером (tombstone) — молча пропускаем ДО любой записи: ни журнал, ни рекорд, ни очередь.
       if (res.finish && rejectedSet.has(`${s.id}|${race.date}|${res.finish.protocolUrl ?? ""}`)) {
@@ -481,8 +492,49 @@ async function runWrite(): Promise<void> {
         if (pendSet.has(pkey)) { skips.push(`${s.name}: ВЕРОЯТНОЕ ${race.date} уже в очереди → без изменений`); continue; }
         pendSet.add(pkey);
         pendPlans.push({ studentId: s.id, studentName: s.name, race, res });
+      } else if (MODE_NAME_FALLBACK && confirmed.length > 0) {
+        // NAME-FALLBACK. Fires ONLY here — after the time match produced NO exact/probable, i.e. the time
+        // anchor is unreliable (no workout time, or the time is farther than the probable tolerance from
+        // the finish). Safeguards: matches ONLY a coach-CONFIRMED spelling (club_probeg_athlete_links);
+        // groups same-date hits by distance and marks NAMESAKES (>1 at one distance) ambiguous — the coach
+        // picks, the code never chooses; honours the tombstone + queue-dedup; NEVER auto-links (queue only).
+        const confSet = new Set(confirmed.map(normalizeFinisherName).filter((x) => x.length > 0));
+        const hits = res.sameDate.filter((f) => f.name && confSet.has(normalizeFinisherName(f.name)));
+        if (hits.length === 0) continue;
+        const byDist = new Map<string, ProbegFinish[]>();
+        for (const f of hits) { const k = f.distanceKm == null ? "?" : String(Math.round(f.distanceKm * 10)); const g = byDist.get(k); if (g) g.push(f); else byDist.set(k, [f]); }
+        for (const [, group] of byDist) {
+          const ambiguous = group.length > 1; // >1 confirmed-name finisher at one date+distance = namesakes
+          for (const f of group) {
+            if (rejectedSet.has(`${s.id}|${race.date}|${f.protocolUrl ?? ""}`)) continue;
+            const pkey = `${s.id}|${race.date}|${f.seconds}`;
+            if (pendSet.has(pkey)) continue;
+            pendSet.add(pkey);
+            const anchorNote = race.ourSeconds == null
+              ? "нет времени тренировки в этот день"
+              : `наше ${fmtHms(race.ourSeconds)} vs протокол ${fmtHms(f.seconds)} — мимо допуска по времени`;
+            const distanceDoubtful = race.ourKm != null && f.distanceKm != null && !distanceMatch(race.ourKm, f.distanceKm);
+            pendPlans.push({ studentId: s.id, studentName: s.name, race, res: { ...res, finish: f, distanceDoubtful }, matchKind: "name_fallback", ambiguous, anchorNote });
+          }
+        }
       }
     }
+  }
+
+  // Hard VOLUME GATE (safeguard 3): the name-fallback must never flood the queue into uselessness.
+  // Count the fallback cards BEFORE any write; over the threshold → write NOTHING, print the count and a
+  // by-year breakdown so the coach can narrow the set (e.g. one year at a time) and re-run.
+  if (MODE_NAME_FALLBACK) {
+    const fb = pendPlans.filter((p) => p.matchKind === "name_fallback");
+    if (fb.length > NAME_FALLBACK_MAX) {
+      const byYear = new Map<string, number>();
+      for (const p of fb) { const y = (p.race.date ?? "").slice(0, 4) || "?"; byYear.set(y, (byYear.get(y) ?? 0) + 1); }
+      console.log(`\n⛔ ГЕЙТ ОБЪЁМА: имя-фолбэк добавил бы ${fb.length} карточек (порог ${NAME_FALLBACK_MAX}). НИЧЕГО не записано.`);
+      console.log(`   По годам: ${[...byYear.entries()].sort().map(([y, n]) => `${y}:${n}`).join("  ")}`);
+      console.log(`   Сузь набор (--name-fallback-max=N или отдельным прогоном по годам) и запусти снова.`);
+      process.exit(0);
+    }
+    if (fb.length > 0) console.log(`\nИмя-фолбэк: ${fb.length} карточек в очередь (порог ${NAME_FALLBACK_MAX}); авто-привязок нет.`);
   }
 
   // club_records is UNIQUE(student, distance_key): a student with several protocols on one distance must
@@ -601,6 +653,7 @@ async function runWrite(): Promise<void> {
       protocol_url: f.protocolUrl ?? null, protocol_name: f.name, protocol_event: f.event, protocol_city: f.city, protocol_place: f.place,
       protocol_seconds: f.seconds, protocol_distance_km: f.distanceKm,
       distance_doubtful: p.res.distanceDoubtful, name_unrecognized: p.res.nameUnrecognized, weak_name: p.res.weakName,
+      match_kind: p.matchKind ?? "time", ambiguous: p.ambiguous ?? false, anchor_note: p.anchorNote ?? null,
     }, { onConflict: "student_id,race_date,protocol_seconds" }));
   }
   for (const p of officialPlans) {

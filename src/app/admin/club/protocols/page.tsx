@@ -28,7 +28,7 @@ export default async function ClubProtocolsPage({ searchParams }: { searchParams
 
   // Group by RACE (event + date) so the coach reviews one event with all our finishers at once.
   type Row = (typeof pending)[number];
-  const flagged = (r: Row): boolean => r.distanceDoubtful || r.nameUnrecognized || r.weakName;
+  const flagged = (r: Row): boolean => r.distanceDoubtful || r.nameUnrecognized || r.weakName || r.ambiguous || r.matchKind === "name_fallback";
   const groups = new Map<string, { event: string; date: string; rows: Row[] }>();
   for (const p of pending) {
     const event = p.protocolEvent && p.protocolEvent.trim() ? p.protocolEvent : "(без названия события)";
@@ -73,9 +73,12 @@ export default async function ClubProtocolsPage({ searchParams }: { searchParams
                     <tr key={p.id}>
                       <td>
                         <strong>{p.studentName}</strong>
+                        {p.matchKind === "name_fallback" ? <div><span className="admin-badge admin-badge-warning">по имени (время не совпало)</span></div> : null}
+                        {p.ambiguous ? <div><span className="admin-badge admin-badge-danger">неоднозначно — однофамильцы</span></div> : null}
                         {p.distanceDoubtful ? <div><span className="admin-badge admin-badge-warning">дистанция?</span></div> : null}
                         {p.nameUnrecognized ? <div><span className="admin-badge admin-badge-warning">имя не распозналось</span></div> : null}
                         {p.weakName ? <div><span className="admin-badge admin-badge-warning">без фамилии</span></div> : null}
+                        {p.anchorNote ? <div className="admin-summary-label">якорь: {p.anchorNote}</div> : null}
                       </td>
                       <td>{km(p.ourDistanceKm)} · <strong>{fmt(p.ourSeconds)}</strong>{p.ourTitle ? <div className="admin-summary-label">{p.ourTitle}</div> : null}</td>
                       <td>

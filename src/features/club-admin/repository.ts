@@ -603,17 +603,22 @@ export type ClubPendingMatch = {
   distanceDoubtful: boolean;
   nameUnrecognized: boolean;
   weakName: boolean;
+  matchKind: string;
+  ambiguous: boolean;
+  anchorNote: string | null;
 };
 
 /** PROBABLE protocol matches awaiting coach confirmation, newest race first. Tolerant of an absent table. */
 export async function listClubProtocolPending(): Promise<ClubPendingMatch[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("club_protocol_pending")
-    .select("id, student_id, race_date, our_seconds, our_distance_km, our_title, protocol_name, protocol_event, protocol_city, protocol_place, protocol_seconds, protocol_distance_km, protocol_url, distance_doubtful, name_unrecognized, weak_name")
-    .eq("status", "pending")
-    .order("race_date", { ascending: false });
-  if (error || !data) return [];
+  const baseCols = "id, student_id, race_date, our_seconds, our_distance_km, our_title, protocol_name, protocol_event, protocol_city, protocol_place, protocol_seconds, protocol_distance_km, protocol_url, distance_doubtful, name_unrecognized, weak_name";
+  // Block D added match_kind/ambiguous/anchor_note. Select them, but fall back to the base columns if the
+  // migration is not applied yet, so the queue page never breaks while the migration is pending.
+  const q = (cols: string) => supabase.from("club_protocol_pending").select(cols).eq("status", "pending").order("race_date", { ascending: false });
+  let res = await q(`${baseCols}, match_kind, ambiguous, anchor_note`);
+  if (res.error) res = await q(baseCols);
+  const data = res.data as Array<Record<string, unknown>> | null;
+  if (res.error || !data) return [];
   const rows = data as Array<Record<string, unknown>>;
   const ids = [...new Set(rows.map((r) => r.student_id as string))];
   const nameById = new Map<string, string>();
@@ -641,6 +646,9 @@ export async function listClubProtocolPending(): Promise<ClubPendingMatch[]> {
       distanceDoubtful: Boolean(r.distance_doubtful),
       nameUnrecognized: Boolean(r.name_unrecognized),
       weakName: Boolean(r.weak_name),
+      matchKind: (r.match_kind as string | null) ?? "time",
+      ambiguous: Boolean(r.ambiguous),
+      anchorNote: (r.anchor_note as string | null) ?? null,
     };
   });
 }
