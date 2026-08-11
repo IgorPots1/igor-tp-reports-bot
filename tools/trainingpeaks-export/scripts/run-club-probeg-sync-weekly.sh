@@ -22,6 +22,13 @@ echo "[$(date '+%F %T')] reconcile race-event distances from protocol"
 node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
   --env-file=.env.local scripts/reconcile-race-distances-from-protocol.ts --commit || true
 
+# Самолечение очереди: строки, поставленные вручную/из браузера (зарубеж), приходят с пустым
+# our_seconds → в очереди «?». Заполняем нашим временем/дистанцией из тренировки того дня, чтобы
+# тренер сравнивал протокол-против-нас. Идемпотентно (трогает только our_seconds IS NULL).
+echo "[$(date '+%F %T')] backfill pending queue our_seconds from the day's workout"
+node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
+  --env-file=.env.local scripts/backfill-pending-our-time.ts --commit || true
+
 # Хартбит: отметка «прогон состоялся» в trainingpeaks_cron_run_logs, чтобы монитор
 # отличал живой поток от тихо вставшего. `|| true` — отметка не важнее самой работы;
 # сбой записи виден в логе (tp-heartbeat печатает причину и не глотает её).
