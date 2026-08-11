@@ -8,7 +8,7 @@
  */
 import { ranges, parseSegments } from "./tp-recompute.ts";
 import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, type Tier } from "./pace-resolver.ts";
-import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, type Envelope } from "./autoplanner-context.ts";
+import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, NOT_RUNNING_RATIO, NOT_RUNNING_WEEKS, type Envelope } from "./autoplanner-context.ts";
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, type QualityDecision } from "./quality-select.ts";
 import type { Band } from "./band-collision.ts";
@@ -316,12 +316,28 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   //
   // Выполнение НЕ выбрасываем: низкое выполнение уходит ПОМЕТКОЙ тренеру ниже, но объём им
   // не режется — иначе пропуск недели навсегда занижает план.
-  let weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;
-  if (env.lastWeekPlannedMinutes > 0) {
-    const ceil = Math.round(env.lastWeekPlannedMinutes * WEEKLY_GROWTH_MAX);
-    if (weekly > ceil) { weekly = ceil; notes.push(`объём подрезан до +${Math.round((WEEKLY_GROWTH_MAX - 1) * 100)}% к плану прошлой недели (${env.lastWeekPlannedMinutes} мин)`); }
+  // ИСКЛЮЧЕНИЕ: КОГДА ЧЕЛОВЕК НЕ ТРЕНИРУЕТСЯ, ПЛАН ЗДОРОВОГО ПЕРИОДА ЕМУ НЕ ОРИЕНТИР.
+  // 5847207 с активной травмой получал 145 мин, потому что потолок брал план ДО травмы, а
+  // понижение тира меняет только режим контроля и объёма не касается. В таких случаях считаем
+  // потолок ОТ ФАКТА. Два входа: активный health-сигнал и «не бегает» (выполнение ниже 40%
+  // подряд 3 недели). Обычное недовыполнение (около 80%) объём НЕ режет — план и так с запасом.
+  const notTraining = hasActiveIllness || env.notRunningWeeks >= NOT_RUNNING_WEEKS;
+
+  let weekly: number;
+  if (notTraining) {
+    weekly = Math.min(env.rolling4wWeeklyMin || 0, env.capWeeklyMin ?? Infinity) || 30;
+    if (env.lastWeekMinutes > 0) weekly = Math.min(weekly, Math.round(env.lastWeekMinutes * WEEKLY_GROWTH_MAX));
+    notes.push(hasActiveIllness
+      ? `потолок от ФАКТА (${weekly} мин): активный health-сигнал — план здорового периода не ориентир`
+      : `потолок от ФАКТА (${weekly} мин): выполнение ниже ${Math.round(NOT_RUNNING_RATIO * 100)}% ${env.notRunningWeeks} нед подряд — человек фактически не тренируется`);
+  } else {
+    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;
+    if (env.lastWeekPlannedMinutes > 0) {
+      const ceil = Math.round(env.lastWeekPlannedMinutes * WEEKLY_GROWTH_MAX);
+      if (weekly > ceil) { weekly = ceil; notes.push(`объём подрезан до +${Math.round((WEEKLY_GROWTH_MAX - 1) * 100)}% к плану прошлой недели (${env.lastWeekPlannedMinutes} мин)`); }
+    }
   }
-  if (env.lowComplianceWeeks >= LOW_COMPLIANCE_WEEKS) {
+  if (!notTraining && env.lowComplianceWeeks >= LOW_COMPLIANCE_WEEKS) {
     notes.push(`✋ выполнение ниже ${Math.round(LOW_COMPLIANCE_RATIO * 100)}% ${env.lowComplianceWeeks} нед подряд`
       + `${env.complianceRatio != null ? ` (за окно ${Math.round(env.complianceRatio * 100)}%)` : ""} — объём НЕ срезан, нужен взгляд тренера`);
   }

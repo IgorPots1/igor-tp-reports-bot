@@ -152,6 +152,9 @@ async function main(): Promise<void> {
   out.push(`- недель с пометкой по низкому выполнению: ${lowCompliance} (объём им НЕ срезан)`);
   const renamedLong = weeks.filter((w) => w.notes.some((nt) => nt.includes("назван лёгким"))).length;
   out.push(`- недель, где длинный день назван лёгким (не длиннее обычной лёгкой): ${renamedLong}`);
+  const factCeil = [...weeks, ...refusedByCeiling.map((r) => r.week)].filter((w) => w.notes.some((nt) => nt.includes("потолок от ФАКТА")));
+  out.push(`- потолок ОТ ФАКТА (не тренируется): ${factCeil.length}`);
+  for (const w of factCeil) out.push(`  - ${w.athleteId}: ${w.weeklyCap} мин, выдано ${w.plannedMinutes} — ${w.notes.find((nt) => nt.includes("потолок от ФАКТА"))?.replace(/^потолок от ФАКТА \([^)]*\): /, "")}`);
 
   const overCap = weeks.filter((w) => w.plannedMinutes > w.weeklyCap);
   out.push(`\n## потолок объёма`);

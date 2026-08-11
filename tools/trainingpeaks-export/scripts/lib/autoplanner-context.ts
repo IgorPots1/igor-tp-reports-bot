@@ -47,6 +47,8 @@ export type Envelope = {
   complianceRatio: number | null;
   /** сколько последних недель подряд выполнение ниже порога */
   lowComplianceWeeks: number;
+  /** сколько последних недель подряд выполнение ниже порога «не бегает» */
+  notRunningWeeks: number;
   /** медиана длительности ОБЫЧНОЙ лёгкой пробежки этого атлета, мин (0 — таких нет) */
   typicalEasyMinutes: number;
   /** объём работы последней качественной (reps × мин), null — истории нет */
@@ -79,6 +81,15 @@ export const TIER_DROP_VOLUME_RATIO = 0.6;
 export const LOW_COMPLIANCE_RATIO = 0.7;
 /** Столько недель подряд низкого выполнения — и неделя получает пометку тренеру. */
 export const LOW_COMPLIANCE_WEEKS = 3;
+
+/**
+ * «НЕ БЕГАЕТ» — это не то же, что «недобегает». Обычное недовыполнение (около 80% плана) объём
+ * НЕ режет: план и так пишется с запасом. А вот выполнение НИЖЕ 40% несколько недель подряд
+ * означает, что человек фактически не тренируется, и планировать ему от плана здорового
+ * периода — значит выдать недоступный объём. Пороги параметрами, не зашиты в логику.
+ */
+export const NOT_RUNNING_RATIO = 0.4;
+export const NOT_RUNNING_WEEKS = 3;
 
 const TIER_DOWN: Record<Tier, Tier> = { T3: "T2", T2: "T1", T1: "T1" };
 
@@ -296,6 +307,11 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       const pl = weekPlanned.get(w) ?? 0; if (pl <= 0) continue;
       if ((weekMin.get(w) ?? 0) / pl < LOW_COMPLIANCE_RATIO) lowComplianceWeeks++; else break;
     }
+    let notRunningWeeks = 0;
+    for (const w of [...weekPlanned.keys()].sort().reverse()) {
+      const pl = weekPlanned.get(w) ?? 0; if (pl <= 0) continue;
+      if ((weekMin.get(w) ?? 0) / pl < NOT_RUNNING_RATIO) notRunningWeeks++; else break;
+    }
 
     const sortedEasy = easyPlannedMinutes.sort((x, y) => x - y);
     const typicalEasyMinutes = sortedEasy.length
@@ -355,7 +371,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
         lastWeekMinutes: lastWeekMin,
-        rolling4wPlannedMin, lastWeekPlannedMinutes, complianceRatio, lowComplianceWeeks, typicalEasyMinutes,
+        rolling4wPlannedMin, lastWeekPlannedMinutes, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         dayHistogram, weeksObserved: weekMin.size,
