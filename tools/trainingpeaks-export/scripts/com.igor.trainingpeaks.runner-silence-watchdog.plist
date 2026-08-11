@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Сторож молчания раннеров, каждые 15 минут.
+     11.08.2026 боевые раннеры пролежали 3 часа и никто не узнал: коммит завёл
+     tools/trainingpeaks-export/tsconfig.json без paths, tsx перестал разворачивать алиас @/,
+     и раннеры умирали на импорте repository.ts — ДО первой строчки работы. Тем же гвоздём легли
+     tp-heartbeat.ts и tp-pipeline-heartbeat-monitor.ts (они импортируют тот же repository.ts),
+     поэтому в trainingpeaks_cron_run_logs не появилось даже строки failed. Молчание выглядело
+     как «событий нет».
+
+     ПОЭТОМУ СТОРОЖ НЕ ДЕЛИТ РАНТАЙМ С ОХРАНЯЕМЫМ: только bash + curl, ни node, ни tsx, ни
+     импортов из src/. Читает из БД последний хартбит каждой критичной работы, молчит дольше
+     порога — пишет тренеру в Telegram. В БД ничего не пишет, только SELECT.
+
+     Каждые 15 минут: порог тревоги ~3 пропущенных цикла (100 мин для получасовых работ),
+     так что 15 минут дают несколько попыток внутри окна и при этом не шумят.
+
+     Сон мака учтён в самом скрипте: если сторож пропустил СВОИ циклы, первый прогон после
+     пробуждения только перевзводится и молчит — иначе он бы орал на законную дыру от сна.
+
+     НЕ УСТАНОВЛЕН. Ставит Игорь, после ручной проверки:
+       tools/trainingpeaks-export/scripts/run-runner-silence-watchdog.sh --dry-run
+       cp .../com.igor.trainingpeaks.runner-silence-watchdog.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.runner-silence-watchdog.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.runner-silence-watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-runner-silence-watchdog.sh"</string>
+  </array>
+
+  <!-- RunAtLoad false намеренно: сразу после загрузки мака раннеры законно ещё не отработали,
+       и первый же прогон дал бы ложную тревогу. Первую проверку делает StartInterval. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/runner-silence-watchdog.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/runner-silence-watchdog.launchd.err.log</string>
+</dict>
+</plist>
