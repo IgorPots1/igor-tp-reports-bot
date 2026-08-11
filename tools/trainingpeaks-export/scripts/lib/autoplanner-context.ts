@@ -245,7 +245,12 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
 
+    // СТРОГО ДО asOf. buildAnchor фильтрует свои сэмплы по дате сам, а конверт объёма,
+    // гистограмма дней и история качества — НЕТ: они собирались по всем строкам подряд.
+    // Для живого прогона это почти незаметно (asOf = сегодня), но для теневого сравнения
+    // это обучение НА БУДУЩЕМ, то есть тест ни о чём. Фильтруем один раз на входе.
     for (const r of rs) {
+      if (r.workout_date >= asOf) continue;
       if (r.student_id) sid = r.student_id;
       const qs = r.title ? extractQualitySample(r.title, r.description ?? "") : null;
       if (qs) qSamples.push({ date: r.workout_date, fast: qs.fast, slow: qs.slow, workMinutes: qs.workMinutes, reps: qs.reps });

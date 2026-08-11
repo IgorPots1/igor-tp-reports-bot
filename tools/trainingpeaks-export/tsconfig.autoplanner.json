@@ -14,6 +14,7 @@
     "scripts/tp-week-shape-measure.ts",
     "scripts/tp-band-collision-check.ts",
     "scripts/tp-collision-calibrate.ts",
-    "scripts/tp-quality-anchor-probe.ts"
+    "scripts/tp-quality-anchor-probe.ts",
+    "scripts/tp-autoplanner-shadow-compare.ts"
   ]
 }
