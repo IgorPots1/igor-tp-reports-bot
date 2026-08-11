@@ -1,0 +1,18 @@
+{
+  "//": "Корневой tsconfig исключает tools/trainingpeaks-export целиком, поэтому `tsc -p tsconfig.json` эти файлы НИКОГДА не проверял. Этот конфиг закрывает дыру: npm run typecheck:tools.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts"],
+  "exclude": ["node_modules", "exports", "parsed", "reports", "action-artifacts"]
+}

@@ -8,6 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck:autoplanner": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.autoplanner.json",
+    "typecheck:tools": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.json",
     "test:tp-api-client": "node --experimental-strip-types --test src/features/trainingpeaks/tp-api-client.test.ts",
     "test:tp-write-action-types": "node --experimental-strip-types --test src/features/trainingpeaks/tp-write-action-types.test.ts",
     "test:athlete-roster-import": "node --experimental-strip-types --test src/features/trainingpeaks/athlete-roster-import.test.ts",

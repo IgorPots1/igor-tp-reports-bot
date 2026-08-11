@@ -1,0 +1,19 @@
+{
+  "//": "Зелёный гейт для автопланировщика. Отдельно от tsconfig.json, потому что тот покрывает всю директорию, где ~680 ДАВНИХ ошибок в посторонних файлах — как гейт он сегодня непригоден, а этот проходит начисто и годится в проверки.",
+  "extends": "./tsconfig.json",
+  "include": [
+    "scripts/lib/autoplanner-catalog.ts",
+    "scripts/lib/autoplanner-context.ts",
+    "scripts/lib/autoplanner-week.ts",
+    "scripts/lib/quality-anchor.ts",
+    "scripts/lib/quality-select.ts",
+    "scripts/lib/pace-resolver.ts",
+    "scripts/lib/easy-anchor.ts",
+    "scripts/lib/band-collision.ts",
+    "scripts/tp-autoplanner-week.ts",
+    "scripts/tp-week-shape-measure.ts",
+    "scripts/tp-band-collision-check.ts",
+    "scripts/tp-collision-calibrate.ts",
+    "scripts/tp-quality-anchor-probe.ts"
+  ]
+}
