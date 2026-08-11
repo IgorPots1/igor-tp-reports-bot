@@ -129,12 +129,23 @@ async function main(): Promise<void> {
   const weekStarts: string[] = [];
   for (let i = WEEKS_BACK; i >= 1; i--) weekStarts.push(addDays(thisMonday, -7 * i));
 
-  console.log(`[shadow] недель к проверке: ${weekStarts.length} (${weekStarts[0]} … ${weekStarts[weekStarts.length - 1]})`);
+  // ДЕНЬ ЗАМЕРА. По умолчанию контекст берётся на понедельник целевой недели — то есть тест
+  // всегда «запускается» в понедельник. Ошибки, зависящие от дня запуска, он при этом не видит
+  // в принципе: последняя такая (обрезанная неполная неделя в конверте) прошла мимо целиком и
+  // всплыла только на живом прогоне. Ключ --asof-offset=N сдвигает момент замера на N дней
+  // назад от начала недели: 6 = вторник предыдущей недели, 5 = среда, 4 = четверг, 3 = пятница.
+  const offArg = process.argv.find((a) => a.startsWith("--asof-offset="));
+  const asOfOffset = offArg ? Math.max(0, Math.round(Number(offArg.split("=")[1]))) : 0;
+  const DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  const offsetLabel = asOfOffset === 0 ? "Пн (начало целевой недели)"
+    : `${DOW[(7 - (asOfOffset % 7)) % 7]} за ${asOfOffset} дн до недели`;
+
+  console.log(`[shadow] недель к проверке: ${weekStarts.length} (${weekStarts[0]} … ${weekStarts[weekStarts.length - 1]}) · замер: ${offsetLabel}`);
   const pairs: Pair[] = [];
 
   for (const ws of weekStarts) {
     const [ctx, actualRows] = await Promise.all([
-      loadAthleteContexts(sb, ws),                 // контекст СТРОГО до ws
+      loadAthleteContexts(sb, addDays(ws, -asOfOffset)), // контекст СТРОГО до момента замера
       pullPlanned(sb, ws, addDays(ws, 7)),         // что тренер реально поставил в неделю ws
     ]);
     const actualByAth = new Map<number, ActualRow[]>();
@@ -299,8 +310,10 @@ async function main(): Promise<void> {
 
   const dir = path.join(path.resolve(toolRoot, "..", ".."), "reports", "autoplanner-shadow");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, `compare-${weekStarts[0]}.md`), out.join("\n") + "\n");
-  writeFileSync(path.join(dir, `pairs-${weekStarts[0]}.json`), JSON.stringify(pairs, null, 2) + "\n");
+  // Имя файла несёт день замера — иначе прогоны с разным --asof-offset затирают друг друга.
+  const sfx = asOfOffset === 0 ? "" : `-off${asOfOffset}`;
+  writeFileSync(path.join(dir, `compare-${weekStarts[0]}${sfx}.md`), out.join("\n") + "\n");
+  writeFileSync(path.join(dir, `pairs-${weekStarts[0]}${sfx}.json`), JSON.stringify(pairs, null, 2) + "\n");
   console.log(out.join("\n"));
   console.log(`\n[shadow] отчёт → ${dir}`);
 }
