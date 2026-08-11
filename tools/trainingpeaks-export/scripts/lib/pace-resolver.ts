@@ -179,6 +179,13 @@ export function resolvePace(
     // вдвое шире лёгкого, и перешагивали сам порог. Тренер пишет отрезки узко (медиана 13 с/км).
     if (a.quality && (intent === "threshold" || intent === "controlled_threshold")) {
       const q = a.quality;
+      // ТОНКИЙ ЯКОРЬ ВИДЕН СЛОВАМИ. Пол существования якоря (effN 0.25) намеренно мягкий, чтобы
+      // не терять покрытие, но тогда «доверие: low» в служебной строке мало: тренер должен
+      // видеть, что числа держатся на единичных старых назначениях.
+      if (q.confidence === "low") {
+        warnings.push(`якорь качества тонкий${q.effectiveN != null ? ` (effN ${q.effectiveN.toFixed(2)})` : ""}`
+          + ": полоса держится на единичных старых назначениях, доверие низкое");
+      }
       return {
         ok: true, intent,
         pctMin: pct(thr, q.slowSec), pctMax: pct(thr, q.fastSec),

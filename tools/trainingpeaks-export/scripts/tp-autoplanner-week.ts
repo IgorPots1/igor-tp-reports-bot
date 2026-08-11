@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   for (const c of ctx.values()) {
     if (!c.easy) { skipped.push({ aid: c.athleteId, why: "нет якоря лёгкого и фолбэка" }); continue; }
     if (c.envelope.weeksObserved === 0) { skipped.push({ aid: c.athleteId, why: "нет наблюдённых недель" }); continue; }
-    const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness);
+    const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness, c.tierNote);
     // ОТКАЗ ПО НЕВМЕСТИМОСТИ: потолок объёма неприкосновенен. Если даже минимальная неделя в
     // него не влезает, неделю НЕ выдаём — случай уходит тренеру.
     if (w.refused) { refusedByCeiling.push({ aid: c.athleteId, why: w.refused, week: w }); continue; }
@@ -124,6 +124,20 @@ async function main(): Promise<void> {
   }
   out.push(`\n## лестница сокращения — что срабатывало`);
   [...noteHist.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
+
+  const tierDowngraded = [...ctx.values()].filter((c) => c.tierNote);
+  out.push(`\n## тир понижен (падение объёма / health-сигнал): ${tierDowngraded.length}`);
+  const byTierReason = new Map<string, number>();
+  for (const c of tierDowngraded) byTierReason.set(c.tierNote!.includes("health") ? "health-сигнал" : "падение объёма",
+    (byTierReason.get(c.tierNote!.includes("health") ? "health-сигнал" : "падение объёма") ?? 0) + 1);
+  [...byTierReason.entries()].forEach(([k, v]) => out.push(`- ${k}: ${v}`));
+
+  const confHist = new Map<string, number>();
+  for (const c of ctx.values()) if (c.quality) confHist.set(c.quality.confidence, (confHist.get(c.quality.confidence) ?? 0) + 1);
+  out.push(`\n## доверие якоря качества (по атлетам со своим якорем)`);
+  [...confHist.entries()].sort((a, b) => b[1] - a[1]).forEach(([k, v]) => out.push(`- ${k}: ${v}`));
+  const thinShown = all.filter((s) => !s.deferred && s.warnings.some((x) => x.includes("якорь качества тонкий"))).length;
+  out.push(`- сессий с явной пометкой «якорь тонкий»: ${thinShown}`);
 
   const overCap = weeks.filter((w) => w.plannedMinutes > w.weeklyCap);
   out.push(`\n## потолок объёма`);
