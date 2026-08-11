@@ -57,6 +57,42 @@ export type Catalog = {
   reviewRules: ReviewRule[];
 };
 
+/**
+ * ВОРОТА ПО УРОВНЮ — ВЫКЛЮЧЕНЫ. Включать ТОЛЬКО когда у УЧЕНИКОВ появится поле уровня.
+ *
+ * Почему это здесь написано так подробно. Раньше отбор по уровню стоял в коде без выключателя:
+ * `athlete_level_min !== "L0" → пропустить`. Пока уровни в каталоге были пустые, строка молчала.
+ * Как только миграция уровней была применена (06.08), ворота ОЖИЛИ САМИ И МОЛЧА: из 14 пресетов
+ * в автогенерации осталось 2 (thr_4x5, thr_5x4) — один формат на всех. Заметили случайно.
+ * Поэтому теперь это ЯВНЫЙ флаг, а не побочный эффект данных.
+ *
+ * КАК ВОРОТА ДОЛЖНЫ РАБОТАТЬ В ПАРЕ (когда включим):
+ *   пресет доступен ученику, если УРОВЕНЬ УЧЕНИКА >= athlete_level_min пресета.
+ *   Шкала по возрастанию: L0 < L1 < L2 < L3 < L4 < L4M. Пресет без уровня доступен всем.
+ *   Ученик без уровня НЕ должен молча получать всё подряд — при включённых воротах он
+ *   считается L0, то есть получает только базовые форматы, а не «уровня нет, значит можно всё».
+ *
+ * ЧЕГО ФЛАГ НЕ КАСАЕТСЯ: выбор протокола разминки по уровню ПРЕСЕТА (L0–L1 простая,
+ * L2–L3 каноническая) работает ВСЕГДА и от этого флага не зависит — там уровень сравнивается
+ * не с учеником, а сам с собой.
+ */
+export const LEVEL_GATE_ENABLED = false;
+
+/** Порядок шкалы уровней по возрастанию требований. */
+const LEVEL_ORDER = ["L0", "L1", "L2", "L3", "L4", "L4M"];
+
+/**
+ * Пресет по зубам ученику? Пресет без уровня доступен всем; ученик без уровня считается L0.
+ * Вызывается только при LEVEL_GATE_ENABLED — пока это задел, а не рабочий путь.
+ */
+export function presetLevelAllowed(presetLevel: string | null, athleteLevel: string | null): boolean {
+  if (presetLevel == null) return true;
+  const need = LEVEL_ORDER.indexOf(presetLevel);
+  const have = LEVEL_ORDER.indexOf(athleteLevel ?? "L0");
+  if (need < 0) return true; // незнакомая метка уровня не должна молча резать каталог
+  return have >= need;
+}
+
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 
 type ParamRow = { reps?: number | null; work_duration_min?: number | null; recovery_duration_min?: number | null;
@@ -76,7 +112,11 @@ type GuardrailRow = { rule_code: string; severity: Guardrail["severity"]; messag
   applies_to_intensity_intents: string[] | null; applies_to_family_codes: string[] | null; condition_jsonb: Record<string, unknown> | null };
 type ReviewRuleRow = { rule_code: string; trigger_type: string; message_ru: string; applies_to_intensity_intents: string[] | null };
 
-export async function loadCatalog(sb: SupabaseClient): Promise<Catalog> {
+/**
+ * `athleteLevel` учитывается ТОЛЬКО при LEVEL_GATE_ENABLED. Сейчас поля уровня у учеников нет,
+ * поэтому вызывающие его не передают, а каталог отдаёт все включённые пресеты.
+ */
+export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | null = null): Promise<Catalog> {
   const { data: presets, error } = await sb.from("workout_template_presets")
     .select(`preset_code, display_name_ru, coach_only, coach_review_required, requires_explicit_vo2_intensity,
              athlete_level_min, is_enabled, enabled_by_default,
@@ -108,19 +148,14 @@ export async function loadCatalog(sb: SupabaseClient): Promise<Catalog> {
     if (fam !== "intervals" && fam !== "race_specific") continue;
 
     // Кандидат автогенерации: не coach_only, не выключенный.
-    //
-    // ГЕЙТ ПО УРОВНЮ ВЫКЛЮЧЕН НАМЕРЕННО. Раньше здесь стояло `lvl !== "L0" → continue`, и пока
-    // уровни в каталоге были пустые, оно ничего не делало. После применения миграции уровней
-    // (06.08) гейт ОЖИЛ САМ И МОЛЧА: из 14 пресетов остались бы thr_4x5 и thr_5x4, то есть один
-    // формат на всех. Уровня у УЧЕНИКОВ не существует (аудит 06.08) — сопоставлять пресет не с
-    // чем, значит отбирать по уровню нельзя. Уровень пресета всё равно поднимаем наверх: по нему
-    // выбирается протокол разминки (простая для L0–L1, каноническая для L2–L3).
     const lvl = (r.athlete_level_min as string | null) ?? null;
     if (r.coach_only === true) continue;
     // enabled_by_default читается КАК ФИЛЬТР: раньше он лежал в выборке, но не применялся,
     // и выключенный thr_7x4 выбирался автогенерацией 7 раз.
     if (r.enabled_by_default === false) continue;
     if (!pp?.reps || !pp?.work_duration_min) continue;
+    // Ворота по уровню — за ЯВНЫМ выключателем, см. LEVEL_GATE_ENABLED.
+    if (LEVEL_GATE_ENABLED && !presetLevelAllowed(lvl, athleteLevel)) continue;
 
     const warm = Array.isArray(r.workout_template_warmup_refs) ? r.workout_template_warmup_refs[0] : r.workout_template_warmup_refs;
     const cool = Array.isArray(r.workout_template_cooldown_refs) ? r.workout_template_cooldown_refs[0] : r.workout_template_cooldown_refs;
