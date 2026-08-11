@@ -511,11 +511,28 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
 
   const canGrowEasy = (): boolean => easyRoles > 0 && spare >= ROUND_TO_MIN * easyRoles
     && longMin > easyBase + ROUND_TO_MIN;
-  // (1) лёгкие до ЦЕЛИ тира — иначе при инварианте 25 мин план выглядит короче обычного
-  while (canGrowEasy() && easyBase < easyTarget) { easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles; }
-  // (2) длительная до ориентира: кратность к лёгкому, кратность к качественной, потолок baseline
-  const longTarget = round5(Math.max(capLong, easyBase * ratioEasy, qLongest > 0 ? qLongest * ratioQual : 0));
-  while (spare >= ROUND_TO_MIN && longMin < longTarget) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
+
+  // ПОРЯДОК РОСТА: ДЛИТЕЛЬНАЯ ПЕРВОЙ (правка 16.08).
+  // Раньше первыми росли лёгкие, и на тесной неделе длительной уже не оставалось: теневое
+  // сравнение показало ухудшение по этой оси (машина короче тренера в 45% → 50% пар) ровно
+  // после того, как подняли цели лёгких. Лёгкий день — расходный, длительная — смысл недели;
+  // платить длительной за лёгкие нельзя. Ориентир длительной — ФУНКЦИЯ от длины лёгкого, а не
+  // число, посчитанное один раз: иначе лёгкие подрастают следом и кратность молча съезжает.
+  const longTargetFor = (easy: number): number =>
+    round5(Math.max(capLong, easy * ratioEasy, qLongest > 0 ? qLongest * ratioQual : 0));
+
+  // (1) длительная до своего ориентира
+  while (spare >= ROUND_TO_MIN && longMin < longTargetFor(easyBase)) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
+  // (2) лёгкие до ЦЕЛИ тира. Шаг лёгкого, который ломает кратность, СНАЧАЛА оплачивает
+  //     длительную — так лёгкие не растут за её счёт.
+  while (canGrowEasy() && easyBase < easyTarget) {
+    const need = longTargetFor(easyBase + ROUND_TO_MIN);
+    if (longMin < need) {
+      if (spare < ROUND_TO_MIN) break;
+      longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; continue;
+    }
+    easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles;
+  }
   // (3) остаток — лёгким, пока кратность-ориентир к длительной не нарушена
   while (canGrowEasy() && easyBase < EASY_MAX && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy) {
     easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles;
@@ -533,11 +550,10 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const longRoom = longMin < capLong && spare >= ROUND_TO_MIN;
     const easyRoom = canGrowEasy() && easyBase < EASY_MAX && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy;
     if (!longRoom && !easyRoom) break;
-    // Кто дальше от своего ориентира, тот и получает шаг: так неделя не перекашивается
-    // в одну длинную сессию и не расползается в одинаковые лёгкие.
-    const longGap = longRoom ? (capLong - longMin) / Math.max(capLong, 1) : -1;
-    const easyGap = easyRoom ? (EASY_MAX - easyBase) / EASY_MAX : -1;
-    if (longRoom && (!easyRoom || longGap >= easyGap)) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
+    // ДЛИТЕЛЬНАЯ ПРИОРИТЕТНЕЕ и здесь: пока у неё есть место до потолка, добор идёт ей.
+    // Прежде шаг отдавался «тому, кто дальше от ориентира», и лёгкие выигрывали почти всегда —
+    // длительная к этому моменту уже стояла на своём потолке, а лёгким было куда расти до 70.
+    if (longRoom) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
     else { easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles; }
   }
   if (total() < targetWeekly * VOLUME_TARGET_TOL) {

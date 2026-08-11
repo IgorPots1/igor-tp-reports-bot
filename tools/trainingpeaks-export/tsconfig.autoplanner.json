@@ -12,6 +12,7 @@
     "scripts/lib/band-collision.ts",
     "scripts/tp-autoplanner-week.ts",
     "scripts/tp-week-shape-measure.ts",
+    "scripts/tp-heuristics-measure.ts",
     "scripts/tp-band-collision-check.ts",
     "scripts/tp-collision-calibrate.ts",
     "scripts/tp-quality-anchor-probe.ts",
