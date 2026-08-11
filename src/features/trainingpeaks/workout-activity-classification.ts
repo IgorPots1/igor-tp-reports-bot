@@ -182,11 +182,18 @@ function classifyByTitle(title: string): TrainingPeaksWorkoutActivityClassificat
  * were mislabelled. The type id is not a hint to be overridden -- it is the
  * answer.
  */
+/**
+ * Single source of truth for TrainingPeaks' Strength sport id. Exported because the
+ * workout-cache normalizer keys its "metric-less strength row IS a plan" rule off it,
+ * and the move flow keys its "strength is never a move candidate" gate off it.
+ */
+export const STRENGTH_WORKOUT_TYPE_VALUE_ID = 9;
+
 const AUTHORITATIVE_TYPE_ID_TO_FAMILY: Record<number, TrainingPeaksWorkoutActivityFamily> = {
   1: "swim",
   2: "bike",
   3: "run",
-  9: "strength",
+  [STRENGTH_WORKOUT_TYPE_VALUE_ID]: "strength",
   13: "walk_hike",
 };
 

@@ -180,7 +180,10 @@ import {
   decideSignalZombieCleanup,
   type SignalZombieCleanupMode,
 } from "@/features/trainingpeaks/signal-zombie-cleanup";
-import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
+import {
+  classifyTrainingPeaksWorkoutActivity,
+  STRENGTH_WORKOUT_TYPE_VALUE_ID,
+} from "@/features/trainingpeaks/workout-activity-classification";
 // Phase A: pure title-sentinel detector for club marker workouts (leaf module — imports
 // only supabase, no trainingpeaks, so no cycle). Used to skip club pometki in the
 // missed-workout signal so they don't create false attention/digest entries.
@@ -3317,6 +3320,15 @@ function isLikelyHardOrIntervalWorkout(row: TrainingPeaksWorkoutCacheRow): boole
   return title.includes("темп") || title.includes("порог") || title.includes("фартлек");
 }
 
+// Планово-силовые теперь помечаются is_planned=true (см. trainingpeaks-workout-normalization:
+// TP отдаёт тренерскую силовую вообще без метрик, поэтому раньше она лежала в кэше как
+// «ни план, ни факт»). Move-автоматика от этого расширяться НЕ должна: силовая никогда не
+// кандидат на перенос и никогда не «занимает» целевой день. Гейт держит поведение переноса
+// ровно таким же, каким оно было до смены флага.
+function isMovableCacheRow(row: TrainingPeaksWorkoutCacheRow): boolean {
+  return row.workoutTypeValueId !== STRENGTH_WORKOUT_TYPE_VALUE_ID;
+}
+
 const MOVE_SOURCE_AI_MODEL_LABEL = process.env.MOVE_INTENT_MODEL?.trim() || "claude-haiku-4-5-20251001";
 
 async function enrichParsedMovePayloadWithWorkoutInference(input: {
@@ -3357,7 +3369,11 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
     // also blocked absolutely by the runner's hard gate.
     const calendarRows = rows.filter(
       (row) =>
-        row.isPlanned && !row.isCompleted && row.workoutDate >= todayIso && row.workoutDate !== targetDateIso
+        isMovableCacheRow(row) &&
+        row.isPlanned &&
+        !row.isCompleted &&
+        row.workoutDate >= todayIso &&
+        row.workoutDate !== targetDateIso
     );
     const aiCalendar: MoveSourceCalendarWorkout[] = calendarRows.map((row) => ({
       workoutId: row.trainingPeaksWorkoutId,
@@ -3463,7 +3479,9 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
     ) {
       const inferredKind = inferWorkoutKindFromText(input.rawText);
       const candidates = rows
-        .filter((row) => row.isPlanned && !row.isCompleted && row.workoutDate >= targetDateIso)
+        .filter(
+          (row) => isMovableCacheRow(row) && row.isPlanned && !row.isCompleted && row.workoutDate >= targetDateIso
+        )
         .map((row) => ({
           row,
           score: scoreWorkoutCandidate({
@@ -3512,7 +3530,9 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
 
   // Target-relative warnings only make sense once the target resolved to a concrete date.
   if (targetDateIso) {
-    const targetDayRows = rows.filter((row) => row.workoutDate === targetDateIso && row.isPlanned);
+    const targetDayRows = rows.filter(
+      (row) => isMovableCacheRow(row) && row.workoutDate === targetDateIso && row.isPlanned
+    );
     if (targetDayRows.length > 0) {
       payload.warnings?.push("На целевой день уже есть тренировка. Проверь расписание недели.");
     }
@@ -3522,14 +3542,18 @@ async function enrichParsedMovePayloadWithWorkoutInference(input: {
     const sourceRow = explicitSourceIso
       ? rows.find(
           (row) =>
+            isMovableCacheRow(row) &&
             row.workoutDate === explicitSourceIso &&
             row.isPlanned &&
             (previewSelectedWorkoutId ? row.trainingPeaksWorkoutId === previewSelectedWorkoutId : true)
-        ) ?? rows.find((row) => row.workoutDate === explicitSourceIso && row.isPlanned)
+        ) ??
+        rows.find(
+          (row) => isMovableCacheRow(row) && row.workoutDate === explicitSourceIso && row.isPlanned
+        )
       : null;
     if (sourceRow && isLikelyHardOrIntervalWorkout(sourceRow)) {
       const aroundTarget = rows.filter((row) => {
-        if (!row.isPlanned || row.workoutDate === targetDateIso) {
+        if (!isMovableCacheRow(row) || !row.isPlanned || row.workoutDate === targetDateIso) {
           return false;
         }
         const distanceDays =

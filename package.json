@@ -13,6 +13,7 @@
     "test:tp-api-client": "node --experimental-strip-types --test src/features/trainingpeaks/tp-api-client.test.ts",
     "test:tp-write-action-types": "node --experimental-strip-types --test src/features/trainingpeaks/tp-write-action-types.test.ts",
     "test:athlete-roster-import": "node --experimental-strip-types --test src/features/trainingpeaks/athlete-roster-import.test.ts",
+    "test:tp-workout-normalization": "node --experimental-strip-types --test tools/trainingpeaks-export/scripts/lib/trainingpeaks-workout-normalization.test.ts",
     "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts",
     "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once",
     "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --",
