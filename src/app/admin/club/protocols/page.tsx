@@ -1,7 +1,7 @@
-import { isClubAdminEnabled, listClubProtocolPending } from "@/features/club-admin/repository";
+import { isClubAdminEnabled, listClubProtocolPending, listClubProtocolRejections } from "@/features/club-admin/repository";
 import FormActionButton from "@/app/admin/FormActionButton";
 import { getSingleSearchParam } from "@/app/admin/lib";
-import { confirmProtocolMatchAction, rejectProtocolMatchAction, confirmProtocolGroupAction } from "@/app/admin/club/actions";
+import { confirmProtocolMatchAction, rejectProtocolMatchAction, confirmProtocolGroupAction, fixProtocolMatchDistanceAction, unrejectProtocolMatchAction } from "@/app/admin/club/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,7 @@ export default async function ClubProtocolsPage({ searchParams }: { searchParams
   const error = getSingleSearchParam(sp.error);
   const selfPath = "/admin/club/protocols";
   const pending = await listClubProtocolPending();
+  const rejections = await listClubProtocolRejections();
 
   // Group by RACE (event + date) so the coach reviews one event with all our finishers at once.
   type Row = (typeof pending)[number];
@@ -82,7 +83,7 @@ export default async function ClubProtocolsPage({ searchParams }: { searchParams
                         <div className="admin-summary-label">{p.protocolName ?? "имя не распозналось"}{p.protocolCity ? ` · ${p.protocolCity}` : ""}{p.protocolUrl ? <> · <a href={p.protocolUrl} target="_blank" rel="noreferrer">протокол</a></> : null}</div>
                       </td>
                       <td>
-                        <div style={{ display: "flex", gap: 6 }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                           <form action={confirmProtocolMatchAction}>
                             <input type="hidden" name="redirectTo" value={selfPath} />
                             <input type="hidden" name="pendingId" value={p.id} />
@@ -91,8 +92,23 @@ export default async function ClubProtocolsPage({ searchParams }: { searchParams
                           <form action={rejectProtocolMatchAction}>
                             <input type="hidden" name="redirectTo" value={selfPath} />
                             <input type="hidden" name="pendingId" value={p.id} />
-                            <FormActionButton className="admin-button admin-button-danger admin-button-small" confirmMessage="Отклонить (больше не предлагать)?" pendingText="…">✕</FormActionButton>
+                            <FormActionButton className="admin-button admin-button-danger admin-button-small" confirmMessage="Отклонить (удалит результат)?" pendingText="…">✕</FormActionButton>
                           </form>
+                          {/* D1 — fix the distance instead of rejecting: pick the correct bucket, the result stays. */}
+                          {p.distanceDoubtful ? (
+                            <form action={fixProtocolMatchDistanceAction} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                              <input type="hidden" name="redirectTo" value={selfPath} />
+                              <input type="hidden" name="pendingId" value={p.id} />
+                              <select name="distanceKey" defaultValue="" className="admin-input admin-input-small" required aria-label="Верная дистанция" style={{ maxWidth: 92 }}>
+                                <option value="" disabled>дист…</option>
+                                <option value="5k">5 км</option>
+                                <option value="10k">10 км</option>
+                                <option value="21k">21.1 км</option>
+                                <option value="42k">42.2 км</option>
+                              </select>
+                              <FormActionButton className="admin-button admin-button-small" confirmMessage={`Привязать ${p.studentName} с выбранной дистанцией (результат ${fmt(p.protocolSeconds)} останется)?`} pendingText="…">Исправить</FormActionButton>
+                            </form>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -111,6 +127,41 @@ export default async function ClubProtocolsPage({ searchParams }: { searchParams
           </div>
         ))
       )}
+
+      {/* D2 — rejected bindings: restore one so the next probeg-sync can re-bind it. */}
+      {rejections.length > 0 ? (
+        <div className="admin-card" style={{ marginTop: 20 }}>
+          <div className="admin-section-header" style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Отклонённые · {rejections.length}</h2>
+            <p className="admin-section-subtitle" style={{ margin: 0 }}>Эти привязки отклонены и синк их пропускает. «Вернуть» снимает пометку — ближайший probeg-синк сможет привязать снова.</p>
+          </div>
+          <div className="admin-table-wrap">
+            <table className="admin-table admin-table-compact">
+              <thead><tr><th>Ученик</th><th>Дата</th><th>Дист.</th><th>Время</th><th>Причина</th><th style={{ width: 1 }}></th></tr></thead>
+              <tbody>
+                {rejections.map((rj) => (
+                  <tr key={`${rj.studentId}|${rj.raceDate}|${rj.protocolUrl ?? ""}`}>
+                    <td><strong>{rj.studentName}</strong></td>
+                    <td>{rj.raceDate}</td>
+                    <td>{rj.distanceKey ?? "?"}</td>
+                    <td>{fmt(rj.resultSeconds)}{rj.protocolUrl ? <> · <a href={rj.protocolUrl} target="_blank" rel="noreferrer">протокол</a></> : null}</td>
+                    <td className="admin-summary-label">{rj.reason ?? ""}</td>
+                    <td>
+                      <form action={unrejectProtocolMatchAction}>
+                        <input type="hidden" name="redirectTo" value={selfPath} />
+                        <input type="hidden" name="studentId" value={rj.studentId} />
+                        <input type="hidden" name="raceDate" value={rj.raceDate} />
+                        {rj.protocolUrl ? <input type="hidden" name="protocolUrl" value={rj.protocolUrl} /> : null}
+                        <FormActionButton className="admin-button admin-button-small" confirmMessage={`Вернуть ${rj.studentName} (${rj.raceDate})? Синк сможет привязать снова.`} pendingText="…">Вернуть</FormActionButton>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

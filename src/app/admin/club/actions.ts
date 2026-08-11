@@ -250,6 +250,36 @@ export async function rejectProtocolMatchAction(formData: FormData): Promise<voi
   redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? "Отклонено, больше не предлагается." : res.error ?? "Ошибка."));
 }
 
+/** D1 — for a doubtful distance the right answer is usually NOT «reject» (that would delete a valid
+ *  result) but «fix the distance»: the coach picks the correct standard distance, the result stays,
+ *  the bucket is corrected, and the queue row closes. */
+export async function fixProtocolMatchDistanceAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const pendingId = req(formData, "pendingId");
+  const distanceKey = req(formData, "distanceKey") as RecordDistanceKey;
+  if (!(["5k", "10k", "21k", "42k"] as string[]).includes(distanceKey)) {
+    redirect(withNotice(redirectTo, "error", "Неверная дистанция."));
+  }
+  const { confirmProtocolMatch } = await import("@/features/club-admin/repository");
+  const res = await confirmProtocolMatch(pendingId, COACH, { distanceKey });
+  revalidateClub();
+  redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? `Привязано с дистанцией ${distanceKey}: рекорд + журнал.` : res.error ?? "Ошибка."));
+}
+
+/** D2 — cancel a rejection: delete the tombstone so the next probeg-sync can re-bind this result. */
+export async function unrejectProtocolMatchAction(formData: FormData): Promise<void> {
+  const redirectTo = req(formData, "redirectTo");
+  await ensureAdminAccess(redirectTo);
+  const studentId = req(formData, "studentId");
+  const raceDate = req(formData, "raceDate");
+  const protocolUrl = opt(formData, "protocolUrl");
+  const { unrejectProtocolMatch } = await import("@/features/club-admin/repository");
+  const res = await unrejectProtocolMatch(studentId, raceDate, protocolUrl);
+  revalidateClub();
+  redirect(withNotice(redirectTo, res.ok ? "notice" : "error", res.ok ? "Возвращено: следующий синк сможет привязать снова." : res.error ?? "Ошибка."));
+}
+
 /** Batch-confirm every pending match in one race group (event+date) at once — the coach reviews the
  *  race's finishers together, then binds them all. Idempotent per row (already-confirmed rows skip). */
 export async function confirmProtocolGroupAction(formData: FormData): Promise<void> {

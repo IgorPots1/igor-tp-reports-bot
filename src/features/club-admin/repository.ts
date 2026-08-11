@@ -658,7 +658,7 @@ export async function countClubProtocolPending(): Promise<number> {
  * is not coach_confirmed (never overwritten), remembers the probeg spelling (club_probeg_athlete_links)
  * so the person never re-queues, and marks the pending row confirmed.
  */
-export async function confirmProtocolMatch(pendingId: string, coach: string): Promise<{ ok: boolean; error?: string }> {
+export async function confirmProtocolMatch(pendingId: string, coach: string, opts?: { distanceKey?: RecordDistanceKey }): Promise<{ ok: boolean; error?: string }> {
   const supabase = createSupabaseServerClient();
   const { data: row } = await supabase.from("club_protocol_pending").select("*").eq("id", pendingId).eq("status", "pending").maybeSingle();
   if (!row) return { ok: false, error: "Запись не найдена или уже обработана." };
@@ -672,11 +672,18 @@ export async function confirmProtocolMatch(pendingId: string, coach: string): Pr
   if (seconds == null) return { ok: false, error: "У протокола нет времени." };
   const nowIso = new Date().toISOString();
 
+  // D1 — the coach can FIX a doubtful distance instead of rejecting (which would delete a valid result):
+  // the chosen standard distance governs BOTH the journal and the record, and clears the doubtful flag
+  // (the coach has resolved it). Without an override the protocol's own distance is used unchanged.
+  const overrideKey = opts?.distanceKey ?? null;
+  const effectiveKm = overrideKey ? PROTO_KM_OF_KEY[overrideKey] : km;
+  const effectiveDoubtful = overrideKey ? false : Boolean(r.distance_doubtful);
+
   // 1. Full journal (any distance) — always.
   const jr = await supabase.from("club_official_results").upsert({
-    student_id: studentId, race_date: date, distance_km: km, distance_label: km != null ? `${km} км` : null,
+    student_id: studentId, race_date: date, distance_km: effectiveKm, distance_label: effectiveKm != null ? `${effectiveKm} км` : null,
     result_seconds: seconds, protocol_url: url, protocol_name: name, place: r.protocol_place, city: r.protocol_city, event: r.protocol_event,
-    source: "official_protocol", trust: "verified", distance_doubtful: Boolean(r.distance_doubtful), confirmed_by: coach, updated_at: nowIso,
+    source: "official_protocol", trust: "verified", distance_doubtful: effectiveDoubtful, confirmed_by: coach, updated_at: nowIso,
   }, { onConflict: "student_id,race_date,protocol_url" });
   if (jr.error) return { ok: false, error: `journal: ${jr.error.message}` };
 
@@ -688,12 +695,12 @@ export async function confirmProtocolMatch(pendingId: string, coach: string): Pr
   //     discarding a faster hand-passed time (coach may hold a result we have no protocol for);
   //   • a DOUBTFUL-distance protocol never displaces a coach slot — its bucket is uncertain
   //     (that path is the queue, block D), so it must not become the record.
-  const dkey = distanceKeyOf(km);
+  const dkey = overrideKey ?? distanceKeyOf(effectiveKm);
   if (dkey) {
     const { data: ex } = await supabase.from("club_records").select("source,duration_seconds").eq("student_id", studentId).eq("distance_key", dkey).maybeSingle();
     const exRow = ex as { source: string; duration_seconds: number } | null;
     const keepFasterCoach = exRow?.source === "coach_confirmed"
-      && (Number(exRow.duration_seconds) < seconds || Boolean(r.distance_doubtful));
+      && (Number(exRow.duration_seconds) < seconds || effectiveDoubtful);
     if (!keepFasterCoach) {
       const dkm = PROTO_KM_OF_KEY[dkey];
       const rr = await supabase.from("club_records").upsert({
@@ -777,6 +784,39 @@ export async function rejectProtocolMatch(pendingId: string, coach: string): Pro
  * Undo a rejection (тренер передумал): remove the tombstone so the next weekly sync re-binds the
  * protocol normally. Does not itself re-write the journal/record — that happens on the next sync run.
  */
+export type ClubRejectionRow = {
+  studentId: string; studentName: string; raceDate: string; protocolUrl: string | null;
+  distanceKey: string | null; resultSeconds: number | null; reason: string | null; rejectedAt: string | null;
+};
+
+/** D2 — list the rejection tombstones so the coach can restore one (unrejectProtocolMatch). Newest first.
+ *  Resilient: returns [] if the table is not migrated yet. */
+export async function listClubProtocolRejections(): Promise<ClubRejectionRow[]> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("club_protocol_rejections")
+    .select("student_id, race_date, protocol_url, distance_key, result_seconds, reason, rejected_at")
+    .order("rejected_at", { ascending: false });
+  if (error || !data) return [];
+  const rows = data as Array<Record<string, unknown>>;
+  const ids = [...new Set(rows.map((r) => r.student_id as string))];
+  const nameById = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: studs } = await supabase.from("trainingpeaks_students").select("id, student_name").in("id", ids);
+    for (const s of (studs as Array<{ id: string; student_name: string }> | null) ?? []) nameById.set(s.id, s.student_name);
+  }
+  return rows.map((r) => ({
+    studentId: r.student_id as string,
+    studentName: nameById.get(r.student_id as string) ?? (r.student_id as string).slice(0, 8),
+    raceDate: (r.race_date as string) ?? "",
+    protocolUrl: (r.protocol_url as string | null) ?? null,
+    distanceKey: (r.distance_key as string | null) ?? null,
+    resultSeconds: (r.result_seconds as number | null) ?? null,
+    reason: (r.reason as string | null) ?? null,
+    rejectedAt: (r.rejected_at as string | null) ?? null,
+  }));
+}
+
 export async function unrejectProtocolMatch(studentId: string, raceDate: string, protocolUrl: string | null): Promise<{ ok: boolean; error?: string }> {
   const supabase = createSupabaseServerClient();
   const d = supabase.from("club_protocol_rejections").delete().eq("student_id", studentId).eq("race_date", raceDate);
