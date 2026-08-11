@@ -13,14 +13,38 @@
 export type CycleIntent = "5k" | "10k" | "half" | "marathon" | "maintenance";
 export type WeekRole = "рост" | "плановая разгрузка" | "подводка" | "старт" | "поддержание";
 
+/**
+ * ЧТО ЦИКЛ НА САМОМ ДЕЛЕ ДЕЛАЕТ. У пяти из двенадцати недель роста в горизонте нет
+ * вовсе — старт близко, расти некогда. Такой цикл не «подготовка», а «подвести к старту
+ * в текущей форме», и называть его надо честно, чтобы тренер видел разницу.
+ */
+export type CycleMode = "подготовка" | "подвод к старту в текущей форме" | "поддержание";
+
 /** Длина цикла по типу, недель. [литература] — см. часть B спеки; 5k и marathon по аналогии. */
 export const LENGTH_WEEKS: Record<CycleIntent, number> = {
   "5k": 11, "10k": 14, half: 16, marathon: 18, maintenance: 8,
 };
 
-/** Шаг роста. [практика]: аэробный p90 от нормальной базы n=1715; качество медиана n=488. */
-export const STEP_AEROBIC = 1.22;
-export const STEP_QUALITY = 1.17;
+/**
+ * ШАГ РОСТА НЕДЕЛИ — ПЛАВНЫЙ, НЕ ПРЕДЕЛЬНЫЙ.
+ *
+ * 1.22 — это p90 ОДНОГО перехода [практика, n=1715], то есть «максимум, который бывает»,
+ * а не темп, который держат неделя за неделей: медиана перехода 0.99. Когда 1.22 работало
+ * темпом, аэробный упирался в потолок (база ×1.25) на ПЕРВОЙ же неделе, и рычага «рост
+ * объёмом» не оказалось ни у кого из двенадцати — вместо двух рычагов получилось полтора.
+ *
+ * Теперь шаг +6% [решение Игоря, середина названного диапазона 5-7%], и цикл доходит
+ * до своего потолка за несколько недель, а не прыжком.
+ */
+export const STEP_AEROBIC = 1.06;
+export const STEP_QUALITY = 1.06;
+
+/**
+ * ПРЕДЕЛ ОДНОГО ПЕРЕХОДА. Ни один шаг цикла — включая возврат после разгрузки и добор
+ * до потолка — не может превысить эту величину [практика, p90 от нормальной базы, n=1715].
+ * Это страховка, а не темп: рабочий темп задаётся STEP_* выше.
+ */
+export const MAX_SINGLE_STEP = 1.22;
 
 /** Период плановой разгрузки. [практика] — медианный период между спадами 4.0 нед, n=16. */
 export const DELOAD_EVERY_N = 4;
@@ -86,6 +110,27 @@ export const WORK_SHARE_MAX = 0.20;
 export const PEAK_OVER_HISTORIC_MAX = 1.10;
 export const PEAK_OVER_BASE_MAX = 1.25;
 
+/**
+ * ПОТОЛОК ОТ НОРМЫ ДО МАКСИМУМА: норма + половина расстояния до максимума
+ * [решение Игоря].
+ *
+ * ЗАЧЕМ. Исторический максимум оказался слишком щедрым пределом: у Пономаревой максимум
+ * работы 60 мин при норме 20, и цикл уводил её долю качества с 9.1% до 15.3% — прежний
+ * когортный перекос вернулся в личной обёртке. Максимум — это ОДНА, возможно случайная
+ * неделя; норма — то, что человек несёт постоянно. Половина расстояния между ними —
+ * компромисс: у Пономаревой 20 -> 40, а не 20 -> 60.
+ */
+export const CAP_BETWEEN_BASE_AND_MAX = 0.5;
+export const capBetween = (base: number, max: number): number =>
+  Math.round((base + (Math.max(max, base) - base) * CAP_BETWEEN_BASE_AND_MAX) / 5) * 5;
+
+/**
+ * ПОДВОДКА БЕЗ ПИКА. Если в цикле не было ни одной недели роста, пика нет: усталость
+ * не копилась, и сбрасывать нечего. Полный профиль (-25% и глубже) в таком случае просто
+ * отнимает форму. Символический срез [решение Игоря].
+ */
+export const TAPER_NO_PEAK_FACTOR = 0.90;
+
 /** Каким рычагом идёт рост на неделе — для прогноза. */
 export type GrowthLever = "аэробный" | "качество" | "оба" | "упёрлись";
 
@@ -134,6 +179,10 @@ export type CycleDraft = {
    * Теперь рабочий предел — личный, а когортные 20% остались ПОСЛЕДНЕЙ защитой.
    */
   peakCapQualityMin: number;
+  /** сырой личный максимум минут работы — от него считается потолок, показывается для сверки */
+  historicMaxQualityMin: number;
+  /** каким был бы аэробный потолок, если брать его просто от максимума — для проверки перекоса */
+  aerobicIfFromMax: number;
   /** чего не хватило, чтобы черновик был полным */
   gaps: string[];
 };
@@ -233,14 +282,20 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
     if (out2go != null && out2go >= 1 && out2go <= taperLen) {
       const tw = draft.taperProfile.find((t) => t.weeksOut === out2go);
       if (tw) {
-        // если рост не успел начаться (короткий цикл), подводка считается от базы
-        const from = peakAer > 0 ? peakAer : draft.baseAerobicMin;
-        const a = round5(from * tw.aerobicFactor);
-        const q = round5(qual * tw.qualityMinutesFactor);
+        // ПОДВОДКА БЕЗ ПИКА. Роста не было — усталость не копилась, сбрасывать нечего.
+        // Полный профиль тут просто отнял бы форму, поэтому срез символический.
+        const noPeak = peakAer === 0;
+        const from = noPeak ? draft.baseAerobicMin : peakAer;
+        const aF = noPeak ? TAPER_NO_PEAK_FACTOR : tw.aerobicFactor;
+        const qF = noPeak ? TAPER_NO_PEAK_FACTOR : tw.qualityMinutesFactor;
+        const a = round5(from * aF);
+        const q = round5(qual * qF);
         out.push({ index: i, weekStart, role: "подводка", aerobicMin: a, qualityMin: q, days: draft.days,
           qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
-          note: `от ${peakAer > 0 ? "ПИКА" : "БАЗЫ"} ${from} мин: аэробный ×${tw.aerobicFactor.toFixed(2)},`
-            + ` работа ×${tw.qualityMinutesFactor.toFixed(2)} · темпы отрезков ТЕ ЖЕ, дней столько же` });
+          note: noPeak
+            ? `ПОДВОДКА ОТ БАЗЫ, ПИКА НЕ БЫЛО: ×${aF.toFixed(2)} символически — роста не было, сбрасывать нечего`
+            : `от ПИКА ${from} мин: аэробный ×${aF.toFixed(2)}, работа ×${qF.toFixed(2)}`
+              + ` · темпы отрезков ТЕ ЖЕ, дней столько же` });
         continue;
       }
     }
@@ -280,8 +335,10 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
       qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever, note: notes.join(" · ") });
 
     peakAer = Math.max(peakAer, a);
-    if (aerRoom) aer = Math.min(aer * draft.stepAerobic, draft.peakCapAerobicMin);
-    if (qualRoom) qual = Math.min(qual * draft.stepQuality, draft.peakCapQualityMin);
+    // Страховка: ни один переход не превышает предел одного шага [практика, p90, n=1715].
+    // Обычный шаг (+6%) её и близко не касается — она ловит добор к потолку после разгрузки.
+    if (aerRoom) aer = Math.min(aer * Math.min(draft.stepAerobic, MAX_SINGLE_STEP), draft.peakCapAerobicMin);
+    if (qualRoom) qual = Math.min(qual * Math.min(draft.stepQuality, MAX_SINGLE_STEP), draft.peakCapQualityMin);
   }
   return out;
 }

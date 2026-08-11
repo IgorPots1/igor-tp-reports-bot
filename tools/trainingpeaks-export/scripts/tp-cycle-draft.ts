@@ -25,7 +25,8 @@ import { splitSessionVolume } from "./lib/quality-volume.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, LENGTH_WEEKS,
   STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, WORK_SHARE_MAX,
-  PEAK_OVER_BASE_MAX, PEAK_OVER_HISTORIC_MAX, forecast, intentFromDistance,
+  PEAK_OVER_BASE_MAX, PEAK_OVER_HISTORIC_MAX, capBetween, forecast, intentFromDistance,
+  type CycleMode,
   type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
 
@@ -139,10 +140,16 @@ async function main(): Promise<void> {
     const baseQualityMin = Math.round(med(ws.map((w) => w.qual)));
     // ЛИЧНЫЙ потолок качества — собственный исторический максимум минут работы [практика].
     // Когортные 20% доли остаются последней защитой, но рабочий предел теперь личный.
-    const histQualMax = Math.round(Math.max(baseQualityMin, ...(histQual.get(aid) ?? [baseQualityMin])));
+    const histQualRaw = Math.round(Math.max(baseQualityMin, ...(histQual.get(aid) ?? [baseQualityMin])));
+    // Норма + половина расстояния до максимума [решение Игоря]: максимум это одна,
+    // возможно случайная неделя, норма — то, что человек несёт постоянно.
+    const histQualMax = capBetween(baseQualityMin, histQualRaw);
     // Пик цикла: ограниченный выход за исторический максимум [решение Игоря].
     // Берётся МЕНЬШЕЕ из «максимум x1.10» и «база x1.25».
     const peakCapAerobicMin = Math.round(Math.min(histMax * PEAK_OVER_HISTORIC_MAX, baseAerobicMin * PEAK_OVER_BASE_MAX) / 5) * 5;
+    // Проверка п.2 наряда: не даёт ли аэробный максимум такого же отрыва от нормы,
+    // как качественный. Если бы потолок брался просто от максимума — куда бы он ушёл.
+    const aerobicIfFromMax = Math.round(histMax * PEAK_OVER_HISTORIC_MAX / 5) * 5;
     if (baseQualityMin === 0) gaps.push("качественных минут за окно нет — база качества 0, цикл начнётся с нуля");
     const days = Math.round(med(ws.map((w) => w.days))) || 3;
 
@@ -163,8 +170,17 @@ async function main(): Promise<void> {
       stepAerobic: STEP_AEROBIC, stepQuality: STEP_QUALITY,
       deloadEveryN: DELOAD_EVERY_N, deloadDepthAerobic: DELOAD_AEROBIC_FACTOR, deloadQualityFactor: DELOAD_QUALITY_FACTOR,
       taperProfile: TAPER_PROFILE[intent], days,
-      peakCapAerobicMin, historicMaxAerobicMin: histMax, peakCapQualityMin: histQualMax, gaps,
+      peakCapAerobicMin, historicMaxAerobicMin: histMax, peakCapQualityMin: histQualMax,
+      historicMaxQualityMin: histQualRaw, aerobicIfFromMax, gaps,
     };
+  }
+
+  /** Честное имя тому, что цикл делает: растит или просто доводит до старта. */
+  function cycleMode(d: typeof drafts extends Map<number, infer T> ? T : never, firstWeek: string): CycleMode {
+    if (d.intent === "maintenance") return "поддержание";
+    const w2r = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(firstWeek)) / (7 * 86400000)) + 1 : 8;
+    const growth = forecast(d, firstWeek, Math.max(1, w2r)).filter((w) => w.role === "рост").length;
+    return growth === 0 ? "подвод к старту в текущей форме" : "подготовка";
   }
 
   const INTENT_RU: Record<CycleIntent, string> = { "5k": "5 км", "10k": "10 км", half: "21.1 км", marathon: "42.2 км", maintenance: "поддерживающий" };
@@ -180,6 +196,7 @@ async function main(): Promise<void> {
     console.log(`${"─".repeat(78)}`);
     console.log(`${sur} · атлет ${aid}`);
     console.log(`  тип цикла:        ${INTENT_RU[d.intent]}${d.targetDate ? ` · старт ${d.targetDate}` : " · старта в базе нет"}`);
+    console.log(`  что цикл делает:  ${cycleMode(d, addDays(mondayOf(today), 7))}`);
     console.log(`  длина:            ${d.lengthWeeks} нед`);
     console.log(`  база аэробная:    ${d.baseAerobicMin} мин/нед`);
     console.log(`  база качества:    ${d.baseQualityMin} мин работы/нед`
@@ -190,7 +207,8 @@ async function main(): Promise<void> {
     const binder = byBase < byHist ? `связывает БАЗА ×${PEAK_OVER_BASE_MAX}` : `связывает МАКСИМУМ ×${PEAK_OVER_HISTORIC_MAX}`;
     console.log(`  потолок аэробн.:  ${d.peakCapAerobicMin} мин/нед · свой максимум ${d.historicMaxAerobicMin} · база ${d.baseAerobicMin}`
       + ` · ${binder} · к базе ${d.peakCapAerobicMin >= d.baseAerobicMin ? "+" : ""}${Math.round(100 * (d.peakCapAerobicMin / Math.max(d.baseAerobicMin, 1) - 1))}%`);
-    console.log(`  потолок качества: ${d.peakCapQualityMin} мин работы/нед — ЛИЧНЫЙ максимум (когортные ${Math.round(100 * WORK_SHARE_MAX)}% доли — последняя защита)`);
+    console.log(`  потолок качества: ${d.peakCapQualityMin} мин работы/нед · норма ${d.baseQualityMin} + половина до максимума ${d.historicMaxQualityMin}`
+      + ` (когортные ${Math.round(100 * WORK_SHARE_MAX)}% доли — последняя защита)`);
     console.log(`  шаг:              аэробный ×${d.stepAerobic} · качество ×${d.stepQuality}`);
     console.log(`  плановая разгрузка: каждые ${d.deloadEveryN} нед · аэробный ×${d.deloadDepthAerobic} · работа ×${d.deloadQualityFactor} · день и качество остаются`);
     console.log(`  подводка:         ${d.taperProfile.length ? d.taperProfile.map((t) => `за ${t.weeksOut} нед: аэр ×${t.aerobicFactor}, работа ×${t.qualityMinutesFactor}`).join(" · ") : "нет (цикл без старта)"}`);
@@ -198,6 +216,23 @@ async function main(): Promise<void> {
   }
 
   const firstWeekAll = addDays(mondayOf(today), 7);
+
+  console.log(`\n${"═".repeat(78)}`);
+  console.log(`ДОЛЯ КАЧЕСТВА: СВОЯ ОБЫЧНАЯ ПРОТИВ ПИКОВОЙ В ЦИКЛЕ`);
+  console.log(`${"═".repeat(78)}`);
+  console.log(`  фамилия      своя   пик в цикле  потолок работы (норма+пол.до макс)  аэробный потолок`);
+  for (const [aid, sur] of GROUP) {
+    const d = drafts.get(aid)!;
+    const w2r = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(firstWeekAll)) / (7 * 86400000)) + 1 : 8;
+    const fc = forecast(d, firstWeekAll, Math.max(1, w2r)).filter((w) => w.role !== "старт");
+    const own = 100 * d.baseQualityMin / Math.max(d.baseAerobicMin + d.baseQualityMin, 1);
+    const peak = fc.length ? Math.max(...fc.map((w) => w.qualitySharePct)) : 0;
+    const drift = peak - own;
+    console.log(`  ${sur.padEnd(13)}${(own.toFixed(1) + "%").padStart(6)}${(peak.toFixed(1) + "%").padStart(13)}`
+      + `   ${String(d.baseQualityMin).padStart(3)} -> ${String(d.peakCapQualityMin).padStart(3)} (макс ${String(d.historicMaxQualityMin).padStart(3)})`
+      + `        ${String(d.peakCapAerobicMin).padStart(4)} (от макс было бы ${d.aerobicIfFromMax})`
+      + (drift > 4 ? "   ⚠ уезжает" : ""));
+  }
   // СВОДКА ПО РЫЧАГАМ: у кого рост упирается в аэробный, у кого в качество, у кого ни в что.
   // Смотрим горизонт цикла каждого, считаем роли недель роста.
   console.log(`\n${"═".repeat(78)}`);
