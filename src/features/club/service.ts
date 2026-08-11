@@ -43,6 +43,7 @@ import type {
   ClubComment,
   ClubExtendedTopsView,
   ClubFeedItem,
+  ClubFeedRace,
   ClubFeedView,
   ClubFreshness,
   ClubNextWorkoutView,
@@ -1772,6 +1773,74 @@ function isFeedRow(row: ClubWorkoutRow, visibleIds: Set<string>): boolean {
   );
 }
 
+/** Race context for a page of feed rows, keyed by `${studentId}|${date}`. A key exists iff that
+ *  student has a race that day (a race_events entry OR a confirmed official result). name = the
+ *  day's longest race_events title (else the official event); the official time/place are filled
+ *  when club_official_results already has a protocol/coach-confirmed row. One batched query per
+ *  table over the page's students + date span (no N+1). Inert if a table is absent. */
+async function loadFeedRaceContext(rows: ClubWorkoutRow[]): Promise<Map<string, ClubFeedRace>> {
+  const out = new Map<string, ClubFeedRace>();
+  if (rows.length === 0) return out;
+  const studentIds = [...new Set(rows.map((r) => r.studentId))];
+  const dates = rows.map((r) => r.workoutDate).sort();
+  const minD = dates[0];
+  const maxD = dates[dates.length - 1];
+  const supabase = createSupabaseServerClient();
+  const nameKm = new Map<string, number>(); // key -> longest event km whose title we kept
+  const offKm = new Map<string, number>(); // key -> longest official-result km we kept
+
+  try {
+    const { data } = await supabase
+      .from("trainingpeaks_race_events")
+      .select("student_id, event_date, title, distance_km")
+      .in("student_id", studentIds)
+      .gte("event_date", minD)
+      .lte("event_date", maxD);
+    for (const row of (data as Array<{ student_id: string; event_date: string | null; title: string | null; distance_km: number | null }> | null) ?? []) {
+      const d = (row.event_date ?? "").slice(0, 10);
+      if (!d) continue;
+      const key = `${row.student_id}|${d}`;
+      const cur = out.get(key) ?? { name: null, officialSeconds: null, officialPlace: null };
+      const km = typeof row.distance_km === "number" ? row.distance_km : null;
+      if (row.title && (cur.name == null || (km != null && km > (nameKm.get(key) ?? -1)))) {
+        cur.name = row.title;
+        if (km != null) nameKm.set(key, km);
+      }
+      out.set(key, cur);
+    }
+  } catch {
+    /* race_events absent → no race cards */
+  }
+
+  try {
+    const { data } = await supabase
+      .from("club_official_results")
+      .select("student_id, race_date, event, result_seconds, place, distance_km, source")
+      .in("student_id", studentIds)
+      .gte("race_date", minD)
+      .lte("race_date", maxD)
+      .in("source", ["official_protocol", "coach_confirmed"]);
+    for (const row of (data as Array<{ student_id: string; race_date: string | null; event: string | null; result_seconds: number | null; place: string | null; distance_km: number | null }> | null) ?? []) {
+      const d = (row.race_date ?? "").slice(0, 10);
+      if (!d) continue;
+      const key = `${row.student_id}|${d}`;
+      const cur = out.get(key) ?? { name: null, officialSeconds: null, officialPlace: null };
+      const km = typeof row.distance_km === "number" ? row.distance_km : null;
+      // main result of the day = the longest official distance (splits already excluded by source)
+      if (row.result_seconds != null && (cur.officialSeconds == null || (km != null && km > (offKm.get(key) ?? -1)))) {
+        cur.officialSeconds = row.result_seconds;
+        cur.officialPlace = row.place ?? null;
+        if (km != null) offKm.set(key, km);
+      }
+      if (cur.name == null && row.event) cur.name = row.event;
+      out.set(key, cur);
+    }
+  } catch {
+    /* official results absent → cards show name only */
+  }
+  return out;
+}
+
 export async function getClubFeed(input: {
   cursor?: string | null;
   currentStudentId: string;
@@ -1816,7 +1885,7 @@ export async function getClubFeed(input: {
   const pageIds = pageRows.map((r) => r.id);
   const uniqueAthletes = [...new Set(pageRows.map((r) => r.studentId))];
   const baselineFrom = addDaysIso(today, -INSIGHT_BASELINE_DAYS);
-  const [reactions, avgHrById, tracksById, baselineRows, intervalIds] = await Promise.all([
+  const [reactions, avgHrById, tracksById, baselineRows, intervalIds, raceCtx] = await Promise.all([
     loadReactionsForWorkouts(pageIds, input.currentStudentId),
     loadAvgHrForWorkouts(pageIds),
     loadTracksForWorkouts(pageIds),
@@ -1824,6 +1893,7 @@ export async function getClubFeed(input: {
       ? loadClubWorkoutRows({ from: baselineFrom, to: today, studentIds: uniqueAthletes })
       : Promise.resolve([] as ClubWorkoutRow[]),
     loadIntervalWorkoutIds(pageIds),
+    loadFeedRaceContext(pageRows),
   ]);
   const insightBaseline = buildInsightBaseline(baselineRows);
 
@@ -1858,6 +1928,7 @@ export async function getClubFeed(input: {
       reactionsEnabled: C.isReactionsEnabled(),
       reactions: { like: agg?.like ?? 0, fire: agg?.fire ?? 0 },
       mine: { like: agg?.mineLike ?? false, fire: agg?.mineFire ?? false },
+      race: raceCtx.get(`${row.studentId}|${row.workoutDate}`) ?? null,
     };
   });
 

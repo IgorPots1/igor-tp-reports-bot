@@ -60,6 +60,21 @@ export type ClubFeedItem = {
   reactions: { like: number; fire: number };
   /** Whether THIS student already reacted (for toggle state). */
   mine: { like: boolean; fire: boolean };
+  /** Set when this workout falls on a RACE day (a race_events entry or a confirmed official
+   *  result exists for this student on this date). Turns the ordinary workout card into a race
+   *  card: badge + start name + the official result when one is already recorded. null on
+   *  ordinary training days. */
+  race?: ClubFeedRace | null;
+};
+
+/** Race context attached to a feed card on a race day. */
+export type ClubFeedRace = {
+  /** Start name, e.g. «Северная столица». The day's longest race_events title, else the official event. */
+  name: string | null;
+  /** Official protocol / coach-confirmed finish time (seconds) once one is recorded; null = ещё нет. */
+  officialSeconds: number | null;
+  /** Official place as printed in the protocol, e.g. «12» or «3 в М40»; null when none. */
+  officialPlace: string | null;
 };
 
 export type ClubFeedView = {

@@ -890,6 +890,15 @@ function StatCell({ label, value }: { label: string; value: string }) {
   );
 }
 
+// Protocol place is free text: «12» (pure rank) or «3 в М40» (rank within a category). Add the word
+// «место» only for a bare number; otherwise render the protocol's own phrasing verbatim.
+function formatPlaceSuffix(place: string | null | undefined): string {
+  if (!place) return "";
+  const t = place.trim();
+  if (!t) return "";
+  return /^\d+$/.test(t) ? ` · ${t}-е место` : ` · ${t}`;
+}
+
 function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: ClubFeedItem; onOpenStudent: (id: string) => void; onOpenWorkout: (id: string) => void; initData: string }) {
   const [reacted, setReacted] = useState<{ like: boolean; fire: boolean }>({ like: item.mine.like, fire: item.mine.fire });
   const countOf = (kind: "like" | "fire") =>
@@ -932,6 +941,15 @@ function FeedCard({ item, onOpenStudent, onOpenWorkout, initData }: { item: Club
         </div>
       </div>
       <div style={{ cursor: "pointer" }} onClick={() => onOpenWorkout(item.id)}>
+        {item.race ? (
+          <div style={S.raceBanner}>
+            <div style={S.raceBadge}><ClubIcon name="medal" size={13} strokeWidth={2.4} />Гонка</div>
+            {item.race.name ? <div style={S.raceBannerName}>{item.race.name}</div> : null}
+            {item.race.officialSeconds ? (
+              <div style={S.raceBannerResult}>Официальный результат: {fmtDuration(item.race.officialSeconds)}{formatPlaceSuffix(item.race.officialPlace)}</div>
+            ) : null}
+          </div>
+        ) : null}
         {item.track ? (
           <div style={{ marginTop: 10 }}>
             <TrackMap track={item.track} height={150} />
@@ -2640,6 +2658,10 @@ const S = {
   stat: { background: C.cardAlt, borderRadius: 999, padding: "5px 12px", fontSize: 14, fontWeight: 600, color: C.ink, fontFamily: HEAD } as React.CSSProperties,
   caption: { marginTop: 10, fontSize: 13.5, color: C.sub, lineHeight: 1.4 } as React.CSSProperties,
   insightBadge: { display: "inline-block", marginTop: 10, padding: "4px 11px", borderRadius: 999, background: "rgba(245,197,24,0.16)", color: C.accentText, fontFamily: HEAD, fontSize: 12, fontWeight: 600 } as React.CSSProperties,
+  raceBanner: { marginTop: 10, padding: "10px 12px", borderRadius: 12, background: "rgba(245,197,24,0.10)", border: `1px solid ${C.accent}`, display: "flex", flexDirection: "column", gap: 4 } as React.CSSProperties,
+  raceBadge: { alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 5, fontFamily: HEAD, fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: C.accentText } as React.CSSProperties,
+  raceBannerName: { fontFamily: HEAD, fontWeight: 700, fontSize: 15, color: C.ink, lineHeight: 1.25 } as React.CSSProperties,
+  raceBannerResult: { fontSize: 12.5, color: C.sub } as React.CSSProperties,
   reactRow: { display: "flex", gap: 10, marginTop: 12 } as React.CSSProperties,
   reactChip: { fontSize: 13, color: C.sub, border: `1px solid ${C.line}`, borderRadius: 999, padding: "0 13px", minHeight: 40, display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box", cursor: "pointer" } as React.CSSProperties,
   secHead: { fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase" as const, color: C.faint } as React.CSSProperties,
