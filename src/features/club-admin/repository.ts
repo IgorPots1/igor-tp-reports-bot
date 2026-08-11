@@ -680,11 +680,21 @@ export async function confirmProtocolMatch(pendingId: string, coach: string): Pr
   }, { onConflict: "student_id,race_date,protocol_url" });
   if (jr.error) return { ok: false, error: `journal: ${jr.error.message}` };
 
-  // 2. Best-4 record — standard distance only, never over a coach_confirmed slot.
+  // 2. Best-4 record — standard distance only. Official protocol is the AUTHORITY: it now
+  // overwrites even a coach_confirmed slot when it is at least as fast (records were being
+  // understated by a slower hand-entered time — e.g. a rough coach entry for a race whose
+  // faster official protocol arrived later, same date). Two guards keep this safe:
+  //   • a STRICTLY FASTER coach_confirmed slot is preserved — never understate a record by
+  //     discarding a faster hand-passed time (coach may hold a result we have no protocol for);
+  //   • a DOUBTFUL-distance protocol never displaces a coach slot — its bucket is uncertain
+  //     (that path is the queue, block D), so it must not become the record.
   const dkey = distanceKeyOf(km);
   if (dkey) {
-    const { data: ex } = await supabase.from("club_records").select("source").eq("student_id", studentId).eq("distance_key", dkey).maybeSingle();
-    if ((ex as { source: string } | null)?.source !== "coach_confirmed") {
+    const { data: ex } = await supabase.from("club_records").select("source,duration_seconds").eq("student_id", studentId).eq("distance_key", dkey).maybeSingle();
+    const exRow = ex as { source: string; duration_seconds: number } | null;
+    const keepFasterCoach = exRow?.source === "coach_confirmed"
+      && (Number(exRow.duration_seconds) < seconds || Boolean(r.distance_doubtful));
+    if (!keepFasterCoach) {
       const dkm = PROTO_KM_OF_KEY[dkey];
       const rr = await supabase.from("club_records").upsert({
         student_id: studentId, distance_key: dkey, duration_seconds: seconds, pace_sec_per_km: dkm ? Math.round(seconds / dkm) : null,
