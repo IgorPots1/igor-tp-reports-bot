@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck:autoplanner": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.autoplanner.json",
     "typecheck:tools": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.json",
+    "check:runner-import-health": "bash tools/trainingpeaks-export/scripts/check-runner-import-health.sh",
     "test:tp-api-client": "node --experimental-strip-types --test src/features/trainingpeaks/tp-api-client.test.ts",
     "test:tp-write-action-types": "node --experimental-strip-types --test src/features/trainingpeaks/tp-write-action-types.test.ts",
     "test:athlete-roster-import": "node --experimental-strip-types --test src/features/trainingpeaks/athlete-roster-import.test.ts",
