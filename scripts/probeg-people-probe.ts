@@ -30,7 +30,7 @@
  *   node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
  *     --env-file=/Users/igor/igor-tp-reports-bot/.env.local scripts/probeg-people-probe.ts --write
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { nameSearchSpecs, studentNameVariantSets } from "@/features/club/name-translit";
@@ -71,6 +71,38 @@ const EXACT_TOLERANCE_S = 60; // ≤1 мин → точное совпадени
 const PROBABLE_TOLERANCE_S = 900; // ≤15 мин на той же дате И той же дистанции → вероятное; на подтверждение
 const TODAY_ISO = new Date().toISOString().slice(0, 10); // future races have no protocol yet — excluded
 const USER_AGENT = "igor-tp-reports-bot/probeg-recon (polite, cached, sequential)";
+// Cache freshness (fix: a permanent cache froze pages and never saw protocols published after first fetch).
+const NO_CACHE = process.argv.includes("--no-cache"); // принудительный рефетч ВСЕХ страниц (ручной прогон)
+const CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 дней: «осевшего» ученика (без свежей непривязанной гонки) перечитываем не чаще раза в 2 недели
+const RECENT_UNBOUND_DAYS = 90; // ученик с непривязанной гонкой за столько дней → рефетч ВСЕГДА (кэш игнорируется)
+
+/** Student ids that have a race in the last RECENT_UNBOUND_DAYS with NO official result yet (bound within
+ *  ±1 day). Their probeg page is always re-fetched so a newly-published protocol is actually seen.
+ *  Memoized: one pair of reads per process. */
+let _recentUnbound: Set<string> | null = null;
+async function recentUnboundStudentIds(): Promise<Set<string>> {
+  if (_recentUnbound) return _recentUnbound;
+  const supabase = createSupabaseServerClient();
+  const since = new Date(Date.now() - RECENT_UNBOUND_DAYS * 864e5).toISOString().slice(0, 10);
+  const [{ data: evs }, { data: offs }] = await Promise.all([
+    supabase.from("trainingpeaks_race_events").select("student_id, event_date").gte("event_date", since).lte("event_date", TODAY_ISO),
+    supabase.from("club_official_results").select("student_id, race_date").gte("race_date", since),
+  ]);
+  const bound = new Set<string>();
+  for (const o of (offs as Array<{ student_id: string; race_date: string | null }> | null) ?? []) {
+    const d = (o.race_date ?? "").slice(0, 10);
+    if (!d) continue;
+    const t = new Date(`${d}T00:00:00Z`).getTime();
+    for (const dd of [-1, 0, 1]) bound.add(`${o.student_id}|${new Date(t + dd * 864e5).toISOString().slice(0, 10)}`);
+  }
+  const out = new Set<string>();
+  for (const e of (evs as Array<{ student_id: string; event_date: string | null }> | null) ?? []) {
+    const d = (e.event_date ?? "").slice(0, 10);
+    if (d && !bound.has(`${e.student_id}|${d}`)) out.add(e.student_id);
+  }
+  _recentUnbound = out;
+  return out;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -86,10 +118,14 @@ function cacheKey(name: string): string {
   return name.replace(/[^0-9a-zа-яё]/gi, "_");
 }
 
-async function fetchHtml(url: string, cacheName: string, diagnose: boolean): Promise<string | null> {
+async function fetchHtml(url: string, cacheName: string, diagnose: boolean, forceFresh = false): Promise<string | null> {
   if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
   const cachePath = path.join(CACHE_DIR, `${cacheName}.html`);
-  if (existsSync(cachePath)) return readFileSync(cachePath, "utf8");
+  // Use the cached copy ONLY when it is not forced fresh, not globally disabled, and not stale.
+  // forceFresh (student with a recent unbound race) or --no-cache always re-fetch; otherwise TTL applies.
+  if (existsSync(cachePath) && !NO_CACHE && !forceFresh && Date.now() - statSync(cachePath).mtimeMs <= CACHE_TTL_MS) {
+    return readFileSync(cachePath, "utf8");
+  }
   await sleep(REQUEST_DELAY_MS);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
@@ -121,7 +157,7 @@ const enc = (s: string) => encodeURIComponent(s);
  * surname-only) and UNION their finishes — our person may sit under a variant spelling or only be
  * reachable by surname alone (given mismatch). Bounded (≤6 URLs/student). Cached + polite.
  */
-async function fetchFinishesForName(rosterName: string, diagnose: boolean): Promise<{ finishes: ProbegFinish[]; tried: string[] }> {
+async function fetchFinishesForName(rosterName: string, diagnose: boolean, forceFresh = false): Promise<{ finishes: ProbegFinish[]; tried: string[] }> {
   const specs = nameSearchSpecs(rosterName);
   const finishes: ProbegFinish[] = [];
   const seen = new Set<string>();
@@ -132,7 +168,7 @@ async function fetchFinishesForName(rosterName: string, diagnose: boolean): Prom
       ? `https://probeg.org/results/${enc(spec.surname)}/${enc(spec.given)}/`
       : `https://probeg.org/results/${enc(spec.surname)}/`;
     tried.push(spec.given ? `${spec.surname}/${spec.given}` : `${spec.surname}/*`);
-    const html = await fetchHtml(url, `results-${cacheKey(spec.surname)}-${cacheKey(spec.given)}`, firstDiag);
+    const html = await fetchHtml(url, `results-${cacheKey(spec.surname)}-${cacheKey(spec.given)}`, firstDiag, forceFresh);
     firstDiag = false;
     if (!html) continue;
     for (const f of extractFinishes(html)) {
@@ -207,7 +243,7 @@ function fmtKm(km: number | null): string {
 }
 
 async function checkStudent(studentId: string, name: string, diagnose: boolean, probablesOut: ProbableDetail[], confirmed: string[], skips: { foreign: SkipDetail[]; notime: SkipDetail[] }): Promise<StudentTally> {
-  const { finishes, tried } = await fetchFinishesForName(name, diagnose);
+  const { finishes, tried } = await fetchFinishesForName(name, diagnose, (await recentUnboundStudentIds()).has(studentId));
   const variants = studentNameVariantSets(name); // имя должно СОВПАСТЬ (фамилия), иначе не матч
   const ourRaces = await loadOurRaces(studentId); // прошедшие гонки
   const tally: StudentTally = { comparable: 0, exact: 0, probable: 0, notFound: 0, foreign: 0, notime: 0, probables: [] };
@@ -404,7 +440,7 @@ async function runWrite(): Promise<void> {
 
   let first = true;
   for (const s of students) {
-    const { finishes } = await fetchFinishesForName(s.name, first); first = false;
+    const { finishes } = await fetchFinishesForName(s.name, first, (await recentUnboundStudentIds()).has(s.id)); first = false;
     const variants = studentNameVariantSets(s.name);
     const confirmed = confirmedByStudent.get(s.id) ?? [];
     for (const race of await loadOurRaces(s.id)) {
