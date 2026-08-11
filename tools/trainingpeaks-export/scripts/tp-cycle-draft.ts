@@ -282,7 +282,9 @@ async function main(): Promise<void> {
     console.log(`ПРОГНОЗ НА МЕСЯЦ · ${sur} · ${INTENT_RU[d.intent]}${d.targetDate ? ` · старт ${d.targetDate}` : ""}`);
     if (shortNote) console.log(shortNote);
     console.log(`${"═".repeat(78)}`);
-    console.log(`  # неделя с    роль                 аэробн  работа  кач.%  рычаг      дней  формат качества`);
+      const ownShare = 100 * d.baseQualityMin / Math.max(d.baseAerobicMin + d.baseQualityMin, 1);
+    console.log(`  своя обычная доля качества: ${ownShare.toFixed(1)}% — колонка «откл.» показывает уход от неё`);
+    console.log(`  # неделя с    роль                 аэробн  работа  кач.%  откл.  рычаг      дней  формат качества`);
     // на месяц вперёд, но если старт близко — показываем до старта включительно
     // Цикл КОНЧАЕТСЯ стартом: показывать недели после него бессмысленно — это уже
     // другой цикл. Первый прогон продолжал Ярулиной «рост» на двух неделях ПОСЛЕ забега.
@@ -291,7 +293,9 @@ async function main(): Promise<void> {
     for (const w of forecast(d, firstWeek, horizon)) {
       console.log(`  ${String(w.index).padStart(2)} ${w.weekStart}  ${w.role.padEnd(20)}`
         + `${String(w.aerobicMin).padStart(5)}   ${String(w.qualityMin).padStart(5)}`
-        + `${(w.qualitySharePct.toFixed(1) + "%").padStart(7)}  ${(w.lever ?? "—").padEnd(10)}`
+        + `${(w.qualitySharePct.toFixed(1) + "%").padStart(7)}`
+        + `${(w.role === "старт" ? "—" : (w.qualitySharePct - ownShare >= 0 ? "+" : "") + (w.qualitySharePct - ownShare).toFixed(1)).padStart(7)}  `
+        + `${(w.lever ?? "—").padEnd(10)}`
         + `${String(w.days).padStart(3)}   ${w.qualityHint}`);
       console.log(`     ${" ".repeat(11)}└ ${w.note}`);
     }

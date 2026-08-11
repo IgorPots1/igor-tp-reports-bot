@@ -261,6 +261,7 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
   // разгрузки цикл возвращался к дореразгрузочному уровню одним прыжком (330 -> 415,
   // то есть x1.26 при заявленном пределе x1.22 — страховка не срабатывала).
   let prevShownAer = 0;
+  let prevShownQual = 0;
 
   const taperLen = draft.taperProfile.length;
   const weeksToRace = draft.targetDate
@@ -317,13 +318,18 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
       }
     }
     if (deloadWeeks.has(i)) {
-      const a = round5(aer * draft.deloadDepthAerobic);
-      const q = round5(qual * draft.deloadQualityFactor);
+      // Режем от ПОКАЗАННОЙ прошлой недели, а не от внутренней переменной роста.
+      // Иначе заявленные −20% превращались в −15%: у Богачева 390 -> 330, потому что
+      // внутри переменная уже ушла на 413. Тренер видит одно, объявлено другое.
+      const fromA = prevShownAer > 0 ? prevShownAer : aer;
+      const fromQ = prevShownQual > 0 ? prevShownQual : qual;
+      const a = round5(fromA * draft.deloadDepthAerobic);
+      const q = round5(fromQ * draft.deloadQualityFactor);
       out.push({ index: i, weekStart, role: "плановая разгрузка", aerobicMin: a, qualityMin: q, days: draft.days,
         qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
         note: `аэробный ×${draft.deloadDepthAerobic.toFixed(2)}, работа ×${draft.deloadQualityFactor.toFixed(2)}`
           + ` · день НЕ убран, качество НЕ снято, темп на ступень мягче` });
-      prevShownAer = a;
+      prevShownAer = a; prevShownQual = q;
       continue;
     }
     if (draft.intent === "maintenance") {
@@ -358,6 +364,7 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
       qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever, note: notes.join(" · ") });
 
     peakAer = Math.max(peakAer, a);
+    prevShownAer = a; prevShownQual = q;
     // Страховка: ни один переход не превышает предел одного шага [практика, p90, n=1715].
     // Обычный шаг (+6%) её и близко не касается — она ловит добор к потолку после разгрузки.
     if (aerRoom) aer = Math.min(aer * Math.min(draft.stepAerobic, MAX_SINGLE_STEP), draft.peakCapAerobicMin);
