@@ -220,18 +220,23 @@ async function main(): Promise<void> {
   console.log(`\n${"═".repeat(78)}`);
   console.log(`ДОЛЯ КАЧЕСТВА: СВОЯ ОБЫЧНАЯ ПРОТИВ ПИКОВОЙ В ЦИКЛЕ`);
   console.log(`${"═".repeat(78)}`);
-  console.log(`  фамилия      своя   пик в цикле  потолок работы (норма+пол.до макс)  аэробный потолок`);
+  console.log(`  фамилия      своя   пик    разгрузка  макс.откл.  потолок работы   аэробный потолок`);
   for (const [aid, sur] of GROUP) {
     const d = drafts.get(aid)!;
     const w2r = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(firstWeekAll)) / (7 * 86400000)) + 1 : 8;
     const fc = forecast(d, firstWeekAll, Math.max(1, w2r)).filter((w) => w.role !== "старт");
     const own = 100 * d.baseQualityMin / Math.max(d.baseAerobicMin + d.baseQualityMin, 1);
     const peak = fc.length ? Math.max(...fc.map((w) => w.qualitySharePct)) : 0;
-    const drift = peak - own;
-    console.log(`  ${sur.padEnd(13)}${(own.toFixed(1) + "%").padStart(6)}${(peak.toFixed(1) + "%").padStart(13)}`
-      + `   ${String(d.baseQualityMin).padStart(3)} -> ${String(d.peakCapQualityMin).padStart(3)} (макс ${String(d.historicMaxQualityMin).padStart(3)})`
-      + `        ${String(d.peakCapAerobicMin).padStart(4)} (от макс было бы ${d.aerobicIfFromMax})`
-      + (drift > 4 ? "   ⚠ уезжает" : ""));
+    const dl = fc.filter((w) => w.role === "плановая разгрузка");
+    const dlShare = dl.length ? dl.reduce((a, w) => a + w.qualitySharePct, 0) / dl.length : NaN;
+    // главное число: НАИБОЛЬШИЙ уход доли от своей обычной за весь цикл, в любую сторону
+    const maxDev = fc.length ? Math.max(...fc.map((w) => Math.abs(w.qualitySharePct - own))) : 0;
+    console.log(`  ${sur.padEnd(13)}${(own.toFixed(1) + "%").padStart(6)}${(peak.toFixed(1) + "%").padStart(7)}`
+      + `${(Number.isFinite(dlShare) ? dlShare.toFixed(1) + "%" : "нет").padStart(11)}`
+      + `${(maxDev.toFixed(1)).padStart(11)}`
+      + `      ${String(d.baseQualityMin).padStart(3)} -> ${String(d.peakCapQualityMin).padStart(3)}`
+      + `        ${String(d.peakCapAerobicMin).padStart(4)}`
+      + (maxDev > 3 ? "   ⚠" : ""));
   }
   // СВОДКА ПО РЫЧАГАМ: у кого рост упирается в аэробный, у кого в качество, у кого ни в что.
   // Смотрим горизонт цикла каждого, считаем роли недель роста.
