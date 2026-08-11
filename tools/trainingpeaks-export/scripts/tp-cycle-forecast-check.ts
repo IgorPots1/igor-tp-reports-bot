@@ -186,9 +186,18 @@ function main(): void {
     const wCycle = buildWeek(anchors, env, cat, MON, false, null, target);
     check("цикл: число дней ровно как просил цикл",
       wCycle.sessions.length === target.days, `просил ${target.days}, собрано ${wCycle.sessions.length}`);
-    check("цикл: попадание в целевой объём ±10%",
-      wCycle.plannedMinutes > 0 && Math.abs(wCycle.plannedMinutes / (target.aerobicMin + target.qualityMin) - 1) <= 0.10,
-      `цель ${target.aerobicMin + target.qualityMin}, собрано ${wCycle.plannedMinutes}`);
+
+    // ── ДВЕ РАЗНЫЕ ПРОВЕРКИ, А НЕ ОДНА ──
+    // Прежняя «попадание в ±10%» не различала недели с ПЛАНОВОЙ ролью и недели, где роль
+    // ПОНИЖЕНА реактивностью. На живых данных трое из двенадцати роняли бы её ложно: они
+    // недобирают 13-28% ПОТОМУ ЧТО так и задумано. Проверка, падающая не там, где надо,
+    // хуже отсутствующей — поэтому случаи разделены.
+    const downgraded = (w: { notes: string[] }): boolean => w.notes.some((n) => n.includes("РОЛЬ НЕДЕЛИ ПОНИЖЕНА"));
+
+    check("цикл, ПЛАНОВАЯ роль: попадание в целевой объём ±10%",
+      !downgraded(wCycle) && wCycle.plannedMinutes > 0
+        && Math.abs(wCycle.plannedMinutes / (target.aerobicMin + target.qualityMin) - 1) <= 0.10,
+      `роль плановая: ${!downgraded(wCycle)}, цель ${target.aerobicMin + target.qualityMin}, собрано ${wCycle.plannedMinutes}`);
     check("цикл: роль недели попала в заметки",
       wCycle.notes.some((n) => n.includes(`неделя ${target.weekIndex} из ${target.totalWeeks}`)),
       `заметки: ${wCycle.notes.join(" | ")}`);
@@ -199,10 +208,21 @@ function main(): void {
     // при активном health-сигнале роль понижается, объём считается от факта
     const wIll = buildWeek(anchors, env, cat, MON, true, null, target);
     check("реактивность: при активном сигнале роль понижена",
-      wIll.notes.some((n) => n.includes("РОЛЬ НЕДЕЛИ ПОНИЖЕНА")), `заметки: ${wIll.notes.join(" | ")}`);
-    check("реактивность: объём при сигнале НЕ равен цели цикла",
-      wIll.weeklyCap !== target.aerobicMin + target.qualityMin,
-      `потолок ${wIll.weeklyCap} совпал с целью — значит сигнал не подействовал`);
+      downgraded(wIll), `заметки: ${wIll.notes.join(" | ")}`);
+
+    // Понижённую неделю проверяем НА ПРАВИЛО ПОНИЖЕНИЯ, а не на цель цикла.
+    // Правило: потолок берётся ОТ ФАКТА (rolling4w фактических минут, подрезанный
+    // пределом перехода от факта прошлой недели) и цели цикла НЕ равен.
+    const factCeil = Math.min(
+      Math.min(env.rolling4wWeeklyMin || 0, env.capWeeklyMin ?? Infinity) || 30,
+      env.lastWeekMinutes > 0 ? Math.round(env.lastWeekMinutes * MAX_SINGLE_STEP) : Infinity,
+    );
+    check("цикл, ПОНИЖЕННАЯ роль: объём считается от ФАКТА, а не от цели цикла",
+      wIll.weeklyCap === factCeil && wIll.weeklyCap !== target.aerobicMin + target.qualityMin,
+      `потолок ${wIll.weeklyCap}, ожидался от факта ${factCeil}, цель цикла ${target.aerobicMin + target.qualityMin}`);
+    check("цикл, ПОНИЖЕННАЯ роль: собранное не превышает потолок от факта",
+      wIll.refused != null || wIll.plannedMinutes <= wIll.weeklyCap,
+      `собрано ${wIll.plannedMinutes}, потолок ${wIll.weeklyCap}`);
 
     // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
     const wNo = buildWeek(anchors, env, cat, MON, false, null);
