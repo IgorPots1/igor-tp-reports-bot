@@ -109,10 +109,13 @@ async function main(): Promise<void> {
 
   // ── 3 недели без цикла ──
   out.push(`\n\n${"#".repeat(78)}`);
-  out.push(`# КОНТРОЛЬ: 3 НЕДЕЛИ АТЛЕТОВ БЕЗ ЦИКЛА — должно быть как раньше`);
+  out.push(`# КОНТРОЛЬ: 3 НЕДЕЛИ БЕЗ ЦИКЛА — должно быть как раньше`);
+  out.push(`# Те же люди, но сборщик вызван БЕЗ цели цикла: так сегодня работают все 112.`);
+  out.push(`# Двое, у кого черновик не строится (мало недель), оба уходят в отказ —`);
+  out.push(`# поэтому контроль взят по атлетам из группы, чтобы было что показать.`);
   out.push("#".repeat(78));
   let m = 0;
-  for (const aid of withoutCycle) {
+  for (const aid of [...GROUP].filter((a) => ctx.has(a))) {
     if (m >= 3) break;
     const c = ctx.get(aid)!;
     const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness, c.tierNote);
