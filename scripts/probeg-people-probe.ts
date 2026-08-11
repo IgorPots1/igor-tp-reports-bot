@@ -447,9 +447,21 @@ async function runWrite(): Promise<void> {
       if (race.ourSeconds == null || race.foreign) continue; // вне знаменателя — не пишем
       const res = matchRace({ date: race.date, ourSeconds: race.ourSeconds, ourKm: race.ourKm }, finishes, variants, { exact: EXACT_TOLERANCE_S, probable: PROBABLE_TOLERANCE_S }, confirmed);
       if (res.verdict === "exact" && res.finish) {
+        const dkey = distanceKeyOf(res.finish.distanceKm);
+        // Наряд: СОМНИТЕЛЬНАЯ ДИСТАНЦИЯ никогда не привязывается автоматом. Даже при идеальном имени+времени
+        // расхождение дистанции (наша vs протокол) уходит в очередь подтверждения, а НЕ в верифицированный
+        // журнал/рекорд. Уже привязанное официально тем же протоколом — не перезапрашиваем (нет дубля в очереди).
+        if (res.distanceDoubtful) {
+          const ex = dkey ? recMap.get(`${s.id}|${dkey}`) : undefined;
+          const alreadyBound = ex?.source === "official_protocol" && ex.url === (res.finish.protocolUrl ?? null);
+          const pkey = `${s.id}|${race.date}|${res.finish.seconds}`;
+          if (alreadyBound || pendSet.has(pkey)) { skips.push(`${s.name}: ТОЧНО(дист.сомнит.) ${race.date} → уже привязано/в очереди`); continue; }
+          pendSet.add(pkey);
+          pendPlans.push({ studentId: s.id, studentName: s.name, race, res });
+          continue;
+        }
         // Full journal: EVERY official (protocol-verified) result, any distance → club_official_results.
         officialPlans.push({ studentId: s.id, studentName: s.name, date: race.date, finish: res.finish, distanceDoubtful: res.distanceDoubtful });
-        const dkey = distanceKeyOf(res.finish.distanceKm);
         // club_records is the best-4 showcase; only the standard buckets go there (collapsed to best below).
         if (!dkey) { skips.push(`${s.name}: ТОЧНО ${race.date} дистанция ${res.finish.distanceKm}км нестандартная → только в журнал club_official_results`); continue; }
         exactCands.push({ studentId: s.id, studentName: s.name, dkey, finish: res.finish, date: race.date, ourSeconds: race.ourSeconds, byConfirmedName: res.byConfirmedName, byShortenedName: res.byShortenedName, distanceDoubtful: res.distanceDoubtful });
@@ -529,18 +541,18 @@ async function runWrite(): Promise<void> {
   const winners = [...new Map(exactCands.map((c) => [`${c.studentId}|${c.dkey}`, c])).values()]; // по одному лучшему на (ученик,дистанция)
   const autoConfirmed = winners.filter((c) => c.byConfirmedName).length;
   const autoShortened = winners.filter((c) => !c.byConfirmedName && c.byShortenedName).length; // сокращённое имя, фамилия точная
-  const autoDistDoubt = winners.filter((c) => !c.byConfirmedName && !c.byShortenedName && c.distanceDoubtful).length; // наша дистанция сомнительна
-  const autoStrict = winners.length - autoConfirmed - autoShortened - autoDistDoubt; // имя+дистанция+время строго
-  const qWeak = pendPlans.filter((p) => p.res.weakName).length; // ученик без фамилии → на подтверждение
-  const qUnrec = pendPlans.filter((p) => !p.res.weakName && p.res.nameUnrecognized).length; // имя не распозналось
-  const qWide = pendPlans.length - qWeak - qUnrec; // широкое время / fuzzy-фамилия / прочее → на подтверждение
+  const autoStrict = winners.length - autoConfirmed - autoShortened; // имя+дистанция+время строго (сомнит.дист. больше НЕ авто)
+  const qDoubt = pendPlans.filter((p) => p.res.distanceDoubtful).length; // сомнительная дистанция → всегда очередь
+  const qWeak = pendPlans.filter((p) => !p.res.distanceDoubtful && p.res.weakName).length; // ученик без фамилии → на подтверждение
+  const qUnrec = pendPlans.filter((p) => !p.res.distanceDoubtful && !p.res.weakName && p.res.nameUnrecognized).length; // имя не распозналось
+  const qWide = pendPlans.length - qDoubt - qWeak - qUnrec; // широкое время / fuzzy-фамилия / прочее → на подтверждение
   console.log(`\n=== РАЗБИВКА ПО ПРИЧИНАМ ===`);
   console.log(`АВТО-ПРИВЯЗКА (${winners.length}):`);
   console.log(`  строгое совпадение (имя+дистанция+время): ${autoStrict}`);
   console.log(`  сокращённое имя, фамилия точная, время в секунды: ${autoShortened}`);
-  console.log(`  наша дистанция сомнительна, имя+время идеальны: ${autoDistDoubt}`);
   console.log(`  по ранее подтверждённому написанию: ${autoConfirmed}`);
   console.log(`НА ПОДТВЕРЖДЕНИЕ (${pendPlans.length}):`);
+  console.log(`  сомнительная дистанция (наша vs протокол): ${qDoubt}`);
   console.log(`  ученик без фамилии: ${qWeak}`);
   console.log(`  имя не распозналось: ${qUnrec}`);
   console.log(`  широкое время / неточная фамилия / прочее: ${qWide}`);
