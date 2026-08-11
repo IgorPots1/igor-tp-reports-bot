@@ -35,17 +35,22 @@ export const ROUND_TO_MIN = 5;
 export const EASY_FLOOR_MIN = 25;
 
 /**
- * ЦЕЛЬ по длине лёгкой — p05 по тирам (30 / 32 / 40, округлено). Не гейт: если неделя не
- * вмещает, лёгкий ужимается до инварианта 25, а день не теряется.
+ * ПРАВИЛО, КОТОРОЕ ЛЕГКО ПЕРЕПУТАТЬ: нижний край распределения — это ПОЛ, медиана — это ЦЕЛЬ.
+ * Ставить целью p05 значит целиться в самую короткую тренировку, какую тренер вообще писал,
+ * и систематически недобирать. Пол защищает от бессмыслицы, цель задаёт норму.
+ *
+ * ЦЕЛЬ по длине лёгкой — МЕДИАНА по тирам (было p05 = 30/30/40, нижний край практики).
+ * Не гейт: если неделя не вмещает, лёгкий ужимается до инварианта 25, а день не теряется.
  */
-export const EASY_TARGET_BY_TIER: Record<Tier, number> = { T1: 30, T2: 30, T3: 40 };
+export const EASY_TARGET_BY_TIER: Record<Tier, number> = { T1: 40, T2: 50, T3: 60 };
 
 /**
- * ЦЕЛЬ кратности длительная/лёгкий — p10 замера (T2 1.43, T3 1.50). ГЕЙТА здесь нет:
- * инвариант — только «длительная не короче самого длинного лёгкого» (min кратности 1.00).
+ * ЦЕЛЬ кратности длительная/лёгкий — МЕДИАНА замера (T2 1.60, T3 1.80). Было p10 (1.43/1.50),
+ * то есть опять нижний край в роли ориентира. ГЕЙТА здесь нет: инвариант — только
+ * «длительная не короче самого длинного лёгкого» (min кратности 1.00).
  * T1 = 1.0: длительных этому тиру не ставят вообще (пар n=0), множитель был бы выдуман.
  */
-export const LONG_OVER_EASY_TARGET: Record<Tier, number> = { T1: 1.0, T2: 1.43, T3: 1.50 };
+export const LONG_OVER_EASY_TARGET: Record<Tier, number> = { T1: 1.0, T2: 1.60, T3: 1.80 };
 
 /**
  * ЦЕЛЬ кратности длительная/качественная — медиана замера (T2 1.53, T3 1.64), а не p10:
@@ -53,6 +58,10 @@ export const LONG_OVER_EASY_TARGET: Record<Tier, number> = { T1: 1.0, T2: 1.43, 
  * (99% недель строго длиннее, 1% поровну, короче НЕ БЫВАЕТ).
  */
 export const LONG_OVER_QUALITY_TARGET: Record<Tier, number> = { T1: 1.0, T2: 1.53, T3: 1.64 };
+/** Потолок отдельной лёгкой пробежки, мин. max наблюдений 130, но это уже длительная по сути. */
+export const EASY_MAX = 70;
+/** Ниже этой доли цели неделя помечается как недобранная (параметр отчётности, не гейт). */
+export const VOLUME_TARGET_TOL = 0.9;
 /** Шаг 4: ширина полосы лёгкого сверху ограничена (сек/км), параметр. */
 export const EASY_BAND_MAX_S = 25;
 /** Прирост недельного объёма к предыдущей ФАКТИЧЕСКОЙ неделе — не более этого (параметр). */
@@ -459,8 +468,31 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const longTarget = round5(Math.max(capLong, easyBase * ratioEasy, qLongest > 0 ? qLongest * ratioQual : 0));
   while (spare >= ROUND_TO_MIN && longMin < longTarget) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
   // (3) остаток — лёгким, пока кратность-ориентир к длительной не нарушена
-  while (canGrowEasy() && easyBase < 70 && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy) {
+  while (canGrowEasy() && easyBase < EASY_MAX && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy) {
     easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles;
+  }
+
+  // (4) ДОБОР ДО ЦЕЛИ ПО ОБЪЁМУ. Раньше сборка останавливалась на первом же ориентире и
+  // отдавала неделю заметно ниже потолка (замер 14.08: медиана выдано 125 при потолке 150),
+  // а теневое сравнение показывало систематический недобор объёма против тренера.
+  // Цель — плановый объём самого атлета, та же валюта, что потолок. Идём шагами по 5 минут,
+  // отдавая шаг тому, кто дальше от своего ориентира, и не нарушая ни потолок, ни инварианты.
+  const targetWeekly = Math.min(weekly, env.rolling4wPlannedMin > 0 ? env.rolling4wPlannedMin : weekly);
+  const total = (): number => qTotal + longMin + easyBase * easyRoles;
+  let guard = 0;
+  while (total() < targetWeekly && spare >= ROUND_TO_MIN && guard++ < 200) {
+    const longRoom = longMin < capLong && spare >= ROUND_TO_MIN;
+    const easyRoom = canGrowEasy() && easyBase < EASY_MAX && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy;
+    if (!longRoom && !easyRoom) break;
+    // Кто дальше от своего ориентира, тот и получает шаг: так неделя не перекашивается
+    // в одну длинную сессию и не расползается в одинаковые лёгкие.
+    const longGap = longRoom ? (capLong - longMin) / Math.max(capLong, 1) : -1;
+    const easyGap = easyRoom ? (EASY_MAX - easyBase) / EASY_MAX : -1;
+    if (longRoom && (!easyRoom || longGap >= easyGap)) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
+    else { easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles; }
+  }
+  if (total() < targetWeekly * VOLUME_TARGET_TOL) {
+    notes.push(`объём ${total()} мин ниже цели ${targetWeekly}: упёрлись в потолки сессий, не в потолок недели`);
   }
 
   const easyVariants = [easyBase, Math.max(EASY_FLOOR, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые

@@ -317,11 +317,19 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       }
     }
 
+    // НЕДЕЛЯ, В КОТОРУЮ ПОПАЛ asOf, — НЕПОЛНАЯ ПО ПОСТРОЕНИЮ и в конверт не идёт.
+    // Фильтр «строго до asOf» (нужный теневому тесту) обрезает её на середине: замер 14.08,
+    // вторник — видно 23 плановых пробежки из 285. Из-за этого lastWeekPlannedMinutes падал
+    // в разы, а член «+10% к плану прошлой недели» схлопывал потолок у 39 атлетов
+    // (медиана потолок/плановый rolling4w = 0.78 при p10 0.32).
+    const cutoffWeek = mondayOf(asOf);
+    const completeWeek = (w: string): boolean => w < cutoffWeek;
+
     // катящийся 4-нед (§4.1): считаем на лету, персистированное не читаем
-    const recentWeeks = [...weekMin.keys()].filter((w) => w >= win4wStart).sort();
+    const recentWeeks = [...weekMin.keys()].filter((w) => w >= win4wStart && completeWeek(w)).sort();
     const rolling4wWeeklyMin = recentWeeks.length
       ? Math.round(recentWeeks.reduce((a, w) => a + (weekMin.get(w) ?? 0), 0) / recentWeeks.length) : 0;
-    const recentPlannedWeeks = [...weekPlanned.keys()].filter((w) => w >= win4wStart).sort();
+    const recentPlannedWeeks = [...weekPlanned.keys()].filter((w) => w >= win4wStart && completeWeek(w)).sort();
     // Частота и качество усредняются по ПЛАНОВЫМ неделям: они и накоплены в плановой валюте,
     // а деление на число ФАКТИЧЕСКИХ недель дало бы бессмысленную смесь.
     const avgPlanned = (m: Map<string, number>): number =>
@@ -329,7 +337,8 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const rolling4wPlannedMin = recentPlannedWeeks.length
       ? Math.round(recentPlannedWeeks.reduce((a, w) => a + (weekPlanned.get(w) ?? 0), 0) / recentPlannedWeeks.length) : 0;
     const lastWeekPlannedMinutes = (() => {
-      const ks = [...weekPlanned.keys()].sort(); return ks.length ? Math.round(weekPlanned.get(ks[ks.length - 1]) ?? 0) : 0;
+      const ks = [...weekPlanned.keys()].filter(completeWeek).sort();
+      return ks.length ? Math.round(weekPlanned.get(ks[ks.length - 1]) ?? 0) : 0;
     })();
 
     // ВЫПОЛНЕНИЕ НЕ ВЫБРАСЫВАЕМ, но объём им НЕ режем: низкое выполнение — повод показать
@@ -373,7 +382,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     // тир T2 и получал темп ЦИФРАМИ, при фактической прошлой неделе 25 мин и активной травме.
     // Тир — не заслуга, а описание текущей формы, поэтому он понижается, а контроль уходит
     // на ощущения.
-    const lastWeekMin = (() => { const ks = [...weekMin.keys()].sort(); return ks.length ? Math.round(weekMin.get(ks[ks.length - 1]) ?? 0) : 0; })();
+    const lastWeekMin = (() => { const ks = [...weekMin.keys()].filter(completeWeek).sort(); return ks.length ? Math.round(weekMin.get(ks[ks.length - 1]) ?? 0) : 0; })();
     const { tier, tierNote } = downgradeTier(tierByVolume, {
       hasActiveIllness, lastWeekMinutes: lastWeekMin, rolling4wWeeklyMin,
     });
@@ -411,7 +420,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         qualityLast8w: qualityDates.length,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         // weeksObserved — про то, есть ли из чего считать КОНВЕРТ, а конверт плановый.
-        dayHistogram, weeksObserved: weekPlanned.size,
+        dayHistogram, weeksObserved: [...weekPlanned.keys()].filter(completeWeek).length,
       },
     });
   }

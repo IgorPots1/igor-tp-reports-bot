@@ -148,6 +148,10 @@ async function main(): Promise<void> {
   out.push(`\n## объёмы недель, мин`);
   out.push(`- потолок: p10 ${Math.round(q(caps, 0.1))} · медиана ${Math.round(q(caps, 0.5))} · p90 ${Math.round(q(caps, 0.9))}`);
   out.push(`- выдано:  p10 ${Math.round(q(mins, 0.1))} · медиана ${Math.round(q(mins, 0.5))} · p90 ${Math.round(q(mins, 0.9))}`);
+  const fill = weeks.filter((w) => w.weeklyCap > 0).map((w) => w.plannedMinutes / w.weeklyCap);
+  out.push(`- заполнение потолка: p10 ${Math.round(q(fill, 0.1) * 100)}% · медиана ${Math.round(q(fill, 0.5) * 100)}% · p90 ${Math.round(q(fill, 0.9) * 100)}%`);
+  const shortOfTarget = weeks.filter((w) => w.notes.some((nt) => nt.includes("ниже цели"))).length;
+  out.push(`- недель ниже цели по объёму: ${shortOfTarget} (упёрлись в потолки сессий, не недели)`);
   const lowCompliance = weeks.filter((w) => w.notes.some((nt) => nt.includes("выполнение ниже"))).length;
   out.push(`- недель с пометкой по низкому выполнению: ${lowCompliance} (объём им НЕ срезан)`);
   const renamedLong = weeks.filter((w) => w.notes.some((nt) => nt.includes("назван лёгким"))).length;
