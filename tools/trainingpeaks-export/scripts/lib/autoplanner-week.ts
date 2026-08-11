@@ -326,21 +326,26 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
 
   // ── ПОДБОР ЧИСЛА ДНЕЙ ПОД ПОТОЛОК ──
   // Идём от желаемой частоты вниз. Для каждого варианта считаем МИНИМАЛЬНУЮ неделю (все сессии
-  // на полах) и берём первый, который помещается. Раздувать объём, чтобы вписать лишний день,
-  // нельзя — сокращается именно число дней.
-  type Plan = { n: number; days: number[]; roles: Map<number, Role>; dec: QualityDecision; qSessions: Session[]; easyRoles: number };
-  let plan: Plan | null = null;
+  // на полах). Раздувать объём, чтобы вписать лишний день, нельзя — сокращается именно число дней.
+  type Plan = { n: number; days: number[]; roles: Map<number, Role>; dec: QualityDecision; qSessions: Session[]; easyRoles: number; fits: boolean; minWeek: number };
   let lastRefusal = `минимальная неделя не помещается в потолок ${weekly} мин`;
 
-  for (let n = nWant; n >= 1; n--) {
+  const tryPlan = (n: number): Plan => {
     const days = chooseDays(env.dayHistogram, n);
     const counts = rolesForDayCount(n, qualityCap);
     let easyRoles = n - counts.quality - counts.long;
 
     // Бюджет ПОЛНОЙ длительности качественной: длительная обязана её перерасти (+1 шаг),
     // у лёгких дней есть пол. Отсюда потолок на саму сессию, который уходит в отбор.
+    // Бюджет ПОЛНОЙ длительности качественной. Выводится из неравенства
+    //   k·Q + Q·ratioQual + пол_лёгкого·лёгкие_дни <= потолок,
+    // где k — число качественных дней, а длительная обязана перерасти качественную В КРАТНОСТИ.
+    // Прежняя формула делила на (k + 1) — это остаток АДДИТИВНОГО правила «качественная + 5 мин».
+    // С кратностью 1.32 она разрешала пресет, который потом в неделю не влезал, и сборщик
+    // сокращал день: у 5733231 на трёх днях выбирался thr_6x5 (61.5 мин), неделя выходила 171
+    // при потолке 164, и качество терялось совсем.
     const sessionBudget = counts.quality > 0
-      ? Math.floor((weekly - ROUND_TO_MIN - EASY_FLOOR * easyRoles - LONG_FLOOR * 0) / (counts.quality + 1))
+      ? Math.floor((weekly - EASY_FLOOR * easyRoles) / (counts.quality + ratioQual))
       : 0;
 
     // Без порога качество не назначаем ВООБЩЕ: резолвер всё равно откажет (числа брать неоткуда).
@@ -368,15 +373,33 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const minLong = Math.max(LONG_FLOOR, easyRoles > 0 ? Math.max(EASY_FLOOR * ratioEasy, EASY_FLOOR + ROUND_TO_MIN) : 0,
       qLongest > 0 ? qLongest * ratioQual : 0);
     const minWeek = qTotal + round5(minLong) * counts.long + EASY_FLOOR * easyRoles;
-    if (minWeek <= weekly) {
-      plan = { n, days, roles, dec, qSessions, easyRoles };
-      if (n < nWant) notes.push(`беговых дней ${nWant} → ${n}: больше не помещается в потолок ${weekly} мин`);
-      if (!dec.selected) notes.push(`качество не назначено: ${dec.reason} (${dec.detail})`);
-      break;
+    return { n, days, roles, dec, qSessions, easyRoles, fits: minWeek <= weekly, minWeek };
+  };
+
+  // КАЧЕСТВО ВАЖНЕЕ ЛИШНЕГО ЛЁГКОГО ДНЯ. Первый проход ищет вариант, где качественная
+  // ПОМЕЩАЕТСЯ: иначе побеждало большее число дней, и у 5733231 выходили четыре лёгких дня
+  // вместо трёх дней с отрезками, хотя качество он стабильно получает.
+  let plan: Plan | null = null;
+  if (qualityCap >= 1 && a.threshold != null) {
+    for (let n = nWant; n >= 1; n--) {
+      const p = tryPlan(n);
+      if (p.fits && p.dec.selected) { plan = p; break; }
     }
-    lastRefusal = `минимальная неделя ${minWeek} мин при ${n} ${n === 1 ? "дне" : "днях"} выше потолка ${weekly} мин`;
+  }
+  if (!plan) {
+    for (let n = nWant; n >= 1; n--) {
+      const p = tryPlan(n);
+      if (p.fits) { plan = p; break; }
+      lastRefusal = `минимальная неделя ${p.minWeek} мин при ${n} ${n === 1 ? "дне" : "днях"} выше потолка ${weekly} мин`;
+    }
   }
   if (!plan) return refuse(lastRefusal, "does_not_fit");
+  if (plan.n < nWant) {
+    notes.push(plan.dec.selected
+      ? `беговых дней ${nWant} → ${plan.n}: столько дней с качественной не помещается в потолок ${weekly} мин`
+      : `беговых дней ${nWant} → ${plan.n}: больше не помещается в потолок ${weekly} мин`);
+  }
+  if (!plan.dec.selected) notes.push(`качество не назначено: ${plan.dec.reason} (${plan.dec.detail})`);
 
   const { days, roles, dec, qSessions, easyRoles } = plan;
   const qTotal = qSessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);

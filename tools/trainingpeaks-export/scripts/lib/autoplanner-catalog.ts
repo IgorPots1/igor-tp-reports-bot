@@ -110,7 +110,9 @@ export const needsCanonicalWarmup = (level: string | null): boolean => level != 
  */
 export function presetSessionMinutes(p: QualityPreset): number {
   const warm = needsCanonicalWarmup(p.athleteLevelMin) ? CANONICAL_WARMUP_MINUTES : (p.warmupMinutes || WARMUP_CANON_MINUTES);
-  return warm + p.reps * p.workMinutes + Math.max(0, p.reps - 1) * p.recoveryMinutes + p.cooldownMinutes;
+  // Округляем: в каталоге есть половинные минуты отдыха, а «61.5 мин» в бюджете недели
+  // выглядит как ошибка и мешает сверять числа глазами.
+  return Math.round(warm + p.reps * p.workMinutes + Math.max(0, p.reps - 1) * p.recoveryMinutes + p.cooldownMinutes);
 }
 
 /** Порядок шкалы уровней по возрастанию требований. */
