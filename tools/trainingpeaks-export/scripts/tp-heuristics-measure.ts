@@ -211,7 +211,7 @@ async function main(): Promise<void> {
   console.log(`\n═══ Б. ПАДЕНИЕ ОБЪЁМА → РЕАКЦИЯ ТРЕНЕРА (константа TIER_DROP_VOLUME_RATIO = 0.6) ═══`);
   const dropBuckets: Array<[string, number, number]> = [["<0.3", 0, 0.3], ["0.3–0.5", 0.3, 0.5], ["0.5–0.7", 0.5, 0.7], ["0.7–0.9", 0.7, 0.9], [">=0.9", 0.9, 99]];
   const dropRows: Array<{ r: number; nextPlanRatio: number }> = [];
-  for (const [aid, weeks] of byAth) {
+  for (const [, weeks] of byAth) {
     const ks = [...weeks.keys()].sort();
     for (let i = 4; i < ks.length; i++) {
       const prior = ks.slice(Math.max(0, i - 5), i - 1).map((k) => weeks.get(k)!.fact).filter((x) => x > 0);
