@@ -197,6 +197,25 @@ async function main(): Promise<void> {
     if (d.gaps.length) for (const g of d.gaps) console.log(`  ⚠ ${g}`);
   }
 
+  const firstWeekAll = addDays(mondayOf(today), 7);
+  // СВОДКА ПО РЫЧАГАМ: у кого рост упирается в аэробный, у кого в качество, у кого ни в что.
+  // Смотрим горизонт цикла каждого, считаем роли недель роста.
+  console.log(`\n${"═".repeat(78)}`);
+  console.log(`ЧЕМ РАСТЁТ КАЖДЫЙ (недели роста в пределах его цикла)`);
+  console.log(`${"═".repeat(78)}`);
+  console.log(`  фамилия      оба  аэробн  качество  упёрлись  доля качества в конце`);
+  for (const [aid, sur] of GROUP) {
+    const d = drafts.get(aid)!;
+    const w2r = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(firstWeekAll)) / (7 * 86400000)) + 1 : 8;
+    const fc = forecast(d, firstWeekAll, Math.max(1, w2r));
+    const g = fc.filter((w) => w.role === "рост");
+    const cnt = (k: string): number => g.filter((w) => w.lever === k).length;
+    const last = g[g.length - 1] ?? fc[fc.length - 1];
+    console.log(`  ${sur.padEnd(13)}${String(cnt("оба")).padStart(3)}${String(cnt("аэробный")).padStart(8)}`
+      + `${String(cnt("качество")).padStart(10)}${String(cnt("упёрлись")).padStart(10)}`
+      + `${(last ? last.qualitySharePct.toFixed(1) + "%" : "—").padStart(12)} (своя ${(100 * d.baseQualityMin / Math.max(d.baseAerobicMin + d.baseQualityMin, 1)).toFixed(1)}%)`);
+  }
+
   if (!process.argv.includes("--forecast")) return;
 
   // Три показательных случая: марафон, полумарафон, без старта.
@@ -214,7 +233,7 @@ async function main(): Promise<void> {
     .filter((x): x is [number, string] => x != null)
     .filter((x, i, arr) => arr.findIndex((y) => y[0] === x[0]) === i);
 
-  const firstWeek = addDays(mondayOf(today), 7);
+  const firstWeek = firstWeekAll;
   for (const [aid, sur] of cases) {
     const d = drafts.get(aid)!;
     console.log(`\n${"═".repeat(78)}`);
