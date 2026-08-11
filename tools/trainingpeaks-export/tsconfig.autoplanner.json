@@ -16,6 +16,7 @@
     "scripts/tp-cycle-draft.ts",
     "scripts/tp-cycle-forecast-check.ts",
     "scripts/lib/cycle-drafts.ts",
+    "scripts/lib/cycle-check-stubs.ts",
     "scripts/tp-cycle-week-acceptance.ts",
     "scripts/tp-quality-volume-check.ts",
     "scripts/tp-taper-check.ts",

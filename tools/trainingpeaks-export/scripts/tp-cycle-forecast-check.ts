@@ -27,6 +27,8 @@
  */
 import process from "node:process";
 
+import { buildWeek, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
+import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
   MAX_SINGLE_STEP, STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, TAPER_NO_PEAK_FACTOR,
@@ -170,6 +172,45 @@ function main(): void {
     const overQ = w.find((x) => x.qualityMin > d.peakCapQualityMin);
     check("аэробный не выше личного потолка", !overA, `неделя ${overA?.index}: ${overA?.aerobicMin} > ${d.peakCapAerobicMin}`);
     check("работа не выше личного потолка", !overQ, `неделя ${overQ?.index}: ${overQ?.qualityMin} > ${d.peakCapQualityMin}`);
+  }
+
+  // ── 7. ПОДКЛЮЧЕНИЕ ЦИКЛА К СБОРЩИКУ ──
+  // Проверки на синтетическом сборщике: цель по дням доходит, роль пишется в заметки,
+  // при активном сигнале роль понижается, а без цикла ничего не меняется.
+  {
+    const anchors = stubAnchors();
+    const env = stubEnvelope();
+    const cat = stubCatalog();
+    const target: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 220, qualityMin: 30, days: 4 };
+
+    const wCycle = buildWeek(anchors, env, cat, MON, false, null, target);
+    check("цикл: число дней ровно как просил цикл",
+      wCycle.sessions.length === target.days, `просил ${target.days}, собрано ${wCycle.sessions.length}`);
+    check("цикл: попадание в целевой объём ±10%",
+      wCycle.plannedMinutes > 0 && Math.abs(wCycle.plannedMinutes / (target.aerobicMin + target.qualityMin) - 1) <= 0.10,
+      `цель ${target.aerobicMin + target.qualityMin}, собрано ${wCycle.plannedMinutes}`);
+    check("цикл: роль недели попала в заметки",
+      wCycle.notes.some((n) => n.includes(`неделя ${target.weekIndex} из ${target.totalWeeks}`)),
+      `заметки: ${wCycle.notes.join(" | ")}`);
+    check("цикл: конверт истории НЕ ограничивает — потолок равен цели цикла",
+      wCycle.weeklyCap === target.aerobicMin + target.qualityMin,
+      `потолок ${wCycle.weeklyCap}, цель ${target.aerobicMin + target.qualityMin}`);
+
+    // при активном health-сигнале роль понижается, объём считается от факта
+    const wIll = buildWeek(anchors, env, cat, MON, true, null, target);
+    check("реактивность: при активном сигнале роль понижена",
+      wIll.notes.some((n) => n.includes("РОЛЬ НЕДЕЛИ ПОНИЖЕНА")), `заметки: ${wIll.notes.join(" | ")}`);
+    check("реактивность: объём при сигнале НЕ равен цели цикла",
+      wIll.weeklyCap !== target.aerobicMin + target.qualityMin,
+      `потолок ${wIll.weeklyCap} совпал с целью — значит сигнал не подействовал`);
+
+    // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
+    const wNo = buildWeek(anchors, env, cat, MON, false, null);
+    check("без цикла: потолок из конверта, а не из цели цикла",
+      wNo.weeklyCap !== target.aerobicMin + target.qualityMin && wNo.weeklyCap > 0,
+      `потолок ${wNo.weeklyCap}`);
+    check("без цикла: в заметках нет упоминания цикла",
+      !wNo.notes.some((n) => n.startsWith("цикл")), `заметки: ${wNo.notes.join(" | ")}`);
   }
 
   console.log(`\nИТОГ: ${failures === 0 ? "все проверки прошли" : `ПАДЕНИЙ ${failures}`}`);
