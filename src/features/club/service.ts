@@ -13,6 +13,7 @@ import {
 } from "@/features/supabase/server";
 import { fetchAllRows, fetchAllInChunks, chunkIds } from "@/features/supabase/paginate";
 import { logClubDbError } from "./db-errors";
+import { formatDuration } from "./format-time";
 import { listClubStarts } from "./cabinet";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
 import {
@@ -961,19 +962,8 @@ function formatRuDate(iso: string): string {
   return `${day} ${month}`;
 }
 
-function formatDuration(seconds: number | null): string | null {
-  if (!seconds || seconds <= 0) {
-    return null;
-  }
-  const total = Math.round(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
+// Duration formatting comes from the shared module (format-time.ts, imported at the top);
+// `export { formatDuration }` below re-exports it so existing consumers are unchanged.
 
 // ---------------------------------------------------------------------------
 // Belgrade date-window helpers (no external deps)

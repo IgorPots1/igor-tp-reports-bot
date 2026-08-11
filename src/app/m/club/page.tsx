@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ClubIcon, type ClubIconName } from "@/features/club/icons";
+import { formatDuration, formatPace } from "@/features/club/format-time";
 import type {
   ClubBillingView,
   ClubCalendarEntry,
@@ -223,27 +224,10 @@ function fmtIsoDate(iso: string | null): string {
   const m = (iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/u);
   return m ? `${Number(m[3])} ${RU_MON[Number(m[2]) - 1] ?? ""}` : (iso ?? "");
 }
-function fmtDuration(sec: number | null): string | null {
-  if (!sec || sec <= 0) {
-    return null;
-  }
-  const t = Math.round(sec);
-  const h = Math.floor(t / 3600);
-  const m = Math.floor((t % 3600) / 60);
-  const s = t % 60;
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-function fmtPace(sec: number | null): string | null {
-  if (!sec || sec <= 0) {
-    return null;
-  }
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}:${String(s).padStart(2, "0")} /км`;
-}
+// Time/pace formatting lives in one shared, dependency-free module so the client and
+// server can't drift apart (see format-time.ts — this is where "4:60 /км" was fixed).
+const fmtDuration = formatDuration;
+const fmtPace = formatPace;
 function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
 }

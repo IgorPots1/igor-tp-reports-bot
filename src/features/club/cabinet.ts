@@ -6,6 +6,7 @@
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "./db-errors";
+import { formatDuration as fmtResult } from "./format-time";
 import { getBillingClientForStudent, getBillingClientDetail, getEffectiveBillingRowStatus } from "@/features/billing/admin";
 import type { BillingMonthStatusRow } from "@/features/billing/types";
 
@@ -144,13 +145,8 @@ export async function listClubRaces(studentId: string): Promise<ClubRace[]> {
   return out.slice(0, 50);
 }
 
-/** seconds -> "H:MM:SS" (or "M:SS" under an hour); null for empty/non-positive. */
-function fmtResult(sec: number | null): string | null {
-  if (sec == null || !Number.isFinite(sec) || sec <= 0) return null;
-  const t = Math.round(sec), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
-  const pad = (n: number): string => String(n).padStart(2, "0");
-  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
-}
+// Result-time formatting comes from the shared module (format-time.ts, imported at the top
+// as fmtResult) so the mini-app's records/cabinet strings can't drift from the feed's.
 
 // When several club_official_results rows describe the same (date, distance), the highest-priority
 // source wins — mirrors the records hierarchy (coach_confirmed > official_protocol > strava_best_effort).
