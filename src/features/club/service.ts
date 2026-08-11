@@ -3836,10 +3836,17 @@ export async function loadClubRecordOverrides(): Promise<Map<string, CoachRecord
   const out = new Map<string, CoachRecord>();
   try {
     const supabase = createSupabaseServerClient();
+    // C5: one switch decides whether Strava best-effort splits surface as records at all
+    // (default ON = shown inline with the «Strava / тренировка» badge). This is the single
+    // chokepoint feeding the records tab, leaderboard tops, and the profile, so gating the
+    // source filter here hides them everywhere at once when the flag is off.
+    const sources = C.showStravaSplitRecords()
+      ? ["coach_confirmed", "official_protocol", "strava_best_effort"]
+      : ["coach_confirmed", "official_protocol"];
     const { data, error } = await supabase
       .from("club_records")
       .select("student_id, distance_key, duration_seconds, pace_sec_per_km, record_date, race_name, trust, source")
-      .in("source", ["coach_confirmed", "official_protocol", "strava_best_effort"]);
+      .in("source", sources);
     if (error || !data) {
       return out;
     }

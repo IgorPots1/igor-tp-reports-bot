@@ -119,6 +119,21 @@ export function isTpPeaksEnabled(): boolean {
 }
 
 /**
+ * C5 — how Strava best-effort segments (training splits, source=strava_best_effort) are presented
+ * among personal records. ONE switch, so the decision is changed in one place:
+ *   ON  (default) — shown inline as records, MARKED with the «Strava / тренировка» badge and kept in
+ *                   the TRAINING slot (never passed off as a race). Their trust is governed separately
+ *                   (demote-strava-records.ts: race-day→verified, impossible→hidden, else→preliminary).
+ *   OFF — Strava splits are not loaded as record overrides at all, so they appear NOWHERE among records,
+ *         the leaderboard tops, or the profile (the rows stay in the DB, just unsurfaced as records).
+ * The data is already tagged (kind=training_split, source=strava_best_effort), so a future "separate
+ * section" layout is a page.tsx-only change; this flag decides shown-vs-hidden without touching readers.
+ */
+export function showStravaSplitRecords(): boolean {
+  return process.env.CLUB_RECORDS_SHOW_STRAVA_SPLITS !== "false";
+}
+
+/**
  * Best-continuous-split reconstruction (local analogue of Strava best_efforts).
  * ON by default. A recorded race is usually LONGER than the target distance
  * (warm-up / run-in in the same file) → timing the whole file underrates the
