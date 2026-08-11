@@ -1,0 +1,53 @@
+#!/bin/bash
+# pre-commit: не дать закоммитить правку, после которой боевые раннеры не загрузятся.
+#
+# 11.08.2026 прод пролежал 3 часа из-за коммита, который выглядел безобидной уборкой тайпчека:
+# завёл tools/trainingpeaks-export/tsconfig.json без блока paths, tsx перестал разворачивать
+# алиас @/, раннеры стали умирать на импорте repository.ts. lint, tsc и build были зелёными —
+# они проверяют ТИПЫ, а сломалось РАЗРЕШЕНИЕ МОДУЛЕЙ. Этот хук ловит ровно тот класс.
+#
+# Установка (хуки не версионируются, поэтому ставится руками ОДИН раз на репозиторий;
+# .git/hooks общий для всех worktree, так что хватит одной установки):
+#   cp tools/trainingpeaks-export/scripts/git-hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# Обойти разово: SKIP_RUNNER_IMPORT_CHECK=1 git commit ...
+
+set -uo pipefail
+
+[ "${SKIP_RUNNER_IMPORT_CHECK:-}" = "1" ] && exit 0
+
+# ПРИЦЕЛЬНО, А НЕ НА КАЖДЫЙ КОММИТ. Гоняем только когда тронуто то, что влияет на загрузку
+# раннеров. Иначе хук висел бы на правках текстов и разборов, где он бессмыслен.
+# Список покрывает вход аварии: её коммит тронул tsconfig.json и package.json.
+CHANGED="$(git diff --cached --name-only --diff-filter=ACMR)"
+if ! printf '%s\n' "$CHANGED" | grep -qE '^(tools/trainingpeaks-export/(tsconfig[^/]*\.json|scripts/)|scripts/_alias-loader\.mjs|package\.json|tools/trainingpeaks-export/package\.json)'; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CHECK="$REPO_ROOT/tools/trainingpeaks-export/scripts/check-runner-import-health.sh"
+
+if [ ! -x "$CHECK" ]; then
+  echo "[pre-commit] чек не найден ($CHECK) — пропускаю, коммит не блокирую."
+  exit 0
+fi
+
+# В большинстве worktree нет node_modules (они живут в каноническом каталоге). Без них tsx не
+# запустится, и хук блокировал бы коммит ЛОЖНО. Поэтому явно пропускаем с предупреждением:
+# лучше не проверить, чем не дать закоммитить из-за отсутствующих зависимостей.
+if [ ! -d "$REPO_ROOT/tools/trainingpeaks-export/node_modules" ] || [ ! -d "$REPO_ROOT/node_modules" ]; then
+  echo "[pre-commit] в этом worktree нет node_modules — чек раннеров пропущен (НЕ проверено!)."
+  echo "[pre-commit] прогони вручную в каноническом каталоге: npm run check:runner-import-health"
+  exit 0
+fi
+
+echo "[pre-commit] тронута обвязка раннеров — проверяю, что они вообще загрузятся"
+if ! REPO="$REPO_ROOT" "$CHECK"; then
+  echo
+  echo "[pre-commit] КОММИТ ОСТАНОВЛЕН: после этой правки боевые раннеры не загрузятся."
+  echo "[pre-commit] Это не про типы — в бою выглядит как тишина: раннер умирает на импорте,"
+  echo "[pre-commit] не успевает записать даже статус failed, и пустая таблица читается как норма."
+  echo "[pre-commit] Если правка всё же осознанная: SKIP_RUNNER_IMPORT_CHECK=1 git commit ..."
+  exit 1
+fi
