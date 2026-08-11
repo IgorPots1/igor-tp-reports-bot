@@ -10,7 +10,7 @@ import { ranges, parseSegments } from "./tp-recompute.ts";
 import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, type Tier } from "./pace-resolver.ts";
 import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, NOT_RUNNING_RATIO, NOT_RUNNING_WEEKS, type Envelope } from "./autoplanner-context.ts";
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
-import { selectQualityFromCatalog, qualityCapFromHistory, type QualityDecision } from "./quality-select.ts";
+import { selectQualityFromCatalog, qualityCapFromHistory, QUALITY_CAP_THRESHOLDS, type QualityDecision } from "./quality-select.ts";
 import type { Band } from "./band-collision.ts";
 
 export const DAY_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -334,8 +334,21 @@ export const LONG_FLOOR = 30;
  */
 export const MIN_WEEKS_FOR_ENVELOPE = 4;
 
+/**
+ * ЦЕЛЬ НЕДЕЛИ ОТ ЦИКЛА. Передана — неделя строится ОТ НЕЁ, а не от конверта истории.
+ * Не передана — поведение ровно прежнее (см. режимы ниже).
+ */
+export type CycleWeekTarget = {
+  weekIndex: number;
+  totalWeeks: number;
+  role: "рост" | "плановая разгрузка" | "подводка" | "старт" | "поддержание";
+  aerobicMin: number;
+  qualityMin: number;
+  days: number;
+};
+
 export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
-  tierNote: string | null = null): Week {
+  tierNote: string | null = null, cycle: CycleWeekTarget | null = null): Week {
   const notes: string[] = [];
   if (tierNote) notes.push(tierNote);
   // ГЕЙТЫ — инварианты, ЦЕЛИ — перцентили. Минимальная неделя считается по инвариантам,
@@ -351,10 +364,17 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // качественной» держится отдельно (см. начальное значение longMin). Расхождение с кратностью
   // не прячем — оно уходит ПОМЕТКОЙ тренеру.
   const ratioQual = LONG_OVER_QUALITY_TARGET[a.tier];
-  let nWant = Math.round(env.rolling4wFrequency || 0);
-  if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
-  if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
-  nWant = clamp(nWant, 1, 7);
+  // ЧИСЛО ДНЕЙ: из цикла, если он есть; иначе как прежде — из медианы плановой частоты.
+  let nWant: number;
+  if (cycle) {
+    nWant = clamp(cycle.days, 1, 7);
+    notes.push(`цикл: неделя ${cycle.weekIndex} из ${cycle.totalWeeks}, роль «${cycle.role}»`);
+  } else {
+    nWant = Math.round(env.rolling4wFrequency || 0);
+    if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
+    if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
+    nWant = clamp(nWant, 1, 7);
+  }
 
   const longDayHint = env.dayHistogram.indexOf(Math.max(...env.dayHistogram));
 
@@ -375,12 +395,28 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const notTraining = hasActiveIllness || env.notRunningWeeks >= NOT_RUNNING_WEEKS;
 
   let weekly: number;
-  if (notTraining) {
+  // ── РЕЖИМ ЦИКЛА ──
+  // Цикл задаёт целевой объём недели, и конверт истории (rolling4w, WEEKLY_GROWTH_MAX,
+  // подрезка после провала) на него НЕ действует: это планирование, а его взял на себя цикл.
+  // ЗАЩИТЫ ОСТАЮТСЯ ВСЕ: полы сессий, потолок доли работы, сужение полосы, проверка
+  // слипания, обратная сверка, отказ при невместимости, фильтр действующих.
+  //
+  // РЕАКТИВНОСТЬ СОХРАНЯЕТСЯ (спека C2): при активном health-сигнале или «не бегает»
+  // потолок считается ОТ ФАКТА даже в цикле — цикл задаёт НАМЕРЕНИЕ, а не обязательство,
+  // и одна неделя тратится на разгрузку, не сдвигая остального плана.
+  if (cycle && !notTraining) {
+    weekly = Math.max(0, cycle.aerobicMin + cycle.qualityMin);
+    notes.push(`цель цикла: ${cycle.aerobicMin} аэробных + ${cycle.qualityMin} работы = ${weekly} мин`);
+  } else if (notTraining) {
     weekly = Math.min(env.rolling4wWeeklyMin || 0, env.capWeeklyMin ?? Infinity) || 30;
     if (env.lastWeekMinutes > 0) weekly = Math.min(weekly, Math.round(env.lastWeekMinutes * WEEKLY_GROWTH_MAX));
     notes.push(hasActiveIllness
       ? `потолок от ФАКТА (${weekly} мин): активный health-сигнал — план здорового периода не ориентир`
       : `потолок от ФАКТА (${weekly} мин): выполнение ниже ${Math.round(NOT_RUNNING_RATIO * 100)}% ${env.notRunningWeeks} нед подряд — человек фактически не тренируется`);
+    if (cycle) {
+      notes.push(`РОЛЬ НЕДЕЛИ ПОНИЖЕНА до разгрузочной: цикл просил «${cycle.role}» и ${cycle.aerobicMin + cycle.qualityMin} мин.`
+        + ` Неделя потрачена, остальной план цикла НЕ сдвинут.`);
+    }
   } else {
     weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;
     // ПРИРОСТ МЕРЯЕТСЯ ОТ НОРМЫ, А НЕ ОТ ПРОВАЛА (замер 16.08).
@@ -407,7 +443,15 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
       + `${env.complianceRatio != null ? ` (за окно ${Math.round(env.complianceRatio * 100)}%)` : ""} — объём НЕ срезан, нужен взгляд тренера`);
   }
 
-  const qualityCap = qualityCapFromHistory(env.qualityLast8w);
+  // ГЕЙТ КАЧЕСТВА: без цикла работает как прежде; при активном цикле ЦИКЛ ГЛАВНЕЕ,
+  // и гейт превращается в пометку тренеру [решение Игоря].
+  const gateCap = qualityCapFromHistory(env.qualityLast8w);
+  let qualityCap = gateCap;
+  if (cycle && cycle.qualityMin > 0 && gateCap < 1) {
+    qualityCap = 1;
+    notes.push(`✋ гейт качества снят циклом: за 8 нед качественных ${env.qualityLast8w}`
+      + ` (гейту нужно ${QUALITY_CAP_THRESHOLDS.oneSessionMin}) — цикл просит работу, нужен взгляд тренера`);
+  }
   const refuse = (detail: string, kind: Week["refusedKind"]): Week => ({
     athleteId: a.athleteId, tier: a.tier, weekStart, days: [], sessions: [], notes,
     qualityDecision: "не выдана", refused: detail, refusedKind: kind, weeklyCap: weekly, plannedMinutes: 0,
@@ -456,6 +500,8 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         hasActiveIllnessOrInjury: hasActiveIllness, hasRaceContext: false,
         contextFlags: hasActiveIllness ? ["injury"] : [], rolling4wWeeklyMin: env.rolling4wWeeklyMin,
         sessionBudgetMin: sessionBudget,
+        // цель по минутам работы от цикла — отборщик берёт ближайший формат, а не прогрессию
+        targetWorkMinutes: cycle ? cycle.qualityMin : null,
       });
     if (!dec.selected) { counts.quality = 0; easyRoles = n - counts.long; }
 

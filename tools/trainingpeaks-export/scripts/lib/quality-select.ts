@@ -32,6 +32,12 @@ export type QualityContext = {
    * null — ограничения нет (диагностика, тесты).
    */
   sessionBudgetMin?: number | null;
+  /**
+   * ЦЕЛЬ ПО МИНУТАМ РАБОТЫ ОТ ЦИКЛА. Задана — формат подбирается ближе всего к ней,
+   * а прогрессия от прошлой сессии НЕ применяется: планирование взял на себя цикл.
+   * Без цикла null, и всё работает как раньше.
+   */
+  targetWorkMinutes?: number | null;
 };
 
 /**
@@ -138,9 +144,16 @@ export function selectQualityFromCatalog(
     pool = fits;
   }
 
-  // ── прогрессия от прошлой качественной ──
+  // ── ЦЕЛЬ ЦИКЛА ГЛАВНЕЕ ПРОГРЕССИИ ──
+  // Цикл уже посчитал, сколько минут работы должно быть на этой неделе; брать поверх этого
+  // ещё и шаг «+20% к прошлой» значило бы планировать дважды. Выбираем формат, ближайший
+  // к цели цикла, среди тех, что прошли гейты и потолки.
   let chosen: QualityPreset; let reason: string;
-  if (ctx.lastQualityWorkMinutes == null) {
+  if (ctx.targetWorkMinutes != null && ctx.targetWorkMinutes > 0) {
+    const t = ctx.targetWorkMinutes;
+    chosen = pool.reduce((best, p) => Math.abs(p.totalWorkMinutes - t) < Math.abs(best.totalWorkMinutes - t) ? p : best);
+    reason = `цель цикла ${t} мин работы — взят ближайший формат (${chosen.totalWorkMinutes} мин)`;
+  } else if (ctx.lastQualityWorkMinutes == null) {
     chosen = pool[0]; // истории нет — начинаем с самого лёгкого доступного
     reason = "истории качества нет — стартовый объём";
   } else {
