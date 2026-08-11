@@ -65,8 +65,29 @@ export const TAPER_PROFILE: Record<CycleIntent, TaperWeek[]> = {
   maintenance: [],
 };
 
-/** Потолок доли работы в неделе. [практика] p90 = 0.20, n=1132. Держим и в цикле. */
+/**
+ * ПОСЛЕДНЯЯ ЗАЩИТА, НЕ РАБОЧИЙ ПРЕДЕЛ. Доля работы в неделе не выше 0.20
+ * [практика, p90 по ростеру, n=1132]. Это КОГОРТНОЕ число: оно годится, чтобы
+ * поймать выброс, но не годится как личный потолок. Рабочий предел качества —
+ * личный (peakCapQualityMin).
+ */
 export const WORK_SHARE_MAX = 0.20;
+
+/**
+ * НАСКОЛЬКО ЦИКЛУ ПОЗВОЛЕНО ВЫЙТИ ЗА СОБСТВЕННЫЙ ИСТОРИЧЕСКИЙ МАКСИМУМ.
+ * Оба числа [решение Игоря]; берётся МЕНЬШЕЕ из двух.
+ *
+ * ЗАЧЕМ ДВА. Жёсткий исторический максимум запрещал прогрессию структурно: у Богачева
+ * максимум 376 при базе 349, то есть цикл мог дать ему +8% и упирался. Но и один
+ * множитель к максимуму опасен: у того, кто когда-то сделал одну огромную неделю,
+ * максимум сильно оторван от базы, и ×1.10 к нему увёл бы далеко от его нынешней формы.
+ * Поэтому второй ограничитель — от БАЗЫ, то есть от того, чем человек живёт сейчас.
+ */
+export const PEAK_OVER_HISTORIC_MAX = 1.10;
+export const PEAK_OVER_BASE_MAX = 1.25;
+
+/** Каким рычагом идёт рост на неделе — для прогноза. */
+export type GrowthLever = "аэробный" | "качество" | "оба" | "упёрлись";
 
 export type CycleDraft = {
   athleteId: number;
@@ -95,6 +116,24 @@ export type CycleDraft = {
    * а не следствие арифметики, поэтому цикл сам туда не идёт.
    */
   peakCapAerobicMin: number;
+  /**
+   * Сырой собственный максимум аэробной недели за окно [практика].
+   * Отдельно от peakCapAerobicMin: потолок цикла считается ОТ него, но им не равен —
+   * циклу разрешён ограниченный выход выше (PEAK_OVER_HISTORIC_MAX / PEAK_OVER_BASE_MAX).
+   * Нужен ещё и для пометки в прогнозе «неделя выше исторического максимума».
+   */
+  historicMaxAerobicMin: number;
+  /**
+   * ПОТОЛОК КАЧЕСТВЕННЫХ МИНУТ, мин работы/нед. Собственный исторический максимум
+   * атлета за окно наблюдения [практика].
+   *
+   * ЗАЧЕМ. До 11.08 качество ограничивалось только долей работы ≤20% недели — это p90
+   * ПО РОСТЕРУ [практика, n=1132], то есть чужое число в роли личного предела. У Богачева
+   * собственная доля 9.4%, а прогноз вёл его к 16% (60 мин работы против базовых 35).
+   * Та же ошибка уже была с полосой лёгкого и с длиной сессий: когортное вместо личного.
+   * Теперь рабочий предел — личный, а когортные 20% остались ПОСЛЕДНЕЙ защитой.
+   */
+  peakCapQualityMin: number;
   /** чего не хватило, чтобы черновик был полным */
   gaps: string[];
 };
@@ -117,6 +156,10 @@ export type WeekForecast = {
   days: number;
   /** какой формат качества закрывает эти минуты работы — подсказка, не предписание */
   qualityHint: string;
+  /** доля работы в неделе, % — Игорь смотрит, не уехала ли она от его обычной */
+  qualitySharePct: number;
+  /** чем растём на этой неделе; на разгрузке и подводке не заполняется */
+  lever: GrowthLever | null;
   note: string;
 };
 
@@ -149,66 +192,96 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
   const out: WeekForecast[] = [];
   let aer = draft.baseAerobicMin;
   let qual = draft.baseQualityMin;
-  // ПИК — это максимум РЕАЛЬНО НАЗНАЧЕННЫХ недель роста, а не то, куда ушла бы
-  // арифметика, если бы рост продолжался. Первый прогон считал подводку «от пика 775»,
-  // хотя 775 не назначались ни разу: подводка началась раньше.
+  // ПИК — максимум РЕАЛЬНО НАЗНАЧЕННЫХ недель роста, а не то, куда ушла бы арифметика,
+  // если бы рост продолжался: подводка может начаться раньше, чем рост дойдёт до цифры.
   let peakAer = 0;
 
-  // сколько недель до старта — от этого зависит, где начинается подводка
   const taperLen = draft.taperProfile.length;
   const weeksToRace = draft.targetDate
     ? Math.round((Date.parse(draft.targetDate) - Date.parse(firstWeekStart)) / (7 * 86400000))
     : null;
 
+  // РАЗМЕЩЕНИЕ ПЛАНОВОЙ РАЗГРУЗКИ С УЧЁТОМ ПОДВОДКИ.
+  // Раньше разгрузка стояла по остатку от деления (i % deloadEveryN), и при коротком
+  // горизонте её либо не было вовсе (у полумарафонца на 5 недель — ни одной), либо она
+  // упиралась в подводку. Теперь недели разгрузки считаются заранее: от конца ростовой
+  // части назад с шагом deloadEveryN, и между разгрузкой и подводкой оставляется
+  // минимум одна полноценная неделя роста.
+  const MIN_GROWTH_BETWEEN_DELOAD_AND_TAPER = 1;
+  const deloadWeeks = new Set<number>();
+  if (draft.intent !== "maintenance") {
+    // последняя неделя, на которой ещё может стоять разгрузка
+    const lastGrowthIdx = weeksToRace == null
+      ? weeks
+      : weeksToRace - taperLen;                       // неделя перед началом подводки
+    const lastAllowed = lastGrowthIdx - MIN_GROWTH_BETWEEN_DELOAD_AND_TAPER;
+    for (let k = lastAllowed; k >= 2; k -= draft.deloadEveryN) {
+      if (k <= weeks) deloadWeeks.add(k);
+    }
+  }
+
   for (let i = 1; i <= weeks; i++) {
     const weekStart = addDays(firstWeekStart, 7 * (i - 1));
     const out2go = weeksToRace == null ? null : weeksToRace - (i - 1);
+    const share = (a: number, q: number): number => (a + q > 0 ? Math.round(1000 * q / (a + q)) / 10 : 0);
 
-    // старт на этой неделе
     if (out2go === 0) {
       out.push({ index: i, weekStart, role: "старт", aerobicMin: 0, qualityMin: 0, days: draft.days,
-        qualityHint: "—", note: `целевой старт ${draft.targetDate}` });
+        qualityHint: "—", qualitySharePct: 0, lever: null, note: `целевой старт ${draft.targetDate}` });
       continue;
     }
-    // подводка: последние taperLen недель перед стартом
     if (out2go != null && out2go >= 1 && out2go <= taperLen) {
       const tw = draft.taperProfile.find((t) => t.weeksOut === out2go);
       if (tw) {
-        const a = round5(peakAer * tw.aerobicFactor);
+        // если рост не успел начаться (короткий цикл), подводка считается от базы
+        const from = peakAer > 0 ? peakAer : draft.baseAerobicMin;
+        const a = round5(from * tw.aerobicFactor);
         const q = round5(qual * tw.qualityMinutesFactor);
         out.push({ index: i, weekStart, role: "подводка", aerobicMin: a, qualityMin: q, days: draft.days,
-          qualityHint: qualityFormatHint(q),
-          note: `от ПИКА ${peakAer} мин: аэробный ×${tw.aerobicFactor.toFixed(2)}, работа ×${tw.qualityMinutesFactor.toFixed(2)}`
-            + ` · темпы отрезков ТЕ ЖЕ, дней столько же` });
+          qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
+          note: `от ${peakAer > 0 ? "ПИКА" : "БАЗЫ"} ${from} мин: аэробный ×${tw.aerobicFactor.toFixed(2)},`
+            + ` работа ×${tw.qualityMinutesFactor.toFixed(2)} · темпы отрезков ТЕ ЖЕ, дней столько же` });
         continue;
       }
     }
-    // плановая разгрузка
-    if (draft.intent !== "maintenance" && i % draft.deloadEveryN === 0) {
+    if (deloadWeeks.has(i)) {
       const a = round5(aer * draft.deloadDepthAerobic);
       const q = round5(qual * draft.deloadQualityFactor);
       out.push({ index: i, weekStart, role: "плановая разгрузка", aerobicMin: a, qualityMin: q, days: draft.days,
-        qualityHint: qualityFormatHint(q),
+        qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
         note: `аэробный ×${draft.deloadDepthAerobic.toFixed(2)}, работа ×${draft.deloadQualityFactor.toFixed(2)}`
           + ` · день НЕ убран, качество НЕ снято, темп на ступень мягче` });
       continue;
     }
-    // поддержание (цикл без старта) или рост
     if (draft.intent === "maintenance") {
-      out.push({ index: i, weekStart, role: "поддержание", aerobicMin: round5(aer), qualityMin: round5(qual),
-        days: draft.days, qualityHint: qualityFormatHint(round5(qual)), note: "шаг ×1.00 — поддержание, не прогрессия" });
+      const a = round5(aer), q = round5(qual);
+      out.push({ index: i, weekStart, role: "поддержание", aerobicMin: a, qualityMin: q, days: draft.days,
+        qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever: null,
+        note: "шаг ×1.00 — поддержание, не прогрессия" });
       continue;
     }
-    const atCap = round5(aer) >= draft.peakCapAerobicMin;
-    out.push({ index: i, weekStart, role: "рост", aerobicMin: round5(aer), qualityMin: round5(qual), days: draft.days,
-      qualityHint: qualityFormatHint(round5(qual)),
-      note: atCap
-        ? `упёрлись в собственный максимум ${draft.peakCapAerobicMin} мин — выше цикл сам не идёт, это решение тренера`
-        : `шаг ×${draft.stepAerobic.toFixed(2)} / ×${draft.stepQuality.toFixed(2)}` });
-    peakAer = Math.max(peakAer, round5(aer));
-    // следующая неделя растёт от этой, но не выше собственного исторического максимума
-    aer = Math.min(aer * draft.stepAerobic, draft.peakCapAerobicMin);
-    qual = Math.min(qual * draft.stepQuality, aer * WORK_SHARE_MAX / (1 - WORK_SHARE_MAX));
+
+    // ── РОСТ. ДВА РЫЧАГА ──
+    // Когда аэробный упёрся в личный потолок, рост НЕ останавливается: дальше растёт
+    // качество, пока не упрётся в свой личный потолок. У Богачева это единственный
+    // доступный рычаг — самый большой объём в группе при самой низкой доле работы.
+    const a = round5(aer), q = round5(qual);
+    const aerRoom = a < draft.peakCapAerobicMin;
+    const qualRoom = q < draft.peakCapQualityMin && q < (a + q) * WORK_SHARE_MAX;
+    const lever: GrowthLever = aerRoom && qualRoom ? "оба" : aerRoom ? "аэробный" : qualRoom ? "качество" : "упёрлись";
+    const overHist = a > draft.historicMaxAerobicMin;
+    const notes: string[] = [];
+    if (lever === "оба") notes.push(`шаг ×${draft.stepAerobic.toFixed(2)} / ×${draft.stepQuality.toFixed(2)}`);
+    else if (lever === "аэробный") notes.push(`качество на личном потолке ${draft.peakCapQualityMin} мин — растём объёмом`);
+    else if (lever === "качество") notes.push(`аэробный на потолке ${draft.peakCapAerobicMin} мин — растём качеством`);
+    else notes.push(`оба на потолке — дальше только решением тренера`);
+    if (overHist) notes.push(`ВЫШЕ исторического максимума ${draft.historicMaxAerobicMin} мин`);
+    out.push({ index: i, weekStart, role: "рост", aerobicMin: a, qualityMin: q, days: draft.days,
+      qualityHint: qualityFormatHint(q), qualitySharePct: share(a, q), lever, note: notes.join(" · ") });
+
+    peakAer = Math.max(peakAer, a);
+    if (aerRoom) aer = Math.min(aer * draft.stepAerobic, draft.peakCapAerobicMin);
+    if (qualRoom) qual = Math.min(qual * draft.stepQuality, draft.peakCapQualityMin);
   }
   return out;
 }

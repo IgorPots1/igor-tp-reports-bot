@@ -24,7 +24,8 @@ import { loadRoster } from "./lib/autoplanner-roster.ts";
 import { splitSessionVolume } from "./lib/quality-volume.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, LENGTH_WEEKS,
-  STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, forecast, intentFromDistance,
+  STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, WORK_SHARE_MAX,
+  PEAK_OVER_BASE_MAX, PEAK_OVER_HISTORIC_MAX, forecast, intentFromDistance,
   type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
 
@@ -107,8 +108,9 @@ async function main(): Promise<void> {
 
   // Исторические аэробные недели за всё окно — из них берётся потолок роста.
   const histAer = new Map<number, number[]>();
+  const histQual = new Map<number, number[]>();
   {
-    const perWeek = new Map<number, Map<string, number>>();
+    const perWeek = new Map<number, Map<string, { aer: number; qual: number }>>();
     for (const r of allRows) {
       if (!roster.active.has(r.trainingpeaks_athlete_id)) continue;
       const minutes = Math.round((r.planned_time_raw ?? 0) * 60);
@@ -116,9 +118,13 @@ async function main(): Promise<void> {
       const s = splitSessionVolume(r.title, minutes, thr.get(r.trainingpeaks_athlete_id) ?? null);
       const wk = mondayOf(r.workout_date);
       const M = perWeek.get(r.trainingpeaks_athlete_id) ?? perWeek.set(r.trainingpeaks_athlete_id, new Map()).get(r.trainingpeaks_athlete_id)!;
-      M.set(wk, (M.get(wk) ?? 0) + s.aerobicMin);
+      const w = M.get(wk) ?? M.set(wk, { aer: 0, qual: 0 }).get(wk)!;
+      w.aer += s.aerobicMin; w.qual += s.qualityMin;
     }
-    for (const [aid, M] of perWeek) histAer.set(aid, [...M.values()].filter((x) => x > 0));
+    for (const [aid, M] of perWeek) {
+      histAer.set(aid, [...M.values()].map((w) => w.aer).filter((x) => x > 0));
+      histQual.set(aid, [...M.values()].map((w) => w.qual).filter((x) => x > 0));
+    }
   }
 
   function draft(aid: number): CycleDraft {
@@ -129,8 +135,14 @@ async function main(): Promise<void> {
     const baseAerobicMin = Math.round(med(ws.map((w) => w.aer)));
     // Потолок роста — собственный исторический максимум аэробной недели [практика].
     // Считается по ВСЕМУ окну наблюдения, а не по 8 неделям базы.
-    const histMax = Math.max(baseAerobicMin, ...(histAer.get(aid) ?? [baseAerobicMin]));
+    const histMax = Math.round(Math.max(baseAerobicMin, ...(histAer.get(aid) ?? [baseAerobicMin])));
     const baseQualityMin = Math.round(med(ws.map((w) => w.qual)));
+    // ЛИЧНЫЙ потолок качества — собственный исторический максимум минут работы [практика].
+    // Когортные 20% доли остаются последней защитой, но рабочий предел теперь личный.
+    const histQualMax = Math.round(Math.max(baseQualityMin, ...(histQual.get(aid) ?? [baseQualityMin])));
+    // Пик цикла: ограниченный выход за исторический максимум [решение Игоря].
+    // Берётся МЕНЬШЕЕ из «максимум x1.10» и «база x1.25».
+    const peakCapAerobicMin = Math.round(Math.min(histMax * PEAK_OVER_HISTORIC_MAX, baseAerobicMin * PEAK_OVER_BASE_MAX) / 5) * 5;
     if (baseQualityMin === 0) gaps.push("качественных минут за окно нет — база качества 0, цикл начнётся с нуля");
     const days = Math.round(med(ws.map((w) => w.days))) || 3;
 
@@ -150,7 +162,8 @@ async function main(): Promise<void> {
       lengthWeeks, baseAerobicMin, baseQualityMin,
       stepAerobic: STEP_AEROBIC, stepQuality: STEP_QUALITY,
       deloadEveryN: DELOAD_EVERY_N, deloadDepthAerobic: DELOAD_AEROBIC_FACTOR, deloadQualityFactor: DELOAD_QUALITY_FACTOR,
-      taperProfile: TAPER_PROFILE[intent], days, peakCapAerobicMin: Math.round(histMax), gaps,
+      taperProfile: TAPER_PROFILE[intent], days,
+      peakCapAerobicMin, historicMaxAerobicMin: histMax, peakCapQualityMin: histQualMax, gaps,
     };
   }
 
@@ -172,7 +185,12 @@ async function main(): Promise<void> {
     console.log(`  база качества:    ${d.baseQualityMin} мин работы/нед`
       + (d.baseAerobicMin + d.baseQualityMin > 0 ? ` (${(100 * d.baseQualityMin / (d.baseAerobicMin + d.baseQualityMin)).toFixed(1)}% недели)` : ""));
     console.log(`  беговых дней:     ${d.days}`);
-    console.log(`  потолок роста:    ${d.peakCapAerobicMin} мин/нед — собственный исторический максимум`);
+    const byHist = d.historicMaxAerobicMin * PEAK_OVER_HISTORIC_MAX;
+    const byBase = d.baseAerobicMin * PEAK_OVER_BASE_MAX;
+    const binder = byBase < byHist ? `связывает БАЗА ×${PEAK_OVER_BASE_MAX}` : `связывает МАКСИМУМ ×${PEAK_OVER_HISTORIC_MAX}`;
+    console.log(`  потолок аэробн.:  ${d.peakCapAerobicMin} мин/нед · свой максимум ${d.historicMaxAerobicMin} · база ${d.baseAerobicMin}`
+      + ` · ${binder} · к базе ${d.peakCapAerobicMin >= d.baseAerobicMin ? "+" : ""}${Math.round(100 * (d.peakCapAerobicMin / Math.max(d.baseAerobicMin, 1) - 1))}%`);
+    console.log(`  потолок качества: ${d.peakCapQualityMin} мин работы/нед — ЛИЧНЫЙ максимум (когортные ${Math.round(100 * WORK_SHARE_MAX)}% доли — последняя защита)`);
     console.log(`  шаг:              аэробный ×${d.stepAerobic} · качество ×${d.stepQuality}`);
     console.log(`  плановая разгрузка: каждые ${d.deloadEveryN} нед · аэробный ×${d.deloadDepthAerobic} · работа ×${d.deloadQualityFactor} · день и качество остаются`);
     console.log(`  подводка:         ${d.taperProfile.length ? d.taperProfile.map((t) => `за ${t.weeksOut} нед: аэр ×${t.aerobicFactor}, работа ×${t.qualityMinutesFactor}`).join(" · ") : "нет (цикл без старта)"}`);
@@ -186,21 +204,38 @@ async function main(): Promise<void> {
     for (const [aid, sur] of GROUP) if (drafts.get(aid)?.intent === want) return [aid, sur];
     return null;
   };
-  const cases = [pick("marathon"), pick("half"), pick("maintenance")].filter((x): x is [number, string] => x != null);
+  // Четвёртым — короткий цикл: у кого до старта меньше типовой длины сильнее всех.
+  const shortest = GROUP
+    .map(([aid, sur]) => [aid, sur, drafts.get(aid)] as const)
+    .filter((x) => x[2]?.targetDate)
+    .sort((a, b) => Date.parse(a[2]!.targetDate!) - Date.parse(b[2]!.targetDate!))[0];
+  const cases = [pick("marathon"), pick("half"), pick("maintenance"),
+    shortest ? [shortest[0], shortest[1]] as [number, string] : null]
+    .filter((x): x is [number, string] => x != null)
+    .filter((x, i, arr) => arr.findIndex((y) => y[0] === x[0]) === i);
 
   const firstWeek = addDays(mondayOf(today), 7);
   for (const [aid, sur] of cases) {
     const d = drafts.get(aid)!;
     console.log(`\n${"═".repeat(78)}`);
+    const w2r = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(firstWeek)) / (7 * 86400000)) + 1 : null;
+    const shortNote = w2r != null && w2r <= d.taperProfile.length + 1
+      ? "  КОРОТКИЙ ЦИКЛ: до старта меньше подводки — цикл состоит только из её хвоста"
+      : (w2r != null && w2r < LENGTH_WEEKS[d.intent] ? "  КОРОТКИЙ ЦИКЛ: подхвачен с хвоста, полная длина не помещается" : "");
     console.log(`ПРОГНОЗ НА МЕСЯЦ · ${sur} · ${INTENT_RU[d.intent]}${d.targetDate ? ` · старт ${d.targetDate}` : ""}`);
+    if (shortNote) console.log(shortNote);
     console.log(`${"═".repeat(78)}`);
-    console.log(`  # неделя с    роль                 аэробн  работа  дней  формат качества`);
+    console.log(`  # неделя с    роль                 аэробн  работа  кач.%  рычаг      дней  формат качества`);
     // на месяц вперёд, но если старт близко — показываем до старта включительно
-    const weeksToRace = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(firstWeek)) / (7 * 86400000)) + 1 : 4;
-    const horizon = Math.max(4, Math.min(weeksToRace, d.lengthWeeks + 1));
+    // Цикл КОНЧАЕТСЯ стартом: показывать недели после него бессмысленно — это уже
+    // другой цикл. Первый прогон продолжал Ярулиной «рост» на двух неделях ПОСЛЕ забега.
+    const weeksToRace = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(firstWeek)) / (7 * 86400000)) + 1 : null;
+    const horizon = weeksToRace != null ? Math.max(1, weeksToRace) : 4;
     for (const w of forecast(d, firstWeek, horizon)) {
       console.log(`  ${String(w.index).padStart(2)} ${w.weekStart}  ${w.role.padEnd(20)}`
-        + `${String(w.aerobicMin).padStart(5)}   ${String(w.qualityMin).padStart(5)}   ${String(w.days).padStart(3)}   ${w.qualityHint}`);
+        + `${String(w.aerobicMin).padStart(5)}   ${String(w.qualityMin).padStart(5)}`
+        + `${(w.qualitySharePct.toFixed(1) + "%").padStart(7)}  ${(w.lever ?? "—").padEnd(10)}`
+        + `${String(w.days).padStart(3)}   ${w.qualityHint}`);
       console.log(`     ${" ".repeat(11)}└ ${w.note}`);
     }
     console.log(`  ПРОГНОЗ НИ К ЧЕМУ НЕ ОБЯЗЫВАЕТ: роль недели пересчитывается перед сборкой,`);
