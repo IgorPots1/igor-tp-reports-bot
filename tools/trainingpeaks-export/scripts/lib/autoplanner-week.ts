@@ -7,7 +7,7 @@
  * Парсер для сверки — канонический ranges()/parseSegments() из tp-recompute.ts.
  */
 import { ranges, parseSegments } from "./tp-recompute.ts";
-import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved } from "./pace-resolver.ts";
+import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, type Tier } from "./pace-resolver.ts";
 import type { Envelope } from "./autoplanner-context.ts";
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, type QualityDecision } from "./quality-select.ts";
@@ -18,8 +18,35 @@ export type Role = "quality" | "long" | "easy" | "easy_strides" | "recovery" | "
 
 /** Шаг 4: всё округляем до 5 минут — «63 минуты» в плане не бывает. */
 export const ROUND_TO_MIN = 5;
-/** Шаг 4: длительная минимум на столько длиннее самого длинного лёгкого недели. */
-export const LONG_OVER_EASY_MIN = 20;
+/**
+ * ФОРМА НЕДЕЛИ — ИЗМЕРЕНО ПО ПРАКТИКЕ (tp-week-shape-measure, 26 недель, 2481 атлето-неделя,
+ * только coach_authored). До 12.08 здесь стояли угаданные 20 мин пола и +20 мин надбавки.
+ *
+ * Пол лёгкого — p05 самой короткой лёгкой пробежки недели по тирам: 30 / 31 / 40 мин.
+ * Прежние 20 были ЗАНИЖЕНЫ ВДВОЕ: короче получаса тренер не пишет вообще.
+ */
+export const EASY_FLOOR_BY_TIER: Record<Tier, number> = { T1: 30, T2: 30, T3: 40 };
+
+/**
+ * Длительная относительно самого длинного лёгкого — КРАТНО, а не аддитивно.
+ * Замер: T2 медиана 1.60 / p10 1.43, T3 медиана 1.80 / p10 1.50. Берём p10 — это ПОЛ,
+ * ниже которого практика почти не опускается (90% недель выше).
+ * T1 = 1.0: длительных этому тиру НЕ СТАВЯТ ВООБЩЕ (пар в замере n=0), поэтому любой
+ * множитель был бы выдуман; «длительный» день у T1 — просто самый длинный из лёгких.
+ *
+ * Аддитивной надбавки не оставляем: в наблюдаемом диапазоне (лёгкий 40–89 мин) кратность 1.5
+ * и надбавка 30 мин дают ОДНО И ТО ЖЕ, а за его пределами данных нет вообще — вводить второй
+ * параметр было бы подгонкой под несуществующие наблюдения.
+ */
+export const LONG_OVER_EASY_RATIO: Record<Tier, number> = { T1: 1.0, T2: 1.43, T3: 1.50 };
+
+/**
+ * Длительная относительно КАЧЕСТВЕННОЙ. Правило «длительная — самая длинная сессия недели»
+ * подтверждено фактом: в 99% недель, где есть обе, длительная длиннее. Но насколько —
+ * измерено: T2 медиана 1.53 / p10 1.32, T3 1.64 / p10 1.36. Прежние «качественная + 5 мин»
+ * формально правило соблюдали, а практику занижали в разы.
+ */
+export const LONG_OVER_QUALITY_RATIO: Record<Tier, number> = { T1: 1.0, T2: 1.32, T3: 1.36 };
 /** Шаг 4: ширина полосы лёгкого сверху ограничена (сек/км), параметр. */
 export const EASY_BAND_MAX_S = 25;
 /** Прирост недельного объёма к предыдущей ФАКТИЧЕСКОЙ неделе — не более этого (параметр). */
@@ -217,8 +244,10 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
 export type Week = {
   athleteId: number; tier: string; weekStart: string; days: number[]; sessions: Session[];
   notes: string[]; qualityDecision: string;
-  /** null — неделя выдана. Иначе причина, по которой она НЕ помещается в потолок объёма. */
+  /** null — неделя выдана. Иначе причина отказа. */
   refused: string | null;
+  /** род отказа: не влезает в потолок или истории не хватает на конверт */
+  refusedKind: "does_not_fit" | "insufficient_data" | null;
   /** потолок объёма недели, мин — по нему проверяется, что раскладка его не нарушила */
   weeklyCap: number;
   /** сумма минут выданных сессий */
@@ -249,13 +278,19 @@ export function shownBands(w: Week): { easy: Band | null; quality: Band | null }
   return { easy, quality };
 }
 
-/** Пол лёгкого дня и пол длительной, мин. Ниже этого сессия перестаёт быть тренировкой. */
-export const EASY_FLOOR = 20, LONG_FLOOR = 30;
+/** Абсолютный пол длительной, мин: совпадает с самым низким полом лёгкого по замеру. */
+export const LONG_FLOOR = 30;
+
+/** Минимум наблюдённых недель, ниже которого конверт объёма считать не из чего (§п.3 наряда). */
+export const MIN_WEEKS_FOR_ENVELOPE = 4;
 
 export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
   tierNote: string | null = null): Week {
   const notes: string[] = [];
   if (tierNote) notes.push(tierNote);
+  const EASY_FLOOR = EASY_FLOOR_BY_TIER[a.tier];
+  const ratioEasy = LONG_OVER_EASY_RATIO[a.tier];
+  const ratioQual = LONG_OVER_QUALITY_RATIO[a.tier];
   let nWant = Math.round(env.rolling4wFrequency || 0);
   if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
   if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
@@ -274,10 +309,20 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   }
 
   const qualityCap = qualityCapFromHistory(env.qualityLast8w);
-  const refuse = (detail: string): Week => ({
+  const refuse = (detail: string, kind: Week["refusedKind"]): Week => ({
     athleteId: a.athleteId, tier: a.tier, weekStart, days: [], sessions: [], notes,
-    qualityDecision: "не выдана", refused: detail, weeklyCap: weekly, plannedMinutes: 0,
+    qualityDecision: "не выдана", refused: detail, refusedKind: kind, weeklyCap: weekly, plannedMinutes: 0,
   });
+
+  // МАЛО ДАННЫХ ≠ НЕ ПОМЕЩАЕТСЯ. У 5524773 потолок выходил 23 мин и он попадал в отказ «не
+  // помещается», хотя причина другая: истории почти нет, и конверт объёма считать не из чего.
+  // Это разные случаи для тренера: один про нагрузку, другой про пробел в данных.
+  if (env.weeksObserved < MIN_WEEKS_FOR_ENVELOPE) {
+    return refuse(`наблюдённых недель ${env.weeksObserved} (нужно ${MIN_WEEKS_FOR_ENVELOPE}) — конверт объёма считать не из чего`, "insufficient_data");
+  }
+  if (env.lastWeekMinutes <= 0 && env.rolling4wWeeklyMin <= 0) {
+    return refuse("ни одной завершённой пробежки в окне — конверт объёма считать не из чего", "insufficient_data");
+  }
 
   // ── ПОДБОР ЧИСЛА ДНЕЙ ПОД ПОТОЛОК ──
   // Идём от желаемой частоты вниз. Для каждого варианта считаем МИНИМАЛЬНУЮ неделю (все сессии
@@ -319,12 +364,10 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const qTotal = qSessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);
     const qLongest = qSessions.reduce((m, x) => (x.deferred ? m : Math.max(m, x.minutes)), 0);
 
-    // Пол «длительная ≥ лёгкий + 20» имеет смысл ТОЛЬКО когда лёгкие дни есть. Без них он
-    // задирал минимальную неделю до 40 мин и отправлял в отказ тех, кому одна тридцатиминутка
-    // под потолок помещалась.
-    const minLong = Math.max(LONG_FLOOR, easyRoles > 0 ? EASY_FLOOR + LONG_OVER_EASY_MIN : 0,
-      qLongest > 0 ? qLongest + ROUND_TO_MIN : 0);
-    const minWeek = qTotal + minLong * counts.long + EASY_FLOOR * easyRoles;
+    // Пол длительной относительно лёгкого имеет смысл ТОЛЬКО когда лёгкие дни есть.
+    const minLong = Math.max(LONG_FLOOR, easyRoles > 0 ? Math.max(EASY_FLOOR * ratioEasy, EASY_FLOOR + ROUND_TO_MIN) : 0,
+      qLongest > 0 ? qLongest * ratioQual : 0);
+    const minWeek = qTotal + round5(minLong) * counts.long + EASY_FLOOR * easyRoles;
     if (minWeek <= weekly) {
       plan = { n, days, roles, dec, qSessions, easyRoles };
       if (n < nWant) notes.push(`беговых дней ${nWant} → ${n}: больше не помещается в потолок ${weekly} мин`);
@@ -333,7 +376,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     }
     lastRefusal = `минимальная неделя ${minWeek} мин при ${n} ${n === 1 ? "дне" : "днях"} выше потолка ${weekly} мин`;
   }
-  if (!plan) return refuse(lastRefusal);
+  if (!plan) return refuse(lastRefusal, "does_not_fit");
 
   const { days, roles, dec, qSessions, easyRoles } = plan;
   const qTotal = qSessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);
@@ -344,13 +387,19 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // Так потолок не может быть нарушен по построению — мы никогда не начинаем сверху.
   const longWant = round5(clamp(Math.min(env.capLongRunMin ?? weekly * 0.35, weekly * 0.45), LONG_FLOOR, 180));
   let easyBase = EASY_FLOOR;
-  let longMin = Math.max(LONG_FLOOR, easyRoles > 0 ? easyBase + LONG_OVER_EASY_MIN : 0,
-    qLongest > 0 ? qLongest + ROUND_TO_MIN : 0);
+  // У T1 кратность 1.0 (длительных им не ставят), но «самая длинная» должна оставаться
+  // буквально самой длинной — иначе в плане два дня по 30 мин, и один зачем-то «длительный».
+  let longMin = round5(Math.max(LONG_FLOOR, easyRoles > 0 ? Math.max(easyBase * ratioEasy, easyBase + ROUND_TO_MIN) : 0,
+    qLongest > 0 ? qLongest * ratioQual : 0));
   let spare = weekly - (qTotal + longMin + easyBase * easyRoles);
 
   while (spare >= ROUND_TO_MIN && longMin < longWant) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
+  // Лёгкие растут, пока длительная остаётся длиннее них в измеренной кратности И строго длиннее
+  // по абсолюту: при кратности 1.0 (T1) одна проверка кратности пропускала ровно тот шаг,
+  // который делал лёгкий равным длительной.
   while (easyRoles > 0 && spare >= ROUND_TO_MIN * easyRoles && easyBase < 70
-         && longMin >= easyBase + ROUND_TO_MIN + LONG_OVER_EASY_MIN) {
+         && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy
+         && longMin > easyBase + ROUND_TO_MIN) {
     easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles;
   }
 
@@ -363,7 +412,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     else if (role === "long") sessions.push(aerobicSession(d, "long", a, cat, longMin));
     else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, easyVariants[easyIdx % easyVariants.length])); easyIdx++; }
   }
-  return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, refused: null,
+  return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, refused: null, refusedKind: null,
     weeklyCap: weekly, plannedMinutes: sessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0),
     qualityDecision: dec.selected ? `${dec.preset.presetCode}: ${dec.reason}` : `отказ: ${dec.reason}` };
 }

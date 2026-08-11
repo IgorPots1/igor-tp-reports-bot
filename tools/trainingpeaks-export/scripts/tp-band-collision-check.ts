@@ -17,7 +17,7 @@ for (const c of ctx.values()) {
   const v = checkEasyAgainstQuality(c.easy.fastSec, c.easy.slowSec,
     c.quality ? { fastSec: c.quality.fastSec, slowSec: c.quality.slowSec, isOwnAnchor: true } : null);
   if (v.status === "ok") ok++;
-  else if (v.status === "unverifiable") unver++;
+  else if (v.status === "unverifiable" || v.status === "not_applicable") unver++;
   else bad.push({ aid: c.athleteId, src: c.easy.source, ratio: v.ratio,
     easy: `${fp(c.easy.fastSec)}–${fp(c.easy.slowSec)}`, qual: `${fp(c.quality!.fastSec)}–${fp(c.quality!.slowSec)}` });
 }
