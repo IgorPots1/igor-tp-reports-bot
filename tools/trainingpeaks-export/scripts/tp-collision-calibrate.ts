@@ -176,6 +176,21 @@ async function main(): Promise<void> {
   }
   console.log(`\n(текущая граница в коде: ${MIN_EASY_TO_QUALITY_RATIO})`);
 
+  // ── З. Цена порога по effN: якорь без свежих данных не должен давать числа ──
+  console.log("\n" + "═".repeat(84));
+  console.log("З. ЯКОРЬ КАЧЕСТВА БЕЗ СВЕЖИХ ДАННЫХ (effN) — сколько теряем на каждом пороге");
+  console.log("═".repeat(84));
+  const effs = [...ctx.values()].filter((c) => c.quality).map((c) => c.quality!.effectiveN ?? 0).sort((a, b) => a - b);
+  console.log(`  атлетов со своим якорем качества: ${effs.length}`);
+  console.log(`  effN: min ${effs[0]?.toFixed(2)} · p25 ${pct(effs, 0.25).toFixed(2)} · медиана ${pct(effs, 0.5).toFixed(2)}`
+    + ` · p75 ${pct(effs, 0.75).toFixed(2)} · max ${effs[effs.length - 1]?.toFixed(2)}`);
+  for (const t of [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]) {
+    const lost = effs.filter((x) => x < t).length;
+    console.log(`    порог effN >= ${t.toFixed(2)}: якорь теряют ${lost} из ${effs.length} (останется ${effs.length - lost})`);
+  }
+  const stale = [...ctx.values()].filter((c) => c.quality && (c.quality.effectiveN ?? 0) < 0.5);
+  console.log(`  с effN < 0.5 поимённо: ${stale.map((c) => `${c.athleteId}(${(c.quality!.effectiveN ?? 0).toFixed(2)})`).join(", ") || "нет"}`);
+
   // ── Ж. Перепроверка шестерых, отклонённых старой границей 1.09 ──
   console.log("\n" + "═".repeat(84));
   console.log("Ж. ШЕСТЕРО, ОТКЛОНЁННЫХ СТАРОЙ ГРАНИЦЕЙ 1.09 — что с ними теперь");

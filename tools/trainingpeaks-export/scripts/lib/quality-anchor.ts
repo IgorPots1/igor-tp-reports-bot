@@ -72,6 +72,23 @@ export function extractQualitySample(title: string, desc: string): { fast: numbe
 
 export type QualityAnchor = Anchor & { source: "quality_description" };
 
+/**
+ * Пол ЭФФЕКТИВНОГО размера выборки, ниже которого якоря НЕТ (а не «есть, но ненадёжный»).
+ *
+ * ЗАЧЕМ. buildAnchor отсекает по СЫРОМУ числу сэмплов и возраст не смотрит, поэтому якорь,
+ * собранный из полугодовых назначений, всё равно выдавал числа: у 5751651 effN = 0.02, и
+ * проверка на слипание считала такой якорь фактом, сравнивая с ним лёгкий.
+ *
+ * ПОЧЕМУ 0.25, А НЕ MIN_EFFECTIVE_SAMPLES (=3). Тройка — порог ГРАДАЦИИ ДОВЕРИЯ внутри
+ * источника, а не порог существования: по ней якорь потеряли бы 70 атлетов из 81, полоса
+ * качества почти у всех уехала бы на формулу от порога, и восстановление якоря из описаний
+ * обнулилось бы. 0.25 — арифметика полураспада: при half-life 21 день это ровно одно
+ * назначение ШЕСТИНЕДЕЛЬНОЙ давности. Кто дольше не получал отрезков — археология.
+ * Цена замерена (tp-collision-calibrate, раздел З): 0.25 снимает якорь у 7 из 81,
+ * 0.50 — у 18, 1.00 — у 26, 3.00 — у 70.
+ */
+export const MIN_QUALITY_ANCHOR_EFF_N = 0.25;
+
 /** Якорь качества = тот же агрегатор, что у лёгкого (свежесть + отсев выбросов + effN). */
 export function buildQualityAnchor(
   samples: QualitySample[],
@@ -79,7 +96,11 @@ export function buildQualityAnchor(
   opts: { halfLifeDays: number; illness?: DateWindow[]; minSamples?: number },
 ): QualityAnchor | null {
   const a = buildAnchor(samples, asOf, { halfLifeDays: opts.halfLifeDays, illness: opts.illness, minSamples: opts.minSamples ?? 4 });
-  return a ? { ...a, source: "quality_description" } : null;
+  if (!a) return null;
+  // Данных нет — чисел не даём: полоса качества уходит на фолбэк от порога, а проверка на
+  // слипание получает unverifiable вместо ложного «проверено».
+  if (a.effectiveN < MIN_QUALITY_ANCHOR_EFF_N) return null;
+  return { ...a, source: "quality_description" };
 }
 
 /** Фолбэк-полоса качества от порога: ПОД порогом, узкая, без расширения по доверию. */
