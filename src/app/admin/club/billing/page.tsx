@@ -3,6 +3,7 @@ import {
   listClubPaymentClaims,
   listClubDebtors,
   listClubPaymentReminders,
+  listClubUnschedulableClients,
 } from "@/features/club-admin/repository";
 import FormActionButton from "@/app/admin/FormActionButton";
 import { getSingleSearchParam } from "@/app/admin/lib";
@@ -27,6 +28,7 @@ export default async function ClubBillingAdminPage({ searchParams }: { searchPar
   const { billingMonth, debtors } = await listClubDebtors();
   const reminders = billingMonth ? await listClubPaymentReminders(billingMonth) : [];
   const drafts = reminders.filter((r) => r.status === "draft");
+  const unschedulable = await listClubUnschedulableClients();
 
   return (
     <section className="admin-section">
@@ -76,6 +78,25 @@ export default async function ClubBillingAdminPage({ searchParams }: { searchPar
                 <td>{d.name}</td>
                 <td>{d.daysOverdue ? `${d.daysOverdue} дн.` : "-"}</td>
                 <td>{d.amountLabel ?? "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* F3 — clients with no payment day: no reminder can ever fire for them; make the gap visible. */}
+      <h2 className="admin-section-subtitle">Без дня платежа ({unschedulable.clients.length})</h2>
+      <p className="admin-section-subtitle" style={{ marginTop: 0 }}>Не оплачено, но день платежа не задан → напоминание НЕ уйдёт (раньше молча пропускались). Поставь день в биллинге.</p>
+      <div className="admin-table-wrap">
+        <table className="admin-table admin-table-compact">
+          <thead><tr><th>Ученик</th><th>Месяц</th><th>Сумма</th></tr></thead>
+          <tbody>
+            {unschedulable.clients.length === 0 ? <tr><td colSpan={3} className="admin-empty-cell">Все с днём платежа</td></tr> : null}
+            {unschedulable.clients.map((c) => (
+              <tr key={c.studentId ?? c.name}>
+                <td>{c.name}</td>
+                <td>{c.billingMonth ?? "-"}</td>
+                <td>{c.amountLabel ?? "-"}</td>
               </tr>
             ))}
           </tbody>

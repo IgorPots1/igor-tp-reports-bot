@@ -47,6 +47,30 @@ export function draftReminderText(row: BillingMonthStatusRow, overdue: boolean):
 }
 
 /**
+ * F3 — unpaid rows that can NEVER produce a reminder because they have no planned payment date.
+ * computeReminderCandidates silently `continue`s these (no due date → not overdue, not due-soon), so a
+ * client with no payment day set was invisible: the coach thought a reminder would go and it never did.
+ * This surfaces them as an explicit list for the admin so the gap is visible, not silent. Pure.
+ */
+export function computeUnschedulableClients(rows: BillingMonthStatusRow[]): Array<{
+  clientId: string; studentId: string | null; clientName: string; billingMonth: string | null; amountLabel: string | null;
+}> {
+  const out: Array<{ clientId: string; studentId: string | null; clientName: string; billingMonth: string | null; amountLabel: string | null }> = [];
+  for (const row of rows) {
+    if (row.status === "paid") continue;
+    if (row.plannedPaymentDate) continue; // has a date → schedulable → not our concern here
+    out.push({
+      clientId: row.clientId,
+      studentId: row.studentId,
+      clientName: row.clientName,
+      billingMonth: row.billingMonth ?? null,
+      amountLabel: amountLabel(row.plannedAmount, row.currency) || null,
+    });
+  }
+  return out;
+}
+
+/**
  * Reminder candidates from month-status rows: unpaid rows that are due within
  * `daysBefore` days OR already overdue. Paid rows are skipped. Pure.
  */

@@ -1118,6 +1118,23 @@ export async function listClubDebtors(): Promise<{ billingMonth: string; debtors
   return { billingMonth: overview.billingMonth, debtors };
 }
 
+/** F3 — unpaid clients with NO planned payment day: a reminder can never fire for them and they were
+ *  invisible (silently skipped). Surfaced so the coach can set a day. Empty on any billing error. */
+export async function listClubUnschedulableClients(): Promise<{ billingMonth: string; clients: Array<{ studentId: string | null; name: string; amountLabel: string | null; billingMonth: string | null }> }> {
+  const { getAdminBillingMonthOverview } = await import("@/features/billing/admin");
+  const { computeUnschedulableClients } = await import("@/features/billing/club-reminders");
+  let overview;
+  try {
+    overview = await getAdminBillingMonthOverview(); // current month, unpaid rows
+  } catch {
+    return { billingMonth: "", clients: [] };
+  }
+  const clients = computeUnschedulableClients(overview.rows).map((c) => ({
+    studentId: c.studentId, name: c.clientName || "Ученик", amountLabel: c.amountLabel, billingMonth: c.billingMonth,
+  }));
+  return { billingMonth: overview.billingMonth, clients };
+}
+
 export type ClubReminderRow = { id: string; studentName: string; billingMonth: string; draftText: string; status: string };
 
 export async function listClubPaymentReminders(billingMonth: string): Promise<ClubReminderRow[]> {

@@ -8,6 +8,7 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import { logClubDbError, CLUB_DB_ERROR_STUDENT_MESSAGE } from "./db-errors";
 import { formatDuration as fmtResult } from "./format-time";
 import { getBillingClientForStudent, getBillingClientDetail, getEffectiveBillingRowStatus } from "@/features/billing/admin";
+import { clubPayUrlForMethod } from "./billing-links";
 import type { BillingMonthStatusRow } from "@/features/billing/types";
 
 import { formatRuDate } from "./service";
@@ -460,15 +461,16 @@ export async function getClubBilling(studentId: string): Promise<ClubBillingView
 
   const current = detail.currentMonthStatus;
   const status = current ? billingStatusLabel(current) : null;
-  // Per-student pay link (наряд ч.5.2): the student's OWN payment_url, никакого общего фолбэка.
-  // Нет ссылки → payUrl=null → мини-апп прячет кнопку «Оплатить» (а не ведёт на общую).
+  // F1 (S2): the pay link is DERIVED from the billing method on the fly (three shared T-Bank links for
+  // tbank_link_a/b/c), and only manual_* clients fall back to the student's own stored payment_url. The
+  // stored column is read solely for that manual case. No link → payUrl=null → мини-апп прячет «Оплатить».
   const supabase = createSupabaseServerClient();
   const { data: stRow } = await supabase
     .from("trainingpeaks_students")
     .select("payment_url")
     .eq("id", studentId)
     .maybeSingle();
-  const payUrl = ((stRow?.payment_url as string | null) ?? "").trim() || null;
+  const payUrl = clubPayUrlForMethod(client.paymentMethod, (stRow?.payment_url as string | null) ?? null, studentId);
 
   const history = detail.paymentHistory
     .slice(-6)
