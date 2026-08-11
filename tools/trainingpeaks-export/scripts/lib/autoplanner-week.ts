@@ -20,33 +20,39 @@ export type Role = "quality" | "long" | "easy" | "easy_strides" | "recovery" | "
 export const ROUND_TO_MIN = 5;
 /**
  * ФОРМА НЕДЕЛИ — ИЗМЕРЕНО ПО ПРАКТИКЕ (tp-week-shape-measure, 26 недель, 2481 атлето-неделя,
- * только coach_authored). До 12.08 здесь стояли угаданные 20 мин пола и +20 мин надбавки.
+ * только coach_authored).
  *
- * Пол лёгкого — p05 самой короткой лёгкой пробежки недели по тирам: 30 / 31 / 40 мин.
- * Прежние 20 были ЗАНИЖЕНЫ ВДВОЕ: короче получаса тренер не пишет вообще.
+ * РАЗДЕЛЕНИЕ ГЕЙТОВ И ОРИЕНТИРОВ (правило Игоря 12.08). В ГЕЙТ — только ИНВАРИАНТ: то, чего
+ * в практике НЕ БЫВАЕТ ВООБЩЕ (граница min распределения). Перцентиль в роли гейта ломает
+ * неделю на ровном месте: кратность 1.32 (p10) запрещала 5733231 брать thr_3x12, хотя такие
+ * недели у тренера есть. Перцентили остаются ЦЕЛЯМИ: к ним тянемся, если место есть.
  */
-export const EASY_FLOOR_BY_TIER: Record<Tier, number> = { T1: 30, T2: 30, T3: 40 };
 
 /**
- * Длительная относительно самого длинного лёгкого — КРАТНО, а не аддитивно.
- * Замер: T2 медиана 1.60 / p10 1.43, T3 медиана 1.80 / p10 1.50. Берём p10 — это ПОЛ,
- * ниже которого практика почти не опускается (90% недель выше).
- * T1 = 1.0: длительных этому тиру НЕ СТАВЯТ ВООБЩЕ (пар в замере n=0), поэтому любой
- * множитель был бы выдуман; «длительный» день у T1 — просто самый длинный из лёгких.
- *
- * Аддитивной надбавки не оставляем: в наблюдаемом диапазоне (лёгкий 40–89 мин) кратность 1.5
- * и надбавка 30 мин дают ОДНО И ТО ЖЕ, а за его пределами данных нет вообще — вводить второй
- * параметр было бы подгонкой под несуществующие наблюдения.
+ * ПОЛ лёгкой пробежки — ИНВАРИАНТ: короче 25 минут тренер не пишет НИ РАЗУ ни в одном тире
+ * (min по замеру: T1 25, T2 25, T3 30).
  */
-export const LONG_OVER_EASY_RATIO: Record<Tier, number> = { T1: 1.0, T2: 1.43, T3: 1.50 };
+export const EASY_FLOOR_MIN = 25;
 
 /**
- * Длительная относительно КАЧЕСТВЕННОЙ. Правило «длительная — самая длинная сессия недели»
- * подтверждено фактом: в 99% недель, где есть обе, длительная длиннее. Но насколько —
- * измерено: T2 медиана 1.53 / p10 1.32, T3 1.64 / p10 1.36. Прежние «качественная + 5 мин»
- * формально правило соблюдали, а практику занижали в разы.
+ * ЦЕЛЬ по длине лёгкой — p05 по тирам (30 / 32 / 40, округлено). Не гейт: если неделя не
+ * вмещает, лёгкий ужимается до инварианта 25, а день не теряется.
  */
-export const LONG_OVER_QUALITY_RATIO: Record<Tier, number> = { T1: 1.0, T2: 1.32, T3: 1.36 };
+export const EASY_TARGET_BY_TIER: Record<Tier, number> = { T1: 30, T2: 30, T3: 40 };
+
+/**
+ * ЦЕЛЬ кратности длительная/лёгкий — p10 замера (T2 1.43, T3 1.50). ГЕЙТА здесь нет:
+ * инвариант — только «длительная не короче самого длинного лёгкого» (min кратности 1.00).
+ * T1 = 1.0: длительных этому тиру не ставят вообще (пар n=0), множитель был бы выдуман.
+ */
+export const LONG_OVER_EASY_TARGET: Record<Tier, number> = { T1: 1.0, T2: 1.43, T3: 1.50 };
+
+/**
+ * ЦЕЛЬ кратности длительная/качественная — медиана замера (T2 1.53, T3 1.64), а не p10:
+ * это ориентир, к нему и тянемся. ГЕЙТ — инвариант «длительная не короче качественной»
+ * (99% недель строго длиннее, 1% поровну, короче НЕ БЫВАЕТ).
+ */
+export const LONG_OVER_QUALITY_TARGET: Record<Tier, number> = { T1: 1.0, T2: 1.53, T3: 1.64 };
 /** Шаг 4: ширина полосы лёгкого сверху ограничена (сек/км), параметр. */
 export const EASY_BAND_MAX_S = 25;
 /** Прирост недельного объёма к предыдущей ФАКТИЧЕСКОЙ неделе — не более этого (параметр). */
@@ -288,9 +294,12 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   tierNote: string | null = null): Week {
   const notes: string[] = [];
   if (tierNote) notes.push(tierNote);
-  const EASY_FLOOR = EASY_FLOOR_BY_TIER[a.tier];
-  const ratioEasy = LONG_OVER_EASY_RATIO[a.tier];
-  const ratioQual = LONG_OVER_QUALITY_RATIO[a.tier];
+  // ГЕЙТЫ — инварианты, ЦЕЛИ — перцентили. Минимальная неделя считается по инвариантам,
+  // рост остатка тянется к целям.
+  const EASY_FLOOR = EASY_FLOOR_MIN;                    // гейт: короче не бывает
+  const easyTarget = EASY_TARGET_BY_TIER[a.tier];       // цель: типичная длина лёгкой
+  const ratioEasy = LONG_OVER_EASY_TARGET[a.tier];      // цель
+  const ratioQual = LONG_OVER_QUALITY_TARGET[a.tier];   // цель
   let nWant = Math.round(env.rolling4wFrequency || 0);
   if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
   if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
@@ -346,15 +355,13 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
 
     // Бюджет ПОЛНОЙ длительности качественной: длительная обязана её перерасти (+1 шаг),
     // у лёгких дней есть пол. Отсюда потолок на саму сессию, который уходит в отбор.
-    // Бюджет ПОЛНОЙ длительности качественной. Выводится из неравенства
-    //   k·Q + Q·ratioQual + пол_лёгкого·лёгкие_дни <= потолок,
-    // где k — число качественных дней, а длительная обязана перерасти качественную В КРАТНОСТИ.
-    // Прежняя формула делила на (k + 1) — это остаток АДДИТИВНОГО правила «качественная + 5 мин».
-    // С кратностью 1.32 она разрешала пресет, который потом в неделю не влезал, и сборщик
-    // сокращал день: у 5733231 на трёх днях выбирался thr_6x5 (61.5 мин), неделя выходила 171
-    // при потолке 164, и качество терялось совсем.
+    // Бюджет ПОЛНОЙ длительности качественной. Выводится из ИНВАРИАНТА (не из кратности):
+    //   k·Q + (Q + шаг) + пол_лёгкого·лёгкие_дни <= потолок,
+    // где k — число качественных дней, а длительная обязана быть лишь ДЛИННЕЕ качественной.
+    // Шаг округления в числителе обязателен: без него бюджет промахивается ровно на эти 5 минут,
+    // отбор берёт пресет на грани, и неделя не проходит проверку вместимости.
     const sessionBudget = counts.quality > 0
-      ? Math.floor((weekly - EASY_FLOOR * easyRoles) / (counts.quality + ratioQual))
+      ? Math.floor((weekly - ROUND_TO_MIN - EASY_FLOOR * easyRoles) / (counts.quality + 1))
       : 0;
 
     // Без порога качество не назначаем ВООБЩЕ: резолвер всё равно откажет (числа брать неоткуда).
@@ -379,8 +386,10 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const qLongest = qSessions.reduce((m, x) => (x.deferred ? m : Math.max(m, x.minutes)), 0);
 
     // Пол длительной относительно лёгкого имеет смысл ТОЛЬКО когда лёгкие дни есть.
-    const minLong = Math.max(LONG_FLOOR, easyRoles > 0 ? Math.max(EASY_FLOOR * ratioEasy, EASY_FLOOR + ROUND_TO_MIN) : 0,
-      qLongest > 0 ? qLongest * ratioQual : 0);
+    // ИНВАРИАНТЫ: длительная не короче самого длинного лёгкого и не короче качественной.
+    // Кратности сюда НЕ входят — они цели, и неделю из-за них не ломаем.
+    const minLong = Math.max(LONG_FLOOR, easyRoles > 0 ? EASY_FLOOR + ROUND_TO_MIN : 0,
+      qLongest > 0 ? qLongest + ROUND_TO_MIN : 0);
     const minWeek = qTotal + round5(minLong) * counts.long + EASY_FLOOR * easyRoles;
     return { n, days, roles, dec, qSessions, easyRoles, fits: minWeek <= weekly, minWeek };
   };
@@ -414,24 +423,27 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const qTotal = qSessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);
   const qLongest = qSessions.reduce((m, x) => (x.deferred ? m : Math.max(m, x.minutes)), 0);
 
-  // ── РАСКЛАДКА ОСТАТКА: стартуем с полов и РАСТЁМ, пока есть место под потолком ──
-  // Порядок роста: сначала длительная до желаемой (она главная сессия недели), потом лёгкие.
-  // Так потолок не может быть нарушен по построению — мы никогда не начинаем сверху.
-  const longWant = round5(clamp(Math.min(env.capLongRunMin ?? weekly * 0.35, weekly * 0.45), LONG_FLOOR, 180));
+  // ── РАСКЛАДКА ОСТАТКА: стартуем с ИНВАРИАНТОВ и РАСТЁМ к ЦЕЛЯМ, пока есть место ──
+  // Потолок не может быть нарушен по построению — мы никогда не начинаем сверху.
+  // Порядок: (1) лёгкие до типичной длины своего тира, (2) длительная до кратности-ориентира,
+  // (3) остаток — длительной. Инвариант «длительная строго длиннее лёгкого» держится на
+  // каждом шаге; при кратности 1.0 (T1) одной проверки кратности было мало — она пропускала
+  // ровно тот шаг, который делал лёгкий равным длительной.
+  const capLong = round5(clamp(Math.min(env.capLongRunMin ?? weekly * 0.35, weekly * 0.45), LONG_FLOOR, 180));
   let easyBase = EASY_FLOOR;
-  // У T1 кратность 1.0 (длительных им не ставят), но «самая длинная» должна оставаться
-  // буквально самой длинной — иначе в плане два дня по 30 мин, и один зачем-то «длительный».
-  let longMin = round5(Math.max(LONG_FLOOR, easyRoles > 0 ? Math.max(easyBase * ratioEasy, easyBase + ROUND_TO_MIN) : 0,
-    qLongest > 0 ? qLongest * ratioQual : 0));
+  let longMin = round5(Math.max(LONG_FLOOR, easyRoles > 0 ? easyBase + ROUND_TO_MIN : 0,
+    qLongest > 0 ? qLongest + ROUND_TO_MIN : 0));
   let spare = weekly - (qTotal + longMin + easyBase * easyRoles);
 
-  while (spare >= ROUND_TO_MIN && longMin < longWant) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
-  // Лёгкие растут, пока длительная остаётся длиннее них в измеренной кратности И строго длиннее
-  // по абсолюту: при кратности 1.0 (T1) одна проверка кратности пропускала ровно тот шаг,
-  // который делал лёгкий равным длительной.
-  while (easyRoles > 0 && spare >= ROUND_TO_MIN * easyRoles && easyBase < 70
-         && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy
-         && longMin > easyBase + ROUND_TO_MIN) {
+  const canGrowEasy = (): boolean => easyRoles > 0 && spare >= ROUND_TO_MIN * easyRoles
+    && longMin > easyBase + ROUND_TO_MIN;
+  // (1) лёгкие до ЦЕЛИ тира — иначе при инварианте 25 мин план выглядит короче обычного
+  while (canGrowEasy() && easyBase < easyTarget) { easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles; }
+  // (2) длительная до ориентира: кратность к лёгкому, кратность к качественной, потолок baseline
+  const longTarget = round5(Math.max(capLong, easyBase * ratioEasy, qLongest > 0 ? qLongest * ratioQual : 0));
+  while (spare >= ROUND_TO_MIN && longMin < longTarget) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }
+  // (3) остаток — лёгким, пока кратность-ориентир к длительной не нарушена
+  while (canGrowEasy() && easyBase < 70 && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy) {
     easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles;
   }
 
