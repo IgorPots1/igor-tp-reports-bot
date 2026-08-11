@@ -10,8 +10,8 @@
  * чинится одной константой. Разброс без перекоса — нормальная вариативность тренера, и чинить
  * там нечего. Поэтому по каждой оси печатается доля совпадений И знак расхождения.
  *
- * Запись в autoplanner_shadow_results НЕ выполняется: миграция не применена. Ключ --persist
- * зарезервирован под будущее и без применённой миграции работать не будет.
+ * Запись в autoplanner_shadow_results — только по ключу --persist (таблица применена 13.08).
+ * Пишем ТОЛЬКО в свою аналитическую таблицу: ни TP, ни рабочие таблицы не трогаем.
  *
  * Запуск: npx tsx tools/trainingpeaks-export/scripts/tp-autoplanner-shadow-compare.ts
  */
@@ -263,6 +263,40 @@ async function main(): Promise<void> {
   }
   out.push("```");
 
+  // ── запись в autoplanner_shadow_results (таблица применена 13.08) ──
+  // Пишем ТОЛЬКО в свою аналитическую таблицу. Ни TP, ни рабочие таблицы не трогаем.
+  if (process.argv.includes("--persist")) {
+    const rows = pairs.map((p) => ({
+      trainingpeaks_athlete_id: p.aid,
+      week_start: p.weekStart,
+      train_window_from: addDays(p.weekStart, -7 * 26),
+      train_window_to: p.weekStart,
+      half_life_days: 21,
+      anchor_source: p.anchorSource,
+      generated_json: { days: p.genDays, minutes: p.genMin, hasQuality: p.genQuality, long: p.genLong, easyFast: p.genEasyFast, easySlow: p.genEasySlow, tier: p.tier },
+      actual_json: { days: p.actDays, minutes: p.actMin, hasQuality: p.actQuality, long: p.actLong, easyFast: p.actEasyFast, easySlow: p.actEasySlow },
+      match_scores_json: {
+        daysDelta: p.genDays - p.actDays,
+        volumeRatio: p.actMin > 0 ? Math.round((p.genMin / p.actMin) * 100) / 100 : null,
+        longRatio: p.actLong > 0 ? Math.round((p.genLong / p.actLong) * 100) / 100 : null,
+        qualityMatch: p.genQuality === p.actQuality,
+      },
+      easy_pred_minus_actual_s: (p.genEasyFast != null && p.genEasySlow != null && p.actEasyFast != null && p.actEasySlow != null)
+        ? Math.round((p.genEasyFast + p.genEasySlow) / 2 - (p.actEasyFast + p.actEasySlow) / 2) : null,
+    }));
+    // Уникальность в таблице задана индексом ПО ВЫРАЖЕНИЮ (coalesce(half_life_days,-1)),
+    // поэтому upsert с onConflict по списку колонок не годится. Перезаписываем ровно те строки,
+    // которые сами же и пишем: свои недели и своё half_life. Чужого не трогаем.
+    const { error: delErr } = await sb.from("autoplanner_shadow_results")
+      .delete().eq("half_life_days", 21).in("week_start", weekStarts);
+    if (delErr) throw new Error(`delete: ${delErr.message}`);
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await sb.from("autoplanner_shadow_results").insert(rows.slice(i, i + 500));
+      if (error) throw new Error(`insert: ${error.message}`);
+    }
+    console.log(`[shadow] записано строк в autoplanner_shadow_results: ${rows.length}`);
+  }
+
   const dir = path.join(path.resolve(toolRoot, "..", ".."), "reports", "autoplanner-shadow");
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, `compare-${weekStarts[0]}.md`), out.join("\n") + "\n");
@@ -271,4 +305,4 @@ async function main(): Promise<void> {
   console.log(`\n[shadow] отчёт → ${dir}`);
 }
 
-main().catch((e: unknown) => { console.error(e instanceof Error ? e.stack : String(e)); process.exit(1); });
+main().catch((e: unknown) => { console.error(e instanceof Error ? e.stack : JSON.stringify(e)); process.exit(1); });
