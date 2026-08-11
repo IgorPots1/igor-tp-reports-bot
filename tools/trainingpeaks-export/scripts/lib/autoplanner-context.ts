@@ -13,6 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildAnchor, extractEasySample, tierOf, type EasySample, type DateWindow } from "./easy-anchor.ts";
 import { buildQualityAnchor, extractQualitySample, type QualitySample } from "./quality-anchor.ts";
 import { anchorConfidence } from "./easy-anchor.ts";
+import { loadRoster } from "./autoplanner-roster.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
 const ILLNESS_TYPES = ["health_issue_started", "health_issue_improving", "pain_injury", "pause_training"];
@@ -264,14 +265,25 @@ const QUALITY_TITLE_RE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|п
 /** Так тренер называет длительные. Нужен, чтобы отделить их от обычных лёгких. */
 const LONG_TITLE_RE = /длительн|длинн/i;
 
-/** Собрать контекст по всем атлетам. asOf = дата, «на которую» считаем (обычно сегодня). */
+/**
+ * Собрать контекст по всем ДЕЙСТВУЮЩИМ атлетам. asOf = дата, «на которую» считаем.
+ *
+ * ФИЛЬТР АКТИВНОСТИ ЖИВЁТ ЗДЕСЬ НАМЕРЕННО. Отсюда кормятся и генератор недель, и пакет на
+ * приёмку, и теневое сравнение — значит фильтр применится ко всем трём сам, и его нельзя
+ * забыть подключить в новом вызывающем месте. До 16.08 ростером было «все, у кого есть
+ * пробежки в кэше», и недели уходили архивным, ушедшим и служебному аккаунту тренера.
+ */
 export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = todayIso()): Promise<Map<number, AthleteContext>> {
-  const [rows, thresholds, zone2, baselines, illnessByStudent] = await Promise.all([
-    pullRuns(sb, 200), pullThresholds(sb), pullZone2(sb), pullBaselines(sb), pullIllness(sb),
+  const [rows, thresholds, zone2, baselines, illnessByStudent, roster] = await Promise.all([
+    pullRuns(sb, 200), pullThresholds(sb), pullZone2(sb), pullBaselines(sb), pullIllness(sb), loadRoster(sb),
   ]);
 
   const byAth = new Map<number, Row[]>();
-  for (const r of rows) (byAth.get(r.trainingpeaks_athlete_id) ?? byAth.set(r.trainingpeaks_athlete_id, []).get(r.trainingpeaks_athlete_id)!).push(r);
+  for (const r of rows) {
+    // Не в списке действующих — контекста не строим вообще: ни в план, ни в замер, ни в метрику.
+    if (!roster.active.has(r.trainingpeaks_athlete_id)) continue;
+    (byAth.get(r.trainingpeaks_athlete_id) ?? byAth.set(r.trainingpeaks_athlete_id, []).get(r.trainingpeaks_athlete_id)!).push(r);
+  }
 
   const out = new Map<number, AthleteContext>();
   const win4wStart = addDays(asOf, -28);

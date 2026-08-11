@@ -26,6 +26,7 @@ import { toolRoot } from "./lib/paths.ts";
 import { loadAthleteContexts, mondayOf } from "./lib/autoplanner-context.ts";
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
 import { buildWeek, DAY_RU, type Week } from "./lib/autoplanner-week.ts";
+import { loadRoster, rosterSummary } from "./lib/autoplanner-roster.ts";
 
 const iso = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const addDays = (s: string, n: number): string => iso(Date.parse(s) + n * 86400000);
@@ -98,6 +99,9 @@ function printWeek(w: Week, label: string): string[] {
 
 async function main(): Promise<void> {
   const sb = sbc();
+  // Фильтр действующих применяется ВНУТРИ loadAthleteContexts; ростер читаем ещё раз только
+  // затем, чтобы показать тренеру в пакете, кого и по какому признаку отсеяли.
+  const roster = await loadRoster(sb);
   const ctx = await loadAthleteContexts(sb);
   const cat = await loadCatalog(sb);
   const weekStart = addDays(mondayOf(iso(Date.now())), 7);
@@ -167,6 +171,8 @@ async function main(): Promise<void> {
   const out: string[] = [];
   out.push(`# ПАКЕТ НА ПРИЁМКУ · ${picked.length} недель · неделя с ${weekStart}`);
   out.push(`\nСгенерировано недель всего: ${ok.length} · отказов: ${refused.length} · атлетов в контексте: ${ctx.size}`);
+  out.push(`\n${rosterSummary(roster)}`);
+  out.push(`Недействующие ученики (архив, ушедшие, служебный аккаунт) в пакет НЕ попадают и в метрику НЕ входят.`);
   out.push(`\nЧитать как тренер: по каждой неделе — «ставлю» или «не ставлю, потому что…».`);
   out.push(`Ничего не сокращено: описания приведены ровно так, как их увидит ученик.`);
 

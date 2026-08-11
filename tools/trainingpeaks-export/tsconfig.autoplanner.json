@@ -10,6 +10,7 @@
     "scripts/lib/pace-resolver.ts",
     "scripts/lib/easy-anchor.ts",
     "scripts/lib/band-collision.ts",
+    "scripts/lib/autoplanner-roster.ts",
     "scripts/tp-autoplanner-week.ts",
     "scripts/tp-week-shape-measure.ts",
     "scripts/tp-heuristics-measure.ts",

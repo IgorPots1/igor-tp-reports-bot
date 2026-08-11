@@ -29,6 +29,7 @@ import { toolRoot } from "./lib/paths.ts";
 import { INTERVAL_TITLE_RE, CONTROL_MODE_EASY_RE, isEasyRunTitle, extractEasySample, tierOf, type Tier } from "./lib/easy-anchor.ts";
 import { extractQualitySample } from "./lib/quality-anchor.ts";
 import { mondayOf } from "./lib/autoplanner-context.ts";
+import { loadRoster, rosterSummary } from "./lib/autoplanner-roster.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const l of readFileSync(p, "utf8").split(/\r?\n/)) { const t = l.trim(); if (!t || t.startsWith("#")) continue; const e = t.indexOf("="); if (e < 0) continue; const k = t.slice(0, e).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(e + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
 function sbc(): SupabaseClient {
@@ -92,7 +93,14 @@ function isNextWeek(prev: string, cur: string): boolean {
 
 async function main(): Promise<void> {
   const sb = sbc();
-  const rows = await pull(sb, WEEKS_BACK * 7);
+  // ЗАМЕР ИДЁТ ТОЛЬКО ПО ДЕЙСТВУЮЩИМ. Этот скрипт читает кэш напрямую, мимо
+  // loadAthleteContexts, поэтому фильтр зовём здесь явно — иначе константы считаются
+  // в том числе по ушедшим ученикам и по служебному аккаунту тренера.
+  const roster = await loadRoster(sb);
+  const rowsAll = await pull(sb, WEEKS_BACK * 7);
+  const rows = rowsAll.filter((r) => roster.active.has(r.trainingpeaks_athlete_id));
+  console.log(rosterSummary(roster));
+  console.log(`беговых записей до фильтра ${rowsAll.length} → после ${rows.length}`);
 
   // ── раскладка: атлет → неделя → {план, факт, качественные, все сессии} ──
   type Wk = { plan: number; fact: number; quality: Array<{ date: string; work: number | null }>; sessions: number };
