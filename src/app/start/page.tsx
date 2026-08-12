@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Onest, JetBrains_Mono } from "next/font/google";
+import { PersonStanding, Send, Zap } from "lucide-react";
 import { FLOW, seatsWord } from "@/lib/flow";
 import { getSeatsLeft } from "@/features/intensive/repository";
 import "./start.css";
@@ -51,17 +52,7 @@ export default async function StartPage() {
             <a className="card primary" href="/intensive">
               <span className="badge">Идёт набор</span>
               <span className="ic int">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5Z" />
-                </svg>
+                <Zap size={22} strokeWidth={2} aria-hidden="true" />
               </span>
               <span className="txt">
                 <span className="t">Беговой интенсив</span>{" "}
@@ -84,20 +75,7 @@ export default async function StartPage() {
 
             <a className="card" href="/landing">
               <span className="ic club">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="15.5" cy="4.2" r="2" />
-                  <path d="M12.3 21.5 14 16l-3.2-2.6.9-5.2 3.1 3.4 3.4.9" />
-                  <path d="M10.6 8.2 7.2 9.6l-1.4 3.1" />
-                  <path d="M14 16l-3.6.6-2.9 4.4" />
-                </svg>
+                <PersonStanding size={22} strokeWidth={2} aria-hidden="true" />
               </span>
               <span className="txt">
                 <span className="t">Беговой клуб</span>{" "}
@@ -110,18 +88,7 @@ export default async function StartPage() {
 
             <a className="card" href={TG_LINK}>
               <span className="ic tg">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M21.5 3.5 2.8 10.4c-.8.3-.8 1.4 0 1.7l4.6 1.6 1.7 5c.3.8 1.3.9 1.8.2l2.4-3.2 4.7 3.5c.7.5 1.7.1 1.9-.7l3-13.5c.2-.9-.6-1.6-1.4-1.5Z" />
-                  <path d="M21.5 3.5 9.4 13.7" />
-                </svg>
+                <Send size={22} strokeWidth={2} aria-hidden="true" />
               </span>
               <span className="txt">
                 <span className="t">Написать мне</span>{" "}
