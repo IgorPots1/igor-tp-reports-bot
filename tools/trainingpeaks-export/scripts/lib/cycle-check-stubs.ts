@@ -44,6 +44,8 @@ export function stubEnvelope(): Envelope {
     // недельного объёма, как при пустом baseline, и проверки меряют ЛОГИКУ, а не подсунутое число.
     longRunPracticeMaxMin: 0,
     longRunPracticeMedianMin: 0,
+    // личного пола у заглушки нет: проверки должны мерить ЛОГИКУ, а не подсунутое число
+    easyFloorPersonalMin: 0,
     dayHistogram: [1, 1, 1, 1, 1, 1, 1],
     weeksObserved: 20,
   };

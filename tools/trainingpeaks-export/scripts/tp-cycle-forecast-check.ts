@@ -27,7 +27,7 @@
  */
 import process from "node:process";
 
-import { buildWeek, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
+import { buildWeek, EASY_FLOOR_MIN, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
@@ -401,6 +401,38 @@ async function main(): Promise<void> {
     check("рост длительной не обходит защиту доли недели x0.45",
       wHole.refused != null || longestOf(wHole) <= Math.ceil(200 * 0.45) + 2,
       `неделя 200 мин дала длительную ${longestOf(wHole)} (защита ${Math.round(200 * 0.45)})`);
+
+    // (п) ЛИЧНЫЙ ПОЛ ЛЁГКОЙ. Когортные 25 мин пускали в неделю сессии 35-40 тем, кому тренер
+    // короче 60 не ставит. Заглушка: личный пол 50 — ни одна сессия недели не должна быть короче.
+    // ЧИСЛО ТОЧНОЕ, не «больше 25»: с когортным полом кратчайшая выходит 35, и мягкая
+    // формулировка прошла бы при снятой правке.
+    // ЗАГЛУШКА ПОДОБРАНА ТАК, ЧТОБЫ ПОЛ ДЕЙСТВИТЕЛЬНО СВЯЗЫВАЛ. При просторной неделе лёгкие
+    // и без пола дорастают до цели тира (50), и снятие правки проверку не роняет — первая
+    // версия так и прошла мутацию. Здесь неделя тесная и длительная забирает много: без пола
+    // кратчайшая сессия выходит 25, с полом — 50.
+    const envFloor = { ...env, easyFloorPersonalMin: 50, capLongRunMin: 130, longRunPracticeMaxMin: 130, longRunPracticeMedianMin: 110 };
+    const floorTgt: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 200, qualityMin: 30, days: 4, baseWeekMin: 230, hasTargetRace: false, intent: "maintenance" };
+    const wFloor = buildWeek(anchors, envFloor, cat, MON, false, null, floorTgt);
+    const shortestOf = (w: { sessions: Array<{ minutes: number; deferred?: boolean }> }): number => {
+      const mins = w.sessions.filter((s) => !s.deferred).map((s) => s.minutes);
+      return mins.length ? Math.min(...mins) : 0;
+    };
+    check("личный пол лёгкой: ни одна сессия не короче собственного минимума атлета",
+      wFloor.refused == null && shortestOf(wFloor) >= 50,
+      `личный пол 50, кратчайшая сессия ${shortestOf(wFloor)}, вся неделя ${wFloor.sessions.map((s) => s.minutes).join("/")}`);
+
+    // (р) НА УРЕЗАННОЙ НЕДЕЛЕ ПОЛ МАСШТАБИРУЕТСЯ, как и у длительной: иначе неделю не урезать.
+    const wFloorTaper = buildWeek(anchors, envFloor, cat, MON, false, null,
+      { ...floorTgt, role: "подводка", aerobicMin: 120, qualityMin: 20, baseWeekMin: 240 });
+    check("личный пол лёгкой: на урезанной неделе масштабируется вместе с целью",
+      wFloorTaper.refused != null || shortestOf(wFloorTaper) < 50,
+      `подводка дала кратчайшую ${shortestOf(wFloorTaper)}, полный личный пол 50`);
+
+    // (с) МАЛО ДАННЫХ — КОГОРТНЫЙ ПОЛ, прежнее поведение.
+    const wNoPf = buildWeek(anchors, { ...envFloor, easyFloorPersonalMin: 0 }, cat, MON, false, null, floorTgt);
+    check("мало данных: пол остаётся когортным, неделя собирается",
+      wNoPf.refused == null && shortestOf(wNoPf) >= EASY_FLOOR_MIN && shortestOf(wNoPf) < 50,
+      `без личного пола кратчайшая ${shortestOf(wNoPf)} (когортный ${EASY_FLOOR_MIN})`);
 
     // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
     const wNo = buildWeek(anchors, env, cat, MON, false, null);

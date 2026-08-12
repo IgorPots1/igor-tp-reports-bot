@@ -407,7 +407,18 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   if (tierNote) notes.push(tierNote);
   // ГЕЙТЫ — инварианты, ЦЕЛИ — перцентили. Минимальная неделя считается по инвариантам,
   // рост остатка тянется к целям.
-  const EASY_FLOOR = EASY_FLOOR_MIN;                    // гейт: короче не бывает
+  // ЛИЧНЫЙ ПОЛ ЛЁГКОЙ (правка 13.08). Когортные 25 мин — минимум ПО ВСЕМУ РОСТЕРУ, и он
+  // пускал в неделю сессии 35-40 мин тем, кому тренер короче 60 не ставит. Объём при этом
+  // совпадал с практикой (+4.1 мин) — рваным был СОСТАВ, и «мелкая неделя» это про него.
+  // Когортные 25 остаются ПОСЛЕДНЕЙ защитой: ниже них не опускаемся никогда.
+  // Масштабирование под урезанную неделю — ниже, рядом с полом длительной: здесь ещё не
+  // известны ни weekly, ни notTraining.
+  // Значение здесь КОГОРТНОЕ; личное подставляется ниже, когда станут известны weekly и
+  // notTraining (личный пол масштабируется на урезанной неделе). Держать личное ещё и тут —
+  // дублирование: нижнее присваивание всё равно перекрывает верхнее, и мутация верхнего
+  // ничего не меняет, то есть проверка рядом с ним была бы беззубой.
+  const easyFloorPersonal = env.easyFloorPersonalMin > 0 ? env.easyFloorPersonalMin : 0;
+  let EASY_FLOOR = EASY_FLOOR_MIN;                      // гейт: короче не бывает
   const easyTarget = EASY_TARGET_BY_TIER[a.tier];       // цель: типичная длина лёгкой
   const ratioEasy = LONG_OVER_EASY_TARGET[a.tier];      // цель
   // ЦЕЛЬ, НО БОЛЬШЕ НЕ МНОЖИТЕЛЬ ДЛИНЫ ДЛИТЕЛЬНОЙ (правка 16.08). Кратность замерена на
@@ -499,6 +510,26 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
 
   // ГЕЙТ КАЧЕСТВА: без цикла работает как прежде; при активном цикле ЦИКЛ ГЛАВНЕЕ,
   // и гейт превращается в пометку тренеру [решение Игоря].
+  // ── КОЭФФИЦИЕНТ УРЕЗАННОЙ НЕДЕЛИ: ОДИН НА ОБА ПОЛА ──
+  // Считается здесь, а не у пола длительной, потому что личный пол ЛЁГКОЙ нужен раньше —
+  // он входит в минимальную неделю (tryPlan), а та решает, сколько дней вообще поместится.
+  //  • неделя роста       — 1, полы в полную величину;
+  //  • разгрузка/подводка — цель цикла уже снижена, полы едут вместе с ней;
+  //  • понижение сигналом — у кого есть целевой старт, режется пропорционально факту;
+  //    у кого нет — полов от практики нет вовсе, остаются когортные.
+  const cycleWeekTarget = cycle ? Math.max(1, cycle.aerobicMin + cycle.qualityMin) : 1;
+  const cycleBaseWeek = cycle && cycle.baseWeekMin ? Math.max(1, cycle.baseWeekMin) : cycleWeekTarget;
+  let floorScale = Math.min(1, cycleWeekTarget / cycleBaseWeek);
+  if (notTraining) floorScale = cycle?.hasTargetRace ? floorScale * Math.min(1, weekly / cycleWeekTarget) : 0;
+
+  // ЛИЧНЫЙ ПОЛ ЛЁГКОЙ масштабируется тем же коэффициентом, что и пол длительной: на урезанной
+  // неделе короткая пробежка — норма, и держать её на полной личной величине значило бы
+  // не дать неделю урезать. Когортные 25 мин остаются нижней границей всегда.
+  if (easyFloorPersonal > 0) {
+    const scaled = cycle ? easyFloorPersonal * (floorScale > 0 ? floorScale : 1) : easyFloorPersonal;
+    EASY_FLOOR = Math.max(EASY_FLOOR_MIN, round5(scaled));
+  }
+
   const gateCap = qualityCapFromHistory(env.qualityLast8w);
   let qualityCap = gateCap;
   if (cycle && cycle.qualityMin > 0 && gateCap < 1) {
@@ -662,10 +693,6 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   //  • понижение сигналом — у кого ЕСТЬ целевой старт, пол режется пропорционально факту,
   //    то есть длительная уменьшается последней; у кого старта нет — пола нет вовсе.
   // Отдельно от пола держится инвариант «длительная не обнуляется» — он ниже, в именовании.
-  const cycleWeekTarget = cycle ? Math.max(1, cycle.aerobicMin + cycle.qualityMin) : 1;
-  const cycleBaseWeek = cycle && cycle.baseWeekMin ? Math.max(1, cycle.baseWeekMin) : cycleWeekTarget;
-  let floorScale = Math.min(1, cycleWeekTarget / cycleBaseWeek);
-  if (notTraining) floorScale = cycle?.hasTargetRace ? floorScale * Math.min(1, weekly / cycleWeekTarget) : 0;
   // ПОЛ ТОЖЕ РАСТЁТ. Поднять один потолок мало: потолок — предел, а тянет длительную вверх ПОЛ.
   // На первом прогоне правки потолок у 5807145 вырос до 110, а длительная осталась 95, потому
   // что ориентир задавали пропорция и доля. При подготовке к дистанции к цели должен идти

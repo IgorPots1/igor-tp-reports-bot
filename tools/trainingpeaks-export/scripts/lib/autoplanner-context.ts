@@ -95,6 +95,16 @@ export type Envelope = {
    */
   longRunPracticeMaxMin: number;
   longRunPracticeMedianMin: number;
+  /**
+   * ЛИЧНЫЙ ПОЛ ЛЁГКОЙ, мин: p10 длительности НЕ-качественных плановых пробежек за 26 недель.
+   * 0 — данных мало (меньше MIN_RUNS_FOR_PERSONAL_FLOOR), брать когортный.
+   *
+   * ЗАЧЕМ. Когортный пол 25 мин — это минимум ПО ВСЕМУ РОСТЕРУ, и он пускал в неделю сессии
+   * 35-40 мин тем, кому тренер короче 60 не ставит: у 5476215 в его собственной неделе нет
+   * ничего короче 60, а сборщик выдавал 35 и 40. Объём при этом совпадал — рваным был СОСТАВ.
+   * Пятая правка одной природы: когортное число в роли личного предела.
+   */
+  easyFloorPersonalMin: number;
   /** наблюдаемое распределение дней недели: 0=Пн … 6=Вс → сколько пробежек */
   dayHistogram: number[];
   weeksObserved: number;
@@ -147,6 +157,12 @@ export const LOW_COMPLIANCE_WEEKS = 3;
  */
 export const NOT_RUNNING_RATIO = 0.4;
 export const NOT_RUNNING_WEEKS = 3;
+
+/**
+ * Меньше этого числа НЕ-качественных пробежек за 26 недель — личный пол лёгкой не считаем,
+ * берём когортный. При n<20 десятый перцентиль опирается на одно-два наблюдения и врёт.
+ */
+export const MIN_RUNS_FOR_PERSONAL_FLOOR = 20;
 
 const TIER_DOWN: Record<Tier, Tier> = { T3: "T2", T2: "T1", T1: "T1" };
 
@@ -279,6 +295,14 @@ const QUALITY_TITLE_RE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|п
 /** Так тренер называет длительные. Нужен, чтобы отделить их от обычных лёгких. */
 const LONG_TITLE_RE = /длительн|длинн/i;
 /**
+ * РАЗМИНКА/АКТИВАЦИЯ — НЕ ЛЁГКИЙ БЕГ, и в личный пол не входит.
+ *
+ * Замер 13.08: всё, что короче 40 мин у этой группы, — «Разминка» перед стартом (у 5476215
+ * 23 и 25 мин, у 6009851 20 и 25). Без их отсева минимум атлета падает до 20-25, то есть
+ * ровно в когортный пол, и правка теряет смысл.
+ */
+const WARMUP_TITLE_RE = /разминк|активац|раскатк/i;
+/**
  * БЛОК В СОРЕВНОВАТЕЛЬНОМ ТЕМПЕ — это работа, а не обычная длительная.
  *
  * Нужен ТОЛЬКО запасному детектору длительных (см. decileFallback). QUALITY_TITLE_RE такие
@@ -326,6 +350,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const weekMin = new Map<string, number>(); const weekFreq = new Map<string, number>(); const weekQual = new Map<string, number>();
     const weekPlanned = new Map<string, number>();
     const easyPlannedMinutes: number[] = []; const longPlannedMinutes: number[] = [];
+    const easyFloorSamples: number[] = [];
     const nonQualPlanned26w: number[] = [];
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
@@ -377,6 +402,15 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         if (t && LONG_TITLE_RE.test(t) && r.workout_date >= win26wStart) {
           const m = Math.round((r.planned_time_raw as number) * 60);
           if (m > 0 && m <= 400) longPlannedMinutes.push(m);
+        }
+        // ЛИЧНЫЙ ПОЛ ЛЁГКОЙ: не-качественные и не-разминки за 26 недель.
+        // «Темп выше» здесь АЭРОБНЫЙ — по замеру (76% от порога против 83% у обычной лёгкой),
+        // как и в детекторе длительных. Без этой поправки у 5748681 в выборку не попадало
+        // почти ничего (её лёгкие названы «Лёгкий бег (темп выше)»), личного пола не
+        // получалось вовсе, и она оставалась на когортных 25 с сессией в 35 мин.
+        if (t && !(QUALITY_TITLE_RE.test(t) && !/темп выше/i.test(t)) && !WARMUP_TITLE_RE.test(t) && r.workout_date >= win26wStart) {
+          const m = Math.round((r.planned_time_raw as number) * 60);
+          if (m > 0 && m <= 300) easyFloorSamples.push(m);
         }
         // ЗАПАСНОЙ ДЕТЕКТОР: все НЕ-качественные за 26 недель. Нужен там, где тренер вообще
         // не пишет в заголовке «длительная» — см. longRunPracticeMedianMin ниже.
@@ -485,6 +519,20 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       return medOf(desc.slice(0, Math.max(1, Math.ceil(desc.length * 0.10))));
     })();
 
+    // ЛИЧНЫЙ ПОЛ — p10, А НЕ min. Обосновано замером 13.08:
+    //  • min после отсева разминок выходит 40 у ДЕСЯТИ из двенадцати (35 и 50 у двоих) —
+    //    то есть он схлопывается в новую когортную константу под личным именем, а чинили мы
+    //    ровно это;
+    //  • min — одно наблюдение, и мы уже видели, как его целиком определила посторонняя
+    //    категория (разминки); других таких категорий может быть сколько угодно;
+    //  • p10 симметричен принятому правилу потолков: «машине можно то, что тренер делает в
+    //    девяти случаях из десяти». Для пола это и есть p10.
+    // p10 по атлетам: 40-55, то есть он РАЗЛИЧАЕТ людей, в отличие от min.
+    const sortedFloor = [...easyFloorSamples].sort((x, y) => x - y);
+    const easyFloorPersonalMin = sortedFloor.length >= MIN_RUNS_FOR_PERSONAL_FLOOR
+      ? sortedFloor[Math.floor(0.10 * (sortedFloor.length - 1))]
+      : 0;
+
     const sortedLong = [...longPlannedMinutes].sort((x, y) => x - y);
     const longRunPracticeMaxMin = sortedLong.length
       ? sortedLong[sortedLong.length - 1]
@@ -542,7 +590,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         rolling4wQuality: Math.round(avgPlanned(weekQual) * 10) / 10,
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
-        longRunPracticeMaxMin, longRunPracticeMedianMin,
+        longRunPracticeMaxMin, longRunPracticeMedianMin, easyFloorPersonalMin,
         lastWeekMinutes: lastWeekMin,
         rolling4wPlannedMin, lastWeekPlannedMinutes, typicalPlannedWeekMin, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,
