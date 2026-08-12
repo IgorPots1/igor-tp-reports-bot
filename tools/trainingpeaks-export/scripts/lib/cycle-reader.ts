@@ -23,7 +23,6 @@ import {
   type CycleDraft, type CycleIntent,
 } from "./training-cycle.ts";
 
-const iso = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const weeksBetween = (from: string, to: string): number =>
   Math.round((Date.parse(to) - Date.parse(from)) / (7 * 86400000));
 

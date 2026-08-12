@@ -311,8 +311,6 @@ async function main(): Promise<void> {
     const envTinyHist = { ...env, rolling4wWeeklyMin: 60, capLongRunMin: 140 };
     const wShare = buildWeek(anchors, envTinyHist, cat, MON, false, null,
       { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 260, qualityMin: 40, days: 5 });
-    const workOf = (w: { sessions: Array<{ role: string; minutes: number }> }): number =>
-      w.sessions.filter((x) => x.role === "quality").reduce((m, x) => Math.max(m, x.minutes), 0);
     // Проверяем ВЫБРАННЫЙ ФОРМАТ, а не факт решения: при старом знаменателе потолок работы
     // выходит 12 мин, ни один формат в него не влезает, пул схлопывается до самого лёгкого
     // (20 мин работы) — но текст решения при этом остаётся тем же «цель цикла … взят
@@ -345,9 +343,9 @@ async function main(): Promise<void> {
       deload_every_n: 4, deload_depth_aerobic: 0.8, deload_quality_factor: 0.8,
       taper_profile: [], start_week: "2026-09-07", days: 5,
     };
-    const fakeSb = { from: () => ({ select: () => ({ eq: async () => ({ data: [row], error: null }) }) }) };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cycles = await loadActiveCycles(fakeSb as any, MON);
+    // Поддельный клиент: отдаёт ровно одну строку training_cycles, БД не нужна.
+    const fakeSb = { from: () => ({ select: () => ({ eq: () => Promise.resolve({ data: [row], error: null }) }) }) } as unknown as Parameters<typeof loadActiveCycles>[0];
+    const cycles = await loadActiveCycles(fakeSb, MON);
     const got = cycles.get(1);
     check("читатель: активный цикл прочитан в цель недели",
       !!got && got.target.days === 5 && got.target.aerobicMin > 0,
@@ -364,7 +362,7 @@ async function main(): Promise<void> {
       `по циклу ${wLive?.plannedMinutes} мин / ${wLive?.sessions.length} дней, без цикла ${wNone.plannedMinutes} мин / ${wNone.sessions.length} дней`);
 
     // Позиция недели считается от start_week, а не «всегда первая».
-    const cyclesLater = await loadActiveCycles(fakeSb as any, "2026-09-28");
+    const cyclesLater = await loadActiveCycles(fakeSb, "2026-09-28");
     check("читатель: позиция недели считается от start_week",
       cyclesLater.get(1)?.target.weekIndex === 4,
       `ожидали 4-ю неделю от 2026-09-07, получили ${cyclesLater.get(1)?.target.weekIndex}`);
