@@ -38,6 +38,11 @@ export type QualityContext = {
    * Без цикла null, и всё работает как раньше.
    */
   targetWorkMinutes?: number | null;
+  /**
+   * НЕДЕЛЬНЫЙ ОБЪЁМ ЭТОЙ НЕДЕЛИ ПО ЦИКЛУ, мин. Задан — потолок доли работы считается ОТ НЕГО.
+   * Без цикла null, и знаменателем остаётся исторический rolling4wWeeklyMin.
+   */
+  cycleWeeklyMin?: number | null;
 };
 
 /**
@@ -118,7 +123,12 @@ export function selectQualityFromCatalog(
   if (pool.length === 0) return { selected: false, reason: "no_candidates", detail: "после отсева VO2 кандидатов не осталось" };
 
   // ── потолок объёма работы по недельному объёму ──
-  const weekly = ctx.rolling4wWeeklyMin || 150;
+  // ЗНАМЕНАТЕЛЬ — НЕДЕЛЯ, КОТОРУЮ СОБИРАЕМ, А НЕ ИСТОРИЧЕСКАЯ (правка 12.08).
+  // Доля работы — это доля ЭТОЙ недели. Пока знаменателем стоял rolling4wWeeklyMin, потолок
+  // считался от исторического ФАКТА (завершённые минуты!), то есть при активном цикле в него
+  // возвращался тот самый конверт, который цикл отменяет, — ровно тот же дефект, что был
+  // починен в доборе объёма. Сам потолок (доля 0.20 = p90 практики) не тронут.
+  const weekly = ctx.cycleWeeklyMin ?? (ctx.rolling4wWeeklyMin || 150);
   const workCeil = Math.max(12, weekly * WORK_SHARE_OF_WEEKLY_MAX);
   const withinWeekly = pool.filter((p) => p.totalWorkMinutes <= workCeil);
   const warnings: string[] = [];

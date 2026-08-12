@@ -509,6 +509,8 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         sessionBudgetMin: sessionBudget,
         // цель по минутам работы от цикла — отборщик берёт ближайший формат, а не прогрессию
         targetWorkMinutes: cycle ? cycle.qualityMin : null,
+        // доля работы считается от недели ЦИКЛА, а не от исторического факта
+        cycleWeeklyMin: cycle ? weekly : null,
       });
     if (!dec.selected) { counts.quality = 0; easyRoles = n - counts.long; }
 
