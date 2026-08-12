@@ -14,6 +14,10 @@ import { buildAnchor, extractEasySample, tierOf, type EasySample, type DateWindo
 import { buildQualityAnchor, extractQualitySample, type QualitySample } from "./quality-anchor.ts";
 import { anchorConfidence } from "./easy-anchor.ts";
 import { loadRoster } from "./autoplanner-roster.ts";
+import {
+  MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
+  easyFloorPersonal, longRunPractice,
+} from "./practice-signals.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
 const ILLNESS_TYPES = ["health_issue_started", "health_issue_improving", "pain_injury", "pause_training"];
@@ -158,11 +162,7 @@ export const LOW_COMPLIANCE_WEEKS = 3;
 export const NOT_RUNNING_RATIO = 0.4;
 export const NOT_RUNNING_WEEKS = 3;
 
-/**
- * Меньше этого числа НЕ-качественных пробежек за 26 недель — личный пол лёгкой не считаем,
- * берём когортный. При n<20 десятый перцентиль опирается на одно-два наблюдения и врёт.
- */
-export const MIN_RUNS_FOR_PERSONAL_FLOOR = 20;
+
 
 const TIER_DOWN: Record<Tier, Tier> = { T3: "T2", T2: "T1", T1: "T1" };
 
@@ -294,28 +294,8 @@ async function pullIllness(sb: SupabaseClient): Promise<Map<string, DateWindow[]
 const QUALITY_TITLE_RE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|повтор|порог|фартлек|vo\s?2|мпк|темп выше)/i;
 /** Так тренер называет длительные. Нужен, чтобы отделить их от обычных лёгких. */
 const LONG_TITLE_RE = /длительн|длинн/i;
-/**
- * РАЗМИНКА/АКТИВАЦИЯ — НЕ ЛЁГКИЙ БЕГ, и в личный пол не входит.
- *
- * Замер 13.08: всё, что короче 40 мин у этой группы, — «Разминка» перед стартом (у 5476215
- * 23 и 25 мин, у 6009851 20 и 25). Без их отсева минимум атлета падает до 20-25, то есть
- * ровно в когортный пол, и правка теряет смысл.
- */
-const WARMUP_TITLE_RE = /разминк|активац|раскатк/i;
-/**
- * БЛОК В СОРЕВНОВАТЕЛЬНОМ ТЕМПЕ — это работа, а не обычная длительная.
- *
- * Нужен ТОЛЬКО запасному детектору длительных (см. decileFallback). QUALITY_TITLE_RE такие
- * заголовки качественными не считает: в них нет ни «х», ни «интерв», ни «порог». У 5475652
- * из-за этого в верхнюю дециль попадали «25 км в темпе марафона» (180 мин) и «15 км в темпе
- * марафона» (132), и её медиана длительных выходила 134 вместо 115 — то есть пол длительной
- * задавался марафонским блоком. Отделяем: настоящие её длительные — «Бег по пульсу (с гелями)»
- * на 165 и 150 мин.
- *
- * В QUALITY_TITLE_RE это НЕ добавлено намеренно: та регулярка кормит счётчики качества,
- * историю качества и «обычную лёгкую» по всему автопланировщику, и её правка — отдельный наряд.
- */
-const RACE_PACE_BLOCK_RE = /в темпе\s+(марафон|пм|полумарафон|мар\b)|марафонском темпе|соревновательн\w*\s+темп/i;
+
+
 
 /**
  * Собрать контекст по всем ДЕЙСТВУЮЩИМ атлетам. asOf = дата, «на которую» считаем.
@@ -408,9 +388,9 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         // как и в детекторе длительных. Без этой поправки у 5748681 в выборку не попадало
         // почти ничего (её лёгкие названы «Лёгкий бег (темп выше)»), личного пола не
         // получалось вовсе, и она оставалась на когортных 25 с сессией в 35 мин.
-        if (t && !(QUALITY_TITLE_RE.test(t) && !/темп выше/i.test(t)) && !WARMUP_TITLE_RE.test(t) && r.workout_date >= win26wStart) {
+        {
           const m = Math.round((r.planned_time_raw as number) * 60);
-          if (m > 0 && m <= 300) easyFloorSamples.push(m);
+          if (r.workout_date >= win26wStart && countsForEasyFloor(t, m, QUALITY_TITLE_RE)) easyFloorSamples.push(m);
         }
         // ЗАПАСНОЙ ДЕТЕКТОР: все НЕ-качественные за 26 недель. Нужен там, где тренер вообще
         // не пишет в заголовке «длительная» — см. longRunPracticeMedianMin ниже.
@@ -421,10 +401,9 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         // у 5748681 пять сессий по 100 мин названы «Лёгкий бег (темп выше)», и по регулярке
         // её медиана длительных падала со 100 до 60. Саму QUALITY_TITLE_RE не трогаем — она
         // кормит счётчики качества по всему автопланировщику, её правка отдельный наряд.
-        const qualForLong = QUALITY_TITLE_RE.test(t) && !/темп выше/i.test(t);
-        if (t && !qualForLong && !RACE_PACE_BLOCK_RE.test(t) && r.workout_date >= win26wStart) {
+        {
           const m = Math.round((r.planned_time_raw as number) * 60);
-          if (m > 0 && m <= 400) nonQualPlanned26w.push(m);
+          if (r.workout_date >= win26wStart && countsForLongFallback(t, m, QUALITY_TITLE_RE)) nonQualPlanned26w.push(m);
         }
       }
       // ── ФАКТИЧЕСКАЯ ВАЛЮТА: только там, где вопрос именно «что человек СДЕЛАЛ» ──
@@ -513,31 +492,11 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     // Включается ТОЛЬКО при полном отсутствии заголовков. Порог «мало заголовков» (например
     // меньше трёх) сюда сознательно НЕ введён: у 5475652 он поднял бы медиану 90 -> 126, и это
     // решение тренера, а не моё. Сегодня ветка срабатывает ровно у одного человека.
-    const decileFallback = ((): number => {
-      const desc = [...nonQualPlanned26w].sort((x, y) => y - x);
-      if (!desc.length) return 0;
-      return medOf(desc.slice(0, Math.max(1, Math.ceil(desc.length * 0.10))));
-    })();
-
-    // ЛИЧНЫЙ ПОЛ — p10, А НЕ min. Обосновано замером 13.08:
-    //  • min после отсева разминок выходит 40 у ДЕСЯТИ из двенадцати (35 и 50 у двоих) —
-    //    то есть он схлопывается в новую когортную константу под личным именем, а чинили мы
-    //    ровно это;
-    //  • min — одно наблюдение, и мы уже видели, как его целиком определила посторонняя
-    //    категория (разминки); других таких категорий может быть сколько угодно;
-    //  • p10 симметричен принятому правилу потолков: «машине можно то, что тренер делает в
-    //    девяти случаях из десяти». Для пола это и есть p10.
-    // p10 по атлетам: 40-55, то есть он РАЗЛИЧАЕТ людей, в отличие от min.
-    const sortedFloor = [...easyFloorSamples].sort((x, y) => x - y);
-    const easyFloorPersonalMin = sortedFloor.length >= MIN_RUNS_FOR_PERSONAL_FLOOR
-      ? sortedFloor[Math.floor(0.10 * (sortedFloor.length - 1))]
-      : 0;
-
-    const sortedLong = [...longPlannedMinutes].sort((x, y) => x - y);
-    const longRunPracticeMaxMin = sortedLong.length
-      ? sortedLong[sortedLong.length - 1]
-      : decileFallback;
-    const longRunPracticeMedianMin = sortedLong.length ? medOf(sortedLong) : decileFallback;
+    // Все три величины считает чистый practice-signals — там же они и проверяются.
+    const easyFloorPersonalMin = easyFloorPersonal(easyFloorSamples);
+    const longPractice = longRunPractice(longPlannedMinutes, nonQualPlanned26w);
+    const longRunPracticeMaxMin = longPractice.maxMin;
+    const longRunPracticeMedianMin = longPractice.medianMin;
 
     const b = baselines.get(aid);
 
