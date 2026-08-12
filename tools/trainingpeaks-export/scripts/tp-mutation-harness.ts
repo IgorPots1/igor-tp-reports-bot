@@ -86,7 +86,7 @@ const MUTATIONS: Mutation[] = [
   { id: "dist-step", file: W, find: 'export const LONG_CAP_STEP_BY_INTENT: Record<string, number> = { marathon: 1.116, half: 1.187 };', replace: 'export const LONG_CAP_STEP_BY_INTENT: Record<string, number> = { marathon: 1.0, half: 1.0 };', what: "шаг роста длительной обнулён" },
   { id: "dist-any-intent", file: W, find: "  const floorBase = cycle && distTarget && distStep && cycle.hasTargetRace", replace: "  const floorBase = cycle && (distTarget ?? 180) && (distStep ?? 1.116)", what: "рост длительной применяется к ЛЮБОМУ циклу, без старта и без дистанции" },
 
-  { id: "easy-target-cohort", file: W, find: "  const easyTarget = env.easyTargetPersonalMin > 0 ? env.easyTargetPersonalMin : EASY_TARGET_BY_TIER[a.tier];", replace: "  const easyTarget = EASY_TARGET_BY_TIER[a.tier];", what: "цель лёгкой вернулась на тирную" },
+  { id: "easy-target-median", file: P, find: "export function easyTargetPersonal(samples: number[]): number {\n  if (samples.length < MIN_RUNS_FOR_PERSONAL_FLOOR) return 0;\n  return median(samples);", replace: "export function easyTargetPersonal(samples: number[]): number {\n  if (samples.length < MIN_RUNS_FOR_PERSONAL_FLOOR) return 0;\n  return Math.min(...samples);", what: "личная цель лёгкой берётся как min вместо медианы" },
 
   // ── сборщик недели: пол лёгкой ──
   { id: "easy-floor-personal", file: W, find: "  if (easyFloorPersonal > 0) {", replace: "  if (false && easyFloorPersonal > 0) {", what: "личный пол лёгкой не подставляется" },

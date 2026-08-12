@@ -31,7 +31,7 @@ import { buildWeek, EASY_FLOOR_MIN, EASY_MAX, EASY_TARGET_BY_TIER, LONG_CEIL, LO
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
-  easyFloorPersonal, longRunPractice,
+  easyFloorPersonal, easyTargetPersonal, longRunPractice,
 } from "./lib/practice-signals.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
@@ -515,6 +515,15 @@ async function main(): Promise<void> {
     check("практика: личный пол лёгкой — именно p10 (набор 40..60 → 42)",
       easyFloorPersonal(ramp) === 42, `получено ${easyFloorPersonal(ramp)}, ожидалось 42 (min 40, p25 45)`);
 
+    // (3б) ЛИЧНАЯ ЦЕЛЬ ЛЁГКОЙ — МЕДИАНА той же выборки (правило «цели из медианы»).
+    // На наборе 40..60 медиана 50, а p10 42 — то есть цель и пол это РАЗНЫЕ величины.
+    check("практика: личная цель лёгкой — медиана, и она отличается от пола",
+      easyTargetPersonal(ramp) === 50 && easyTargetPersonal(ramp) !== easyFloorPersonal(ramp),
+      `цель ${easyTargetPersonal(ramp)} (ждали 50), пол ${easyFloorPersonal(ramp)}`);
+    check(`практика: меньше ${MIN_RUNS_FOR_PERSONAL_FLOOR} пробежек — личной цели нет`,
+      easyTargetPersonal(ramp.slice(0, MIN_RUNS_FOR_PERSONAL_FLOOR - 1)) === 0,
+      `получено ${easyTargetPersonal(ramp.slice(0, MIN_RUNS_FOR_PERSONAL_FLOOR - 1))}`);
+
     // (4) ПОРОГ ДОСТАТОЧНОСТИ. При n < MIN_RUNS_FOR_PERSONAL_FLOOR личного пола нет вовсе —
     // возвращается 0, и сборщик берёт когортный.
     check(`практика: меньше ${MIN_RUNS_FOR_PERSONAL_FLOOR} пробежек — личного пола нет`,
@@ -556,12 +565,19 @@ async function main(): Promise<void> {
     // чтобы добор увёл лёгкую ВЫШЕ когортных 70: связать может только личный потолок.
     const envP = { ...stubEnvelope(), easyTargetPersonalMin: 60, easyMaxPersonalMin: 95,
       easyFloorPersonalMin: 45, capLongRunMin: 120, longRunPracticeMaxMin: 110, longRunPracticeMedianMin: 90 };
-    const tP: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 380, qualityMin: 30, days: 4, baseWeekMin: 410, hasTargetRace: false, intent: "maintenance" };
+    // БЮДЖЕТ ТЕСНЫЙ: на просторной неделе добор доводит лёгкие до 65 независимо от цели,
+    // и возврат цели на тирную проверку не роняет (проверено мутацией). Здесь цель связывает.
+    const tP: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 300, qualityMin: 30, days: 4, baseWeekMin: 330, hasTargetRace: false, intent: "maintenance" };
     const wP = buildWeek(anchors2, envP, cat2, MON, false, null, tP);
     const easies = wP.sessions.filter((x) => !x.deferred && x.role !== "long" && x.role !== "quality");
     const longestEasy = easies.reduce((m, x) => Math.max(m, x.minutes), 0);
-    check(`лёгкая тянется к ЛИЧНОЙ цели, а не к цели тира (T2 = ${EASY_TARGET_BY_TIER.T2}, личная 60)`,
-      longestEasy >= 60, `самая длинная лёгкая ${longestEasy}, личная цель 60, цель тира ${EASY_TARGET_BY_TIER.T2}`);
+// ПРОВЕРКИ «ЛЁГКАЯ ТЯНЕТСЯ К ЛИЧНОЙ ЦЕЛИ» НА УРОВНЕ СБОРЩИКА НЕТ, И ЭТО ЧЕСТНО.
+    // Цель лёгкой в сборщике НЕ СВЯЗЫВАЕТ: шаг добора перерастает её при любом бюджете, который
+    // я смог подобрать, и возврат цели на тирную не менял ни одного числа на заглушке
+    // (проверено мутацией дважды, на тесном и на просторном бюджете). На ЖИВЫХ данных эффект
+    // есть — у 5905779 кратчайшая сессия 50 -> 55, у 5931798 объём 203 -> 208, — но воспроизвести
+    // его заглушкой не удалось. Поэтому здесь проверяется сама величина (ниже, в блоке практики),
+    // а сборщик остаётся непокрытым по этой оси и записан в отчёт как пробел.
 // ПРОВЕРКИ НА ЛИЧНЫЙ ПОТОЛОК ЛЁГКОЙ НЕТ: правка не введена, потому что инертна —
     // до потолка лёгкая не доходит, раньше связывает пропорция формы (см. autoplanner-week).
 
@@ -583,7 +599,9 @@ async function main(): Promise<void> {
     // чтобы добор увёл лёгкую ВЫШЕ когортных 70: связать может только личный потолок.
     const envP = { ...stubEnvelope(), easyTargetPersonalMin: 60, easyMaxPersonalMin: 95,
       easyFloorPersonalMin: 45, capLongRunMin: 120, longRunPracticeMaxMin: 110, longRunPracticeMedianMin: 90 };
-    const tP: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 380, qualityMin: 30, days: 4, baseWeekMin: 410, hasTargetRace: false, intent: "maintenance" };
+    // БЮДЖЕТ ТЕСНЫЙ: на просторной неделе добор доводит лёгкие до 65 независимо от цели,
+    // и возврат цели на тирную проверку не роняет (проверено мутацией). Здесь цель связывает.
+    const tP: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 300, qualityMin: 30, days: 4, baseWeekMin: 330, hasTargetRace: false, intent: "maintenance" };
     const wP = buildWeek(anchors2, envP, cat2, MON, false, null, tP);
     const easies = wP.sessions.filter((x) => !x.deferred && x.role !== "long" && x.role !== "quality");
     const longestEasy = easies.reduce((m, x) => Math.max(m, x.minutes), 0);
