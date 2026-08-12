@@ -673,8 +673,19 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const floorBase = cycle && distTarget && distStep && cycle.hasTargetRace
     ? Math.min(distTarget, env.longRunPracticeMedianMin * Math.pow(distStep, Math.max(0, (cycle.weekIndex ?? 1) - 1)))
     : env.longRunPracticeMedianMin;
+  // ДОЛЯ x0.45 РЕЖЕТ ТОЛЬКО РОСТ, НЕ САМУ МЕДИАНУ (правка 13.08).
+  //
+  // Два решения тренера, которые на первый взгляд противоречат друг другу:
+  //   • «доля x0.45 — защита от абсурда, а не рабочий предел»: медиану практики она перебивать
+  //     не должна (у 6009851 медиана 90 против 0.45 x 180 = 81 — иначе теряется 10 мин);
+  //   • «дыру в защите закрыть»: выросший под дистанцию пол обходил долю через max() и на
+  //     неделе 330 мин пол в 180 дал бы 55% недели.
+  // Развод простой и по смыслу: МЕДИАНА — то, что человек делает и так, её доля не трогает;
+  // РОСТ СВЕРХ МЕДИАНЫ — предположение системы, и он доле подчиняется.
+  const practiceFloor = round5(env.longRunPracticeMedianMin * floorScale);
+  const grownFloor = round5(floorBase * floorScale);
   const longPracticeFloor = cycle && env.longRunPracticeMedianMin > 0 && floorScale > 0
-    ? Math.min(round5(floorBase * floorScale), LONG_CEIL) : 0;
+    ? Math.min(Math.max(practiceFloor, Math.min(grownFloor, weekly * 0.45)), LONG_CEIL) : 0;
   // ── ПОТОЛОК РАСТЁТ ВМЕСТЕ С ЦИКЛОМ (правка 13.08) ──
   // Потолок «максимум практики атлета» верен для ПОДДЕРЖАНИЯ и неверен для ПОДГОТОВКИ: цель
   // подготовки по определению за пределами прошлого. У 5807145 практический максимум 90 мин,
@@ -690,8 +701,17 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // «снять рост потолка» не роняла проверку. Честно: совсем мёртвым он не был — на подводочной
   // неделе 5807145 давал +5 мин (115 против 110). Пять минут не стоят ветки, которую нечем
   // проверить: зелёная проверка рядом с непроверяемым кодом хуже отсутствия обоих.
+  // ДОЛЯ НЕДЕЛИ x0.45 — ЗАЩИТА, И ОНА НЕ ОБХОДИТСЯ ПОЛОМ (правка 13.08).
+  // Прежде было max(пол, min(источник, неделя x0.45)): пол стоял СНАРУЖИ минимума и потому
+  // проходил мимо защиты. Пока пол был равен медиане практики, это было незаметно; после того
+  // как пол начал РАСТИ под дистанцию, дыра стала считаться: пол 180 на неделе 330 мин дал бы
+  // длительную в 55% недели. Теперь доля режет и пол тоже.
+  // Смысл «защита, а не рабочий предел» сохранён: 0.45 по-прежнему НЕ мешает достать медиану
+  // практики на нормальной неделе — там 0.45 x неделя заведомо выше медианы; она вступает
+  // только там, где длительная действительно грозит съесть половину недели.
+  const shareGuard = weekly * 0.45;
   const capLong = round5(clamp(
-    Math.max(longPracticeFloor, Math.min(longCapSource ?? weekly * 0.35, weekly * 0.45)),
+    Math.max(longPracticeFloor, Math.min(longCapSource ?? weekly * 0.35, shareGuard)),
     LONG_FLOOR, LONG_CEIL));
   let easyBase = EASY_FLOOR;
   let longMin = round5(Math.max(LONG_FLOOR, easyRoles > 0 ? easyBase + ROUND_TO_MIN : 0,

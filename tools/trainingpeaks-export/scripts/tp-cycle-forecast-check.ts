@@ -392,6 +392,16 @@ async function main(): Promise<void> {
       wTaper.refused != null || longestOf(wTaper) >= LONG_FLOOR,
       `подводочная неделя дала длительную ${longestOf(wTaper)} (пол ${LONG_FLOOR})`);
 
+    // (о) РОСТ СВЕРХ МЕДИАНЫ ПОДЧИНЯЕТСЯ ДОЛЕ x0.45, САМА МЕДИАНА — НЕТ.
+    // Заглушка: медиана практики 90, неделя 200 мин (0.45 x 200 = 90), а выросший пол на
+    // 8-й неделе просит 90 x 1.116^7 = 191. Без защиты длительная забрала бы 95% недели.
+    const envHole = { ...env, capLongRunMin: 200, longRunPracticeMaxMin: 90, longRunPracticeMedianMin: 90 };
+    const wHole = buildWeek(anchors, envHole, cat, MON, false, null,
+      { weekIndex: 8, totalWeeks: 12, role: "рост", aerobicMin: 175, qualityMin: 25, days: 3, baseWeekMin: 200, hasTargetRace: true, intent: "marathon" });
+    check("рост длительной не обходит защиту доли недели x0.45",
+      wHole.refused != null || longestOf(wHole) <= Math.ceil(200 * 0.45) + 2,
+      `неделя 200 мин дала длительную ${longestOf(wHole)} (защита ${Math.round(200 * 0.45)})`);
+
     // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
     const wNo = buildWeek(anchors, env, cat, MON, false, null);
     check("без цикла: потолок из конверта, а не из цели цикла",
