@@ -27,7 +27,7 @@
  */
 import process from "node:process";
 
-import { buildWeek, EASY_FLOOR_MIN, EASY_MAX, EASY_TARGET_BY_TIER, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
+import { buildWeek, DAY_RU, EASY_FLOOR_MIN, EASY_MAX, EASY_TARGET_BY_TIER, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, placeRolesByPractice, type CycleWeekTarget, type DayHistograms, type Role, type Week } from "./lib/autoplanner-week.ts";
 import { tempoPresetsFrom } from "./lib/autoplanner-catalog.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
@@ -776,6 +776,75 @@ async function main(): Promise<void> {
     check("темповый: рабочая полоса МЕДЛЕННЕЕ порога (суб-порог), а не на пороге",
       tWork.length === 1 && (tWork[0].fastSec ?? 0) >= (A.threshold?.paceSec ?? 0),
       `быстрый край ${tWork[0]?.fastSec ?? "—"} при пороге ${A.threshold?.paceSec}`);
+  }
+
+  // ── 7-кватер. ДНИ ПО РОЛЯМ ──
+  // Наряд 12.08. День длительной брался как argmax ОБЩЕЙ гистограммы; замер показал, что она
+  // совпадает с настоящим днём длительной лишь у 27 атлетов из 99, потому что набита лёгкими.
+  {
+    const H = (over: Partial<DayHistograms> = {}): DayHistograms => ({
+      all: [0, 0, 0, 0, 0, 0, 0], long: [0, 0, 0, 0, 0, 0, 0],
+      quality: [0, 0, 0, 0, 0, 0, 0], easy: [0, 0, 0, 0, 0, 0, 0], ...over,
+    });
+    const roleOf = (r: Map<number, Role>, role: Role): number[] =>
+      [...r.entries()].filter(([, x]) => x === role).map(([d]) => d).sort((a, b) => a - b);
+
+    // (а) ДЛИТЕЛЬНАЯ ИДЁТ В СВОЙ ДЕНЬ, А НЕ В САМЫЙ ЧАСТЫЙ ВООБЩЕ.
+    // Общая гистограмма указывает на вторник (там 20 лёгких), своя — на воскресенье.
+    // Это буквально случай Николаевой: 20 недель подряд длительная в воскресенье.
+    const hNik = H({ all: [0, 20, 1, 19, 4, 2, 16], long: [0, 0, 0, 0, 0, 0, 16], quality: [0, 0, 0, 19, 0, 0, 0], easy: [0, 20, 1, 0, 4, 2, 0] });
+    const pNik = placeRolesByPractice(4, { quality: 1, long: 1 }, hNik);
+    check("дни: длительная в свой обычный день, а не в самый частый вообще",
+      roleOf(pNik.roles, "long")[0] === 6,
+      `длительная в ${DAY_RU[roleOf(pNik.roles, "long")[0] ?? -1] ?? "—"}, ждали Вс (argmax общей — Вт)`);
+    check("дни: качественная в свой обычный день",
+      roleOf(pNik.roles, "quality")[0] === 3,
+      `качество в ${roleOf(pNik.roles, "quality").map((d) => DAY_RU[d]).join(",") || "—"}, ждали Чт`);
+
+    // (б) ПРАВИЛО СМЕЖНОСТИ ЖЁСТЧЕ ПРЕДПОЧТЕНИЯ. Обычный день качества — суббота, но
+    // длительная в воскресенье, и качество обязано сдвинуться на следующий свой день.
+    const hAdj = H({ all: [1, 8, 1, 1, 1, 9, 10], long: [0, 0, 0, 0, 0, 0, 10], quality: [0, 5, 0, 0, 0, 9, 0], easy: [1, 3, 1, 1, 1, 0, 0] });
+    const pAdj = placeRolesByPractice(3, { quality: 1, long: 1 }, hAdj);
+    check("дни: качество не смежно с длительной — предпочтение уступает правилу",
+      roleOf(pAdj.roles, "quality")[0] === 1,
+      `качество в ${DAY_RU[roleOf(pAdj.roles, "quality")[0] ?? -1] ?? "—"} при длительной в ${DAY_RU[roleOf(pAdj.roles, "long")[0] ?? -1] ?? "—"}; Сб запрещена как смежная`);
+
+    // (в) ДВЕ КАЧЕСТВЕННЫЕ НЕ ПОДРЯД. Обычные дни качества — вторник и среда,
+    // вторая обязана уехать дальше (в практике подряд лишь 11 недель из 1377).
+    const hTwo = H({ all: [2, 9, 8, 5, 4, 1, 9], long: [0, 0, 0, 0, 0, 0, 9], quality: [0, 9, 8, 5, 1, 0, 0], easy: [2, 0, 0, 0, 3, 1, 0] });
+    const pTwo = placeRolesByPractice(4, { quality: 2, long: 1 }, hTwo);
+    const qTwo = roleOf(pTwo.roles, "quality");
+    check("дни: две качественные не в смежные дни",
+      qTwo.length === 2 && Math.abs(qTwo[0] - qTwo[1]) !== 1 && Math.abs(qTwo[0] - qTwo[1]) !== 6,
+      `качество в ${qTwo.map((d) => DAY_RU[d]).join(",")}`);
+
+    // (г) ПОСЛЕ ДЛИТЕЛЬНОЙ — ЛЁГКИЙ. Отдельного кода правило не требует (его держит запрет
+    // смежности), но требует проверки: снимут запрет — и день после длительной станет
+    // качественным. ЗАГОТОВКА ПОДОБРАНА ТАК, ЧТОБЫ ПРАВИЛО РЕАЛЬНО СВЯЗЫВАЛО: обычный день
+    // качества у этого атлета — ПОНЕДЕЛЬНИК, то есть ровно день после воскресной длительной.
+    // На заготовке, где качество и так предпочитает середину недели, проверка была бы пустой.
+    // Четыре дня, чтобы понедельник ГАРАНТИРОВАННО был занят: на пустой день правило
+    // не проверить, а «после длительной никого» проверку молча озеленяло бы.
+    const hAfter = H({ all: [9, 4, 3, 1, 5, 1, 9], long: [0, 0, 0, 0, 0, 0, 9], quality: [9, 4, 3, 0, 0, 0, 0], easy: [7, 0, 0, 1, 5, 1, 0] });
+    const pAfter = placeRolesByPractice(4, { quality: 1, long: 1 }, hAfter);
+    const longDay = roleOf(pAfter.roles, "long")[0];
+    const after = pAfter.roles.get((longDay + 1) % 7);
+    check("дни: день после длительной — лёгкий, а не качественный",
+      longDay === 6 && after !== undefined && after !== "quality",
+      `после длительной (${DAY_RU[longDay] ?? "—"}) стоит «${after ?? "ничего"}», при том что Пн — самый частый день качества`);
+
+    // (д) РОЛЕВОЙ ГИСТОГРАММЫ НЕТ (новичок) — падаем на общую, а не на нулевой день.
+    const pNew = placeRolesByPractice(3, { quality: 1, long: 1 }, H({ all: [0, 0, 3, 0, 5, 0, 7] }));
+    check("дни: своей гистограммы нет — роль встаёт по общей, неделя не вырождается в понедельник",
+      roleOf(pNew.roles, "long")[0] === 6 && pNew.days.length === 3,
+      `длительная в ${DAY_RU[roleOf(pNew.roles, "long")[0] ?? -1] ?? "—"}, дней ${pNew.days.length}`);
+
+    // (е) ЛЁГКИЕ ЗАНИМАЮТ СВОИ ДНИ, А НЕ ОСТАТОК ПО ПОРЯДКУ НЕДЕЛИ.
+    const hEasy = H({ all: [1, 9, 1, 1, 8, 1, 9], long: [0, 0, 0, 0, 0, 0, 9], quality: [0, 9, 0, 0, 0, 0, 0], easy: [1, 0, 1, 1, 8, 1, 0] });
+    const pEasy = placeRolesByPractice(3, { quality: 1, long: 1 }, hEasy);
+    const easyDays = [...pEasy.roles.entries()].filter(([, r]) => r === "easy" || r === "easy_strides").map(([d]) => d);
+    check("дни: лёгкий встаёт в свой частый день (Пт), а не в первый свободный (Пн)",
+      easyDays.length === 1 && easyDays[0] === 4, `лёгкие в ${easyDays.map((d) => DAY_RU[d]).join(",") || "—"}`);
   }
 
   // ── 7-тер. КЛАССИФИКАТОР КАЧЕСТВА И ЛЕСТНИЦА ТЕМПОВОГО: ЧИСТЫЕ ФУНКЦИИ ──

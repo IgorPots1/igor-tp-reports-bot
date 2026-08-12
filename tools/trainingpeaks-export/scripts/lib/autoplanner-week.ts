@@ -191,23 +191,79 @@ export function chooseDays(hist: number[], n: number): number[] {
     .slice(0, Math.max(0, n)).map((x) => x.i).sort((a, b) => a - b);
 }
 
-export function assignRoles(days: number[], counts: { quality: number; long: number }, longDayHint: number | null): Map<number, Role> {
+/** Гистограммы дней по ролям + общая. Общая — запасная, когда ролевая пуста. */
+export type DayHistograms = { all: number[]; long: number[]; quality: number[]; easy: number[] };
+
+const adjacentDays = (a: number, b: number): boolean => Math.abs(a - b) === 1 || Math.abs(a - b) === 6;
+
+/** Дни по убыванию частоты в своей гистограмме; при равенстве — по общей, затем по порядку недели. */
+function daysByPreference(own: number[], all: number[]): number[] {
+  return own.map((c, i) => ({ c, i })).sort((x, y) => y.c - x.c || all[y.i] - all[x.i] || x.i - y.i).map((x) => x.i);
+}
+
+/**
+ * РОЛЬ СТАВИТСЯ В СВОЙ ОБЫЧНЫЙ ДЕНЬ, А НЕ В ЛЮБОЙ СВОБОДНЫЙ (правка 12.08).
+ *
+ * ЧТО БЫЛО СЛОМАНО. Дни недели выбирались как top-N ОБЩЕЙ гистограммы, а роли раскладывались
+ * по ним «от длительной по расстоянию». Сам день длительной брался как argmax той же общей
+ * гистограммы — то есть день, в который человек просто чаще всего бегает. Замер 12.08: argmax
+ * общей гистограммы совпадает с настоящим днём длительной лишь у 27 атлетов ИЗ 99. Общая
+ * гистограмма набита лёгкими днями: у Николаевой она указывает на вторник, а длительная у неё
+ * двадцать недель подряд в воскресенье. Тренер и видел это как «длительная во вторник».
+ *
+ * ТЕПЕРЬ каждая роль идёт в свой день: длительная — в argmax СВОЕЙ гистограммы, качественные —
+ * в самые частые свои дни, лёгкие занимают остаток.
+ *
+ * ПРАВИЛА СОХРАНЕНЫ И ПОДТВЕРЖДЕНЫ ЗАМЕРОМ (1377 недель с длительной и качеством):
+ *   • качественная не смежна с длительной — в практике так в 92% недель;
+ *   • две качественные не подряд — подряд лишь 11 недель из 1377;
+ *   • после длительной лёгкий — день после длительной занят в 203 неделях, и в 80% лёгким.
+ *     Отдельного кода это не требует: качество к длительной не примыкает по правилу выше,
+ *     значит следующий день может быть только лёгким.
+ * Правила ЖЁСТЧЕ предпочтения: если обычный день качества примыкает к длительной, качество
+ * сдвигается на следующий по частоте свой день.
+ */
+export function placeRolesByPractice(
+  n: number, counts: { quality: number; long: number }, hist: DayHistograms,
+): { days: number[]; roles: Map<number, Role> } {
   const roles = new Map<number, Role>();
-  if (days.length === 0) return roles;
-  const longDay = longDayHint != null && days.includes(longDayHint) ? longDayHint : days[days.length - 1];
-  if (counts.long > 0) roles.set(longDay, "long");
-  const adjacent = (a: number, b: number): boolean => Math.abs(a - b) === 1 || Math.abs(a - b) === 6;
-  const picked: number[] = [];
-  const byDistance = days.filter((d) => !roles.has(d))
-    .sort((a, b) => (Math.min(Math.abs(b - longDay), 7 - Math.abs(b - longDay))) - (Math.min(Math.abs(a - longDay), 7 - Math.abs(a - longDay))));
-  for (const d of byDistance) {
-    if (picked.length >= counts.quality) break;
-    if (adjacent(d, longDay)) continue;
-    if (picked.some((p) => adjacent(p, d))) continue;
-    picked.push(d); roles.set(d, "quality");
+  if (n <= 0) return { days: [], roles };
+  const used = new Set<number>();
+  const take = (d: number, r: Role): void => { used.add(d); roles.set(d, r); };
+
+  // (1) ДЛИТЕЛЬНАЯ — в свой день. Отдельной ветки «своей гистограммы нет» тут НЕ НУЖНО:
+  // daysByPreference разрешает ничью по общей гистограмме, и при сплошных нулях в ролевой
+  // порядок и так задаёт общая. Первая версия эту ветку писала явно, и мутационный прогон
+  // показал, что она мертва — порча ничего не меняла.
+  let longDay: number | null = null;
+  if (counts.long > 0) {
+    longDay = daysByPreference(hist.long, hist.all)[0] ?? 0;
+    take(longDay, "long");
   }
-  days.filter((d) => !roles.has(d)).forEach((d, idx) => roles.set(d, idx === 0 && days.length >= 4 ? "easy_strides" : "easy"));
-  return roles;
+
+  // (2) КАЧЕСТВЕННЫЕ — в свои дни, с соблюдением смежности.
+  const picked: number[] = [];
+  const qPref = daysByPreference(hist.quality, hist.all);
+  for (const d of qPref) {
+    if (picked.length >= counts.quality || used.size >= n) break;
+    if (used.has(d)) continue;
+    if (longDay != null && adjacentDays(d, longDay)) continue;
+    if (picked.some((p) => adjacentDays(p, d))) continue;
+    picked.push(d); take(d, "quality");
+  }
+
+  // (3) ЛЁГКИЕ — остаток по своей гистограмме, затем по общей, затем любые свободные дни.
+  for (const d of [...daysByPreference(hist.easy, hist.all), ...daysByPreference(hist.all, hist.all), 0, 1, 2, 3, 4, 5, 6]) {
+    if (used.size >= n) break;
+    if (used.has(d)) continue;
+    take(d, "easy");
+  }
+
+  // Ускорения — в первый по порядку недели лёгкий день, как и раньше.
+  const days = [...used].sort((a, b) => a - b);
+  const easyDays = days.filter((d) => roles.get(d) === "easy");
+  if (days.length >= 4 && easyDays.length > 0) roles.set(easyDays[0], "easy_strides");
+  return { days, roles };
 }
 
 export type Segment = {
@@ -516,7 +572,6 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     nWant = clamp(nWant, 1, 7);
   }
 
-  const longDayHint = env.dayHistogram.indexOf(Math.max(...env.dayHistogram));
 
   // ПОТОЛОК НЕДЕЛИ — НЕПРИКОСНОВЕНЕН (правило Игоря 11.08) И СЧИТАЕТСЯ ОТ ПЛАНА (12.08).
   //
@@ -641,8 +696,12 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   type Plan = { n: number; days: number[]; roles: Map<number, Role>; decs: QualityDecision[]; dec: QualityDecision; qSessions: Session[]; easyRoles: number; fits: boolean; minWeek: number };
   let lastRefusal = `минимальная неделя не помещается в потолок ${weekly} мин`;
 
+  const dayHists: DayHistograms = {
+    all: env.dayHistogram, long: env.dayHistogramLong,
+    quality: env.dayHistogramQuality, easy: env.dayHistogramEasy,
+  };
+
   const tryPlan = (n: number): Plan => {
-    const days = chooseDays(env.dayHistogram, n);
     const counts = rolesForDayCount(n, qualityCap, qualityWant);
     let easyRoles = n - counts.quality - counts.long;
 
@@ -691,8 +750,15 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     if (picked.length === 0) { counts.quality = 0; easyRoles = n - counts.long; }
     else if (picked.length < counts.quality) { counts.quality = picked.length; easyRoles = n - counts.quality - counts.long; }
 
-    const roles = assignRoles(days, counts, longDayHint);
-    const qDays = [...roles.entries()].filter(([, r]) => r === "quality").map(([d]) => d);
+    // РАЗМЕЩЕНИЕ — ПОСЛЕ ОТБОРА: если второй слот не собрался, роль качества на его день
+    // не заводится вовсе, и день сразу уходит лёгким. Раньше роли расставлялись до отбора
+    // и лишний качественный день приходилось переименовывать задним числом.
+    const { days, roles } = placeRolesByPractice(n, counts, dayHists);
+    const qDays = [...roles.entries()].filter(([, r]) => r === "quality").map(([d]) => d).sort((x, y) => x - y);
+    // Число лёгких дней берём ИЗ ФАКТИЧЕСКОЙ раскладки: правило смежности могло не дать
+    // поставить второе качество, и тогда его день стал лёгким. Считать по counts значило бы
+    // ошибиться в минимальной неделе ровно на этот день.
+    easyRoles = days.length - qDays.length - (counts.long > 0 ? 1 : 0);
     // Каноническая разминка НЕ сворачивается: она задана уровнем пресета, это решение тренера.
     const qSessions = qDays.map((d, i) => qualitySession(d, a, picked[Math.min(i, picked.length - 1)]));
     const qTotal = qSessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);

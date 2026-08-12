@@ -168,6 +168,14 @@ const MUTATIONS: Mutation[] = [
   { id: "practice-tempo-mode", file: P, find: "export const TEMPO_TITLE_RE = /(темпов[а-яё]*\\s+бег|^\\s*[0-9]{1,3}\\s*(?:мин|минут|км)\\s+темп|порогов[а-яё]*)/i;", replace: "export const TEMPO_TITLE_RE = /темп/i;", what: "«Бег по темпу» (режим контроля) считается качественной работой" },
   { id: "volume-tempo-blind", file: V, find: "  if (tempoLike) {", replace: "  if (false) {", what: "минуты работы темпового не читаются — база качества цикла занижена" },
   { id: "volume-tempo-mode", file: V, find: "const TEMPO_TITLE_RE = /(темпов[а-яё]*\\s+бег|^\\s*[0-9]{1,3}\\s*(?:мин|минут|км)\\s+темп|порогов[а-яё]*)/i;", replace: "const TEMPO_TITLE_RE = /темп/i;", what: "«Бег по темпу» разбирается как работа в объёме цикла" },
+  // ── ДНИ ПО РОЛЯМ (наряд 12.08) ──
+  { id: "days-long-from-all", file: W, find: "    longDay = daysByPreference(hist.long, hist.all)[0] ?? 0;", replace: "    longDay = daysByPreference(hist.all, hist.all)[0] ?? 0;", what: "день длительной снова берётся из ОБЩЕЙ гистограммы" },
+  { id: "days-quality-from-all", file: W, find: "  const qPref = daysByPreference(hist.quality, hist.all);", replace: "  const qPref = daysByPreference(hist.all, hist.all);", what: "день качества снова берётся из общей гистограммы" },
+  { id: "days-adj-long-off", file: W, find: "    if (longDay != null && adjacentDays(d, longDay)) continue;", replace: "    if (false && longDay != null && adjacentDays(d, longDay)) continue;", what: "качество разрешено смежно с длительной" },
+  { id: "days-adj-quality-off", file: W, find: "    if (picked.some((p) => adjacentDays(p, d))) continue;", replace: "    if (false && picked.some((p) => adjacentDays(p, d))) continue;", what: "две качественные разрешены подряд" },
+  { id: "days-easy-order", file: W, find: "  for (const d of [...daysByPreference(hist.easy, hist.all), ...daysByPreference(hist.all, hist.all), 0, 1, 2, 3, 4, 5, 6]) {", replace: "  for (const d of [0, 1, 2, 3, 4, 5, 6]) {", what: "лёгкие занимают первые свободные дни, а не свои" },
+  { id: "days-no-fallback", file: W, find: "  return own.map((c, i) => ({ c, i })).sort((x, y) => y.c - x.c || all[y.i] - all[x.i] || x.i - y.i).map((x) => x.i);", replace: "  void all; return own.map((c, i) => ({ c, i })).sort((x, y) => y.c - x.c || x.i - y.i).map((x) => x.i);", what: "ничья в ролевой гистограмме не разрешается общей — неделя съезжает в начало недели" },
+
   { id: "volume-tempo-whole", file: V, find: "    if (w > 0 && w <= 90) return clamp(w, \"tempo_continuous\", false);", replace: "    return clamp(total, \"tempo_continuous\", false);", what: "у темпового вся сессия считается работой, включая разминку" },
 ];
 

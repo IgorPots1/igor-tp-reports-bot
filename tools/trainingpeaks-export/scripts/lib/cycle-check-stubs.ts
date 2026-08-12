@@ -55,6 +55,12 @@ export function stubEnvelope(): Envelope {
     easyTargetPersonalMin: 0,
     easyMaxPersonalMin: 0,
     dayHistogram: [1, 1, 1, 1, 1, 1, 1],
+    // РОЛЕВЫЕ ГИСТОГРАММЫ ПУСТЫ У БАЗОВОЙ ЗАГЛУШКИ НАМЕРЕННО: так проверяется ЗАПАСНОЙ путь
+    // (роль падает на общую гистограмму), а конкретные дни подставляются точечно в проверках
+    // размещения. Держать здесь готовые дни значило бы, что общий путь никогда не исполняется.
+    dayHistogramLong: [0, 0, 0, 0, 0, 0, 0],
+    dayHistogramQuality: [0, 0, 0, 0, 0, 0, 0],
+    dayHistogramEasy: [0, 0, 0, 0, 0, 0, 0],
     weeksObserved: 20,
   };
 }

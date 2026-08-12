@@ -129,6 +129,18 @@ export type Envelope = {
   easyMaxPersonalMin: number;
   /** наблюдаемое распределение дней недели: 0=Пн … 6=Вс → сколько пробежек */
   dayHistogram: number[];
+  /**
+   * РАСПРЕДЕЛЕНИЕ ДНЕЙ ОТДЕЛЬНО ПО РОЛЯМ.
+   *
+   * ЗАЧЕМ. Раньше день длительной брался как argmax ОБЩЕЙ гистограммы, то есть из дня,
+   * в который человек просто чаще всего бегает. Замер 12.08: argmax общей гистограммы
+   * совпадает с настоящим днём длительной лишь у 27 атлетов из 99. Общая гистограмма
+   * заполнена лёгкими днями и про длительную не говорит ничего — тренер видел это как
+   * «длительная во вторник».
+   */
+  dayHistogramLong: number[];
+  dayHistogramQuality: number[];
+  dayHistogramEasy: number[];
   weeksObserved: number;
 };
 
@@ -353,6 +365,10 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
     let hasTempoPractice = false; let hasIntervalPractice = false;
+    // Плановые сессии по неделям — нужны, чтобы разложить дни ПО РОЛЯМ (см. dayHistogramLong).
+    // Роль «длительная» определяется по заголовку, а при его отсутствии — самой длинной
+    // не-качественной сессией недели: тем же запасным правилом, что и длительность.
+    const weekSess = new Map<string, Array<{ day: number; min: number; quality: boolean; longTitled: boolean }>>();
 
     // СТРОГО ДО asOf. buildAnchor фильтрует свои сэмплы по дате сам, а конверт объёма,
     // гистограмма дней и история качества — НЕТ: они собирались по всем строкам подряд.
@@ -381,7 +397,15 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         weekPlanned.set(wkp, (weekPlanned.get(wkp) ?? 0) + (r.planned_time_raw as number) * 60);
         weekFreq.set(wkp, (weekFreq.get(wkp) ?? 0) + 1);
         const d = new Date(r.workout_date + "T00:00:00Z");
-        dayHistogram[(d.getUTCDay() + 6) % 7] += 1;
+        const dayIdx = (d.getUTCDay() + 6) % 7;
+        dayHistogram[dayIdx] += 1;
+        {
+          const ttl = r.title ?? "";
+          (weekSess.get(wkp) ?? weekSess.set(wkp, []).get(wkp)!).push({
+            day: dayIdx, min: Math.round((r.planned_time_raw as number) * 60),
+            quality: isQualityForPractice(ttl, QUALITY_TITLE_RE), longTitled: LONG_TITLE_RE.test(ttl),
+          });
+        }
         // СЧЁТЧИК КАЧЕСТВА — ПО ПОЧИНЕННОМУ КЛАССИФИКАТОРУ (правка 12.08).
         // Прежде здесь стояла голая QUALITY_TITLE_RE, и она ошибалась в ОБЕ стороны:
         // считала работой «Легкий бег по темпу (темп выше)» (по замеру это обычная лёгкая,
@@ -540,6 +564,30 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const longRunPracticeMaxMin = longPractice.maxMin;
     const longRunPracticeMedianMin = longPractice.medianMin;
 
+    // ── ДНИ ПО РОЛЯМ ──
+    // Считаем по НЕДЕЛЯМ, а не по строкам: роль «длительная» без заголовка определяется только
+    // в контексте своей недели (самая длинная не-качественная). Роль «качество» — по заголовку.
+    // Всё остальное — лёгкие.
+    const dayHistogramLong = [0, 0, 0, 0, 0, 0, 0];
+    const dayHistogramQuality = [0, 0, 0, 0, 0, 0, 0];
+    const dayHistogramEasy = [0, 0, 0, 0, 0, 0, 0];
+    for (const [, ss] of weekSess) {
+      let longDay: number | null = null;
+      const titled = ss.filter((s) => s.longTitled && !s.quality).sort((x, y) => y.min - x.min)[0];
+      if (titled) longDay = titled.day;
+      else if (ss.length >= 2) {
+        // Запасное правило: самая длинная не-качественная сессия недели. Порог «хотя бы две
+        // сессии» нужен, чтобы одинокая пробежка не объявлялась длительной.
+        const cand = ss.filter((s) => !s.quality).sort((x, y) => y.min - x.min)[0];
+        if (cand) longDay = cand.day;
+      }
+      for (const s of ss) {
+        if (s.quality) dayHistogramQuality[s.day] += 1;
+        else if (longDay != null && s.day === longDay) dayHistogramLong[s.day] += 1;
+        else dayHistogramEasy[s.day] += 1;
+      }
+    }
+
     const b = baselines.get(aid);
 
     // ТИР — ТОЖЕ ОТ ПЛАНА. Полы сессий по тирам измерены на ПЛАНОВЫХ неделях (tp-week-shape-measure
@@ -599,7 +647,8 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         lastWeekQualityCount, hasTempoPractice, hasIntervalPractice,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         // weeksObserved — про то, есть ли из чего считать КОНВЕРТ, а конверт плановый.
-        dayHistogram, weeksObserved: [...weekPlanned.keys()].filter(completeWeek).length,
+        dayHistogram, dayHistogramLong, dayHistogramQuality, dayHistogramEasy,
+        weeksObserved: [...weekPlanned.keys()].filter(completeWeek).length,
       },
     });
   }
