@@ -27,7 +27,7 @@
  */
 import process from "node:process";
 
-import { buildWeek, EASY_FLOOR_MIN, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
+import { buildWeek, EASY_FLOOR_MIN, EASY_MAX, EASY_TARGET_BY_TIER, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
@@ -544,6 +544,60 @@ async function main(): Promise<void> {
       !countsForLongFallback("25 км в темпе марафона", 180, QRE)
         && countsForLongFallback("Бег по пульсу (с гелями)", 165, QRE),
       `марафонский блок → ${countsForLongFallback("25 км в темпе марафона", 180, QRE)}`);
+  }
+
+  // ── 6в. ЦЕЛЬ И ПОТОЛОК ЛЁГКОЙ — ЛИЧНЫЕ ──
+  {
+    const anchors2 = stubAnchors(); const cat2 = stubCatalog();
+    // тир T2: когортная цель 50, когортный потолок 70. Личные заведомо выше.
+    // ЦЕЛЬ НИЖЕ ПОТОЛКА И БЮДЖЕТ ПРОСТОРНЫЙ. Если поставить цель 70 при когортном потолке 70,
+    // лёгкая упрётся в 70 при любой правке, и снятие ЛИЧНОГО потолка проверку не уронит —
+    // так первая версия и прошла мутацию. Здесь цель 60, личный потолок 95, а бюджета хватает,
+    // чтобы добор увёл лёгкую ВЫШЕ когортных 70: связать может только личный потолок.
+    const envP = { ...stubEnvelope(), easyTargetPersonalMin: 60, easyMaxPersonalMin: 95,
+      easyFloorPersonalMin: 45, capLongRunMin: 120, longRunPracticeMaxMin: 110, longRunPracticeMedianMin: 90 };
+    const tP: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 380, qualityMin: 30, days: 4, baseWeekMin: 410, hasTargetRace: false, intent: "maintenance" };
+    const wP = buildWeek(anchors2, envP, cat2, MON, false, null, tP);
+    const easies = wP.sessions.filter((x) => !x.deferred && x.role !== "long" && x.role !== "quality");
+    const longestEasy = easies.reduce((m, x) => Math.max(m, x.minutes), 0);
+    check(`лёгкая тянется к ЛИЧНОЙ цели, а не к цели тира (T2 = ${EASY_TARGET_BY_TIER.T2}, личная 60)`,
+      longestEasy >= 60, `самая длинная лёгкая ${longestEasy}, личная цель 60, цель тира ${EASY_TARGET_BY_TIER.T2}`);
+// ПРОВЕРКИ НА ЛИЧНЫЙ ПОТОЛОК ЛЁГКОЙ НЕТ: правка не введена, потому что инертна —
+    // до потолка лёгкая не доходит, раньше связывает пропорция формы (см. autoplanner-week).
+
+    // мало данных — обе величины 0, поведение прежнее
+    const wCoh = buildWeek(anchors2, { ...envP, easyTargetPersonalMin: 0, easyMaxPersonalMin: 0 }, cat2, MON, false, null, tP);
+    const easiesC = wCoh.sessions.filter((x) => !x.deferred && x.role !== "long" && x.role !== "quality");
+    check("мало данных: цель и потолок лёгкой остаются когортными",
+      easiesC.every((x) => x.minutes <= EASY_MAX),
+      `лёгкие ${easiesC.map((x) => x.minutes).join("/")} при когортном потолке ${EASY_MAX}`);
+  }
+
+  // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ  // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ  // ── 6в. ЦЕЛЬ И ПОТОЛОК ЛЁГКОЙ — ЛИЧНЫЕ ──
+  {
+    const anchors2 = stubAnchors(); const cat2 = stubCatalog();
+    // тир T2: когортная цель 50, когортный потолок 70. Личные заведомо выше.
+    // ЦЕЛЬ НИЖЕ ПОТОЛКА И БЮДЖЕТ ПРОСТОРНЫЙ. Если поставить цель 70 при когортном потолке 70,
+    // лёгкая упрётся в 70 при любой правке, и снятие ЛИЧНОГО потолка проверку не уронит —
+    // так первая версия и прошла мутацию. Здесь цель 60, личный потолок 95, а бюджета хватает,
+    // чтобы добор увёл лёгкую ВЫШЕ когортных 70: связать может только личный потолок.
+    const envP = { ...stubEnvelope(), easyTargetPersonalMin: 60, easyMaxPersonalMin: 95,
+      easyFloorPersonalMin: 45, capLongRunMin: 120, longRunPracticeMaxMin: 110, longRunPracticeMedianMin: 90 };
+    const tP: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 380, qualityMin: 30, days: 4, baseWeekMin: 410, hasTargetRace: false, intent: "maintenance" };
+    const wP = buildWeek(anchors2, envP, cat2, MON, false, null, tP);
+    const easies = wP.sessions.filter((x) => !x.deferred && x.role !== "long" && x.role !== "quality");
+    const longestEasy = easies.reduce((m, x) => Math.max(m, x.minutes), 0);
+    check(`лёгкая тянется к ЛИЧНОЙ цели, а не к цели тира (T2 = ${EASY_TARGET_BY_TIER.T2}, личная 60)`,
+      longestEasy >= 60, `самая длинная лёгкая ${longestEasy}, личная цель 60, цель тира ${EASY_TARGET_BY_TIER.T2}`);
+// ПРОВЕРКИ НА ЛИЧНЫЙ ПОТОЛОК ЛЁГКОЙ НЕТ: правка не введена, потому что инертна —
+    // до потолка лёгкая не доходит, раньше связывает пропорция формы (см. autoplanner-week).
+
+    // мало данных — обе величины 0, поведение прежнее
+    const wCoh = buildWeek(anchors2, { ...envP, easyTargetPersonalMin: 0, easyMaxPersonalMin: 0 }, cat2, MON, false, null, tP);
+    const easiesC = wCoh.sessions.filter((x) => !x.deferred && x.role !== "long" && x.role !== "quality");
+    check("мало данных: цель и потолок лёгкой остаются когортными",
+      easiesC.every((x) => x.minutes <= EASY_MAX),
+      `лёгкие ${easiesC.map((x) => x.minutes).join("/")} при когортном потолке ${EASY_MAX}`);
   }
 
   // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ  // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ: СЕРЕДИНА МЕЖДУ МЕДИАНОЙ И p75 ──

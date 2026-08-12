@@ -46,6 +46,8 @@ export function stubEnvelope(): Envelope {
     longRunPracticeMedianMin: 0,
     // личного пола у заглушки нет: проверки должны мерить ЛОГИКУ, а не подсунутое число
     easyFloorPersonalMin: 0,
+    easyTargetPersonalMin: 0,
+    easyMaxPersonalMin: 0,
     dayHistogram: [1, 1, 1, 1, 1, 1, 1],
     weeksObserved: 20,
   };

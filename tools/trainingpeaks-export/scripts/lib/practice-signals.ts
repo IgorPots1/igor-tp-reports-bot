@@ -100,6 +100,27 @@ export function longRunFallback(nonQualSamples: number[]): number {
   return median(desc.slice(0, Math.max(1, Math.ceil(desc.length * LONG_FALLBACK_DECILE))));
 }
 
+/**
+ * ЛИЧНАЯ ЦЕЛЬ И ЛИЧНЫЙ ПОТОЛОК ЛЁГКОЙ. Замер 13.08 по группе 12:
+ *   собственная МЕДИАНА лёгкой выше цели тира у 10 из 12 (у 5475652 70 против 40);
+ *   собственный p90 выше когортного потолка 70 у 10 из 12 (80..105).
+ * То есть тирные 40/50/60 и потолок 70 — когортные числа в роли ЛИЧНЫХ пределов, шестая
+ * правка одной природы. Личная величина в данных есть, поэтому берётся она.
+ *
+ * Цель — МЕДИАНА (правило «цели из медианы»), потолок — p90 (правило «потолки из p90»).
+ * При нехватке данных обе возвращают 0, и сборщик остаётся на когортных.
+ */
+export function easyTargetPersonal(samples: number[]): number {
+  if (samples.length < MIN_RUNS_FOR_PERSONAL_FLOOR) return 0;
+  return median(samples);
+}
+
+export function easyMaxPersonal(samples: number[]): number {
+  if (samples.length < MIN_RUNS_FOR_PERSONAL_FLOOR) return 0;
+  const s = [...samples].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(0.90 * (s.length - 1)))];
+}
+
 export type LongPractice = { maxMin: number; medianMin: number; fromFallback: boolean };
 
 /**

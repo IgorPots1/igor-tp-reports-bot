@@ -16,7 +16,7 @@ import { anchorConfidence } from "./easy-anchor.ts";
 import { loadRoster } from "./autoplanner-roster.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
-  easyFloorPersonal, longRunPractice,
+  easyFloorPersonal, easyMaxPersonal, easyTargetPersonal, longRunPractice,
 } from "./practice-signals.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
@@ -109,6 +109,10 @@ export type Envelope = {
    * Пятая правка одной природы: когортное число в роли личного предела.
    */
   easyFloorPersonalMin: number;
+  /** ЛИЧНАЯ ЦЕЛЬ лёгкой: медиана той же выборки. 0 — данных мало, берётся цель тира. */
+  easyTargetPersonalMin: number;
+  /** ЛИЧНЫЙ ПОТОЛОК лёгкой: p90 той же выборки. 0 — данных мало, берётся когортный EASY_MAX. */
+  easyMaxPersonalMin: number;
   /** наблюдаемое распределение дней недели: 0=Пн … 6=Вс → сколько пробежек */
   dayHistogram: number[];
   weeksObserved: number;
@@ -494,6 +498,8 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     // решение тренера, а не моё. Сегодня ветка срабатывает ровно у одного человека.
     // Все три величины считает чистый practice-signals — там же они и проверяются.
     const easyFloorPersonalMin = easyFloorPersonal(easyFloorSamples);
+    const easyTargetPersonalMin = easyTargetPersonal(easyFloorSamples);
+    const easyMaxPersonalMin = easyMaxPersonal(easyFloorSamples);
     const longPractice = longRunPractice(longPlannedMinutes, nonQualPlanned26w);
     const longRunPracticeMaxMin = longPractice.maxMin;
     const longRunPracticeMedianMin = longPractice.medianMin;
@@ -550,6 +556,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
         longRunPracticeMaxMin, longRunPracticeMedianMin, easyFloorPersonalMin,
+        easyTargetPersonalMin, easyMaxPersonalMin,
         lastWeekMinutes: lastWeekMin,
         rolling4wPlannedMin, lastWeekPlannedMinutes, typicalPlannedWeekMin, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,

@@ -419,7 +419,18 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // ничего не меняет, то есть проверка рядом с ним была бы беззубой.
   const easyFloorPersonal = env.easyFloorPersonalMin > 0 ? env.easyFloorPersonalMin : 0;
   let EASY_FLOOR = EASY_FLOOR_MIN;                      // гейт: короче не бывает
-  const easyTarget = EASY_TARGET_BY_TIER[a.tier];       // цель: типичная длина лёгкой
+  // ЦЕЛЬ И ПОТОЛОК ЛЁГКОЙ — ЛИЧНЫЕ, когда данные есть (правка 13.08).
+  // Замер: собственная медиана лёгкой выше цели тира у 10 из 12 (у 5475652 70 против 40),
+  // собственный p90 выше когортного потолка 70 у 10 из 12. Тирные числа систематически
+  // занижали и цель, и потолок — это шестая по счёту правка «когортное в личной роли».
+  const easyTarget = env.easyTargetPersonalMin > 0 ? env.easyTargetPersonalMin : EASY_TARGET_BY_TIER[a.tier];
+  // ЛИЧНЫЙ ПОТОЛОК ЛЁГКОЙ НЕ ВВЕДЁН СОЗНАТЕЛЬНО. Замер показал, что личный p90 выше когортных
+  // 70 у 10 из 12, и напрашивалась такая же правка, как для цели. Но она ИНЕРТНА: до потолка
+  // лёгкая не доходит никогда — раньше связывают доля в пропорции (easyCeilShape) и кратность
+  // к длительной. Проверено: с личным потолком 95 при просторном бюджете лёгкая всё равно
+  // остановилась на 70. Оставлять правку, которую нечем подтвердить, нельзя — убрана.
+  // env.easyMaxPersonalMin остаётся в конверте: он понадобится, если пропорцию когда-то снимут.
+  const easyMax = EASY_MAX;
   const ratioEasy = LONG_OVER_EASY_TARGET[a.tier];      // цель
   // ЦЕЛЬ, НО БОЛЬШЕ НЕ МНОЖИТЕЛЬ ДЛИНЫ ДЛИТЕЛЬНОЙ (правка 16.08). Кратность замерена на
   // качественных ТРЕНЕРА (медиана полной длительности у T3 — 61 мин), а машина ставит сессию
@@ -789,7 +800,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles;
   }
   // (3) остаток — лёгким, пока кратность-ориентир к длительной не нарушена
-  while (canGrowEasy() && easyBase < EASY_MAX && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy) {
+  while (canGrowEasy() && easyBase < easyMax && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy) {
     easyBase += ROUND_TO_MIN; spare -= ROUND_TO_MIN * easyRoles;
   }
 
@@ -812,7 +823,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   let guard = 0;
   while (total() < targetWeekly && spare >= ROUND_TO_MIN && guard++ < 200) {
     const longRoom = longMin < capLong && spare >= ROUND_TO_MIN;
-    const easyRoom = canGrowEasy() && easyBase < EASY_MAX && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy;
+    const easyRoom = canGrowEasy() && easyBase < easyMax && longMin >= (easyBase + ROUND_TO_MIN) * ratioEasy;
     if (!longRoom && !easyRoom) break;
     // ДОБОР ДЕРЖИТ ФОРМУ, а не отдаёт всё одному. Шаг получает тот, кто отстаёт от замеренной
     // кратности: если длительная сейчас короче ratioEasy × лёгкий — ей, иначе лёгким.
