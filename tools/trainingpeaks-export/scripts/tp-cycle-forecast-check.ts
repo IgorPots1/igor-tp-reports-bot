@@ -27,7 +27,7 @@
  */
 import process from "node:process";
 
-import { buildWeek, LONG_CEIL, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
+import { buildWeek, LONG_CEIL, LONG_FLOOR, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
@@ -318,6 +318,40 @@ async function main(): Promise<void> {
     check("цикл: потолок доли работы от недели ЦИКЛА, а не от исторического факта",
       wShare.refused == null && wShare.qualityDecision.includes("(40 мин)"),
       `история 60 мин/нед, цель цикла 300, ждали формат на 40 мин работы; решение: ${wShare.qualityDecision}`);
+
+    // (ж) ДЛИТЕЛЬНАЯ НЕ ОБНУЛЯЕТСЯ НА ПОНИЖЕННОЙ НЕДЕЛЕ.
+    // У 5807145 выходил ноль: объём от факта, длительная оседала ровно на её исторической
+    // лёгкой и переименовывалась в лёгкую. «Нет длительной» и «короткая длительная» — разное.
+    // Медиана 160 подобрана так, чтобы ПОЛ ДЕЙСТВИТЕЛЬНО СВЯЗЫВАЛ: при медиане 90 доля
+    // недели x0.45 и так даёт 80, пропорциональный пол выходит 53 и ничего не решает —
+    // первая версия этой проверки на такой заглушке падала не по делу.
+    const envNoRace = { ...env, capLongRunMin: 180, longRunPracticeMaxMin: 160, longRunPracticeMedianMin: 160, typicalEasyMinutes: 85 };
+    const tgtNoRace: CycleWeekTarget = { weekIndex: 2, totalWeeks: 8, role: "поддержание", aerobicMin: 280, qualityMin: 25, days: 3, baseWeekMin: 305, hasTargetRace: false };
+    const wIllLong = buildWeek(anchors, envNoRace, cat, MON, true, null, tgtNoRace);
+    check("понижённая неделя: длительная НЕ обнуляется",
+      wIllLong.refused != null || longestOf(wIllLong) >= LONG_FLOOR,
+      `длительная ${longestOf(wIllLong)} мин на понижённой неделе (пол ${LONG_FLOOR})`);
+
+    // (з) ЦЕЛЕВОЙ СТАРТ: длительная режется ПОСЛЕДНЕЙ. У кого старт есть, пол применяется
+    // пропорционально понижению; у кого нет — пола нет. Разница обязана быть видна.
+    const tgtRace: CycleWeekTarget = { ...tgtNoRace, hasTargetRace: true };
+    const wIllRace = buildWeek(anchors, envNoRace, cat, MON, true, null, tgtRace);
+    check("понижённая неделя: с целевым стартом длительная длиннее, чем без него",
+      longestOf(wIllRace) > longestOf(wIllLong),
+      `со стартом ${longestOf(wIllRace)}, без старта ${longestOf(wIllLong)}`);
+
+    // (и) РАЗГРУЗКА: пол применяется к СНИЖЕННОЙ цели, а не к полной медиане практики.
+    // Иначе на разгрузочной неделе длительная тянулась бы к медиане и разгрузки бы не было.
+    // ЧИСЛО ТОЧНОЕ, А НЕ «МЕНЬШЕ ЧЕМ»: цель разгрузки 240 при базе 300 — это x0.8, значит пол
+    // равен 180 x 0.8 = 144 -> 145 после округления к пяти. Заглушка подобрана так, чтобы
+    // связывал именно ПОЛ, а не бюджет: при 5 днях длительная упиралась в бюджет на 100 мин,
+    // и проверка проходила даже со снятым масштабированием.
+    const envDl = { ...env, capLongRunMin: 200, longRunPracticeMaxMin: 180, longRunPracticeMedianMin: 180 };
+    const deload: CycleWeekTarget = { weekIndex: 4, totalWeeks: 8, role: "плановая разгрузка", aerobicMin: 220, qualityMin: 20, days: 3, baseWeekMin: 300, hasTargetRace: true };
+    const wDl = buildWeek(anchors, envDl, cat, MON, false, null, deload);
+    check("разгрузка: пол практики едет вместе со сниженной целью (180 x 0.8 = 145)",
+      longestOf(wDl) === 145,
+      `длительная ${longestOf(wDl)}, ожидалось 145 при медиане практики 180 и разгрузке x0.8`);
 
     // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
     const wNo = buildWeek(anchors, env, cat, MON, false, null);

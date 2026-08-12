@@ -157,7 +157,8 @@ async function main(): Promise<void> {
       const fc = forecast(d, weekStart, Math.max(1, w2r));
       const f = fc[0];
       if (f) {
-        const t: CycleWeekTarget = { weekIndex: 1, totalWeeks: fc.length, role: f.role, aerobicMin: f.aerobicMin, qualityMin: f.qualityMin, days: f.days };
+        const t: CycleWeekTarget = { weekIndex: 1, totalWeeks: fc.length, role: f.role, aerobicMin: f.aerobicMin, qualityMin: f.qualityMin, days: f.days,
+          baseWeekMin: d.baseAerobicMin + d.baseQualityMin, hasTargetRace: d.targetDate != null };
         cycleTarget.set(aid, f.aerobicMin + f.qualityMin);
         mach = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness, c.tierNote, t);
       }

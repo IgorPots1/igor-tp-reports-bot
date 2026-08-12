@@ -352,6 +352,18 @@ export type CycleWeekTarget = {
   aerobicMin: number;
   qualityMin: number;
   days: number;
+  /**
+   * Базовая неделя цикла (аэробный + работа), мин. Нужна, чтобы понять, НАСКОЛЬКО урезана
+   * эта неделя относительно обычной: разгрузка и подводка режут цель, и пол длительной
+   * обязан ехать вместе с ней, а не тянуть к полной медиане практики.
+   */
+  baseWeekMin?: number;
+  /**
+   * Есть ли у атлета БУДУЩИЙ целевой старт (из trainingpeaks_race_events через черновик цикла).
+   * У кого старт есть — длительная режется ПОСЛЕДНЕЙ: при понижении недели она уменьшается
+   * пропорционально, а не обнуляется [решение Игоря 12.08].
+   */
+  hasTargetRace?: boolean;
 };
 
 export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
@@ -605,8 +617,19 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // неделе, где объём считается ОТ ФАКТА из-за активного сигнала, то есть 44% недели
   // отдавалось длительной ровно тогда, когда человека надо разгрузить. Цикл задаёт
   // намерение, а не обязательство — на понижённой неделе намерение уступает целиком.
-  const longPracticeFloor = cycle && !notTraining && env.longRunPracticeMedianMin > 0
-    ? Math.min(env.longRunPracticeMedianMin, LONG_CEIL) : 0;
+  // ПОЛ МАСШТАБИРУЕТСЯ ТЕМ ЖЕ, ЧЕМ УРЕЗАНА НЕДЕЛЯ (правка 12.08). Одно правило вместо трёх:
+  //  • неделя роста      — пол равен медиане практики;
+  //  • разгрузка/подводка — цель цикла уже снижена, и пол едет вместе с ней (иначе на
+  //    разгрузке длительная тянулась бы к полной медиане и разгрузки бы не было);
+  //  • понижение сигналом — у кого ЕСТЬ целевой старт, пол режется пропорционально факту,
+  //    то есть длительная уменьшается последней; у кого старта нет — пола нет вовсе.
+  // Отдельно от пола держится инвариант «длительная не обнуляется» — он ниже, в именовании.
+  const cycleWeekTarget = cycle ? Math.max(1, cycle.aerobicMin + cycle.qualityMin) : 1;
+  const cycleBaseWeek = cycle && cycle.baseWeekMin ? Math.max(1, cycle.baseWeekMin) : cycleWeekTarget;
+  let floorScale = Math.min(1, cycleWeekTarget / cycleBaseWeek);
+  if (notTraining) floorScale = cycle?.hasTargetRace ? floorScale * Math.min(1, weekly / cycleWeekTarget) : 0;
+  const longPracticeFloor = cycle && env.longRunPracticeMedianMin > 0 && floorScale > 0
+    ? Math.min(round5(env.longRunPracticeMedianMin * floorScale), LONG_CEIL) : 0;
   const capLong = round5(clamp(
     Math.max(longPracticeFloor, Math.min(longCapSource ?? weekly * 0.35, weekly * 0.45)),
     LONG_FLOOR, LONG_CEIL));
@@ -711,8 +734,26 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     // обычная лёгкая у этого же атлета ровно 30. Если сессия не длиннее его обычной лёгкой —
     // это лёгкий бег, а не длительная.
     else if (role === "long") {
-      const isReallyLong = env.typicalEasyMinutes <= 0 || longMin > env.typicalEasyMinutes;
-      if (!isReallyLong) notes.push(`длинный день назван лёгким: ${longMin} мин не больше обычной лёгкой (${env.typicalEasyMinutes} мин)`);
+      // ── ДЛИТЕЛЬНАЯ НЕ ОБНУЛЯЕТСЯ НИКОГДА (правка 12.08) ──
+      // Историческое сравнение с «обычной лёгкой» нужно, чтобы не называть длительной сессию,
+      // которая для этого человека обычная лёгкая (у T1 длительных в практике нет вовсе).
+      // Но на ПОНИЖЕННОЙ неделе оно даёт ноль: у 5807145 объём считается от факта, длительная
+      // оседает ровно на её исторической лёгкой (60 против 60), переименовывается — и
+      // длительной не остаётся ВООБЩЕ. «Нет длительной» и «короткая длительная» — разные вещи:
+      // понижение должно делать её короче, а не отменять.
+      //
+      // Поэтому на понижённой неделе длительная — это самый длинный день ЭТОЙ недели, а не
+      // сравнение с историей: внутри урезанной недели вопрос «длиннее ли обычного» не имеет
+      // смысла, вся неделя короче обычного по построению. Пол LONG_FLOOR держится всегда.
+      // Платить за это лёгкими нельзя: шаг длительной стоил бы 5 мин × число лёгких дней,
+      // и неделя худела на ровном месте (замер: 220 -> 210).
+      const longestEasyThisWeek = Math.max(...easyVariants, 0);
+      const isReallyLong = notTraining
+        ? longMin >= LONG_FLOOR && longMin > longestEasyThisWeek
+        : (env.typicalEasyMinutes <= 0 || longMin > env.typicalEasyMinutes);
+      if (!isReallyLong) notes.push(`длинный день назван лёгким: ${longMin} мин не больше `
+        + (notTraining ? `самого длинного лёгкого этой недели (${longestEasyThisWeek} мин)`
+                       : `обычной лёгкой (${env.typicalEasyMinutes} мин)`));
       sessions.push(aerobicSession(d, isReallyLong ? "long" : "easy", a, cat, longMin));
     }
     else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, easyVariants[easyIdx % easyVariants.length])); easyIdx++; }
