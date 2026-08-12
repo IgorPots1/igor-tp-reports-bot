@@ -36,6 +36,8 @@ const X = path.join(LIB, "autoplanner-context.ts");
 const R = path.join(LIB, "cycle-reader.ts");
 const Q = path.join(LIB, "quality-select.ts");
 const P = path.join(LIB, "practice-signals.ts");
+const LIBCAT = path.join(LIB, "autoplanner-catalog.ts");
+const V = path.join(LIB, "quality-volume.ts");
 
 type Mutation = { id: string; file: string; find: string; replace: string; what: string };
 
@@ -131,21 +133,42 @@ const MUTATIONS: Mutation[] = [
   { id: "nocycle-uses-cycle-cap", file: W, find: "    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;", replace: "    weekly = 250;", what: "без цикла потолок берётся не из конверта" },
   { id: "downgraded-over-cap", file: W, find: "  const easyVariants = [easyBase, Math.max(EASY_FLOOR, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые", replace: "  const easyVariants = [easyBase + 40, Math.max(EASY_FLOOR, easyBase + 35)]; // мутация: неделя раздута сверх потолка", what: "собранная неделя раздувается сверх потолка" },
 
-  // ── контекст ──  // ── контекст ──  // ── остаток подозрительных: последняя попытка подобрать порчу ──
-  { id: "long-fallback-decile", file: P, find: "  return median(desc.slice(0, Math.max(1, Math.ceil(desc.length * LONG_FALLBACK_DECILE))));", replace: "  return median(desc);", what: "запасной детектор берёт медиану ВСЕХ, а не верхней децили" },
-  { id: "keep-grow-anyway", file: W, find: "  const floorBase = cycle && distTarget && distStep && cycle.hasTargetRace", replace: "  const floorBase = cycle && (distTarget ?? 180) && (distStep ?? 1.116) && (cycle.hasTargetRace || true)", what: "рост длительной включается и на поддержании без старта" },
-  { id: "nocycle-uses-cycle-cap", file: W, find: "    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;", replace: "    weekly = 250;", what: "без цикла потолок берётся не из конверта" },
-  { id: "downgraded-over-cap", file: W, find: "  const easyVariants = [easyBase, Math.max(EASY_FLOOR, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые", replace: "  const easyVariants = [easyBase + 40, Math.max(EASY_FLOOR, easyBase + 35)]; // мутация: неделя раздута сверх потолка", what: "собранная неделя раздувается сверх потолка" },
-
-  // ── контекст ──  // ── контекст ──
+  // ── контекст ──
   // Переехали в practice-signals вместе с логикой. Харнесс честно сообщал «ЯКОРЬ НЕ НАЙДЕН»,
   // пока я их не перенацелил, — это и есть его польза: молча зелёными они не стали.
   { id: "ctx-warmup", file: P, find: "  if (WARMUP_TITLE_RE.test(title)) return false;", replace: "  void WARMUP_TITLE_RE;", what: "разминки попадают в личный пол" },
   { id: "ctx-min-runs", file: P, find: "  if (samples.length < MIN_RUNS_FOR_PERSONAL_FLOOR) return 0;", replace: "  if (samples.length < 0) return 0;", what: "порог достаточности данных снят" },
   { id: "ps-p10-to-min", file: P, find: "  return s[Math.floor(LONG_FALLBACK_DECILE * (s.length - 1))];", replace: "  return s[0];", what: "личный пол берётся как min вместо p10" },
   { id: "ps-racepace", file: P, find: "  if (RACE_PACE_BLOCK_RE.test(title)) return false;", replace: "  void RACE_PACE_BLOCK_RE;", what: "марафонские блоки идут в детектор длительных" },
-  { id: "ps-tempo-quality", file: P, find: "  return qualityRe.test(title) && !AEROBIC_DESPITE_QUALITY_RE.test(title);", replace: "  return qualityRe.test(title);", what: "«темп выше» снова считается качественной" },
+  { id: "ps-tempo-quality", file: P, find: "  if (AEROBIC_DESPITE_QUALITY_RE.test(title)) return false;", replace: "  void AEROBIC_DESPITE_QUALITY_RE;", what: "«темп выше» снова считается качественной" },
   { id: "ps-fallback-always", file: P, find: "  if (titledSamples.length > 0) {", replace: "  if (false) {", what: "запасной детектор вытесняет заголовки" },
+
+  // ── ВТОРАЯ КАЧЕСТВЕННАЯ И ТЕМПОВЫЙ (наряд 12.08) ──
+  { id: "roles-day-gate", file: W, find: "  return { quality: Math.max(0, Math.min(cap, want, n - 1)), long: 1 };", replace: "  void want;\n  if (n <= 5) return { quality: Math.min(cap, 1), long: 1 };\n  return { quality: Math.min(cap, 2), long: 1 };", what: "вернулся порог «две качественные только с шести дней»" },
+  { id: "roles-want-ignored", file: W, find: "Math.max(0, Math.min(cap, want, n - 1))", replace: "Math.max(0, Math.min(cap, 1, n - 1))", what: "просьба практики игнорируется, всегда одна" },
+  // ПОТОЛОК ГЕЙТА ПРИМЕНЯЕТСЯ ДВАЖДЫ (в qualityCountWanted и в rolesForDayCount), поэтому
+  // порча одного места маскируется вторым — как это уже было с личными потолками. Ломаем оба.
+  { id: "gate-cap-off", file: W, find: "Math.max(0, Math.min(cap, want, n - 1))", replace: "Math.max(0, Math.min(want, n - 1))", what: "гейт по истории 8 недель не ограничивает число качественных" },
+  // День длительной при двух беговых днях защищает ГЕЙТ ОТБОРА «меньше трёх дней», а не
+  // арифметика скелета: она срабатывает позже и потому мутацией не изолируется (см. коммент
+  // у rolesForDayCount). Ломаем то, что реально держит.
+  { id: "quality-min-days-off", file: Q, find: "  if (ctx.plannedRunCount < 3) {", replace: "  if (ctx.plannedRunCount < 0) {", what: "качество назначается и при двух беговых днях — длительная теряет день" },
+  { id: "want-no-floor", file: P, find: "  return Math.max(1, lastWeekQualityCount);", replace: "  return lastWeekQualityCount;", what: "пустая прошлая неделя обнуляет качество" },
+  { id: "want-always-two", file: P, find: "  return Math.max(1, lastWeekQualityCount);", replace: "  void lastWeekQualityCount; return 2;", what: "две качественные назначаются всем подряд" },
+  { id: "slot-types-off", file: W, find: "  if (!hasIntervals && !hasTempo) return Array.from({ length: count }, () => null);", replace: "  return Array.from({ length: count }, () => null);", what: "тип сессии не выбирается — обе качественные одинаковые" },
+  { id: "slot-order-swapped", file: W, find: "  return Array.from({ length: count }, (_, i) => (i === 0 ? first : second));", replace: "  return Array.from({ length: count }, (_, i) => (i === 0 ? second : first));", what: "темповый идёт первым, отрезки вторыми" },
+  { id: "slot-tempo-forced", file: W, find: "  const second: \"intervals\" | \"tempo\" = hasTempo ? \"tempo\" : \"intervals\";", replace: "  const second: \"intervals\" | \"tempo\" = \"tempo\";", what: "темповый навязывается тем, у кого его нет в практике" },
+  { id: "slot-narrow-off", file: Q, find: "  if (ctx.slotType) {", replace: "  if (false && ctx.slotType) {", what: "пул не сужается по типу — вторая копирует первую" },
+  { id: "work-share-no-split", file: Q, find: "  const workCeil = Math.max(12, weekly * WORK_SHARE_OF_WEEKLY_MAX / slots);", replace: "  const workCeil = Math.max(12, weekly * WORK_SHARE_OF_WEEKLY_MAX);", what: "потолок доли работы не делится между сессиями (две по 20% = 40%)" },
+  { id: "cycle-work-no-split", file: W, find: "        targetWorkMinutes: cycle ? Math.round(cycle.qualityMin / Math.max(1, counts.quality)) : null,", replace: "        targetWorkMinutes: cycle ? cycle.qualityMin : null,", what: "цель цикла по работе не делится — каждая сессия целится в недельное число" },
+  { id: "tempo-ladder-empty", file: LIBCAT, find: "  if (!(hi >= lo && lo > 0)) return [];", replace: "  if (true) return [];", what: "лестница темпового пуста — темповый не участвует в отборе" },
+  { id: "tempo-ladder-fixed", file: LIBCAT, find: "  const lo = p.advisoryMinMinutes ?? TEMPO_ADVISORY_FALLBACK.min;\n  const hi = p.advisoryMaxMinutes ?? TEMPO_ADVISORY_FALLBACK.max;", replace: "  const lo = 30; const hi = 30; void p;", what: "лестница темпового не берёт диапазон из каталога" },
+  { id: "tempo-intent-threshold", file: W, find: "  const isTempo = p.intensityIntent === \"steady_tempo\";", replace: "  const isTempo = false && p.intensityIntent === \"steady_tempo\";", what: "темповый считается пороговым: полоса на пороге и метки «Отрезок»" },
+  { id: "practice-tempo-blind", file: P, find: "  return qualityRe.test(title) || TEMPO_TITLE_RE.test(title);", replace: "  return qualityRe.test(title);", what: "классификатор снова не видит темповый" },
+  { id: "practice-tempo-mode", file: P, find: "export const TEMPO_TITLE_RE = /(темпов[а-яё]*\\s+бег|^\\s*[0-9]{1,3}\\s*(?:мин|минут|км)\\s+темп|порогов[а-яё]*)/i;", replace: "export const TEMPO_TITLE_RE = /темп/i;", what: "«Бег по темпу» (режим контроля) считается качественной работой" },
+  { id: "volume-tempo-blind", file: V, find: "  if (tempoLike) {", replace: "  if (false) {", what: "минуты работы темпового не читаются — база качества цикла занижена" },
+  { id: "volume-tempo-mode", file: V, find: "const TEMPO_TITLE_RE = /(темпов[а-яё]*\\s+бег|^\\s*[0-9]{1,3}\\s*(?:мин|минут|км)\\s+темп|порогов[а-яё]*)/i;", replace: "const TEMPO_TITLE_RE = /темп/i;", what: "«Бег по темпу» разбирается как работа в объёме цикла" },
+  { id: "volume-tempo-whole", file: V, find: "    if (w > 0 && w <= 90) return clamp(w, \"tempo_continuous\", false);", replace: "    return clamp(total, \"tempo_continuous\", false);", what: "у темпового вся сессия считается работой, включая разминку" },
 ];
 
 function run(): { failed: string[]; crashed: boolean } {

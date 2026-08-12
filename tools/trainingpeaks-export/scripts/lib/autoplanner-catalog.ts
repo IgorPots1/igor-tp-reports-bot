@@ -10,6 +10,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { TEMPO_COOLDOWN_MIN, TEMPO_WARMUP_MIN } from "./practice-signals.ts";
+
 export type AerobicPresetCode = "easy_continuous" | "easy_plus_strides" | "recovery_easy" | "long_aerobic" | "steady_continuous";
 
 export type AerobicPreset = {
@@ -115,6 +117,50 @@ export function presetSessionMinutes(p: QualityPreset): number {
   return Math.round(warm + p.reps * p.workMinutes + Math.max(0, p.reps - 1) * p.recoveryMinutes + p.cooldownMinutes);
 }
 
+/**
+ * ТЕМПОВЫЙ БЕГ ИЗ АЭРОБНОГО ПРЕСЕТА — ЛЕСТНИЦА КАНДИДАТОВ ОТБОРА.
+ *
+ * `steady_continuous` лежит в семье steady_tempo и потому попадал в аэробную карту, где отбор
+ * качества его не видит вовсе. При этом в его же extra_params каталога записано
+ * `advisory_min_minutes: 20, advisory_max_minutes: 40, duration_from_envelope: true` — то есть
+ * длительность работы задумана как ПАРАМЕТР, а не константа. Отбор умеет выбирать только из
+ * готовых форматов, поэтому разворачиваем диапазон каталога в лестницу с шагом округления
+ * репозитория (5 мин): 20, 25, 30, 35, 40. Границы — каталога, шаг — ROUND_TO_MIN, своих чисел
+ * здесь нет.
+ *
+ * Замер практики (62 темповых у 15 действующих за 26 нед) диапазон подтверждает: работа из
+ * заголовка медиана 30, p75 40 — ровно середина и верх лестницы.
+ *
+ * reps = 1: это НЕПРЕРЫВНАЯ работа, а не повторы. Отдыха между отрезками нет по построению.
+ */
+const TEMPO_LADDER_STEP_MIN = 5;
+const TEMPO_ADVISORY_FALLBACK = { min: 20, max: 40 };
+
+export function tempoPresetsFrom(p: AerobicPreset): QualityPreset[] {
+  const lo = p.advisoryMinMinutes ?? TEMPO_ADVISORY_FALLBACK.min;
+  const hi = p.advisoryMaxMinutes ?? TEMPO_ADVISORY_FALLBACK.max;
+  if (!(hi >= lo && lo > 0)) return [];
+  const out: QualityPreset[] = [];
+  for (let w = Math.ceil(lo / TEMPO_LADDER_STEP_MIN) * TEMPO_LADDER_STEP_MIN; w <= hi; w += TEMPO_LADDER_STEP_MIN) {
+    out.push({
+      presetCode: `${p.presetCode}_${w}`,
+      // Формулировка тренера буква в букву: «Темповый бег 30 минут» — так он их и называет.
+      displayNameRu: `Темповый бег ${w} минут`,
+      intensityIntent: "steady_tempo",
+      reps: 1, workMinutes: w, recoveryMinutes: 0,
+      rpeTarget: p.rpeTarget, rpeCap: p.rpeCap,
+      avoidAcidosis: false, coachReviewRequired: false, requiresExplicitVo2: false,
+      warmupMinutes: TEMPO_WARMUP_MIN, cooldownMinutes: TEMPO_COOLDOWN_MIN,
+      totalWorkMinutes: w,
+      // L0 намеренно: разминка у темпового ПРОСТАЯ (замер — 15 мин спокойно), а не канонический
+      // протокол с лестницей ускорений. Канонический задан уровнем пресета, и темповому он
+      // в практике не пишется ни разу.
+      athleteLevelMin: "L0",
+    });
+  }
+  return out;
+}
+
 /** Порядок шкалы уровней по возрастанию требований. */
 const LEVEL_ORDER = ["L0", "L1", "L2", "L3", "L4", "L4M"];
 
@@ -173,13 +219,21 @@ export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | nul
     const extra = (pp?.extra_params ?? {}) as Record<string, unknown>;
 
     if (fam === "easy" || fam === "long_run" || fam === "steady_tempo") {
-      aerobic.set(r.preset_code as string, {
+      const ap: AerobicPreset = {
         presetCode: r.preset_code, displayNameRu: r.display_name_ru,
         targetMode: (pp?.target_mode ?? "pace") as AerobicPreset["targetMode"],
         rpeTarget: num(pp?.rpe_target), rpeCap: num(pp?.rpe_cap),
         advisoryMinMinutes: num(extra.advisory_min_minutes), advisoryMaxMinutes: num(extra.advisory_max_minutes),
         controlModeOverriddenByTier: extra.control_mode_overridden_by_tier !== false,
-      });
+      };
+      aerobic.set(r.preset_code as string, ap);
+      // ТЕМПОВЫЙ УЧАСТВУЕТ В ОТБОРЕ КАЧЕСТВА. Он остаётся и в аэробной карте (там его читают
+      // разминки), но теперь ДОПОЛНИТЕЛЬНО разворачивается в кандидатов отбора: без этого
+      // вторая качественная у Паниной, Кругловой и Хофман не могла быть назначена в принципе.
+      // Выключенный или coach_only пресет в кандидаты не идёт — те же правила, что у отрезков.
+      if (fam === "steady_tempo" && r.coach_only !== true && r.enabled_by_default !== false) {
+        quality.push(...tempoPresetsFrom(ap));
+      }
       continue;
     }
     if (fam !== "intervals" && fam !== "race_specific") continue;

@@ -27,12 +27,14 @@
  */
 import process from "node:process";
 
-import { buildWeek, EASY_FLOOR_MIN, EASY_MAX, EASY_TARGET_BY_TIER, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
+import { buildWeek, EASY_FLOOR_MIN, EASY_MAX, EASY_TARGET_BY_TIER, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
+import { tempoPresetsFrom } from "./lib/autoplanner-catalog.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
-  easyFloorPersonal, easyTargetPersonal, longRunPractice,
+  easyFloorPersonal, easyTargetPersonal, isQualityForPractice, isTempoForPractice, longRunPractice,
 } from "./lib/practice-signals.ts";
+import { splitSessionVolume } from "./lib/quality-volume.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
@@ -667,6 +669,166 @@ async function main(): Promise<void> {
     check("целевой старт: при равной дистанции берётся более ранний",
       pickTargetRace([R("late", "2026-10-26", 42.2), R("early", "2026-10-19", 42.2)], MONDAY)?.id === "early",
       `выбран ${pickTargetRace([R("late", "2026-10-26", 42.2), R("early", "2026-10-19", 42.2)], MONDAY)?.id}`);
+  }
+
+  // ── 7-бис. ВТОРАЯ КАЧЕСТВЕННАЯ: СКОЛЬКО ИХ И КАКИЕ ──
+  // Наряд 12.08. Скелет давал второе качество только с ШЕСТИ беговых дней, а в практике
+  // у недель с двумя качественными медиана дней равна ТРЁМ (6 дней встретились ОДИН раз
+  // из 164). Плюс темповый бег не участвовал в отборе вообще. Держим обе половины правки.
+  {
+    const A = stubAnchors();
+    const cat2 = stubCatalog();
+    const MON = "2026-08-17";
+    // Просторная неделя на ТРИ дня: качество + качество + длительная, лёгких дней нет.
+    // Именно этот случай раньше был структурно недостижим.
+    const env3 = { ...stubEnvelope(), dayHistogram: [0, 5, 0, 5, 0, 0, 5], rolling4wFrequency: 3 };
+    const T3 = (over: Partial<CycleWeekTarget> = {}): CycleWeekTarget =>
+      ({ weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 220, qualityMin: 60, days: 3, ...over });
+    const nQ = (w: Week): number => w.sessions.filter((s) => s.role === "quality" && !s.deferred).length;
+    const codes = (w: Week): string[] =>
+      w.sessions.filter((s) => s.role === "quality" && !s.deferred).map((s) => s.presetCode);
+
+    // (а) ДВЕ КАЧЕСТВЕННЫЕ ПРИ ТРЁХ ДНЯХ. Практика просит две (прошлая неделя 2),
+    // гейт разрешает две (история 6+). Раньше выходила ОДНА — из-за порога в шесть дней.
+    const wTwo = buildWeek(A, { ...env3, lastWeekQualityCount: 2 }, cat2, MON, false, null, T3());
+    check("скелет: две качественные помещаются в ТРИ беговых дня",
+      nQ(wTwo) === 2, `качественных ${nQ(wTwo)} при 3 днях: ${codes(wTwo).join(", ") || "нет"} · ${wTwo.refused ?? ""}`);
+
+    // (б) НЕ БОЛЬШЕ, ЧЕМ ПРОСИТ ПРАКТИКА. Гейт разрешает две, но в прошлой неделе была одна.
+    // Без этой проверки «две всем подряд» выглядело бы как исправление.
+    const wOne = buildWeek(A, { ...env3, lastWeekQualityCount: 1 }, cat2, MON, false, null, T3());
+    check("скелет: практика просит одну — вторую не навязываем",
+      nQ(wOne) === 1, `качественных ${nQ(wOne)} при прошлой неделе с одной: ${codes(wOne).join(", ")}`);
+
+    // (в) ПОЛ: пустая прошлая неделя не отменяет качество. Иначе одна пропущенная неделя
+    // выключала бы работу, а за «можно ли вообще» отвечает гейт по истории 8 недель.
+    const wZero = buildWeek(A, { ...env3, lastWeekQualityCount: 0 }, cat2, MON, false, null, T3());
+    check("скелет: пустая прошлая неделя не обнуляет качество (пол = одна)",
+      nQ(wZero) === 1, `качественных ${nQ(wZero)} при пустой прошлой неделе`);
+
+    // (г) ГЕЙТ ГЛАВНЕЕ ПРАКТИКИ. История 8 недель даёт потолок 1 (для двух нужно 6),
+    // практика просит две — выдана должна быть ОДНА.
+    const wGate = buildWeek(A, { ...env3, lastWeekQualityCount: 2, qualityLast8w: 3 }, cat2, MON, false, null, T3());
+    check("скелет: потолок гейта главнее просьбы практики",
+      nQ(wGate) === 1, `качественных ${nQ(wGate)} при истории 3 за 8 нед (потолку нужно 6)`);
+
+    // (д) ДЛИТЕЛЬНАЯ СВОЙ ДЕНЬ НЕ ОТДАЁТ: при двух беговых днях качества нет вовсе.
+    // Держит это ГЕЙТ ОТБОРА «меньше трёх беговых дней», а не арифметика скелета — проверено
+    // мутацией: снятие арифметики ничего не меняет, снятие гейта роняет эту строку.
+    const env2 = { ...env3, dayHistogram: [0, 5, 0, 0, 0, 0, 5], rolling4wFrequency: 2 };
+    const wTwoDays = buildWeek(A, { ...env2, lastWeekQualityCount: 2 }, cat2, MON, false, null, T3({ days: 2 }));
+    check("скелет: при двух беговых днях качества нет — длительная свой день не отдаёт",
+      nQ(wTwoDays) === 0 && wTwoDays.refused == null,
+      `качественных ${nQ(wTwoDays)} при 2 днях, отказ: ${wTwoDays.refused ?? "нет"}`);
+
+    // (е) ТИП ВТОРОЙ — ТЕМПОВЫЙ, ЕСЛИ ОН ЕСТЬ В ПРАКТИКЕ. Первой идут отрезки
+    // (замер: 154 недели из 164 с двумя качественными начинаются отрезками).
+    const cTempo = codes(buildWeek(A, { ...env3, lastWeekQualityCount: 2, hasTempoPractice: true }, cat2, MON, false, null, T3()));
+    check("тип: первой отрезки, второй темповый — когда темповый в практике есть",
+      cTempo.length === 2 && !cTempo[0].startsWith("steady") && cTempo[1].startsWith("steady"),
+      `выбрано: ${cTempo.join(", ")}`);
+
+    // (ж) ТЕМПОВОГО В ПРАКТИКЕ НЕТ — ВТОРАЯ ТОЖЕ ОТРЕЗКИ. Так делает большинство
+    // (отрезки+отрезки 74 недели из 110 с ровно двумя), навязывать темповый нельзя.
+    const cNoTempo = codes(buildWeek(A, { ...env3, lastWeekQualityCount: 2, hasTempoPractice: false }, cat2, MON, false, null, T3()));
+    check("тип: темпового в практике нет — вторая тоже отрезки",
+      cNoTempo.length === 2 && cNoTempo.every((c) => !c.startsWith("steady")), `выбрано: ${cNoTempo.join(", ")}`);
+
+    // (з) ОТРЕЗКОВ В ПРАКТИКЕ НЕТ — ПЕРВОЙ ИДЁТ ТЕМПОВЫЙ. Назначать тип, которого человек
+    // не делает, нельзя ни в каком слоте.
+    const cOnlyTempo = codes(buildWeek(A, { ...env3, lastWeekQualityCount: 1, hasTempoPractice: true, hasIntervalPractice: false }, cat2, MON, false, null, T3()));
+    check("тип: отрезков в практике нет — качественная это темповый",
+      cOnlyTempo.length === 1 && cOnlyTempo[0].startsWith("steady"), `выбрано: ${cOnlyTempo.join(", ")}`);
+
+    const workOf = (w: Week): number[] => w.sessions.filter((s) => s.role === "quality" && !s.deferred)
+      .map((s) => cat2.quality.find((p) => p.presetCode === s.presetCode)?.totalWorkMinutes ?? 0);
+
+    // (и) ЦЕЛЬ ЦИКЛА ПО РАБОТЕ ДЕЛИТСЯ МЕЖДУ СЕССИЯМИ. Цикл задаёт минуты работы НА НЕДЕЛЮ;
+    // если каждая сессия целится в недельное число, работа удваивается.
+    // НЕДЕЛЯ НАМЕРЕННО ПРОСТОРНАЯ (560 мин): потолок доли даёт 56 мин на сессию и НЕ связывает,
+    // поэтому проверка меряет именно деление цели, а не потолок. Без деления цель сессии
+    // стала бы 60 и отбор взял бы формат на 42–48 мин.
+    const wSplit = buildWeek(A, { ...env3, lastWeekQualityCount: 2 }, cat2, MON, false, null, T3({ qualityMin: 60, aerobicMin: 500 }));
+    const workSplit = workOf(wSplit);
+    check("две качественные: цель цикла по работе делится между ними",
+      workSplit.length === 2 && workSplit.every((x) => x <= 35),
+      `минуты работы по сессиям ${workSplit.join(" + ")} при цели цикла 60 на неделю`);
+
+    // (к) ПОТОЛОК ДОЛИ РАБОТЫ — НЕДЕЛЬНЫЙ И ТОЖЕ ДЕЛИТСЯ. Замеренный p90 = 0.20 недели;
+    // две сессии по 20% дали бы 40%, вдвое выше собственного замера.
+    // ЗАГОТОВКА ПОДОБРАНА ТАК, ЧТОБЫ ПОТОЛОК РЕАЛЬНО СВЯЗЫВАЛ: неделя цикла 300 → на сессию
+    // 30 мин, а цель просит 45. Без деления потолок был бы 60, и отбор взял бы 42 мин.
+    const wCeil = buildWeek(A, { ...env3, lastWeekQualityCount: 2 }, cat2, MON, false, null, T3({ qualityMin: 90, aerobicMin: 210 }));
+    const workCeil = workOf(wCeil);
+    const totalWork = workCeil.reduce((s, x) => s + x, 0);
+    check("две качественные: суммарная работа не выше 20% недели ЦИКЛА",
+      workCeil.length === 2 && workCeil.every((x) => x <= 30) && totalWork <= 300 * 0.20,
+      `работы по сессиям ${workCeil.join(" + ")} = ${totalWork} мин при неделе цикла 300 (потолок 60)`);
+
+    // (л) ТЕМПОВЫЙ — НЕПРЕРЫВНАЯ РАБОТА, А НЕ «ОТРЕЗОК 1», И ПОЛОСА СУБ-ПОРОГОВАЯ.
+    // Свалить его в controlled_threshold значило бы выдать пороговые числа за темповые.
+    const tSess = buildWeek(A, { ...env3, lastWeekQualityCount: 1, hasIntervalPractice: false, hasTempoPractice: true }, cat2, MON, false, null, T3())
+      .sessions.find((s) => s.role === "quality" && !s.deferred);
+    const tWork = (tSess?.segments ?? []).filter((x) => x.label === "Основная часть");
+    check("темповый: один непрерывный кусок «Основная часть», а не нумерованные отрезки",
+      tWork.length === 1 && !(tSess?.segments ?? []).some((x) => x.label.startsWith("Отрезок")),
+      `кусков «Основная часть» ${tWork.length}, метки: ${(tSess?.segments ?? []).map((x) => x.label).join(" | ")}`);
+    check("темповый: рабочая полоса МЕДЛЕННЕЕ порога (суб-порог), а не на пороге",
+      tWork.length === 1 && (tWork[0].fastSec ?? 0) >= (A.threshold?.paceSec ?? 0),
+      `быстрый край ${tWork[0]?.fastSec ?? "—"} при пороге ${A.threshold?.paceSec}`);
+  }
+
+  // ── 7-тер. КЛАССИФИКАТОР КАЧЕСТВА И ЛЕСТНИЦА ТЕМПОВОГО: ЧИСТЫЕ ФУНКЦИИ ──
+  {
+    // ЛЕСТНИЦА ТЕМПОВОГО СТРОИТСЯ ИЗ ДИАПАЗОНА КАТАЛОГА, А НЕ ИЗ ЧИСЛА В КОДЕ.
+    // steady_continuous несёт advisory_min/max_minutes и duration_from_envelope — то есть
+    // длительность работы задумана параметром. Проверяем на ЧИСТОЙ функции: заглушка каталога
+    // строит свои темповые сама, и порча настоящего построителя ей не видна.
+    const ladder = tempoPresetsFrom({
+      presetCode: "steady_continuous", displayNameRu: "Ровный (суб-порог)", targetMode: "pace",
+      rpeTarget: 6, rpeCap: 7, advisoryMinMinutes: 20, advisoryMaxMinutes: 40,
+      controlModeOverriddenByTier: false,
+    });
+    check("каталог: лестница темпового = диапазон каталога с шагом 5 (20..40)",
+      ladder.map((p) => p.totalWorkMinutes).join(",") === "20,25,30,35,40",
+      `получено: ${ladder.map((p) => p.totalWorkMinutes).join(",") || "пусто"}`);
+    check("каталог: темповый — непрерывная работа (reps 1, отдыха нет) и суб-пороговый intent",
+      ladder.length > 0 && ladder.every((p) => p.reps === 1 && p.recoveryMinutes === 0 && p.intensityIntent === "steady_tempo"),
+      `reps/отдых/intent: ${ladder.map((p) => `${p.reps}/${p.recoveryMinutes}/${p.intensityIntent}`).join(" ")}`);
+    // Диапазон ДРУГОЙ — лестница обязана поехать за ним, иначе она не из каталога.
+    const ladder2 = tempoPresetsFrom({
+      presetCode: "steady_continuous", displayNameRu: "x", targetMode: "pace",
+      rpeTarget: null, rpeCap: null, advisoryMinMinutes: 30, advisoryMaxMinutes: 35,
+      controlModeOverriddenByTier: false,
+    });
+    check("каталог: другой диапазон каталога — другая лестница",
+      ladder2.map((p) => p.totalWorkMinutes).join(",") === "30,35",
+      `получено: ${ladder2.map((p) => p.totalWorkMinutes).join(",") || "пусто"}`);
+  }
+  {
+    const QRE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|повтор|порог|фартлек|vo\s?2|мпк|темп выше)/i;
+    check("практика: «Темповый бег 30 минут» — качественная",
+      isQualityForPractice("Темповый бег 30 минут", QRE), "не опознан как качественная");
+    check("практика: «40 мин темп» — качественная",
+      isQualityForPractice("40 мин темп", QRE), "не опознан как качественная");
+    // «Бег по темпу» — 1614 сессий, это РЕЖИМ КОНТРОЛЯ («беги по заданному темпу»),
+    // а не тип тренировки. Спутать их значило бы объявить работой пятую часть ростера.
+    check("практика: «Бег по темпу» — НЕ качественная (это режим контроля)",
+      !isQualityForPractice("Бег по темпу", QRE), "«Бег по темпу» ошибочно принят за работу");
+    check("практика: «Легкий бег по темпу (темп выше)» — НЕ качественная",
+      !isQualityForPractice("Легкий бег по темпу (темп выше)", QRE), "«темп выше» снова считается работой");
+    check("практика: темповый отличается от отрезков",
+      isTempoForPractice("Темповый бег 30 минут", QRE) && !isTempoForPractice("8 х 4 мин", QRE),
+      "тип второй качественной определить нечем");
+    // Объём: минуты работы темпового берутся из заголовка, иначе база качества цикла
+    // занижена вдвое и две качественные в неё не помещаются.
+    const sv = splitSessionVolume("Темповый бег 30 минут", 59, 300);
+    check("объём: у темпового минуты работы читаются из заголовка",
+      sv.qualityMin === 30 && sv.aerobicMin === 29,
+      `разобрано ${sv.kind}: работа ${sv.qualityMin}, аэробных ${sv.aerobicMin}`);
+    const svAer = splitSessionVolume("Бег по темпу", 60, 300);
+    check("объём: «Бег по темпу» целиком аэробный",
+      svAer.qualityMin === 0 && svAer.kind === "aerobic", `разобрано ${svAer.kind}: работа ${svAer.qualityMin}`);
   }
 
   // ── 8. ЧИТАТЕЛЬ ЦИКЛА  // ── 8. ЧИТАТЕЛЬ ЦИКЛА: СТРОКА В ТАБЛИЦЕ РЕАЛЬНО МЕНЯЕТ НЕДЕЛЮ ──

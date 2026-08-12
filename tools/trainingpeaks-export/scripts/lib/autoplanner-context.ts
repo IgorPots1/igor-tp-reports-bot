@@ -16,7 +16,8 @@ import { anchorConfidence } from "./easy-anchor.ts";
 import { loadRoster } from "./autoplanner-roster.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
-  easyFloorPersonal, easyMaxPersonal, easyTargetPersonal, longRunPractice,
+  easyFloorPersonal, easyMaxPersonal, easyTargetPersonal, isQualityForPractice,
+  isTempoForPractice, longRunPractice,
 } from "./practice-signals.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
@@ -62,6 +63,19 @@ export type Envelope = {
   rolling4wQuality: number;
   /** качественных сессий за 8 недель — потолок качества считается ОТСЮДА, не из baselines */
   qualityLast8w: number;
+  /**
+   * КАЧЕСТВЕННЫХ В ПОСЛЕДНЕЙ ПОЛНОЙ ПЛАНОВОЙ НЕДЕЛЕ. Отсюда скелет берёт, сколько их ставить
+   * (см. qualityCountWanted): по бэктесту прошлая неделя предсказывает лучше среднего,
+   * медианы и p75 сразу по всем осям.
+   */
+  lastWeekQualityCount: number;
+  /**
+   * ЕСТЬ ЛИ У АТЛЕТА В ПРАКТИКЕ ТЕМПОВЫЙ и ОТРЕЗКИ (за 26 недель). Проверка НАЛИЧИЯ, а не
+   * доли: тем же способом решается, брать ли заголовки длительных или запасной детектор.
+   * Нужны, чтобы вторая качественная была того типа, который человек реально делает.
+   */
+  hasTempoPractice: boolean;
+  hasIntervalPractice: boolean;
   /** объём последней ФАКТИЧЕСКОЙ недели, мин — используется для сигналов, НЕ для потолка */
   lastWeekMinutes: number;
   /** катящийся 4-нед ПЛАНОВЫЙ объём, мин — та же валюта, что у полов сессий */
@@ -338,6 +352,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const nonQualPlanned26w: number[] = [];
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
+    let hasTempoPractice = false; let hasIntervalPractice = false;
 
     // СТРОГО ДО asOf. buildAnchor фильтрует свои сэмплы по дате сам, а конверт объёма,
     // гистограмма дней и история качества — НЕТ: они собирались по всем строкам подряд.
@@ -367,9 +382,20 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         weekFreq.set(wkp, (weekFreq.get(wkp) ?? 0) + 1);
         const d = new Date(r.workout_date + "T00:00:00Z");
         dayHistogram[(d.getUTCDay() + 6) % 7] += 1;
+        // СЧЁТЧИК КАЧЕСТВА — ПО ПОЧИНЕННОМУ КЛАССИФИКАТОРУ (правка 12.08).
+        // Прежде здесь стояла голая QUALITY_TITLE_RE, и она ошибалась в ОБЕ стороны:
+        // считала работой «Легкий бег по темпу (темп выше)» (по замеру это обычная лёгкая,
+        // разница темпа с ней 0 с/км) и НЕ ВИДЕЛА «Темповый бег 30 минут» — а это ровно та
+        // вторая качественная, которую Игорь ставит Паниной, Кругловой и Хофман.
+        // Пороги гейта (3 и 6 за 8 недель) перемерены на починенном классификаторе и держатся:
+        // у недели с одной качественной p10 истории по-прежнему 3, у недели с двумя p25 = 6.
         const t = r.title ?? "";
-        if (t && QUALITY_TITLE_RE.test(t)) {
+        if (t && isQualityForPractice(t, QUALITY_TITLE_RE)) {
           weekQual.set(wkp, (weekQual.get(wkp) ?? 0) + 1);
+          if (r.workout_date >= win26wStart) {
+            if (isTempoForPractice(t, QUALITY_TITLE_RE)) hasTempoPractice = true;
+            else hasIntervalPractice = true;
+          }
           if (r.workout_date >= win8wStart) {
             qualityDates.push(r.workout_date);
             const m = /([0-9]{1,2})\s*[xх×]\s*([0-9]{1,2}(?:[.,][0-9])?)\s*(мин|min)/i.exec(t);
@@ -378,7 +404,10 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         }
         // «Обычная лёгкая» этого атлета: нужна, чтобы не называть длительной сессию, которая
         // на самом деле обычная лёгкая (у T1 длительных в практике нет вовсе).
-        if (t && !QUALITY_TITLE_RE.test(t) && !LONG_TITLE_RE.test(t)) {
+        // «Обычная лёгкая» — тоже по починенному классификатору: «Темповый бег 30 минут»
+        // длится 59 мин и, попадая сюда, задирал медиану обычной лёгкой, от которой зависит
+        // именование длительной.
+        if (t && !isQualityForPractice(t, QUALITY_TITLE_RE) && !LONG_TITLE_RE.test(t)) {
           const m = Math.round((r.planned_time_raw as number) * 60);
           if (m > 0 && m <= 300) easyPlannedMinutes.push(m);
         }
@@ -440,6 +469,13 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const lastWeekPlannedMinutes = (() => {
       const ks = [...weekPlanned.keys()].filter(completeWeek).sort();
       return ks.length ? Math.round(weekPlanned.get(ks[ks.length - 1]) ?? 0) : 0;
+    })();
+    // КАЧЕСТВЕННЫХ В ПОСЛЕДНЕЙ ПОЛНОЙ ПЛАНОВОЙ НЕДЕЛЕ — та же неделя, что и lastWeekPlannedMinutes,
+    // то есть та же валюта и то же окно. Неполная текущая неделя сюда не попадает: иначе в
+    // понедельник счётчик читался бы как «качества не было» и вторая сессия молча пропадала.
+    const lastWeekQualityCount = (() => {
+      const ks = [...weekPlanned.keys()].filter(completeWeek).sort();
+      return ks.length ? (weekQual.get(ks[ks.length - 1]) ?? 0) : 0;
     })();
     // ОБЫЧНАЯ неделя атлета — медиана планового объёма за ВСЁ окно, а не за 4 недели.
     // Нужна, чтобы отличить «прошлая неделя была нормальной» от «прошлая неделя была провалом»:
@@ -560,6 +596,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         lastWeekMinutes: lastWeekMin,
         rolling4wPlannedMin, lastWeekPlannedMinutes, typicalPlannedWeekMin, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,
+        lastWeekQualityCount, hasTempoPractice, hasIntervalPractice,
         lastQualityWorkMinutes: lastQ ? lastQ.work : null,
         // weeksObserved — про то, есть ли из чего считать КОНВЕРТ, а конверт плановый.
         dayHistogram, weeksObserved: [...weekPlanned.keys()].filter(completeWeek).length,

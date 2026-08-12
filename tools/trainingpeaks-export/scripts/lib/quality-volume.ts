@@ -29,6 +29,27 @@ const QUALITY_TITLE_RE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|п
  */
 const TEMPO_MARKER_RE = /темп выше/i;
 
+/**
+ * ТЕМПОВЫЙ БЕГ — НЕПРЕРЫВНАЯ РАБОТА, КОТОРУЮ ЭТОТ МОДУЛЬ НЕ ВИДЕЛ ВОВСЕ.
+ *
+ * QUALITY_TITLE_RE выше не ловит «Темповый бег 30 минут» и «40 мин темп», поэтому вся такая
+ * сессия уходила в аэробные минуты, а качественных считалось НОЛЬ. Дефект тянулся прямо в
+ * базу цикла: у Паниной цикл просил 26 минут работы в неделю при том, что она делает отрезки
+ * ПЛЮС темповый на 30 минут. Цель по работе была занижена вдвое, и вторая качественная в неё
+ * физически не помещалась — два самых лёгких формата каталога дают 40 минут работы.
+ *
+ * Работа берётся ИЗ ЗАГОЛОВКА — тренер её там и пишет (замер 12.08: число есть у 38 заголовков
+ * из 62; медиана 30, p75 40). Без числа сессия остаётся неразобранной, как и безымянные
+ * отрезки: гадать нечего.
+ *
+ * ОСТОРОЖНО: `\w` не матчит кириллицу и молча не находит «Темповый».
+ */
+const TEMPO_TITLE_RE = /(темпов[а-яё]*\s+бег|^\s*[0-9]{1,3}\s*(?:мин|минут|км)\s+темп|порогов[а-яё]*)/i;
+/** «Темповый бег 30 минут», «40 мин темп» — минуты непрерывной работы из заголовка. */
+const TEMPO_WORK_MIN = /(?:темпов[а-яё]*\s+бег\s+([0-9]{1,3})\s*(?:мин|минут)|^\s*([0-9]{1,3})\s*(?:мин|минут)\s+темп)/i;
+/** Блок в соревновательном темпе — часть длительной, а не отдельная работа. */
+const RACE_PACE_RE = /в темпе\s+(?:марафон|пм|полумарафон|мар\b)|марафонском темпе/i;
+
 /** «6 x 4 мин», «12 x 2,5 мин», «7 x 4 min» — работа N × M минут. */
 const SHAPE_MIN = /([0-9]{1,2})\s*[xх×]\s*([0-9]{1,2}(?:[.,][0-9])?)\s*(?:мин|min)/i;
 /** «3 x 3 км» — то же, что метры, только в километрах. */
@@ -65,7 +86,9 @@ export type VolumeKind =
   | "interval_minutes"   // форма разобрана в минутах
   | "interval_seconds"   // форма разобрана в секундах
   | "interval_meters"    // форма в метрах, минуты ОЦЕНЕНЫ через порог
-  | "interval_unparsed"; // качество на вид, но форма не читается
+  | "interval_unparsed"  // качество на вид, но форма не читается
+  | "tempo_continuous"   // темповый: непрерывная работа, минуты взяты из заголовка
+  | "tempo_unparsed";    // темповый на вид, но минут в заголовке нет
 
 export type VolumeSplit = {
   kind: VolumeKind;
@@ -92,14 +115,24 @@ export function splitSessionVolume(
   const total = plannedMinutes > 0 ? plannedMinutes : 0;
   const all = (kind: VolumeKind): VolumeSplit => ({ kind, qualityMin: 0, aerobicMin: total, estimated: false });
 
-  if (!QUALITY_TITLE_RE.test(t)) return all("aerobic");
   if (TEMPO_MARKER_RE.test(t)) return all("tempo_marker");
+  const tempoLike = TEMPO_TITLE_RE.test(t) && !RACE_PACE_RE.test(t);
+  if (!QUALITY_TITLE_RE.test(t) && !tempoLike) return all("aerobic");
 
   const clamp = (work: number, kind: VolumeKind, estimated: boolean): VolumeSplit => {
     // Работа не может занимать больше самой сессии — иначе заголовок врёт о длительности.
     const q = Math.max(0, Math.min(total, Math.round(work)));
     return { kind, qualityMin: q, aerobicMin: total - q, estimated };
   };
+
+  // ТЕМПОВЫЙ РАЗБИРАЕТСЯ ПЕРВЫМ: у «Темповый бег 30 минут» нет формы N×M, и без этой ветки
+  // он проваливался бы в interval_unparsed, то есть снова в ноль качественных минут.
+  if (tempoLike) {
+    const m = TEMPO_WORK_MIN.exec(t);
+    const w = m ? num(m[1] ?? m[2]) : 0;
+    if (w > 0 && w <= 90) return clamp(w, "tempo_continuous", false);
+    return all("tempo_unparsed");
+  }
 
   // ПОРЯДОК ВАЖЕН: «6 х 4 / 2» и «6 х 4 + 2» должны разобраться как множества ДО того,
   // как SHAPE_MIN подхватит из них «6 х 4 мин» (в «6 х 4 + 2 мин» «мин» относится к отдыху).

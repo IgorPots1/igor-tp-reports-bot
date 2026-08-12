@@ -87,7 +87,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n═══ ПОКРЫТИЕ РАЗБОРА (плановых беговых у действующих: ${runs.length}) ═══`);
-  const order: VolumeKind[] = ["aerobic", "tempo_marker", "interval_minutes", "interval_seconds", "interval_meters", "interval_unparsed"];
+  const order: VolumeKind[] = ["aerobic", "tempo_marker", "interval_minutes", "interval_seconds", "interval_meters", "interval_unparsed", "tempo_continuous", "tempo_unparsed"];
   const nameOf: Record<VolumeKind, string> = {
     aerobic: "аэробная (не качество)",
     tempo_marker: "«темп выше» → аэробная (замер: 76% порога)",
@@ -95,6 +95,8 @@ async function main(): Promise<void> {
     interval_seconds: "отрезки, форма в секундах",
     interval_meters: "отрезки в метрах (минуты ОЦЕНЕНЫ через порог)",
     interval_unparsed: "качество на вид, форма НЕ читается",
+    tempo_continuous: "темповый, минуты работы из заголовка",
+    tempo_unparsed: "темповый на вид, минут в заголовке НЕТ",
   };
   for (const k of order) console.log(`  ${nameOf[k].padEnd(48)} ${String(kinds.get(k) ?? 0).padStart(5)}`);
   const qTotal = (kinds.get("interval_minutes") ?? 0) + (kinds.get("interval_seconds") ?? 0) + (kinds.get("interval_meters") ?? 0);

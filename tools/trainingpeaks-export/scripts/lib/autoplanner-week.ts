@@ -11,6 +11,7 @@ import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, 
 import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, NOT_RUNNING_RATIO, NOT_RUNNING_WEEKS, type Envelope } from "./autoplanner-context.ts";
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, QUALITY_CAP_THRESHOLDS, type QualityDecision } from "./quality-select.ts";
+import { qualityCountWanted } from "./practice-signals.ts";
 import type { Band } from "./band-collision.ts";
 
 export const DAY_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -131,11 +132,58 @@ export const LONG_CAP_STEP_BY_INTENT: Record<string, number> = { marathon: 1.116
 const round5 = (m: number): number => Math.max(ROUND_TO_MIN, Math.round(m / ROUND_TO_MIN) * ROUND_TO_MIN);
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
-export function rolesForDayCount(n: number, qualityCap: number): { quality: number; long: number } {
+/**
+ * СКЕЛЕТ НЕДЕЛИ. ЧИСЛО КАЧЕСТВЕННЫХ — ИЗ ПРАКТИКИ АТЛЕТА, А НЕ ИЗ ЧИСЛА ДНЕЙ (правка 12.08).
+ *
+ * ЧТО БЫЛО СЛОМАНО. Вторая качественная выдавалась только при ШЕСТИ беговых днях
+ * (`n <= 5 → одна`). В практике связи с числом дней нет: у 164 недель с двумя качественными
+ * медиана беговых дней равна ТРЁМ (3 дн — 77 недель, 4 дн — 53, 5 дн — 16, 6 дн — ОДНА).
+ * То есть порог отсекал ровно тех, кто две качественные и делает: Панина, Круглова и Хофман
+ * бегают 3–4 дня в неделю и получали одну.
+ *
+ * ЧТО ОСТАЁТСЯ ОТ ЧИСЛА ДНЕЙ. Только арифметика: длительная занимает свой день, поэтому
+ * качественных не может быть больше, чем дней минус один.
+ *
+ * ОДНА ЗАЩИТА, А НЕ ДВЕ. Здесь стоял ещё и ранний возврат «при n<=2 качества нет». Он
+ * ДУБЛИРОВАЛ гейт отбора «беговых дней меньше трёх» (quality-select), и мутационный прогон
+ * показал ровно то, чего и следовало ждать: порча любой из двух защит маскировалась второй,
+ * а проверка «при двух днях качества нет» выглядела беззубой. Та же ловушка, что была
+ * с личными потолками, применявшимися в трёх местах. Гейт остался ОДИН — в отборе.
+ *
+ * Член `n - 1` — страховка от отрицательного числа лёгких дней (качество плюс длительная
+ * не могут занять больше дней, чем есть). Своей проверки у него нет и быть не может:
+ * при потолке гейта в 2 он недостижим, и мутация его не изолирует.
+ *
+ * `want` приходит из practice-signals.qualityCountWanted (прошлая неделя), `qualityCap` —
+ * из гейта по истории 8 недель. Оба ограничителя остаются, ни один не снят.
+ */
+export function rolesForDayCount(n: number, qualityCap: number, want: number = 1): { quality: number; long: number } {
   const cap = Math.max(0, qualityCap);
-  if (n <= 2) return { quality: 0, long: 1 };
-  if (n <= 5) return { quality: Math.min(cap, 1), long: 1 };
-  return { quality: Math.min(cap, 2), long: 1 };
+  return { quality: Math.max(0, Math.min(cap, want, n - 1)), long: 1 };
+}
+
+/**
+ * ТИП КАЖДОЙ КАЧЕСТВЕННОЙ НЕДЕЛИ — ИЗ ПРАКТИКИ АТЛЕТА. [замер 12.08]
+ *
+ * ПОРЯДОК. Среди 164 недель с двумя и более качественными первой стоят отрезки в 154 случаях,
+ * темповый первым — в 10. Поэтому отрезки идут первыми, темповый вторым.
+ *
+ * СОЧЕТАНИЕ. Среди недель ровно с двумя (n=110): отрезки+отрезки 74, отрезки+темповый 31,
+ * темповый+темповый 5. То есть вторая качественная — ЧАЩЕ ТОЖЕ ОТРЕЗКИ, и ставить темповый
+ * всем подряд было бы подгонкой. Темповый ставится тем, у кого он В ПРАКТИКЕ ЕСТЬ (проверка
+ * наличия за 26 недель, как у заголовков длительных): таких 15 человек, и среди них ровно
+ * те трое, из-за кого наряд и заведён.
+ *
+ * Если отрезков в практике нет, а темповый есть — первой идёт темповый: назначать человеку
+ * тип, которого он не делает, нельзя ни в каком слоте.
+ */
+export function qualitySlotTypes(count: number, hasIntervals: boolean, hasTempo: boolean): Array<"intervals" | "tempo" | null> {
+  if (count <= 0) return [];
+  // Практики нет вовсе — тип не сужаем, отбор работает как раньше (весь пул).
+  if (!hasIntervals && !hasTempo) return Array.from({ length: count }, () => null);
+  const first: "intervals" | "tempo" = hasIntervals ? "intervals" : "tempo";
+  const second: "intervals" | "tempo" = hasTempo ? "tempo" : "intervals";
+  return Array.from({ length: count }, (_, i) => (i === 0 ? first : second));
 }
 
 export function chooseDays(hist: number[], n: number): number[] {
@@ -280,9 +328,22 @@ function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }):
   return segs;
 }
 
+/**
+ * Метка рабочего куска. У отрезков их несколько и они нумеруются; у темпового кусок ОДИН и
+ * непрерывный, и тренер называет его «Основная часть» — так и пишем, а не «Отрезок 1».
+ */
+export const WORK_SEGMENT_LABEL_TEMPO = "Основная часть";
+const workSegmentLabel = (isTempo: boolean, i: number): string =>
+  isTempo ? WORK_SEGMENT_LABEL_TEMPO : `Отрезок ${i + 1}`;
+
 function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityDecision, { selected: true }>): Session {
   const p: QualityPreset = dec.preset;
-  const intent: IntensityIntent = p.intensityIntent === "threshold" ? "threshold" : "controlled_threshold";
+  // ТЕМПОВЫЙ ИДЁТ СВОИМ НАМЕРЕНИЕМ. steady_tempo в резолвере — СУБ-пороговая полоса, и это
+  // подтверждается практикой: у Паниной работа темпового 5:27–5:39 при пороге 5:11–5:24.
+  // Свалить его в controlled_threshold значило бы выдать пороговые числа за темповые.
+  const isTempo = p.intensityIntent === "steady_tempo";
+  const intent: IntensityIntent = isTempo ? "steady_tempo"
+    : p.intensityIntent === "threshold" ? "threshold" : "controlled_threshold";
   const work = resolvePace(a, intent, "maintenance", p.rpeTarget);
   const easy = resolvePace(a, "easy", "maintenance", null);
   if (!work.ok || !easy.ok) {
@@ -304,7 +365,7 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     // встречаются лишь в 15% — в простой разминке НЕ ставим.
     : [{ minutes: warmMin, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
   for (let i = 0; i < p.reps; i++) {
-    segs.push({ minutes: p.workMinutes, label: `Отрезок ${i + 1}`, fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS });
+    segs.push({ minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS });
     if (i < p.reps - 1) segs.push({ minutes: p.recoveryMinutes, label: "Трусца", fastSec: eb.fast, slowSec: eb.slow });
   }
   segs.push({ minutes: p.cooldownMinutes, label: "Заминка, свободно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow });
@@ -349,7 +410,10 @@ export function shownBands(w: Week): { easy: Band | null; quality: Band | null }
   let quality: Band | null = null;
   for (const s of w.sessions) {
     if (s.deferred || s.role !== "quality" || s.targetMode !== "pace") continue;
-    const seg = s.segments.find((x) => x.label.startsWith("Отрезок") && x.fastSec != null && x.slowSec != null);
+    // Рабочий кусок называется «Отрезок N» у повторов и «Основная часть» у темпового —
+    // проверка слипания полос обязана видеть оба, иначе у темповой недели её просто нет.
+    const seg = s.segments.find((x) => (x.label.startsWith("Отрезок") || x.label === WORK_SEGMENT_LABEL_TEMPO)
+      && x.fastSec != null && x.slowSec != null);
     if (seg) { quality = { fastSec: seg.fastSec!, slowSec: seg.slowSec! }; break; }
   }
   return { easy, quality };
@@ -548,6 +612,14 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     notes.push(`✋ гейт качества снят циклом: за 8 нед качественных ${env.qualityLast8w}`
       + ` (гейту нужно ${QUALITY_CAP_THRESHOLDS.oneSessionMin}) — цикл просит работу, нужен взгляд тренера`);
   }
+  // СКОЛЬКО КАЧЕСТВЕННЫХ ПРОСИТ ПРАКТИКА. Гейт (qualityCap) отвечает «сколько МОЖНО»,
+  // это число — «сколько НАДО». Раньше второго вопроса не задавали вовсе, и ответ выводился
+  // из числа беговых дней, чего в практике нет (см. rolesForDayCount).
+  const qualityWant = qualityCountWanted(env.lastWeekQualityCount);
+  if (qualityWant >= 2) {
+    notes.push(`качественных ${qualityWant}: столько было в прошлой плановой неделе`
+      + `${env.hasTempoPractice ? ", вторая — темповый (есть в практике)" : ""}`);
+  }
   const refuse = (detail: string, kind: Week["refusedKind"]): Week => ({
     athleteId: a.athleteId, tier: a.tier, weekStart, days: [], sessions: [], notes,
     qualityDecision: "не выдана", refused: detail, refusedKind: kind, weeklyCap: weekly, plannedMinutes: 0,
@@ -566,12 +638,12 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // ── ПОДБОР ЧИСЛА ДНЕЙ ПОД ПОТОЛОК ──
   // Идём от желаемой частоты вниз. Для каждого варианта считаем МИНИМАЛЬНУЮ неделю (все сессии
   // на полах). Раздувать объём, чтобы вписать лишний день, нельзя — сокращается именно число дней.
-  type Plan = { n: number; days: number[]; roles: Map<number, Role>; dec: QualityDecision; qSessions: Session[]; easyRoles: number; fits: boolean; minWeek: number };
+  type Plan = { n: number; days: number[]; roles: Map<number, Role>; decs: QualityDecision[]; dec: QualityDecision; qSessions: Session[]; easyRoles: number; fits: boolean; minWeek: number };
   let lastRefusal = `минимальная неделя не помещается в потолок ${weekly} мин`;
 
   const tryPlan = (n: number): Plan => {
     const days = chooseDays(env.dayHistogram, n);
-    const counts = rolesForDayCount(n, qualityCap);
+    const counts = rolesForDayCount(n, qualityCap, qualityWant);
     let easyRoles = n - counts.quality - counts.long;
 
     // Бюджет ПОЛНОЙ длительности качественной: длительная обязана её перерасти (+1 шаг),
@@ -588,25 +660,41 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     // Без порога качество не назначаем ВООБЩЕ: резолвер всё равно откажет (числа брать неоткуда).
     // Отбор сам знает про потолок качества и про «меньше 3 беговых дней» — свою причину поверх
     // его причины не пишем, иначе в отчёте не видно, что реально помешало.
-    const dec: QualityDecision = a.threshold == null
-      ? { selected: false, reason: "no_threshold_cannot_do_quality", detail: "порога нет — качество не назначается" }
-      : selectQualityFromCatalog(cat.quality, cat.guardrails, cat.reviewRules, {
+    //
+    // ОТБОР ИДЁТ ПО СЛОТАМ. Раньше решение было ОДНО и копировалось на все качественные дни —
+    // то есть две качественные были бы двумя одинаковыми тренировками. Теперь у каждого слота
+    // свой тип (отрезки / темповый, по практике атлета) и своя доля целевых минут работы.
+    const slotTypes = qualitySlotTypes(counts.quality, env.hasIntervalPractice, env.hasTempoPractice);
+    const decs: QualityDecision[] = a.threshold == null
+      ? [{ selected: false, reason: "no_threshold_cannot_do_quality", detail: "порога нет — качество не назначается" }]
+      : slotTypes.length === 0
+      // Слотов нет вовсе (гейт закрыт или дней меньше трёх) — причину пишем ЯВНО. Пустой
+      // список решений оставлял дальше undefined и ронял сборку на первом же таком атлете.
+      ? [{ selected: false, reason: "no_quality_slot_available",
+          detail: `скелет не дал ни одного качественного дня: дней ${n}, потолок ${qualityCap}, просит практика ${qualityWant}` }]
+      : slotTypes.map((slotType) => selectQualityFromCatalog(cat.quality, cat.guardrails, cat.reviewRules, {
         qualityLast8w: env.qualityLast8w, plannedRunCount: n,
         lastQualityWorkMinutes: env.lastQualityWorkMinutes,
         hasActiveIllnessOrInjury: hasActiveIllness, hasRaceContext: false,
         contextFlags: hasActiveIllness ? ["injury"] : [], rolling4wWeeklyMin: env.rolling4wWeeklyMin,
         sessionBudgetMin: sessionBudget,
-        // цель по минутам работы от цикла — отборщик берёт ближайший формат, а не прогрессию
-        targetWorkMinutes: cycle ? cycle.qualityMin : null,
+        // ЦЕЛЬ ЦИКЛА ПО МИНУТАМ РАБОТЫ ДЕЛИТСЯ МЕЖДУ СЕССИЯМИ: цикл задаёт объём работы НА НЕДЕЛЮ,
+        // и целиться каждой сессией в недельное число значило бы удвоить работу.
+        targetWorkMinutes: cycle ? Math.round(cycle.qualityMin / Math.max(1, counts.quality)) : null,
         // доля работы считается от недели ЦИКЛА, а не от исторического факта
         cycleWeeklyMin: cycle ? weekly : null,
-      });
-    if (!dec.selected) { counts.quality = 0; easyRoles = n - counts.long; }
+        sessionsThisWeek: Math.max(1, counts.quality), slotType,
+      }));
+    // ЕСЛИ ВТОРОЙ СЛОТ НЕ СОБРАЛСЯ — неделя остаётся с первым, а не теряет качество целиком.
+    const picked = decs.filter((d): d is Extract<QualityDecision, { selected: true }> => d.selected);
+    const dec: QualityDecision = picked[0] ?? decs[0];
+    if (picked.length === 0) { counts.quality = 0; easyRoles = n - counts.long; }
+    else if (picked.length < counts.quality) { counts.quality = picked.length; easyRoles = n - counts.quality - counts.long; }
 
     const roles = assignRoles(days, counts, longDayHint);
     const qDays = [...roles.entries()].filter(([, r]) => r === "quality").map(([d]) => d);
     // Каноническая разминка НЕ сворачивается: она задана уровнем пресета, это решение тренера.
-    const qSessions = dec.selected ? qDays.map((d) => qualitySession(d, a, dec)) : [];
+    const qSessions = qDays.map((d, i) => qualitySession(d, a, picked[Math.min(i, picked.length - 1)]));
     const qTotal = qSessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);
     const qLongest = qSessions.reduce((m, x) => (x.deferred ? m : Math.max(m, x.minutes)), 0);
 
@@ -616,7 +704,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const minLong = Math.max(LONG_FLOOR, easyRoles > 0 ? EASY_FLOOR + ROUND_TO_MIN : 0,
       qLongest > 0 ? qLongest + ROUND_TO_MIN : 0);
     const minWeek = qTotal + round5(minLong) * counts.long + EASY_FLOOR * easyRoles;
-    return { n, days, roles, dec, qSessions, easyRoles, fits: minWeek <= weekly, minWeek };
+    return { n, days, roles, decs, dec, qSessions, easyRoles, fits: minWeek <= weekly, minWeek };
   };
 
   // КАЧЕСТВО ВАЖНЕЕ ЛИШНЕГО ЛЁГКОГО ДНЯ. Первый проход ищет вариант, где качественная
@@ -644,7 +732,11 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   }
   if (!plan.dec.selected) notes.push(`качество не назначено: ${plan.dec.reason} (${plan.dec.detail})`);
 
-  const { days, roles, dec, qSessions, easyRoles } = plan;
+  const { days, roles, dec, decs, qSessions, easyRoles } = plan;
+  // Отказ ВТОРОГО слота видно отдельно: «одна вместо двух» и «качества нет» — разные вещи.
+  for (const d of decs.slice(1)) {
+    if (!d.selected) notes.push(`вторая качественная не назначена: ${d.reason} (${d.detail})`);
+  }
   const qTotal = qSessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0);
   const qLongest = qSessions.reduce((m, x) => (x.deferred ? m : Math.max(m, x.minutes)), 0);
 
@@ -889,5 +981,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   }
   return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, refused: null, refusedKind: null,
     weeklyCap: weekly, plannedMinutes: sessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0),
-    qualityDecision: dec.selected ? `${dec.preset.presetCode}: ${dec.reason}` : `отказ: ${dec.reason}` };
+    qualityDecision: decs.some((d) => d.selected)
+      ? decs.filter((d) => d.selected).map((d) => `${(d as Extract<QualityDecision, { selected: true }>).preset.presetCode}: ${d.reason}`).join(" + ")
+      : `отказ: ${dec.reason}` };
 }

@@ -27,6 +27,12 @@ export function stubEnvelope(): Envelope {
     rolling4wFrequency: 3,
     rolling4wQuality: 1,
     qualityLast8w: 6,
+    // ОДНА КАЧЕСТВЕННАЯ В ПРОШЛОЙ НЕДЕЛЕ и отрезки в практике — базовая заглушка описывает
+    // обычного атлета. Двойное качество и темповый подставляются ТОЧЕЧНО в своих проверках:
+    // держать их в общей заглушке значило бы менять поведение всех проверок разом.
+    lastWeekQualityCount: 1,
+    hasTempoPractice: false,
+    hasIntervalPractice: true,
     lastWeekMinutes: 175,
     rolling4wPlannedMin: 190,
     lastWeekPlannedMinutes: 185,
@@ -67,6 +73,17 @@ const quality = (presetCode: string, reps: number, workMinutes: number): Quality
   athleteLevelMin: "L1",
 });
 
+/**
+ * Темповый кандидат заглушки: непрерывная работа, reps = 1, отдыха нет.
+ * Разминка и заминка — замеренные 15/10, как у настоящей лестницы каталога.
+ */
+const tempo = (workMinutes: number): QualityPreset => ({
+  presetCode: `steady_continuous_${workMinutes}`, displayNameRu: `Темповый бег ${workMinutes} минут`,
+  intensityIntent: "steady_tempo", reps: 1, workMinutes, recoveryMinutes: 0,
+  rpeTarget: 6, rpeCap: 7, avoidAcidosis: false, coachReviewRequired: false, requiresExplicitVo2: false,
+  warmupMinutes: 15, cooldownMinutes: 10, totalWorkMinutes: workMinutes, athleteLevelMin: "L0",
+});
+
 export function stubCatalog(): Catalog {
   return {
     aerobic: new Map([
@@ -74,13 +91,17 @@ export function stubCatalog(): Catalog {
       ["easy_plus_strides", aerobic("easy_plus_strides")],
       ["recovery_easy", aerobic("recovery_easy")],
       ["long_aerobic", aerobic("long_aerobic")],
+      ["steady_continuous", { ...aerobic("steady_continuous"), advisoryMinMinutes: 20, advisoryMaxMinutes: 40 }],
     ]),
-    // лесенка от 20 до 48 мин работы — достаточно, чтобы цель цикла нашла близкий формат
+    // лесенка от 20 до 48 мин работы — достаточно, чтобы цель цикла нашла близкий формат.
+    // Отсортирована по возрастанию работы, как это делает настоящий loadCatalog: отбор
+    // берёт pool[0] как «самый лёгкий», и на неотсортированной заглушке это была бы ложь.
     quality: [
-      quality("thr_4x5", 4, 5), quality("thr_3x8", 3, 8), quality("thr_5x6", 5, 6),
-      quality("thr_4x8", 4, 8), quality("thr_5x7", 5, 7), quality("thr_4x10", 4, 10),
+      quality("thr_4x5", 4, 5), tempo(20), quality("thr_3x8", 3, 8), tempo(25),
+      quality("thr_5x6", 5, 6), tempo(30), quality("thr_4x8", 4, 8), tempo(35),
+      quality("thr_5x7", 5, 7), tempo(40), quality("thr_4x10", 4, 10),
       quality("thr_3x14", 3, 14), quality("thr_3x16", 3, 16),
-    ],
+    ].sort((a, b) => a.totalWorkMinutes - b.totalWorkMinutes),
     guardrails: [],
     reviewRules: [],
   };

@@ -43,7 +43,23 @@ export type QualityContext = {
    * Без цикла null, и знаменателем остаётся исторический rolling4wWeeklyMin.
    */
   cycleWeeklyMin?: number | null;
+  /**
+   * СКОЛЬКО КАЧЕСТВЕННЫХ НА НЕДЕЛЕ ВСЕГО. Потолок доли работы — недельный, поэтому при двух
+   * сессиях он делится между ними: иначе две сессии по 20% недели дают 40% работы, и
+   * замеренный p90 практики нарушается вдвое. По умолчанию 1 — прежнее поведение.
+   */
+  sessionsThisWeek?: number;
+  /**
+   * ТИП ЭТОЙ КОНКРЕТНОЙ СЕССИИ. Задан — пул сужается до него.
+   * Замер 12.08 по 164 неделям с двумя качественными: первой стоят отрезки в 154 случаях
+   * из 164, темповый первым — 10. Поэтому порядок «отрезки, потом темповый» берётся из
+   * практики, а не назначается.
+   */
+  slotType?: "intervals" | "tempo" | null;
 };
+
+/** Темповый ли это кандидат каталога (непрерывная работа), в отличие от отрезков. */
+export const isTempoPreset = (p: QualityPreset): boolean => p.intensityIntent === "steady_tempo";
 
 /**
  * Пороги потолка качества — параметры, не зашиты в логику.
@@ -122,14 +138,32 @@ export function selectQualityFromCatalog(
   let pool = candidates.filter((p) => p.intensityIntent !== "vo2" && !p.requiresExplicitVo2);
   if (pool.length === 0) return { selected: false, reason: "no_candidates", detail: "после отсева VO2 кандидатов не осталось" };
 
+  // ── ТИП СЕССИИ: отрезки или темповый ──
+  // Без указания тип не сужается — прежнее поведение, в пуле только отрезки, если темповых
+  // в каталоге нет. С указанием пул сужается жёстко: «вторая качественная» имеет смысл
+  // только если она ДРУГАЯ, а не копия первой.
+  if (ctx.slotType) {
+    const want = ctx.slotType === "tempo";
+    const narrowed = pool.filter((p) => isTempoPreset(p) === want);
+    if (narrowed.length === 0) {
+      return { selected: false, reason: "no_candidates_of_type",
+        detail: `в каталоге нет кандидатов типа «${ctx.slotType === "tempo" ? "темповый" : "отрезки"}»` };
+    }
+    pool = narrowed;
+  }
+
   // ── потолок объёма работы по недельному объёму ──
   // ЗНАМЕНАТЕЛЬ — НЕДЕЛЯ, КОТОРУЮ СОБИРАЕМ, А НЕ ИСТОРИЧЕСКАЯ (правка 12.08).
   // Доля работы — это доля ЭТОЙ недели. Пока знаменателем стоял rolling4wWeeklyMin, потолок
   // считался от исторического ФАКТА (завершённые минуты!), то есть при активном цикле в него
   // возвращался тот самый конверт, который цикл отменяет, — ровно тот же дефект, что был
   // починен в доборе объёма. Сам потолок (доля 0.20 = p90 практики) не тронут.
+  // ДОЛЯ РАБОТЫ — НЕДЕЛЬНАЯ, ПОЭТОМУ ДЕЛИТСЯ МЕЖДУ СЕССИЯМИ. Замеренный p90 = 0.20 недели
+  // относится к неделе целиком; две сессии, каждая под 20%, дали бы 40% и сломали бы потолок,
+  // который сам же и замерен. Пол 12 мин остаётся: ниже него формата всё равно нет.
   const weekly = ctx.cycleWeeklyMin ?? (ctx.rolling4wWeeklyMin || 150);
-  const workCeil = Math.max(12, weekly * WORK_SHARE_OF_WEEKLY_MAX);
+  const slots = Math.max(1, ctx.sessionsThisWeek ?? 1);
+  const workCeil = Math.max(12, weekly * WORK_SHARE_OF_WEEKLY_MAX / slots);
   const withinWeekly = pool.filter((p) => p.totalWorkMinutes <= workCeil);
   const warnings: string[] = [];
   if (withinWeekly.length === 0) {
