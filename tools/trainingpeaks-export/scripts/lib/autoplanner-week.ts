@@ -613,7 +613,16 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // а теневое сравнение показывало систематический недобор объёма против тренера.
   // Цель — плановый объём самого атлета, та же валюта, что потолок. Идём шагами по 5 минут,
   // отдавая шаг тому, кто дальше от своего ориентира, и не нарушая ни потолок, ни инварианты.
-  const targetWeekly = Math.min(weekly, env.rolling4wPlannedMin > 0 ? env.rolling4wPlannedMin : weekly);
+  //
+  // ПРИ АКТИВНОМ ЦИКЛЕ ЦЕЛЬ ДОБОРА — ЦЕЛЬ ЦИКЛА, А НЕ КОНВЕРТ ИСТОРИИ (правка 12.08).
+  // Конверт rolling4wPlannedMin цикл отменяет ещё в расчёте потолка недели — и он же
+  // возвращался сюда через Math.min, то есть отмена отменялась в шаге добора. Замер 11.08:
+  // сработало у 8 атлетов из 12 и стоило 93 минуты из 129 недобранных. У 5733446 цикл просил
+  // 410, потолок недели был 410, а добор останавливался на 365 — ровно его rolling4wPlannedMin.
+  // Без цикла поведение прежнее: там конверт и есть план, и целиться больше не во что.
+  const targetWeekly = cycle
+    ? weekly
+    : Math.min(weekly, env.rolling4wPlannedMin > 0 ? env.rolling4wPlannedMin : weekly);
   const total = (): number => qTotal + longMin + easyBase * easyRoles;
   let guard = 0;
   while (total() < targetWeekly && spare >= ROUND_TO_MIN && guard++ < 200) {

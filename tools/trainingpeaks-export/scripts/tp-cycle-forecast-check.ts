@@ -205,6 +205,29 @@ function main(): void {
       wCycle.weeklyCap === target.aerobicMin + target.qualityMin,
       `потолок ${wCycle.weeklyCap}, цель ${target.aerobicMin + target.qualityMin}`);
 
+    // ── КОНВЕРТ НЕ ВОЗВРАЩАЕТСЯ В ДОБОР ──
+    // Проверка выше сторожит только ПОТОЛОК недели, и её было мало: конверт возвращался
+    // в шаге (4) через targetWeekly = min(потолок, rolling4wPlannedMin), а потолок при этом
+    // оставался правильным. Замер 11.08: эта течь стоила 93 минуты из 129 у 8 атлетов из 12.
+    //
+    // ЗАГЛУШКА ПОДОБРАНА ТАК, ЧТОБЫ ДОБОР БЫЛ СВЯЗЫВАЮЩИМ ШАГОМ, иначе проверка беззубая.
+    // На обычной заглушке течь не ловится вообще: потолки сессий (capLong = недельный × 0.35
+    // при пустом baseline) упираются раньше конверта, шаги формы (1)-(3) добирают всё сами,
+    // и добор не запускается — проверено мутацией, старая формула проходила её насквозь.
+    // Поэтому здесь просторный capLongRunMin (140) и пять дней: место для роста есть,
+    // и единственное, что может остановить добор, — вернувшийся конверт.
+    // ДОПУСК 3%, А НЕ 10%: разница между течью и починкой на этой заглушке 15 минут
+    // (318 против 333 при цели 340), и десятипроцентный допуск накрывает обе.
+    const envLowPlan = { ...env, rolling4wPlannedMin: 200, capLongRunMin: 140 };
+    const bigTarget: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 300, qualityMin: 40, days: 5 };
+    const wBig = buildWeek(anchors, envLowPlan, cat, MON, false, null, bigTarget);
+    const bigWant = bigTarget.aerobicMin + bigTarget.qualityMin;
+    check("цикл: конверт истории НЕ участвует в ДОБОРЕ объёма (допуск 3%)",
+      wBig.plannedMinutes > envLowPlan.rolling4wPlannedMin
+        && Math.abs(wBig.plannedMinutes / bigWant - 1) <= 0.03,
+      `конверт ${envLowPlan.rolling4wPlannedMin}, цель цикла ${bigWant}, собрано ${wBig.plannedMinutes}`
+      + ` (${Math.round(1000 * (wBig.plannedMinutes / bigWant - 1)) / 10}%)`);
+
     // при активном health-сигнале роль понижается, объём считается от факта
     const wIll = buildWeek(anchors, env, cat, MON, true, null, target);
     check("реактивность: при активном сигнале роль понижена",
