@@ -1,0 +1,105 @@
+/* Анкета участника интенсива. Все селекторы заскоуплены на .apply-root —
+   в globals.css есть неприкрытые main{}, h1{}, .btn и прочее, а в landing.css
+   свои глобальные .btn/.wrap; без префикса они перебивают форму. */
+.apply-root{
+  --bg:#F6F4EF;--surface:#FFFFFF;--ink:#191712;--ink-2:#4D483F;--muted:#857F73;
+  --line:#E7E1D5;--line-2:#D8D0C0;--accent:#E5480E;--accent-ink:#B53707;
+  --green:#2E7D45;--green-bg:#EAF3EC;--radius:14px;
+  --shadow:0 1px 2px rgba(25,23,18,.04), 0 8px 28px -12px rgba(25,23,18,.18);
+}
+.apply-root *{box-sizing:border-box;margin:0;padding:0}
+.apply-root{background:var(--bg);color:var(--ink);font-family:var(--font-onest),system-ui,sans-serif;font-size:16.5px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
+.apply-root .wrap{width:100%;max-width:660px;margin:0 auto;padding:0 20px}
+
+/* header + progress */
+.apply-root header{position:sticky;top:0;z-index:20;background:rgba(246,244,239,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.apply-root .hbar{display:flex;align-items:center;justify-content:space-between;height:56px;gap:14px}
+.apply-root .hbar .t{font-weight:700;font-size:15px;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+.apply-root .hbar .t .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+.apply-root .hbar .c{font-family:var(--font-jetbrains),monospace;font-size:12px;color:var(--muted);white-space:nowrap}
+.apply-root .prog{height:3px;background:var(--line)}
+.apply-root .prog i{display:block;height:100%;background:var(--accent);transition:width .3s ease}
+
+.apply-root main{flex:1;max-width:none;align-self:stretch;padding:28px 0 40px}
+.apply-root .step{display:none}
+.apply-root .step.on{display:block;animation:apply-fade .25s ease}
+@keyframes apply-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.apply-root .eyebrow{font-family:var(--font-jetbrains),monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.apply-root h2{font-size:clamp(23px,3.4vw,30px);font-weight:700;letter-spacing:-.02em;line-height:1.15;margin:10px 0 6px}
+.apply-root .lede{color:var(--ink-2);font-size:15.5px;margin-bottom:24px}
+
+.apply-root .f{margin-bottom:20px}
+.apply-root .f > label{display:block;font-weight:600;font-size:15.5px;margin-bottom:8px;letter-spacing:-.01em}
+.apply-root .f .hint{font-size:13px;color:var(--muted);margin:-3px 0 9px;line-height:1.4}
+.apply-root .req{color:var(--accent);font-weight:700}
+.apply-root input[type=text],.apply-root input[type=number],.apply-root input[type=date],.apply-root select,.apply-root textarea{
+  width:100%;background:var(--surface);border:1.5px solid var(--line);border-radius:11px;
+  padding:12px 14px;font-family:var(--font-onest),sans-serif;font-size:16px;color:var(--ink);outline:none;transition:border-color .18s}
+.apply-root textarea{min-height:92px;resize:vertical;line-height:1.5}
+.apply-root input:focus,.apply-root select:focus,.apply-root textarea:focus{border-color:var(--accent)}
+.apply-root .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:560px){.apply-root .row{grid-template-columns:1fr}}
+.apply-root .suffix{position:relative}
+.apply-root .suffix span{position:absolute;right:14px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;font-family:var(--font-jetbrains),monospace}
+
+/* ошибка у поля */
+.apply-root .f.bad input[type=text],.apply-root .f.bad input[type=number],
+.apply-root .f.bad input[type=date],.apply-root .f.bad textarea{border-color:var(--accent)}
+.apply-root .emsg{margin-top:7px;font-size:13.5px;color:var(--accent-ink);font-weight:600}
+
+/* chips */
+.apply-root .chips{display:flex;flex-wrap:wrap;gap:8px}
+.apply-root .chip{position:relative}
+.apply-root .chip input{position:absolute;opacity:0;pointer-events:none}
+.apply-root .chip span{display:inline-block;padding:9px 15px;border:1.5px solid var(--line);background:var(--surface);
+  border-radius:999px;font-size:14.5px;font-weight:500;cursor:pointer;transition:all .16s;user-select:none}
+.apply-root .chip input:checked + span{border-color:var(--accent);background:var(--accent);color:#fff}
+.apply-root .chip input:focus-visible + span{outline:2px solid var(--accent);outline-offset:2px}
+.apply-root .chip.day span{min-width:52px;text-align:center;padding:9px 10px}
+
+/* PR grid */
+.apply-root .pr{display:grid;gap:9px}
+.apply-root .pr-row{display:grid;grid-template-columns:88px 1fr;gap:10px;align-items:center}
+.apply-root .pr-row .d{font-family:var(--font-jetbrains),monospace;font-size:13px;color:var(--ink-2)}
+
+/* med block */
+.apply-root .med{background:#FFF8F4;border:1.5px solid #F3D9C9;border-radius:var(--radius);padding:18px 18px 6px;margin-bottom:20px}
+.apply-root .med .note{display:flex;gap:10px;font-size:13.5px;color:var(--ink-2);line-height:1.45;margin-bottom:16px}
+.apply-root .med .note .i{color:var(--accent);flex:0 0 auto;font-weight:700}
+.apply-root .check{display:flex;gap:11px;align-items:flex-start;background:var(--surface);border:1.5px solid var(--line);border-radius:11px;padding:14px;cursor:pointer}
+.apply-root .check.bad{border-color:var(--accent)}
+.apply-root .check input{margin-top:3px;width:18px;height:18px;accent-color:var(--accent);flex:0 0 auto}
+.apply-root .check span{font-size:14px;line-height:1.45;color:var(--ink-2)}
+
+/* upload */
+.apply-root .up{border:1.5px dashed var(--line-2);border-radius:var(--radius);background:var(--surface);padding:22px 18px;text-align:center;cursor:pointer;display:block}
+.apply-root .up input[type=file]{display:none}
+.apply-root .up .ic{width:42px;height:42px;border-radius:11px;background:var(--green-bg);color:var(--green);display:grid;place-items:center;margin:0 auto 11px}
+.apply-root .up .t{font-weight:600;font-size:15px;margin-bottom:5px}
+.apply-root .up .s{font-size:13px;color:var(--muted);line-height:1.45}
+.apply-root .up-list{margin-top:12px;display:grid;gap:8px}
+.apply-root .up-item{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 13px;font-size:14px}
+.apply-root .up-item .fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apply-root .up-item .n{width:22px;height:22px;border-radius:6px;background:var(--green-bg);color:var(--green);display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto}
+.apply-root .up-item .x{margin-left:auto;color:var(--muted);font-size:18px;cursor:pointer;background:none;border:none;padding:0 4px;line-height:1;flex:0 0 auto}
+.apply-root .up-item .x:hover{color:var(--ink)}
+
+/* nav */
+.apply-root .nav{display:flex;gap:10px;margin-top:28px;padding-top:20px;border-top:1px solid var(--line)}
+.apply-root .btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;border:none;cursor:pointer;
+  font-family:var(--font-onest),sans-serif;font-weight:600;font-size:16px;background:var(--accent);color:#fff;
+  padding:14px 22px;border-radius:999px;transition:background .18s}
+.apply-root .btn:hover{background:var(--accent-ink)}
+.apply-root .btn:disabled{opacity:.6;cursor:default}
+.apply-root .btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line-2);flex:0 0 auto;padding:14px 20px}
+.apply-root .btn.ghost:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+.apply-root .sendfail{margin-top:14px;background:#FFF1EC;border:1.5px solid #F3D9C9;border-radius:11px;padding:13px 15px;font-size:14.5px;color:var(--accent-ink)}
+
+/* done */
+.apply-root .done{text-align:center;padding:40px 0}
+.apply-root .done .tick{width:70px;height:70px;border-radius:50%;background:var(--green-bg);color:var(--green);display:grid;place-items:center;margin:0 auto 20px;font-size:32px}
+.apply-root .done h2{margin-bottom:10px}
+.apply-root .done p{color:var(--ink-2);max-width:44ch;margin:0 auto 8px}
+.apply-root .done .seat{margin-top:20px;display:inline-flex;align-items:center;gap:9px;background:var(--green-bg);color:var(--green);font-weight:700;font-size:14px;padding:10px 18px;border-radius:999px}

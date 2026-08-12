@@ -4,8 +4,13 @@ import Image from "next/image";
 import fs from "fs";
 import path from "path";
 import Carousel from "../landing/Carousel";
-import { FLOW, pastFlows, seatsWord } from "@/lib/flow";
+import { FLOW, SEATS_TOTAL, pastFlows, seatsWord } from "@/lib/flow";
+import { getSeatsLeft } from "@/features/intensive/repository";
 import "./intensive.css";
+
+// Число мест живое — считается по заявкам на каждый показ страницы.
+// Без этого Next отдавал бы статику, и счётчик замерз бы на времени сборки.
+export const dynamic = "force-dynamic";
 
 const onest = Onest({
   subsets: ["latin", "cyrillic"],
@@ -39,7 +44,9 @@ const TgIcon = () => (
   </svg>
 );
 
-export default function IntensivePage() {
+export default async function IntensivePage() {
+  const seatsLeft = await getSeatsLeft();
+  const seatsClosed = seatsLeft <= 0;
   const hasHeroPhoto = fs.existsSync(
     path.join(process.cwd(), "public/intensive/hero.jpg")
   );
@@ -83,10 +90,10 @@ export default function IntensivePage() {
                 <div className="v">{FLOW.startDate}</div>
               </div>
               <div className="fb">
-                <div className="k">Осталось</div>
+                <div className="k">{seatsClosed ? "Мест" : "Осталось"}</div>
                 <div className="v">
                   <span className="acc">
-                    {FLOW.seatsLeft} {seatsWord(FLOW.seatsLeft)}
+                    {seatsClosed ? "Набор закрыт" : `${seatsLeft} ${seatsWord(seatsLeft)}`}
                   </span>
                 </div>
               </div>
@@ -736,7 +743,7 @@ export default function IntensivePage() {
             </div>
             <div className="bandi">
               <div className="v">
-                Всего {FLOW.seatsTotal} {seatsWord(FLOW.seatsTotal)}
+                Всего {SEATS_TOTAL} {seatsWord(SEATS_TOTAL)}
               </div>
               <div className="k">каждого веду лично</div>
             </div>
@@ -781,8 +788,14 @@ export default function IntensivePage() {
         <div className="wrap">
           <div className="final">
             <span className="urg">
-              &#9203; Осталось {FLOW.seatsLeft} {seatsWord(FLOW.seatsLeft)} в{" "}
-              {FLOW.number}-м потоке
+              {seatsClosed ? (
+                <>&#9203; Набор в этот поток закрыт</>
+              ) : (
+                <>
+                  &#9203; Осталось {seatsLeft} {seatsWord(seatsLeft)} в{" "}
+                  {FLOW.number}-м потоке
+                </>
+              )}
             </span>
             <h2>Хочешь бегать правильно и улучшать результаты?</h2>
             <p>
