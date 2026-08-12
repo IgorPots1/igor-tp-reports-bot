@@ -35,6 +35,7 @@ const C = path.join(LIB, "training-cycle.ts");
 const X = path.join(LIB, "autoplanner-context.ts");
 const R = path.join(LIB, "cycle-reader.ts");
 const Q = path.join(LIB, "quality-select.ts");
+const P = path.join(LIB, "practice-signals.ts");
 
 type Mutation = { id: string; file: string; find: string; replace: string; what: string };
 
@@ -113,8 +114,14 @@ const MUTATIONS: Mutation[] = [
   { id: "neg-growth-cap", file: C, find: "export const MAX_SINGLE_STEP = 1.22;", replace: "export const MAX_SINGLE_STEP = 1.22;\n// контроль: безвредный комментарий", what: "КОНТРОЛЬ: безвредная правка, замечать нечего" },
 
   // ── контекст ──  // ── контекст ──
-  { id: "ctx-warmup", file: X, find: "        if (t && !(QUALITY_TITLE_RE.test(t) && !/темп выше/i.test(t)) && !WARMUP_TITLE_RE.test(t) && r.workout_date >= win26wStart) {", replace: "        if (t && !(QUALITY_TITLE_RE.test(t) && !/темп выше/i.test(t)) && r.workout_date >= win26wStart) {", what: "разминки попадают в личный пол" },
-  { id: "ctx-min-runs", file: X, find: "export const MIN_RUNS_FOR_PERSONAL_FLOOR = 20;", replace: "export const MIN_RUNS_FOR_PERSONAL_FLOOR = 0;", what: "порог достаточности данных снят" },
+  // Переехали в practice-signals вместе с логикой. Харнесс честно сообщал «ЯКОРЬ НЕ НАЙДЕН»,
+  // пока я их не перенацелил, — это и есть его польза: молча зелёными они не стали.
+  { id: "ctx-warmup", file: P, find: "  if (WARMUP_TITLE_RE.test(title)) return false;", replace: "  void WARMUP_TITLE_RE;", what: "разминки попадают в личный пол" },
+  { id: "ctx-min-runs", file: P, find: "  if (samples.length < MIN_RUNS_FOR_PERSONAL_FLOOR) return 0;", replace: "  if (samples.length < 0) return 0;", what: "порог достаточности данных снят" },
+  { id: "ps-p10-to-min", file: P, find: "  return s[Math.floor(LONG_FALLBACK_DECILE * (s.length - 1))];", replace: "  return s[0];", what: "личный пол берётся как min вместо p10" },
+  { id: "ps-racepace", file: P, find: "  if (RACE_PACE_BLOCK_RE.test(title)) return false;", replace: "  void RACE_PACE_BLOCK_RE;", what: "марафонские блоки идут в детектор длительных" },
+  { id: "ps-tempo-quality", file: P, find: "  return qualityRe.test(title) && !AEROBIC_DESPITE_QUALITY_RE.test(title);", replace: "  return qualityRe.test(title);", what: "«темп выше» снова считается качественной" },
+  { id: "ps-fallback-always", file: P, find: "  if (titledSamples.length > 0) {", replace: "  if (false) {", what: "запасной детектор вытесняет заголовки" },
 ];
 
 function run(): { failed: string[]; crashed: boolean } {

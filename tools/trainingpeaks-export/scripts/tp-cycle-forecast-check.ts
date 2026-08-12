@@ -29,6 +29,10 @@ import process from "node:process";
 
 import { buildWeek, EASY_FLOOR_MIN, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
+import {
+  MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
+  easyFloorPersonal, longRunPractice,
+} from "./lib/practice-signals.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
@@ -452,7 +456,64 @@ async function main(): Promise<void> {
       !wNo.notes.some((n) => n.startsWith("цикл")), `заметки: ${wNo.notes.join(" | ")}`);
   }
 
-  // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ: СЕРЕДИНА МЕЖДУ МЕДИАНОЙ И p75 ──
+  // ── 6б. ПРАКТИЧЕСКИЕ СИГНАЛЫ: настоящие проверки, а не через заглушку конверта ──
+  // До 13.08 этот код не исполнялся проверками ВООБЩЕ: все идут на stubEnvelope, а величины
+  // приходят туда уже готовыми. Мутационный прогон это и показал — порча отсева разминок и
+  // порога достаточности не роняла ни одной из 49 проверок. Здесь проверяется сама логика.
+  {
+    const QRE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|повтор|порог|фартлек|vo\s?2|мпк|темп выше)/i;
+
+    // (1) ОТСЕВ РАЗМИНОК. Всё короче 40 мин в практике — «Разминка» перед стартом, и без
+    // её отсева минимум атлета падает в когортный пол, а личный пол теряет смысл.
+    check("практика: разминка не идёт в выборку пола лёгкой",
+      !countsForEasyFloor("Разминка", 23, QRE) && !countsForEasyFloor("Активация перед стартом", 20, QRE)
+        && countsForEasyFloor("Лёгкий бег", 50, QRE),
+      `разминка 23 → ${countsForEasyFloor("Разминка", 23, QRE)}, лёгкий 50 → ${countsForEasyFloor("Лёгкий бег", 50, QRE)}`);
+
+    // (2) «ТЕМП ВЫШЕ» — АЭРОБНЫЙ ПО ЗАМЕРУ, хотя регулярка качества его ловит. Без этого
+    // у 5748681 в выборку не попадало почти ничего.
+    check("практика: «темп выше» считается аэробным вопреки регулярке качества",
+      countsForEasyFloor("Лёгкий бег (темп выше)", 100, QRE) && !countsForEasyFloor("6 x 4 мин", 50, QRE),
+      `темп выше → ${countsForEasyFloor("Лёгкий бег (темп выше)", 100, QRE)}, отрезки → ${countsForEasyFloor("6 x 4 мин", 50, QRE)}`);
+
+    // (3) ЛИЧНЫЙ ПОЛ — p10, ЧИСЛОМ. На 21 значении 40..60 десятый перцентиль = 42:
+    // индекс floor(0.1 * 20) = 2, то есть третье снизу. min дал бы 40, p25 — 45.
+    const ramp = Array.from({ length: 21 }, (_, i) => 40 + i);
+    check("практика: личный пол лёгкой — именно p10 (набор 40..60 → 42)",
+      easyFloorPersonal(ramp) === 42, `получено ${easyFloorPersonal(ramp)}, ожидалось 42 (min 40, p25 45)`);
+
+    // (4) ПОРОГ ДОСТАТОЧНОСТИ. При n < MIN_RUNS_FOR_PERSONAL_FLOOR личного пола нет вовсе —
+    // возвращается 0, и сборщик берёт когортный.
+    check(`практика: меньше ${MIN_RUNS_FOR_PERSONAL_FLOOR} пробежек — личного пола нет`,
+      easyFloorPersonal(ramp.slice(0, MIN_RUNS_FOR_PERSONAL_FLOOR - 1)) === 0
+        && easyFloorPersonal(ramp.slice(0, MIN_RUNS_FOR_PERSONAL_FLOOR)) > 0,
+      `n=${MIN_RUNS_FOR_PERSONAL_FLOOR - 1} → ${easyFloorPersonal(ramp.slice(0, MIN_RUNS_FOR_PERSONAL_FLOOR - 1))}, `
+      + `n=${MIN_RUNS_FOR_PERSONAL_FLOOR} → ${easyFloorPersonal(ramp.slice(0, MIN_RUNS_FOR_PERSONAL_FLOOR))}`);
+
+    // (5) ПРАКТИКА ДЛИТЕЛЬНЫХ ПО ЗАГОЛОВКАМ, когда они есть.
+    const titled = [90, 100, 110, 120];
+    const byTitle = longRunPractice(titled, [200, 190, 180]);
+    check("практика длительных: по заголовкам, запасной детектор не вмешивается",
+      byTitle.maxMin === 120 && byTitle.medianMin === 105 && !byTitle.fromFallback,
+      `макс ${byTitle.maxMin}, медиана ${byTitle.medianMin}, запасной ${byTitle.fromFallback}`);
+
+    // (6) ЗАПАСНОЙ ДЕТЕКТОР включается ТОЛЬКО при полном отсутствии заголовков.
+    // Набор из 20 значений 60..250: верхняя дециль — два самых длинных (250 и 240), медиана 245.
+    const nonQual = [...Array.from({ length: 18 }, (_, i) => 60 + i * 5), 240, 250];
+    const fb = longRunPractice([], nonQual);
+    check("практика длительных: без заголовков — медиана верхней децили не-качественных",
+      fb.fromFallback && fb.maxMin === fb.medianMin && fb.maxMin === 245,
+      `получено ${fb.maxMin}, ожидалось 245 (верхняя дециль из 20 = два значения: 250 и 240)`);
+
+    // (7) МАРАФОНСКИЙ БЛОК не считается обычной длительной: у 5475652 «25 км в темпе марафона»
+    // на 180 мин задирал медиану длительных со 115 до 134.
+    check("практика: блок в темпе марафона не идёт в запасной детектор длительных",
+      !countsForLongFallback("25 км в темпе марафона", 180, QRE)
+        && countsForLongFallback("Бег по пульсу (с гелями)", 165, QRE),
+      `марафонский блок → ${countsForLongFallback("25 км в темпе марафона", 180, QRE)}`);
+  }
+
+  // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ  // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ: СЕРЕДИНА МЕЖДУ МЕДИАНОЙ И p75 ──
   // Была медиана — цель садилась в середину собственного распределения атлета, и половина
   // его недель оказывалась больше плановой. Проверяется ЧИСЛОМ на известном наборе: при
   // равных весах медиана = 200, p75 = 300, середина = 250. Формулировка «больше медианы»
