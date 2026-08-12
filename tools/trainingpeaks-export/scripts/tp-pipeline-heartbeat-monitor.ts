@@ -32,7 +32,46 @@ const HEARTBEAT_FLOWS: HeartbeatFlow[] = [
   { job: "health_metrics_scan", label: "здоровье (сон/пульс/HRV)", maxH: 8, cadence: "6×/день" },
   // Vercel cron — writes the same cron_run_logs row (status=sent) on a successful digest send.
   { job: "attention_digest", label: "утренняя сводка (Vercel)", maxH: 26, cadence: "дневной" },
+  // ДОБАВЛЕНЫ 13.08. Эти потоки писали heartbeat, но в списке монитора их не было — то есть
+  // они могли встать так же тихо, как встал скан стартов. Пороги: суточные с запасом 2ч,
+  // редкие — по своей каденции.
+  { job: "club_execute_approved", label: "клуб: исполнение одобренного", maxH: 3, cadence: "часовой" },
+  { job: "club_reconcile_tp", label: "клуб: сверка с TP", maxH: 3, cadence: "часовой" },
+  { job: "club_materialize_full", label: "клуб: материализация", maxH: 26, cadence: "дневной" },
+  { job: "club_probeg_sync", label: "клуб: синхронизация пробегов", maxH: 4 * 24, cadence: "пн+чт" },
+  { job: "db_stats_guard", label: "сторож размера БД", maxH: 26, cadence: "дневной" },
+  { job: "feedback_safety_net", label: "сетка отчётов", maxH: 26, cadence: "дневной" },
+  { job: "feedback_lexicon_grow", label: "рост лексикона", maxH: 9 * 24, cadence: "недельный" },
 ];
+
+/**
+ * ЗАДАНИЯ ИЗ trainingpeaks_jobs — сторожатся ПО ПРОГОНАМ, а не по heartbeat.
+ *
+ * У этих потоков heartbeat нет вовсе, зато есть таблица заданий со статусом. Проверяется то же
+ * самое, что для скана стартов: возраст последнего УСПЕШНОГО прогона и число провалов ПОДРЯД.
+ *
+ * ЗАЧЕМ. Инвентаризация 13.08 показала два мёртвых потока, за которыми не следил никто:
+ *   weekly_reports     — 25 заданий, 10 провалов, последний успех 74 ДНЯ назад;
+ *   race_results_probe — последний успех 82 ДНЯ назад.
+ * Оба умерли тихо и были найдены случайно, при разборе совсем другой задачи.
+ */
+type JobFlow = { jobType: string; label: string; maxH: number; cadence: string; onDemand?: boolean };
+const JOB_FLOWS: JobFlow[] = [
+  { jobType: "race_scan_events", label: "старты/календарь", maxH: 9 * 24, cadence: "недельный" },
+  // ПО ТРЕБОВАНИЮ — ВОЗРАСТ НЕ СТОРОЖИМ. Разбор 13.08 показал, что оба «мёртвых» потока на
+  // самом деле исправны: у weekly_reports все провалы это РУЧНЫЕ ОТМЕНЫ тренером из Telegram
+  // (cancelled_by_coach, «broad weekly job created by mistake»), а успеха нет 74 дня просто
+  // потому, что его никто не запускал с 30.05. У race_results_probe та же картина.
+  // Тревожить «успеха нет 74 дня» на потоке, который запускают руками, — ложный сигнал каждый
+  // день; проверка, падающая не там, где надо, хуже отсутствующей. Поэтому здесь сторожим
+  // только ПРОВАЛЫ ПОДРЯД (сломалось при запуске) и ЗАСТРЯВШИЕ в очереди задания.
+  { jobType: "weekly_reports", label: "недельные отчёты", maxH: 0, cadence: "по требованию", onDemand: true },
+  { jobType: "race_results_probe", label: "результаты стартов", maxH: 0, cadence: "по требованию", onDemand: true },
+  { jobType: "race_scan_backfill", label: "добор стартов назад", maxH: 0, cadence: "по требованию", onDemand: true },
+];
+const JOB_FAIL_STREAK_ALERT = 2;
+/** Задание, висящее в очереди дольше этого, никем не взято — это поломка раннера. */
+const JOB_STUCK_QUEUED_H = 48;
 // РАБОТА СКАНА СТАРТОВ ЧИТАЕТСЯ ИЗ ТАБЛИЦЫ ЗАДАНИЙ, А НЕ ИЗ СВЕЖЕСТИ ДАННЫХ (правка 13.08).
 //
 // Прежде здесь стоял слабый прокси: возраст самой новой строки trainingpeaks_race_events.
@@ -74,30 +113,36 @@ async function main(): Promise<void> {
     if (!ok) stale.push(`⚠️ ${f.label}: молчит ${fmt(age)} (порог ${f.maxH}ч)`);
   }
 
-  // race — ПО ЗАДАНИЯМ, не по свежести данных
-  {
+  // задания из trainingpeaks_jobs — по прогонам
+  for (const f of JOB_FLOWS) {
     const { data } = await sb
       .from("trainingpeaks_jobs")
       .select("status, created_at, finished_at, error_message")
-      .eq("job_type", "race_scan_events")
+      .eq("job_type", f.jobType)
       .order("created_at", { ascending: false })
       .limit(30);
     const rows = (data as Array<{ status: string; created_at: string; finished_at: string | null; error_message: string | null }> | null) ?? [];
+    if (rows.length === 0) { state.push(`  ➖ ${f.label} (${f.cadence}): заданий нет вовсе`); continue; }
     const lastOk = rows.find((r) => r.status === "completed") ?? null;
     const age = ageH(lastOk?.finished_at ?? lastOk?.created_at ?? null);
-    // провалы ПОДРЯД с последнего успеха
     let streak = 0;
     let lastErr: string | null = null;
     for (const r of rows) {
       if (r.status === "completed") break;
       if (r.status === "failed") { streak++; if (!lastErr) lastErr = r.error_message; }
     }
-    const overdue = age > RACE_MAX_H;
-    const failing = streak >= RACE_FAIL_STREAK_ALERT;
-    const ok = !overdue && !failing;
-    state.push(`  ${ok ? "✅" : "⚠️"} старты/календарь (недельный, по ЗАДАНИЯМ): последний успех ${fmt(age)} назад · порог ${RACE_MAX_H / 24}д · провалов подряд ${streak}`);
-    if (failing) stale.push(`⚠️ скан стартов: ${streak} провала подряд, последний успех ${fmt(age)} назад${lastErr ? ` — ${lastErr.slice(0, 120)}` : ""}`);
-    else if (overdue) stale.push(`⚠️ скан стартов: успеха нет ${fmt(age)} (порог ${RACE_MAX_H / 24}д) — проверь race-scan`);
+    // застрявшее в очереди задание — поломка раннера, а не отсутствие спроса
+    const stuck = rows.find((r) => r.status === "queued" && ageH(r.created_at) > JOB_STUCK_QUEUED_H) ?? null;
+    const overdue = !f.onDemand && age > f.maxH;
+    const failing = streak >= JOB_FAIL_STREAK_ALERT;
+    const ok = !overdue && !failing && !stuck;
+    const ageText = f.onDemand
+      ? `последний запуск ${fmt(age)} назад · по требованию, возраст не сторожим`
+      : `последний успех ${fmt(age)} назад · порог ${Math.round(f.maxH / 24)}д`;
+    state.push(`  ${ok ? "✅" : "⚠️"} ${f.label} (${f.cadence}, по ЗАДАНИЯМ): ${ageText} · провалов подряд ${streak}`);
+    if (failing) stale.push(`⚠️ ${f.label}: ${streak} провала подряд, последний успех ${fmt(age)} назад${lastErr ? ` — ${lastErr.slice(0, 160)}` : ""}`);
+    else if (overdue) stale.push(`⚠️ ${f.label}: успеха нет ${fmt(age)} (порог ${Math.round(f.maxH / 24)}д)`);
+    if (stuck) stale.push(`⚠️ ${f.label}: задание висит в очереди ${fmt(ageH(stuck.created_at))} — раннер его не берёт`);
   }
 
   // billing email import (Vercel cron, daily 08:30) — REAL MONEY, and it logs to its OWN table
