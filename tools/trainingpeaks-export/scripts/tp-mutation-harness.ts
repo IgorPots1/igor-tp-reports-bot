@@ -56,7 +56,11 @@ const MUTATIONS: Mutation[] = [
   { id: "taper-nopeak-formula", file: C, find: "        const aF = noPeak ? TAPER_NO_PEAK_FACTOR : tw.aerobicFactor;", replace: "        const aF = noPeak ? 0.5 : tw.aerobicFactor;", what: "подводка без пика режет вдвое вместо −10%" },
   { id: "share-clamp-off", file: C, find: "        const cl = clampShare(a, qRaw, draft.ownSharePct, draft.peakCapQualityMin);", replace: "        const cl = { aerobicMin: a, qualityMin: qRaw };", what: "зажим доли качества не применяется в подводке" },
 
-  // ── выбор целевого старта ──
+  // ── точка прицеливания ──
+  { id: "aim-median", file: C, find: "  return Math.round((med + p75) / 2);", replace: "  void p75; return Math.round(med);", what: "прицел вернулся на медиану" },
+  { id: "aim-p75", file: C, find: "  return Math.round((med + p75) / 2);", replace: "  void med; return Math.round(p75);", what: "прицел уехал на p75 целиком" },
+
+  // ── выбор целевого старта ──  // ── выбор целевого старта ──
   { id: "race-min-weeks", file: C, find: "x.w >= TARGET_RACE_MIN_WEEKS && ", replace: "x.w >= 0 && ", what: "порог «ближе 2 недель не цель» снят" },
   { id: "race-horizon", file: C, find: " && x.w <= LENGTH_WEEKS[intentFromDistance(x.r.distance_km)])", replace: ")", what: "горизонт выбора цели снят" },
   { id: "race-longest", file: C, find: "    (b.r.distance_km ?? 0) - (a.r.distance_km ?? 0) || a.r.event_date.localeCompare(b.r.event_date));", replace: "    a.r.event_date.localeCompare(b.r.event_date));", what: "«длинная бьёт короткую» → просто ближайший" },

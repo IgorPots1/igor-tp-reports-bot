@@ -33,7 +33,7 @@ import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
   MAX_SINGLE_STEP, STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, TAPER_NO_PEAK_FACTOR,
-  forecast, pickTargetRace, type CycleDraft, type CycleIntent,
+  forecast, pickTargetRace, weightedWeeklyBase, type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
 
 let failures = 0;
@@ -452,7 +452,24 @@ async function main(): Promise<void> {
       !wNo.notes.some((n) => n.startsWith("цикл")), `заметки: ${wNo.notes.join(" | ")}`);
   }
 
-  // ── 7б. ВЫБОР ЦЕЛЕВОГО СТАРТА: ГЛАВНЫЙ, А НЕ БЛИЖАЙШИЙ ──
+  // ── 7а. ТОЧКА ПРИЦЕЛИВАНИЯ: СЕРЕДИНА МЕЖДУ МЕДИАНОЙ И p75 ──
+  // Была медиана — цель садилась в середину собственного распределения атлета, и половина
+  // его недель оказывалась больше плановой. Проверяется ЧИСЛОМ на известном наборе: при
+  // равных весах медиана = 200, p75 = 300, середина = 250. Формулировка «больше медианы»
+  // не годится: её прошло бы и чистое p75, а это другая точка.
+  {
+    const flat = [100, 200, 300, 400].map((v) => ({ weekStart: "2026-06-01", value: v, hasTraining: true }));
+    // одинаковая дата => одинаковый вес, значит перцентили считаются как на невзвешенном наборе
+    const got = weightedWeeklyBase(flat, "2026-06-01", [], 42);
+    check("точка прицеливания: середина между медианой и p75 (200 и 300 → 250)",
+      got === 250, `получено ${got}, ожидалось 250 (медиана 200, p75 300)`);
+
+    // и она обязана быть СТРОГО между: не медианой и не p75
+    check("точка прицеливания: не медиана и не p75",
+      got > 200 && got < 300, `получено ${got}`);
+  }
+
+  // ── 7б. ВЫБОР ЦЕЛЕВОГО СТАРТА  // ── 7б. ВЫБОР ЦЕЛЕВОГО СТАРТА: ГЛАВНЫЙ, А НЕ БЛИЖАЙШИЙ ──
   {
     const MONDAY = "2026-08-17";
     const R = (id: string, d: string, km: number | null) => ({ id, event_date: d, distance_km: km });

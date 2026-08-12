@@ -10,7 +10,7 @@
  * тренером и практикой НЕ подтверждается; [выведено] — ни то ни другое.
  */
 
-import { DEFAULT_HALF_LIFE_DAYS, inAnyWindow, weightForAge, weightedMedian, type DateWindow } from "./easy-anchor.ts";
+import { DEFAULT_HALF_LIFE_DAYS, inAnyWindow, weightForAge, weightedQuantile, type DateWindow } from "./easy-anchor.ts";
 
 /**
  * БАЗА ЦИКЛА СЧИТАЕТСЯ ОТ НОРМЫ, А НЕ ОТ ФАЗЫ.
@@ -85,7 +85,18 @@ export function weightedWeeklyBase(
     v: w.value,
     w: weightForAge(Math.round((Date.parse(asOf) - Date.parse(w.weekStart)) / 86400000), halfLifeDays),
   }));
-  return Math.round(weightedMedian(items));
+  // ТОЧКА ПРИЦЕЛИВАНИЯ — СЕРЕДИНА МЕЖДУ МЕДИАНОЙ И p75 [решение Игоря 13.08].
+  //
+  // Была медиана — и цель по построению садилась в СЕРЕДИНУ собственного распределения
+  // атлета, то есть половина его недель оказывалась больше плановой. Игорь четыре раза
+  // сказал «мало»; замер 13.08 подтвердил: цель ниже его p75 у 9 из 12, у 5461678 на 84 мин.
+  // p75 целиком тоже неверен — он берёт ХОРОШУЮ неделю за норму. Взята середина.
+  //
+  // Меняется ТОЛЬКО цель. Личные потолки, полы и защиты не тронуты; у понижённых сигналом
+  // не меняется вообще ничего — там объём считается от факта.
+  const med = weightedQuantile(items, 0.5);
+  const p75 = weightedQuantile(items, 0.75);
+  return Math.round((med + p75) / 2);
 }
 
 export type CycleIntent = "5k" | "10k" | "half" | "marathon" | "maintenance";

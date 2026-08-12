@@ -101,10 +101,20 @@ export function weightForAge(ageDays: number, halfLifeDays: number): number {
 
 /** Экспортируется по той же причине, что и weightForAge. Чистая функция. */
 export function weightedMedian(items: { v: number; w: number }[]): number {
+  return weightedQuantile(items, 0.5);
+}
+
+/**
+ * Взвешенный перцентиль: первое значение, на котором накопленный вес достигает доли p.
+ * Обобщение weightedMedian — понадобился, когда точкой прицеливания цикла стала не медиана,
+ * а середина между медианой и p75.
+ */
+export function weightedQuantile(items: { v: number; w: number }[], p: number): number {
   const s = [...items].sort((a, b) => a.v - b.v);
   const total = s.reduce((acc, x) => acc + x.w, 0);
+  if (total <= 0) return s[s.length - 1]?.v ?? NaN;
   let cum = 0;
-  for (const x of s) { cum += x.w; if (cum >= total / 2) return x.v; }
+  for (const x of s) { cum += x.w; if (cum >= total * p) return x.v; }
   return s[s.length - 1]?.v ?? NaN;
 }
 
