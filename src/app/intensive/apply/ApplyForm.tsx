@@ -397,7 +397,7 @@ export default function ApplyForm() {
             <input
               id="city"
               type="text"
-              placeholder="Например: Белград"
+              placeholder="Например: Москва"
               value={draft.city}
               onChange={(event) => set("city", event.target.value)}
             />
