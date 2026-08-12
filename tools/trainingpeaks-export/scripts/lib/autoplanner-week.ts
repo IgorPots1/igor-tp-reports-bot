@@ -98,6 +98,36 @@ export const DIP_BASE_RATIO = 0.7;
  * при любом недельном объёме. Поднят до 200 [решение Игоря 12.08].
  */
 export const LONG_CEIL = 200;
+
+/**
+ * ЦЕЛЕВАЯ ДЛИТЕЛЬНАЯ ПОД ДИСТАНЦИЮ, мин. ЗАМЕРЕНО 13.08 по практике Игоря, не из литературы.
+ *
+ * Брались прошедшие старты с известной дистанцией, окно 16 недель до старта, и в каждой неделе —
+ * самая длинная НЕ-качественная плановая пробежка. Пик за подготовку:
+ *   марафон      (n=26 подготовок): медиана 179, p75 191, p90 200, макс 210, min 120
+ *   полумарафон  (n=66 подготовок): медиана 110, p75 120, p90 140, макс 210, min  90
+ * ЦЕЛЬ берётся из МЕДИАНЫ — по тому же правилу, что easyTarget и кратности: потолки из p90,
+ * полы из min, цели из медианы.
+ *
+ * 10k и 5k СОЗНАТЕЛЬНО ОТСУТСТВУЮТ: под них отдельного замера нет, а переносить марафонскую
+ * логику на короткие дистанции без данных — ровно та подгонка, которая уже пять раз ломала
+ * систему. Для них потолок длительной остаётся прежним, от практики атлета.
+ */
+export const LONG_TARGET_BY_INTENT: Record<string, number> = { marathon: 180, half: 110 };
+
+/**
+ * ПОТОЛОК НЕДЕЛЬНОГО ПРИРОСТА длительной при подготовке к дистанции. ЗАМЕРЕНО 13.08.
+ *
+ * Считалась ЭФФЕКТИВНАЯ скорость за подготовку: (пик / первая неделя) ^ (1 / недель до пика).
+ *   марафон     (n=24): медиана 1.075, p75 1.100, p90 1.116
+ *   полумарафон (n=57): медиана 1.046, p75 1.104, p90 1.187
+ * По правилу «потолок = p90 практики» берётся p90.
+ *
+ * ПОЧЕМУ НЕ «ШАГ В МОМЕНТ РОСТА». Первый замер дал шаг x1.20 (марафон) — но это шаг В ТУ НЕДЕЛЮ,
+ * КОГДА МАКСИМУМ РАСТЁТ, а растёт он лишь в 22% недель. Применять 1.20 еженедельно значило бы
+ * гнать вчетверо быстрее тренера.
+ */
+export const LONG_CAP_STEP_BY_INTENT: Record<string, number> = { marathon: 1.116, half: 1.187 };
 const round5 = (m: number): number => Math.max(ROUND_TO_MIN, Math.round(m / ROUND_TO_MIN) * ROUND_TO_MIN);
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
@@ -364,6 +394,11 @@ export type CycleWeekTarget = {
    * пропорционально, а не обнуляется [решение Игоря 12.08].
    */
   hasTargetRace?: boolean;
+  /**
+   * Тип цикла (marathon / half / 10k / 5k / maintenance). Нужен, чтобы потолок длительной РОС
+   * к целевому значению под дистанцию, а не упирался в прошлое атлета.
+   */
+  intent?: string;
 };
 
 export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
@@ -617,6 +652,9 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // неделе, где объём считается ОТ ФАКТА из-за активного сигнала, то есть 44% недели
   // отдавалось длительной ровно тогда, когда человека надо разгрузить. Цикл задаёт
   // намерение, а не обязательство — на понижённой неделе намерение уступает целиком.
+  const intentKey = cycle?.intent ?? "";
+  const distTarget = LONG_TARGET_BY_INTENT[intentKey];
+  const distStep = LONG_CAP_STEP_BY_INTENT[intentKey];
   // ПОЛ МАСШТАБИРУЕТСЯ ТЕМ ЖЕ, ЧЕМ УРЕЗАНА НЕДЕЛЯ (правка 12.08). Одно правило вместо трёх:
   //  • неделя роста      — пол равен медиане практики;
   //  • разгрузка/подводка — цель цикла уже снижена, и пол едет вместе с ней (иначе на
@@ -628,8 +666,30 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const cycleBaseWeek = cycle && cycle.baseWeekMin ? Math.max(1, cycle.baseWeekMin) : cycleWeekTarget;
   let floorScale = Math.min(1, cycleWeekTarget / cycleBaseWeek);
   if (notTraining) floorScale = cycle?.hasTargetRace ? floorScale * Math.min(1, weekly / cycleWeekTarget) : 0;
+  // ПОЛ ТОЖЕ РАСТЁТ. Поднять один потолок мало: потолок — предел, а тянет длительную вверх ПОЛ.
+  // На первом прогоне правки потолок у 5807145 вырос до 110, а длительная осталась 95, потому
+  // что ориентир задавали пропорция и доля. При подготовке к дистанции к цели должен идти
+  // именно ориентир, поэтому пол растёт тем же шагом и с тем же ограничением целью.
+  const floorBase = cycle && distTarget && distStep && cycle.hasTargetRace
+    ? Math.min(distTarget, env.longRunPracticeMedianMin * Math.pow(distStep, Math.max(0, (cycle.weekIndex ?? 1) - 1)))
+    : env.longRunPracticeMedianMin;
   const longPracticeFloor = cycle && env.longRunPracticeMedianMin > 0 && floorScale > 0
-    ? Math.min(round5(env.longRunPracticeMedianMin * floorScale), LONG_CEIL) : 0;
+    ? Math.min(round5(floorBase * floorScale), LONG_CEIL) : 0;
+  // ── ПОТОЛОК РАСТЁТ ВМЕСТЕ С ЦИКЛОМ (правка 13.08) ──
+  // Потолок «максимум практики атлета» верен для ПОДДЕРЖАНИЯ и неверен для ПОДГОТОВКИ: цель
+  // подготовки по определению за пределами прошлого. У 5807145 практический максимум 90 мин,
+  // марафону нужно 180 — сборщик не вывел бы её выше 90 ни за 6 недель, ни за 16, то есть
+  // марафонский цикл был структурно невозможен для всех, кто марафон ещё не бегал.
+  //
+  // Теперь при цикле ПОД ДИСТАНЦИЮ потолок идёт от практики к целевому значению шагом за неделю:
+  //   потолок(N) = практика x шаг^(N-1), но не выше цели дистанции.
+  // Оба числа замерены по практике Игоря (см. LONG_TARGET_BY_INTENT / LONG_CAP_STEP_BY_INTENT).
+  // Доля недели x0.45 остаётся защитой и режет сверху, как и раньше.
+  // РАСТЁТ ТОЛЬКО ПОЛ, ПОТОЛОК НЕ ДУБЛИРУЕТСЯ. Первая версия растила и потолок: capLong =
+  // max(пол, …), поэтому выросший пол почти всегда перекрывал выросший потолок, и мутация
+  // «снять рост потолка» не роняла проверку. Честно: совсем мёртвым он не был — на подводочной
+  // неделе 5807145 давал +5 мин (115 против 110). Пять минут не стоят ветки, которую нечем
+  // проверить: зелёная проверка рядом с непроверяемым кодом хуже отсутствия обоих.
   const capLong = round5(clamp(
     Math.max(longPracticeFloor, Math.min(longCapSource ?? weekly * 0.35, weekly * 0.45)),
     LONG_FLOOR, LONG_CEIL));
@@ -748,12 +808,23 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
       // Платить за это лёгкими нельзя: шаг длительной стоил бы 5 мин × число лёгких дней,
       // и неделя худела на ровном месте (замер: 220 -> 210).
       const longestEasyThisWeek = Math.max(...easyVariants, 0);
-      const isReallyLong = notTraining
+      // «НИКОГДА» ЗНАЧИТ НИКОГДА (правка 13.08). Первая версия этой оговорки покрывала только
+      // неделю, понижённую health-сигналом (notTraining), и на ПОДВОДКЕ ноль возвращался:
+      // у 5807145 на 6-й неделе марафонского цикла (цель 155 мин) длительная снова обнулялась,
+      // потому что там работало прежнее историческое сравнение. Подводка урезает неделю ровно
+      // так же, как понижение сигналом, и вопрос «длиннее ли обычного» в ней так же бессмыслен.
+      //
+      // Правило теперь одно: если неделя УРЕЗАНА относительно обычной (сигналом или ролью цикла),
+      // длительная — это самый длинный день ЭТОЙ недели. На обычной неделе роста сравнение с
+      // исторической лёгкой остаётся: там оно и нужно, чтобы не звать длительной обычную лёгкую.
+      const weekIsReduced = notTraining
+        || (cycle != null && cycle.baseWeekMin != null && weekly < cycle.baseWeekMin);
+      const isReallyLong = weekIsReduced
         ? longMin >= LONG_FLOOR && longMin > longestEasyThisWeek
         : (env.typicalEasyMinutes <= 0 || longMin > env.typicalEasyMinutes);
       if (!isReallyLong) notes.push(`длинный день назван лёгким: ${longMin} мин не больше `
-        + (notTraining ? `самого длинного лёгкого этой недели (${longestEasyThisWeek} мин)`
-                       : `обычной лёгкой (${env.typicalEasyMinutes} мин)`));
+        + (weekIsReduced ? `самого длинного лёгкого этой недели (${longestEasyThisWeek} мин)`
+                         : `обычной лёгкой (${env.typicalEasyMinutes} мин)`));
       sessions.push(aerobicSession(d, isReallyLong ? "long" : "easy", a, cat, longMin));
     }
     else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, easyVariants[easyIdx % easyVariants.length])); easyIdx++; }

@@ -123,7 +123,7 @@ async function main(): Promise<void> {
     const target: CycleWeekTarget = live ? live.target : {
       weekIndex: 1, totalWeeks: fc.length, role: first.role,
       aerobicMin: first.aerobicMin, qualityMin: first.qualityMin, days: first.days,
-      baseWeekMin: d.baseAerobicMin + d.baseQualityMin, hasTargetRace: d.targetDate != null,
+      baseWeekMin: d.baseAerobicMin + d.baseQualityMin, hasTargetRace: d.targetDate != null, intent: d.intent,
     };
     const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness, c.tierNote, target);
     const got = w.plannedMinutes;

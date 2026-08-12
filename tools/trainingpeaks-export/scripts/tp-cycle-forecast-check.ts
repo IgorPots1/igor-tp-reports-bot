@@ -27,7 +27,7 @@
  */
 import process from "node:process";
 
-import { buildWeek, LONG_CEIL, LONG_FLOOR, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
+import { buildWeek, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
@@ -352,6 +352,45 @@ async function main(): Promise<void> {
     check("разгрузка: пол практики едет вместе со сниженной целью (180 x 0.8 = 145)",
       longestOf(wDl) === 145,
       `длительная ${longestOf(wDl)}, ожидалось 145 при медиане практики 180 и разгрузке x0.8`);
+
+    // (к) ПОТОЛОК И ПОЛ ДЛИТЕЛЬНОЙ РАСТУТ ПОД ДИСТАНЦИЮ.
+    // Практический максимум 90 у марафонца — это про прошлое; цель подготовки за его пределами.
+    // Неделя 5 обязана дать длительную ДЛИННЕЕ недели 1 при той же цели по объёму.
+    const envMar = { ...env, capLongRunMin: 90, longRunPracticeMaxMin: 90, longRunPracticeMedianMin: 90, typicalEasyMinutes: 60 };
+    const marW = (idx: number): CycleWeekTarget => ({
+      weekIndex: idx, totalWeeks: 12, role: "рост", aerobicMin: 300, qualityMin: 30, days: 4,
+      baseWeekMin: 330, hasTargetRace: true, intent: "marathon",
+    });
+    const wMar1 = buildWeek(anchors, envMar, cat, MON, false, null, marW(1));
+    const wMar5 = buildWeek(anchors, envMar, cat, MON, false, null, marW(5));
+    // ЧИСЛО ТОЧНОЕ, А НЕ «БОЛЬШЕ ЧЕМ»: 90 x 1.116^4 = 139 -> 140 после округления к пяти.
+    // Слабая формулировка «неделя 5 больше недели 1» проходила при снятии ЛЮБОГО из двух
+    // механизмов по отдельности — потолок и пол дублируют друг друга, и каждый в одиночку
+    // вытягивал длительную выше практики. Точное число ловит оба.
+    check("марафон: длительная растёт по замеренному шагу (90 x 1.116^4 = 140)",
+      longestOf(wMar1) === 90 && longestOf(wMar5) === 140,
+      `неделя 1 ${longestOf(wMar1)} (ждали 90), неделя 5 ${longestOf(wMar5)} (ждали 140)`);
+
+    // (л) РОСТ НЕ ПЕРЕЛЕТАЕТ ЦЕЛЬ ДИСТАНЦИИ. На далёкой неделе шаг^N улетел бы за 180.
+    const wMar20 = buildWeek(anchors, envMar, cat, MON, false, null, { ...marW(20), aerobicMin: 500, qualityMin: 40, baseWeekMin: 540 });
+    check(`марафон: рост не выше цели дистанции ${LONG_TARGET_BY_INTENT.marathon}`,
+      longestOf(wMar20) <= LONG_TARGET_BY_INTENT.marathon,
+      `неделя 20 дала ${longestOf(wMar20)}, цель ${LONG_TARGET_BY_INTENT.marathon}`);
+
+    // (м) БЕЗ ЦЕЛЕВОГО СТАРТА РОСТА НЕТ — поддержание не должно уводить за прошлое атлета.
+    const wKeep5 = buildWeek(anchors, envMar, cat, MON, false, null,
+      { ...marW(5), intent: "maintenance", hasTargetRace: false });
+    check("поддержание: потолок длительной НЕ растёт за практику атлета",
+      longestOf(wKeep5) <= envMar.longRunPracticeMaxMin,
+      `неделя 5 поддержания дала ${longestOf(wKeep5)}, практика максимум ${envMar.longRunPracticeMaxMin}`);
+
+    // (н) ПОДВОДКА НЕ ОБНУЛЯЕТ ДЛИТЕЛЬНУЮ. Прежняя оговорка покрывала только неделю,
+    // понижённую сигналом, и на подводке ноль возвращался (у 5807145 на 6-й неделе).
+    const wTaper = buildWeek(anchors, envMar, cat, MON, false, null,
+      { weekIndex: 11, totalWeeks: 12, role: "подводка", aerobicMin: 135, qualityMin: 20, days: 4, baseWeekMin: 330, hasTargetRace: true, intent: "marathon" });
+    check("подводка: длительная НЕ обнуляется",
+      wTaper.refused != null || longestOf(wTaper) >= LONG_FLOOR,
+      `подводочная неделя дала длительную ${longestOf(wTaper)} (пол ${LONG_FLOOR})`);
 
     // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
     const wNo = buildWeek(anchors, env, cat, MON, false, null);
