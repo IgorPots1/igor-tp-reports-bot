@@ -312,6 +312,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const weekMin = new Map<string, number>(); const weekFreq = new Map<string, number>(); const weekQual = new Map<string, number>();
     const weekPlanned = new Map<string, number>();
     const easyPlannedMinutes: number[] = []; const longPlannedMinutes: number[] = [];
+    const nonQualPlanned26w: number[] = [];
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
 
@@ -362,6 +363,12 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         if (t && LONG_TITLE_RE.test(t) && r.workout_date >= win26wStart) {
           const m = Math.round((r.planned_time_raw as number) * 60);
           if (m > 0 && m <= 400) longPlannedMinutes.push(m);
+        }
+        // ЗАПАСНОЙ ДЕТЕКТОР: все НЕ-качественные за 26 недель. Нужен там, где тренер вообще
+        // не пишет в заголовке «длительная» — см. longRunPracticeMedianMin ниже.
+        if (t && !QUALITY_TITLE_RE.test(t) && r.workout_date >= win26wStart) {
+          const m = Math.round((r.planned_time_raw as number) * 60);
+          if (m > 0 && m <= 400) nonQualPlanned26w.push(m);
         }
       }
       // ── ФАКТИЧЕСКАЯ ВАЛЮТА: только там, где вопрос именно «что человек СДЕЛАЛ» ──
@@ -430,12 +437,37 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         : Math.round((sortedEasy[sortedEasy.length / 2 - 1] + sortedEasy[sortedEasy.length / 2]) / 2))
       : 0;
 
+    const medOf = (arr: number[]): number => {
+      if (!arr.length) return 0;
+      const s2 = [...arr].sort((x, y) => x - y);
+      return s2.length % 2 ? s2[(s2.length - 1) / 2]
+        : Math.round((s2[s2.length / 2 - 1] + s2[s2.length / 2]) / 2);
+    };
+    // ЗАПАСНОЙ ДЕТЕКТОР ДЛИТЕЛЬНЫХ — когда по заголовку не нашлось НИ ОДНОЙ.
+    //
+    // Замер 12.08: у 5748681 из 100 плановых пробежек за 26 недель заголовку «длительн|длинн»
+    // не отвечает НИ ОДНА, при этом пять её сессий по 100 мин называются «Лёгкий бег (темп
+    // выше)». То есть «длительных нет» — это дыра ДЕТЕКТОРА, а не факт о человеке: тренер
+    // просто не пишет это слово в заголовке.
+    //
+    // Приближение: медиана верхней децили НЕ-качественных сессий. Проверено против эталона
+    // там, где заголовки есть (n=11): точное совпадение у 5 из 11, средняя |ошибка| 9.5 мин,
+    // и НИ РАЗУ не ниже эталона — для ПОЛА это правильная сторона ошибки.
+    //
+    // Включается ТОЛЬКО при полном отсутствии заголовков. Порог «мало заголовков» (например
+    // меньше трёх) сюда сознательно НЕ введён: у 5475652 он поднял бы медиану 90 -> 126, и это
+    // решение тренера, а не моё. Сегодня ветка срабатывает ровно у одного человека.
+    const decileFallback = ((): number => {
+      const desc = [...nonQualPlanned26w].sort((x, y) => y - x);
+      if (!desc.length) return 0;
+      return medOf(desc.slice(0, Math.max(1, Math.ceil(desc.length * 0.10))));
+    })();
+
     const sortedLong = [...longPlannedMinutes].sort((x, y) => x - y);
-    const longRunPracticeMaxMin = sortedLong.length ? sortedLong[sortedLong.length - 1] : 0;
-    const longRunPracticeMedianMin = sortedLong.length
-      ? (sortedLong.length % 2 ? sortedLong[(sortedLong.length - 1) / 2]
-        : Math.round((sortedLong[sortedLong.length / 2 - 1] + sortedLong[sortedLong.length / 2]) / 2))
-      : 0;
+    const longRunPracticeMaxMin = sortedLong.length
+      ? sortedLong[sortedLong.length - 1]
+      : decileFallback;
+    const longRunPracticeMedianMin = sortedLong.length ? medOf(sortedLong) : decileFallback;
 
     const b = baselines.get(aid);
 

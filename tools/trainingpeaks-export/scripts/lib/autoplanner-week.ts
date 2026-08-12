@@ -581,7 +581,33 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const baselineLong = (env.capLongRunMin ?? 0) > 0 ? (env.capLongRunMin as number) : null;
   const practiceLong = env.longRunPracticeMaxMin > 0 ? env.longRunPracticeMaxMin : null;
   const longCapSource = cycle ? (practiceLong ?? baselineLong) : (baselineLong ?? practiceLong);
-  const capLong = round5(clamp(Math.min(longCapSource ?? weekly * 0.35, weekly * 0.45), LONG_FLOOR, LONG_CEIL));
+
+  // ── МЕДИАНА ПРАКТИКИ — ЦЕЛЬ, А НЕ ЖЕРТВА ОГРАНИЧИТЕЛЕЙ (правка 12.08, третий заход) ──
+  // Игорь третий раз говорит «мало объёма, особенно длительные». После починки потолка
+  // длительная всё ещё выходила короче его собственной медианы у четверых. Связывали её
+  // ДВА ЧИСЛА, ОБА ВЫВЕДЕННЫЕ ИЗ ПРАКТИКИ, НО ПОСТАВЛЕННЫЕ ОГРАНИЧИТЕЛЯМИ:
+  //   • доля недели ×0.45 — у 6009851 это 81 мин при её собственной медиане 90;
+  //   • пропорция длительная/лёгкий — задавала ориентир ниже медианы.
+  // Это ровно та же ошибка, что была с кратностью 1.32 и полом лёгкого: РАСПРЕДЕЛЕНИЕ,
+  // ПОСТАВЛЕННОЕ В РОЛЬ ЗАПРЕТА. Медиана — то, что тренер ставит этому человеку в половине
+  // случаев; запрещать её числом, выведенным из того же распределения, бессмысленно.
+  //
+  // Теперь при активном цикле медиана практики — ПОЛ цели длительной. Доля ×0.45 остаётся
+  // защитой от абсурда (она по-прежнему режет ВЫШЕ медианы), но рабочим пределом быть
+  // перестала. Пропорция длительная/лёгкий уступает: она ориентир, не гейт.
+  //
+  // Бюджет недели при этом НЕ нарушается: шаг (1) растит длительную только пока есть spare,
+  // поэтому на тесной неделе она просто не дорастёт — деградация естественная, без отказа.
+  // РЕАКТИВНОСТЬ ГЛАВНЕЕ НАМЕРЕНИЯ: на неделе, ПОНИЖЕННОЙ health-сигналом, пола нет.
+  // Без этой оговорки пол срабатывал и там: у 5475968 длительная прыгала 70 → 115 мин на
+  // неделе, где объём считается ОТ ФАКТА из-за активного сигнала, то есть 44% недели
+  // отдавалось длительной ровно тогда, когда человека надо разгрузить. Цикл задаёт
+  // намерение, а не обязательство — на понижённой неделе намерение уступает целиком.
+  const longPracticeFloor = cycle && !notTraining && env.longRunPracticeMedianMin > 0
+    ? Math.min(env.longRunPracticeMedianMin, LONG_CEIL) : 0;
+  const capLong = round5(clamp(
+    Math.max(longPracticeFloor, Math.min(longCapSource ?? weekly * 0.35, weekly * 0.45)),
+    LONG_FLOOR, LONG_CEIL));
   let easyBase = EASY_FLOOR;
   let longMin = round5(Math.max(LONG_FLOOR, easyRoles > 0 ? easyBase + ROUND_TO_MIN : 0,
     qLongest > 0 ? qLongest + ROUND_TO_MIN : 0));
@@ -612,8 +638,10 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // ПОТОЛОК ДЛИТЕЛЬНОЙ — ПОТОЛОК, А НЕ ЦЕЛЬ. Прежде он входил в ориентир через Math.max и
   // работал как ПОЛ: длительная всегда дорастала минимум до него. Правило Игоря обратное —
   // потолок объёма главнее полов.
+  // МЕДИАНА ПРАКТИКИ входит сюда именно ПОЛОМ (см. longPracticeFloor выше): при активном цикле
+  // длительная тянется как минимум до неё, даже если пропорция и доля просят меньше.
   const longTargetFor = (easy: number): number =>
-    round5(Math.min(capLong, Math.max(LONG_FLOOR, easy * ratioEasy, longShape)));
+    round5(Math.min(capLong, Math.max(LONG_FLOOR, longPracticeFloor, easy * ratioEasy, longShape)));
 
   // (1) длительная до своей доли — раньше лёгких, но именно до ДОЛИ, а не до потолка
   while (spare >= ROUND_TO_MIN && longMin < longTargetFor(easyBase)) { longMin += ROUND_TO_MIN; spare -= ROUND_TO_MIN; }

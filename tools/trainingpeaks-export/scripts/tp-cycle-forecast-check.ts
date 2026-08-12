@@ -284,6 +284,25 @@ function main(): void {
       longestOf(wFrozenNo) > 0 && longestOf(wFrozenNo) <= 65,
       `без цикла ${longestOf(wFrozenNo)} мин при baseline 65 и практике 120`);
 
+    // (г) МЕДИАНА ПРАКТИКИ — ПОЛ ЦЕЛИ, А НЕ ЖЕРТВА ОГРАНИЧИТЕЛЕЙ.
+    // Доля недели x0.45 и пропорция длительная/лёгкий — оба числа выведены из практики,
+    // но стояли ОГРАНИЧИТЕЛЯМИ и не давали достать медиану. Здесь доля заведомо ниже
+    // медианы: недельный объём 180 даёт 0.45 x 180 = 81 при медиане 90. Если доля снова
+    // станет рабочим пределом, длительная упадёт на 80 и проверка сядет.
+    const envMed = { ...env, capLongRunMin: 0, longRunPracticeMaxMin: 90, longRunPracticeMedianMin: 90 };
+    const wMed = buildWeek(anchors, envMed, cat, MON, false, null,
+      { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 155, qualityMin: 25, days: 3 });
+    check("цикл: длительная не короче МЕДИАНЫ практики, доля недели не мешает",
+      longestOf(wMed) >= 90, `длительная ${longestOf(wMed)} мин при медиане практики 90 и доле 0.45 x 180 = 81`);
+
+    // (д) РЕАКТИВНОСТЬ ГЛАВНЕЕ: на понижённой сигналом неделе пола практики НЕТ.
+    // Иначе длительная прыгала бы к медиане ровно тогда, когда человека надо разгрузить.
+    const wMedIll = buildWeek(anchors, envMed, cat, MON, true, null,
+      { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 155, qualityMin: 25, days: 3 });
+    check("понижённая неделя: пол практики НЕ применяется",
+      wMedIll.refused != null || longestOf(wMedIll) < 90,
+      `длительная ${longestOf(wMedIll)} мин на неделе с активным сигналом (медиана практики 90)`);
+
     // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
     const wNo = buildWeek(anchors, env, cat, MON, false, null);
     check("без цикла: потолок из конверта, а не из цели цикла",
