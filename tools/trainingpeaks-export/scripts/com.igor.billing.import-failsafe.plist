@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.igor.billing.import-failsafe</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-billing-import-failsafe.sh</string>
+  </array>
+  <!-- 12:00 по местному: Vercel к этому времени уже отработал бы (его окно 08:30-09:30 UTC),
+       значит если успеха нет, он его и не сделает. Раньше дёргать смысла нет. -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>StandardOutPath</key><string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/billing-failsafe.launchd.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/billing-failsafe.launchd.err.log</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

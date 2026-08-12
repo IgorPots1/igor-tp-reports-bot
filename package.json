@@ -48,6 +48,7 @@
     "tp-fit-ingest-scan": "npm --prefix tools/trainingpeaks-export run tp-fit-ingest-scan --",
     "tp-probe-race-results": "npm --prefix tools/trainingpeaks-export run tp-probe-race-results --",
     "tp-probes-once": "npm --prefix tools/trainingpeaks-export run tp-probes-once --",
+    "tp-billing-import-failsafe": "npm --prefix tools/trainingpeaks-export run tp-billing-import-failsafe --",
     "tp-probe-progress-evidence": "npm --prefix tools/trainingpeaks-export run tp-probe-progress-evidence --",
     "tp-diagnose-athlete-training-baseline-v2": "npx tsx tools/trainingpeaks-export/scripts/tp-diagnose-athlete-training-baseline-v2.ts",
     "tp-athlete-phase-snapshot-v0": "npx tsx tools/trainingpeaks-export/scripts/tp-athlete-phase-snapshot-v0.ts",

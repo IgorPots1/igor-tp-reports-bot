@@ -93,6 +93,7 @@
     "tp-scan-events": "tsx scripts/tp-scan-events.ts",
     "tp-probe-race-results": "tsx scripts/tp-probe-race-results.ts",
     "tp-probes-once": "tsx scripts/tp-probes-once.ts",
+    "tp-billing-import-failsafe": "tsx scripts/tp-billing-import-failsafe.ts",
     "tp-probe-progress-evidence": "tsx scripts/tp-probe-progress-evidence.ts",
     "tp-race-prediction-probe": "tsx scripts/tp-race-prediction-probe.ts",
     "tp-actions-loop:install": "sh scripts/install-tp-actions-launchagent.sh",
