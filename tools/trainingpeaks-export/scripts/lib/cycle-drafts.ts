@@ -13,7 +13,7 @@ import {
   CYCLE_BASE_HALF_LIFE_DAYS, LENGTH_WEEKS, PEAK_OVER_BASE_MAX, PEAK_OVER_HISTORIC_MAX,
   STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N,
   DELOAD_QUALITY_FACTOR, capBetween, halfLifeForTrend, intentFromDistance, weeklySlope,
-  weightedWeeklyBase, type CycleDraft, type CycleIntent,
+  weightedWeeklyBase, pickTargetRace, TARGET_RACE_MIN_WEEKS, type CycleDraft, type CycleIntent,
 } from "./training-cycle.ts";
 
 const BASE_WEEKS = 8;
@@ -145,7 +145,17 @@ export async function buildDrafts(
       || Math.round(med(ws.map((w) => w.days))) || 3;
 
     const mine = races.filter((r) => r.trainingpeaks_athlete_id === aid).sort((a, b) => a.event_date.localeCompare(b.event_date));
-    const race = mine[0] ?? null;
+    // ЦЕЛЬ — ГЛАВНЫЙ СТАРТ, А НЕ БЛИЖАЙШИЙ (см. pickTargetRace). Пропущенные ближние старты
+    // не исчезают из плана — они просто не задают цикл; тренер видит их пометкой.
+    const race = pickTargetRace(mine, mondayOf(today));
+    for (const r of mine) {
+      const w = Math.round((Date.parse(r.event_date) - Date.parse(mondayOf(today))) / (7 * 86400000));
+      if (w < 0) continue;
+      if (r.id === race?.id) continue;
+      if (w < TARGET_RACE_MIN_WEEKS) gaps.push(`старт ${r.event_date} через ${w} нед — целью не берётся, бежится по ходу`);
+      else if (r.distance_km == null) gaps.push(`у старта ${r.event_date} нет дистанции — целью не берётся`);
+      else if (race && (r.distance_km ?? 0) < (race.distance_km ?? 0)) gaps.push(`старт ${r.event_date} ${r.distance_km} км — проходной, главный ${race.event_date} ${race.distance_km} км`);
+    }
     const intent: CycleIntent = race ? intentFromDistance(race.distance_km) : "maintenance";
     if (race && race.distance_km == null) gaps.push(`у старта ${race.event_date} не указана дистанция — тип цикла взят как поддерживающий`);
 

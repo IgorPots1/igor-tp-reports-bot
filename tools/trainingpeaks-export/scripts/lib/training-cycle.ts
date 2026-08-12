@@ -359,6 +359,44 @@ export function intentFromDistance(km: number | null): CycleIntent {
   return "marathon";
 }
 
+/**
+ * СТАРТ БЛИЖЕ ЭТОГО СРОКА ЦЕЛЕВЫМ БЫТЬ НЕ МОЖЕТ, недель. [решение Игоря 13.08]
+ *
+ * Под старт через неделю цикл уже не построить: он бежится по ходу, а цикл строится на
+ * следующий. Без этого правила у 6290336 цикл строился на старт ЧЕРЕЗ ДВА ДНЯ — формально
+ * верно, практически бессмысленно.
+ */
+export const TARGET_RACE_MIN_WEEKS = 2;
+
+export type RaceLike = { id: string; event_date: string; distance_km: number | null };
+
+/**
+ * ВЫБОР ЦЕЛЕВОГО СТАРТА: ГЛАВНЫЙ, А НЕ БЛИЖАЙШИЙ. [решение Игоря 13.08]
+ *
+ * ЗАЧЕМ. До 13.08 бралась просто ближайшая строка race_events. Пока мелких стартов в базе не
+ * было, это совпадало с главным; после починки скана стало хуже у четверых: у 5475652 марафон
+ * 01.11 подменился десяткой 26.09, у 6290336 цикл поехал на старт через два дня.
+ *
+ * Три правила:
+ *   1) ближе TARGET_RACE_MIN_WEEKS — не цель вообще;
+ *   2) горизонт выбора — ТИПОВАЯ ДЛИНА ЦИКЛА ПОД САМУ ЭТУ ДИСТАНЦИЮ: марафон за 18 недель
+ *      целью быть может, десятка за 18 недель — нет, ей столько не готовятся;
+ *   3) среди прошедших фильтр ДЛИННАЯ ДИСТАНЦИЯ БЬЁТ КОРОТКУЮ, при равной — более ранняя.
+ *
+ * Старт без дистанции целью не берётся: тип цикла из него не вывести, а угадывать нельзя.
+ */
+export function pickTargetRace<T extends RaceLike>(races: T[], mondayToday: string): T | null {
+  const weeksTo = (d: string): number => Math.round((Date.parse(d) - Date.parse(mondayToday)) / (7 * 86400000));
+  const eligible = races
+    .filter((r) => r.distance_km != null)
+    .map((r) => ({ r, w: weeksTo(r.event_date) }))
+    .filter((x) => x.w >= TARGET_RACE_MIN_WEEKS && x.w <= LENGTH_WEEKS[intentFromDistance(x.r.distance_km)]);
+  if (eligible.length === 0) return null;
+  eligible.sort((a, b) =>
+    (b.r.distance_km ?? 0) - (a.r.distance_km ?? 0) || a.r.event_date.localeCompare(b.r.event_date));
+  return eligible[0].r;
+}
+
 export type WeekForecast = {
   index: number;
   weekStart: string;

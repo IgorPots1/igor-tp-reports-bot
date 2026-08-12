@@ -33,7 +33,7 @@ import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
   MAX_SINGLE_STEP, STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, TAPER_NO_PEAK_FACTOR,
-  forecast, type CycleDraft, type CycleIntent,
+  forecast, pickTargetRace, type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
 
 let failures = 0;
@@ -401,7 +401,41 @@ async function main(): Promise<void> {
       !wNo.notes.some((n) => n.startsWith("цикл")), `заметки: ${wNo.notes.join(" | ")}`);
   }
 
-  // ── 8. ЧИТАТЕЛЬ ЦИКЛА: СТРОКА В ТАБЛИЦЕ РЕАЛЬНО МЕНЯЕТ НЕДЕЛЮ ──
+  // ── 7б. ВЫБОР ЦЕЛЕВОГО СТАРТА: ГЛАВНЫЙ, А НЕ БЛИЖАЙШИЙ ──
+  {
+    const MONDAY = "2026-08-17";
+    const R = (id: string, d: string, km: number | null) => ({ id, event_date: d, distance_km: km });
+
+    // Ближний старт целью не берётся: под него уже не построить цикл.
+    // БЛИЖНИЙ СДЕЛАН САМЫМ ДЛИННЫМ НАМЕРЕННО: иначе его отсекает правило «длинная бьёт
+    // короткую», и снятие самого порога проверку не роняет — первая версия так и прошла мутацию.
+    const nearBig = [R("near42", "2026-08-19", 42.2), R("far21", "2026-09-14", 21.1)];
+    check("целевой старт: ближе 2 недель не берётся даже если он самый длинный",
+      pickTargetRace(nearBig, MONDAY)?.id === "far21",
+      `выбран ${pickTargetRace(nearBig, MONDAY)?.id ?? "ничего"}`);
+
+    // длинная дистанция бьёт короткую, даже если короткая раньше (случай 5475652)
+    check("целевой старт: длинная дистанция бьёт короткую",
+      pickTargetRace([R("k10", "2026-09-28", 10), R("mar", "2026-11-02", 42.2)], MONDAY)?.id === "mar",
+      `выбран ${pickTargetRace([R("k10", "2026-09-28", 10), R("mar", "2026-11-02", 42.2)], MONDAY)?.id}`);
+
+    // горизонт — типовая длина цикла ПОД ЭТУ дистанцию: десятке 30 недель не готовятся
+    check("целевой старт: за горизонтом своего цикла не берётся",
+      pickTargetRace([R("far10", "2027-03-15", 10)], MONDAY) === null,
+      `выбран ${pickTargetRace([R("far10", "2027-03-15", 10)], MONDAY)?.id ?? "ничего"}`);
+
+    // без дистанции тип цикла не вывести — целью не берётся
+    check("целевой старт: без дистанции не берётся",
+      pickTargetRace([R("nod", "2026-09-14", null)], MONDAY) === null,
+      `выбран ${pickTargetRace([R("nod", "2026-09-14", null)], MONDAY)?.id ?? "ничего"}`);
+
+    // при равной дистанции — более ранний
+    check("целевой старт: при равной дистанции берётся более ранний",
+      pickTargetRace([R("late", "2026-10-26", 42.2), R("early", "2026-10-19", 42.2)], MONDAY)?.id === "early",
+      `выбран ${pickTargetRace([R("late", "2026-10-26", 42.2), R("early", "2026-10-19", 42.2)], MONDAY)?.id}`);
+  }
+
+  // ── 8. ЧИТАТЕЛЬ ЦИКЛА  // ── 8. ЧИТАТЕЛЬ ЦИКЛА: СТРОКА В ТАБЛИЦЕ РЕАЛЬНО МЕНЯЕТ НЕДЕЛЮ ──
   // Без БД: подставляем поддельный клиент, отдающий одну строку training_cycles.
   // Смысл проверки — не «читатель что-то вернул», а «неделя собралась ПО ЦИФРАМ ТРЕНЕРА».
   // Поэтому база в строке заведомо не равна ничему, что можно вывести из заглушки истории.
