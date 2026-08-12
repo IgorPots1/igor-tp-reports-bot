@@ -31,6 +31,28 @@ function sbc(): SupabaseClient {
   return createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } });
 }
 
+/**
+ * Фамилии для шапки берутся ИЗ БАЗЫ, а не списком в файле.
+ *
+ * ЗАЧЕМ ИМЕННО ТАК. 11.08 отчёт и артефакт приёмки были подписаны по черновой карте
+ * id → фамилия, которая врала у 7 атлетов из 12: числа по id верные, подписи чужие.
+ * Любой список фамилий в коде — это копия, которая однажды разойдётся с источником.
+ * Источник один: trainingpeaks_students.trainingpeaks_athlete_url → id.
+ */
+async function loadNames(sb: SupabaseClient): Promise<Map<number, string>> {
+  const { data, error } = await sb.from("trainingpeaks_students")
+    .select("student_name, trainingpeaks_athlete_url");
+  if (error) throw error;
+  const m = new Map<number, string>();
+  for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+    const url = String(r.trainingpeaks_athlete_url ?? "");
+    const hit = /athletes?\/(\d+)/.exec(url);
+    const nm = String(r.student_name ?? "").trim();
+    if (hit && nm) m.set(Number(hit[1]), nm);
+  }
+  return m;
+}
+
 const GROUP = new Set([5733446, 5475652, 5476215, 6009851, 5931798, 5905779, 5748681, 5475750, 5475968, 5461678, 5807145, 6290336]);
 const iso = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const addDays = (s: string, n: number): string => iso(Date.parse(s) + n * 86400000);
@@ -59,6 +81,7 @@ async function main(): Promise<void> {
   const today = iso(Date.now());
   const weekStart = addDays(mondayOf(today), 7);
   const drafts = await buildDrafts(sb, ctx, today);
+  const names = await loadNames(sb);
 
   const out: string[] = [];
   out.push(`# ПАКЕТ НА ПРИЁМКУ · НЕДЕЛИ ОТ ЦИКЛА · неделя с ${weekStart}`);
@@ -117,7 +140,7 @@ async function main(): Promise<void> {
         : longMin >= med ? "не короче медианы тренера ✓"
           : `КОРОЧЕ медианы тренера на ${med - longMin} мин`;
     out.push(...printWeek(w, [
-      `НЕДЕЛЯ ${n} · атлет ${aid} · тир ${w.tier} · ОТ ЦИКЛА`,
+      `НЕДЕЛЯ ${n} · ${names.get(aid) ?? "имя не найдено"} (${aid}) · тир ${w.tier} · ОТ ЦИКЛА`,
       live
         ? `ЦИКЛ ТРЕНЕРА (из training_cycles): неделя ${target.weekIndex} из ${target.totalWeeks} · роль «${target.role}» · ${live.provenance}`
         : `цикл: неделя 1 из ${fc.length} · роль «${first.role}» · тип ${d.intent}${d.targetDate ? ` · старт ${d.targetDate}` : ""} · ЧЕРНОВИК из истории`,
@@ -141,7 +164,7 @@ async function main(): Promise<void> {
     const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness, c.tierNote);
     if (w.refused) continue;
     m++;
-    out.push(...printWeek(w, [`БЕЗ ЦИКЛА ${m} · атлет ${aid} · тир ${w.tier}`,
+    out.push(...printWeek(w, [`БЕЗ ЦИКЛА ${m} · ${names.get(aid) ?? "имя не найдено"} (${aid}) · тир ${w.tier}`,
       `потолок недели ${w.weeklyCap} мин · собрано ${w.plannedMinutes} мин · дней ${w.sessions.length}`]));
   }
 
