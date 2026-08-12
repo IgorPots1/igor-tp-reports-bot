@@ -275,15 +275,24 @@ async function main(): Promise<void> {
 
     // (в) при активном цикле практика главнее ЗАМОРОЖЕННОГО baseline (окно 11.03-03.06);
     //     без цикла baseline остаётся главным — прежнее поведение не тронуто.
+    // МЕДИАНА ПРАКТИКИ ЗАДАНА НАМЕРЕННО: без неё пол практики равен нулю при любой правке,
+    // и утечка пола в БЕСЦИКЛОВЫЙ путь принципиально невидима — мутационный прогон 13.08
+    // показал, что «пол применяется и без цикла» не роняло эту проверку вообще.
+    // БЕЗ медианы практики: тогда решает именно longCapSource, и подмена «практика → baseline»
+    // видна. С заданной медианой пол перекрывает источник, и мутация перестаёт ловиться —
+    // проверено, при усилении соседней заглушки эта проверка молча потеряла зубы.
     const envFrozen = { ...env, capLongRunMin: 65, longRunPracticeMaxMin: 120 };
     const cycTarget: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 250, qualityMin: 30, days: 4 };
     const wFrozenCyc = buildWeek(anchors, envFrozen, cat, MON, false, null, cycTarget);
-    const wFrozenNo = buildWeek(anchors, envFrozen, cat, MON, false, null);
+    // Для БЕСЦИКЛОВОЙ проверки медиана нужна: без неё пол практики равен нулю при любой
+    // правке, и утечка пола в бесцикловый путь принципиально невидима.
+    const envFrozenMed = { ...envFrozen, longRunPracticeMedianMin: 110 };
+    const wFrozenNo = buildWeek(anchors, envFrozenMed, cat, MON, false, null);
     check("цикл: потолок длительной из ПРАКТИКИ, а не из замороженного baseline",
       longestOf(wFrozenCyc) > 65, `с циклом ${longestOf(wFrozenCyc)} мин при baseline 65 и практике 120`);
     check("без цикла: потолок длительной по-прежнему из baseline",
       longestOf(wFrozenNo) > 0 && longestOf(wFrozenNo) <= 65,
-      `без цикла ${longestOf(wFrozenNo)} мин при baseline 65 и практике 120`);
+      `без цикла ${longestOf(wFrozenNo)} мин при baseline 65, практике 120 и медиане 110`);
 
     // (г) МЕДИАНА ПРАКТИКИ — ПОЛ ЦЕЛИ, А НЕ ЖЕРТВА ОГРАНИЧИТЕЛЕЙ.
     // Доля недели x0.45 и пропорция длительная/лёгкий — оба числа выведены из практики,
@@ -510,7 +519,19 @@ async function main(): Promise<void> {
         && wLive.sessions.length === 5,
       `по циклу ${wLive?.plannedMinutes} мин / ${wLive?.sessions.length} дней, без цикла ${wNone.plannedMinutes} мин / ${wNone.sessions.length} дней`);
 
-    // Позиция недели считается от start_week, а не «всегда первая».
+    // РУЧНАЯ БАЗА ТРЕНЕРА ГЛАВНЕЕ РАСЧЁТНОЙ. Мутационный прогон 13.08 показал, что это
+    // поведение не покрыто ничем: подмена base_aerobic_min_manual на base_aerobic_min не
+    // роняла ни одной из 48 проверок.
+    const rowManual = { ...row, base_aerobic_min: 260, base_aerobic_min_manual: 180, base_manual_reason: "новая норма" };
+    const fakeManual = { from: () => ({ select: () => ({ eq: () => Promise.resolve({ data: [rowManual], error: null }) }) }) } as unknown as Parameters<typeof loadActiveCycles>[0];
+    const cyclesManual = await loadActiveCycles(fakeManual, MON);
+    const gotManual = cyclesManual.get(1);
+    const gotPlain = (await loadActiveCycles(fakeSb, MON)).get(1);
+    check("читатель: ручная база тренера главнее расчётной",
+      !!gotManual && !!gotPlain && gotManual.target.aerobicMin < gotPlain.target.aerobicMin,
+      `с ручной базой 180 → ${gotManual?.target.aerobicMin}, с расчётной 260 → ${gotPlain?.target.aerobicMin}`);
+
+    // Позиция недели считается от start_week, а не «всегда первая».    // Позиция недели считается от start_week, а не «всегда первая».
     const cyclesLater = await loadActiveCycles(fakeSb, "2026-09-28");
     check("читатель: позиция недели считается от start_week",
       cyclesLater.get(1)?.target.weekIndex === 4,
