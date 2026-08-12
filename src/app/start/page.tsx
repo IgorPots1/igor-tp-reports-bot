@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Onest, JetBrains_Mono } from "next/font/google";
-import { PersonStanding, Send, Zap } from "lucide-react";
+import { Send, Users, Zap } from "lucide-react";
 import { FLOW, seatsWord } from "@/lib/flow";
 import { getSeatsLeft } from "@/features/intensive/repository";
 import "./start.css";
@@ -75,7 +75,7 @@ export default async function StartPage() {
 
             <a className="card" href="/landing">
               <span className="ic club">
-                <PersonStanding size={22} strokeWidth={2} aria-hidden="true" />
+                <Users size={22} strokeWidth={2} aria-hidden="true" />
               </span>
               <span className="txt">
                 <span className="t">Беговой клуб</span>{" "}
