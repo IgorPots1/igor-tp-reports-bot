@@ -21,6 +21,7 @@ import { loadAthleteContexts, mondayOf } from "./lib/autoplanner-context.ts";
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
 import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
 import { buildDrafts } from "./lib/cycle-drafts.ts";
+import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import { forecast } from "./lib/training-cycle.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const l of readFileSync(p, "utf8").split(/\r?\n/)) { const t = l.trim(); if (!t || t.startsWith("#")) continue; const e = t.indexOf("="); if (e < 0) continue; const k = t.slice(0, e).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(e + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
@@ -68,16 +69,19 @@ async function main(): Promise<void> {
   // ЧЕСТНО: активных циклов в базе СЕЙЧАС НЕТ — таблица training_cycles пуста, тренер их
   // ещё не заводил. Пакет показывает, что БУДЕТ, если завести: цикл берётся черновиком
   // из истории. Реальное разделение режимов пойдёт по training_cycles.status = 'active'.
-  const { data: active } = await sb.from("training_cycles")
-    .select("trainingpeaks_athlete_id").eq("status", "active");
-  const activeIds = new Set((active ?? []).map((r) => Number((r as Record<string, unknown>).trainingpeaks_athlete_id)));
+  // ЗАВЕДЁННЫЕ ЦИКЛЫ ЧИТАЮТСЯ ПО-НАСТОЯЩЕМУ (правка 12.08). Раньше здесь только СЧИТАЛИСЬ
+  // активные строки, а цель недели всё равно бралась из черновика по истории — то есть
+  // заведение цикла не меняло ничего. Теперь строка тренера главнее черновика.
+  const activeCycles = await loadActiveCycles(sb, weekStart,
+    new Map([...ctx.keys()].map((a) => [a, Math.max(1, Math.round(ctx.get(a)!.envelope.rolling4wFrequency || 3))])));
+  const activeIds = new Set(activeCycles.keys());
   const withCycle = [...ctx.keys()].filter((a) => drafts.has(a));
   const withoutCycle = [...ctx.keys()].filter((a) => !drafts.has(a));
   out.push(`\n## Режимы`);
   out.push("```");
   out.push(`атлетов в контексте: ${ctx.size}`);
-  out.push(`АКТИВНЫХ ЦИКЛОВ В БАЗЕ СЕЙЧАС: ${activeIds.size} — тренер их ещё не заводил,`);
-  out.push(`  поэтому в бою СЕЙЧАС все ${ctx.size} идут прежним путём, ничего не изменилось.`);
+  out.push(`АКТИВНЫХ ЦИКЛОВ В БАЗЕ СЕЙЧАС: ${activeIds.size}`);
+  out.push(`  Заведённый цикл ЧИТАЕТСЯ и главнее черновика; у кого строки нет — черновик из истории.`);
   out.push(`в этом пакете цикл СИМУЛИРОВАН черновиком из истории у ${withCycle.length} атлетов,`);
   out.push(`  чтобы показать, что будет после заведения; без черновика (мало недель): ${withoutCycle.length}`);
   out.push("```");
@@ -91,13 +95,15 @@ async function main(): Promise<void> {
     const first = fc[0];
     if (!first) continue;
     n++;
-    const target: CycleWeekTarget = {
+    // ЦИКЛ ТРЕНЕРА ГЛАВНЕЕ ЧЕРНОВИКА: если строка заведена — берём её, черновик не подмешиваем.
+    const live = activeCycles.get(aid);
+    const target: CycleWeekTarget = live ? live.target : {
       weekIndex: 1, totalWeeks: fc.length, role: first.role,
       aerobicMin: first.aerobicMin, qualityMin: first.qualityMin, days: first.days,
     };
     const w = buildWeek(c, c.envelope, cat, weekStart, c.hasActiveIllness, c.tierNote, target);
     const got = w.plannedMinutes;
-    const want = first.aerobicMin + first.qualityMin;
+    const want = target.aerobicMin + target.qualityMin;
     const dev = want > 0 ? Math.round(1000 * (got / want - 1)) / 10 : 0;
     // ДЛИТЕЛЬНАЯ ПРОТИВ ПРАКТИКИ — отдельной строкой. Цель сборщика: не короче медианы,
     // которую тренер ставит этому же человеку сам. Замер 11.08 показал обратное у 7 из 12,
@@ -112,7 +118,9 @@ async function main(): Promise<void> {
           : `КОРОЧЕ медианы тренера на ${med - longMin} мин`;
     out.push(...printWeek(w, [
       `НЕДЕЛЯ ${n} · атлет ${aid} · тир ${w.tier} · ОТ ЦИКЛА`,
-      `цикл: неделя 1 из ${fc.length} · роль «${first.role}» · тип ${d.intent}${d.targetDate ? ` · старт ${d.targetDate}` : ""}`,
+      live
+        ? `ЦИКЛ ТРЕНЕРА (из training_cycles): неделя ${target.weekIndex} из ${target.totalWeeks} · роль «${target.role}» · ${live.provenance}`
+        : `цикл: неделя 1 из ${fc.length} · роль «${first.role}» · тип ${d.intent}${d.targetDate ? ` · старт ${d.targetDate}` : ""} · ЧЕРНОВИК из истории`,
       `цель цикла ${want} мин (${first.aerobicMin} аэробн + ${first.qualityMin} работы) · собрано ${got} мин · отклонение ${dev >= 0 ? "+" : ""}${dev}%`,
       `длительная ${longMin} мин · практика тренера за 26 нед: мед ${med} / макс ${mx} — ${verdict}`,
       `дней: цикл просил ${first.days}, собрано ${w.sessions.length}`,

@@ -29,6 +29,7 @@ import process from "node:process";
 
 import { buildWeek, LONG_CEIL, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
+import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
   MAX_SINGLE_STEP, STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, TAPER_NO_PEAK_FACTOR,
@@ -67,7 +68,7 @@ function draft(over: Partial<CycleDraft> = {}): CycleDraft {
 const MON = "2026-09-07";
 const shareOf = (a: number, q: number): number => (a + q > 0 ? 100 * q / (a + q) : 0);
 
-function main(): void {
+async function main(): Promise<void> {
   console.log("ПРОВЕРКИ ЧИСЕЛ ПРОГНОЗА ЦИКЛА\n");
 
   // ── 1. возврат после плановой разгрузки ──
@@ -329,8 +330,48 @@ function main(): void {
       !wNo.notes.some((n) => n.startsWith("цикл")), `заметки: ${wNo.notes.join(" | ")}`);
   }
 
+  // ── 8. ЧИТАТЕЛЬ ЦИКЛА: СТРОКА В ТАБЛИЦЕ РЕАЛЬНО МЕНЯЕТ НЕДЕЛЮ ──
+  // Без БД: подставляем поддельный клиент, отдающий одну строку training_cycles.
+  // Смысл проверки — не «читатель что-то вернул», а «неделя собралась ПО ЦИФРАМ ТРЕНЕРА».
+  // Поэтому база в строке заведомо не равна ничему, что можно вывести из заглушки истории.
+  {
+    const row = {
+      id: "11111111-1111-1111-1111-111111111111",
+      trainingpeaks_athlete_id: 1,
+      intent: "half", target_date: null, target_race_id: null, status: "active",
+      length_weeks: 8, base_aerobic_min: 260, base_quality_min: 30,
+      base_aerobic_min_manual: null, base_quality_min_manual: null, base_manual_reason: null,
+      step_aerobic: 1.06, step_quality: 1.06, peak_aerobic_min: null,
+      deload_every_n: 4, deload_depth_aerobic: 0.8, deload_quality_factor: 0.8,
+      taper_profile: [], start_week: "2026-09-07", days: 5,
+    };
+    const fakeSb = { from: () => ({ select: () => ({ eq: async () => ({ data: [row], error: null }) }) }) };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cycles = await loadActiveCycles(fakeSb as any, MON);
+    const got = cycles.get(1);
+    check("читатель: активный цикл прочитан в цель недели",
+      !!got && got.target.days === 5 && got.target.aerobicMin > 0,
+      `прочитано: ${got ? JSON.stringify(got.target) : "ничего"}`);
+
+    // Неделя, собранная ПО СТРОКЕ ТРЕНЕРА, обязана отличаться от недели без цикла.
+    const anchors2 = stubAnchors(); const env2 = { ...stubEnvelope(), capLongRunMin: 140 };
+    const cat2 = stubCatalog();
+    const wLive = got ? buildWeek(anchors2, env2, cat2, MON, false, null, got.target) : null;
+    const wNone = buildWeek(anchors2, env2, cat2, MON, false, null);
+    check("читатель: строка в таблице МЕНЯЕТ собранную неделю",
+      !!wLive && wLive.refused == null && wLive.plannedMinutes !== wNone.plannedMinutes
+        && wLive.sessions.length === 5,
+      `по циклу ${wLive?.plannedMinutes} мин / ${wLive?.sessions.length} дней, без цикла ${wNone.plannedMinutes} мин / ${wNone.sessions.length} дней`);
+
+    // Позиция недели считается от start_week, а не «всегда первая».
+    const cyclesLater = await loadActiveCycles(fakeSb as any, "2026-09-28");
+    check("читатель: позиция недели считается от start_week",
+      cyclesLater.get(1)?.target.weekIndex === 4,
+      `ожидали 4-ю неделю от 2026-09-07, получили ${cyclesLater.get(1)?.target.weekIndex}`);
+  }
+
   console.log(`\nИТОГ: ${failures === 0 ? "все проверки прошли" : `ПАДЕНИЙ ${failures}`}`);
   if (failures > 0) process.exit(1);
 }
 
-main();
+main().catch((e: unknown) => { console.error(e instanceof Error ? e.stack : String(e)); process.exit(1); });
