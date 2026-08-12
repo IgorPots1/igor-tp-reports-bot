@@ -166,17 +166,50 @@ async function main(): Promise<void> {
       const ratio = cur.aerobicMin / prev.aerobicMin;
       if (ratio > MAX_SINGLE_STEP + 0.001) { ok = false; detail = `${prev.aerobicMin} -> ${cur.aerobicMin} = ×${ratio.toFixed(3)}`; }
     }
-    check(`ни один переход роста не выше ×${MAX_SINGLE_STEP}`, ok, detail);
+    // ШАГ ЗАВЕДОМО БОЛЬШЕ ПРЕДЕЛА, иначе проверка бессодержательна: при штатных 1.06 ни один
+    // переход и близко не подходит к 1.22, и снятие предела ничего не меняет (проверено
+    // мутацией — «предел не применяется» не роняло эту проверку вообще).
+    const dBig = draft({ stepAerobic: 1.5, peakCapAerobicMin: 9999, peakCapQualityMin: 9999 });
+    const wBig = forecast(dBig, MON, 8);
+    let okBig = true, detBig = "", bound = false;
+    for (let i = 1; i < wBig.length; i++) {
+      const prev = wBig[i - 1], cur = wBig[i];
+      if (cur.role !== "рост" || prev.aerobicMin <= 0 || prev.role === "плановая разгрузка") continue;
+      const ratio = cur.aerobicMin / prev.aerobicMin;
+      if (ratio > MAX_SINGLE_STEP + 0.001) { okBig = false; detBig = `${prev.aerobicMin} -> ${cur.aerobicMin} = ×${ratio.toFixed(3)}`; }
+      if (ratio > MAX_SINGLE_STEP - 0.05) bound = true;
+    }
+    check(`ни один переход роста не выше ×${MAX_SINGLE_STEP} (шаг заявлен 1.5 — предел ОБЯЗАН связать)`,
+      ok && okBig && bound, detail || detBig || "предел ни разу не связал — проверка ничего не меряет");
   }
 
   // ── 6. личные потолки ──
   {
-    const d = draft({ targetDate: "2026-11-30" });
+    // БЕЗ targetDate И НА ДЛИННОМ ГОРИЗОНТЕ. С подводкой рост доходил лишь до 375 при потолке
+    // 400 — упереться было не во что, и обе проверки не значили НИЧЕГО: снятие потолка во всех
+    // трёх местах его применения не роняло ни одну (проверено мутацией). Теперь горизонт такой,
+    // что потолок ОБЯЗАН связать, и это проверяется отдельным условием.
+    const d = draft();
     const w = forecast(d, MON, 14);
     const overA = w.find((x) => x.aerobicMin > d.peakCapAerobicMin);
     const overQ = w.find((x) => x.qualityMin > d.peakCapQualityMin);
-    check("аэробный не выше личного потолка", !overA, `неделя ${overA?.index}: ${overA?.aerobicMin} > ${d.peakCapAerobicMin}`);
-    check("работа не выше личного потолка", !overQ, `неделя ${overQ?.index}: ${overQ?.qualityMin} > ${d.peakCapQualityMin}`);
+    const hitA = w.some((x) => x.aerobicMin === d.peakCapAerobicMin);
+    // ПОТОЛОК РАБОТЫ ПРОВЕРЯЕТСЯ НА ДРУГОМ АТЛЕТЕ. При обычной доле качества (~9%) зажим
+    // доли срабатывает раньше потолка, и 60 мин работы недостижимы структурно: чтобы дойти
+    // до них при аэробном 400, доля должна быть 13%. То есть на базовой заготовке эта
+    // проверка не могла иметь зубов вообще. Берём атлета с высокой долей — там связывает
+    // именно потолок.
+    const dq = draft({ baseAerobicMin: 200, baseQualityMin: 40, peakCapAerobicMin: 9999 });
+    const wq = forecast(dq, MON, 14);
+    const overQ2 = wq.find((x) => x.qualityMin > dq.peakCapQualityMin);
+    const hitQ = wq.some((x) => x.qualityMin === dq.peakCapQualityMin);
+    check("аэробный не выше личного потолка (и потолок реально связывает)",
+      !overA && hitA, overA ? `неделя ${overA.index}: ${overA.aerobicMin} > ${d.peakCapAerobicMin}`
+        : `потолок ${d.peakCapAerobicMin} ни разу не достигнут — проверка ничего не меряет`);
+    check("работа не выше личного потолка (и потолок реально связывает)",
+      !overQ && !overQ2 && hitQ, (overQ ?? overQ2)
+        ? `неделя ${(overQ ?? overQ2)!.index}: ${(overQ ?? overQ2)!.qualityMin} > потолка`
+        : `потолок ${dq.peakCapQualityMin} ни разу не достигнут — проверка ничего не меряет`);
   }
 
   // ── 7. ПОДКЛЮЧЕНИЕ ЦИКЛА К СБОРЩИКУ ──

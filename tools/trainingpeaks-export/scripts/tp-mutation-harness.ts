@@ -101,7 +101,17 @@ const MUTATIONS: Mutation[] = [
   { id: "reader-days", file: R, find: "    const days = raw.days ?? fallbackDays?.get(aid) ?? wk.days;", replace: "    const days = wk.days;", what: "дни тренера игнорируются" },
   { id: "reader-manual-base", file: R, find: "  const baseAerobic = r.base_aerobic_min_manual ?? r.base_aerobic_min;", replace: "  const baseAerobic = r.base_aerobic_min;", what: "ручная база игнорируется" },
 
-  // ── ОТРИЦАТЕЛЬНЫЕ ПРОВЕРКИ: ломаем то, чего они запрещают ──
+  // ── ПОД 8 ПОДОЗРИТЕЛЬНЫХ (наряд п.2): что именно у них сломать ──
+  // ЛИЧНЫЙ ПОТОЛОК ПРИМЕНЯЕТСЯ В ТРЁХ МЕСТАХ (выдача недели, накопление, гейт aerRoom),
+  // и порча ОДНОГО маскируется остальными — по отдельности ни одна не ловится. Ломаем разом:
+  // если и это не роняет проверку, значит она бессодержательна.
+  { id: "cap-aerobic-off", file: C, find: "draft.peakCapAerobicMin", replace: "Infinity", what: "личный потолок аэробного снят ВЕЗДЕ" },
+  { id: "cap-quality-off", file: C, find: "draft.peakCapQualityMin", replace: "Infinity", what: "личный потолок работы снят ВЕЗДЕ" },
+  { id: "step-ceil-off", file: C, find: "    const ceilStep = returningFromDeload || prevShownAer <= 0 ? Infinity : prevShownAer * MAX_SINGLE_STEP;", replace: "    const ceilStep = Infinity;", what: "предел одного перехода не применяется вовсе" },
+  { id: "deload-return-off", file: C, find: "    preDeloadAer = a; preDeloadQual = q;", replace: "    preDeloadAer = 0; preDeloadQual = 0;", what: "уровень до разгрузки не запоминается — возврат сломан" },
+  { id: "target-race-tiebreak", file: C, find: "|| a.r.event_date.localeCompare(b.r.event_date));", replace: "|| b.r.event_date.localeCompare(a.r.event_date));", what: "при равной дистанции берётся более ПОЗДНИЙ старт" },
+
+  // ── ОТРИЦАТЕЛЬНЫЕ ПРОВЕРКИ  // ── ОТРИЦАТЕЛЬНЫЕ ПРОВЕРКИ: ломаем то, чего они запрещают ──
   // Проверки вида «без цикла НЕ должно», «пол НЕ применяется», «роль понижена» утверждают
   // отсутствие поведения. Обычная порча их не задевает — нужна порча, которая это поведение
   // ВКЛЮЧАЕТ. Без таких мутаций они выглядят беззубыми, хотя могут быть в порядке.
@@ -112,6 +122,18 @@ const MUTATIONS: Mutation[] = [
   // КОНТРОЛЬ КАТАЛОГА: заведомо безвредная правка. Если её кто-то «поймает» — врут не
   // проверки, а сам харнесс (нестабильный прогон, мусор в разборе вывода).
   { id: "neg-growth-cap", file: C, find: "export const MAX_SINGLE_STEP = 1.22;", replace: "export const MAX_SINGLE_STEP = 1.22;\n// контроль: безвредный комментарий", what: "КОНТРОЛЬ: безвредная правка, замечать нечего" },
+
+  // ── остаток подозрительных: последняя попытка подобрать порчу ──
+  { id: "long-fallback-decile", file: P, find: "  return median(desc.slice(0, Math.max(1, Math.ceil(desc.length * LONG_FALLBACK_DECILE))));", replace: "  return median(desc);", what: "запасной детектор берёт медиану ВСЕХ, а не верхней децили" },
+  { id: "keep-grow-anyway", file: W, find: "  const floorBase = cycle && distTarget && distStep && cycle.hasTargetRace", replace: "  const floorBase = cycle && (distTarget ?? 180) && (distStep ?? 1.116) && (cycle.hasTargetRace || true)", what: "рост длительной включается и на поддержании без старта" },
+  { id: "nocycle-uses-cycle-cap", file: W, find: "    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;", replace: "    weekly = 250;", what: "без цикла потолок берётся не из конверта" },
+  { id: "downgraded-over-cap", file: W, find: "  const easyVariants = [easyBase, Math.max(EASY_FLOOR, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые", replace: "  const easyVariants = [easyBase + 40, Math.max(EASY_FLOOR, easyBase + 35)]; // мутация: неделя раздута сверх потолка", what: "собранная неделя раздувается сверх потолка" },
+
+  // ── контекст ──  // ── контекст ──  // ── остаток подозрительных: последняя попытка подобрать порчу ──
+  { id: "long-fallback-decile", file: P, find: "  return median(desc.slice(0, Math.max(1, Math.ceil(desc.length * LONG_FALLBACK_DECILE))));", replace: "  return median(desc);", what: "запасной детектор берёт медиану ВСЕХ, а не верхней децили" },
+  { id: "keep-grow-anyway", file: W, find: "  const floorBase = cycle && distTarget && distStep && cycle.hasTargetRace", replace: "  const floorBase = cycle && (distTarget ?? 180) && (distStep ?? 1.116) && (cycle.hasTargetRace || true)", what: "рост длительной включается и на поддержании без старта" },
+  { id: "nocycle-uses-cycle-cap", file: W, find: "    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;", replace: "    weekly = 250;", what: "без цикла потолок берётся не из конверта" },
+  { id: "downgraded-over-cap", file: W, find: "  const easyVariants = [easyBase, Math.max(EASY_FLOOR, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые", replace: "  const easyVariants = [easyBase + 40, Math.max(EASY_FLOOR, easyBase + 35)]; // мутация: неделя раздута сверх потолка", what: "собранная неделя раздувается сверх потолка" },
 
   // ── контекст ──  // ── контекст ──
   // Переехали в practice-signals вместе с логикой. Харнесс честно сообщал «ЯКОРЬ НЕ НАЙДЕН»,
@@ -160,7 +182,9 @@ function main(): void {
       continue;
     }
     try {
-      writeFileSync(m.file, before.replace(m.find, m.replace));
+      // replaceAll: часть мутаций (снятие потолка) должна задеть ВСЕ места применения,
+      // иначе оставшиеся копии маскируют порчу и проверка выглядит беззубой ложно.
+      writeFileSync(m.file, before.split(m.find).join(m.replace));
       const res = run();
       if (res.crashed) console.log(`  ␥ ${m.id.padEnd(22)} код не компилируется/падает — как сигнал не считается`);
       else if (res.failed.length === 0) { useless.push(m); console.log(`  ✗ ${m.id.padEnd(22)} НИКТО НЕ ЗАМЕТИЛ · ${m.what}`); }
