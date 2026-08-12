@@ -91,6 +91,13 @@ export const WEEKLY_GROWTH_MAX = 1.22;
  * недель по +10%. Доля 0.7 — та же граница «нормальной базы», на которой сделан замер.
  */
 export const DIP_BASE_RATIO = 0.7;
+
+/**
+ * Абсолютный потолок ОДНОЙ длительной, мин. Был 180 и делал контрольную длительную тренера
+ * структурно невозможной: в практике она есть на 182 мин, а выше 180 сборщик не выдавал никогда,
+ * при любом недельном объёме. Поднят до 200 [решение Игоря 12.08].
+ */
+export const LONG_CEIL = 200;
 const round5 = (m: number): number => Math.max(ROUND_TO_MIN, Math.round(m / ROUND_TO_MIN) * ROUND_TO_MIN);
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
@@ -556,7 +563,25 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // (3) остаток — длительной. Инвариант «длительная строго длиннее лёгкого» держится на
   // каждом шаге; при кратности 1.0 (T1) одной проверки кратности было мало — она пропускала
   // ровно тот шаг, который делал лёгкий равным длительной.
-  const capLong = round5(clamp(Math.min(env.capLongRunMin ?? weekly * 0.35, weekly * 0.45), LONG_FLOOR, 180));
+  // ── ПОТОЛОК ДЛИТЕЛЬНОЙ: ТРИ ПРИЧИНЫ, ПО КОТОРЫМ ОН БЫЛ НИЖЕ ПРАКТИКИ ТРЕНЕРА (правка 12.08) ──
+  // Замер 11.08 по двенадцати: у 7 из 12 длительная сборщика КОРОЧЕ той, что ставит тренер сам,
+  // у двоих её не выдавалось вовсе. Причины разные, чиним все три.
+  //
+  // (а) Жёсткий предел 180 мин делал контрольную длительную тренера (182 мин, есть в практике)
+  //     структурно невозможной при любом недельном объёме. Поднят до 200 [решение Игоря].
+  // (б) baseline = 0 у двоих — не решение тренера, а артефакт классификатора (см. Envelope.
+  //     longRunPracticeMaxMin). Нуль не отличался от «потолка нет», потому что проверка была
+  //     `?? weekly*0.35`, а нуль не null: Math.min(0, …) = 0 → clamp до пола 30 → сессия
+  //     переставала быть длиннее обычной лёгкой и переименовывалась в лёгкую.
+  // (в) baseline заморожен на окне 11.03–03.06 и с тех пор не пересчитывался. При АКТИВНОМ ЦИКЛЕ
+  //     потолок берётся из ПРАКТИКИ атлета за 26 недель (максимум), а не из мёртвого числа:
+  //     цикл уже отменил исторический конверт объёма, и держать при этом длительную на конверте
+  //     трёхмесячной давности — та же отменённая отмена, что была в доборе.
+  // Без цикла порядок прежний: baseline главный, практика — только подмена нуля/пропуска.
+  const baselineLong = (env.capLongRunMin ?? 0) > 0 ? (env.capLongRunMin as number) : null;
+  const practiceLong = env.longRunPracticeMaxMin > 0 ? env.longRunPracticeMaxMin : null;
+  const longCapSource = cycle ? (practiceLong ?? baselineLong) : (baselineLong ?? practiceLong);
+  const capLong = round5(clamp(Math.min(longCapSource ?? weekly * 0.35, weekly * 0.45), LONG_FLOOR, LONG_CEIL));
   let easyBase = EASY_FLOOR;
   let longMin = round5(Math.max(LONG_FLOOR, easyRoles > 0 ? easyBase + ROUND_TO_MIN : 0,
     qLongest > 0 ? qLongest + ROUND_TO_MIN : 0));

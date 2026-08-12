@@ -27,7 +27,7 @@
  */
 import process from "node:process";
 
-import { buildWeek, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
+import { buildWeek, LONG_CEIL, type CycleWeekTarget } from "./lib/autoplanner-week.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
@@ -246,6 +246,43 @@ function main(): void {
     check("цикл, ПОНИЖЕННАЯ роль: собранное не превышает потолок от факта",
       wIll.refused != null || wIll.plannedMinutes <= wIll.weeklyCap,
       `собрано ${wIll.plannedMinutes}, потолок ${wIll.weeklyCap}`);
+
+    // ── ПОТОЛОК ДЛИТЕЛЬНОЙ: ТРИ ПРИЧИНЫ ЗАНИЖЕНИЯ, ТРИ ПРОВЕРКИ ──
+    // Замер 11.08: у 7 атлетов из 12 длительная короче той, что тренер ставит сам, у двоих
+    // её не выдавалось вовсе. Каждая проверка сторожит СВОЮ причину и падает, если правка снята.
+    const longestOf = (w: { sessions: Array<{ role: string; minutes: number }> }): number =>
+      w.sessions.filter((s) => s.role === "long").reduce((m, s) => Math.max(m, s.minutes), 0);
+
+    // (а) жёсткий предел: был 180, стал 200. Контрольная длительная тренера — 182 мин.
+    const wCeil = buildWeek(anchors, { ...env, capLongRunMin: null, longRunPracticeMaxMin: 200 }, cat, MON, false, null,
+      { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 420, qualityMin: 40, days: 3 });
+    check(`длительная может превысить прежний предел 180 (потолок ${LONG_CEIL})`,
+      longestOf(wCeil) > 180, `длительная ${longestOf(wCeil)} мин при практике 200 и цели 460`);
+
+    // (б) baseline = 0 — дыра в данных, а не решение тренера: нуль не должен работать потолком.
+    // Прежде `capLongRunMin ?? …` пропускал нуль (?? ловит только null), min(0, …) = 0,
+    // clamp поднимал до пола 30 — и сессия переставала быть длиннее обычной лёгкой (45 мин),
+    // после чего переименовывалась в лёгкую, то есть длительной не выдавалось ВООБЩЕ.
+    //
+    // БЕЗ ЦИКЛА, И ЭТО СУЩЕСТВЕННО. При активном цикле практика берётся первой в любом случае,
+    // поэтому нуль там не проявляется и проверка была бы беззубой — первая версия этой проверки
+    // шла с циклом и мутацию `capLongRunMin ?? null` проходила насквозь. Ветка с нулём живёт
+    // ровно на бесцикловом пути, там её и сторожим.
+    const wZero = buildWeek(anchors, { ...env, capLongRunMin: 0, longRunPracticeMaxMin: 90 }, cat, MON, false, null);
+    check("нулевой baseline длительной не работает потолком — берётся практика (без цикла)",
+      longestOf(wZero) >= 80, `длительная ${longestOf(wZero)} мин при baseline 0 и практике 90`);
+
+    // (в) при активном цикле практика главнее ЗАМОРОЖЕННОГО baseline (окно 11.03-03.06);
+    //     без цикла baseline остаётся главным — прежнее поведение не тронуто.
+    const envFrozen = { ...env, capLongRunMin: 65, longRunPracticeMaxMin: 120 };
+    const cycTarget: CycleWeekTarget = { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 250, qualityMin: 30, days: 4 };
+    const wFrozenCyc = buildWeek(anchors, envFrozen, cat, MON, false, null, cycTarget);
+    const wFrozenNo = buildWeek(anchors, envFrozen, cat, MON, false, null);
+    check("цикл: потолок длительной из ПРАКТИКИ, а не из замороженного baseline",
+      longestOf(wFrozenCyc) > 65, `с циклом ${longestOf(wFrozenCyc)} мин при baseline 65 и практике 120`);
+    check("без цикла: потолок длительной по-прежнему из baseline",
+      longestOf(wFrozenNo) > 0 && longestOf(wFrozenNo) <= 65,
+      `без цикла ${longestOf(wFrozenNo)} мин при baseline 65 и практике 120`);
 
     // без цикла поведение прежнее: потолок берётся из конверта, а не из цели
     const wNo = buildWeek(anchors, env, cat, MON, false, null);

@@ -81,6 +81,20 @@ export type Envelope = {
   capLongRunMin: number | null;
   capQuality: number | null;
   capFrequency: number | null;
+  /**
+   * ПРАКТИКА ДЛИТЕЛЬНЫХ этого атлета за 26 недель, плановые минуты (0 — таких сессий нет).
+   *
+   * Зачем отдельно от capLongRunMin: baseline заморожен на окне 11.03–03.06 и с тех пор ни разу
+   * не пересчитывался, а у двоих из двенадцати он равен НУЛЮ — и это не решение тренера, а
+   * артефакт классификатора: все их сессии в том окне разложились в семейство beginner_run_walk,
+   * в семействе long_run оказалось 0 сессий, и потолок записался нулём (проверено по
+   * raw_stats_jsonb: max_long_run_duration_minutes = null у 5461678 и 6009851). При этом по
+   * заголовкам у обеих в практике есть длительные на 90 мин. Замороженный нуль превращался в
+   * потолок 30 мин, сессия переставала быть длиннее обычной лёгкой и переименовывалась в лёгкую —
+   * то есть длительной у человека не выдавалось вовсе.
+   */
+  longRunPracticeMaxMin: number;
+  longRunPracticeMedianMin: number;
   /** наблюдаемое распределение дней недели: 0=Пн … 6=Вс → сколько пробежек */
   dayHistogram: number[];
   weeksObserved: number;
@@ -288,6 +302,8 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
   const out = new Map<number, AthleteContext>();
   const win4wStart = addDays(asOf, -28);
   const win8wStart = addDays(asOf, -56);
+  // 26 недель — окно практики длительных. pullRuns тянет 200 дней, так что окно помещается целиком.
+  const win26wStart = addDays(asOf, -182);
 
   for (const [aid, rs] of byAth) {
     let sid: string | null = null;
@@ -295,7 +311,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const dayHistogram = [0, 0, 0, 0, 0, 0, 0];
     const weekMin = new Map<string, number>(); const weekFreq = new Map<string, number>(); const weekQual = new Map<string, number>();
     const weekPlanned = new Map<string, number>();
-    const easyPlannedMinutes: number[] = [];
+    const easyPlannedMinutes: number[] = []; const longPlannedMinutes: number[] = [];
     const qualityDates: string[] = []; let lastQ: { date: string; work: number } | null = null;
     const qSamples: QualitySample[] = [];
 
@@ -341,6 +357,11 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         if (t && !QUALITY_TITLE_RE.test(t) && !LONG_TITLE_RE.test(t)) {
           const m = Math.round((r.planned_time_raw as number) * 60);
           if (m > 0 && m <= 300) easyPlannedMinutes.push(m);
+        }
+        // ПРАКТИКА ДЛИТЕЛЬНЫХ за 26 недель — источник потолка длительной вместо мёртвого baseline.
+        if (t && LONG_TITLE_RE.test(t) && r.workout_date >= win26wStart) {
+          const m = Math.round((r.planned_time_raw as number) * 60);
+          if (m > 0 && m <= 400) longPlannedMinutes.push(m);
         }
       }
       // ── ФАКТИЧЕСКАЯ ВАЛЮТА: только там, где вопрос именно «что человек СДЕЛАЛ» ──
@@ -409,6 +430,13 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         : Math.round((sortedEasy[sortedEasy.length / 2 - 1] + sortedEasy[sortedEasy.length / 2]) / 2))
       : 0;
 
+    const sortedLong = [...longPlannedMinutes].sort((x, y) => x - y);
+    const longRunPracticeMaxMin = sortedLong.length ? sortedLong[sortedLong.length - 1] : 0;
+    const longRunPracticeMedianMin = sortedLong.length
+      ? (sortedLong.length % 2 ? sortedLong[(sortedLong.length - 1) / 2]
+        : Math.round((sortedLong[sortedLong.length / 2 - 1] + sortedLong[sortedLong.length / 2]) / 2))
+      : 0;
+
     const b = baselines.get(aid);
 
     // ТИР — ТОЖЕ ОТ ПЛАНА. Полы сессий по тирам измерены на ПЛАНОВЫХ неделях (tp-week-shape-measure
@@ -460,6 +488,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
         rolling4wQuality: Math.round(avgPlanned(weekQual) * 10) / 10,
         capWeeklyMin: b?.wk ?? null, capLongRunMin: b?.long ?? null,
         capQuality: b?.q ?? null, capFrequency: b?.freq ?? null,
+        longRunPracticeMaxMin, longRunPracticeMedianMin,
         lastWeekMinutes: lastWeekMin,
         rolling4wPlannedMin, lastWeekPlannedMinutes, typicalPlannedWeekMin, complianceRatio, lowComplianceWeeks, notRunningWeeks, typicalEasyMinutes,
         qualityLast8w: qualityDates.length,

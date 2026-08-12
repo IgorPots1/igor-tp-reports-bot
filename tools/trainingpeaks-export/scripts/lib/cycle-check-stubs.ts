@@ -40,6 +40,10 @@ export function stubEnvelope(): Envelope {
     capLongRunMin: null,
     capQuality: null,
     capFrequency: null,
+    // Практики длительных у заглушки нет намеренно: потолок длительной тогда считается от
+    // недельного объёма, как при пустом baseline, и проверки меряют ЛОГИКУ, а не подсунутое число.
+    longRunPracticeMaxMin: 0,
+    longRunPracticeMedianMin: 0,
     dayHistogram: [1, 1, 1, 1, 1, 1, 1],
     weeksObserved: 20,
   };
