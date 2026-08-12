@@ -99,10 +99,22 @@ async function main(): Promise<void> {
     const got = w.plannedMinutes;
     const want = first.aerobicMin + first.qualityMin;
     const dev = want > 0 ? Math.round(1000 * (got / want - 1)) / 10 : 0;
+    // ДЛИТЕЛЬНАЯ ПРОТИВ ПРАКТИКИ — отдельной строкой. Цель сборщика: не короче медианы,
+    // которую тренер ставит этому же человеку сам. Замер 11.08 показал обратное у 7 из 12,
+    // и по одной сводной цифре отклонения объёма этого было не видно.
+    const longMin = w.sessions.filter((s) => s.role === "long" && !s.deferred)
+      .reduce((m, s) => Math.max(m, s.minutes), 0);
+    const med = c.envelope.longRunPracticeMedianMin;
+    const mx = c.envelope.longRunPracticeMaxMin;
+    const verdict = med <= 0 ? "в истории длительных нет — сравнивать не с чем"
+      : longMin <= 0 ? `НЕ ВЫДАНА (медиана тренера ${med})`
+        : longMin >= med ? "не короче медианы тренера ✓"
+          : `КОРОЧЕ медианы тренера на ${med - longMin} мин`;
     out.push(...printWeek(w, [
       `НЕДЕЛЯ ${n} · атлет ${aid} · тир ${w.tier} · ОТ ЦИКЛА`,
       `цикл: неделя 1 из ${fc.length} · роль «${first.role}» · тип ${d.intent}${d.targetDate ? ` · старт ${d.targetDate}` : ""}`,
       `цель цикла ${want} мин (${first.aerobicMin} аэробн + ${first.qualityMin} работы) · собрано ${got} мин · отклонение ${dev >= 0 ? "+" : ""}${dev}%`,
+      `длительная ${longMin} мин · практика тренера за 26 нед: мед ${med} / макс ${mx} — ${verdict}`,
       `дней: цикл просил ${first.days}, собрано ${w.sessions.length}`,
     ]));
   }
