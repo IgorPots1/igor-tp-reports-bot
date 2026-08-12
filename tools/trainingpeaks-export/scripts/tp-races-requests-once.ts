@@ -117,11 +117,30 @@ function getSupabase() {
   });
 }
 
+/**
+ * Лимит поднят с 350 до 1600: в сообщение теперь входит хвост stderr упавшего скана, а на 350
+ * символах он обрезался ровно там, где начиналась причина. 350 хватало, пока сообщение было
+ * «exit code 1» — то есть пока разбирать было нечего.
+ */
+const ERROR_MESSAGE_LIMIT = 1600;
+
 function toShortErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   const normalized = raw.replace(/\s+/g, " ").trim();
-  return normalized.length <= 350 ? normalized : `${normalized.slice(0, 347)}...`;
+  return normalized.length <= ERROR_MESSAGE_LIMIT ? normalized : `${normalized.slice(0, ERROR_MESSAGE_LIMIT - 3)}...`;
 }
+
+/**
+ * Хвост stderr упавшего скана, чтобы причина не терялась.
+ *
+ * ЗАЧЕМ. Падение 10.08 записалось в задание как «tp-scan-events failed with exit code 1» и всё —
+ * разбирать было нечего, сам stderr уходил в stdio:"inherit" и растворялся в логе launchd.
+ * Теперь stderr одновременно ПРОБРАСЫВАЕТСЯ наружу (чтобы лог launchd не обеднел) и копится
+ * в кольцевом буфере; хвост попадает в error_message задания и в сигнал сторожа.
+ */
+const STDERR_TAIL_LIMIT = 4000;
+let lastChildStderrTail = "";
+export function getLastChildStderrTail(): string { return lastChildStderrTail; }
 
 async function runNpmScript(scriptName: string, args: string[] = []): Promise<void> {
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -129,20 +148,28 @@ async function runNpmScript(scriptName: string, args: string[] = []): Promise<vo
   if (args.length > 0) {
     childArgs.push("--", ...args);
   }
+  lastChildStderrTail = "";
   await new Promise<void>((resolve, reject) => {
     const child = spawn(npmCommand, childArgs, {
       cwd: toolRoot,
-      stdio: "inherit",
+      // stdout наследуем, stderr перехватываем и тут же копируем наружу
+      stdio: ["inherit", "inherit", "pipe"],
       env: process.env,
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      lastChildStderrTail = (lastChildStderrTail + chunk.toString("utf8")).slice(-STDERR_TAIL_LIMIT);
     });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
+      const tail = lastChildStderrTail.trim();
+      const suffix = tail ? ` stderr: ${tail.slice(-1200)}` : " (stderr пуст)";
       if (signal) {
-        reject(new Error(`${scriptName} exited from signal ${signal}.`));
+        reject(new Error(`${scriptName} exited from signal ${signal}.${suffix}`));
         return;
       }
       if (code !== 0) {
-        reject(new Error(`${scriptName} failed with exit code ${code}.`));
+        reject(new Error(`${scriptName} failed with exit code ${code}.${suffix}`));
         return;
       }
       resolve();

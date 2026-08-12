@@ -33,11 +33,21 @@ const HEARTBEAT_FLOWS: HeartbeatFlow[] = [
   // Vercel cron — writes the same cron_run_logs row (status=sent) on a successful digest send.
   { job: "attention_digest", label: "утренняя сводка (Vercel)", maxH: 26, cadence: "дневной" },
 ];
-// Race-scan's wrapper lives outside the repo (local-only), so it can't write a heartbeat here yet.
-// Until it does, monitor its OUTPUT freshness: the newest race_events row. Weaker (no new races ≠
-// failure), so it's a soft flag with a note. Add tp-heartbeat --job=race_scan to that wrapper for a
-// true signal.
+// РАБОТА СКАНА СТАРТОВ ЧИТАЕТСЯ ИЗ ТАБЛИЦЫ ЗАДАНИЙ, А НЕ ИЗ СВЕЖЕСТИ ДАННЫХ (правка 13.08).
+//
+// Прежде здесь стоял слабый прокси: возраст самой новой строки trainingpeaks_race_events.
+// Он ОБМАНУЛ РОВНО В ТОМ СЛУЧАЕ, ради которого написан. Скан упал 03.08 и 10.08 подряд, десять
+// дней система не видела новых стартов — и не увидела марафоны двух учениц. При этом строки в
+// race_events появлялись (11.08 их создал ручной backfill, плюс проверка результатов трогает
+// updated_at), возраст «последней записи» оставался маленьким, и монитор всё это время показывал
+// зелёное. «Данные свежие» и «процесс жив» — разные вещи; прокси меряет первое, а нужно второе.
+//
+// Теперь сигнал берётся из trainingpeaks_jobs по job_type=race_scan_events:
+//   1) возраст ПОСЛЕДНЕГО УСПЕШНОГО прогона против порога;
+//   2) сколько провалов подряд накопилось с последнего успеха — два подряд это уже сигнал,
+//      не дожидаясь порога по времени. Ровно этот случай и был: 03.08 и 10.08.
 const RACE_MAX_H = 9 * 24;
+const RACE_FAIL_STREAK_ALERT = 2;
 
 async function main(): Promise<void> {
   const dryRun = process.argv.includes("--dry-run");
@@ -64,14 +74,30 @@ async function main(): Promise<void> {
     if (!ok) stale.push(`⚠️ ${f.label}: молчит ${fmt(age)} (порог ${f.maxH}ч)`);
   }
 
-  // race — data-freshness fallback
+  // race — ПО ЗАДАНИЯМ, не по свежести данных
   {
-    const { data } = await sb.from("trainingpeaks_race_events").select("created_at").order("created_at", { ascending: false }).limit(1);
-    const last = (data as Array<{ created_at: string }> | null)?.[0]?.created_at ?? null;
-    const age = ageH(last);
-    const ok = age <= RACE_MAX_H;
-    state.push(`  ${ok ? "✅" : "⚠️"} старты/календарь (недельный, по данным race_events): последняя запись ${fmt(age)} назад · порог ${RACE_MAX_H / 24}д · heartbeat не настроен`);
-    if (!ok) stale.push(`⚠️ старты/календарь: новых записей ${fmt(age)} (порог ${RACE_MAX_H / 24}д) — проверь race-scan`);
+    const { data } = await sb
+      .from("trainingpeaks_jobs")
+      .select("status, created_at, finished_at, error_message")
+      .eq("job_type", "race_scan_events")
+      .order("created_at", { ascending: false })
+      .limit(30);
+    const rows = (data as Array<{ status: string; created_at: string; finished_at: string | null; error_message: string | null }> | null) ?? [];
+    const lastOk = rows.find((r) => r.status === "completed") ?? null;
+    const age = ageH(lastOk?.finished_at ?? lastOk?.created_at ?? null);
+    // провалы ПОДРЯД с последнего успеха
+    let streak = 0;
+    let lastErr: string | null = null;
+    for (const r of rows) {
+      if (r.status === "completed") break;
+      if (r.status === "failed") { streak++; if (!lastErr) lastErr = r.error_message; }
+    }
+    const overdue = age > RACE_MAX_H;
+    const failing = streak >= RACE_FAIL_STREAK_ALERT;
+    const ok = !overdue && !failing;
+    state.push(`  ${ok ? "✅" : "⚠️"} старты/календарь (недельный, по ЗАДАНИЯМ): последний успех ${fmt(age)} назад · порог ${RACE_MAX_H / 24}д · провалов подряд ${streak}`);
+    if (failing) stale.push(`⚠️ скан стартов: ${streak} провала подряд, последний успех ${fmt(age)} назад${lastErr ? ` — ${lastErr.slice(0, 120)}` : ""}`);
+    else if (overdue) stale.push(`⚠️ скан стартов: успеха нет ${fmt(age)} (порог ${RACE_MAX_H / 24}д) — проверь race-scan`);
   }
 
   // billing email import (Vercel cron, daily 08:30) — REAL MONEY, and it logs to its OWN table
