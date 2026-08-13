@@ -17,7 +17,7 @@ import { loadRoster } from "./autoplanner-roster.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
   easyFloorPersonal, easyMaxPersonal, easyTargetPersonal, isQualityForPractice,
-  isTempoForPractice, longRunPractice,
+  isTempoForPractice, longDayOfWeek, longRunPractice,
 } from "./practice-signals.ts";
 import type { AthleteAnchors, Confidence, EasyAnchor, ThresholdAnchor, Tier } from "./pace-resolver.ts";
 
@@ -572,15 +572,10 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
     const dayHistogramQuality = [0, 0, 0, 0, 0, 0, 0];
     const dayHistogramEasy = [0, 0, 0, 0, 0, 0, 0];
     for (const [, ss] of weekSess) {
-      let longDay: number | null = null;
-      const titled = ss.filter((s) => s.longTitled && !s.quality).sort((x, y) => y.min - x.min)[0];
-      if (titled) longDay = titled.day;
-      else if (ss.length >= 2) {
-        // Запасное правило: самая длинная не-качественная сессия недели. Порог «хотя бы две
-        // сессии» нужен, чтобы одинокая пробежка не объявлялась длительной.
-        const cand = ss.filter((s) => !s.quality).sort((x, y) => y.min - x.min)[0];
-        if (cand) longDay = cand.day;
-      }
+      // Выбор дня — в чистой longDayOfWeek: там же он и проверяется. Ничья по минутам
+      // наблюдением НЕ СЧИТАЕТСЯ (см. её шапку) — раньше такие недели давали 20% ряда
+      // и день брался порядком строк в базе.
+      const longDay = longDayOfWeek(ss);
       for (const s of ss) {
         if (s.quality) dayHistogramQuality[s.day] += 1;
         else if (longDay != null && s.day === longDay) dayHistogramLong[s.day] += 1;

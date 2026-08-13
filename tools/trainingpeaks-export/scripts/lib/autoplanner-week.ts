@@ -11,7 +11,7 @@ import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, 
 import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, NOT_RUNNING_RATIO, NOT_RUNNING_WEEKS, type Envelope } from "./autoplanner-context.ts";
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, QUALITY_CAP_THRESHOLDS, type QualityDecision } from "./quality-select.ts";
-import { qualityCountWanted } from "./practice-signals.ts";
+import { LONG_DAY_FALLBACK, confidentLongDay, qualityCountWanted } from "./practice-signals.ts";
 import type { Band } from "./band-collision.ts";
 
 export const DAY_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -231,13 +231,19 @@ export function placeRolesByPractice(
   const used = new Set<number>();
   const take = (d: number, r: Role): void => { used.add(d); roles.set(d, r); };
 
-  // (1) ДЛИТЕЛЬНАЯ — в свой день. Отдельной ветки «своей гистограммы нет» тут НЕ НУЖНО:
-  // daysByPreference разрешает ничью по общей гистограмме, и при сплошных нулях в ролевой
-  // порядок и так задаёт общая. Первая версия эту ветку писала явно, и мутационный прогон
-  // показал, что она мертва — порча ничего не меняла.
+  // (1) ДЛИТЕЛЬНАЯ — В СВОЙ ДЕНЬ, НО ТОЛЬКО ЕСЛИ ГИСТОГРАММА ЕГО ДЕЙСТВИТЕЛЬНО НАЗЫВАЕТ.
+  //
+  // Игорь про Ярулину: «непонятно, почему длительная в будни». Оказалось — потому что argmax
+  // её гистограммы держался на шуме: 14 из 16 наблюдений давал запасной детектор на неделях,
+  // где все пробежки одной длины. Замер жалобы (см. LONG_DAY_MIN_CONCENTRATION): без порога
+  // будний день оказывался ошибочным в 49% случаев — ровно монетка.
+  //
+  // Теперь личный день берётся при концентрации >= 60%, иначе воскресенье (50% честных
+  // наблюдений практики против 25% у субботы). Порог замерен, не выдуман.
   let longDay: number | null = null;
   if (counts.long > 0) {
-    longDay = daysByPreference(hist.long, hist.all)[0] ?? 0;
+    const confident = confidentLongDay(hist.long);
+    longDay = confident ?? LONG_DAY_FALLBACK;
     take(longDay, "long");
   }
 

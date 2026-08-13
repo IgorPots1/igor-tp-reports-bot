@@ -32,7 +32,8 @@ import { tempoPresetsFrom } from "./lib/autoplanner-catalog.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
-  easyFloorPersonal, easyTargetPersonal, isQualityForPractice, isTempoForPractice, longRunPractice,
+  LONG_DAY_FALLBACK, confidentLongDay, easyFloorPersonal, easyTargetPersonal,
+  isQualityForPractice, isTempoForPractice, longDayOfWeek, longRunPractice,
 } from "./lib/practice-signals.ts";
 import { splitSessionVolume } from "./lib/quality-volume.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
@@ -835,11 +836,39 @@ async function main(): Promise<void> {
       longDay === 6 && after !== undefined && after !== "quality",
       `после длительной (${DAY_RU[longDay] ?? "—"}) стоит «${after ?? "ничего"}», при том что Пн — самый частый день качества`);
 
-    // (д) РОЛЕВОЙ ГИСТОГРАММЫ НЕТ (новичок) — падаем на общую, а не на нулевой день.
-    const pNew = placeRolesByPractice(3, { quality: 1, long: 1 }, H({ all: [0, 0, 3, 0, 5, 0, 7] }));
-    check("дни: своей гистограммы нет — роль встаёт по общей, неделя не вырождается в понедельник",
-      roleOf(pNew.roles, "long")[0] === 6 && pNew.days.length === 3,
+    // (д) РОЛЕВОЙ ГИСТОГРАММЫ НЕТ (новичок) — длительная встаёт в ВОСКРЕСЕНЬЕ, а не в
+    // понедельник и не в самый частый беговой день. Общая гистограмма тут намеренно указывает
+    // на ПЯТНИЦУ: если запасной день когда-нибудь снова начнут брать из неё, это будет видно.
+    const pNew = placeRolesByPractice(3, { quality: 1, long: 1 }, H({ all: [0, 0, 3, 0, 9, 0, 1] }));
+    check("дни: своей гистограммы нет — длительная в воскресенье, а не в частый беговой день",
+      roleOf(pNew.roles, "long")[0] === LONG_DAY_FALLBACK && pNew.days.length === 3,
       `длительная в ${DAY_RU[roleOf(pNew.roles, "long")[0] ?? -1] ?? "—"}, дней ${pNew.days.length}`);
+
+    // (е) СЛАБАЯ ГИСТОГРАММА НЕ НАЗНАЧАЕТ БУДНИЙ ДЕНЬ. Случай Ярулиной: argmax понедельник,
+    // но он собрал треть наблюдений — при таком разбросе будний день ошибочен в половине
+    // случаев, то есть выбран монеткой. Уходим в воскресенье.
+    const hWeak = H({ all: [3, 0, 1, 3, 0, 1, 1], long: [3, 0, 1, 3, 0, 1, 1], easy: [0, 0, 0, 0, 0, 0, 0] });
+    const pWeak = placeRolesByPractice(3, { quality: 0, long: 1 }, hWeak);
+    check("дни: слабая гистограмма (<60%) не ставит длительную в будни",
+      roleOf(pWeak.roles, "long")[0] === LONG_DAY_FALLBACK,
+      `длительная в ${DAY_RU[roleOf(pWeak.roles, "long")[0] ?? -1] ?? "—"} при гистограмме Пн3 Ср1 Чт3 Сб1 Вс1 (argmax Пн, 33%)`);
+
+    // (ж) СИЛЬНАЯ ГИСТОГРАММА НАЗНАЧАЕТ ДАЖЕ БУДНИЙ ДЕНЬ. Порог не должен превращаться
+    // в «всегда воскресенье»: у кого длительная правда в понедельник — тот её там и получит.
+    const hStrong = H({ all: [9, 0, 1, 0, 0, 1, 1], long: [9, 0, 1, 0, 0, 1, 1] });
+    const pStrong = placeRolesByPractice(3, { quality: 0, long: 1 }, hStrong);
+    check("дни: сильная гистограмма (>=60%) ставит длительную в её день, даже будний",
+      roleOf(pStrong.roles, "long")[0] === 0,
+      `длительная в ${DAY_RU[roleOf(pStrong.roles, "long")[0] ?? -1] ?? "—"} при Пн 9 из 12 (75%)`);
+
+    // (е-бис) У КАЧЕСТВА СВОЕЙ ГИСТОГРАММЫ НЕТ — падаем на общую, а не на начало недели.
+    // Длительная в этом случае уходит в воскресенье по своему правилу, а качество обязано
+    // встать в самый частый беговой день из допустимых.
+    const pQnone = placeRolesByPractice(3, { quality: 1, long: 1 },
+      H({ all: [0, 1, 9, 0, 2, 0, 5], long: [0, 0, 0, 0, 0, 0, 5] }));
+    check("дни: своей гистограммы качества нет — берём самый частый беговой день",
+      roleOf(pQnone.roles, "quality")[0] === 2,
+      `качество в ${DAY_RU[roleOf(pQnone.roles, "quality")[0] ?? -1] ?? "—"}, ждали Ср (в общей 9)`);
 
     // (е) ЛЁГКИЕ ЗАНИМАЮТ СВОИ ДНИ, А НЕ ОСТАТОК ПО ПОРЯДКУ НЕДЕЛИ.
     const hEasy = H({ all: [1, 9, 1, 1, 8, 1, 9], long: [0, 0, 0, 0, 0, 0, 9], quality: [0, 9, 0, 0, 0, 0, 0], easy: [1, 0, 1, 1, 8, 1, 0] });
@@ -847,6 +876,50 @@ async function main(): Promise<void> {
     const easyDays = [...pEasy.roles.entries()].filter(([, r]) => r === "easy" || r === "easy_strides").map(([d]) => d);
     check("дни: лёгкий встаёт в свой частый день (Пт), а не в первый свободный (Пн)",
       easyDays.length === 1 && easyDays[0] === 4, `лёгкие в ${easyDays.map((d) => DAY_RU[d]).join(",") || "—"}`);
+  }
+
+  // ── 7-пента. ДЕНЬ ДЛИТЕЛЬНОЙ ЗА НЕДЕЛЮ: НИЧЬЯ НЕ НАБЛЮДЕНИЕ ──
+  {
+    const W = (day: number, min: number, o: { q?: boolean; t?: boolean } = {}) =>
+      ({ day, min, quality: o.q === true, longTitled: o.t === true });
+    // Неделя «Пн 50, Ср 50, Пт 50» про день длительной не говорит НИЧЕГО. Раньше побеждал
+    // порядок строк в базе, и такие недели давали 20% всего ряда наблюдений.
+    check("длительная за неделю: ничья по минутам — наблюдения НЕТ",
+      longDayOfWeek([W(0, 50), W(2, 50), W(4, 50)]) === null,
+      `вернулось ${longDayOfWeek([W(0, 50), W(2, 50), W(4, 50)])}`);
+    check("длительная за неделю: строго длиннее — наблюдение есть",
+      longDayOfWeek([W(0, 50), W(2, 50), W(6, 90)]) === 6,
+      `вернулось ${longDayOfWeek([W(0, 50), W(2, 50), W(6, 90)])}`);
+    // Разрыв меньше шага округления репозитория — тоже не наблюдение: у тренера таких
+    // недель 2 из 1764, то есть это шум разбора, а не решение.
+    check("длительная за неделю: разрыв меньше шага округления не считается",
+      longDayOfWeek([W(0, 50), W(6, 52)]) === null,
+      `вернулось ${longDayOfWeek([W(0, 50), W(6, 52)])}`);
+    // Заголовок главнее любой арифметики: тренер назвал длительную — значит она длительная.
+    check("длительная за неделю: заголовок главнее длины",
+      longDayOfWeek([W(0, 90), W(6, 50, { t: true })]) === 6,
+      `вернулось ${longDayOfWeek([W(0, 90), W(6, 50, { t: true })])}`);
+    check("длительная за неделю: качественная длительной не считается",
+      longDayOfWeek([W(1, 95, { q: true }), W(6, 60)]) === 6,
+      `вернулось ${longDayOfWeek([W(1, 95, { q: true }), W(6, 60)])}`);
+
+    // КОНЦЕНТРАЦИЯ
+    check("день длительной: концентрация 33% — личному дню не верим",
+      confidentLongDay([3, 0, 1, 3, 0, 1, 1]) === null,
+      `вернулось ${confidentLongDay([3, 0, 1, 3, 0, 1, 1])}`);
+    check("день длительной: концентрация 75% — верим",
+      confidentLongDay([9, 0, 1, 0, 0, 1, 1]) === 0,
+      `вернулось ${confidentLongDay([9, 0, 1, 0, 0, 1, 1])}`);
+    check("день длительной: пустая гистограмма — личного дня нет",
+      confidentLongDay([0, 0, 0, 0, 0, 0, 0]) === null,
+      `вернулось ${confidentLongDay([0, 0, 0, 0, 0, 0, 0])}`);
+    // ЗНАЧЕНИЕ запасного дня закрепляем ЧИСЛОМ, а не через саму константу. Обычно проверки
+    // читают те же константы, что код (это параметры тренера), но здесь число — ЗАМЕР:
+    // из 1638 честных наблюдений Вс 50%, Сб 25%, будни 25%. Будний запасной день был бы
+    // прямым противоречием практике, и это должно ронять проверку, а не проходить молча.
+    check("запасной день длительной — выходной, а не будни",
+      LONG_DAY_FALLBACK === 5 || LONG_DAY_FALLBACK === 6,
+      `LONG_DAY_FALLBACK = ${LONG_DAY_FALLBACK} (${DAY_RU[LONG_DAY_FALLBACK] ?? "?"})`);
   }
 
   // ── 7-тер. КЛАССИФИКАТОР КАЧЕСТВА И ЛЕСТНИЦА ТЕМПОВОГО: ЧИСТЫЕ ФУНКЦИИ ──
