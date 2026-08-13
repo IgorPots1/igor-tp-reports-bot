@@ -42,6 +42,8 @@ import {
   forecast, pickTargetRace, weightedWeeklyBase, type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
 
+const addWeeks = (d: string, n: number): string => new Date(Date.parse(d) + n * 7 * 86400000).toISOString().slice(0, 10);
+
 let failures = 0;
 function check(name: string, ok: boolean, detail: string): void {
   if (ok) { console.log(`  ok    ${name}`); return; }
@@ -945,11 +947,99 @@ async function main(): Promise<void> {
       !!gotManual && !!gotPlain && gotManual.target.aerobicMin < gotPlain.target.aerobicMin,
       `с ручной базой 180 → ${gotManual?.target.aerobicMin}, с расчётной 260 → ${gotPlain?.target.aerobicMin}`);
 
-    // Позиция недели считается от start_week, а не «всегда первая».    // Позиция недели считается от start_week, а не «всегда первая».
+    // Позиция недели считается от start_week, а не «всегда первая».
     const cyclesLater = await loadActiveCycles(fakeSb, "2026-09-28");
     check("читатель: позиция недели считается от start_week",
       cyclesLater.get(1)?.target.weekIndex === 4,
       `ожидали 4-ю неделю от 2026-09-07, получили ${cyclesLater.get(1)?.target.weekIndex}`);
+
+    // ── РУЧНОЙ РОСТ (наряд 12.08, п.3) ──
+    // Игорь говорит: Кудрявцевой и Кругловой надо наращивать объём. Из истории это не
+    // выводится — цель считается от их прошлого. Два способа задать, оба обязаны работать.
+    const fake = (r: Record<string, unknown>) => ({ from: () => ({ select: () => ({ eq: () => Promise.resolve({ data: [r], error: null }) }) }) }) as unknown as Parameters<typeof loadActiveCycles>[0];
+    const peakOf = async (r: Record<string, unknown>): Promise<number> => {
+      let mx = 0;
+      for (let k = 0; k < 8; k++) {
+        const c = (await loadActiveCycles(fake(r), addWeeks("2026-09-07", k))).get(1);
+        if (c) mx = Math.max(mx, c.target.aerobicMin + c.target.qualityMin);
+      }
+      return mx;
+    };
+    const peakDefault = await peakOf(row);
+
+    // (а) РУЧНОЙ ШАГ ГЛАВНЕЕ РАСЧЁТНОГО и реально разгоняет ряд.
+    const peakManualStep = await peakOf({ ...row, step_aerobic_manual: 1.15, step_quality_manual: 1.15 });
+    check("ручной рост: шаг тренера главнее расчётного и разгоняет цикл",
+      peakManualStep > peakDefault,
+      `пик при ×1.15 = ${peakManualStep}, при штатном ×1.06 = ${peakDefault}`);
+
+    // (б) ЦЕЛЕВОЙ ОБЪЁМ К ПИКУ: шаг подбирается так, чтобы пик попал в заданное число.
+    // Цель выбрана заведомо достижимой в пределах одного перехода.
+    const peakTarget = await peakOf({ ...row, target_peak_weekly_min: 380 });
+    check("ручной рост: целевой объём к пику достигается подбором шага",
+      Math.abs(peakTarget - 380) <= 5,
+      `цель 380, пик вышел ${peakTarget} (штатный дал бы ${peakDefault})`);
+
+    // (в) ЦЕЛЬ ГЛАВНЕЕ РУЧНОГО ШАГА: заданы оба, побеждает цель.
+    const peakBoth = await peakOf({ ...row, step_aerobic_manual: 1.01, step_quality_manual: 1.01, target_peak_weekly_min: 380 });
+    check("ручной рост: заданы оба — целевой объём главнее ручного шага",
+      Math.abs(peakBoth - 380) <= 5,
+      `шаг ×1.01 и цель 380 вместе → пик ${peakBoth} (по шагу вышло бы около ${peakDefault})`);
+
+    // (г) ПРЕДЕЛ ОДНОГО ПЕРЕХОДА НЕ СНИМАЕТСЯ. Недостижимая цель не разгоняет цикл выше
+    // p90 практики: система идёт так быстро, как практика допускает, и честно недобирает.
+    // Точная формулировка: недостижимая цель даёт РОВНО ТОТ ЖЕ ряд, что предельный шаг,
+    // и ни минутой больше. Про «каждый переход не выше ×1.22» здесь утверждать нельзя —
+    // возврат после ПЛАНОВОЙ разгрузки предел намеренно не соблюдает (форму не теряли),
+    // и это проверяет отдельная строка выше.
+    const peakHuge = await peakOf({ ...row, target_peak_weekly_min: 1200 });
+    const peakAtLimit = await peakOf({ ...row, step_aerobic_manual: MAX_SINGLE_STEP, step_quality_manual: MAX_SINGLE_STEP });
+    // Сверяем И ПИК, И ОБЪЯВЛЕННЫЙ ТРЕНЕРУ ШАГ. Одного пика мало: его держит ещё и предел
+    // перехода внутри forecast(), поэтому подбор мог бы вернуть ×1.9, ряд остался бы прежним,
+    // а в отчёте у тренера стояло бы число, которого в практике не бывает.
+    const provHuge = (await loadActiveCycles(fake({ ...row, target_peak_weekly_min: 1200 }), "2026-09-07")).get(1)?.provenance ?? "";
+    const stepShown = Number(/шаг ×([0-9.]+)/.exec(provHuge)?.[1] ?? "0");
+    check("ручной рост: недостижимая цель не разгоняет цикл выше предельного шага",
+      peakHuge < 1200 && peakHuge === peakAtLimit && stepShown > 0 && stepShown <= MAX_SINGLE_STEP,
+      `цель 1200 → пик ${peakHuge} (предельный шаг даёт ${peakAtLimit}), тренеру объявлен шаг ×${stepShown}`);
+
+    // (д) ДОЛЯ РАБОТЫ НЕ ЕДЕТ ОТ УСКОРЕНИЯ.
+    // ЧЕСТНО: эту строку не роняет НИ ОДНА мутация, и это не признак беззубости — поведение
+    // держат ДВЕ независимые защиты в РАЗНЫХ файлах. Аэробный и работа разгоняются ОДНИМ
+    // шагом (cycle-reader), поэтому доля не меняется арифметически; сверх того стоит зажим
+    // доли ±2 п.п. (training-cycle). Порча любой одной перекрывается второй, а харнесс
+    // мутирует по одному файлу за прогон. Проверка оставлена как страховка от снятия ОБЕИХ.
+    const shareAt = async (r: Record<string, unknown>): Promise<number> => {
+      const c = (await loadActiveCycles(fake(r), addWeeks("2026-09-07", 5))).get(1);
+      const t = c?.target; if (!t) return -1;
+      return Math.round(1000 * t.qualityMin / Math.max(1, t.aerobicMin + t.qualityMin)) / 10;
+    };
+    const shareBase = await shareAt(row);
+    const shareFast = await shareAt({ ...row, target_peak_weekly_min: 380 });
+    check("ручной рост: доля работы не уезжает от ускорения",
+      shareBase >= 0 && shareFast >= 0 && Math.abs(shareFast - shareBase) <= MAX_SHARE_DEVIATION_PP,
+      `доля при штатном ${shareBase}%, при ускоренном ${shareFast}%`);
+
+    // (е) НЕПРИМЕНЁННАЯ МИГРАЦИЯ НЕ ЛОМАЕТ ЧТЕНИЕ. Миграции кладутся файлом, применяет Игорь;
+    // до этого колонок ручного роста в бою нет, и читатель обязан работать без них.
+    let stage = 0;
+    const fakeNoGrowth = { from: () => ({ select: (cols: string) => ({ eq: () => {
+      stage++;
+      if (cols.includes("target_peak_weekly_min")) {
+        return Promise.resolve({ data: null, error: { message: "column training_cycles.target_peak_weekly_min does not exist" } });
+      }
+      return Promise.resolve({ data: [row], error: null });
+    } }) }) } as unknown as Parameters<typeof loadActiveCycles>[0];
+    // Исключение ловим САМИ: без этого сломанный фолбэк роняет весь скрипт, и мутационный
+    // харнесс засчитывает это как «код не компилируется», то есть как НЕ сигнал.
+    let gotNoGrowth: Awaited<ReturnType<typeof loadActiveCycles>> | null = null;
+    let readErr = "";
+    try { gotNoGrowth = await loadActiveCycles(fakeNoGrowth, MON); }
+    catch (e: unknown) { readErr = e instanceof Error ? e.message : String(e); }
+    const noGrowthTarget = gotNoGrowth?.get(1);
+    check("читатель: без колонок ручного роста цикл всё равно читается",
+      readErr === "" && !!noGrowthTarget && noGrowthTarget.target.aerobicMin > 0 && stage >= 2,
+      readErr ? `чтение упало: ${readErr}` : `прочитано ${noGrowthTarget ? noGrowthTarget.target.aerobicMin : "ничего"} мин, попыток выборки ${stage}`);
   }
 
   console.log(`\nИТОГ: ${failures === 0 ? "все проверки прошли" : `ПАДЕНИЙ ${failures}`}`);

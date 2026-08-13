@@ -408,6 +408,44 @@ export function pickTargetRace<T extends RaceLike>(races: T[], mondayToday: stri
   return eligible[0].r;
 }
 
+/**
+ * ШАГ ПОД ЦЕЛЕВОЙ ОБЪЁМ К ПИКУ ЦИКЛА. [решение Игоря 12.08]
+ *
+ * ЗАЧЕМ. Тренеру удобнее сказать «хочу к концу цикла 350 минут в неделю», чем «расти по 9%».
+ * Наряд просит оба способа, и это второй.
+ *
+ * ПОЧЕМУ ПОДБОР, А НЕ ФОРМУЛА. Формула вида (цель/база)^(1/недель) была бы НЕВЕРНА: в ряду
+ * есть плановые разгрузки (неделя вниз и возврат БЕЗ шага) и подводка, поэтому число недель
+ * РОСТА не равно длине цикла, а сам пик берётся до подводки. Считать это отдельной формулой
+ * значило бы завести вторую модель цикла рядом с forecast() — и разойтись с ней при первой же
+ * правке разгрузки. Здесь вместо этого forecast() прогоняется с пробным шагом, и шаг
+ * подбирается делением пополам. Одна модель, а не две.
+ *
+ * ПРЕДЕЛ ОДНОГО ПЕРЕХОДА НЕ СНИМАЕТСЯ: поиск идёт внутри [1.0, MAX_SINGLE_STEP]. Если цель
+ * недостижима даже на предельном шаге, возвращается предел — цикл идёт так быстро, как
+ * практика вообще допускает, и не быстрее. Врать тренеру числом, которого не бывает, нельзя.
+ */
+export const STEP_SEARCH_ITERATIONS = 40;
+
+export function stepForTargetPeak(
+  base: CycleDraft, firstWeekStart: string, weeks: number, targetWeeklyMin: number,
+): number {
+  const peakOf = (step: number): number => {
+    const series = forecast({ ...base, stepAerobic: step, stepQuality: step }, firstWeekStart, weeks);
+    return series.reduce((m, w) => Math.max(m, w.aerobicMin + w.qualityMin), 0);
+  };
+  if (!(targetWeeklyMin > 0)) return base.stepAerobic;
+  if (peakOf(MAX_SINGLE_STEP) <= targetWeeklyMin) return MAX_SINGLE_STEP;
+  if (peakOf(1) >= targetWeeklyMin) return 1;
+  let lo = 1, hi = MAX_SINGLE_STEP;
+  for (let i = 0; i < STEP_SEARCH_ITERATIONS; i++) {
+    const mid = (lo + hi) / 2;
+    if (peakOf(mid) < targetWeeklyMin) lo = mid; else hi = mid;
+  }
+  // Округляем до тысячных — та же точность, что у колонки numeric(4,3) в таблице.
+  return Math.round(hi * 1000) / 1000;
+}
+
 export type WeekForecast = {
   index: number;
   weekStart: string;

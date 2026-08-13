@@ -18,8 +18,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { mondayOf } from "./autoplanner-context.ts";
 import type { CycleWeekTarget } from "./autoplanner-week.ts";
 import {
-  DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, LENGTH_WEEKS,
-  STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, forecast,
+  DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, LENGTH_WEEKS, MAX_SINGLE_STEP,
+  STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, forecast, stepForTargetPeak,
   type CycleDraft, type CycleIntent,
 } from "./training-cycle.ts";
 
@@ -42,6 +42,10 @@ type CycleRow = {
   base_manual_reason: string | null;
   step_aerobic: number | string;
   step_quality: number | string;
+  step_aerobic_manual: number | string | null;
+  step_quality_manual: number | string | null;
+  target_peak_weekly_min: number | null;
+  growth_manual_reason: string | null;
   peak_aerobic_min: number | null;
   deload_every_n: number;
   deload_depth_aerobic: number | string;
@@ -55,6 +59,8 @@ const SELECT = "id, trainingpeaks_athlete_id, intent, target_date, target_race_i
   + " length_weeks, base_aerobic_min, base_quality_min, base_aerobic_min_manual,"
   + " base_quality_min_manual, base_manual_reason, step_aerobic, step_quality, peak_aerobic_min,"
   + " deload_every_n, deload_depth_aerobic, deload_quality_factor, taper_profile, start_week, days";
+/** Колонки ручного роста — миграция 20260923000000. Читаются отдельно, см. loadActiveCycles. */
+const SELECT_GROWTH = ", step_aerobic_manual, step_quality_manual, target_peak_weekly_min, growth_manual_reason";
 
 const num = (v: unknown, fallback: number): number => {
   const n = typeof v === "string" ? Number(v) : (v as number);
@@ -82,9 +88,27 @@ function rowToDraft(r: CycleRow): CycleDraft {
   const taper = Array.isArray(r.taper_profile) && r.taper_profile.length > 0
     ? (r.taper_profile as CycleDraft["taperProfile"])
     : (TAPER_PROFILE[r.intent] ?? []);
-  // Потолок пика: тренер мог задать явно; иначе цикл не выходит выше собственной базы
-  // больше, чем позволяет шаг — историю сюда НЕ подмешиваем, это решение тренера.
-  const peakCap = r.peak_aerobic_min ?? Math.round(baseAerobic * Math.pow(num(r.step_aerobic, STEP_AEROBIC), r.length_weeks));
+  // ── РУЧНОЙ РОСТ (миграция 20260923000000) ──
+  // Шаг тренера главнее расчётного — тот же порядок, что у ручной базы. Целевой объём
+  // главнее ручного шага: он про результат, а шаг лишь про способ до него добраться.
+  // Сам подбор шага под цель делается ниже, в loadActiveCycles: ему нужен уже собранный
+  // черновик и горизонт ряда, а здесь ни того ни другого ещё нет.
+  const stepAerobic = num(r.step_aerobic_manual, num(r.step_aerobic, STEP_AEROBIC));
+  const stepQuality = num(r.step_quality_manual, num(r.step_quality, STEP_QUALITY));
+  // ПОТОЛОК ПИКА ЕДЕТ ЗА ЦЕЛЬЮ. Иначе ускоренный рост упрётся в потолок, посчитанный от
+  // штатного шага, и заданная цель окажется недостижимой молча — худший из возможных исходов:
+  // тренер задал число, отчёт показал другое, и нигде не написано почему.
+  // Доля работы при этом НЕ МЕНЯЕТСЯ: потолки аэробного и работы растут в той же пропорции,
+  // в какой они стоят в базе, а сверху всё равно работает зажим доли (±2 п.п.).
+  const baseTotal = baseAerobic + baseQuality;
+  const qShare = baseTotal > 0 ? baseQuality / baseTotal : 0;
+  const target = r.target_peak_weekly_min && r.target_peak_weekly_min > 0 ? r.target_peak_weekly_min : null;
+  const peakCap = target != null
+    ? Math.round(target * (1 - qShare))
+    : r.peak_aerobic_min ?? Math.round(baseAerobic * Math.pow(stepAerobic, r.length_weeks));
+  const peakCapQuality = target != null
+    ? Math.round(target * qShare)
+    : Math.round(baseQuality * Math.pow(stepQuality, r.length_weeks));
   return {
     athleteId: Number(r.trainingpeaks_athlete_id),
     intent: r.intent,
@@ -93,8 +117,8 @@ function rowToDraft(r: CycleRow): CycleDraft {
     lengthWeeks: r.length_weeks || LENGTH_WEEKS[r.intent] || 12,
     baseAerobicMin: baseAerobic,
     baseQualityMin: baseQuality,
-    stepAerobic: num(r.step_aerobic, STEP_AEROBIC),
-    stepQuality: num(r.step_quality, STEP_QUALITY),
+    stepAerobic,
+    stepQuality,
     deloadEveryN: r.deload_every_n || DELOAD_EVERY_N,
     deloadDepthAerobic: num(r.deload_depth_aerobic, DELOAD_AEROBIC_FACTOR),
     deloadQualityFactor: num(r.deload_quality_factor, DELOAD_QUALITY_FACTOR),
@@ -106,7 +130,7 @@ function rowToDraft(r: CycleRow): CycleDraft {
     days: 0,
     peakCapAerobicMin: peakCap,
     historicMaxAerobicMin: peakCap,
-    peakCapQualityMin: Math.round(baseQuality * Math.pow(num(r.step_quality, STEP_QUALITY), r.length_weeks)),
+    peakCapQualityMin: peakCapQuality,
     historicMaxQualityMin: baseQuality,
     aerobicIfFromMax: peakCap,
     base8Aerobic: baseAerobic,
@@ -120,8 +144,11 @@ function rowToDraft(r: CycleRow): CycleDraft {
     baseManualReason: r.base_manual_reason,
     baseAerobicComputed: r.base_aerobic_min,
     baseQualityComputed: r.base_quality_min,
-    ownSharePct: baseAerobic + baseQuality > 0 ? 100 * baseQuality / (baseAerobic + baseQuality) : 0,
-    gaps: r.base_manual_reason ? [`база задана ТРЕНЕРОМ: ${r.base_manual_reason}`] : [],
+    ownSharePct: baseTotal > 0 ? 100 * baseQuality / baseTotal : 0,
+    gaps: [
+      ...(r.base_manual_reason ? [`база задана ТРЕНЕРОМ: ${r.base_manual_reason}`] : []),
+      ...(r.growth_manual_reason ? [`рост задан ТРЕНЕРОМ: ${r.growth_manual_reason}`] : []),
+    ],
   };
 }
 
@@ -139,16 +166,29 @@ export async function loadActiveCycles(
   // МИГРАЦИЯ 20260920000000 МОЖЕТ БЫТЬ ЕЩЁ НЕ ПРИМЕНЕНА — она кладётся файлом, а применяет
   // её Игорь. Пока колонок start_week и days нет, читатель обязан работать без них, а не
   // падать: иначе пакет приёмки и сборка недель ложатся из-за неприменённой миграции.
+  // Колонки читаются ЛЕСЕНКОЙ, от самой полной выборки к самой скудной: миграции кладутся
+  // файлом и применяются Игорем, поэтому в бою возможен любой промежуточный набор колонок.
+  // Падать из-за неприменённой миграции нельзя — ляжет и сборка недель, и пакет приёмки.
+  const NO_GROWTH = { step_aerobic_manual: null, step_quality_manual: null,
+    target_peak_weekly_min: null, growth_manual_reason: null } as const;
   let rows: CycleRow[] = [];
-  const full = await sb.from("training_cycles").select(SELECT).eq("status", "active");
-  if (full.error) {
-    if (!/column .* does not exist/i.test(full.error.message)) throw full.error;
-    const base = await sb.from("training_cycles")
-      .select(SELECT.replace(", start_week, days", "")).eq("status", "active");
-    if (base.error) throw base.error;
-    rows = ((base.data ?? []) as unknown as CycleRow[]).map((r) => ({ ...r, start_week: null, days: null }));
-  } else {
+  const missingColumn = (m: string): boolean => /column .* does not exist/i.test(m);
+  const full = await sb.from("training_cycles").select(SELECT + SELECT_GROWTH).eq("status", "active");
+  if (!full.error) {
     rows = (full.data ?? []) as unknown as CycleRow[];
+  } else {
+    if (!missingColumn(full.error.message)) throw full.error;
+    const noGrowth = await sb.from("training_cycles").select(SELECT).eq("status", "active");
+    if (!noGrowth.error) {
+      rows = ((noGrowth.data ?? []) as unknown as CycleRow[]).map((r) => ({ ...r, ...NO_GROWTH }));
+    } else {
+      if (!missingColumn(noGrowth.error.message)) throw noGrowth.error;
+      const base = await sb.from("training_cycles")
+        .select(SELECT.replace(", start_week, days", "")).eq("status", "active");
+      if (base.error) throw base.error;
+      rows = ((base.data ?? []) as unknown as CycleRow[])
+        .map((r) => ({ ...r, start_week: null, days: null, ...NO_GROWTH }));
+    }
   }
 
   const out = new Map<number, ActiveCycle>();
@@ -164,11 +204,28 @@ export async function loadActiveCycles(
     const idx = Math.max(0, weeksBetween(start, weekStart));
     if (idx >= raw.length_weeks) continue; // цикл кончился — неделя строится прежним путём
 
-    const draft = rowToDraft(raw);
+    let draft = rowToDraft(raw);
     // Сколько недель разворачивать: до старта, если он задан, иначе вся длина цикла.
     const wantWeeks = raw.target_date
       ? Math.max(1, weeksBetween(start, raw.target_date) + 1)
       : raw.length_weeks;
+
+    // ── ЦЕЛЕВОЙ ОБЪЁМ К ПИКУ: ШАГ ПОДБИРАЕТСЯ ПОД НЕГО ──
+    // Делается здесь, а не в rowToDraft: подбор гоняет forecast(), которому нужны и готовый
+    // черновик, и горизонт ряда. Предел одного перехода при подборе не снимается.
+    let growthNote = "";
+    const target = raw.target_peak_weekly_min && raw.target_peak_weekly_min > 0 ? raw.target_peak_weekly_min : null;
+    if (target != null) {
+      const step = stepForTargetPeak(draft, start, wantWeeks, target);
+      draft = { ...draft, stepAerobic: step, stepQuality: step };
+      const peak = forecast(draft, start, wantWeeks).reduce((m, w) => Math.max(m, w.aerobicMin + w.qualityMin), 0);
+      growthNote = `, ЦЕЛЬ ТРЕНЕРА к пику ${target} мин/нед → шаг ×${step.toFixed(3)}`
+        + (peak < target ? ` (достижимо только ${peak} — упёрлись в предел одного перехода ×${MAX_SINGLE_STEP})` : ` (пик ${peak})`);
+    } else if (raw.step_aerobic_manual != null) {
+      growthNote = `, шаг задан ТРЕНЕРОМ ×${draft.stepAerobic.toFixed(3)}`;
+    }
+    if (raw.growth_manual_reason) growthNote += ` · ${raw.growth_manual_reason}`;
+
     const series = forecast(draft, start, wantWeeks);
     const wk = series[idx];
     if (!wk) continue;
@@ -190,7 +247,8 @@ export async function loadActiveCycles(
         + `, начат ${start}${raw.start_week ? "" : " (start_week не задан — считаем от текущей недели)"}`
         + `, база ${draft.baseAerobicMin}+${draft.baseQualityMin}`
         + `${raw.base_aerobic_min_manual != null ? " (ручная)" : ""}`
-        + `, дней ${days}${raw.days == null ? " (из истории)" : " (задано тренером)"}`,
+        + `, дней ${days}${raw.days == null ? " (из истории)" : " (задано тренером)"}`
+        + growthNote,
     });
   }
   return out;
