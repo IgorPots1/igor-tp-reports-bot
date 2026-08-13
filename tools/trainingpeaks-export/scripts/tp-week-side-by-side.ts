@@ -29,6 +29,7 @@ import { loadAthleteContexts, mondayOf, type AthleteContext } from "./lib/autopl
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
 import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
 import { buildDrafts } from "./lib/cycle-drafts.ts";
+import { isQualityForPractice } from "./lib/practice-signals.ts";
 import { forecast } from "./lib/training-cycle.ts";
 
 function loadEnv(p: string): void { if (!existsSync(p)) return; for (const l of readFileSync(p, "utf8").split(/\r?\n/)) { const t = l.trim(); if (!t || t.startsWith("#")) continue; const e = t.indexOf("="); if (e < 0) continue; const k = t.slice(0, e).trim(); if (!k || process.env[k] !== undefined) continue; let v = t.slice(e + 1).trim(); if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1); process.env[k] = v; } }
@@ -41,13 +42,23 @@ function sbc(): SupabaseClient {
 const GROUP = [5733446, 5475652, 5476215, 6009851, 5931798, 5905779, 5748681, 5475750, 5475968, 5461678, 5807145, 6290336];
 const iso = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 const addDays = (s: string, n: number): string => iso(Date.parse(s) + n * 86400000);
+/**
+ * КЛАССИФИКАТОР ВИТРИНЫ БЫЛ НЕВЕРЕН В ОБЕ СТОРОНЫ (правка 12.08) и потому врал в отчёте:
+ * «Легкий бег по темпу (темп выше)» считался у тренера КАЧЕСТВЕННОЙ (по замеру это обычная
+ * лёгкая, разница темпа с ней 0 с/км), а «Темповый бег 30 минут» — не считался вовсе.
+ * У Паниной из-за этого её неделя выглядела как «три качественных», хотя их две.
+ * Берём тот же классификатор, что и весь остальной автопланировщик.
+ */
 const QUALITY_RE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|повтор|порог|фартлек|vo\s?2|мпк|темп выше)/i;
+const isQ = (t: string): boolean => isQualityForPractice(t, QUALITY_RE);
 const LONG_RE = /длительн|длинн/i;
 /** Ниже этого сессия считается «коротышкой» для сводки. Порог отчётный, в логику не входит. */
 const SHORT_SESSION_MIN = 45;
 
 type CoachSession = { date: string; dayIdx: number; title: string; minutes: number; kind: "quality" | "long" | "easy" };
-type Side = { total: number; days: number; longest: number; longestEasy: number; easies: number; work: number; sharePct: number; shortest: number; underMin: number };
+type Side = { total: number; days: number; longest: number; longestEasy: number; easies: number; work: number; sharePct: number; shortest: number; underMin: number;
+  /** сколько качественных и в какие дни стоят роли — наряд 12.08 просит показать это отдельно */
+  qCount: number; longDay: number | null; qDays: number[] };
 
 /** Минуты РАБОТЫ из заголовка вида «6 х 4 мин» — та же грубая оценка, что в замерах. */
 function workMinutesFromTitle(t: string): number {
@@ -57,7 +68,7 @@ function workMinutesFromTitle(t: string): number {
   return Number.isFinite(w) && w > 0 && w <= 90 ? w : 0;
 }
 
-function summarise(sessions: Array<{ minutes: number; kind: string; work?: number }>): Side {
+function summarise(sessions: Array<{ minutes: number; kind: string; work?: number; dayIdx?: number }>): Side {
   const total = sessions.reduce((s, x) => s + x.minutes, 0);
   const longs = sessions.filter((x) => x.kind === "long");
   const easies = sessions.filter((x) => x.kind === "easy");
@@ -72,6 +83,9 @@ function summarise(sessions: Array<{ minutes: number; kind: string; work?: numbe
     // сумме и не в числе дней, видно «мелкую» неделю: у тренера коротышек почти не бывает.
     shortest: sessions.length ? sessions.reduce((m, x) => Math.min(m, x.minutes), Infinity) : 0,
     underMin: sessions.filter((x) => x.minutes < SHORT_SESSION_MIN).length,
+    qCount: sessions.filter((x) => x.kind === "quality").length,
+    longDay: longs.length ? (longs.sort((a, b) => b.minutes - a.minutes)[0].dayIdx ?? null) : null,
+    qDays: sessions.filter((x) => x.kind === "quality").map((x) => x.dayIdx ?? -1).filter((d) => d >= 0).sort((a, b) => a - b),
   };
 }
 
@@ -132,7 +146,7 @@ async function main(): Promise<void> {
     const coach: CoachSession[] = all.filter((r) => Number(r.workout_type_value_id) === 3).map((r) => {
       const t = String(r.title ?? "");
       const minutes = Math.round((r.planned_time_raw as number) * 60);
-      const kind: CoachSession["kind"] = QUALITY_RE.test(t) ? "quality" : LONG_RE.test(t) ? "long" : "easy";
+      const kind: CoachSession["kind"] = isQ(t) ? "quality" : LONG_RE.test(t) ? "long" : "easy";
       const dt = String(r.workout_date);
       return { date: dt, dayIdx: (new Date(dt + "T00:00:00Z").getUTCDay() + 6) % 7, title: t, minutes, kind };
     }).sort((a, b) => a.dayIdx - b.dayIdx);
@@ -148,7 +162,7 @@ async function main(): Promise<void> {
       const cand = coach.filter((s) => s.kind === "easy").sort((a, b) => b.minutes - a.minutes)[0];
       if (cand && c.envelope.typicalEasyMinutes > 0 && cand.minutes > c.envelope.typicalEasyMinutes) cand.kind = "long";
     }
-    const coachSide = summarise(coach.map((s) => ({ minutes: s.minutes, kind: s.kind, work: s.kind === "quality" ? workMinutesFromTitle(s.title) : 0 })));
+    const coachSide = summarise(coach.map((s) => ({ minutes: s.minutes, kind: s.kind, dayIdx: s.dayIdx, work: s.kind === "quality" ? workMinutesFromTitle(s.title) : 0 })));
 
     // ── неделя сборщика ──
     let mach: Week | null = null;
@@ -167,7 +181,7 @@ async function main(): Promise<void> {
     const ms = (mach.sessions ?? []).filter((s) => !s.deferred);
     const machSide = summarise(ms.map((s) => ({
       minutes: s.minutes, kind: s.role === "quality" ? "quality" : s.role === "long" ? "long" : "easy",
-      work: s.role === "quality" ? workMinutesFromTitle(s.title) : 0,
+      dayIdx: s.dayIdx, work: s.role === "quality" ? workMinutesFromTitle(s.title) : 0,
     })));
 
     rows.push({ aid, nm, c: coachSide, m: machSide, cw: illFree });
@@ -195,6 +209,10 @@ async function main(): Promise<void> {
     out.push(cmp("доля качества, %", coachSide.sharePct, machSide.sharePct));
     out.push(cmp("САМАЯ КОРОТКАЯ, мин", coachSide.shortest, machSide.shortest));
     out.push(cmp(`сессий короче ${SHORT_SESSION_MIN}`, coachSide.underMin, machSide.underMin));
+    out.push(cmp("КАЧЕСТВЕННЫХ", coachSide.qCount, machSide.qCount));
+    const dn = (d: number | null): string => (d == null || d < 0 ? "—" : DAY_RU[d]);
+    out.push(cmp("день длительной", dn(coachSide.longDay), dn(machSide.longDay)));
+    out.push(cmp("дни качественных", coachSide.qDays.map(dn).join(",") || "—", machSide.qDays.map(dn).join(",") || "—"));
   }
 
   // ── сводка расхождений ──
@@ -202,16 +220,23 @@ async function main(): Promise<void> {
   out.push(`# ГДЕ ИМЕННО РАСХОЖДЕНИЕ · сборщик минус тренер, со знаком`);
   out.push("#".repeat(96));
   out.push("");
-  const hdr = `${"атлет".padEnd(22)}${"дней".padStart(7)}${"сумма".padStart(8)}${"длит".padStart(7)}${"дл.лёгк".padStart(9)}${"лёгких".padStart(8)}${"работа".padStart(8)}${"кратч".padStart(8)}${"<45".padStart(6)}`;
+  const hdr = `${"атлет".padEnd(22)}${"дней".padStart(7)}${"сумма".padStart(8)}${"длит".padStart(7)}${"дл.лёгк".padStart(9)}${"лёгких".padStart(8)}${"работа".padStart(8)}${"кратч".padStart(8)}${"<45".padStart(6)}${"кач-х".padStart(7)}${"деньД".padStart(7)}${"деньК".padStart(7)}`;
   out.push(hdr);
   out.push("-".repeat(hdr.length));
   const sg = (n: number): string => (n > 0 ? "+" : "") + n;
-  const acc = { days: 0, total: 0, longest: 0, longestEasy: 0, easies: 0, work: 0, shortest: 0, underMin: 0, n: 0 };
+  const acc = { days: 0, total: 0, longest: 0, longestEasy: 0, easies: 0, work: 0, shortest: 0, underMin: 0, qCount: 0, n: 0 };
+  let longDayHit = 0, qDayHit = 0, qDayCmp = 0;
   for (const r of rows) {
     out.push(`${r.nm.slice(0, 21).padEnd(22)}${sg(r.m.days - r.c.days).padStart(7)}${sg(r.m.total - r.c.total).padStart(8)}`
       + `${sg(r.m.longest - r.c.longest).padStart(7)}${sg(r.m.longestEasy - r.c.longestEasy).padStart(9)}`
       + `${sg(r.m.easies - r.c.easies).padStart(8)}${sg(r.m.work - r.c.work).padStart(8)}`
-      + `${sg(r.m.shortest - r.c.shortest).padStart(8)}${sg(r.m.underMin - r.c.underMin).padStart(6)}`);
+      + `${sg(r.m.shortest - r.c.shortest).padStart(8)}${sg(r.m.underMin - r.c.underMin).padStart(6)}`
+      + `${sg(r.m.qCount - r.c.qCount).padStart(7)}`
+      + `${(r.m.longDay != null && r.m.longDay === r.c.longDay ? "совп" : "—").padStart(7)}`
+      + `${(r.m.qDays.length > 0 && r.c.qDays.length > 0 && r.m.qDays.some((d) => r.c.qDays.includes(d)) ? "совп" : "—").padStart(7)}`);
+    if (r.m.longDay != null && r.m.longDay === r.c.longDay) longDayHit++;
+    if (r.m.qDays.length > 0 && r.c.qDays.length > 0) { qDayCmp++; if (r.m.qDays.some((d) => r.c.qDays.includes(d))) qDayHit++; }
+    acc.qCount += r.m.qCount - r.c.qCount;
     acc.days += r.m.days - r.c.days; acc.total += r.m.total - r.c.total;
     acc.longest += r.m.longest - r.c.longest; acc.longestEasy += r.m.longestEasy - r.c.longestEasy;
     acc.easies += r.m.easies - r.c.easies; acc.work += r.m.work - r.c.work;
@@ -221,7 +246,10 @@ async function main(): Promise<void> {
   const av = (x: number): string => (Math.round(10 * x / Math.max(1, acc.n)) / 10).toString();
   out.push(`${"среднее на атлета".padEnd(22)}${av(acc.days).padStart(7)}${av(acc.total).padStart(8)}${av(acc.longest).padStart(7)}`
     + `${av(acc.longestEasy).padStart(9)}${av(acc.easies).padStart(8)}${av(acc.work).padStart(8)}`
-    + `${av(acc.shortest).padStart(8)}${av(acc.underMin).padStart(6)}`);
+    + `${av(acc.shortest).padStart(8)}${av(acc.underMin).padStart(6)}${av(acc.qCount).padStart(7)}`);
+  out.push("");
+  out.push(`ДЕНЬ ДЛИТЕЛЬНОЙ совпал с днём тренера: ${longDayHit} из ${acc.n}`);
+  out.push(`ДЕНЬ КАЧЕСТВА пересёкся с днями тренера: ${qDayHit} из ${qDayCmp} (там, где качество есть у обоих)`);
 
   // ── ЦЕЛЬ ЦИКЛА ПРОТИВ РАСПРЕДЕЛЕНИЯ ЕГО СОБСТВЕННЫХ НЕДЕЛЬ ──
   // Гипотеза замкнутого круга: база цикла — взвешенная медиана его плановых недель, значит
