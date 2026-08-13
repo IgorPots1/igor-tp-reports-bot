@@ -3,6 +3,7 @@ import { Onest, JetBrains_Mono } from "next/font/google";
 import Image from "next/image";
 import LeadForm from "./LeadForm";
 import Carousel from "./Carousel";
+import { CLUB } from "@/lib/club";
 import "./landing.css";
 
 const onest = Onest({
@@ -764,7 +765,7 @@ export default function LandingPage() {
           <div className="price-wrap">
             <div className="price-card">
               <div className="price-main">
-                <b>5 000 &#8381;</b>
+                <b>{CLUB.priceMonthly}</b>
                 <span>в месяц</span>
               </div>
               <p className="price-note">
@@ -808,7 +809,7 @@ export default function LandingPage() {
             <details className="q">
               <summary>Сколько стоит и как оплачивать?</summary>
               <div className="a">
-                5 000 &#8381; в месяц за всё сопровождение: план, разборы
+                {CLUB.priceMonthly} в месяц за всё сопровождение: план, разборы
                 тренировок и связь с тренером. Оплата помесячно, остановиться
                 можно в любой момент. Для учеников не из России есть оплата
                 в евро.
@@ -938,8 +939,8 @@ export default function LandingPage() {
             </h2>
             <p className="sub">
               Оставь заявку — познакомимся, обсудим твои цели и подберём формат
-              работы. Присоединиться можно в любой момент. Стоимость 5 000 &#8381;
-              в месяц.
+              работы. Присоединиться можно в любой момент. Стоимость{" "}
+              {CLUB.priceMonthly} в месяц.
             </p>
           </div>
           <LeadForm />
