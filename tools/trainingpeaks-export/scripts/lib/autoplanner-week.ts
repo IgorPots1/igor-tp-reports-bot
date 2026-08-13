@@ -12,6 +12,7 @@ import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, NOT_RUNNING_RATIO, NOT_RUNN
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, QUALITY_CAP_THRESHOLDS, type QualityDecision } from "./quality-select.ts";
 import { LONG_DAY_FALLBACK, confidentLongDay, qualityCountWanted } from "./practice-signals.ts";
+import { availableDayCount, resolvePreferences, type AthletePreference, type PreferenceEffect, type PreferenceRole } from "./athlete-preferences.ts";
 import type { Band } from "./band-collision.ts";
 
 export const DAY_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -225,11 +226,22 @@ function daysByPreference(own: number[], all: number[]): number[] {
  */
 export function placeRolesByPractice(
   n: number, counts: { quality: number; long: number }, hist: DayHistograms,
-): { days: number[]; roles: Map<number, Role> } {
+  /**
+   * ПОЖЕЛАНИЯ ТРЕНЕРА. Не переданы — поведение ровно прежнее.
+   * Пожелание ЖЁСТЧЕ расчётного дня, но НЕ ОТМЕНЯЕТ ИНВАРИАНТОВ (качество не в смежные
+   * дни, после длительной лёгкий): инварианты выведены из практики и защищают неделю от
+   * бессмыслицы, а пожелание — предпочтение про образ жизни. Спор виден в pref.notes.
+   */
+  pref?: PreferenceEffect | null,
+): { days: number[]; roles: Map<number, Role>; conflicts: string[] } {
   const roles = new Map<number, Role>();
-  if (n <= 0) return { days: [], roles };
+  const conflicts: string[] = [];
+  if (n <= 0) return { days: [], roles, conflicts };
   const used = new Set<number>();
   const take = (d: number, r: Role): void => { used.add(d); roles.set(d, r); };
+  const blocked = pref?.blockedDays ?? new Set<number>();
+  const pinned = pref?.pinnedRole ?? new Map<PreferenceRole, number>();
+  const allowed = (d: number): boolean => !blocked.has(d);
 
   // (1) ДЛИТЕЛЬНАЯ — В СВОЙ ДЕНЬ, НО ТОЛЬКО ЕСЛИ ГИСТОГРАММА ЕГО ДЕЙСТВИТЕЛЬНО НАЗЫВАЕТ.
   //
@@ -242,34 +254,57 @@ export function placeRolesByPractice(
   // наблюдений практики против 25% у субботы). Порог замерен, не выдуман.
   let longDay: number | null = null;
   if (counts.long > 0) {
+    // ПОЖЕЛАНИЕ ГЛАВНЕЕ И ГИСТОГРАММЫ, И ЗАПАСНОГО ДНЯ: «длинное только в воскресенье» —
+    // это решение тренера, и спорить с ним замером незачем.
+    const wanted = pinned.get("long");
     const confident = confidentLongDay(hist.long);
-    longDay = confident ?? LONG_DAY_FALLBACK;
+    longDay = wanted ?? confident ?? LONG_DAY_FALLBACK;
+    // Запасной день может оказаться закрытым пожеланием — тогда берём ближайший открытый
+    // по практике, а не оставляем длительную в недоступном дне.
+    if (!allowed(longDay)) {
+      const alt = daysByPreference(hist.long, hist.all).find(allowed)
+        ?? daysByPreference(hist.all, hist.all).find(allowed)
+        ?? [0, 1, 2, 3, 4, 5, 6].find(allowed);
+      if (alt == null) return { days: [], roles, conflicts: ["все дни закрыты пожеланиями"] };
+      conflicts.push(`длительная перенесена в ${DAY_RU[alt]}: ${DAY_RU[longDay]} закрыт пожеланием`);
+      longDay = alt;
+    }
     take(longDay, "long");
   }
 
   // (2) КАЧЕСТВЕННЫЕ — в свои дни, с соблюдением смежности.
   const picked: number[] = [];
-  const qPref = daysByPreference(hist.quality, hist.all);
+  // Желаемый день качества идёт ПЕРВЫМ кандидатом; инварианты смежности всё равно проверяются
+  // ниже и могут его отклонить — тогда спор уходит пометкой тренеру, а не молча.
+  const wantQ = pinned.get("quality");
+  const qPref = [...(wantQ != null ? [wantQ] : []), ...daysByPreference(hist.quality, hist.all)];
   for (const d of qPref) {
     if (picked.length >= counts.quality || used.size >= n) break;
-    if (used.has(d)) continue;
+    if (used.has(d) || !allowed(d)) continue;
     if (longDay != null && adjacentDays(d, longDay)) continue;
     if (picked.some((p) => adjacentDays(p, d))) continue;
     picked.push(d); take(d, "quality");
+  }
+  if (wantQ != null && !picked.includes(wantQ)) {
+    conflicts.push(`✋ качественная не встала в ${DAY_RU[wantQ]}, как просило пожелание:`
+      + ` ${blocked.has(wantQ) ? "день закрыт другим пожеланием" : "нарушился бы инвариант (смежность с длительной или другой качественной)"}`);
   }
 
   // (3) ЛЁГКИЕ — остаток по своей гистограмме, затем по общей, затем любые свободные дни.
   for (const d of [...daysByPreference(hist.easy, hist.all), ...daysByPreference(hist.all, hist.all), 0, 1, 2, 3, 4, 5, 6]) {
     if (used.size >= n) break;
-    if (used.has(d)) continue;
+    if (used.has(d) || !allowed(d)) continue;
     take(d, "easy");
+  }
+  if (used.size < n) {
+    conflicts.push(`беговых дней ${used.size} вместо ${n}: остальные закрыты пожеланиями`);
   }
 
   // Ускорения — в первый по порядку недели лёгкий день, как и раньше.
   const days = [...used].sort((a, b) => a - b);
   const easyDays = days.filter((d) => roles.get(d) === "easy");
   if (days.length >= 4 && easyDays.length > 0) roles.set(easyDays[0], "easy_strides");
-  return { days, roles };
+  return { days, roles, conflicts };
 }
 
 export type Segment = {
@@ -528,8 +563,14 @@ export type CycleWeekTarget = {
 };
 
 export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
-  tierNote: string | null = null, cycle: CycleWeekTarget | null = null): Week {
+  tierNote: string | null = null, cycle: CycleWeekTarget | null = null,
+  /** Пожелания тренера. Не переданы — поведение ровно прежнее. */
+  prefs: AthletePreference[] | null = null): Week {
   const notes: string[] = [];
+  // ПОЖЕЛАНИЯ СВОДЯТСЯ ОДИН РАЗ, ДО ВСЕГО. Их пометки идут в заметки недели ДАЖЕ ЕСЛИ
+  // неделя потом окажется отказной: тренер должен видеть, что его правило прочитано.
+  const pref = prefs && prefs.length ? resolvePreferences(prefs, weekStart) : null;
+  if (pref) notes.push(...pref.notes);
   if (tierNote) notes.push(tierNote);
   // ГЕЙТЫ — инварианты, ЦЕЛИ — перцентили. Минимальная неделя считается по инвариантам,
   // рост остатка тянется к целям.
@@ -576,6 +617,18 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
     if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
     nWant = clamp(nWant, 1, 7);
+  }
+  // ПОТОЛОК ДНЕЙ ОТ ПОЖЕЛАНИЯ. Он ЖЁСТЧЕ и цикла, и истории: «могу бегать три раза
+  // в неделю» — это про жизнь человека, а не про нагрузку, и спорить с ним нечем.
+  // Число доступных дней тоже ограничивает: в пять открытых дней шесть пробежек не влезет.
+  if (pref) {
+    const roomDays = availableDayCount(pref);
+    const capDays = Math.min(pref.maxDays ?? 7, roomDays);
+    if (nWant > capDays) {
+      notes.push(`беговых дней ${nWant} → ${capDays}: ${pref.maxDays != null && pref.maxDays < roomDays
+        ? `пожелание тренера — не больше ${pref.maxDays}` : "остальные дни закрыты пожеланиями"}`);
+      nWant = Math.max(1, capDays);
+    }
   }
 
 
@@ -699,7 +752,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // ── ПОДБОР ЧИСЛА ДНЕЙ ПОД ПОТОЛОК ──
   // Идём от желаемой частоты вниз. Для каждого варианта считаем МИНИМАЛЬНУЮ неделю (все сессии
   // на полах). Раздувать объём, чтобы вписать лишний день, нельзя — сокращается именно число дней.
-  type Plan = { n: number; days: number[]; roles: Map<number, Role>; decs: QualityDecision[]; dec: QualityDecision; qSessions: Session[]; easyRoles: number; fits: boolean; minWeek: number };
+  type Plan = { n: number; days: number[]; roles: Map<number, Role>; conflicts: string[]; decs: QualityDecision[]; dec: QualityDecision; qSessions: Session[]; easyRoles: number; fits: boolean; minWeek: number };
   let lastRefusal = `минимальная неделя не помещается в потолок ${weekly} мин`;
 
   const dayHists: DayHistograms = {
@@ -759,7 +812,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     // РАЗМЕЩЕНИЕ — ПОСЛЕ ОТБОРА: если второй слот не собрался, роль качества на его день
     // не заводится вовсе, и день сразу уходит лёгким. Раньше роли расставлялись до отбора
     // и лишний качественный день приходилось переименовывать задним числом.
-    const { days, roles } = placeRolesByPractice(n, counts, dayHists);
+    const { days, roles, conflicts } = placeRolesByPractice(n, counts, dayHists, pref);
     const qDays = [...roles.entries()].filter(([, r]) => r === "quality").map(([d]) => d).sort((x, y) => x - y);
     // Число лёгких дней берём ИЗ ФАКТИЧЕСКОЙ раскладки: правило смежности могло не дать
     // поставить второе качество, и тогда его день стал лёгким. Считать по counts значило бы
@@ -776,7 +829,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const minLong = Math.max(LONG_FLOOR, easyRoles > 0 ? EASY_FLOOR + ROUND_TO_MIN : 0,
       qLongest > 0 ? qLongest + ROUND_TO_MIN : 0);
     const minWeek = qTotal + round5(minLong) * counts.long + EASY_FLOOR * easyRoles;
-    return { n, days, roles, decs, dec, qSessions, easyRoles, fits: minWeek <= weekly, minWeek };
+    return { n, days, roles, conflicts, decs, dec, qSessions, easyRoles, fits: minWeek <= weekly, minWeek };
   };
 
   // КАЧЕСТВО ВАЖНЕЕ ЛИШНЕГО ЛЁГКОГО ДНЯ. Первый проход ищет вариант, где качественная
@@ -805,6 +858,9 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   if (!plan.dec.selected) notes.push(`качество не назначено: ${plan.dec.reason} (${plan.dec.detail})`);
 
   const { days, roles, dec, decs, qSessions, easyRoles } = plan;
+  // Споры пожелания с инвариантом — ПОМЕТКОЙ тренеру. Неделя при этом собирается:
+  // молчаливая поломка хуже неисполненного пожелания.
+  notes.push(...plan.conflicts);
   // Отказ ВТОРОГО слота видно отдельно: «одна вместо двух» и «качества нет» — разные вещи.
   for (const d of decs.slice(1)) {
     if (!d.selected) notes.push(`вторая качественная не назначена: ${d.reason} (${d.detail})`);
@@ -1008,8 +1064,29 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   const easyVariants = [easyBase, Math.max(EASY_FLOOR, easyBase - ROUND_TO_MIN)]; // лёгкие не одинаковые
 
   const sessions: Session[] = []; let easyIdx = 0; let qIdx = 0;
+  /**
+   * ПОТОЛОК МИНУТ В КОНКРЕТНЫЙ ДЕНЬ — четвёртый вид пожелания.
+   * Режет ТОЛЬКО вниз и ТОЛЬКО аэробные сессии: качественная задана форматом каталога
+   * (разминка + отрезки + заминка), и урезать её на 20 минут значит выдать формат, которого
+   * в каталоге нет. Если качественная не влезает в пожелание — это пометка тренеру, а не
+   * молчаливая правка протокола.
+   */
+  const capDay = (d: number, minutes: number): number => {
+    const cap = pref?.dayMaxMinutes.get(d);
+    if (cap == null || minutes <= cap) return minutes;
+    notes.push(`${DAY_RU[d]}: ${minutes} → ${cap} мин по пожеланию тренера`);
+    return Math.max(ROUND_TO_MIN, Math.round(cap / ROUND_TO_MIN) * ROUND_TO_MIN);
+  };
   for (const d of days) {
     const role = roles.get(d) ?? "easy";
+    {
+      const cap = pref?.dayMaxMinutes.get(d);
+      const q = role === "quality" ? qSessions[qIdx] : null;
+      if (cap != null && q && !q.deferred && q.minutes > cap) {
+        notes.push(`✋ качественная в ${DAY_RU[d]} длится ${q.minutes} мин при пожелании не больше ${cap}:`
+          + ` формат задан каталогом и не режется. Нужен взгляд тренера.`);
+      }
+    }
     if (role === "quality" && qIdx < qSessions.length) sessions.push(qSessions[qIdx++]);
     // НАЗЫВАЕМ ВЕЩИ СВОИМИ ИМЕНАМИ. У T1 длительных в практике нет вовсе (пар в замере n=0),
     // и единственная сессия недели выходила «Длительный аэробный 30 минут» при том, что
@@ -1047,9 +1124,9 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
       if (!isReallyLong) notes.push(`длинный день назван лёгким: ${longMin} мин не больше `
         + (weekIsReduced ? `самого длинного лёгкого этой недели (${longestEasyThisWeek} мин)`
                          : `обычной лёгкой (${env.typicalEasyMinutes} мин)`));
-      sessions.push(aerobicSession(d, isReallyLong ? "long" : "easy", a, cat, longMin));
+      sessions.push(aerobicSession(d, isReallyLong ? "long" : "easy", a, cat, capDay(d, longMin)));
     }
-    else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, easyVariants[easyIdx % easyVariants.length])); easyIdx++; }
+    else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, capDay(d, easyVariants[easyIdx % easyVariants.length]))); easyIdx++; }
   }
   return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, refused: null, refusedKind: null,
     weeklyCap: weekly, plannedMinutes: sessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0),

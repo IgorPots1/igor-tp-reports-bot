@@ -38,6 +38,7 @@ const Q = path.join(LIB, "quality-select.ts");
 const P = path.join(LIB, "practice-signals.ts");
 const LIBCAT = path.join(LIB, "autoplanner-catalog.ts");
 const V = path.join(LIB, "quality-volume.ts");
+const PR = path.join(LIB, "athlete-preferences.ts");
 
 type Mutation = { id: string; file: string; find: string; replace: string; what: string };
 
@@ -176,6 +177,26 @@ const MUTATIONS: Mutation[] = [
   { id: "growth-share-drift", file: R, find: "  const peakCapQuality = target != null\n    ? Math.round(target * qShare)", replace: "  const peakCapQuality = target != null\n    ? Math.round(target * qShare * 3)", what: "потолок работы растёт быстрее аэробного — доля уезжает" },
   { id: "reader-no-migration-fallback", file: R, find: "    if (!missingColumn(full.error.message)) throw full.error;", replace: "    throw full.error;", what: "неприменённая миграция ломает чтение цикла" },
 
+  // ── ПОЖЕЛАНИЯ ТРЕНЕРА (наряд 13.08, п.3) ──
+  { id: "pref-window-point", file: PR, find: "  const end = new Date(Date.parse(weekStart) + 6 * 86400000).toISOString().slice(0, 10);", replace: "  const end = weekStart;", what: "окно пожелания сверяется с понедельником, а не со всей неделей" },
+  // Реалистичный сдвиг на единицу: конец окна сверяется с КОНЦОМ недели вместо начала,
+  // и пожелание, действующее до среды, объявляется истёкшим уже в понедельник.
+  { id: "pref-window-offbyone", file: PR, find: "  if (p.activeTo && p.activeTo < weekStart) return false;", replace: "  if (p.activeTo && p.activeTo < end) return false;", what: "конец окна сверяется с концом недели — пожелание истекает раньше времени" },
+  { id: "pref-window-ignored", file: PR, find: "  if (p.activeTo && p.activeTo < weekStart) return false;", replace: "  void p.activeTo;", what: "истёкшее пожелание продолжает действовать" },
+  { id: "pref-always-inactive", file: PR, find: "  return true;\n}\n\nexport type PreferenceEffect", replace: "  return p.activeFrom != null;\n}\n\nexport type PreferenceEffect", what: "постоянное пожелание (без окна) считается недействующим" },
+  { id: "pref-window-future", file: PR, find: "  if (p.activeFrom && p.activeFrom > end) return false;", replace: "  void end;", what: "будущее пожелание действует уже сейчас" },
+  { id: "pref-block-ignored", file: W, find: "    if (used.has(d) || !allowed(d)) continue;", replace: "    if (used.has(d)) continue;", what: "недоступный день всё равно занимается" },
+  { id: "pref-pin-ignored", file: W, find: "    const wanted = pinned.get(\"long\");", replace: "    const wanted = undefined;", what: "привязка длительной ко дню игнорируется" },
+  { id: "pref-pin-quality-ignored", file: W, find: "  const wantQ = pinned.get(\"quality\");", replace: "  const wantQ = undefined;", what: "привязка качественной ко дню игнорируется" },
+  { id: "pref-pin-beats-invariant", file: W, find: "    if (longDay != null && adjacentDays(d, longDay)) continue;\n    if (picked.some((p) => adjacentDays(p, d))) continue;\n    picked.push(d); take(d, \"quality\");", replace: "    picked.push(d); take(d, \"quality\");", what: "пожелание отменяет инвариант смежности" },
+  { id: "pref-conflict-silent", file: PR, find: "          eff.notes.push(`✋ пожелания спорят: «${ROLE_RU[p.role]} в ${DAY_RU[p.dayOfWeek]}»`", replace: "          void 0; void (`", what: "спор двух пожеланий не помечается тренеру" },
+  { id: "pref-block-loses", file: PR, find: "        if (eff.blockedDays.has(p.dayOfWeek)) {", replace: "        if (false) {", what: "привязка роли побеждает недоступность дня" },
+  { id: "pref-maxdays-ignored", file: W, find: "    const capDays = Math.min(pref.maxDays ?? 7, roomDays);", replace: "    const capDays = roomDays;", what: "потолок беговых дней от пожелания не применяется" },
+  { id: "pref-daymin-ignored", file: W, find: "    if (cap == null || minutes <= cap) return minutes;", replace: "    return minutes; if (cap == null) return minutes;", what: "потолок минут в конкретный день не режет сессию" },
+  { id: "pref-allclosed-silent", file: PR, find: "  if (eff.blockedDays.size >= 7) {", replace: "  if (false) {", what: "закрытые все семь дней не названы своим именем" },
+  { id: "pref-empty-changes", file: W, find: "  const pref = prefs && prefs.length ? resolvePreferences(prefs, weekStart) : null;", replace: "  const pref = resolvePreferences(prefs ?? [{ kind: \"day_unavailable\", dayOfWeek: 1 }], weekStart);", what: "без пожеланий неделя всё равно меняется" },
+  { id: "pref-move-silent", file: W, find: "      conflicts.push(`длительная перенесена в ${DAY_RU[alt]}: ${DAY_RU[longDay]} закрыт пожеланием`);", replace: "      void alt;", what: "перенос длительной из закрытого дня не помечается" },
+
   { id: "volume-tempo-blind", file: V, find: "  if (tempoLike) {", replace: "  if (false) {", what: "минуты работы темпового не читаются — база качества цикла занижена" },
   { id: "volume-tempo-mode", file: V, find: "const TEMPO_TITLE_RE = /(темпов[а-яё]*\\s+бег|^\\s*[0-9]{1,3}\\s*(?:мин|минут|км)\\s+темп|порогов[а-яё]*)/i;", replace: "const TEMPO_TITLE_RE = /темп/i;", what: "«Бег по темпу» разбирается как работа в объёме цикла" },
   // ── ДНИ ПО РОЛЯМ (наряд 12.08) ──
@@ -188,7 +209,7 @@ const MUTATIONS: Mutation[] = [
   { id: "long-quality-counts", file: P, find: "  const nq = ss.filter((s) => !s.quality).sort((a, b) => b.min - a.min);", replace: "  const nq = [...ss].sort((a, b) => b.min - a.min);", what: "качественная может быть объявлена длительной" },
   { id: "long-empty-hist", file: P, find: "  if (total <= 0) return null;", replace: "  if (total <= 0) return 0;", what: "пустая гистограмма назначает понедельник вместо запасного дня" },
   { id: "long-titled-ignored", file: P, find: "  const titled = ss.filter((s) => s.longTitled && !s.quality).sort((a, b) => b.min - a.min)[0];\n  if (titled) return titled.day;", replace: "  const titled = null;\n  if (titled) return 0;", what: "заголовок «длительная» игнорируется, день берётся только по длине" },
-  { id: "days-quality-from-all", file: W, find: "  const qPref = daysByPreference(hist.quality, hist.all);", replace: "  const qPref = daysByPreference(hist.all, hist.all);", what: "день качества снова берётся из общей гистограммы" },
+  { id: "days-quality-from-all", file: W, find: "...daysByPreference(hist.quality, hist.all)]", replace: "...daysByPreference(hist.all, hist.all)]", what: "день качества снова берётся из общей гистограммы" },
   { id: "days-adj-long-off", file: W, find: "    if (longDay != null && adjacentDays(d, longDay)) continue;", replace: "    if (false && longDay != null && adjacentDays(d, longDay)) continue;", what: "качество разрешено смежно с длительной" },
   { id: "days-adj-quality-off", file: W, find: "    if (picked.some((p) => adjacentDays(p, d))) continue;", replace: "    if (false && picked.some((p) => adjacentDays(p, d))) continue;", what: "две качественные разрешены подряд" },
   { id: "days-easy-order", file: W, find: "  for (const d of [...daysByPreference(hist.easy, hist.all), ...daysByPreference(hist.all, hist.all), 0, 1, 2, 3, 4, 5, 6]) {", replace: "  for (const d of [0, 1, 2, 3, 4, 5, 6]) {", what: "лёгкие занимают первые свободные дни, а не свои" },

@@ -29,6 +29,7 @@ import process from "node:process";
 
 import { buildWeek, DAY_RU, EASY_FLOOR_MIN, EASY_MAX, EASY_TARGET_BY_TIER, LONG_CEIL, LONG_FLOOR, LONG_TARGET_BY_INTENT, placeRolesByPractice, type CycleWeekTarget, type DayHistograms, type Role, type Week } from "./lib/autoplanner-week.ts";
 import { tempoPresetsFrom } from "./lib/autoplanner-catalog.ts";
+import { isActiveOnWeek, resolvePreferences, type AthletePreference, type PreferenceEffect } from "./lib/athlete-preferences.ts";
 import { stubAnchors, stubCatalog, stubEnvelope } from "./lib/cycle-check-stubs.ts";
 import {
   MIN_RUNS_FOR_PERSONAL_FLOOR, countsForEasyFloor, countsForLongFallback,
@@ -920,6 +921,118 @@ async function main(): Promise<void> {
     check("запасной день длительной — выходной, а не будни",
       LONG_DAY_FALLBACK === 5 || LONG_DAY_FALLBACK === 6,
       `LONG_DAY_FALLBACK = ${LONG_DAY_FALLBACK} (${DAY_RU[LONG_DAY_FALLBACK] ?? "?"})`);
+  }
+
+  // ── 7-гекса. ПОЖЕЛАНИЯ ТРЕНЕРА КАК ВХОД ФОРМЫ НЕДЕЛИ ──
+  // Контракт: пожелание ЖЁСТЧЕ расчётного дня, но НЕ ОТМЕНЯЕТ инвариантов; спор —
+  // пометкой тренеру, а не молчаливой поломкой. См. docs/athlete-preferences-inventory.md.
+  {
+    const H2 = (over: Partial<DayHistograms> = {}): DayHistograms => ({
+      all: [0, 0, 0, 0, 0, 0, 0], long: [0, 0, 0, 0, 0, 0, 0],
+      quality: [0, 0, 0, 0, 0, 0, 0], easy: [0, 0, 0, 0, 0, 0, 0], ...over,
+    });
+    const roleOf2 = (r: Map<number, Role>, role: Role): number[] =>
+      [...r.entries()].filter(([, x]) => x === role).map(([d]) => d).sort((a, b) => a - b);
+    const WK = "2026-08-17";
+    const eff = (ps: AthletePreference[]): PreferenceEffect => resolvePreferences(ps, WK);
+
+    // (а) ОКНО ДЕЙСТВИЯ СРАВНИВАЕТСЯ СО ВСЕЙ НЕДЕЛЕЙ, А НЕ С ЕЁ ПОНЕДЕЛЬНИКОМ.
+    // «В отпуске до среды» обязано действовать на этой неделе, хотя понедельник уже позже
+    // начала окна. Пересечение отрезков, а не попадание точки.
+    // Окно НАЧИНАЕТСЯ В СЕРЕДИНЕ недели: «уезжаю в четверг». Именно здесь решает то, что
+    // сравнение идёт с концом недели, а не с её понедельником — на прежней заготовке
+    // (окно, начавшееся ДО недели) обе версии давали одинаковый ответ, и проверка была пустой.
+    check("пожелания: окно, начинающееся в середине недели, на этой неделе ДЕЙСТВУЕТ",
+      isActiveOnWeek({ kind: "day_unavailable", dayOfWeek: 3, activeFrom: "2026-08-20", activeTo: "2026-08-31" }, WK),
+      "окно с 20 августа не признано действующим на неделе 17–23 августа");
+    check("пожелания: окно, кончающееся в середине недели, на этой неделе ДЕЙСТВУЕТ",
+      isActiveOnWeek({ kind: "day_unavailable", dayOfWeek: 1, activeFrom: "2026-08-10", activeTo: "2026-08-19" }, WK),
+      "окно 10–19 августа не признано действующим на неделе с 17-го");
+    check("пожелания: окно, кончившееся ДО недели, не действует",
+      !isActiveOnWeek({ kind: "day_unavailable", dayOfWeek: 1, activeFrom: "2026-08-01", activeTo: "2026-08-16" }, WK),
+      "окно, истёкшее 16 августа, всё ещё действует на неделе с 17-го");
+    check("пожелания: окно, начинающееся ПОСЛЕ недели, не действует",
+      !isActiveOnWeek({ kind: "day_unavailable", dayOfWeek: 1, activeFrom: "2026-08-24", activeTo: null }, WK),
+      "окно с 24 августа действует на неделе с 17-го");
+    check("пожелания: без окна пожелание постоянное",
+      isActiveOnWeek({ kind: "day_unavailable", dayOfWeek: 1 }, WK), "постоянное пожелание не действует");
+
+    // (б) РОЛЬ ПРИВЯЗАНА КО ДНЮ — ЖЁСТЧЕ И ГИСТОГРАММЫ, И ЗАПАСНОГО ДНЯ.
+    // Гистограмма уверенно (100%) говорит «суббота», пожелание — «воскресенье».
+    const pPin = placeRolesByPractice(3, { quality: 1, long: 1 },
+      H2({ all: [0, 5, 0, 0, 5, 9, 0], long: [0, 0, 0, 0, 0, 9, 0], quality: [0, 5, 0, 0, 0, 0, 0] }),
+      eff([{ kind: "role_day", role: "long", dayOfWeek: 6 }]));
+    check("пожелания: «длинное только в воскресенье» бьёт уверенную гистограмму субботы",
+      roleOf2(pPin.roles, "long")[0] === 6,
+      `длительная в ${DAY_RU[roleOf2(pPin.roles, "long")[0] ?? -1] ?? "—"} при гистограмме Сб 9 из 9`);
+
+    // (в) НЕДОСТУПНЫЙ ДЕНЬ НЕ ЗАНИМАЕТСЯ НИКОГДА.
+    const pBlock = placeRolesByPractice(3, { quality: 1, long: 1 },
+      H2({ all: [0, 9, 0, 5, 0, 0, 9], long: [0, 0, 0, 0, 0, 0, 9], quality: [0, 9, 0, 0, 0, 0, 0] }),
+      eff([{ kind: "day_unavailable", dayOfWeek: 1 }]));
+    check("пожелания: недоступный день не занимается ни одной ролью",
+      !pBlock.days.includes(1) && pBlock.days.length === 3,
+      `дни ${pBlock.days.map((d) => DAY_RU[d]).join(",")}`);
+
+    // (г) ЗАКРЫТ ЗАПАСНОЙ ДЕНЬ — ДЛИТЕЛЬНАЯ ПЕРЕЕЗЖАЕТ, А НЕ ОСТАЁТСЯ В НЕДОСТУПНОМ.
+    // Гистограммы длительной нет вовсе, запасной день — воскресенье, и оно закрыто.
+    const pMove = placeRolesByPractice(2, { quality: 0, long: 1 },
+      H2({ all: [0, 0, 0, 0, 5, 9, 2] }), eff([{ kind: "day_unavailable", dayOfWeek: 6 }]));
+    check("пожелания: закрыт запасной день — длительная переезжает и это помечено",
+      roleOf2(pMove.roles, "long")[0] !== 6 && pMove.conflicts.some((c) => c.includes("длительная перенесена")),
+      `длительная в ${DAY_RU[roleOf2(pMove.roles, "long")[0] ?? -1] ?? "—"}, пометки: ${pMove.conflicts.join(" | ") || "нет"}`);
+
+    // (д) ИНВАРИАНТ ГЛАВНЕЕ ПОЖЕЛАНИЯ, И СПОР ВИДЕН. Просят качество в субботу,
+    // но длительная в воскресенье — это смежные дни. Инвариант держится, тренер узнаёт.
+    const pConf = placeRolesByPractice(3, { quality: 1, long: 1 },
+      H2({ all: [0, 5, 0, 0, 5, 5, 9], long: [0, 0, 0, 0, 0, 0, 9] }),
+      eff([{ kind: "role_day", role: "quality", dayOfWeek: 5 }]));
+    check("пожелания: инвариант смежности главнее пожелания, и спор помечен",
+      !roleOf2(pConf.roles, "quality").includes(5) && pConf.conflicts.some((c) => c.includes("инвариант")),
+      `качество в ${roleOf2(pConf.roles, "quality").map((d) => DAY_RU[d]).join(",") || "—"}, пометки: ${pConf.conflicts.join(" | ") || "нет"}`);
+
+    // (е) ДВА ПОЖЕЛАНИЯ СПОРЯТ МЕЖДУ СОБОЙ — побеждает недоступность (утверждение о ФАКТЕ),
+    // привязка роли (предпочтение) отклоняется, и это видно.
+    const e2 = eff([{ kind: "role_day", role: "long", dayOfWeek: 6 }, { kind: "day_unavailable", dayOfWeek: 6 }]);
+    check("пожелания: «роль в этот день» против «день недоступен» — побеждает недоступность",
+      !e2.pinnedRole.has("long") && e2.notes.some((n) => n.includes("пожелания спорят")),
+      `pinned=${[...e2.pinnedRole.keys()].join(",") || "нет"}, пометки: ${e2.notes.join(" | ")}`);
+
+    // (ж) ПОТОЛОК ДНЕЙ. Пожелание жёстче и цикла, и истории.
+    const A2 = stubAnchors(); const cat3 = stubCatalog();
+    const envP = { ...stubEnvelope(), dayHistogram: [3, 9, 3, 9, 3, 3, 9], rolling4wFrequency: 5 };
+    const wCap = buildWeek(A2, envP, cat3, WK, false, null,
+      { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 260, qualityMin: 30, days: 5 },
+      [{ kind: "max_days_per_week", maxDays: 3 }]);
+    check("пожелания: потолок беговых дней жёстче цикла",
+      wCap.refused == null && wCap.sessions.length === 3,
+      `дней ${wCap.sessions.length} при цикле 5 и пожелании 3; отказ: ${wCap.refused ?? "нет"}`);
+
+    // (з) ПОТОЛОК МИНУТ В ДЕНЬ режет аэробную сессию вниз и помечает это.
+    const wMin = buildWeek(A2, envP, cat3, WK, false, null,
+      { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 260, qualityMin: 30, days: 4 },
+      [{ kind: "role_day", role: "long", dayOfWeek: 6 }, { kind: "day_max_minutes", dayOfWeek: 6, maxMinutes: 60 }]);
+    const sun = wMin.sessions.find((x) => x.dayIdx === 6);
+    check("пожелания: потолок минут в день режет сессию и помечает",
+      !!sun && sun.minutes <= 60 && wMin.notes.some((n) => n.includes("по пожеланию тренера")),
+      `в Вс ${sun?.minutes ?? "—"} мин при пожелании 60; пометки: ${wMin.notes.filter((n) => n.includes("пожелани")).join(" | ") || "нет"}`);
+
+    // (и) ВСЕ ДНИ ЗАКРЫТЫ — это ошибка ввода, и она названа своим именем, а не выглядит
+    // как проблема нагрузки («не помещается в потолок»).
+    const eAll = eff([0, 1, 2, 3, 4, 5, 6].map((d) => ({ kind: "day_unavailable" as const, dayOfWeek: d })));
+    check("пожелания: закрыты все семь дней — сказано прямо, а не через отказ по объёму",
+      eAll.notes.some((n) => n.includes("закрыты ВСЕ семь дней")), `пометки: ${eAll.notes.join(" | ")}`);
+
+    // (к) БЕЗ ПОЖЕЛАНИЙ ПОВЕДЕНИЕ РОВНО ПРЕЖНЕЕ. Иначе правка меняет неделю всем 126,
+    // а не тем, кому тренер что-то задал.
+    const wNo = buildWeek(A2, envP, cat3, WK, false, null,
+      { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 260, qualityMin: 30, days: 4 });
+    const wEmpty = buildWeek(A2, envP, cat3, WK, false, null,
+      { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 260, qualityMin: 30, days: 4 }, []);
+    check("пожелания: пустой список ничего не меняет",
+      wNo.plannedMinutes === wEmpty.plannedMinutes && wNo.sessions.length === wEmpty.sessions.length
+        && wNo.sessions.every((x, i) => x.dayIdx === wEmpty.sessions[i].dayIdx),
+      `без пожеланий ${wNo.plannedMinutes} мин / ${wNo.sessions.length} дней, с пустым списком ${wEmpty.plannedMinutes} / ${wEmpty.sessions.length}`);
   }
 
   // ── 7-тер. КЛАССИФИКАТОР КАЧЕСТВА И ЛЕСТНИЦА ТЕМПОВОГО: ЧИСТЫЕ ФУНКЦИИ ──
