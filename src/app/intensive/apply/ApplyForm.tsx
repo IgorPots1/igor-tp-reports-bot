@@ -157,9 +157,6 @@ export default function ApplyForm() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  // Попала ли анкета в лист ожидания — приходит от сервера, от него зависит
-  // текст финального экрана.
-  const [waitlisted, setWaitlisted] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -263,17 +260,12 @@ export default function ApplyForm() {
         method: "POST",
         body: payload,
       });
-      const result = (await response.json()) as {
-        ok?: boolean;
-        error?: string;
-        waitlist?: boolean;
-      };
+      const result = (await response.json()) as { ok?: boolean; error?: string };
       if (!response.ok || result.ok !== true) {
         setSendError(result.error ?? "Не получилось отправить анкету. Попробуй ещё раз.");
         setSending(false);
         return;
       }
-      setWaitlisted(result.waitlist === true);
       setStep(DONE_STEP);
       scrollTop();
     } catch {
@@ -866,34 +858,18 @@ export default function ApplyForm() {
           </div>
         </section>
 
-        {/* ГОТОВО. Два исхода: место есть — или лист ожидания. Второй экран
-            намеренно не выглядит отказом: анкета принята и лежит у тренера,
-            человеку важно это понимать, а не думать, что он писал впустую. */}
+        {/* ГОТОВО. Экран ОДИН на любой исход — и для попавших в набор, и для
+            тех, кто пришёл сверх лимита. Снаружи разницы быть не должно: кто
+            в наборе, а кто в очереди, видит только тренер в админке.
+            Обещания «место закреплено» здесь нет намеренно — сверх лимита оно
+            было бы неправдой. */}
         <section className={`step${step === DONE_STEP ? " on" : ""}`}>
-          {waitlisted ? (
-            <div className="done">
-              <div className="tick wait">&#8987;</div>
-              <h2>Анкета принята</h2>
-              <p>
-                Места в этом потоке уже разобрали, поэтому я записал тебя в
-                список ожидания. Твои ответы у меня — заново заполнять ничего не
-                нужно.
-              </p>
-              <p>
-                Напишу в Telegram, если место освободится, либо позову в
-                следующий поток — он стартует через 2–3 недели.
-              </p>
-              <div className="seat wait">&#8987; Ты в списке ожидания</div>
-            </div>
-          ) : (
-            <div className="done">
-              <div className="tick">&#10003;</div>
-              <h2>Анкета отправлена</h2>
-              <p>Спасибо! Я изучу твои ответы и напишу в Telegram перед стартом потока.</p>
-              <p>Если что-то захочешь добавить — просто напиши мне.</p>
-              <div className="seat">&#10003; Место в потоке закреплено за тобой</div>
-            </div>
-          )}
+          <div className="done">
+            <div className="tick">&#10003;</div>
+            <h2>Анкета отправлена</h2>
+            <p>Я изучу твои ответы и напишу в Telegram перед стартом потока.</p>
+            <p>Если что-то захочешь добавить — просто напиши мне.</p>
+          </div>
         </section>
       </main>
     </>
