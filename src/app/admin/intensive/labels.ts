@@ -6,6 +6,8 @@ export function statusLabel(status: ApplicationStatus): string {
       return "Новая";
     case "confirmed":
       return "Подтверждена";
+    case "waitlist":
+      return "Лист ожидания";
     case "cancelled":
       return "Отменена";
     default:
@@ -17,11 +19,20 @@ export function statusBadgeClass(status: ApplicationStatus): string {
   switch (status) {
     case "confirmed":
       return "admin-badge admin-badge-success";
+    case "waitlist":
+      // Жёлтый: анкета живая и ждёт решения, но места за ней нет.
+      return "admin-badge admin-badge-warning";
     case "cancelled":
       return "admin-badge admin-badge-muted";
     default:
       return "admin-badge admin-badge-accent";
   }
+}
+
+/** Занимает ли статус место в потоке. Дублирует OCCUPYING_STATUSES репозитория,
+ *  но нужен на странице, чтобы предупредить о превышении лимита до нажатия. */
+export function statusTakesSeat(status: ApplicationStatus): boolean {
+  return status === "new" || status === "confirmed";
 }
 
 const DAY_LABELS: Record<string, string> = {

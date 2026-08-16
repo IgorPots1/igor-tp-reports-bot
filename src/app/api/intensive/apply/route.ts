@@ -6,6 +6,7 @@ import {
   getSeatsLeft,
   setApplicationScreenshots,
   uploadScreenshot,
+  type ApplicationStatus,
   type Screenshot,
 } from "@/features/intensive/repository";
 
@@ -66,6 +67,7 @@ async function notifyTelegram(params: {
   goal: string | null;
   screenshotCount: number;
   seatsLeft: number;
+  isWaitlist: boolean;
 }): Promise<void> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const leadsChat = process.env.LEADS_CHAT_ID;
@@ -77,7 +79,10 @@ async function notifyTelegram(params: {
   }
 
   const goalShort = params.goal ? params.goal.slice(0, 100) : "—";
+  // Пометка листа ожидания идёт ПЕРВОЙ строкой: в потоке уведомлений разницу
+  // надо видеть с первого взгляда, не дочитывая до счётчика мест.
   const message = [
+    ...(params.isWaitlist ? ["⏳ ЛИСТ ОЖИДАНИЯ"] : []),
     "📋 Новая анкета на интенсив",
     `Имя: ${params.fullName}`,
     `Город: ${params.city ?? "—"}`,
@@ -122,15 +127,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── Места. Проверяем ДО создания анкеты: закрытый набор не должен копить
-  // заявки, за которыми нет места.
+  // ── Места. Отказа здесь НЕТ и быть не должно. Раньше при нуле мест роут
+  // возвращал 409 ДО вставки, и анкета исчезала без единого следа: ни строки в
+  // таблице, ни файлов в bucket, ни уведомления тренеру, ни записи в логе.
+  // Теперь мест нет → анкета всё равно сохраняется, но со статусом waitlist;
+  // кого пустить в поток, решает тренер в админке.
   const seatsBefore = await getSeatsLeft();
-  if (seatsBefore <= 0) {
-    return json(
-      { ok: false, error: "Набор в поток закрыт. Напиши мне в Telegram — подскажу по следующему." },
-      409
-    );
-  }
+  const status: ApplicationStatus = seatsBefore > 0 ? "new" : "waitlist";
 
   // ── Файлы. Проверяем до вставки, чтобы не плодить анкеты с мусором.
   const files = form
@@ -181,7 +184,7 @@ export async function POST(req: NextRequest) {
       shoes: text(form, "shoes", 200),
       strength: text(form, "strength", 20),
       screenshots: [],
-    });
+    }, status);
   } catch (error) {
     console.error("[intensive-apply] insert failed:", error);
     return json({ ok: false, error: "Не удалось сохранить анкету. Попробуй ещё раз." }, 500);
@@ -216,11 +219,13 @@ export async function POST(req: NextRequest) {
       goal: text(form, "goal"),
       screenshotCount: uploaded.length,
       seatsLeft,
+      isWaitlist: status === "waitlist",
     });
   } catch (error) {
     console.error("[intensive-apply] Telegram failed:", error);
   }
 
-  // В ответе только факт. Ни id, ни содержимого анкеты наружу не отдаём.
-  return json({ ok: true }, 200);
+  // В ответе только факт и признак листа ожидания — по нему форма выбирает
+  // финальный экран. Ни id, ни содержимого анкеты наружу не отдаём.
+  return json({ ok: true, waitlist: status === "waitlist" }, 200);
 }

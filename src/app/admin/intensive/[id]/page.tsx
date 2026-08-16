@@ -3,10 +3,12 @@ import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
 import { getSingleSearchParam } from "@/app/admin/lib";
+import { SEATS_TOTAL } from "@/lib/flow";
 import {
   APPLICATION_STATUSES,
   createScreenshotUrls,
   getApplication,
+  getSeatsLeft,
 } from "@/features/intensive/repository";
 import {
   dayLabels,
@@ -15,6 +17,7 @@ import {
   sexLabel,
   statusBadgeClass,
   statusLabel,
+  statusTakesSeat,
   strengthLabel,
 } from "../labels";
 import {
@@ -68,6 +71,11 @@ export default async function IntensiveApplicationPage({
 
   const screenshots = await createScreenshotUrls(application.screenshots);
 
+  // Сколько мест свободно СЕЙЧАС, без учёта этой анкеты, если она места не
+  // занимает. Нужно, чтобы предупредить о переполнении до нажатия, а не после.
+  const seatsLeft = await getSeatsLeft();
+  const wouldExceedLimit = seatsLeft <= 0 && !statusTakesSeat(application.status);
+
   return (
     <section className="admin-section">
       <Link className="admin-backlink" href="/admin/intensive">
@@ -93,28 +101,47 @@ export default async function IntensiveApplicationPage({
             {statusLabel(application.status)}
           </span>
         </div>
+        {wouldExceedLimit ? (
+          <div className="admin-alert admin-alert-warning" style={{ marginTop: 10 }}>
+            Свободных мест нет. Если переведёшь эту анкету в «Новая» или
+            «Подтверждена», в потоке станет больше {SEATS_TOTAL} человек.
+            Это разрешено — решение за тобой.
+          </div>
+        ) : null}
         <div className="admin-inline-actions" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
-          {APPLICATION_STATUSES.filter((value) => value !== application.status).map((value) => (
-            <form key={value} action={updateIntensiveApplicationStatusAction}>
-              <input type="hidden" name="id" value={application.id} />
-              <input type="hidden" name="status" value={value} />
-              <input type="hidden" name="redirectTo" value={selfPath} />
-              <FormActionButton
-                className={
-                  value === "cancelled"
-                    ? "admin-button admin-button-danger admin-button-small"
-                    : "admin-button admin-button-primary admin-button-small"
-                }
-                confirmMessage={`Перевести анкету в «${statusLabel(value)}»?`}
-                pendingText="…"
-              >
-                {statusLabel(value)}
-              </FormActionButton>
-            </form>
-          ))}
+          {APPLICATION_STATUSES.filter((value) => value !== application.status).map((value) => {
+            // Предупреждение вшито в само подтверждение: тренер увидит его в
+            // момент нажатия, даже если проскроллил плашку выше.
+            const overflows = wouldExceedLimit && statusTakesSeat(value);
+            const confirmMessage = overflows
+              ? `Свободных мест нет — в потоке станет больше ${SEATS_TOTAL} человек. Всё равно перевести в «${statusLabel(value)}»?`
+              : `Перевести анкету в «${statusLabel(value)}»?`;
+
+            return (
+              <form key={value} action={updateIntensiveApplicationStatusAction}>
+                <input type="hidden" name="id" value={application.id} />
+                <input type="hidden" name="status" value={value} />
+                <input type="hidden" name="redirectTo" value={selfPath} />
+                <FormActionButton
+                  className={
+                    value === "cancelled"
+                      ? "admin-button admin-button-danger admin-button-small"
+                      : "admin-button admin-button-primary admin-button-small"
+                  }
+                  confirmMessage={confirmMessage}
+                  pendingText="…"
+                >
+                  {statusLabel(value)}
+                  {overflows ? " (сверх лимита)" : ""}
+                </FormActionButton>
+              </form>
+            );
+          })}
         </div>
         <p className="admin-hint" style={{ marginTop: 8 }}>
-          «Новая» и «Подтверждена» занимают место в потоке, «Отменена» — освобождает.
+          «Новая» и «Подтверждена» занимают место в потоке. «Лист ожидания» и
+          «Отменена» место не занимают: анкета остаётся у тебя целиком, но на
+          счётчик набора не влияет.
         </p>
       </div>
 

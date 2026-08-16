@@ -5,6 +5,7 @@ import { SEATS_TOTAL } from "@/lib/flow";
 import {
   APPLICATION_STATUSES,
   getSeatsLeft,
+  getWaitlistCount,
   listApplications,
   listFlowNumbers,
   type ApplicationListItem,
@@ -34,13 +35,15 @@ export default async function IntensiveApplicationsPage({
   let applications: ApplicationListItem[] = [];
   let flows: string[] = [];
   let seatsLeft = SEATS_TOTAL;
+  let waitlistCount = 0;
   let loadError: string | null = null;
 
   try {
-    [applications, flows, seatsLeft] = await Promise.all([
+    [applications, flows, seatsLeft, waitlistCount] = await Promise.all([
       listApplications({ status, flow }),
       listFlowNumbers(),
       getSeatsLeft(),
+      getWaitlistCount(),
     ]);
   } catch (error) {
     // Самый частый случай — миграция ещё не применена. Показываем это прямо,
@@ -55,8 +58,9 @@ export default async function IntensiveApplicationsPage({
       <div className="admin-section-header">
         <h1>Беговой интенсив</h1>
         <p className="admin-section-subtitle">
-          Анкеты участников. Место в потоке занимают статусы «Новая» и
-          «Подтверждена», «Отменена» — освобождает.
+          Анкеты участников. Место в потоке занимают «Новая» и «Подтверждена».
+          «Лист ожидания» и «Отменена» место не занимают — анкета сохранена и
+          ждёт твоего решения.
         </p>
       </div>
 
@@ -77,6 +81,10 @@ export default async function IntensiveApplicationsPage({
         <div className="admin-summary-card">
           <span className="admin-summary-label">Свободно</span>
           <span className="admin-summary-value">{seatsLeft}</span>
+        </div>
+        <div className="admin-summary-card">
+          <span className="admin-summary-label">В листе ожидания</span>
+          <span className="admin-summary-value">{waitlistCount}</span>
         </div>
         <div className="admin-summary-card">
           <span className="admin-summary-label">Показано анкет</span>

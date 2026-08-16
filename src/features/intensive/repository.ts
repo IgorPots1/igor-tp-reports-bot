@@ -9,10 +9,21 @@ import {
 } from "@/features/supabase/server";
 import { SEATS_TOTAL } from "@/lib/flow";
 
-export const APPLICATION_STATUSES = ["new", "confirmed", "cancelled"] as const;
+export const APPLICATION_STATUSES = [
+  "new",
+  "confirmed",
+  "waitlist",
+  "cancelled",
+] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 
-/** Статусы, которые ЗАНИМАЮТ место в потоке. cancelled место возвращает. */
+/**
+ * Статусы, которые ЗАНИМАЮТ место в потоке.
+ *
+ * waitlist и cancelled место НЕ занимают: анкета сохранена и видна тренеру, но
+ * на арифметику набора не влияет. Кого пустить в поток — решение тренера в
+ * админке, а не отказ на входе в API.
+ */
 const OCCUPYING_STATUSES: ApplicationStatus[] = ["new", "confirmed"];
 
 const BUCKET = "intensive-screenshots";
@@ -195,13 +206,47 @@ export async function getSeatsTaken(): Promise<number> {
   return SEATS_TOTAL - (await getSeatsLeft());
 }
 
+/**
+ * Сколько анкет ждут в листе ожидания. Место они не занимают, но тренеру нужно
+ * видеть, что за закрытым набором стоит очередь.
+ *
+ * При сбое базы возвращаем 0 — счётчик в админке не должен ронять страницу.
+ */
+export async function getWaitlistCount(): Promise<number> {
+  try {
+    const supabase = createSupabaseServerClient();
+    const { count, error } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("intensive_applications")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "waitlist")
+    );
+
+    if (error) {
+      console.error("[intensive] waitlist count failed:", describeSupabaseError(error));
+      return 0;
+    }
+
+    return count ?? 0;
+  } catch (error) {
+    console.error("[intensive] waitlist count threw:", describeSupabaseError(error));
+    return 0;
+  }
+}
+
+/**
+ * Заводит анкету. Статус приходит снаружи: 'new' если место есть, 'waitlist'
+ * если мест нет. Отказов здесь нет — анкета сохраняется всегда.
+ */
 export async function createIntensiveApplication(
-  input: NewApplicationInput
+  input: NewApplicationInput,
+  status: ApplicationStatus = "new"
 ): Promise<string> {
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("intensive_applications")
     .insert({
+      status,
       flow_number: input.flowNumber,
       full_name: input.fullName,
       birth_date: input.birthDate,
