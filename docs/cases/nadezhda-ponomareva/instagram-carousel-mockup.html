@@ -1,0 +1,321 @@
+<title>Кейс: Надежда Пономарева, макет карусели</title>
+<style>
+  :root{
+    --page-bg:#f4f5f7; --page-ink:#1c2430; --page-muted:#5b6674; --page-card:#ffffff; --page-line:#dfe3e9;
+    --night:#0E1B2E; --night-2:#132539; --ink:#F3EFE6; --muted:#93A3B8; --faint:#5C6E85;
+    --dawn:#F2A45C;
+    --s-was:#5E8FD1;
+    --s-now:#CE7524;
+    --line:rgba(147,163,184,.22);
+  }
+  :root[data-theme="dark"], :root[data-theme="dark"] body{ --page-bg:#10151c; --page-ink:#e8ecf2; --page-muted:#9aa7b6; --page-card:#171f29; --page-line:#2a3441; }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){ --page-bg:#10151c; --page-ink:#e8ecf2; --page-muted:#9aa7b6; --page-card:#171f29; --page-line:#2a3441; }
+  }
+  body{ background:var(--page-bg); color:var(--page-ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; margin:0; padding:32px 16px 64px; line-height:1.5;}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:26px;letter-spacing:-.01em;margin:0 0 4px}
+  .lede{color:var(--page-muted);max-width:64ch;margin:0 0 28px;font-size:15px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:28px;align-items:start}
+  .slot{display:flex;flex-direction:column;gap:8px}
+  .slot-cap{font-size:12.5px;color:var(--page-muted);letter-spacing:.06em;text-transform:uppercase}
+  .slot-cap b{color:var(--page-ink);letter-spacing:.02em}
+
+  .slide{aspect-ratio:4/5;background:var(--night);color:var(--ink);border-radius:14px;overflow:hidden;position:relative;display:flex;flex-direction:column;padding:7.5% 8%;box-sizing:border-box;box-shadow:0 8px 28px rgba(10,18,30,.28);container-type:inline-size}
+  .slide *{box-sizing:border-box}
+  .eyebrow{font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dawn);margin-bottom:10px}
+  .slide h2{font-size:clamp(20px,5.6cqw,30px);line-height:1.12;margin:0 0 6px;letter-spacing:-.015em;text-wrap:balance;font-weight:750}
+  .slide h2.big{font-size:clamp(24px,7.4cqw,40px);line-height:1.06}
+  .slide .sub{color:var(--muted);font-size:13.5px;margin:0}
+  .num{font-variant-numeric:tabular-nums;font-weight:800;letter-spacing:-.02em}
+  .hero-num{font-size:clamp(26px,8cqw,38px);line-height:1.04;color:var(--ink)}
+  .hero-num .to{color:var(--dawn)}
+  .arrow{color:var(--faint);font-weight:400}
+  .foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline;font-size:11px;color:var(--faint);letter-spacing:.055em;text-transform:uppercase;gap:10px}
+  .pageno{color:var(--muted);margin-left:auto;white-space:nowrap}
+
+  /* обложка с фото */
+  .slide.cover{padding:0;justify-content:space-between;
+    background:linear-gradient(rgba(8,16,30,.42), rgba(8,16,30,.42)), var(--cover-photo, none);
+    background-size:cover;background-position:center}
+  .cover-top,.cover-bottom{text-shadow:0 2px 16px rgba(5,10,20,.85)}
+  .cover-top{padding:7.5% 8% 14%;background:linear-gradient(180deg, rgba(8,16,30,.9) 0%, rgba(8,16,30,.7) 45%, rgba(8,16,30,.25) 80%, rgba(8,16,30,0) 100%)}
+  .cover-bottom{padding:26% 8% 13%;background:linear-gradient(0deg, rgba(8,16,30,.66) 0%, rgba(8,16,30,.82) 32%, rgba(8,16,30,.52) 64%, rgba(8,16,30,0) 100%)}
+  .cover .foot{margin-top:12px}
+
+  .slide.shot-slide{padding:0;justify-content:space-between;background-size:cover;background-position:center}
+  .shot-top,.shot-bottom{text-shadow:0 2px 16px rgba(5,10,20,.85)}
+  .shot-top{padding:7.5% 8% 14%;background:linear-gradient(180deg, rgba(8,16,30,.9) 0%, rgba(8,16,30,.68) 45%, rgba(8,16,30,.22) 80%, rgba(8,16,30,0) 100%)}
+  .shot-bottom{padding:18% 8% 7.5%;background:linear-gradient(0deg, rgba(8,16,30,.95) 0%, rgba(8,16,30,.84) 45%, rgba(8,16,30,.4) 74%, rgba(8,16,30,0) 100%)}
+  .shot-bottom .tiles{margin:0 0 4px}
+  .shot-bottom .tile{background:rgba(14,27,46,.72);border:1px solid rgba(147,163,184,.2)}
+  .shot-slide .foot{margin-top:10px;border-color:rgba(243,239,230,.28)}
+
+  .kv{display:flex;flex-direction:column;gap:0}
+  .kv.airy{flex:1;justify-content:center}
+  .kv.airy .row{padding:16px 0}
+  .kv .row{display:flex;justify-content:space-between;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--line)}
+  .kv .row:last-child{border-bottom:none}
+  .kv .k{color:var(--muted);font-size:13px;padding-right:12px}
+  .kv .v{font-variant-numeric:tabular-nums;font-weight:700;font-size:15px;white-space:nowrap}
+  .kv .v .was{color:var(--muted);font-weight:600}
+  .kv .v .now{color:var(--dawn)}
+
+  .tl{display:flex;flex-direction:column;gap:0;margin-top:4px}
+  .tl .row{display:grid;grid-template-columns:52px 1fr auto;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .tl .row:last-child{border-bottom:none}
+  .tl .d{color:var(--faint);font-variant-numeric:tabular-nums}
+  .tl .e{color:var(--ink)}
+  .tl .e small{color:var(--muted)}
+  .tl .t{font-variant-numeric:tabular-nums;font-weight:700}
+  .tl .hl .e,.tl .hl .t{color:var(--dawn)}
+  .tl .pre .e,.tl .pre .t{color:var(--muted)}
+
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0 6px}
+  .tile{background:var(--night-2);border-radius:10px;padding:14px 14px 12px}
+  .tile .lab{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .tile .val{font-size:clamp(22px,7cqw,30px);line-height:1.05}
+  .tile.was .val{color:var(--s-was)}
+  .tile.now .val{color:var(--dawn)}
+  .tile .note{font-size:11.5px;color:var(--faint);margin-top:4px}
+
+  .chart{margin:10px 0 4px}
+  .chart svg{display:block;width:100%;height:auto}
+
+  .quote{background:var(--night-2);border-radius:10px;padding:11px 14px;font-size:12.5px;color:var(--ink)}
+  .quote .who{color:var(--faint);font-size:10.5px;margin-top:5px;letter-spacing:.06em;text-transform:uppercase}
+  .quote em{color:var(--dawn);font-style:normal;font-weight:600}
+
+  .offer{display:flex;flex-direction:column;gap:9px;margin:14px 0 10px}
+  .offer .item{display:grid;grid-template-columns:16px 1fr;gap:9px;font-size:13px;color:var(--ink);line-height:1.35}
+  .offer .item i{color:var(--dawn);font-style:normal;font-weight:800}
+  .sitebox{background:var(--night-2);border:1px solid rgba(242,164,92,.35);border-radius:10px;padding:12px 14px;text-align:center;margin-top:auto}
+  .sitebox .val{font-size:clamp(13px,3.9cqw,30px);font-weight:800;color:var(--dawn);letter-spacing:-.01em;line-height:1.28}
+
+  .checklist,.caption{background:var(--page-card);border:1px solid var(--page-line);border-radius:12px;padding:20px 24px;margin-top:24px}
+  .checklist h3,.caption h3{margin:0 0 10px;font-size:17px}
+  .checklist ul{margin:0;padding-left:20px}
+  .checklist li{margin:6px 0;font-size:14.5px}
+  .caption{white-space:pre-wrap;font-size:14.5px}
+  section.block{margin-top:44px}
+</style>
+
+<div class="wrap">
+  <h1>Кейс для Instagram: Надежда Пономарева</h1>
+  <p class="lede">Девять слайдов по шаблону кейса Марины. Слайды 1 и 6 ждут фотографии: пока стоит тёмная заливка, фон подставляется одной строкой. Все цифры пересчитаны заново, источники в case-data.md.</p>
+
+  <div class="grid">
+
+    <div class="slot"><span class="slot-cap">Слайд 1 · обложка (ждёт фото)</span>
+      <div class="slide cover">
+        <div class="cover-top">
+          <div class="eyebrow">Сообщение на следующий день после полумарафона</div>
+          <h2 class="big">«Я до сих пор<br>в шоках от себя»</h2>
+          <p class="sub" style="color:rgba(243,239,230,.9)">Надежда, 10 августа 2026 года</p>
+        </div>
+        <div class="cover-bottom">
+          <div style="font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:rgba(243,239,230,.8);margin-bottom:6px">Полумарафон за 11 месяцев</div>
+          <div class="hero-num num" style="font-size:clamp(26px,8.6cqw,40px)">1:51:54 <span class="arrow" style="color:rgba(243,239,230,.55)">→</span> <span class="to">1:39:29</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 2 · точка старта</span>
+      <div class="slide">
+        <div class="eyebrow">Май 2024 · как всё началось</div>
+        <h2>«А вдруг сердце остановится, а вдруг плохо станет»</h2>
+        <p class="sub">Так Надежда объясняла, почему не бежит в полную силу. Второй день в клубе, 31 мая 2024 года.</p>
+        <div class="kv airy" style="margin-top:16px">
+          <div class="row"><span class="k">10 км</span><span class="v num">51:00</span></div>
+          <div class="row"><span class="k">И то</span><span class="v">«не на максимум»</span></div>
+          <div class="row"><span class="k">Бег до клуба</span><span class="v">«5 км для себя»</span></div>
+          <div class="row"><span class="k">Полумарафонов</span><span class="v num">0</span></div>
+        </div>
+        <div class="foot"><span>точка отсчёта</span></div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 3 · хронология стартов</span>
+      <div class="slide">
+        <div class="eyebrow">Два года · от «5 км для себя» до 1:39</div>
+        <h2>Каждый полумарафон быстрее предыдущего</h2>
+        <div class="tl" style="flex:1">
+          <div class="row pre"><span class="d">05.24</span><span class="e">Просто для себя <small>· 10 км · до клуба</small></span><span class="t num">51:00</span></div>
+          <div class="row"><span class="d">04.25</span><span class="e">Московский полумарафон <small>· 21,1 км</small></span><span class="t num">1:55:33</span></div>
+          <div class="row"><span class="d">05.25</span><span class="e">ЗаБег.РФ <small>· 21,1 км</small></span><span class="t num">1:53:45</span></div>
+          <div class="row"><span class="d">07.25</span><span class="e">Белые ночи <small>· первый марафон</small></span><span class="t num">4:11:00</span></div>
+          <div class="row"><span class="d">09.25</span><span class="e">Минский полумарафон <small>· 21,1 км</small></span><span class="t num">1:51:54</span></div>
+          <div class="row"><span class="d">06.26</span><span class="e">Ночной забег <small>· 10 км</small></span><span class="t num">47:06</span></div>
+          <div class="row hl"><span class="d">08.26</span><span class="e">Северная столица <small>· 21,1 км</small></span><span class="t num">1:39:29</span></div>
+        </div>
+        <div class="foot"><span>протоколы забегов и данные часов</span></div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 4 · график полумарафона</span>
+      <div class="slide">
+        <div class="eyebrow">Дистанция 21,1 км</div>
+        <h2>Минус 16 минут за 16 месяцев</h2>
+        <div class="chart" style="flex:1;display:flex;align-items:center">
+          <svg viewBox="0 0 400 258" role="img" aria-label="Время на полумарафоне: 1:55:33, 1:53:45, 1:51:54, 1:39:29">
+            <g stroke="rgba(147,163,184,.16)" stroke-width="1">
+              <line x1="38" y1="36" x2="392" y2="36"/><line x1="38" y1="110" x2="392" y2="110"/><line x1="38" y1="185" x2="392" y2="185"/>
+            </g>
+            <g fill="#5C6E85" font-size="11" font-family="system-ui" text-anchor="end">
+              <text x="34" y="40">1:56</text><text x="34" y="114">1:48</text><text x="34" y="189">1:40</text>
+            </g>
+            <polyline points="45,40 155,57 265,74 375,189" fill="none" stroke="#5E8FD1" stroke-width="2" stroke-linejoin="round"/>
+            <g>
+              <circle cx="45" cy="40" r="5" fill="#5E8FD1" stroke="#0E1B2E" stroke-width="2"/>
+              <circle cx="155" cy="57" r="5" fill="#5E8FD1" stroke="#0E1B2E" stroke-width="2"/>
+              <circle cx="265" cy="74" r="5" fill="#5E8FD1" stroke="#0E1B2E" stroke-width="2"/>
+              <circle cx="375" cy="189" r="6.5" fill="#CE7524" stroke="#0E1B2E" stroke-width="2"/>
+            </g>
+            <g fill="#F3EFE6" font-size="12.5" font-weight="700" font-family="system-ui" text-anchor="middle">
+              <text x="45" y="28">1:55:33</text>
+              <text x="155" y="45">1:53:45</text>
+              <text x="265" y="62">1:51:54</text>
+              <text x="375" y="173" fill="#F2A45C" font-size="14">1:39:29</text>
+            </g>
+            <g fill="#5C6E85" font-size="10.5" font-family="system-ui" text-anchor="middle">
+              <text x="45" y="222">апр 25</text><text x="155" y="222">май 25</text><text x="265" y="222">сен 25</text><text x="392" y="222" text-anchor="end">авг 26</text>
+            </g>
+            <g fill="#5C6E85" font-size="10" font-family="system-ui" text-anchor="middle">
+              <text x="45" y="237">Москва</text><text x="155" y="237">ЗаБег.РФ</text><text x="265" y="237">Минск</text><text x="392" y="237" text-anchor="end" fill="#93A3B8">Петербург</text>
+            </g>
+          </svg>
+        </div>
+        <div class="foot"><span>между Минском и Питером минус 12:25</span></div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 5 · пульс и лёгкий темп</span>
+      <div class="slide">
+        <div class="eyebrow">Главный маркер формы</div>
+        <h2>Быстрее и при этом легче</h2>
+        <p class="sub">Лёгкие пробежки: средний темп и средний пульс за сезон</p>
+        <div class="tiles">
+          <div class="tile was"><div class="lab">Лето 2025</div><div class="val num">5:55<span style="font-size:.5em;font-weight:600">/км</span></div><div class="note">пульс 145</div></div>
+          <div class="tile now"><div class="lab">Лето 2026</div><div class="val num">5:28<span style="font-size:.5em;font-weight:600">/км</span></div><div class="note">пульс 139</div></div>
+        </div>
+        <div class="chart">
+          <svg viewBox="0 0 400 128" role="img" aria-label="Темп лёгкого бега по сезонам: 5:55, 6:00, 6:07, 5:38, 5:28">
+            <polyline points="45,43 127,35.5 209,25 291,68.5 368,83.5" fill="none" stroke="#5E8FD1" stroke-width="2" stroke-linejoin="round"/>
+            <g>
+              <circle cx="45" cy="43" r="4.5" fill="#5E8FD1" stroke="#0E1B2E" stroke-width="2"/>
+              <circle cx="127" cy="35.5" r="4.5" fill="#5E8FD1" stroke="#0E1B2E" stroke-width="2"/>
+              <circle cx="209" cy="25" r="4.5" fill="#5E8FD1" stroke="#0E1B2E" stroke-width="2"/>
+              <circle cx="291" cy="68.5" r="4.5" fill="#5E8FD1" stroke="#0E1B2E" stroke-width="2"/>
+              <circle cx="368" cy="83.5" r="6" fill="#CE7524" stroke="#0E1B2E" stroke-width="2"/>
+            </g>
+            <g fill="#F3EFE6" font-size="11.5" font-weight="700" font-family="system-ui" text-anchor="middle">
+              <text x="45" y="58">5:55</text><text x="127" y="25">6:00</text><text x="209" y="15">6:07</text><text x="291" y="59">5:38</text>
+              <text x="368" y="74" fill="#F2A45C" font-size="13">5:28</text>
+            </g>
+            <g fill="#5C6E85" font-size="10.5" font-family="system-ui" text-anchor="middle">
+              <text x="45" y="110">лето 2025</text><text x="127" y="110">осень</text><text x="209" y="110">зима</text><text x="291" y="110">весна</text><text x="368" y="110">лето 2026</text>
+            </g>
+            <g fill="#5C6E85" font-size="9.5" font-family="system-ui" text-anchor="middle">
+              <text x="45" y="123">пульс 145</text><text x="127" y="123">145</text><text x="209" y="123">146</text><text x="291" y="123">144</text><text x="368" y="123">139</text>
+            </g>
+          </svg>
+        </div>
+        <div class="foot"><span>провал зимой виден и на графике</span></div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 6 · пульс в гонке (ждёт фото)</span>
+      <div class="slide shot-slide">
+        <div class="shot-top">
+          <div class="eyebrow">Два полумарафона подряд</div>
+          <h2>На 35 секунд с километра быстрее и на более низком пульсе</h2>
+        </div>
+        <div class="shot-bottom">
+          <div class="tiles">
+            <div class="tile was"><div class="lab">Минск · сен 2025</div><div class="val num">1:51:54</div><div class="note">пульс в гонке 168</div></div>
+            <div class="tile now"><div class="lab">Питер · авг 2026</div><div class="val num">1:39:29</div><div class="note">пульс в гонке 164</div></div>
+          </div>
+          <div class="foot"><span style="color:rgba(243,239,230,.7)">темп 5:18 и 4:43 на километр</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 7 · провал и возвращение</span>
+      <div class="slide">
+        <div class="eyebrow">Осень 2025</div>
+        <h2>Выпала на два месяца и вернулась</h2>
+        <div class="kv" style="margin-top:12px">
+          <div class="row"><span class="k">Выполнение плана осенью</span><span class="v num">22 из 39 · 56%</span></div>
+          <div class="row"><span class="k">Недельный объём тогда</span><span class="v num"><span class="was">30</span> → 18 км</span></div>
+          <div class="row"><span class="k">Выполнение плана сейчас</span><span class="v num"><span class="now">88%</span></span></div>
+          <div class="row"><span class="k">Недельный объём сейчас</span><span class="v num"><span class="now">46 км</span>, пик 72</span></div>
+          <div class="row"><span class="k">Всего с января 2025</span><span class="v num">252 пробежки · 2 659 км</span></div>
+        </div>
+        <div class="quote" style="margin-top:12px">«Октябрь такой октябрь. Все тренировки не выполнены, охото спать. <em>Я обещаю разберусь с этим</em>»<div class="who">15 октября 2025</div></div>
+        <div class="foot"><span>через 10 месяцев после этого сообщения — 1:39:29</span></div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 8 · переписка</span>
+      <div class="slide">
+        <div class="eyebrow">Дословно из переписки</div>
+        <h2>Как это звучало изнутри</h2>
+        <div style="display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center;margin-top:10px">
+          <div class="quote">«Я себя останавливаю, тк боюсь бежать на максимуме»<div class="who">май 2024, до первого плана</div></div>
+          <div class="quote">«Это лето было распланировано до решения тренироваться в беге по-настоящему, а не просто 5 км для себя»<div class="who">июнь 2024</div></div>
+          <div class="quote">«Пока не верю, что могу так 10 км пробежать»<br><span style="color:var(--faint)">на следующий день:</span> <em>«Я оказывается могу бежать по 4:38 в удовольствие»</em><div class="who">июнь 2026, 10 км за 47:06</div></div>
+          <div class="quote">«Я если честно хотела рыдать, <em>пока стояла к колоколу финишера</em>»<div class="who">август 2026, полумарафон 1:39:29</div></div>
+        </div>
+        <div class="foot"><span>из переписки за два года работы</span></div>
+      </div>
+    </div>
+
+    <div class="slot"><span class="slot-cap">Слайд 9 · финал</span>
+      <div class="slide">
+        <div class="eyebrow">Игорь Поцелуев · Беговой клуб</div>
+        <h2>Надежда начала с 10 км за 51 минуту</h2>
+        <div class="offer">
+          <div class="item"><i>✓</i><span>Индивидуальный план под твой уровень и цели, вся неделя в личном кабинете</span></div>
+          <div class="item"><i>✓</i><span>Разбор и обратная связь по каждой тренировке</span></div>
+          <div class="item"><i>✓</i><span>Тренер на связи каждый день, в чате и лично</span></div>
+          <div class="item"><i>✓</i><span>Силовые, растяжка, восстановление и разбор техники</span></div>
+        </div>
+        <p class="sub">Веду до твоей цели: первый забег, личный рекорд или просто регулярный бег.</p>
+        <div class="sitebox">
+          <div class="val">Нажимай ссылку в шапке профиля<br>и вступай в наш клуб</div>
+        </div>
+        <div class="foot"><span></span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="caption">
+<h3>Текст поста</h3>
+Полтора года назад Надежда бегала «просто 5 км для себя» и боялась выйти на максимум: «а вдруг сердце остановится».
+
+В августе она выбежала полумарафон из 1:40.
+
+Между этими двумя точками был не только прогресс. Осенью 2025 всё посыпалось: выполнение плана упало до 56 процентов, недельный объём с 30 километров до 18. Она написала: «Октябрь такой октябрь. Все тренировки не выполнены. Я обещаю разберусь с этим».
+
+Разобралась. Через десять месяцев — 1:39:29.
+
+Полумарафон: 1:55:33 → 1:53:45 → 1:51:54 → 1:39:29.
+Лёгкий бег: 5:55 на пульсе 145 → 5:28 на пульсе 139.
+В гонке: Минск на пульсе 168, Питер на 35 секунд быстрее с километра и на пульсе 164.
+
+Все цифры из протоколов забегов и данных часов. Публикуется с разрешения Надежды.
+
+Нажимай ссылку в шапке профиля и вступай в наш клуб.
+  </div>
+
+  <div class="checklist">
+    <h3>Что осталось от Игоря</h3>
+    <ul>
+      <li>Фото на слайд 1 (обложка) и на слайд 6. Надежда прислала подборку 17 августа, ей самой больше всего нравится кадр «Северная».</li>
+      <li>Подтвердить протоколы Московского полумарафона (13.04.2025) и ЗаБег.РФ (25.05.2025): у меня время по часам и по сообщению системы забега, официальных протоколов в базе нет.</li>
+      <li>Углич 28.06.2026 в карусель не вошёл: результата нет ни в протоколах, ни в TrainingPeaks. По переписке пейсер вёл на 1:44. Если найдёшь протокол, добавлю точку на график.</li>
+      <li>Прочитать раздел про пульс покоя в case-data.md: цифру 67 → 47 я из кейса убрал, объяснение там.</li>
+    </ul>
+  </div>
+</div>
