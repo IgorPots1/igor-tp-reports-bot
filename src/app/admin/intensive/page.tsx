@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { getSingleSearchParam } from "@/app/admin/lib";
-import { SEATS_TOTAL } from "@/lib/flow";
+import { FLOW, SEATS_TOTAL } from "@/lib/flow";
 import {
   APPLICATION_STATUSES,
   getSeatsLeft,
@@ -73,7 +73,7 @@ export default async function IntensiveApplicationsPage({
 
       <div className="admin-summary-grid admin-summary-grid-compact">
         <div className="admin-summary-card">
-          <span className="admin-summary-label">Занято</span>
+          <span className="admin-summary-label">Занято в {FLOW.number}-м потоке</span>
           <span className="admin-summary-value">
             {seatsTaken} из {SEATS_TOTAL}
           </span>
@@ -83,7 +83,7 @@ export default async function IntensiveApplicationsPage({
           <span className="admin-summary-value">{seatsLeft}</span>
         </div>
         <div className="admin-summary-card">
-          <span className="admin-summary-label">В листе ожидания</span>
+          <span className="admin-summary-label">В листе ожидания (все потоки)</span>
           <span className="admin-summary-value">{waitlistCount}</span>
         </div>
         <div className="admin-summary-card">

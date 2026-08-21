@@ -4,8 +4,8 @@
 // (getSeatsLeft в src/features/intensive/repository.ts). Раньше seatsLeft правили
 // руками, и оно расходилось с реальностью между правками.
 export const FLOW = {
-  number: 28, // номер потока: «28-й», «в 28-м потоке»
-  startDate: "17 августа",
+  number: 29, // номер потока: «29-й», «в 29-м потоке»
+  startDate: "31 августа",
   price: "999 ₽",
   priceEur: "10 €",
 };
@@ -14,7 +14,7 @@ export const FLOW = {
 // new и confirmed; cancelled место возвращает.
 export const SEATS_TOTAL = 10;
 
-// «27 потоков интенсива уже прошло»
+// «28 потоков интенсива уже прошло»
 export const pastFlows = FLOW.number - 1;
 
 // «10 мест», «3 места», «1 место»
