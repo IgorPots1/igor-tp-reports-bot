@@ -4,7 +4,7 @@
  * Боевой прогон — по ученику, доступ берётся из базы, привезённое ложится в базу:
  *   node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
  *     --env-file=.env.local scripts/intervals-ingest-once.ts \
- *     --student=<student_id> [--all | --from=YYYY-MM-DD --to=YYYY-MM-DD] [--verify=<activity_id>]
+ *     --student=<student_id> [--from=YYYY-MM-DD --to=YYYY-MM-DD] [--verify=<activity_id>]
  *
  * Источник без владельца (аккаунт тренера, тестовое подключение) адресуется
  * не учеником, а аккаунтом:
@@ -13,8 +13,8 @@
  * Холостой прогон — по аккаунту, БЕЗ ученика и БЕЗ записи в базу:
  *   node ... scripts/intervals-ingest-once.ts --dry-run --athlete=i38500 --all
  *
- * --all              вся история (с 2010 года)
- * --from / --to      период, границы включительно; --to по умолчанию сегодня
+ * --all              вся история (с 2010 года) — ЭТО ЖЕ И ПОВЕДЕНИЕ ПО УМОЛЧАНИЮ
+ * --from / --to      сузить до периода, границы включительно; --to по умолчанию сегодня
  * --verify=<id>      после боевого прогона показать длины рядов этой активности
  * --dry-run          пройти весь путь и посчитать всё, но не записать ни строки
  * --key-env=ИМЯ      откуда брать ключ в холостом прогоне (INTERVALS_PILOT_API_KEY)
@@ -94,10 +94,16 @@ async function main(): Promise<void> {
   for (const [label, value] of [["--from", from], ["--to", to]] as const) {
     if (value && !DATE_RE.test(value)) fail(`${label} должен быть в виде YYYY-MM-DD`);
   }
-  if (!all && !from) fail("Укажите период: --all или --from=YYYY-MM-DD");
+  // Период по умолчанию — ВСЯ история. Полная история на онбординге стоит
+  // своих мегабайт: пятилетний архив тяжёлого пользователя занял 67,5 МБ сырого
+  // JSON, и это верхняя граница, а не типичный случай. Окно (--from/--to)
+  // остаётся опцией — на случай, если кто-то придёт с десятью годами.
 
   const startedAt = Date.now();
-  const period = { from: all ? HISTORY_START : (from ?? undefined), to: to ?? undefined };
+  const period = {
+    from: all || !from ? HISTORY_START : from,
+    to: to ?? undefined,
+  };
 
   if (dryRun) {
     const athleteId = arg("athlete");
