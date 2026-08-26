@@ -5,7 +5,7 @@ import Image from "next/image";
 import LeadForm from "./LeadForm";
 import Carousel from "./Carousel";
 import { CLUB } from "@/lib/club";
-import "./landing.css";
+import "./club.css";
 
 const onest = Onest({
   subsets: ["latin", "cyrillic"],
@@ -19,7 +19,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = publicPageMetadata({
-  path: "/landing",
+  path: "/club",
   title: "Беговой клуб Игоря Поцелуева — система сопровождения бегунов",
   description:
     "Индивидуальный план тренировок, разбор техники, тренер на связи каждый день. От первых 5 км до марафона — системный подход к бегу.",

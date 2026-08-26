@@ -4,10 +4,10 @@ import { Onest, JetBrains_Mono } from "next/font/google";
 import Image from "next/image";
 import fs from "fs";
 import path from "path";
-import Carousel from "../landing/Carousel";
+import Carousel from "../club/Carousel";
 import { FLOW, SEATS_TOTAL, pastFlows, seatsWord } from "@/lib/flow";
 import { getSeatsLeft } from "@/features/intensive/repository";
-import "./intensive.css";
+import "./camp.css";
 
 // Число мест живое — считается по заявкам на каждый показ страницы.
 // Без этого Next отдавал бы статику, и счётчик замерз бы на времени сборки.
@@ -25,7 +25,7 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = publicPageMetadata({
-  path: "/intensive",
+  path: "/camp",
   title:
     "Беговой интенсив Игоря Поцелуева — 10 дней, которые изменят твои тренировки",
   description:
@@ -822,7 +822,7 @@ export default async function IntensivePage() {
             <span className="eyebrow">Ещё у меня есть</span>
           </div>
           <div className="links">
-            <a className="linkbtn" href="/landing">
+            <a className="linkbtn" href="/club">
               <span className="ic">&#127939;</span>Беговой клуб: постоянное
               сопровождение
               <span className="ar">&rarr;</span>

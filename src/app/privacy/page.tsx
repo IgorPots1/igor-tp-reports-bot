@@ -348,7 +348,7 @@ export default function PrivacyPage() {
         </section>
 
         <p style={footerStyle}>
-          <a style={linkStyle} href="/landing">
+          <a style={linkStyle} href="/club">
             ← На сайт бегового клуба
           </a>
         </p>

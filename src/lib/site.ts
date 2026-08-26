@@ -36,25 +36,33 @@ export type PublicPage = {
  * поиске не нужны. Появилась публичная страница — добавь строку.
  *
  * Чего здесь нет и почему:
- *   /intensive/apply  — форма записи, самостоятельной ценности в выдаче нет;
+ *   /camp/apply       — форма записи, самостоятельной ценности в выдаче нет
+ *                       (у неё и своё noindex в метаданных);
+ *   /start, /landing, /intensive — старые адреса, отдают 308 на новые;
+ *                       в карте нужны цели, а не перевалочные пункты;
  *   /admin/*, /m/*    — закрытые разделы, они же закрыты в robots.
  */
 export const PUBLIC_PAGES: PublicPage[] = [
-  // Корень редиректит на /landing, но в карте он нужен: именно голый домен
-  // люди вставляют в профиль и в переписку, и поисковик должен знать, что это
-  // живой вход, а не случайный адрес. Canonical у цели всё равно /landing.
+  // Корень — страница-хаб, она же главная: отдаёт содержимое сама, без прыжка.
   { path: "/", changeFrequency: "weekly", priority: 1 },
-  { path: "/landing", changeFrequency: "weekly", priority: 1 },
-  { path: "/intensive", changeFrequency: "weekly", priority: 0.9 },
-  { path: "/start", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/club", changeFrequency: "weekly", priority: 0.9 },
+  { path: "/camp", changeFrequency: "weekly", priority: 0.9 },
   { path: "/tools/plan", changeFrequency: "monthly", priority: 0.7 },
   { path: "/tools/nutrition", changeFrequency: "monthly", priority: 0.7 },
   { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },
 ];
 
-/** Абсолютный адрес страницы сайта. */
+/**
+ * Абсолютный адрес страницы сайта.
+ *
+ * Корень отдаётся БЕЗ завершающего слэша: Next именно так нормализует canonical
+ * («https://igorp.run»), и карта сайта обязана называть главную ровно тем же
+ * адресом. Иначе canonical и sitemap показывают на строку, различающуюся одним
+ * символом, — формально это один и тот же адрес, но расхождение потом всплывает
+ * предупреждением в панели вебмастера и заставляет разбираться на ровном месте.
+ */
 export function siteUrl(path: string): string {
-  return `${SITE_URL}${path}`;
+  return path === "/" ? SITE_URL : `${SITE_URL}${path}`;
 }
 
 type PublicPageMetadataInput = {
