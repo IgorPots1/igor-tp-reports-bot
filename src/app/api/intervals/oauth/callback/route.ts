@@ -86,7 +86,7 @@ function renderPage({ status, tone, eyebrow, title, body, facts = [] }: PageOpti
   <h1>${escapeHtml(title)}</h1>
   <p>${body}</p>
   ${factsHtml}
-  <a class="back" href="/landing">← На сайт бегового клуба</a>
+  <a class="back" href="/club">← На сайт бегового клуба</a>
 </main>
 </body>
 </html>`;

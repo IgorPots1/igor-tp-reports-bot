@@ -62,8 +62,10 @@ export async function updateIntensiveApplicationStatusAction(formData: FormData)
   revalidatePath("/admin/intensive");
   revalidatePath(`/admin/intensive/${id}`);
   // Счётчик мест на публичных страницах обязан поехать сразу же.
-  revalidatePath("/intensive");
-  revalidatePath("/start");
+  // Пути — новые: раздел переехал на /camp, хаб стал корнем. Старые адреса
+  // отдают 308 и страницами больше не являются, сбрасывать по ним нечего.
+  revalidatePath("/camp");
+  revalidatePath("/");
 
   redirect(withNotice(redirectTo, "notice", "Статус обновлён"));
 }
