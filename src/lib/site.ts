@@ -36,11 +36,14 @@ export type PublicPage = {
  * поиске не нужны. Появилась публичная страница — добавь строку.
  *
  * Чего здесь нет и почему:
- *   /                 — редиректит на /admin, отдавать поисковику нечего;
  *   /intensive/apply  — форма записи, самостоятельной ценности в выдаче нет;
  *   /admin/*, /m/*    — закрытые разделы, они же закрыты в robots.
  */
 export const PUBLIC_PAGES: PublicPage[] = [
+  // Корень редиректит на /landing, но в карте он нужен: именно голый домен
+  // люди вставляют в профиль и в переписку, и поисковик должен знать, что это
+  // живой вход, а не случайный адрес. Canonical у цели всё равно /landing.
+  { path: "/", changeFrequency: "weekly", priority: 1 },
   { path: "/landing", changeFrequency: "weekly", priority: 1 },
   { path: "/intensive", changeFrequency: "weekly", priority: 0.9 },
   { path: "/start", changeFrequency: "monthly", priority: 0.8 },
