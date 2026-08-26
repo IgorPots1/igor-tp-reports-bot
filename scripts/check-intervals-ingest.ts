@@ -11,6 +11,7 @@
  *   npx tsx scripts/check-intervals-ingest.ts
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { buildAuthorizationHeader, redactSecrets } from "@/features/intervals/auth";
 import { assessDataQuality } from "@/features/intervals/data-quality";
@@ -112,5 +113,28 @@ assert.equal(standing.dataLevel, "none", "ряд скорости из одни�
 
 const moving = assessDataQuality(streams(null, [0, 0, 2.5]));
 assert.equal(moving.dataLevel, "pace_only", "хоть одна точка движения — темп есть");
+
+// ── Ключ upsert источника ────────────────────────────────────────────────────
+//
+// Ловушка, которую иначе не поймать до боевого прогона: у источников без
+// владельца student_id равен NULL, а Postgres считает NULL-ы РАЗЛИЧНЫМИ, то
+// есть уникальный индекс (student_id, provider) их не склеит. Upsert с таким
+// конфликтом заводил бы новую строку при каждом запуске вместо обновления —
+// молча, без единой ошибки. Единственный всегда осмысленный ключ —
+// (provider, external_athlete_id).
+const repositorySource = readFileSync(
+  new URL("../src/features/intervals/repository.ts", import.meta.url),
+  "utf8"
+);
+assert.match(
+  repositorySource,
+  /onConflict:\s*"provider,external_athlete_id"/,
+  "upsert источника обязан конфликтовать по (provider, external_athlete_id): по student_id NULL-ы не склеиваются"
+);
+assert.doesNotMatch(
+  repositorySource,
+  /onConflict:\s*"student_id,provider"/,
+  "конфликт по (student_id, provider) заводит дубли у источников без владельца"
+);
 
 console.log("check:intervals-ingest — все проверки пройдены");

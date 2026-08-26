@@ -9,8 +9,13 @@
 import { fetchActivities, fetchActivity, fetchActivityStreams, IntervalsApiError } from "./api-client";
 import { redactSecrets, type DataSourceCredentials } from "./auth";
 import { assessDataQuality } from "./data-quality";
-import { getSourceWithSecret, markSourceSynced, saveActivity } from "./repository";
-import type { IngestSummary } from "./types";
+import {
+  getSourceByAthlete,
+  getSourceWithSecret,
+  markSourceSynced,
+  saveActivity,
+} from "./repository";
+import type { IngestSummary, StudentDataSource } from "./types";
 
 /**
  * С какой даты начинается «вся история». Intervals появился в 2018-м, но ученик
@@ -42,7 +47,7 @@ function today(): string {
  * и объём рядов — и ничего не записать. На пилоте это единственный способ
  * узнать, сколько места займут ряды, не скачав их сначала.
  */
-type IngestDestination = { sourceId: string; studentUuid: string } | null;
+type IngestDestination = { sourceId: string; studentUuid: string | null } | null;
 
 type RunOptions = {
   credentials: DataSourceCredentials;
@@ -58,6 +63,7 @@ async function run(options: RunOptions): Promise<IngestSummary> {
 
   const summary: IngestSummary = {
     studentId: destination?.studentUuid ?? null,
+    sourceId: destination?.sourceId ?? null,
     externalAthleteId: athleteId,
     from,
     to,
@@ -155,14 +161,41 @@ export async function ingestStudentActivities(options: IngestOptions): Promise<I
       "У ученика нет источника Intervals. Заведите его: scripts/intervals-link-source.ts"
     );
   }
+  return ingestFromSource(source, options);
+}
+
+/**
+ * Боевой приём по аккаунту провайдера, а не по ученику.
+ *
+ * Нужен для источников БЕЗ владельца (kind self/test): у них нет student_id,
+ * и «найти источник ученика» для них не работает по определению. Ключ поиска —
+ * athlete_id, он есть у любого источника и уникален у провайдера.
+ */
+export async function ingestAthleteActivities(
+  athleteId: string,
+  options: Omit<IngestOptions, "studentUuid"> = {}
+): Promise<IngestSummary> {
+  const source = await getSourceByAthlete(athleteId);
+  if (!source) {
+    throw new Error(
+      `Источник для athlete ${athleteId} не заведён. Заведите: scripts/intervals-link-source.ts`
+    );
+  }
+  return ingestFromSource(source, options);
+}
+
+async function ingestFromSource(
+  source: StudentDataSource,
+  options: Omit<IngestOptions, "studentUuid">
+): Promise<IngestSummary> {
   if (!source.isActive) {
-    throw new Error("Источник Intervals у ученика отключён (is_active = false)");
+    throw new Error("Источник Intervals отключён (is_active = false)");
   }
 
   return run({
     credentials: source,
     athleteId: source.externalAthleteId,
-    destination: { sourceId: source.id, studentUuid: options.studentUuid },
+    destination: { sourceId: source.id, studentUuid: source.studentId },
     from: options.from ?? HISTORY_START,
     to: options.to ?? today(),
     onProgress: options.onProgress ?? (() => {}),

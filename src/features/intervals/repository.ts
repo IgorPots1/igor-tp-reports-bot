@@ -5,13 +5,15 @@ import { createSupabaseServerClient, describeSupabaseError } from "@/features/su
 import { assessDataQuality } from "./data-quality";
 import type {
   ActivityStreams,
+  DataSourceKind,
   IntervalsActivity,
   StudentDataSource,
 } from "./types";
 
 type SourceRow = {
   id: string;
-  student_id: string;
+  student_id: string | null;
+  kind: string;
   provider: string;
   external_athlete_id: string;
   auth_method: string;
@@ -24,6 +26,7 @@ function toDomainSource(row: SourceRow): StudentDataSource {
   return {
     id: row.id,
     studentId: row.student_id,
+    kind: row.kind === "self" || row.kind === "test" ? row.kind : "student",
     provider: "intervals",
     externalAthleteId: row.external_athlete_id,
     authMethod: row.auth_method === "oauth" ? "oauth" : "api_key",
@@ -37,7 +40,7 @@ function toDomainSource(row: SourceRow): StudentDataSource {
 // попадает в память только там, где он нужен для заголовка, и ни один будущий
 // «покажем источники в админке» не утащит credential случайно.
 const SOURCE_COLUMNS_WITH_SECRET =
-  "id, student_id, provider, external_athlete_id, auth_method, credential, is_active, last_synced_at";
+  "id, student_id, kind, provider, external_athlete_id, auth_method, credential, is_active, last_synced_at";
 
 /**
  * Источник ученика ВМЕСТЕ С СЕКРЕТОМ. Звать только оттуда, где сейчас же
@@ -58,6 +61,30 @@ export async function getSourceWithSecret(
 
   if (error) {
     throw new Error(`Не удалось прочитать источник ученика: ${describeSupabaseError(error)}`);
+  }
+  return data ? toDomainSource(data as SourceRow) : null;
+}
+
+/**
+ * Источник по athlete_id провайдера, ВМЕСТЕ С СЕКРЕТОМ.
+ *
+ * Для источников без владельца (kind self/test) это единственный способ их
+ * найти: student_id у них NULL, и поиск «по ученику» для них не существует.
+ */
+export async function getSourceByAthlete(
+  externalAthleteId: string,
+  provider: "intervals" = "intervals"
+): Promise<StudentDataSource | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("student_data_sources")
+    .select(SOURCE_COLUMNS_WITH_SECRET)
+    .eq("provider", provider)
+    .eq("external_athlete_id", externalAthleteId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Не удалось прочитать источник по athlete: ${describeSupabaseError(error)}`);
   }
   return data ? toDomainSource(data as SourceRow) : null;
 }
@@ -86,7 +113,9 @@ export async function findStudentByKey(
  * лог, ни в возвращаемое значение — наружу уходит только id строки.
  */
 export async function upsertSource(input: {
-  studentUuid: string;
+  /** null допустим только для kind self/test — это стережёт констрейнт в базе. */
+  studentUuid: string | null;
+  kind: DataSourceKind;
   externalAthleteId: string;
   authMethod: "api_key" | "oauth";
   credential: string;
@@ -98,6 +127,7 @@ export async function upsertSource(input: {
     .upsert(
       {
         student_id: input.studentUuid,
+        kind: input.kind,
         provider: "intervals",
         external_athlete_id: input.externalAthleteId,
         auth_method: input.authMethod,
@@ -105,7 +135,12 @@ export async function upsertSource(input: {
         credential_expires_at: input.credentialExpiresAt ?? null,
         is_active: true,
       },
-      { onConflict: "student_id,provider" }
+      // Конфликт по (provider, external_athlete_id), а НЕ по (student_id, provider):
+      // у источников без владельца student_id равен NULL, а Postgres считает
+      // NULL-ы различными — уникальный индекс с ним пропустил бы второй такой
+      // же источник, и повторный запуск завёл бы дубль вместо обновления.
+      // athlete_id есть всегда и всегда осмыслен.
+      { onConflict: "provider,external_athlete_id" }
     )
     .select("id")
     .single();
@@ -146,7 +181,8 @@ function textOrNull(value: unknown): string | null {
  */
 export async function saveActivity(input: {
   sourceId: string;
-  studentUuid: string;
+  /** null — активность из источника без владельца. */
+  studentUuid: string | null;
   activity: IntervalsActivity;
   streams: ActivityStreams | null;
 }): Promise<{ activityId: string; streamsSaved: boolean }> {
@@ -227,8 +263,11 @@ export async function saveActivity(input: {
   return { activityId: activity.id, streamsSaved: true };
 }
 
-/** Сводка по ученику — для отчёта скрипта и проверки глазами. */
-export async function summariseStudent(studentUuid: string): Promise<{
+/**
+ * Сводка по ИСТОЧНИКУ, а не по ученику: у источников без владельца ученика нет,
+ * а сводка нужна одинаково. source_id есть у любой привезённой активности.
+ */
+export async function summariseSource(sourceId: string): Promise<{
   total: number;
   withHeartrate: number;
   paceOnly: number;
@@ -247,7 +286,7 @@ export async function summariseStudent(studentUuid: string): Promise<{
     const { count, error } = await supabase
       .from("intervals_activities")
       .select("id", { head: true, count: "exact" })
-      .eq("student_id", studentUuid)
+      .eq("source_id", sourceId)
       .eq("data_level", level);
     if (error) {
       throw new Error(`Не удалось посчитать сводку: ${describeSupabaseError(error)}`);

@@ -2,10 +2,15 @@
 
 import type { IntervalsAuthMethod } from "./auth";
 
+/** Вид источника: боевой ученик, личный аккаунт тренера, тестовое подключение. */
+export type DataSourceKind = "student" | "self" | "test";
+
 /** Строка student_data_sources, как её читает серверный код. */
 export type StudentDataSource = {
   id: string;
-  studentId: string;
+  /** NULL у self/test: у аккаунта тренера карточки ученика нет и не должно быть. */
+  studentId: string | null;
+  kind: DataSourceKind;
   provider: "intervals";
   externalAthleteId: string;
   authMethod: IntervalsAuthMethod;
@@ -59,8 +64,10 @@ export type ActivityDataQuality = {
 
 /** Итог одного прогона приёма — то, что печатает скрипт и видит отчёт. */
 export type IngestSummary = {
-  /** null в холостом прогоне: он идёт по аккаунту, а не по ученику. */
+  /** null в холостом прогоне и у источников без владельца. */
   studentId: string | null;
+  /** null только в холостом прогоне — писать было некуда. */
+  sourceId: string | null;
   externalAthleteId: string;
   from: string | null;
   to: string | null;

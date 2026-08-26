@@ -6,6 +6,10 @@
  *     --env-file=.env.local scripts/intervals-ingest-once.ts \
  *     --student=<student_id> [--all | --from=YYYY-MM-DD --to=YYYY-MM-DD] [--verify=<activity_id>]
  *
+ * Источник без владельца (аккаунт тренера, тестовое подключение) адресуется
+ * не учеником, а аккаунтом:
+ *   node ... scripts/intervals-ingest-once.ts --athlete=i38500 --all
+ *
  * Холостой прогон — по аккаунту, БЕЗ ученика и БЕЗ записи в базу:
  *   node ... scripts/intervals-ingest-once.ts --dry-run --athlete=i38500 --all
  *
@@ -22,8 +26,13 @@
  */
 import process from "node:process";
 
-import { dryRunActivities, HISTORY_START, ingestStudentActivities } from "@/features/intervals/ingest";
-import { findStudentByKey, getStreamLengths, summariseStudent } from "@/features/intervals/repository";
+import {
+  dryRunActivities,
+  HISTORY_START,
+  ingestAthleteActivities,
+  ingestStudentActivities,
+} from "@/features/intervals/ingest";
+import { findStudentByKey, getStreamLengths, summariseSource } from "@/features/intervals/repository";
 import type { IngestSummary } from "@/features/intervals/types";
 
 function arg(name: string): string | null {
@@ -111,25 +120,43 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Боевой прогон адресуется либо учеником, либо аккаунтом. Второе — не
+  // «удобство»: у источников без владельца (kind self/test) ученика нет, и
+  // адресовать их можно ТОЛЬКО по athlete_id.
   const studentKey = arg("student");
-  if (!studentKey) fail("Нужен --student=<student_id> (или --dry-run --athlete=<i38500>)");
+  const athleteKey = arg("athlete");
+  if (!studentKey && !athleteKey) {
+    fail("Нужен --student=<student_id> или --athlete=<i38500>");
+  }
+  if (studentKey && athleteKey) {
+    fail("Укажите что-то одно: --student или --athlete");
+  }
 
-  const student = await findStudentByKey(studentKey);
-  if (!student) fail(`Ученик со student_id=${studentKey} не найден`);
-
-  console.log(`Ученик: ${student.studentName} (${student.studentId})`);
-  const summary = await ingestStudentActivities({
-    studentUuid: student.id,
-    ...period,
-    onProgress: (message) => console.log(message),
-  });
+  let summary;
+  if (studentKey) {
+    const student = await findStudentByKey(studentKey);
+    if (!student) fail(`Ученик со student_id=${studentKey} не найден`);
+    console.log(`Ученик: ${student.studentName} (${student.studentId})`);
+    summary = await ingestStudentActivities({
+      studentUuid: student.id,
+      ...period,
+      onProgress: (message) => console.log(message),
+    });
+  } else {
+    console.log(`Аккаунт: ${athleteKey}`);
+    summary = await ingestAthleteActivities(athleteKey!, {
+      ...period,
+      onProgress: (message) => console.log(message),
+    });
+  }
   printSummary(summary, Math.round((Date.now() - startedAt) / 1000));
 
   // Сводка из БАЗЫ, а не из счётчиков прогона: она показывает, что реально
-  // лежит у ученика после всех прогонов, включая прошлые.
-  const stored = await summariseStudent(student.id);
+  // лежит по источнику после ВСЕХ прогонов, включая прошлые. По источнику, а не
+  // по ученику: у self/test ученика нет, а сводка нужна одинаково.
+  const stored = await summariseSource(summary.sourceId!);
   console.log("");
-  console.log("── В базе по ученику ────────────────────────");
+  console.log("── В базе по источнику ──────────────────────");
   console.log(`всего:        ${stored.total}`);
   console.log(`с пульсом:    ${stored.withHeartrate}`);
   console.log(`только темп:  ${stored.paceOnly}`);
