@@ -252,6 +252,7 @@
     "check:nutrition-comment-decision-matrix": "npx tsx scripts/check-nutrition-comment-decision-matrix.ts",
     "check:nutrition-canonical-daily-analysis": "npx tsx scripts/check-nutrition-canonical-daily-analysis.ts",
     "check:nutrition-next-week-plan-formulas": "npx tsx scripts/check-nutrition-next-week-plan-formulas.ts",
+    "check:intervals-ingest": "npx tsx scripts/check-intervals-ingest.ts",
     "check:nutrition-methodology-wiring": "npx tsx scripts/check-nutrition-methodology-wiring.ts",
     "check:nutrition-weight-resolution": "npx tsx scripts/check-nutrition-weight-resolution.ts",
     "check:nutrition-coach-context": "npx tsx scripts/check-nutrition-coach-context.ts",
