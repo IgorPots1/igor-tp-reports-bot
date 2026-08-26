@@ -99,6 +99,16 @@ const half = assessDataQuality(streams([120, 130, null, null], [3, 3, 3, 3]));
 assert.equal(half.dataLevel, "heartrate", "50% покрытия — граница включительная");
 assert.equal(half.hrCoveragePct, 50);
 
+// Ноль в ряду пульса — это провал записи, а не показание. Найдено на живых
+// данных: Intervals затыкает дырки нулями, null внутри рядов не встречается.
+const zeroFilled = assessDataQuality(streams([120, 0, 0, 0], [3, 3, 3, 3]));
+assert.equal(zeroFilled.hrCoveragePct, 25, "нули в ряду пульса не считаются живыми точками");
+assert.equal(zeroFilled.dataLevel, "pace_only", "ряд, забитый нулями, не даёт права рассуждать об интенсивности");
+
+const allZeroHr = assessDataQuality(streams([0, 0, 0, 0], [3, 3, 3, 3]));
+assert.equal(allZeroHr.hrCoveragePct, 0, "ряд из одних нулей — нулевое покрытие");
+assert.equal(allZeroHr.hasHeartrate, false);
+
 const paceOnly = assessDataQuality(streams(null, [3, 3, 3]));
 assert.equal(paceOnly.dataLevel, "pace_only", "без ряда пульса — только темп");
 assert.equal(paceOnly.hrCoveragePct, null);

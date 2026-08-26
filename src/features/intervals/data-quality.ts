@@ -21,11 +21,27 @@ import type { ActivityDataQuality, ActivityStreams } from "./types";
  */
 const MIN_HR_COVERAGE_PCT = 50;
 
-function countLive(series: (number | null)[] | null | undefined): number {
+/**
+ * Считает ЖИВЫЕ точки пульса.
+ *
+ * Ноль — это НЕ показание. Проверено на живых данных (i38500, 2 ряда из 200
+ * проверенных содержали 2223 нулевые точки, а null внутри рядов не встретился
+ * ни разу): Intervals.icu затыкает провалы пульса нулями, а не пропусками. Пока
+ * ноль считался живым значением, такая тренировка показывала покрытие 100% —
+ * то есть ровно та ложь, ради предотвращения которой уровень качества и
+ * считается по рядам, а не по average_heartrate.
+ *
+ * Пульс 0 уд/мин физиологически невозможен, поэтому граница не назначенная, а
+ *однозначная: ноль отбрасывается всегда. Более широкий порог («меньше 30 —
+ * тоже провал») сознательно НЕ вводится: без данных о том, как выглядят такие
+ * ряды, он был бы догадкой, а нижние значения бывают настоящими у выносливых
+ * людей на разминке.
+ */
+function countLiveHeartrate(series: (number | null)[] | null | undefined): number {
   if (!series) return 0;
   let live = 0;
   for (const value of series) {
-    if (value !== null && Number.isFinite(value)) live += 1;
+    if (value !== null && Number.isFinite(value) && value > 0) live += 1;
   }
   return live;
 }
@@ -45,7 +61,7 @@ export function assessDataQuality(streams: ActivityStreams | null): ActivityData
 
   const pointCount = streams.time.length;
 
-  const hrLive = countLive(streams.heartrate);
+  const hrLive = countLiveHeartrate(streams.heartrate);
   // null — ряда не было; 0 — ряд пришёл, но пустой. Разница важна при разборе
   // жалоб «почему у меня нет пульса»: в первом случае его не записали, во
   // втором записали пустым.
