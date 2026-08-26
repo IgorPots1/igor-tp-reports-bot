@@ -175,7 +175,7 @@ export TELEGRAM_BOT_TOKEN="<your_bot_token>"
 export TELEGRAM_WEBHOOK_SECRET="<your_webhook_secret>"
 
 curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-  -d "url=https://igor-tp-reports-bot.vercel.app/api/telegram/webhook" \
+  -d "url=https://igorp.run/api/telegram/webhook" \
   -d "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
   --data-urlencode 'allowed_updates=["message","callback_query","business_connection","business_message","edited_business_message","deleted_business_messages"]'
 ```

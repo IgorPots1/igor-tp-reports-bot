@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { publicPageMetadata } from "@/lib/site";
 import { Manrope, Oswald } from "next/font/google";
 
 import styles from "./plan.module.css";
@@ -18,11 +19,12 @@ const manrope = Manrope({
   display: "swap",
 });
 
-export const metadata: Metadata = {
+export const metadata: Metadata = publicPageMetadata({
+  path: "/tools/plan",
   title: "Три типа тренировок, шаблон недели и калькулятор темпа | igorp.run",
   description:
     "Готовый шаблон беговой недели на 3–4 тренировки и расчёт темпов под твой недавний результат на 5 или 10 км.",
-};
+});
 
 export default function PlanToolPage() {
   return (

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { publicPageMetadata } from "@/lib/site";
 import type { CSSProperties, ReactNode } from "react";
 import { Onest, JetBrains_Mono } from "next/font/google";
 
@@ -21,11 +22,12 @@ const jetbrains = JetBrains_Mono({
   display: "swap",
 });
 
-export const metadata: Metadata = {
+export const metadata: Metadata = publicPageMetadata({
+  path: "/privacy",
   title: "Политика конфиденциальности — Игорь Поцелуев · Беговой клуб",
   description:
     "Какие данные получает igorp.run, зачем они нужны, где хранятся и как их удалить.",
-};
+});
 
 // Стили заинлайнены намеренно: страницу открывают внешние проверяющие
 // (Intervals.icu), и она обязана выглядеть одинаково независимо от того, что
