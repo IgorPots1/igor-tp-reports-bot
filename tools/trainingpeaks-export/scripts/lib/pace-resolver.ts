@@ -18,7 +18,13 @@ export type Phase = "maintenance"; // v1: только поддерживающ�
 export type AnchorSource =
   | "applied_threshold_coach" | "applied_threshold_bulk_only"
   | "easy_description" | "tp_zone2" | "cohort_ratio" | "cs_calibrated"
-  | "quality_description";
+  | "quality_description"
+  // Темп лёгкого, ИЗМЕРЕННЫЙ по фактическим пробежкам из Intervals.icu (медиана
+  // медленной половины окна). Отдельная метка, а не одна из существующих:
+  // easy_description означает «из описаний тренера», tp_zone2 — «из зоны TP», и
+  // подписать измерение чужим источником значит соврать в происхождении, за
+  // которым в этом проекте следят отдельно.
+  | "intervals_easy_measured";
 
 export type Confidence = "high" | "medium" | "medium_low" | "low";
 export type Tier = "T1" | "T2" | "T3";
@@ -50,7 +56,7 @@ const STEADY_PACE_MULT = { fast: 1.02, slow: 1.08 } as const;
 export type EasyAnchor = {
   fastSec: number;            // быстрый край — ЖЁСТКИЙ предел (§2.6)
   slowSec: number;            // медленный край — мягкий, только предупреждение
-  source: Extract<AnchorSource, "easy_description" | "tp_zone2" | "cohort_ratio">;
+  source: Extract<AnchorSource, "easy_description" | "tp_zone2" | "cohort_ratio" | "intervals_easy_measured">;
   confidence: Confidence;
   effectiveN?: number;        // только для easy_description — градация доверия внутри источника
 };
