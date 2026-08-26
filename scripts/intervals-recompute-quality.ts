@@ -33,6 +33,17 @@ type StreamRow = {
   velocity_smooth: (number | null)[] | null;
 };
 
+/** Перцентиль по возрастающе отсортированному массиву, линейной интерполяцией. */
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return Number.NaN;
+  if (sorted.length === 1) return sorted[0];
+  const position = ((sorted.length - 1) * p) / 100;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+}
+
 type ActivityRow = {
   activity_id: string;
   data_level: string;
@@ -70,6 +81,14 @@ async function main(): Promise<void> {
   console.log(`рядов в базе: ${streams.length}`);
 
   const changes: { activityId: string; before: string; after: string }[] = [];
+  // Переходы «было → стало». Счётчик изменений сам по себе не отвечает на
+  // главный вопрос — что именно уехало и куда.
+  const transitions = new Map<string, number>();
+  // Покрытие пульса у тех, кто ОСТАЛСЯ heartrate. Медиана здесь важнее
+  // среднего и важнее счётчика: если у половины «пульсовых» тренировок
+  // покрытие около порога, значит порог слишком мягкий и генератор будет
+  // рассуждать об интенсивности на половинных данных.
+  const coverageOfHeartrate: number[] = [];
 
   for (const row of streams) {
     const quality = assessDataQuality({
@@ -79,6 +98,14 @@ async function main(): Promise<void> {
     });
     const before = stored.get(row.activity_id);
     if (!before) continue;
+
+    if (quality.dataLevel === "heartrate" && quality.hrCoveragePct !== null) {
+      coverageOfHeartrate.push(quality.hrCoveragePct);
+    }
+    if (before.data_level !== quality.dataLevel) {
+      const key = `${before.data_level} → ${quality.dataLevel}`;
+      transitions.set(key, (transitions.get(key) ?? 0) + 1);
+    }
 
     const sameLevel = before.data_level === quality.dataLevel;
     const sameHr = before.has_heartrate === quality.hasHeartrate;
@@ -118,6 +145,32 @@ async function main(): Promise<void> {
     console.log(`  ${change.activityId}: ${change.before} → ${change.after}`);
   }
   if (changes.length > 40) console.log(`  …и ещё ${changes.length - 40}`);
+
+  console.log("");
+  console.log("── Переходы уровня ──────────────────────────");
+  if (transitions.size === 0) {
+    console.log("  ни одна тренировка не сменила уровень");
+  } else {
+    for (const [key, count] of [...transitions].sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${key.padEnd(26)} ${count}`);
+    }
+  }
+
+  console.log("");
+  console.log("── Покрытие пульса у оставшихся heartrate ───");
+  if (coverageOfHeartrate.length === 0) {
+    console.log("  таких тренировок нет");
+  } else {
+    const sorted = [...coverageOfHeartrate].sort((a, b) => a - b);
+    console.log(`  тренировок:  ${sorted.length}`);
+    console.log(`  минимум:     ${percentile(sorted, 0).toFixed(1)}%`);
+    console.log(`  10-й проц.:  ${percentile(sorted, 10).toFixed(1)}%`);
+    console.log(`  25-й проц.:  ${percentile(sorted, 25).toFixed(1)}%`);
+    console.log(`  МЕДИАНА:     ${percentile(sorted, 50).toFixed(1)}%`);
+    console.log(`  75-й проц.:  ${percentile(sorted, 75).toFixed(1)}%`);
+    const nearThreshold = sorted.filter((value) => value < 60).length;
+    console.log(`  ниже 60%:    ${nearThreshold} — это те, кого держит только мягкость порога`);
+  }
 
   console.log("");
   console.log(COMMIT ? "Изменения записаны." : "Ничего не записано (запуск без --commit).");
