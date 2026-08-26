@@ -59,10 +59,13 @@ export type ActivityDataQuality = {
 
 /** Итог одного прогона приёма — то, что печатает скрипт и видит отчёт. */
 export type IngestSummary = {
-  studentId: string;
+  /** null в холостом прогоне: он идёт по аккаунту, а не по ученику. */
+  studentId: string | null;
   externalAthleteId: string;
   from: string | null;
   to: string | null;
+  /** true — прошли весь путь, но в базу не записали ничего. */
+  dryRun: boolean;
   activitiesSeen: number;
   activitiesSaved: number;
   streamsSaved: number;
@@ -70,5 +73,7 @@ export type IngestSummary = {
   withHeartrate: number;
   paceOnly: number;
   noData: number;
+  /** Сколько байт JSON заняли бы ряды. Считается только в холостом прогоне. */
+  streamBytes: number;
   failures: { activityId: string; reason: string }[];
 };

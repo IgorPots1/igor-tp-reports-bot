@@ -7,7 +7,7 @@
  */
 
 import { fetchActivities, fetchActivity, fetchActivityStreams, IntervalsApiError } from "./api-client";
-import { redactSecrets } from "./auth";
+import { redactSecrets, type DataSourceCredentials } from "./auth";
 import { assessDataQuality } from "./data-quality";
 import { getSourceWithSecret, markSourceSynced, saveActivity } from "./repository";
 import type { IngestSummary } from "./types";
@@ -30,40 +30,38 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export type IngestOptions = {
-  studentUuid: string;
-  /** «YYYY-MM-DD». По умолчанию — вся история. */
-  from?: string;
-  /** «YYYY-MM-DD». По умолчанию — сегодня. */
-  to?: string;
-  /** Куда рассказывать о ходе дела. По умолчанию молча. */
-  onProgress?: (message: string) => void;
-};
-
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export async function ingestStudentActivities(options: IngestOptions): Promise<IngestSummary> {
-  const from = options.from ?? HISTORY_START;
-  const to = options.to ?? today();
-  const say = options.onProgress ?? (() => {});
+/**
+ * Куда складывать привезённое. null означает холостой прогон.
+ *
+ * Это не «режим отладки», а способ посмотреть на живые данные ДО того, как они
+ * поедут в боевые таблицы: пройти весь путь целиком, посчитать уровень качества
+ * и объём рядов — и ничего не записать. На пилоте это единственный способ
+ * узнать, сколько места займут ряды, не скачав их сначала.
+ */
+type IngestDestination = { sourceId: string; studentUuid: string } | null;
 
-  const source = await getSourceWithSecret(options.studentUuid);
-  if (!source) {
-    throw new Error(
-      "У ученика нет источника Intervals. Заведите его: scripts/intervals-link-source.ts"
-    );
-  }
-  if (!source.isActive) {
-    throw new Error("Источник Intervals у ученика отключён (is_active = false)");
-  }
+type RunOptions = {
+  credentials: DataSourceCredentials;
+  athleteId: string;
+  destination: IngestDestination;
+  from: string;
+  to: string;
+  onProgress: (message: string) => void;
+};
+
+async function run(options: RunOptions): Promise<IngestSummary> {
+  const { credentials, athleteId, destination, from, to, onProgress: say } = options;
 
   const summary: IngestSummary = {
-    studentId: options.studentUuid,
-    externalAthleteId: source.externalAthleteId,
+    studentId: destination?.studentUuid ?? null,
+    externalAthleteId: athleteId,
     from,
     to,
+    dryRun: destination === null,
     activitiesSeen: 0,
     activitiesSaved: 0,
     streamsSaved: 0,
@@ -71,34 +69,42 @@ export async function ingestStudentActivities(options: IngestOptions): Promise<I
     withHeartrate: 0,
     paceOnly: 0,
     noData: 0,
+    streamBytes: 0,
     failures: [],
   };
 
-  const list = await fetchActivities(source, source.externalAthleteId, from, to);
+  const list = await fetchActivities(credentials, athleteId, from, to);
   summary.activitiesSeen = list.length;
   say(`Активностей в периоде ${from}…${to}: ${list.length}`);
 
   for (const [index, listed] of list.entries()) {
     try {
       // Детали берём отдельным запросом, а не довольствуемся строкой списка:
-      // список у провайдера урезан, часть полей (в т.ч. пульсовые) в нём
-      // отсутствует. Что именно урезано — зависит от вида спорта, поэтому
-      // проще всегда брать полную карточку, чем держать список исключений.
-      const activity = await fetchActivity(source, listed.id);
-      const streams = await fetchActivityStreams(source, listed.id);
+      // список у провайдера урезан — в нём, например, нет пульсовых полей
+      // (проверено на живом ответе: 40 полей в строке списка против 183 в
+      // карточке активности).
+      const activity = await fetchActivity(credentials, listed.id);
+      const streams = await fetchActivityStreams(credentials, listed.id);
+      const quality = assessDataQuality(streams);
 
-      const { streamsSaved } = await saveActivity({
-        sourceId: source.id,
-        studentUuid: options.studentUuid,
-        activity,
-        streams,
-      });
+      if (destination) {
+        await saveActivity({
+          sourceId: destination.sourceId,
+          studentUuid: destination.studentUuid,
+          activity,
+          streams,
+        });
+      } else if (streams) {
+        // Считаем ровно то, что записали бы.
+        summary.streamBytes += Buffer.byteLength(
+          JSON.stringify([streams.time, streams.heartrate, streams.velocitySmooth])
+        );
+      }
 
       summary.activitiesSaved += 1;
-      if (streamsSaved) summary.streamsSaved += 1;
+      if (streams) summary.streamsSaved += 1;
       else summary.streamsMissing += 1;
 
-      const quality = assessDataQuality(streams);
       if (quality.dataLevel === "heartrate") summary.withHeartrate += 1;
       else if (quality.dataLevel === "pace_only") summary.paceOnly += 1;
       else summary.noData += 1;
@@ -122,11 +128,69 @@ export async function ingestStudentActivities(options: IngestOptions): Promise<I
     if (index < list.length - 1) await sleep(PAUSE_BETWEEN_ACTIVITIES_MS);
   }
 
-  // Отметку ставим, только если что-то реально доехало: иначе следующий прогон
-  // решит, что период уже забран, и дыра в данных закрепится.
-  if (summary.activitiesSaved > 0) {
-    await markSourceSynced(source.id);
+  // Отметку ставим, только если что-то реально доехало В БАЗУ: иначе следующий
+  // прогон решит, что период уже забран, и дыра в данных закрепится. Холостой
+  // прогон не отмечает ничего — он и не забирал.
+  if (destination && summary.activitiesSaved > 0) {
+    await markSourceSynced(destination.sourceId);
   }
 
   return summary;
+}
+
+export type IngestOptions = {
+  studentUuid: string;
+  /** «YYYY-MM-DD». По умолчанию — вся история. */
+  from?: string;
+  /** «YYYY-MM-DD». По умолчанию — сегодня. */
+  to?: string;
+  onProgress?: (message: string) => void;
+};
+
+/** Боевой приём: доступ берётся из базы, привезённое ложится в базу. */
+export async function ingestStudentActivities(options: IngestOptions): Promise<IngestSummary> {
+  const source = await getSourceWithSecret(options.studentUuid);
+  if (!source) {
+    throw new Error(
+      "У ученика нет источника Intervals. Заведите его: scripts/intervals-link-source.ts"
+    );
+  }
+  if (!source.isActive) {
+    throw new Error("Источник Intervals у ученика отключён (is_active = false)");
+  }
+
+  return run({
+    credentials: source,
+    athleteId: source.externalAthleteId,
+    destination: { sourceId: source.id, studentUuid: options.studentUuid },
+    from: options.from ?? HISTORY_START,
+    to: options.to ?? today(),
+    onProgress: options.onProgress ?? (() => {}),
+  });
+}
+
+export type DryRunOptions = {
+  credentials: DataSourceCredentials;
+  athleteId: string;
+  from?: string;
+  to?: string;
+  onProgress?: (message: string) => void;
+};
+
+/**
+ * Холостой прогон по аккаунту БЕЗ строки ученика и без записи.
+ *
+ * Существует ровно потому, что доступ и ученик — разные вещи: посмотреть на
+ * данные аккаунта можно и нужно раньше, чем решено, к какой карточке их
+ * привязывать. Ни одной записи в базу отсюда не уходит.
+ */
+export async function dryRunActivities(options: DryRunOptions): Promise<IngestSummary> {
+  return run({
+    credentials: options.credentials,
+    athleteId: options.athleteId,
+    destination: null,
+    from: options.from ?? HISTORY_START,
+    to: options.to ?? today(),
+    onProgress: options.onProgress ?? (() => {}),
+  });
 }
