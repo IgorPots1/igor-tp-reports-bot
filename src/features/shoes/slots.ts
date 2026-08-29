@@ -1,0 +1,83 @@
+import type { Answers, Slot } from "./types";
+
+/**
+ * Определение слотов ротации — раздел 6.1 ТЗ.
+ *
+ * Ротация из нескольких пар — сам формат выдачи: несколько пар вместо одной
+ * снижают риск травмы заметно сильнее, чем любой критерий внутри одного слота.
+ * Поэтому число слотов растёт от ответа «сколько пар готов держать», а не от
+ * желания показать побольше моделей.
+ */
+export function resolveSlots(a: Answers): Slot[] {
+  const slots: Slot[] = [
+    {
+      id: "daily",
+      title: "Ежедневные",
+      subtitle: "Основной объём: лёгкие, длительные, восстановительные",
+      categories: ["daily", "max", "stability"],
+      surface: "road",
+    },
+  ];
+
+  const trailPrimary = a.surface === "trail" || a.goal === "trail_ultra";
+  if (trailPrimary) {
+    slots.push({
+      id: "trail",
+      title: "Трейловые",
+      subtitle: "Грунт, камни, корни — там, где нужен протектор",
+      categories: ["trail"],
+      surface: "trail",
+    });
+  }
+
+  if (a.pairs >= 2 && a.speedwork) {
+    slots.push({
+      id: "tempo",
+      title: "Темповые",
+      subtitle: "Интервалы, темповые, прогрессии",
+      categories: ["tempo", "race"],
+      surface: "road",
+    });
+  }
+
+  if (a.pairs >= 3 && (a.goal === "5_10" || a.goal === "half" || a.goal === "marathon")) {
+    slots.push({
+      id: "race",
+      title: "Стартовые",
+      subtitle: "Только на старт и контрольные, ресурс маленький",
+      categories: ["race"],
+      surface: "road",
+    });
+  }
+
+  // Зимний слот добавляется СВЕРХ выбранного количества пар, а не занимает в
+  // нём место: зимняя пара живёт параллельно ротации. Выбрал две пары и бегаешь
+  // зимой — получаешь три слота, а не две пары, из которых одна съедена зимой.
+  if (a.winter !== "none") {
+    slots.push({
+      id: "winter",
+      title: "Зима и мокрая погода",
+      subtitle:
+        a.winter === "slush"
+          ? "Дождь и слякоть. Решает мембрана, но в ней жарче и хуже вентиляция"
+          : "Снег и лёд. Решает протектор и состав резины, мембрана вторична",
+      categories: ["winter"],
+      surface: null,
+    });
+  }
+
+  // Смешанная поверхность и запас на третью пару — отдельный лёгкий грунтовой
+  // слот. Не тот же, что «трейловые»: там протектор решает, здесь важнее, чтобы
+  // пара оставалась пригодной и для асфальта.
+  if (!trailPrimary && a.surface === "mixed" && a.pairs >= 3) {
+    slots.push({
+      id: "trail_light",
+      title: "Грунт и лес",
+      subtitle: "Парковые дорожки и мягкий грунт, без техничных троп",
+      categories: ["trail"],
+      surface: "trail",
+    });
+  }
+
+  return slots;
+}

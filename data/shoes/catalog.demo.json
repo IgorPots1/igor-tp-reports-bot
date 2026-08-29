@@ -1,0 +1,3121 @@
+{
+  "catalog_kind": "demo",
+  "note": "Демо-база для сборки приложения (этап 3 ТЗ). Числа НЕ сверены по источникам и не годятся для выдачи людям — заменяется настоящей базой этапа 1.",
+  "shoes": [
+    {
+      "id": "asics-novablast-5",
+      "brand": "ASICS",
+      "model": "Novablast 5",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 255,
+      "stack_heel_mm": 41,
+      "stack_fore_mm": 33,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 22,
+      "softness": 6.7,
+      "foam_type": "FF Blast Max",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 88,
+      "platform_width_fore_mm": 112,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.6,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 14500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 255,
+          "durometer_ha": 22,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 218,
+          "durometer_ha": 20,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-pegasus-41",
+      "brand": "Nike",
+      "model": "Pegasus 41",
+      "year": 2024,
+      "categories": [
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 286,
+      "stack_heel_mm": 37,
+      "stack_fore_mm": 27,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 26,
+      "softness": 5.1,
+      "foam_type": "ReactX",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 85,
+      "platform_width_fore_mm": 110,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 3.1,
+      "membrane": "none",
+      "winter_grip": 6,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 145,
+        "ru": 13900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 286,
+          "durometer_ha": 26,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 244,
+          "durometer_ha": 25,
+          "measured": true
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "hoka-clifton-10",
+      "brand": "HOKA",
+      "model": "Clifton 10",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "max"
+      ],
+      "surface": "road",
+      "weight_g": 272,
+      "stack_heel_mm": 42,
+      "stack_fore_mm": 34,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 24,
+      "softness": 5.9,
+      "foam_type": "CMEVA",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 91,
+      "platform_width_fore_mm": 113,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.2,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 155,
+        "ru": 15900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 272,
+          "durometer_ha": 24,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 231,
+          "durometer_ha": 23,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nb-1080v14",
+      "brand": "New Balance",
+      "model": "Fresh Foam X 1080v14",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "max"
+      ],
+      "surface": "road",
+      "weight_g": 269,
+      "stack_heel_mm": 46,
+      "stack_fore_mm": 40,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 19,
+      "softness": 8,
+      "foam_type": "Fresh Foam X",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 90,
+      "platform_width_fore_mm": 114,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.4,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 180,
+        "ru": 17900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 269,
+          "durometer_ha": 19,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 228,
+          "durometer_ha": 18,
+          "measured": true
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "brooks-ghost-17",
+      "brand": "Brooks",
+      "model": "Ghost 17",
+      "year": 2025,
+      "categories": [
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 278,
+      "stack_heel_mm": 37,
+      "stack_fore_mm": 27,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 27,
+      "softness": 4.7,
+      "foam_type": "DNA Loft v3",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 87,
+      "platform_width_fore_mm": 111,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 3,
+      "membrane": "none",
+      "winter_grip": 6,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 15200
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 278,
+          "durometer_ha": 27,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 238,
+          "durometer_ha": 26,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "saucony-ride-18",
+      "brand": "Saucony",
+      "model": "Ride 18",
+      "year": 2025,
+      "categories": [
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 261,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 30,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 25,
+      "softness": 5.5,
+      "foam_type": "PWRRUN+",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 86,
+      "platform_width_fore_mm": 110,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.8,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 14800
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 261,
+          "durometer_ha": 25,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 222,
+          "durometer_ha": 24,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "asics-nimbus-27",
+      "brand": "ASICS",
+      "model": "Gel-Nimbus 27",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "max"
+      ],
+      "surface": "road",
+      "weight_g": 300,
+      "stack_heel_mm": 42,
+      "stack_fore_mm": 34,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 21,
+      "softness": 7.1,
+      "foam_type": "FF Blast Plus Eco",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 90,
+      "platform_width_fore_mm": 115,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.9,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 190,
+        "ru": 18900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 300,
+          "durometer_ha": 21,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 256,
+          "durometer_ha": 20,
+          "measured": true
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "puma-velocity-nitro-4",
+      "brand": "PUMA",
+      "model": "Velocity Nitro 4",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 258,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 28,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 23,
+      "softness": 6.3,
+      "foam_type": "Nitrofoam Elite",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 84,
+      "platform_width_fore_mm": 109,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.5,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 125,
+        "ru": 10900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "low",
+        "ru": "low"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 258,
+          "durometer_ha": 23,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 215,
+          "durometer_ha": 22,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "adidas-supernova-rise-2",
+      "brand": "adidas",
+      "model": "Supernova Rise 2",
+      "year": 2025,
+      "categories": [
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 289,
+      "stack_heel_mm": 37,
+      "stack_fore_mm": 27,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 28,
+      "softness": 4.3,
+      "foam_type": "Dreamstrike+",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 86,
+      "platform_width_fore_mm": 110,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.7,
+      "membrane": "none",
+      "winter_grip": 8,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 120,
+        "ru": 10500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "low",
+        "ru": "low"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 289,
+          "durometer_ha": 28,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 246,
+          "durometer_ha": 27,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "mizuno-wave-rider-29",
+      "brand": "Mizuno",
+      "model": "Wave Rider 29",
+      "year": 2025,
+      "categories": [
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 264,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 31,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 26,
+      "softness": 5.1,
+      "foam_type": "Enerzy NXT",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 85,
+      "platform_width_fore_mm": 109,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 3,
+      "membrane": "none",
+      "winter_grip": 6,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 160,
+        "ru": 15500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 264,
+          "durometer_ha": 26,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 224,
+          "durometer_ha": 25,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-vomero-18",
+      "brand": "Nike",
+      "model": "Vomero 18",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "max"
+      ],
+      "surface": "road",
+      "weight_g": 295,
+      "stack_heel_mm": 46,
+      "stack_fore_mm": 36,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 20,
+      "softness": 7.5,
+      "foam_type": "ZoomX + ReactX",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 92,
+      "platform_width_fore_mm": 116,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.8,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 165,
+        "ru": 16900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 295,
+          "durometer_ha": 20,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 251,
+          "durometer_ha": 19,
+          "measured": true
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "saucony-triumph-23",
+      "brand": "Saucony",
+      "model": "Triumph 23",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "max"
+      ],
+      "surface": "road",
+      "weight_g": 278,
+      "stack_heel_mm": 42,
+      "stack_fore_mm": 32,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 20,
+      "softness": 7.5,
+      "foam_type": "PWRRUN PB",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 91,
+      "platform_width_fore_mm": 114,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.5,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 180,
+        "ru": 17500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 278,
+          "durometer_ha": 20,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 236,
+          "durometer_ha": 19,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "on-cloudmonster-2",
+      "brand": "On",
+      "model": "Cloudmonster 2",
+      "year": 2024,
+      "categories": [
+        "daily",
+        "max"
+      ],
+      "surface": "road",
+      "weight_g": 294,
+      "stack_heel_mm": 42,
+      "stack_fore_mm": 36,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 25,
+      "softness": 5.5,
+      "foam_type": "Helion HF",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "narrow",
+      "platform_width_heel_mm": 83,
+      "platform_width_fore_mm": 107,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.3,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 190,
+        "ru": 19500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 294,
+          "durometer_ha": 25,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 250,
+          "durometer_ha": 24,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "brooks-glycerin-22",
+      "brand": "Brooks",
+      "model": "Glycerin 22",
+      "year": 2024,
+      "categories": [
+        "daily",
+        "max"
+      ],
+      "surface": "road",
+      "weight_g": 289,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 28,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 22,
+      "softness": 6.7,
+      "foam_type": "DNA Tuned",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 89,
+      "platform_width_fore_mm": 112,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.9,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 170,
+        "ru": 16500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 289,
+          "durometer_ha": 22,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 246,
+          "durometer_ha": 21,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "adidas-evo-sl",
+      "brand": "adidas",
+      "model": "Adizero Evo SL",
+      "year": 2025,
+      "categories": [
+        "daily",
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 225,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 33,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 21,
+      "softness": 7.1,
+      "foam_type": "Lightstrike Pro",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 82,
+      "platform_width_fore_mm": 106,
+      "outsole_durability": 5,
+      "outsole_thickness_mm": 1.8,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 14900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 225,
+          "durometer_ha": 21,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 191,
+          "durometer_ha": 20,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "kiprun-kd900x-ld",
+      "brand": "Kiprun",
+      "model": "KD900X LD",
+      "year": 2024,
+      "categories": [
+        "daily",
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 245,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 30,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 24,
+      "softness": 5.9,
+      "foam_type": "VFOAM Plus",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 84,
+      "platform_width_fore_mm": 108,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.4,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 110,
+        "ru": 9900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "low",
+        "ru": "low"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 245,
+          "durometer_ha": 24,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 208,
+          "durometer_ha": 23,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "asics-magic-speed-4",
+      "brand": "ASICS",
+      "model": "Magic Speed 4",
+      "year": 2024,
+      "categories": [
+        "tempo",
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 213,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 32,
+      "drop_mm": 7,
+      "midsole_durometer_ha": 20,
+      "softness": 7.5,
+      "foam_type": "FF Blast Plus",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 80,
+      "platform_width_fore_mm": 104,
+      "outsole_durability": 5,
+      "outsole_thickness_mm": 2,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 185,
+        "ru": 18500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 213,
+          "durometer_ha": 20,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 181,
+          "durometer_ha": 19,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "saucony-endorphin-speed-4",
+      "brand": "Saucony",
+      "model": "Endorphin Speed 4",
+      "year": 2024,
+      "categories": [
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 218,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 30,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 18,
+      "softness": 8.4,
+      "foam_type": "PWRRUN PB",
+      "plate": "nylon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 81,
+      "platform_width_fore_mm": 105,
+      "outsole_durability": 5,
+      "outsole_thickness_mm": 2.1,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 190,
+        "ru": 18900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 218,
+          "durometer_ha": 18,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 185,
+          "durometer_ha": 17,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-zoom-fly-6",
+      "brand": "Nike",
+      "model": "Zoom Fly 6",
+      "year": 2024,
+      "categories": [
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 248,
+      "stack_heel_mm": 40,
+      "stack_fore_mm": 32,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 22,
+      "softness": 6.7,
+      "foam_type": "ZoomX + SR-02",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 82,
+      "platform_width_fore_mm": 106,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.4,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 180,
+        "ru": 17900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 248,
+          "durometer_ha": 22,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 211,
+          "durometer_ha": 21,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "hoka-mach-6",
+      "brand": "HOKA",
+      "model": "Mach 6",
+      "year": 2024,
+      "categories": [
+        "tempo",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 233,
+      "stack_heel_mm": 37,
+      "stack_fore_mm": 32,
+      "drop_mm": 5,
+      "midsole_durometer_ha": 23,
+      "softness": 6.3,
+      "foam_type": "Supercritical EVA",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 83,
+      "platform_width_fore_mm": 107,
+      "outsole_durability": 5,
+      "outsole_thickness_mm": 1.9,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 14500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 233,
+          "durometer_ha": 23,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 198,
+          "durometer_ha": 22,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "puma-deviate-nitro-3",
+      "brand": "PUMA",
+      "model": "Deviate Nitro 3",
+      "year": 2024,
+      "categories": [
+        "tempo",
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 243,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 31,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 19,
+      "softness": 8,
+      "foam_type": "Nitrofoam Elite",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 82,
+      "platform_width_fore_mm": 107,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.2,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 180,
+        "ru": 17500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 243,
+          "durometer_ha": 19,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 207,
+          "durometer_ha": 18,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nb-rebel-v4",
+      "brand": "New Balance",
+      "model": "FuelCell Rebel v4",
+      "year": 2024,
+      "categories": [
+        "tempo",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 218,
+      "stack_heel_mm": 36,
+      "stack_fore_mm": 30,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 17,
+      "softness": 8.8,
+      "foam_type": "FuelCell",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "wide",
+      "platform_width_heel_mm": 84,
+      "platform_width_fore_mm": 111,
+      "outsole_durability": 4,
+      "outsole_thickness_mm": 1.7,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 14900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 218,
+          "durometer_ha": 17,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 185,
+          "durometer_ha": 16,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "adidas-boston-13",
+      "brand": "adidas",
+      "model": "Adizero Boston 13",
+      "year": 2025,
+      "categories": [
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 264,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 32,
+      "drop_mm": 7,
+      "midsole_durometer_ha": 24,
+      "softness": 5.9,
+      "foam_type": "Lightstrike Pro/2.0",
+      "plate": "nylon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 83,
+      "platform_width_fore_mm": 108,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.6,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 160,
+        "ru": 15900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 264,
+          "durometer_ha": 24,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 224,
+          "durometer_ha": 23,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "lining-feidian-4-challenger",
+      "brand": "Li-Ning",
+      "model": "Feidian 4 Challenger",
+      "year": 2024,
+      "categories": [
+        "tempo",
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 212,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 32,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 20,
+      "softness": 7.5,
+      "foam_type": "Boom foam",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "narrow",
+      "platform_width_heel_mm": 79,
+      "platform_width_fore_mm": 103,
+      "outsole_durability": 5,
+      "outsole_thickness_mm": 1.9,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 130,
+        "ru": 11500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 212,
+          "durometer_ha": 20,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 180,
+          "durometer_ha": 19,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-vaporfly-4",
+      "brand": "Nike",
+      "model": "Vaporfly 4",
+      "year": 2025,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 188,
+      "stack_heel_mm": 40,
+      "stack_fore_mm": 32,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 16,
+      "softness": 9.2,
+      "foam_type": "ZoomX",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 78,
+      "platform_width_fore_mm": 102,
+      "outsole_durability": 3,
+      "outsole_thickness_mm": 1.4,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 290,
+        "ru": 29900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 188,
+          "durometer_ha": 16,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 160,
+          "durometer_ha": 15,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-alphafly-3",
+      "brand": "Nike",
+      "model": "Alphafly 3",
+      "year": 2024,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 212,
+      "stack_heel_mm": 40,
+      "stack_fore_mm": 32,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 17,
+      "softness": 8.8,
+      "foam_type": "ZoomX + Air Zoom",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 81,
+      "platform_width_fore_mm": 106,
+      "outsole_durability": 4,
+      "outsole_thickness_mm": 1.6,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 300,
+        "ru": 31500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 212,
+          "durometer_ha": 17,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 180,
+          "durometer_ha": 16,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "asics-metaspeed-sky-paris",
+      "brand": "ASICS",
+      "model": "Metaspeed Sky Paris",
+      "year": 2024,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 186,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 34,
+      "drop_mm": 5,
+      "midsole_durometer_ha": 18,
+      "softness": 8.4,
+      "foam_type": "FF Turbo Plus",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 79,
+      "platform_width_fore_mm": 103,
+      "outsole_durability": 3,
+      "outsole_thickness_mm": 1.5,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 275,
+        "ru": 28500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 186,
+          "durometer_ha": 18,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 158,
+          "durometer_ha": 17,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "adidas-adios-pro-4",
+      "brand": "adidas",
+      "model": "Adizero Adios Pro 4",
+      "year": 2025,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 191,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 33,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 17,
+      "softness": 8.8,
+      "foam_type": "Lightstrike Pro",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 78,
+      "platform_width_fore_mm": 103,
+      "outsole_durability": 3,
+      "outsole_thickness_mm": 1.4,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 280,
+        "ru": 29500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 191,
+          "durometer_ha": 17,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 162,
+          "durometer_ha": 16,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "saucony-endorphin-pro-4",
+      "brand": "Saucony",
+      "model": "Endorphin Pro 4",
+      "year": 2024,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 205,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 33,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 18,
+      "softness": 8.4,
+      "foam_type": "PWRRUN HG",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 80,
+      "platform_width_fore_mm": 104,
+      "outsole_durability": 4,
+      "outsole_thickness_mm": 1.6,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 270,
+        "ru": 27900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 205,
+          "durometer_ha": 18,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 174,
+          "durometer_ha": 17,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "hoka-cielo-x1-2",
+      "brand": "HOKA",
+      "model": "Cielo X1 2.0",
+      "year": 2025,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 232,
+      "stack_heel_mm": 42,
+      "stack_fore_mm": 35,
+      "drop_mm": 7,
+      "midsole_durometer_ha": 19,
+      "softness": 8,
+      "foam_type": "PEBA",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 84,
+      "platform_width_fore_mm": 110,
+      "outsole_durability": 4,
+      "outsole_thickness_mm": 1.7,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 280,
+        "ru": 29500
+      },
+      "available": [
+        "eu"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 232,
+          "durometer_ha": 19,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 197,
+          "durometer_ha": 18,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "xtep-160x-6-pro",
+      "brand": "Xtep",
+      "model": "160X 6.0 Pro",
+      "year": 2024,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 198,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 32,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 19,
+      "softness": 8,
+      "foam_type": "XTEP ACE",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "narrow",
+      "platform_width_heel_mm": 77,
+      "platform_width_fore_mm": 101,
+      "outsole_durability": 4,
+      "outsole_thickness_mm": 1.6,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 160,
+        "ru": 14500
+      },
+      "available": [
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 198,
+          "durometer_ha": 19,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 168,
+          "durometer_ha": 18,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "lining-feidian-6-ultra",
+      "brand": "Li-Ning",
+      "model": "Feidian 6 Ultra",
+      "year": 2025,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 184,
+      "stack_heel_mm": 39,
+      "stack_fore_mm": 33,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 17,
+      "softness": 8.8,
+      "foam_type": "Boom foam",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "narrow",
+      "platform_width_heel_mm": 78,
+      "platform_width_fore_mm": 102,
+      "outsole_durability": 3,
+      "outsole_thickness_mm": 1.4,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 200,
+        "ru": 17900
+      },
+      "available": [
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 184,
+          "durometer_ha": 17,
+          "measured": true
+        },
+        "w": {
+          "available": false,
+          "weight_g": null,
+          "durometer_ha": null,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "anta-c202-gt",
+      "brand": "ANTA",
+      "model": "C202 GT",
+      "year": 2024,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 196,
+      "stack_heel_mm": 37,
+      "stack_fore_mm": 31,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 20,
+      "softness": 7.5,
+      "foam_type": "Nitrogen A-Flashfoam",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "narrow",
+      "platform_width_heel_mm": 77,
+      "platform_width_fore_mm": 101,
+      "outsole_durability": 4,
+      "outsole_thickness_mm": 1.7,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 13500
+      },
+      "available": [
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 196,
+          "durometer_ha": 20,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 167,
+          "durometer_ha": 19,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "puma-fast-r-nitro-elite-3",
+      "brand": "PUMA",
+      "model": "Fast-R Nitro Elite 3",
+      "year": 2025,
+      "categories": [
+        "race"
+      ],
+      "surface": "road",
+      "weight_g": 202,
+      "stack_heel_mm": 40,
+      "stack_fore_mm": 32,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 17,
+      "softness": 8.8,
+      "foam_type": "Nitrofoam Elite",
+      "plate": "carbon",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 79,
+      "platform_width_fore_mm": 104,
+      "outsole_durability": 3,
+      "outsole_thickness_mm": 1.5,
+      "membrane": "none",
+      "winter_grip": 4,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 280,
+        "ru": 29900
+      },
+      "available": [
+        "eu"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 202,
+          "durometer_ha": 17,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 172,
+          "durometer_ha": 16,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "brooks-adrenaline-gts-24",
+      "brand": "Brooks",
+      "model": "Adrenaline GTS 24",
+      "year": 2024,
+      "categories": [
+        "stability",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 286,
+      "stack_heel_mm": 36,
+      "stack_fore_mm": 24,
+      "drop_mm": 12,
+      "midsole_durometer_ha": 28,
+      "softness": 4.3,
+      "foam_type": "DNA Loft v2",
+      "plate": "none",
+      "stability": 2,
+      "last_width": "wide",
+      "platform_width_heel_mm": 89,
+      "platform_width_fore_mm": 114,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 3.1,
+      "membrane": "none",
+      "winter_grip": 6,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 15200
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 286,
+          "durometer_ha": 28,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 243,
+          "durometer_ha": 27,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "asics-gt-2000-13",
+      "brand": "ASICS",
+      "model": "GT-2000 13",
+      "year": 2025,
+      "categories": [
+        "stability",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 270,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 30,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 27,
+      "softness": 4.7,
+      "foam_type": "FF Blast Plus",
+      "plate": "none",
+      "stability": 1,
+      "last_width": "std",
+      "platform_width_heel_mm": 88,
+      "platform_width_fore_mm": 112,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 3,
+      "membrane": "none",
+      "winter_grip": 6,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 120,
+        "ru": 10900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "low",
+        "ru": "low"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 270,
+          "durometer_ha": 27,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 230,
+          "durometer_ha": 26,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "saucony-guide-18",
+      "brand": "Saucony",
+      "model": "Guide 18",
+      "year": 2025,
+      "categories": [
+        "stability",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 269,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 32,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 25,
+      "softness": 5.5,
+      "foam_type": "PWRRUN",
+      "plate": "none",
+      "stability": 1,
+      "last_width": "std",
+      "platform_width_heel_mm": 89,
+      "platform_width_fore_mm": 113,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.8,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 14900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 269,
+          "durometer_ha": 25,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 229,
+          "durometer_ha": 24,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "hoka-arahi-7",
+      "brand": "HOKA",
+      "model": "Arahi 7",
+      "year": 2024,
+      "categories": [
+        "stability",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 257,
+      "stack_heel_mm": 37,
+      "stack_fore_mm": 32,
+      "drop_mm": 5,
+      "midsole_durometer_ha": 26,
+      "softness": 5.1,
+      "foam_type": "CMEVA + J-Frame",
+      "plate": "none",
+      "stability": 2,
+      "last_width": "std",
+      "platform_width_heel_mm": 90,
+      "platform_width_fore_mm": 113,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.3,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 15500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 257,
+          "durometer_ha": 26,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 218,
+          "durometer_ha": 25,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nb-860v14",
+      "brand": "New Balance",
+      "model": "860v14",
+      "year": 2024,
+      "categories": [
+        "stability",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 289,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 32,
+      "drop_mm": 6,
+      "midsole_durometer_ha": 26,
+      "softness": 5.1,
+      "foam_type": "Fresh Foam X",
+      "plate": "none",
+      "stability": 1,
+      "last_width": "wide",
+      "platform_width_heel_mm": 90,
+      "platform_width_fore_mm": 115,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.9,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 150,
+        "ru": 15200
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 289,
+          "durometer_ha": 26,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 246,
+          "durometer_ha": 25,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "mizuno-wave-inspire-21",
+      "brand": "Mizuno",
+      "model": "Wave Inspire 21",
+      "year": 2025,
+      "categories": [
+        "stability",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 280,
+      "stack_heel_mm": 38,
+      "stack_fore_mm": 30,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 27,
+      "softness": 4.7,
+      "foam_type": "Enerzy + Wave",
+      "plate": "none",
+      "stability": 2,
+      "last_width": "std",
+      "platform_width_heel_mm": 89,
+      "platform_width_fore_mm": 113,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 3,
+      "membrane": "none",
+      "winter_grip": 6,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 160,
+        "ru": 15900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 280,
+          "durometer_ha": 27,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 238,
+          "durometer_ha": 26,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "hoka-skyward-x",
+      "brand": "HOKA",
+      "model": "Skyward X",
+      "year": 2024,
+      "categories": [
+        "max",
+        "daily"
+      ],
+      "surface": "road",
+      "weight_g": 320,
+      "stack_heel_mm": 48,
+      "stack_fore_mm": 43,
+      "drop_mm": 5,
+      "midsole_durometer_ha": 21,
+      "softness": 7.1,
+      "foam_type": "PEBA + EVA",
+      "plate": "carbon",
+      "stability": 1,
+      "last_width": "std",
+      "platform_width_heel_mm": 93,
+      "platform_width_fore_mm": 118,
+      "outsole_durability": 7,
+      "outsole_thickness_mm": 2.6,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 225,
+        "ru": 22900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 320,
+          "durometer_ha": 21,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 272,
+          "durometer_ha": 20,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "asics-superblast-2",
+      "brand": "ASICS",
+      "model": "Superblast 2",
+      "year": 2024,
+      "categories": [
+        "max",
+        "tempo"
+      ],
+      "surface": "road",
+      "weight_g": 248,
+      "stack_heel_mm": 45,
+      "stack_fore_mm": 37,
+      "drop_mm": 8,
+      "midsole_durometer_ha": 20,
+      "softness": 7.5,
+      "foam_type": "FF Turbo + Blast",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 88,
+      "platform_width_fore_mm": 113,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 2.2,
+      "membrane": "none",
+      "winter_grip": 5,
+      "lug_depth_mm": 0,
+      "variant_of": null,
+      "price": {
+        "eu": 230,
+        "ru": 23500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "top",
+        "ru": "top"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 248,
+          "durometer_ha": 20,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 211,
+          "durometer_ha": 19,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "salomon-speedcross-6",
+      "brand": "Salomon",
+      "model": "Speedcross 6",
+      "year": 2024,
+      "categories": [
+        "trail"
+      ],
+      "surface": "trail",
+      "weight_g": 294,
+      "stack_heel_mm": 32,
+      "stack_fore_mm": 22,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 30,
+      "softness": 3.5,
+      "foam_type": "EnergyCell",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "narrow",
+      "platform_width_heel_mm": 80,
+      "platform_width_fore_mm": 104,
+      "outsole_durability": 9,
+      "outsole_thickness_mm": 5.5,
+      "membrane": "none",
+      "winter_grip": 8,
+      "lug_depth_mm": 5.5,
+      "variant_of": null,
+      "price": {
+        "eu": 125,
+        "ru": 10900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "low",
+        "ru": "low"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 294,
+          "durometer_ha": 30,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 250,
+          "durometer_ha": 29,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "hoka-speedgoat-6",
+      "brand": "HOKA",
+      "model": "Speedgoat 6",
+      "year": 2025,
+      "categories": [
+        "trail"
+      ],
+      "surface": "trail",
+      "weight_g": 289,
+      "stack_heel_mm": 40,
+      "stack_fore_mm": 35,
+      "drop_mm": 5,
+      "midsole_durometer_ha": 25,
+      "softness": 5.5,
+      "foam_type": "CMEVA",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 88,
+      "platform_width_fore_mm": 112,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 5,
+      "membrane": "none",
+      "winter_grip": 8,
+      "lug_depth_mm": 5,
+      "variant_of": null,
+      "price": {
+        "eu": 155,
+        "ru": 15900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 289,
+          "durometer_ha": 25,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 246,
+          "durometer_ha": 24,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-pegasus-trail-5",
+      "brand": "Nike",
+      "model": "Pegasus Trail 5",
+      "year": 2024,
+      "categories": [
+        "trail"
+      ],
+      "surface": "trail",
+      "weight_g": 291,
+      "stack_heel_mm": 37,
+      "stack_fore_mm": 27,
+      "drop_mm": 10,
+      "midsole_durometer_ha": 26,
+      "softness": 5.1,
+      "foam_type": "ReactX",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 86,
+      "platform_width_fore_mm": 110,
+      "outsole_durability": 6,
+      "outsole_thickness_mm": 3.5,
+      "membrane": "none",
+      "winter_grip": 8,
+      "lug_depth_mm": 3.5,
+      "variant_of": null,
+      "price": {
+        "eu": 145,
+        "ru": 14500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 291,
+          "durometer_ha": 26,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 247,
+          "durometer_ha": 25,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "saucony-peregrine-15",
+      "brand": "Saucony",
+      "model": "Peregrine 15",
+      "year": 2025,
+      "categories": [
+        "trail"
+      ],
+      "surface": "trail",
+      "weight_g": 258,
+      "stack_heel_mm": 32,
+      "stack_fore_mm": 28,
+      "drop_mm": 4,
+      "midsole_durometer_ha": 27,
+      "softness": 4.7,
+      "foam_type": "PWRRUN",
+      "plate": "none",
+      "stability": 0,
+      "last_width": "std",
+      "platform_width_heel_mm": 84,
+      "platform_width_fore_mm": 108,
+      "outsole_durability": 8,
+      "outsole_thickness_mm": 5,
+      "membrane": "none",
+      "winter_grip": 8,
+      "lug_depth_mm": 5,
+      "variant_of": null,
+      "price": {
+        "eu": 145,
+        "ru": 14200
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 258,
+          "durometer_ha": 27,
+          "measured": true
+        },
+        "w": {
+          "available": true,
+          "weight_g": 219,
+          "durometer_ha": 26,
+          "measured": false
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-pegasus-41-gtx",
+      "brand": "Nike",
+      "model": "Pegasus 41 GTX",
+      "year": 2024,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 310,
+      "membrane": "gtx",
+      "winter_grip": 7,
+      "lug_depth_mm": 1.5,
+      "variant_of": "nike-pegasus-41",
+      "price": {
+        "eu": 175,
+        "ru": 17500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 310
+        },
+        "w": {
+          "available": true,
+          "weight_g": 268
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-pegasus-41-shield",
+      "brand": "Nike",
+      "model": "Pegasus 41 Shield",
+      "year": 2024,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 300,
+      "membrane": "shield",
+      "winter_grip": 7,
+      "lug_depth_mm": 1.5,
+      "variant_of": "nike-pegasus-41",
+      "price": {
+        "eu": 155,
+        "ru": 15200
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 300
+        },
+        "w": {
+          "available": true,
+          "weight_g": 258
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "brooks-ghost-17-gtx",
+      "brand": "Brooks",
+      "model": "Ghost 17 GTX",
+      "year": 2025,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 305,
+      "membrane": "gtx",
+      "winter_grip": 7,
+      "lug_depth_mm": 1.5,
+      "variant_of": "brooks-ghost-17",
+      "price": {
+        "eu": 180,
+        "ru": 18200
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 305
+        },
+        "w": {
+          "available": true,
+          "weight_g": 262
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "asics-gt-2000-13-gtx",
+      "brand": "ASICS",
+      "model": "GT-2000 13 GTX",
+      "year": 2025,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 295,
+      "membrane": "gtx",
+      "winter_grip": 7,
+      "lug_depth_mm": 2,
+      "variant_of": "asics-gt-2000-13",
+      "price": {
+        "eu": 150,
+        "ru": 13900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 295
+        },
+        "w": {
+          "available": true,
+          "weight_g": 252
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "nike-pegasus-trail-5-gtx",
+      "brand": "Nike",
+      "model": "Pegasus Trail 5 GTX",
+      "year": 2024,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 310,
+      "membrane": "gtx",
+      "winter_grip": 8,
+      "lug_depth_mm": 3.5,
+      "variant_of": "nike-pegasus-trail-5",
+      "price": {
+        "eu": 175,
+        "ru": 17500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 310
+        },
+        "w": {
+          "available": true,
+          "weight_g": 266
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "saucony-peregrine-15-gtx",
+      "brand": "Saucony",
+      "model": "Peregrine 15 GTX",
+      "year": 2025,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 280,
+      "membrane": "gtx",
+      "winter_grip": 9,
+      "lug_depth_mm": 5,
+      "variant_of": "saucony-peregrine-15",
+      "price": {
+        "eu": 175,
+        "ru": 17200
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 280
+        },
+        "w": {
+          "available": true,
+          "weight_g": 238
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "hoka-speedgoat-6-gtx",
+      "brand": "HOKA",
+      "model": "Speedgoat 6 GTX",
+      "year": 2025,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 305,
+      "membrane": "gtx",
+      "winter_grip": 9,
+      "lug_depth_mm": 5,
+      "variant_of": "hoka-speedgoat-6",
+      "price": {
+        "eu": 185,
+        "ru": 18900
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 305
+        },
+        "w": {
+          "available": true,
+          "weight_g": 259
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    },
+    {
+      "id": "salomon-speedcross-6-gtx",
+      "brand": "Salomon",
+      "model": "Speedcross 6 GTX",
+      "year": 2024,
+      "categories": [
+        "winter"
+      ],
+      "weight_g": 315,
+      "membrane": "gtx",
+      "winter_grip": 10,
+      "lug_depth_mm": 5.5,
+      "variant_of": "salomon-speedcross-6",
+      "price": {
+        "eu": 170,
+        "ru": 16500
+      },
+      "available": [
+        "eu",
+        "ru"
+      ],
+      "tier": {
+        "eu": "mid",
+        "ru": "mid"
+      },
+      "genders": {
+        "m": {
+          "available": true,
+          "weight_g": 315
+        },
+        "w": {
+          "available": true,
+          "weight_g": 268
+        }
+      },
+      "image": null,
+      "sources": [
+        "demo"
+      ],
+      "demo": true,
+      "verified_at": null
+    }
+  ]
+}

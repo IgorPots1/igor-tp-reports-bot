@@ -1,0 +1,732 @@
+{
+  "entries": [
+    {
+      "id": "adidas-adios-pro-4",
+      "brand": "adidas",
+      "model": "Adizero Adios Pro 4",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "adidas-boston-13",
+      "brand": "adidas",
+      "model": "Adizero Boston 13",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "adidas-evo-sl",
+      "brand": "adidas",
+      "model": "Adizero Evo SL",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "adidas-supernova-rise-2",
+      "brand": "adidas",
+      "model": "Supernova Rise 2",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-adidas-adizero-boston-12",
+      "brand": "adidas",
+      "model": "Adizero Boston 12",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-adidas-solarglide-6",
+      "brand": "adidas",
+      "model": "Solarglide 6",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-adidas-adizero-adios-pro-3",
+      "brand": "adidas",
+      "model": "Adizero Adios Pro 3",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-adidas-ultraboost-22",
+      "brand": "adidas",
+      "model": "Ultraboost 22",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "anta-c202-gt",
+      "brand": "ANTA",
+      "model": "C202 GT",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-anta-c10-pro",
+      "brand": "ANTA",
+      "model": "C10 Pro",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "asics-nimbus-27",
+      "brand": "ASICS",
+      "model": "Gel-Nimbus 27",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "asics-gt-2000-13",
+      "brand": "ASICS",
+      "model": "GT-2000 13",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "asics-gt-2000-13-gtx",
+      "brand": "ASICS",
+      "model": "GT-2000 13 GTX",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "asics-novablast-5",
+      "brand": "ASICS",
+      "model": "Novablast 5",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "asics-magic-speed-4",
+      "brand": "ASICS",
+      "model": "Magic Speed 4",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "asics-metaspeed-sky-paris",
+      "brand": "ASICS",
+      "model": "Metaspeed Sky Paris",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-asics-novablast-4",
+      "brand": "ASICS",
+      "model": "Novablast 4",
+      "year": 2024,
+      "in_catalog": false
+    },
+    {
+      "id": "asics-superblast-2",
+      "brand": "ASICS",
+      "model": "Superblast 2",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-asics-gel-kayano-30",
+      "brand": "ASICS",
+      "model": "Gel-Kayano 30",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-asics-gel-nimbus-25",
+      "brand": "ASICS",
+      "model": "Gel-Nimbus 25",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-asics-gt-2000-11",
+      "brand": "ASICS",
+      "model": "GT-2000 11",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-asics-magic-speed-3",
+      "brand": "ASICS",
+      "model": "Magic Speed 3",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-asics-novablast-3",
+      "brand": "ASICS",
+      "model": "Novablast 3",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-asics-superblast",
+      "brand": "ASICS",
+      "model": "Superblast",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-asics-novablast-2",
+      "brand": "ASICS",
+      "model": "Novablast 2",
+      "year": 2021,
+      "in_catalog": false
+    },
+    {
+      "id": "brooks-ghost-17",
+      "brand": "Brooks",
+      "model": "Ghost 17",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "brooks-ghost-17-gtx",
+      "brand": "Brooks",
+      "model": "Ghost 17 GTX",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "brooks-adrenaline-gts-24",
+      "brand": "Brooks",
+      "model": "Adrenaline GTS 24",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-brooks-ghost-16",
+      "brand": "Brooks",
+      "model": "Ghost 16",
+      "year": 2024,
+      "in_catalog": false
+    },
+    {
+      "id": "brooks-glycerin-22",
+      "brand": "Brooks",
+      "model": "Glycerin 22",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-brooks-adrenaline-gts-23",
+      "brand": "Brooks",
+      "model": "Adrenaline GTS 23",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-brooks-glycerin-21",
+      "brand": "Brooks",
+      "model": "Glycerin 21",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-brooks-ghost-15",
+      "brand": "Brooks",
+      "model": "Ghost 15",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-decathlon-kalenji-run-comfort",
+      "brand": "Decathlon",
+      "model": "Kalenji Run Comfort",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "hoka-cielo-x1-2",
+      "brand": "HOKA",
+      "model": "Cielo X1 2.0",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "hoka-clifton-10",
+      "brand": "HOKA",
+      "model": "Clifton 10",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "hoka-speedgoat-6",
+      "brand": "HOKA",
+      "model": "Speedgoat 6",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "hoka-speedgoat-6-gtx",
+      "brand": "HOKA",
+      "model": "Speedgoat 6 GTX",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "hoka-arahi-7",
+      "brand": "HOKA",
+      "model": "Arahi 7",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "hoka-mach-6",
+      "brand": "HOKA",
+      "model": "Mach 6",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "hoka-skyward-x",
+      "brand": "HOKA",
+      "model": "Skyward X",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-hoka-clifton-9",
+      "brand": "HOKA",
+      "model": "Clifton 9",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-hoka-bondi-8",
+      "brand": "HOKA",
+      "model": "Bondi 8",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-hoka-speedgoat-5",
+      "brand": "HOKA",
+      "model": "Speedgoat 5",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-hoka-clifton-8",
+      "brand": "HOKA",
+      "model": "Clifton 8",
+      "year": 2021,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-hoka-rincon-3",
+      "brand": "HOKA",
+      "model": "Rincon 3",
+      "year": 2021,
+      "in_catalog": false
+    },
+    {
+      "id": "kiprun-kd900x-ld",
+      "brand": "Kiprun",
+      "model": "KD900X LD",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-kiprun-run-900",
+      "brand": "Kiprun",
+      "model": "Run 900",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-kiprun-kd900x",
+      "brand": "Kiprun",
+      "model": "KD900X",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "lining-feidian-6-ultra",
+      "brand": "Li-Ning",
+      "model": "Feidian 6 Ultra",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "lining-feidian-4-challenger",
+      "brand": "Li-Ning",
+      "model": "Feidian 4 Challenger",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-li-ning-feidian-3-ultra",
+      "brand": "Li-Ning",
+      "model": "Feidian 3 Ultra",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "mizuno-wave-inspire-21",
+      "brand": "Mizuno",
+      "model": "Wave Inspire 21",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "mizuno-wave-rider-29",
+      "brand": "Mizuno",
+      "model": "Wave Rider 29",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-mizuno-wave-rider-27",
+      "brand": "Mizuno",
+      "model": "Wave Rider 27",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-mizuno-wave-sky-7",
+      "brand": "Mizuno",
+      "model": "Wave Sky 7",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "nb-1080v14",
+      "brand": "New Balance",
+      "model": "Fresh Foam X 1080v14",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "nb-860v14",
+      "brand": "New Balance",
+      "model": "860v14",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "nb-rebel-v4",
+      "brand": "New Balance",
+      "model": "FuelCell Rebel v4",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-new-balance-fresh-foam-x-1080v13",
+      "brand": "New Balance",
+      "model": "Fresh Foam X 1080v13",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-new-balance-rebel-v3",
+      "brand": "New Balance",
+      "model": "Rebel v3",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "nike-vaporfly-4",
+      "brand": "Nike",
+      "model": "Vaporfly 4",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-vomero-18",
+      "brand": "Nike",
+      "model": "Vomero 18",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-alphafly-3",
+      "brand": "Nike",
+      "model": "Alphafly 3",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-pegasus-41",
+      "brand": "Nike",
+      "model": "Pegasus 41",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-pegasus-41-gtx",
+      "brand": "Nike",
+      "model": "Pegasus 41 GTX",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-pegasus-41-shield",
+      "brand": "Nike",
+      "model": "Pegasus 41 Shield",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-pegasus-trail-5",
+      "brand": "Nike",
+      "model": "Pegasus Trail 5",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-pegasus-trail-5-gtx",
+      "brand": "Nike",
+      "model": "Pegasus Trail 5 GTX",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "nike-zoom-fly-6",
+      "brand": "Nike",
+      "model": "Zoom Fly 6",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-nike-infinity-run-4",
+      "brand": "Nike",
+      "model": "Infinity Run 4",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-pegasus-40",
+      "brand": "Nike",
+      "model": "Pegasus 40",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-structure-25",
+      "brand": "Nike",
+      "model": "Structure 25",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-vaporfly-3",
+      "brand": "Nike",
+      "model": "Vaporfly 3",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-vomero-17",
+      "brand": "Nike",
+      "model": "Vomero 17",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-pegasus-39",
+      "brand": "Nike",
+      "model": "Pegasus 39",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-revolution-6",
+      "brand": "Nike",
+      "model": "Revolution 6",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-zoom-fly-5",
+      "brand": "Nike",
+      "model": "Zoom Fly 5",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-nike-pegasus-38",
+      "brand": "Nike",
+      "model": "Pegasus 38",
+      "year": 2021,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-on-cloudflow-4",
+      "brand": "On",
+      "model": "Cloudflow 4",
+      "year": 2024,
+      "in_catalog": false
+    },
+    {
+      "id": "on-cloudmonster-2",
+      "brand": "On",
+      "model": "Cloudmonster 2",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-on-cloudsurfer",
+      "brand": "On",
+      "model": "Cloudsurfer",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "puma-fast-r-nitro-elite-3",
+      "brand": "PUMA",
+      "model": "Fast-R Nitro Elite 3",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "puma-velocity-nitro-4",
+      "brand": "PUMA",
+      "model": "Velocity Nitro 4",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "puma-deviate-nitro-3",
+      "brand": "PUMA",
+      "model": "Deviate Nitro 3",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-puma-velocity-nitro-3",
+      "brand": "PUMA",
+      "model": "Velocity Nitro 3",
+      "year": 2024,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-puma-deviate-nitro-2",
+      "brand": "PUMA",
+      "model": "Deviate Nitro 2",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "salomon-speedcross-6",
+      "brand": "Salomon",
+      "model": "Speedcross 6",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "salomon-speedcross-6-gtx",
+      "brand": "Salomon",
+      "model": "Speedcross 6 GTX",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-salomon-sense-ride-5",
+      "brand": "Salomon",
+      "model": "Sense Ride 5",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "saucony-guide-18",
+      "brand": "Saucony",
+      "model": "Guide 18",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "saucony-peregrine-15",
+      "brand": "Saucony",
+      "model": "Peregrine 15",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "saucony-peregrine-15-gtx",
+      "brand": "Saucony",
+      "model": "Peregrine 15 GTX",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "saucony-ride-18",
+      "brand": "Saucony",
+      "model": "Ride 18",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "saucony-triumph-23",
+      "brand": "Saucony",
+      "model": "Triumph 23",
+      "year": 2025,
+      "in_catalog": true
+    },
+    {
+      "id": "saucony-endorphin-pro-4",
+      "brand": "Saucony",
+      "model": "Endorphin Pro 4",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "saucony-endorphin-speed-4",
+      "brand": "Saucony",
+      "model": "Endorphin Speed 4",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-saucony-ride-17",
+      "brand": "Saucony",
+      "model": "Ride 17",
+      "year": 2024,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-saucony-kinvara-14",
+      "brand": "Saucony",
+      "model": "Kinvara 14",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-saucony-peregrine-13",
+      "brand": "Saucony",
+      "model": "Peregrine 13",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-saucony-triumph-21",
+      "brand": "Saucony",
+      "model": "Triumph 21",
+      "year": 2023,
+      "in_catalog": false
+    },
+    {
+      "id": "legacy-saucony-endorphin-speed-3",
+      "brand": "Saucony",
+      "model": "Endorphin Speed 3",
+      "year": 2022,
+      "in_catalog": false
+    },
+    {
+      "id": "xtep-160x-6-pro",
+      "brand": "Xtep",
+      "model": "160X 6.0 Pro",
+      "year": 2024,
+      "in_catalog": true
+    },
+    {
+      "id": "legacy-xtep-160x-5-0-pro",
+      "brand": "Xtep",
+      "model": "160X 5.0 Pro",
+      "year": 2023,
+      "in_catalog": false
+    }
+  ]
+}
