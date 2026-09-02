@@ -53,23 +53,38 @@ for (const source of SOURCES) {
     continue;
   }
 
+  /**
+   * Коды ответа на robots.txt значат РАЗНОЕ, и валить их в одно «не прочитан»
+   * нельзя — стандарт различает:
+   *   2xx        — правила есть, разбираем;
+   *   404/410    — файла нет, ограничений нет, обход разрешён;
+   *   401/403    — доступ закрыт, считаем ПОЛНЫЙ запрет;
+   *   5xx, сеть  — временная беда, обход не начинаем.
+   * У трёх брендов (New Balance, Brooks, adidas) стоит 403 даже браузерному
+   * агенту: это защита сайта от автоматов, то есть отказ, а не молчание.
+   */
   let text = "";
-  let fetched = false;
+  let outcome: "parsed" | "absent" | "denied" | "unreachable" = "unreachable";
+  let httpCode = 0;
   try {
     const res = await fetch(`${source.origin}/robots.txt`, {
       headers: { "User-Agent": USER_AGENT, Accept: "text/plain" },
       signal: AbortSignal.timeout(15000),
       redirect: "follow",
     });
+    httpCode = res.status;
     if (res.ok) {
       text = await res.text();
-      fetched = true;
-    } else {
-      text = "";
+      outcome = "parsed";
+    } else if (res.status === 404 || res.status === 410) {
+      outcome = "absent";
+    } else if (res.status === 401 || res.status === 403) {
+      outcome = "denied";
     }
   } catch (err) {
-    console.log(`  ! ${source.title}: robots.txt не прочитан (${(err as Error).message})`);
+    console.log(`  ! ${source.title}: robots.txt недоступен (${(err as Error).message})`);
   }
+  const fetched = outcome === "parsed";
 
   const robots = parseRobots(text, !fetched);
   const paths = source.probePaths.map((p) => {
@@ -83,11 +98,17 @@ for (const source of SOURCES) {
   const allAllowed = paths.every((p) => p.allowed);
   let status: TermsStatus;
   let note: string;
-  if (!fetched) {
-    // Нет robots.txt — формально можно, но решение оставляем человеку:
-    // отсутствие файла не то же самое, что разрешение.
+  if (outcome === "denied") {
+    status = "forbidden";
+    note = `robots.txt отдаёт ${httpCode} — сайт закрыт для автоматического доступа, обход не начинаем`;
+  } else if (outcome === "absent") {
+    // Стандарт: файла нет — ограничений нет. Но условия использования всё ещё
+    // могут быть, поэтому решение остаётся за человеком.
     status = "manual";
-    note = "robots.txt не прочитан — решение за человеком, автоматически не берём";
+    note = `robots.txt отсутствует (${httpCode}) — запретов нет, но условия сайта проверяет человек`;
+  } else if (outcome === "unreachable") {
+    status = "manual";
+    note = "robots.txt недоступен (сеть или домен) — обход не начинаем, проверяет человек";
   } else if (allAllowed) {
     status = "allowed";
     note = paths.map((p) => `${p.path} → ${p.reason}`).join("; ");
