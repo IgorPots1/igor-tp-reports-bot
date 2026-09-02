@@ -1,23 +1,25 @@
 import type { Metadata } from "next";
-import { Manrope, Oswald } from "next/font/google";
+import { JetBrains_Mono, Onest } from "next/font/google";
 
 import { clientCatalog } from "@/features/shoes/catalog";
 import { publicPageMetadata } from "@/lib/site";
 
 import ShoePicker from "./ShoePicker";
+import "./shoes-page.css";
 import styles from "./shoes.module.css";
 
-const oswald = Oswald({
+// Те же шрифты, что у хаба, /club и /camp: страница не заводит своей типографики.
+const onest = Onest({
   subsets: ["latin", "cyrillic"],
-  weight: ["500", "600", "700"],
-  variable: "--font-oswald",
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-onest",
   display: "swap",
 });
 
-const manrope = Manrope({
+const jetbrains = JetBrains_Mono({
   subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-manrope",
+  weight: ["400", "500"],
+  variable: "--font-jetbrains",
   display: "swap",
 });
 
@@ -32,7 +34,7 @@ export default function ShoesToolPage() {
   // База читается и проверяется на сервере: битая запись не доедет до браузера,
   // а цены физически не попадают в объект, который уходит на клиент.
   return (
-    <div className={`${oswald.variable} ${manrope.variable} ${styles.page}`}>
+    <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
       <ShoePicker catalog={clientCatalog} />
     </div>
   );

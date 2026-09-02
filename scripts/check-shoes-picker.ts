@@ -1,11 +1,16 @@
 /**
  * Прогон движка подбора на профилях.
  *
- * Здесь же будет стенд калибровки (этап 2 ТЗ): Игорь даёт 5–7 реальных
- * атлетов и что бы он сам им посоветовал, профили ложатся в PROFILES с полем
- * `expect`, и веса в src/features/shoes/weights.ts крутятся, пока выдача не
- * совпадёт. Пока expect не заполнен, скрипт проверяет только инварианты,
- * которые не зависят от калибровки.
+ * Он же стенд калибровки. Профили сюда приходят НЕ из головы, а из реальных
+ * выдач: `npm run shoes:calibration-review` показывает пару «ответы → что
+ * выдали», Игорь отмечает расхождения со своим мнением, и разошедшийся случай
+ * заводится сюда профилем с `expect`. Смысл — чтобы следующая правка весов не
+ * сломала уже разобранное. Придуманный профиль проверял бы догадку о том, кто
+ * придёт, а не то, кто пришёл, поэтому калибровка на составленных профилях
+ * отменена.
+ *
+ * Профили ниже — не калибровочные, а дымовые: они держат инварианты, которые
+ * от калибровки не зависят вовсе.
  *
  *   npm run check:shoes-picker
  */
@@ -211,9 +216,19 @@ for (const p of PROFILES) {
 
   // Профильные требования, которые калибровка сдвинуть не должна.
   const daily = results.find((r) => r.slot.id === "daily");
+  // Вес отвечает только за минимальный стек — и это про износ пены, а не про
+  // травмы. Порог 30 мм: ниже него тяжёлому пена начнёт пробиваться рано.
   if (p.answers.bodyWeightKg >= 85 && daily) {
-    const thin = daily.picks.filter((x) => x.shoe.stack_heel_mm < 36);
-    if (thin.length > 0) fail(`под ${p.answers.bodyWeightKg} кг предложен низкий стек: ${thin.map((t) => t.shoe.id).join(", ")}`);
+    const thin = daily.picks.filter((x) => x.shoe.stack_heel_mm < 30);
+    if (thin.length > 0) fail(`под ${p.answers.bodyWeightKg} кг предложен стек ниже 30 мм: ${thin.map((t) => t.shoe.id).join(", ")}`);
+  }
+  // И обратное: вес НЕ толкает выдачу к мягкости. Тяжёлый бегун, попросивший
+  // жёсткое, обязан получить жёсткое — расхожее «тяжёлым нужен максимум
+  // амортизации» данными не подтверждается.
+  if (p.answers.bodyWeightKg >= 85 && p.answers.feel <= 2 && daily?.picks[0]) {
+    if (daily.picks[0].variant.softnessShown > 6.5) {
+      fail(`тяжёлому при ответе «жёстко» выдана мягкая пара: ${daily.picks[0].shoe.id}`);
+    }
   }
   if (p.answers.footWidth === "wide" && daily) {
     const narrow = daily.picks.filter((x) => x.shoe.last_width === "narrow");
@@ -223,6 +238,32 @@ for (const p of PROFILES) {
     const low = results.flatMap((r) => r.picks).filter((x) => x.shoe.drop_mm < 6);
     if (low.length > 0) fail(`при больном ахилле предложен дроп < 6 мм: ${low.map((t) => t.shoe.id).join(", ")}`);
   }
+}
+
+console.log("\n=== Жёсткость задника ===");
+{
+  // «Натирало пятку» больше не пустой ответ: у моделей есть лабораторный замер
+  // задника, и жёсткие 4–5 должны штрафоваться, мягкие 1–2 — получать плюс.
+  const a: Answers = { ...base, dislikes: ["heel_rub"], pairs: 2 };
+  const daily = recommend(clientCatalog, a).find((r) => r.slot.id === "daily");
+  const stiff = daily?.picks.filter((p) => (p.shoe.heel_counter_stiffness ?? 0) >= 4) ?? [];
+  console.log(
+    "  выдача: " +
+      (daily?.picks
+        .map((p) => `${p.shoe.brand} ${p.shoe.model} (задник ${p.shoe.heel_counter_stiffness ?? "нет замера"})`)
+        .join(" · ") ?? "пусто")
+  );
+  if (stiff.length === (daily?.picks.length ?? 0) && stiff.length > 0) {
+    fail("при жалобе на пятку вся выдача — модели с жёстким задником");
+  }
+  const soft = daily?.picks.find((p) => (p.shoe.heel_counter_stiffness ?? 9) <= 2);
+  if (soft && !soft.pros.some((x) => x.includes("задник"))) {
+    fail("модель с мягким задником не объяснила это плюсом");
+  }
+  // А там, где замера нет, критерий обязан молчать, а не гадать.
+  const noData = clientCatalog.shoes.filter((s) => s.heel_counter_stiffness === null);
+  if (noData.length === 0) fail("в демо-базе не осталось моделей без замера задника — путь «молчим» не проверяется");
+  else console.log(`  без замера в базе: ${noData.length} моделей — на них критерий молчит`);
 }
 
 console.log("\n=== Зима ===");

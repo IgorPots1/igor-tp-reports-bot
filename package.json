@@ -11,6 +11,7 @@
     "check:cycle-forecast": "npx tsx tools/trainingpeaks-export/scripts/tp-cycle-forecast-check.ts",
     "typecheck:autoplanner": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.autoplanner.json",
     "typecheck:tools": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.json",
+    "shoes:calibration-review": "npx tsx scripts/shoes-calibration-review.ts",
     "check:shoes-catalog": "npx tsx scripts/check-shoes-catalog.ts",
     "check:shoes-picker": "npx tsx scripts/check-shoes-picker.ts",
     "check:runner-import-health": "bash tools/trainingpeaks-export/scripts/check-runner-import-health.sh",

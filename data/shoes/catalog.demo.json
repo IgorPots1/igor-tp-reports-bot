@@ -61,7 +61,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "nike-pegasus-41",
@@ -121,7 +122,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "hoka-clifton-10",
@@ -182,7 +184,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "nb-1080v14",
@@ -243,7 +246,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "brooks-ghost-17",
@@ -303,7 +307,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "saucony-ride-18",
@@ -363,7 +368,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "asics-nimbus-27",
@@ -424,7 +430,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "puma-velocity-nitro-4",
@@ -485,7 +492,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "adidas-supernova-rise-2",
@@ -545,7 +553,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "mizuno-wave-rider-29",
@@ -605,7 +614,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "nike-vomero-18",
@@ -666,7 +676,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "saucony-triumph-23",
@@ -727,7 +738,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "on-cloudmonster-2",
@@ -788,7 +800,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": null
     },
     {
       "id": "brooks-glycerin-22",
@@ -849,7 +862,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "adidas-evo-sl",
@@ -910,7 +924,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "kiprun-kd900x-ld",
@@ -971,7 +986,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": null
     },
     {
       "id": "asics-magic-speed-4",
@@ -1032,7 +1048,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "saucony-endorphin-speed-4",
@@ -1092,7 +1109,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "nike-zoom-fly-6",
@@ -1152,7 +1170,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "hoka-mach-6",
@@ -1213,7 +1232,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "puma-deviate-nitro-3",
@@ -1274,7 +1294,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "nb-rebel-v4",
@@ -1335,7 +1356,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "adidas-boston-13",
@@ -1395,7 +1417,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "lining-feidian-4-challenger",
@@ -1456,7 +1479,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "nike-vaporfly-4",
@@ -1516,7 +1540,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "nike-alphafly-3",
@@ -1576,7 +1601,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "asics-metaspeed-sky-paris",
@@ -1636,7 +1662,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "adidas-adios-pro-4",
@@ -1696,7 +1723,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "saucony-endorphin-pro-4",
@@ -1756,7 +1784,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "hoka-cielo-x1-2",
@@ -1815,7 +1844,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "xtep-160x-6-pro",
@@ -1874,7 +1904,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "lining-feidian-6-ultra",
@@ -1933,7 +1964,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "anta-c202-gt",
@@ -1992,7 +2024,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": null
     },
     {
       "id": "puma-fast-r-nitro-elite-3",
@@ -2051,7 +2084,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 2
     },
     {
       "id": "brooks-adrenaline-gts-24",
@@ -2112,7 +2146,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "asics-gt-2000-13",
@@ -2173,7 +2208,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "saucony-guide-18",
@@ -2234,7 +2270,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "hoka-arahi-7",
@@ -2295,7 +2332,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "nb-860v14",
@@ -2356,7 +2394,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "mizuno-wave-inspire-21",
@@ -2417,7 +2456,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "hoka-skyward-x",
@@ -2478,7 +2518,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 4
     },
     {
       "id": "asics-superblast-2",
@@ -2539,7 +2580,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "salomon-speedcross-6",
@@ -2599,7 +2641,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "hoka-speedgoat-6",
@@ -2659,7 +2702,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "nike-pegasus-trail-5",
@@ -2719,7 +2763,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "saucony-peregrine-15",
@@ -2779,7 +2824,8 @@
         "demo"
       ],
       "demo": true,
-      "verified_at": null
+      "verified_at": null,
+      "heel_counter_stiffness": 3
     },
     {
       "id": "nike-pegasus-41-gtx",

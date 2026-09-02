@@ -86,6 +86,16 @@ function checkRecord(raw: unknown, kind: CatalogKind): { shoe: Shoe | null; prob
   if (isNum(r?.winter_grip) && (r.winter_grip < 1 || r.winter_grip > 10)) {
     problems.push(`winter_grip ${r.winter_grip} вне шкалы 1–10`);
   }
+  // Задник — необязательное поле: лаборатории меряют его не у всех моделей.
+  // Пустое значение допустимо и уходит в отчёт о пропусках, а вот значение
+  // вне шкалы означает, что цифра взята не оттуда.
+  if (r?.heel_counter_stiffness !== null && r?.heel_counter_stiffness !== undefined) {
+    if (!isNum(r.heel_counter_stiffness) || r.heel_counter_stiffness < 1 || r.heel_counter_stiffness > 5) {
+      problems.push(`heel_counter_stiffness ${String(r.heel_counter_stiffness)} вне шкалы 1–5`);
+    }
+  } else if (r?.heel_counter_stiffness === undefined) {
+    problems.push("heel_counter_stiffness: поля нет (нужен null, если замера нет)");
+  }
   if (r?.variant_of !== null && !isStr(r?.variant_of)) {
     problems.push("variant_of: должен быть id базовой модели или null");
   }
@@ -241,6 +251,9 @@ export function validateCatalog(raw: unknown): ValidationResult {
       continue;
     }
     if (shoe.image === null) gaps.push({ id, field: "image" });
+    if (shoe.heel_counter_stiffness === null) {
+      gaps.push({ id, field: "heel_counter_stiffness" });
+    }
     if (shoe.genders.w.available && !shoe.genders.w.measured) {
       gaps.push({ id, field: "genders.w.measured" });
     }

@@ -1,13 +1,22 @@
-/* Брендинг igorp.run: фон zinc-950, акцент yellow-400, Oswald (заголовки) +
-   Manrope (текст). Тот же визуальный набор, что у /tools/plan и /tools/nutrition. */
+/* Классы страницы подбора кроссовок.
+
+   Токены и правила уровня документа (:root, html, body) живут в соседнем
+   shoes-page.css: CSS-модуль не принимает селектор без локального класса, а
+   фон обязан стоять именно на html — иначе при резиновой прокрутке на iOS
+   из-под страницы видно белый фон документа. Ровно так же сделано у /club и
+   /camp: обычный файл со своими токенами рядом со страницей. */
 
 .page {
-  min-height: 100vh;
-  background: #09090b;
-  color: #ffffff;
-  padding: 24px;
-  font-family: var(--font-manrope), system-ui, -apple-system, sans-serif;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-onest), system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
   box-sizing: border-box;
 }
 
@@ -17,72 +26,112 @@
   box-sizing: border-box;
 }
 
-.inner {
-  max-width: 28rem;
+/* Анимации выключаются, если человек попросил об этом в системе. */
+@media (prefers-reduced-motion: reduce) {
+  .page *,
+  .page *::before,
+  .page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Видимый фокус — обводкой, а не только цветом: без него клавиатурная
+   навигация по опроснику вслепую. */
+.page a:focus-visible,
+.page button:focus-visible,
+.page input:focus-visible,
+.page summary:focus-visible {
+  outline: 3px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ----- Липкая шапка ----- */
+/* Непрозрачная и выше содержимого: до этого заголовок вопроса при прокрутке
+   наезжал на часы и индикатор сети. env(safe-area-inset-top) — вырез и
+   «чёлка»; на обычном экране он равен нулю и ничего не сдвигает. */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  padding-top: env(safe-area-inset-top);
+}
+
+.headerInner {
+  max-width: 30rem;
   margin: 0 auto;
-  padding-top: 16px;
+  padding: 12px 20px;
 }
 
-.brand {
-  font-size: 12px;
-  color: #71717a;
-  margin-bottom: 4px;
-}
-
-.title {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-size: 36px;
-  line-height: 1.08;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
-  margin: 0 0 12px;
-}
-
-.accent {
-  color: #facc15;
-}
-
-.subtitle {
-  color: #a1a1aa;
-  font-size: 14px;
-  line-height: 1.55;
-  margin: 0 0 28px;
-}
-
-/* ----- Прогресс ----- */
-.progress {
-  margin-bottom: 24px;
-}
-
-.progressHead {
+.headerTop {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 12px;
-  color: #71717a;
+  gap: 12px;
   margin-bottom: 8px;
 }
 
-.progressStep {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-weight: 700;
+.brand {
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11.5px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #facc15;
+  color: var(--ink-2);
+}
+
+.progressStep {
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
 }
 
 .progressTrack {
   height: 4px;
-  background: #27272a;
+  background: var(--line);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .progressFill {
   height: 100%;
-  background: #facc15;
+  background: var(--accent);
   transition: width 0.25s ease;
+}
+
+/* ----- Содержимое ----- */
+.main {
+  flex: 1;
+}
+
+.inner {
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: 24px 20px 32px;
+}
+
+.title {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  margin: 0 0 12px;
+}
+
+.accent {
+  color: var(--accent-ink);
+}
+
+.subtitle {
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 0 0 28px;
 }
 
 /* ----- Вопрос ----- */
@@ -91,17 +140,18 @@
 }
 
 .questionLabel {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.4;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
   margin: 0 0 4px;
 }
 
 .questionHint {
-  font-size: 13px;
-  color: #71717a;
-  line-height: 1.5;
-  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.45;
+  margin: 0 0 12px;
 }
 
 .options {
@@ -115,46 +165,48 @@
 
 .option {
   font-family: inherit;
-  font-size: 14px;
+  font-size: 15.5px;
   line-height: 1.35;
   text-align: left;
-  border: 1px solid #27272a;
-  border-radius: 10px;
-  padding: 12px 14px;
-  background: #18181b;
-  color: #d4d4d8;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  color: var(--ink);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: border-color 0.16s ease, background 0.16s ease;
 }
 
 .option:hover {
-  border-color: #3f3f46;
+  border-color: var(--line-2);
 }
 
+/* Выбранный ответ отличается не одним цветом: заливка, цвет текста и
+   насыщенность рамки меняются вместе — иначе при дальтонизме выбор не читается. */
 .optionActive {
-  background: #facc15;
-  border-color: #facc15;
-  color: #000000;
-  font-weight: 700;
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 /* ----- Ползунок веса ----- */
 .slider {
   width: 100%;
-  accent-color: #facc15;
-  margin: 6px 0 2px;
+  accent-color: var(--accent-ink);
+  margin: 8px 0 2px;
 }
 
 .sliderValue {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
-  color: #facc15;
+  letter-spacing: -0.02em;
+  color: var(--ink);
 }
 
 .sliderUnit {
-  font-size: 14px;
-  color: #71717a;
+  font-size: 15px;
+  color: var(--ink-2);
   margin-left: 6px;
 }
 
@@ -166,26 +218,33 @@
 .searchInput {
   width: 100%;
   font-family: inherit;
-  font-size: 14px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid #3f3f46;
-  background: #18181b;
-  color: #ffffff;
+  font-size: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.searchInput::placeholder {
+  color: var(--ink-2);
+  opacity: 0.75;
 }
 
 .searchInput:focus {
   outline: none;
-  border-color: #facc15;
+  border-color: var(--accent-ink);
+  box-shadow: 0 0 0 3px rgba(181, 55, 7, 0.15);
 }
 
 .suggestions {
   list-style: none;
   margin: 6px 0 0;
   padding: 4px;
-  background: #18181b;
-  border: 1px solid #3f3f46;
-  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -194,22 +253,22 @@
   width: 100%;
   text-align: left;
   font-family: inherit;
-  font-size: 14px;
-  padding: 10px 12px;
+  font-size: 15px;
+  padding: 11px 12px;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #d4d4d8;
+  color: var(--ink);
   cursor: pointer;
 }
 
 .suggestion:hover {
-  background: #27272a;
-  color: #ffffff;
+  background: var(--bg);
 }
 
 .suggestionYear {
-  color: #71717a;
+  font-family: var(--font-jetbrains), monospace;
+  color: var(--ink-2);
   font-size: 12px;
   margin-left: 6px;
 }
@@ -226,79 +285,138 @@
   align-items: center;
   gap: 8px;
   font-family: inherit;
-  font-size: 13px;
-  padding: 8px 10px;
+  font-size: 14px;
+  padding: 9px 12px;
   border-radius: 999px;
-  border: 1px solid #3f3f46;
-  background: #18181b;
-  color: #d4d4d8;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--ink);
   cursor: pointer;
 }
 
 .chipRemove {
-  color: #71717a;
-  font-size: 15px;
+  color: var(--ink-2);
+  font-size: 16px;
   line-height: 1;
 }
 
-/* ----- Навигация ----- */
-.nav {
+/* ----- Уведомление о сборе данных ----- */
+.privacyNote {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin-bottom: 20px;
+}
+
+.privacyNote a {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.privacyToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.privacyToggle input {
+  margin-top: 2px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-ink);
+  flex: 0 0 auto;
+}
+
+/* ----- Нижняя панель ----- */
+/* Липкая и непрозрачная, с отступом под домашнюю полоску iPhone: без
+   env(safe-area-inset-bottom) кнопка «Далее» попадала под жест «домой». */
+.bottomBar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.bottomBarInner {
+  max-width: 30rem;
+  margin: 0 auto;
+  padding: 12px 20px;
   display: flex;
   gap: 10px;
-  margin-top: 8px;
 }
 
 .navBack {
   font-family: inherit;
-  font-size: 14px;
-  padding: 14px 18px;
-  border-radius: 10px;
-  border: 1px solid #3f3f46;
-  background: transparent;
-  color: #d4d4d8;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 15px 20px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--ink);
   cursor: pointer;
 }
 
 .navNext {
   flex: 1;
   font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  padding: 14px 18px;
-  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 15px 20px;
+  border-radius: 999px;
   border: 0;
-  background: #facc15;
-  color: #000000;
+  background: var(--accent-ink);
+  color: #ffffff;
   cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.navNext:hover:not(:disabled) {
+  background: var(--accent);
 }
 
 .navNext:disabled {
-  background: #27272a;
-  color: #52525b;
+  background: var(--line-2);
+  color: var(--ink-2);
   cursor: not-allowed;
 }
 
 /* ----- Выдача ----- */
+/* Оговорка, а не успех: зелёный фон читался бы как «всё хорошо», хотя смысл
+   ровно обратный — цифрам пока верить рано. Отсюда нейтральный фон и акцентная
+   полоса слева. */
 .demoNotice {
-  border: 1px solid rgba(250, 204, 21, 0.4);
-  background: rgba(250, 204, 21, 0.08);
-  border-radius: 10px;
-  padding: 12px 14px;
-  font-size: 13px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 14px;
   line-height: 1.55;
-  color: #facc15;
+  color: var(--ink);
   margin-bottom: 20px;
 }
 
 .rotationNote {
-  background: #18181b;
-  border: 1px solid #27272a;
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 16px;
-  font-size: 13px;
+  font-size: 14.5px;
   line-height: 1.6;
-  color: #d4d4d8;
-  margin-bottom: 28px;
+  color: var(--ink-2);
+  margin-bottom: 24px;
 }
 
 .slot {
@@ -306,30 +424,30 @@
 }
 
 .slotHead {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #facc15;
-  margin: 0 0 4px;
+  color: var(--accent-ink);
+  margin: 0 0 6px;
 }
 
 .slotSubtitle {
-  font-size: 13px;
-  color: #71717a;
-  line-height: 1.5;
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.45;
   margin: 0 0 12px;
 }
 
 .empty {
-  background: #18181b;
-  border: 1px solid #27272a;
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 16px;
-  font-size: 13px;
+  font-size: 14.5px;
   line-height: 1.6;
-  color: #d4d4d8;
+  color: var(--ink-2);
 }
 
 .cards {
@@ -338,33 +456,34 @@
 }
 
 .card {
-  padding: 16px;
-  background: #18181b;
-  border: 1px solid #27272a;
-  border-radius: 12px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 
 .cardBest {
-  border-color: rgba(250, 204, 21, 0.5);
+  border-color: var(--accent);
+  border-width: 1.5px;
 }
 
 .bestBadge {
   display: inline-block;
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-family: var(--font-jetbrains), monospace;
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #000000;
-  background: #facc15;
-  border-radius: 4px;
-  padding: 3px 6px;
-  margin-bottom: 10px;
+  color: #ffffff;
+  background: var(--accent-ink);
+  border-radius: 999px;
+  padding: 4px 10px;
+  margin-bottom: 12px;
 }
 
 .cardImage {
   width: 100%;
-  border-radius: 8px;
+  border-radius: 10px;
   margin-bottom: 12px;
   display: block;
 }
@@ -373,38 +492,38 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .cardName {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 700;
-  text-transform: uppercase;
-  line-height: 1.15;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
 }
 
 .cardScore {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-family: var(--font-jetbrains), monospace;
   font-size: 22px;
-  font-weight: 700;
-  color: #facc15;
+  font-weight: 500;
+  color: var(--accent-ink);
   white-space: nowrap;
+  text-align: right;
 }
 
 .cardScoreUnit {
-  font-size: 12px;
-  color: #71717a;
+  font-family: var(--font-onest), system-ui, sans-serif;
+  font-size: 11px;
+  color: var(--ink-2);
   display: block;
-  text-align: right;
-  font-family: var(--font-manrope), sans-serif;
   font-weight: 400;
 }
 
 .cardMeta {
-  font-size: 12px;
-  color: #71717a;
-  margin: 4px 0 10px;
+  font-family: var(--font-jetbrains), monospace;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  margin: 6px 0 12px;
 }
 
 .tags {
@@ -415,11 +534,12 @@
 }
 
 .tag {
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #27272a;
-  color: #d4d4d8;
+  font-size: 13px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
 }
 
 .pros,
@@ -428,22 +548,23 @@
   margin: 0 0 8px;
   padding: 0;
   display: grid;
-  gap: 4px;
+  gap: 5px;
 }
 
 .pros li,
 .cons li {
-  font-size: 13px;
+  font-size: 14.5px;
   line-height: 1.5;
-  padding-left: 18px;
+  padding-left: 20px;
   position: relative;
+  color: var(--ink);
 }
 
 .pros li::before {
   content: "+";
   position: absolute;
   left: 0;
-  color: #facc15;
+  color: var(--green);
   font-weight: 700;
 }
 
@@ -451,32 +572,35 @@
   content: "−";
   position: absolute;
   left: 0;
-  color: #71717a;
+  color: var(--accent-ink);
   font-weight: 700;
 }
 
 .cons li {
-  color: #a1a1aa;
+  color: var(--ink-2);
 }
 
 .borrowed {
-  font-size: 12px;
-  color: #71717a;
+  font-size: 13px;
+  color: var(--ink-2);
   line-height: 1.5;
-  margin: 8px 0 0;
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
 .details {
   margin-top: 12px;
-  border-top: 1px solid #27272a;
+  border-top: 1px solid var(--line);
   padding-top: 10px;
 }
 
 .summary {
-  font-size: 13px;
-  color: #a1a1aa;
+  font-size: 14px;
+  color: var(--accent-ink);
   cursor: pointer;
   list-style: none;
+  font-weight: 600;
 }
 
 .summary::-webkit-details-marker {
@@ -485,7 +609,6 @@
 
 .summary::before {
   content: "▸ ";
-  color: #facc15;
 }
 
 .details[open] .summary::before {
@@ -495,97 +618,104 @@
 .numbers {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 12px;
-  margin: 12px 0;
+  gap: 6px 16px;
+  margin: 14px 0;
 }
 
 .numberRow {
+  font-family: var(--font-jetbrains), monospace;
   font-size: 12px;
-  color: #d4d4d8;
+  color: var(--ink);
   display: flex;
   justify-content: space-between;
   gap: 8px;
 }
 
 .numberLabel {
-  color: #71717a;
+  color: var(--ink-2);
 }
 
 .breakdown {
   display: grid;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .breakdownRow {
   display: grid;
-  grid-template-columns: 1fr 56px;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
-  color: #a1a1aa;
+  font-size: 13px;
+  color: var(--ink-2);
 }
 
 .breakdownBarTrack {
   grid-column: 1 / -1;
   height: 3px;
-  background: #27272a;
+  background: var(--line);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .breakdownBar {
   height: 100%;
-  background: #facc15;
+  background: var(--accent);
 }
 
 .breakdownValue {
+  font-family: var(--font-jetbrains), monospace;
   text-align: right;
-  color: #d4d4d8;
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
 
 /* ----- CTA ----- */
 .cta {
   margin-top: 8px;
-  background: linear-gradient(to bottom right, rgba(250, 204, 21, 0.15), #18181b);
-  border: 1px solid rgba(250, 204, 21, 0.4);
-  border-radius: 12px;
-  padding: 20px;
+  background: var(--surface);
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow);
 }
 
 .ctaTitle {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 700;
+  letter-spacing: -0.02em;
   line-height: 1.2;
   margin-bottom: 8px;
 }
 
 .ctaText {
-  font-size: 14px;
-  color: #d4d4d8;
-  line-height: 1.6;
-  margin: 0 0 16px;
+  font-size: 15px;
+  color: var(--ink-2);
+  line-height: 1.55;
+  margin: 0 0 18px;
 }
 
 .ctaButton {
   display: inline-block;
-  background: #facc15;
-  color: #000000;
-  font-weight: 700;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-size: 14px;
+  background: var(--accent-ink);
+  color: #ffffff;
+  font-weight: 600;
+  padding: 14px 26px;
+  border-radius: 999px;
+  font-size: 16px;
   text-decoration: none;
+}
+
+.ctaButton:hover {
+  background: var(--accent);
 }
 
 .restart {
   display: block;
-  margin: 20px auto 0;
+  margin: 22px auto 0;
   font-family: inherit;
-  font-size: 13px;
-  color: #71717a;
+  font-size: 14px;
+  color: var(--ink-2);
   background: transparent;
   border: 0;
   cursor: pointer;
@@ -593,8 +723,11 @@
 }
 
 .footer {
+  font-family: var(--font-jetbrains), monospace;
   text-align: center;
-  font-size: 12px;
-  color: #52525b;
-  margin-top: 32px;
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+  margin-top: 28px;
+  padding-bottom: env(safe-area-inset-bottom);
 }

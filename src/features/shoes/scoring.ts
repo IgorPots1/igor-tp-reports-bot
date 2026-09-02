@@ -14,6 +14,16 @@ import type {
  * сказать, формулировку из данных: не «хорошая мягкость», а «стека и плотности
  * хватает под 90 кг». Эти же формулировки собираются в плюсы и минусы карточки.
  *
+ * Вес бегуна НЕ толкает выдачу к мягкости и к категории max, и жёсткие модели
+ * не получают за тяжёлого бегуна бонуса. Расхожее «тяжёлым нужна максимальная
+ * амортизация» не подтвердилось: в рандомизированном исследовании на 848
+ * бегунах (Malisoux 2020, полгода) у получивших ЖЁСТКИЕ кроссовки риск травмы
+ * был выше в 1,52 раза, а сама масса тела с риском травмы связана не была —
+ * мягкая межподошва при этом помогала как раз лёгким. Поэтому вес отвечает
+ * только за минимальный стек, и это аргумент про ИЗНОС (тяжёлый сильнее
+ * продавливает пену, она раньше начинает пробиваться), а не про травмы.
+ * Мягкость по-прежнему задаёт ответ про предпочитаемое ощущение.
+ *
  * Ни один критерий не додумывает недостающее. Чего в базе нет — того нет в
  * оценке: жалоба «натирало пятку» в баллах не участвует вовсе, потому что поля
  * про пятку в схеме нет, а правдоподобная догадка здесь — брак.
@@ -88,41 +98,30 @@ function softness(shoe: ClientShoe, a: Answers, c: Ctx): Raw {
   return { score, notes: [] };
 }
 
-function runnerWeight(shoe: ClientShoe, a: Answers, c: Ctx): Raw {
+function runnerWeight(shoe: ClientShoe, a: Answers): Raw {
   const bw = a.bodyWeightKg;
   const stack = shoe.stack_heel_mm;
 
   if (bw >= 85) {
-    let s = 1;
-    const notes: CriterionNote[] = [];
-    if (stack < 36) {
-      s -= 0.45;
-      notes.push(minus(`${stack} мм стека мало под ${bw} кг — пена кончится раньше ноги`));
+    if (stack >= 34) {
+      return {
+        score: 1,
+        notes: [plus("стека хватает под твой вес, пена не будет пробиваться")],
+      };
     }
-    if (c.softness > 8) {
-      s -= 0.3;
-      notes.push(minus(`слишком мягкая пена под ${bw} кг — будет проваливаться`));
-    }
-    if (notes.length === 0) notes.push(plus(`стека и плотности хватает под ${bw} кг`));
-    return { score: clamp01(s), notes };
+    if (stack >= 30) return { score: 0.6, notes: [] };
+    return {
+      score: 0.25,
+      notes: [minus(`${stack} мм стека под ${bw} кг — пена начнёт пробиваться рано`)],
+    };
   }
 
-  if (bw >= 72) {
-    let s = 1;
-    const notes: CriterionNote[] = [];
-    if (stack < 30) {
-      s -= 0.25;
-      notes.push(minus(`низкий стек под ${bw} кг — на длинных будет жёстко`));
-    }
-    if (c.softness > 8.5) s -= 0.15;
-    return { score: clamp01(s), notes };
+  if (bw >= 70) {
+    return stack >= 30 ? { score: 1, notes: [] } : { score: 0.7, notes: [] };
   }
 
-  // До 72 кг низкий стек допустим — лёгкому бегуну он ничего не ломает.
-  return {
-    score: 1,
-    notes: stack < 32 ? [plus(`при ${bw} кг низкий стек тебе не мешает`)] : [],
-  };
+  // До 70 кг стек не ограничение вовсе: продавливать пену нечем.
+  return { score: 1, notes: [] };
 }
 
 function antiPattern(shoe: ClientShoe, a: Answers, c: Ctx): Raw {
@@ -184,7 +183,20 @@ function antiPattern(shoe: ClientShoe, a: Answers, c: Ctx): Raw {
       notes.push(minus("подошва снашивается быстро — как в прошлый раз"));
     } else parts.push(0.55);
   }
-  // «Натирало пятку» осознанно не оценивается: поля про пятку в схеме нет.
+  if (d.includes("heel_rub")) {
+    // Пока лабораторного замера задника нет — молчим, а не гадаем по соседним
+    // полям: правдоподобная догадка здесь ничем не лучше выдуманного числа.
+    const stiffness = shoe.heel_counter_stiffness;
+    if (stiffness !== null) {
+      if (stiffness >= 4) {
+        parts.push(0.15);
+        notes.push(minus("жёсткий задник — рискует натереть там же, где и раньше"));
+      } else if (stiffness <= 2) {
+        parts.push(1);
+        notes.push(plus("мягкий задник, меньше риска натереть"));
+      } else parts.push(0.55);
+    }
+  }
 
   if (parts.length === 0) return { score: 1, notes: [] };
   return { score: parts.reduce((x, y) => x + y, 0) / parts.length, notes };
@@ -436,7 +448,7 @@ export function scoreShoe(
 
   const raws: Record<CriterionId, Raw> = {
     softness: softness(shoe, a, ctx),
-    runnerWeight: runnerWeight(shoe, a, ctx),
+    runnerWeight: runnerWeight(shoe, a),
     antiPattern: antiPattern(shoe, a, ctx),
     width: width(shoe, a),
     slotFit: slotFit(shoe, a, ctx),

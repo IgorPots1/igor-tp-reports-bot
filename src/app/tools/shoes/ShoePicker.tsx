@@ -296,6 +296,9 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
   const [done, setDone] = useState(false);
+  // Сохранять ли ответы. По умолчанию да — на этих ответах держится калибровка
+  // весов, — но человек видит уведомление и может снять галочку одним касанием.
+  const [saveAnswers, setSaveAnswers] = useState(true);
   const [restored, setRestored] = useState(false);
   const sent = useRef(false);
 
@@ -311,9 +314,10 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
     try {
       const raw = sessionStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const saved = JSON.parse(raw) as { draft?: Draft; step?: number };
+        const saved = JSON.parse(raw) as { draft?: Draft; step?: number; save?: boolean };
         if (saved.draft) setDraft({ ...DEFAULT_DRAFT, ...saved.draft });
         if (typeof saved.step === "number") setStep(Math.min(saved.step, STEP_TITLES.length - 1));
+        if (typeof saved.save === "boolean") setSaveAnswers(saved.save);
       }
     } catch {
       // Сломанное хранилище не должно ронять опросник — начинаем с чистого.
@@ -324,11 +328,11 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
   useEffect(() => {
     if (!restored) return;
     try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ draft, step }));
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ draft, step, save: saveAnswers }));
     } catch {
       // Приватный режим — просто не сохраняем.
     }
-  }, [draft, step, restored]);
+  }, [draft, step, saveAnswers, restored]);
 
   const set = <K extends keyof Answers>(key: K, value: Answers[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -344,10 +348,12 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
     [done, catalog, answers]
   );
 
-  // Ответы опросника — это данные о том, чем реально бегает аудитория.
-  // Отправляются один раз, уже после того как человек увидел выдачу.
+  // Ответы опросника — это данные о том, чем реально бегает аудитория, и вход
+  // в калибровку весов. Уходят один раз, уже после того как человек увидел
+  // выдачу, и только если он не снял галочку: в ответах есть вес и история
+  // травм, то есть данные о здоровье, и молча забирать их нельзя.
   useEffect(() => {
-    if (!done || sent.current) return;
+    if (!done || sent.current || !saveAnswers) return;
     sent.current = true;
     void fetch("/api/shoes/answers", {
       method: "POST",
@@ -362,12 +368,30 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
     }).catch(() => {
       // Молча: сбор статистики не должен мешать человеку получить выдачу.
     });
-  }, [done, answers, results]);
+  }, [done, answers, results, saveAnswers]);
+
+  // Жалоба на пятку учтена, если у показанных моделей есть замер задника.
+  // Строка про неучтённый ответ гаснет сама, как только замеры появятся в базе.
+  const heelUnmeasured =
+    done &&
+    (answers.dislikes ?? []).includes("heel_rub") &&
+    results
+      .flatMap((r) => r.picks)
+      .every((p) => p.shoe.heel_counter_stiffness === null);
 
   if (done) {
     return (
-      <div className={styles.inner}>
-        <div className={styles.brand}>igorp.run</div>
+      <>
+        <header className={styles.header}>
+          <div className={styles.headerInner}>
+            <div className={styles.headerTop}>
+              <span className={styles.brand}>igorp.run</span>
+              <span className={styles.progressStep}>подбор кроссовок</span>
+            </div>
+          </div>
+        </header>
+        <main className={styles.main}>
+          <div className={styles.inner}>
         <h1 className={styles.title}>
           Твоя <span className={styles.accent}>ротация</span>
         </h1>
@@ -387,7 +411,7 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
           по настроению.
         </div>
 
-        {answers.dislikes?.includes("heel_rub") ? (
+        {heelUnmeasured ? (
           <div className={styles.rotationNote}>
             Про «натирало пятку» подбор промолчал намеренно: посадки пятки нет в
             замерах, а гадать по остальным цифрам — значит выдать догадку за
@@ -440,36 +464,47 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
           Пройти заново
         </button>
 
-        <div className={styles.footer}>igorp.run</div>
-      </div>
+            <div className={styles.footer}>igorp.run</div>
+          </div>
+        </main>
+      </>
     );
   }
 
   return (
-    <div className={styles.inner}>
-      <div className={styles.brand}>igorp.run</div>
-      <h1 className={styles.title}>
-        Подбор <span className={styles.accent}>беговых кроссовок</span>
-      </h1>
-      <p className={styles.subtitle}>
-        16 вопросов — и набор пар под твои тренировки, а не одна модель на всё.
-        Видно, какие свойства кроссовка привели к решению.
-      </p>
+    <>
+      {/* Шапка липкая и непрозрачная: без этого заголовок вопроса при прокрутке
+          наезжал на часы и индикатор сети. */}
+      <header className={styles.header}>
+        <div className={styles.headerInner}>
+          <div className={styles.headerTop}>
+            <span className={styles.brand}>{STEP_TITLES[step]}</span>
+            <span className={styles.progressStep}>
+              шаг {step + 1} из {STEP_TITLES.length}
+            </span>
+          </div>
+          <div className={styles.progressTrack}>
+            <div
+              className={styles.progressFill}
+              style={{ width: `${((step + 1) / STEP_TITLES.length) * 100}%` }}
+            />
+          </div>
+        </div>
+      </header>
 
-      <div className={styles.progress}>
-        <div className={styles.progressHead}>
-          <span className={styles.progressStep}>{STEP_TITLES[step]}</span>
-          <span>
-            шаг {step + 1} из {STEP_TITLES.length}
-          </span>
-        </div>
-        <div className={styles.progressTrack}>
-          <div
-            className={styles.progressFill}
-            style={{ width: `${((step + 1) / STEP_TITLES.length) * 100}%` }}
-          />
-        </div>
-      </div>
+      <main className={styles.main}>
+        <div className={styles.inner}>
+      {step === 0 ? (
+        <>
+          <h1 className={styles.title}>
+            Подбор <span className={styles.accent}>беговых кроссовок</span>
+          </h1>
+          <p className={styles.subtitle}>
+            16 вопросов — и набор пар под твои тренировки, а не одна модель на
+            всё. Видно, какие свойства кроссовка привели к решению.
+          </p>
+        </>
+      ) : null}
 
       {step === 0 ? (
         <>
@@ -671,26 +706,55 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
             value={draft.pairs}
             onChange={(v) => set("pairs", v)}
           />
+
+          {/* Уведомление стоит на последнем шаге, до кнопки: среди ответов есть
+              вес и история травм — данные о здоровье, и забирать их молча
+              нельзя. Отказ ничего не ломает: выдачу человек получает так же. */}
+          <div className={styles.privacyNote}>
+            Ответы сохраняются обезличенно — чтобы понимать, чем реально бегает
+            аудитория, и чинить подбор там, где он промахивается. Ни имени, ни
+            почты, ни телефона на этом шаге не спрашиваем и не сохраняем; ни
+            IP, ни данные браузера не пишем. Связка с тобой появится, только
+            если ты сам перейдёшь в бот.{" "}
+            <a href="/privacy" target="_blank" rel="noopener noreferrer">
+              Политика конфиденциальности
+            </a>
+            .
+            <label className={styles.privacyToggle}>
+              <input
+                type="checkbox"
+                checked={saveAnswers}
+                onChange={(e) => setSaveAnswers(e.target.checked)}
+              />
+              <span>
+                Можно сохранить мои ответы. Снимешь галочку — выдачу всё равно
+                увидишь, просто ничего не сохранится.
+              </span>
+            </label>
+          </div>
         </>
       ) : null}
 
-      <div className={styles.nav}>
-        {step > 0 ? (
-          <button type="button" className={styles.navBack} onClick={() => setStep(step - 1)}>
-            Назад
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className={styles.navNext}
-          disabled={!stepReady}
-          onClick={() => (step === STEP_TITLES.length - 1 ? setDone(true) : setStep(step + 1))}
-        >
-          {step === STEP_TITLES.length - 1 ? "Показать ротацию" : "Далее"}
-        </button>
-      </div>
+        </div>
+      </main>
 
-      <div className={styles.footer}>igorp.run</div>
-    </div>
+      <div className={styles.bottomBar}>
+        <div className={styles.bottomBarInner}>
+          {step > 0 ? (
+            <button type="button" className={styles.navBack} onClick={() => setStep(step - 1)}>
+              Назад
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={styles.navNext}
+            disabled={!stepReady}
+            onClick={() => (step === STEP_TITLES.length - 1 ? setDone(true) : setStep(step + 1))}
+          >
+            {step === STEP_TITLES.length - 1 ? "Показать ротацию" : "Далее"}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
