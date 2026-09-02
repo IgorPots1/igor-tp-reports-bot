@@ -161,6 +161,7 @@ assert.ok(
 const answers: OnboardingAnswers = {
   sourceId: "s", goalKind: "race", raceDate: "2026-11-22", raceDistanceKm: 21.1,
   daysPerWeek: 4, selfReportedWeeklyMinutes: 200, unavailableWeekdays: [0], preferredLongWeekday: 6,
+  canRunContinuously: null,
 };
 const fromAnswers = startingPointFromAnswers(answers);
 assert.equal(fromAnswers.source, "questionnaire");

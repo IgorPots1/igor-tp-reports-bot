@@ -52,11 +52,38 @@ export type Guardrail = {
 };
 export type ReviewRule = { ruleCode: string; triggerType: string; messageRu: string; intents: string[] };
 
+/**
+ * Пресет лестницы шаг-бега для начинающих.
+ *
+ * Раньше всё семейство beginner_run_walk отбрасывалось прямо на загрузке, и
+ * генератор о нём не знал вовсе: минимальной беговой единицей оставался лёгкий
+ * бег с полом 25 минут — то есть новичку, который бегать непрерывно ещё не
+ * может, выдавалась сессия, которую он физически не выполнит.
+ *
+ * Числа для назначения берутся НЕ отсюда, а из методики
+ * (src/features/methodology/beginner.ts): там лестница, порядок ступеней и
+ * правила перехода. Каталог — витрина и место правки для тренера; сборщик
+ * сверяет одно с другим и жалуется, если они разошлись.
+ */
+export type BeginnerPreset = {
+  presetCode: string;
+  displayNameRu: string;
+  beginnerStep: number | null;
+  reps: number | null;
+  runMinutes: number | null;
+  walkMinutes: number | null;
+  continuousMinutes: number | null;
+  rpeTarget: number | null;
+  rpeCap: number | null;
+};
+
 export type Catalog = {
   aerobic: Map<string, AerobicPreset>;
   quality: QualityPreset[];
   guardrails: Guardrail[];
   reviewRules: ReviewRule[];
+  /** Лестница новичка. Пустая карта — семейства в базе нет (миграция не применена). */
+  beginner: Map<string, BeginnerPreset>;
 };
 
 /**
@@ -204,7 +231,7 @@ export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | nul
     .select(`preset_code, display_name_ru, coach_only, coach_review_required, requires_explicit_vo2_intensity,
              athlete_level_min, is_enabled, enabled_by_default,
              workout_template_variants!inner(variant_code, intensity_intent, workout_template_families!inner(family_code)),
-             workout_template_preset_parameters(reps, work_duration_min, recovery_duration_min, target_mode, rpe_target, rpe_cap, avoid_acidosis, extra_params),
+             workout_template_preset_parameters(reps, work_duration_min, recovery_duration_min, run_duration_min, walk_duration_min, target_mode, rpe_target, rpe_cap, avoid_acidosis, extra_params),
              workout_template_warmup_refs(duration_min_approx),
              workout_template_cooldown_refs(duration_min_approx)`)
     .eq("is_enabled", true);
@@ -212,6 +239,7 @@ export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | nul
 
   const aerobic = new Map<string, AerobicPreset>();
   const quality: QualityPreset[] = [];
+  const beginner = new Map<string, BeginnerPreset>();
 
   for (const r of (presets ?? []) as unknown as Array<CatalogRow>) {
     const v = r.workout_template_variants; const fam = v?.workout_template_families?.family_code;
@@ -236,6 +264,26 @@ export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | nul
       }
       continue;
     }
+    // ЛЕСТНИЦА НОВИЧКА — в свою карту, а не в аэробные и не в качество.
+    // В аэробные её класть нельзя: сборщик подставляет аэробные пресеты по
+    // жёстко зашитым кодам и меряет их одной длительностью, а шаг-бег — это
+    // структура. В качество — тем более: это лёгкая работа по ощущениям.
+    if (fam === "beginner_run_walk") {
+      const extraStep = Number(extra.beginnerStep);
+      beginner.set(r.preset_code as string, {
+        presetCode: r.preset_code as string,
+        displayNameRu: r.display_name_ru as string,
+        beginnerStep: Number.isFinite(extraStep) ? extraStep : null,
+        reps: num(pp?.reps),
+        runMinutes: num((pp as { run_duration_min?: unknown } | undefined)?.run_duration_min),
+        walkMinutes: num((pp as { walk_duration_min?: unknown } | undefined)?.walk_duration_min),
+        continuousMinutes: num(extra.continuousMinutes),
+        rpeTarget: num(pp?.rpe_target),
+        rpeCap: num(pp?.rpe_cap),
+      });
+      continue;
+    }
+
     if (fam !== "intervals" && fam !== "race_specific") continue;
 
     // Кандидат автогенерации: не coach_only, не выключенный.
@@ -272,7 +320,7 @@ export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | nul
     .select("rule_code, trigger_type, message_ru, applies_to_intensity_intents").eq("is_enabled", true);
 
   return {
-    aerobic, quality: quality.sort((a, b) => a.totalWorkMinutes - b.totalWorkMinutes),
+    aerobic, beginner, quality: quality.sort((a, b) => a.totalWorkMinutes - b.totalWorkMinutes),
     guardrails: ((gr ?? []) as unknown as Array<GuardrailRow>).map((g) => ({
       ruleCode: g.rule_code, severity: g.severity, messageRu: g.message_ru,
       intents: g.applies_to_intensity_intents ?? [], families: g.applies_to_family_codes ?? [],

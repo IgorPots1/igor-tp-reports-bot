@@ -13,6 +13,7 @@ import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Cata
 import { selectQualityFromCatalog, qualityCapFromHistory, QUALITY_CAP_THRESHOLDS, type QualityDecision } from "./quality-select.ts";
 import { LONG_DAY_FALLBACK, confidentLongDay, qualityCountWanted } from "./practice-signals.ts";
 import { availableDayCount, resolvePreferences, type AthletePreference, type PreferenceEffect, type PreferenceRole } from "./athlete-preferences.ts";
+import { composeBeginnerWeek, type BeginnerWeekInput } from "./beginner-week.ts";
 import type { Band } from "./band-collision.ts";
 
 export const DAY_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -565,7 +566,26 @@ export type CycleWeekTarget = {
 export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
   tierNote: string | null = null, cycle: CycleWeekTarget | null = null,
   /** Пожелания тренера. Не переданы — поведение ровно прежнее. */
-  prefs: AthletePreference[] | null = null): Week {
+  prefs: AthletePreference[] | null = null,
+  /**
+   * ВЕТКА НАЧИНАЮЩЕГО. Передана — неделя собирается по лестнице шаг-бега, и ни
+   * одна строка ниже не выполняется.
+   *
+   * Почему ранним возвратом, а не флагом внутри. У новичка нет ничего, на чём
+   * стоит остальной сборщик: ни конверта объёма (наблюдённых недель ноль), ни
+   * темпового якоря (методика прямо требует управления по ощущению), ни
+   * практики по дням. Пропускать его через арифметику, рассчитанную на атлета
+   * с историей, значит либо получить отказ «конверт считать не из чего», либо
+   * подсунуть ей выдуманные числа.
+   *
+   * РОСТЕР TRAININGPEAKS НЕ ЗАТРОНУТ: параметр необязательный и по умолчанию
+   * null, а вызовы ростера его не передают — там якорь есть всегда.
+   */
+  beginner: BeginnerWeekInput | null = null): Week {
+  if (beginner) {
+    return composeBeginnerWeek(a.athleteId, a.tier, weekStart, beginner, cat, prefs);
+  }
+
   const notes: string[] = [];
   // ПОЖЕЛАНИЯ СВОДЯТСЯ ОДИН РАЗ, ДО ВСЕГО. Их пометки идут в заметки недели ДАЖЕ ЕСЛИ
   // неделя потом окажется отказной: тренер должен видеть, что его правило прочитано.

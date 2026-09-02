@@ -27,7 +27,14 @@ import {
 } from "@/features/intervals/onboarding/starting-point";
 import type { OnboardingAnswers, StartingPoint } from "@/features/intervals/onboarding/types";
 
+import {
+  BEGINNER_MAX_RUNS_PER_WEEK, BEGINNER_METHODOLOGY_ID, BEGINNER_METHODOLOGY_VERSION,
+  BEGINNER_RPE_CAP, BEGINNER_RPE_TARGET, decideNextStep, diagnosticSession,
+  stepByIndex, stepDescriptionRu, weeklyRunningMinutes, type SessionFeedback,
+} from "@/features/methodology/beginner";
+
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
+import type { BeginnerWeekInput } from "./lib/beginner-week.ts";
 import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
 import { forecast } from "./lib/training-cycle.ts";
 import type { AthletePreference } from "./lib/athlete-preferences.ts";
@@ -154,7 +161,9 @@ async function main(): Promise<void> {
   const goalArg = arg("goal");
   let answersFromFlags: OnboardingAnswers | null = null;
   if (goalArg) {
-    if (goalArg !== "race" && goalArg !== "regular") fail("--goal принимает race или regular");
+    if (goalArg !== "race" && goalArg !== "regular" && goalArg !== "start_running") {
+      fail("--goal принимает race, regular или start_running");
+    }
     const raceDate = arg("race-date");
     const raceKm = arg("race-km");
     if (goalArg === "race" && (!raceDate || !raceKm)) {
@@ -174,6 +183,8 @@ async function main(): Promise<void> {
         .filter(Boolean)
         .map(Number),
       preferredLongWeekday: longDayArg === null ? null : Number(longDayArg),
+      canRunContinuously:
+        arg("can-run-continuously") === null ? null : arg("can-run-continuously") === "true",
     };
   }
 
@@ -188,6 +199,7 @@ async function main(): Promise<void> {
         self_reported_weekly_minutes: answersFromFlags!.selfReportedWeeklyMinutes,
         unavailable_weekdays: answersFromFlags!.unavailableWeekdays,
         preferred_long_weekday: answersFromFlags!.preferredLongWeekday,
+        can_run_continuously: answersFromFlags!.canRunContinuously,
       },
       { onConflict: "source_id" }
     );
@@ -217,6 +229,7 @@ async function main(): Promise<void> {
           selfReportedWeeklyMinutes: answersRow.self_reported_weekly_minutes,
           unavailableWeekdays: (answersRow.unavailable_weekdays ?? []) as number[],
           preferredLongWeekday: answersRow.preferred_long_weekday,
+          canRunContinuously: answersRow.can_run_continuously ?? null,
         };
       }
     }
@@ -224,7 +237,13 @@ async function main(): Promise<void> {
   if (!answers) fail("Анкеты нет. Передайте --goal=… и остальные поля.");
 
   console.log("── Анкета ───────────────────────────────────");
-  console.log(`цель:                ${answers.goalKind === "race" ? `старт ${answers.raceDate}, ${answers.raceDistanceKm} км` : "бегать регулярно"}`);
+  const goalText =
+    answers.goalKind === "race"
+      ? `старт ${answers.raceDate}, ${answers.raceDistanceKm} км`
+      : answers.goalKind === "start_running"
+        ? "начать бегать (методика новичка)"
+        : "бегать регулярно";
+  console.log(`цель:                ${goalText}`);
   console.log(`дней в неделю:       ${answers.daysPerWeek}`);
   console.log(`недоступные дни:     ${answers.unavailableWeekdays.length ? answers.unavailableWeekdays.map((d) => DAY_RU[d]).join(", ") : "нет"}`);
   console.log(`день длительной:     ${answers.preferredLongWeekday === null ? "не задан" : DAY_RU[answers.preferredLongWeekday]}`);
@@ -253,6 +272,15 @@ async function main(): Promise<void> {
   }
   printStartingPoint(start);
   console.log("");
+
+  // ── Ветка начинающего ──
+  //
+  // Отдельная дорога, а не режим общей: у новичка методика назначает конкретную
+  // сессию по лестнице, и считать конверт объёма не из чего и незачем.
+  if (answers.goalKind === "start_running") {
+    await runBeginnerBranch(supabase, source.id as string, answers);
+    return;
+  }
 
   // ── Цикл ──
   const firstWeekStart = arg("first-week") ?? mondayOf(addDays(today, 7));
@@ -362,6 +390,148 @@ async function main(): Promise<void> {
 
   console.log("");
   console.log(`Записано: цикл ${cycleRow.id}, сессий ${rows.length}.`);
+}
+
+/**
+ * Ветка начинающего: лестница шаг-бега вместо цикла по объёму.
+ *
+ * Прогрессия управляется обратной связью, а не календарём, поэтому показанные
+ * недели — ПРОЕКЦИЯ: «если каждая тренировка даётся на RPE 2–3 без боли». Она
+ * считается тем же правилом decideNextStep, что работает в бою, — чтобы
+ * обещание в плане и поведение системы не разошлись.
+ */
+async function runBeginnerBranch(
+  supabase: ReturnType<typeof createSupabaseServerClient>,
+  sourceId: string,
+  answers: OnboardingAnswers
+): Promise<void> {
+  // ПОТОЛОК ЖЁСТКИЙ. Просьбу о четырёх днях отклоняем с объяснением, а не
+  // урезаем молча: человек должен знать, что его услышали и почему ответили нет.
+  if (answers.daysPerWeek > BEGINNER_MAX_RUNS_PER_WEEK) {
+    fail(
+      `Отказ: методика новичка (${BEGINNER_METHODOLOGY_ID} ${BEGINNER_METHODOLOGY_VERSION}) ` +
+        `ограничивает первые 12 недель ${BEGINNER_MAX_RUNS_PER_WEEK} беговыми днями в неделю. ` +
+        `В анкете запрошено ${answers.daysPerWeek}.\n` +
+        "Причина: у начинающего восстановление медленнее нагрузки, и четвёртый беговой день " +
+        "забирает день отдыха, за счёт которого происходит адаптация.\n" +
+        "Исправьте анкету (--days=3) — или снимите сегмент новичка, если человек не новичок."
+    );
+  }
+  if (answers.canRunContinuously === null) {
+    fail(
+      "Отказ: не заполнено, может ли человек бежать непрерывно (--can-run-continuously=true|false). " +
+        "От этого зависит первая, диагностическая тренировка, и угадывать её нельзя."
+    );
+  }
+
+  const weeks = Number(arg("weeks") ?? 4);
+
+  // Состояние прогрессии: где человек сейчас. Нет строки — начинаем с первой
+  // ступени; это первый план.
+  const { data: stateRow } = await supabase
+    .from("intervals_beginner_progression")
+    .select("current_step, sessions_at_step, recent_sessions, methodology_version")
+    .eq("source_id", sourceId)
+    .maybeSingle();
+
+  let step = stateRow ? Number(stateRow.current_step) : 1;
+  let sessionsAtStep = stateRow ? Number(stateRow.sessions_at_step) : 0;
+  const recent: SessionFeedback[] = stateRow ? ((stateRow.recent_sessions ?? []) as SessionFeedback[]) : [];
+  const isFirstPlan = !stateRow;
+
+  console.log("── Методика ─────────────────────────────────");
+  console.log(`источник:            ${BEGINNER_METHODOLOGY_ID} ${BEGINNER_METHODOLOGY_VERSION}`);
+  console.log(`потолок дней:        ${BEGINNER_MAX_RUNS_PER_WEEK} в неделю (жёсткий)`);
+  console.log(`может непрерывно:    ${answers.canRunContinuously ? "да" : "нет"}`);
+  console.log(`ступень на старте:   ${step} (сессий на ступени ${sessionsAtStep})`);
+  console.log(`RPE сессии:          ${BEGINNER_RPE_TARGET}–${BEGINNER_RPE_CAP}`);
+  console.log("");
+  console.log("Показанные недели — ПРОЕКЦИЯ при условии RPE 2–3 без боли.");
+  console.log("Реальная ступень определяется обратной связью после каждой тренировки.");
+
+  const catalog = await loadCatalog(supabase);
+  const prefs = preferencesFromAnswers(answers);
+  const firstWeekStart = arg("first-week") ?? mondayOf(addDays(new Date().toISOString().slice(0, 10), 7));
+
+  // Якоря и конверт ветке не нужны — она возвращается из buildWeek до них.
+  // Передаём пустые осознанно, а не выдуманные: подставить сюда правдоподобные
+  // числа значило бы сделать вид, что они на что-то влияют.
+  const anchors = { athleteId: 0, tier: "T1" as const, easy: null, threshold: null, quality: null };
+  const envelope = buildEnvelope(startingPointFromAnswers(answers));
+
+  const projection: { weekStart: string; step: number; sessions: number; note: string }[] = [];
+  const simulated: SessionFeedback[] = [...recent];
+
+  for (let index = 0; index < weeks; index += 1) {
+    const weekStart = addDays(firstWeekStart, index * 7);
+    const isDiagnostic = isFirstPlan && index === 0;
+
+    if (!isDiagnostic) {
+      const decision = decideNextStep({ currentStep: step, sessionsAtStep, recent: simulated });
+      if (decision.action === "progress") {
+        step = decision.nextStep;
+        sessionsAtStep = 0;
+      }
+      projection.push({ weekStart, step, sessions: answers.daysPerWeek, note: decision.reason });
+    } else {
+      projection.push({ weekStart, step, sessions: 1, note: "первый план: диагностическая тренировка" });
+    }
+
+    const current = stepByIndex(step);
+    const diagnostic = isDiagnostic ? diagnosticSession(answers.canRunContinuously === true) : null;
+
+    const input: BeginnerWeekInput = {
+      step: diagnostic && answers.canRunContinuously
+        ? { ...stepByIndex(6), presetCode: diagnostic.presetCode, totalMinutes: diagnostic.totalMinutes, runningMinutes: diagnostic.runningMinutes }
+        : current,
+      title: diagnostic ? diagnostic.titleRu : `Бег/шаг · ступень ${current.index}`,
+      description: diagnostic ? diagnostic.descriptionRu : stepDescriptionRu(current),
+      isDiagnostic,
+      runsThisWeek: answers.daysPerWeek,
+      rpeTarget: BEGINNER_RPE_TARGET,
+      rpeCap: BEGINNER_RPE_CAP,
+      progressionNote: projection[projection.length - 1].note,
+    };
+
+    const week = buildWeek(anchors, envelope, catalog, weekStart, false, null, null, prefs, input);
+    const runsThisWeek = week.sessions.length;
+
+    console.log("");
+    console.log(
+      `Неделя ${index + 1} · ${weekStart} · ступень ${step} · ` +
+        `${runsThisWeek} ${runsThisWeek === 1 ? "тренировка" : "тренировки"} · ` +
+        `беговых минут ${weeklyRunningMinutes(current, runsThisWeek)}`
+    );
+    if (week.notes.length) console.log(`  ${week.notes.join("; ")}`);
+    for (const session of week.sessions) {
+      console.log(`  ${DAY_RU[session.dayIdx]} ${addDays(weekStart, session.dayIdx)} — ${session.title}, ${session.minutes} мин`);
+      console.log(`     ${session.description}`);
+      console.log(`     [цель: ${session.targetMode} ${BEGINNER_RPE_TARGET}–${BEGINNER_RPE_CAP} · якорь: ${session.anchorSource}]`);
+      if (session.warnings.length) console.log(`     ⚠ ${session.warnings.join(" | ")}`);
+      if (session.coachReview.length) console.log(`     ✋ тренеру: ${session.coachReview.join(" | ")}`);
+    }
+
+    // Проекция: считаем, что все сессии недели прошли на RPE 2-3 без боли.
+    for (let session = 0; session < runsThisWeek; session += 1) {
+      simulated.unshift({ date: weekStart, rpe: 2, pain: false });
+      sessionsAtStep += 1;
+    }
+  }
+
+  console.log("");
+  console.log("── Проекция по ступеням ─────────────────────");
+  for (const [index, row] of projection.entries()) {
+    console.log(`  неделя ${index + 1} (${row.weekStart}): ступень ${row.step} · ${row.note}`);
+  }
+  const finalStep = stepByIndex(projection[projection.length - 1].step);
+  console.log("");
+  console.log(`К концу ${projection.length}-й недели: ступень ${finalStep.index} — ${finalStep.labelRu}`);
+  console.log(`Это при идеальном прохождении. Любое RPE 4+ или боль добавят повтор ступени.`);
+
+  if (!COMMIT) {
+    console.log("");
+    console.log("Ничего не записано (запуск без --commit).");
+  }
 }
 
 main().catch((error) => {

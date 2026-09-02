@@ -49,7 +49,7 @@ export type StartingPointInput = {
 };
 
 export type AnswersInput = {
-  goalKind: "race" | "regular";
+  goalKind: "race" | "regular" | "start_running";
   raceDate: string | null;
   raceDistanceKm: number | null;
   daysPerWeek: number;
@@ -184,8 +184,10 @@ export function buildDraftFromOnboarding(
   const notes: string[] = [];
   const gaps: string[] = [];
 
+  // start_running сюда не доходит: у него своя ветка, лестница шаг-бега вместо
+  // цикла по объёму. Значение оставлено ради полноты разбора.
   const intent: CycleIntent =
-    answers.goalKind === "regular" ? "maintenance" : intentFromDistance(answers.raceDistanceKm);
+    answers.goalKind === "race" ? intentFromDistance(answers.raceDistanceKm) : "maintenance";
 
   // ДЛИНА ЦИКЛА. У старта — сколько недель до него осталось, но не больше
   // канонической длины подготовки под эту дистанцию: если до полумарафона год,

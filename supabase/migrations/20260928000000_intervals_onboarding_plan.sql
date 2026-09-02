@@ -30,7 +30,10 @@ create table if not exists public.intervals_onboarding_answers (
   -- недель, у «просто бегать» — ни того ни другого (intent = maintenance).
   -- Без этого поля пришлось бы гадать, к чему готовим, и любая догадка меняет
   -- и длину цикла, и профиль последних недель.
-  goal_kind text not null check (goal_kind in ('race', 'regular')),
+  -- start_running — сегмент «Хочу начать бегать» из методики новичка
+  -- (coach_igor_true_beginner). У него своя лестница шаг-бега, свой потолок
+  -- беговых дней и своя первая, диагностическая тренировка.
+  goal_kind text not null check (goal_kind in ('race', 'regular', 'start_running')),
 
   -- ДАТА СТАРТА. Из неё считается длина цикла (сколько недель осталось) и куда
   -- встаёт подводка. Без даты цикл нельзя сфазировать: подводка — это последние
@@ -69,13 +72,31 @@ create table if not exists public.intervals_onboarding_answers (
   -- планирует вокруг остальной жизни.
   preferred_long_weekday smallint check (preferred_long_weekday between 0 and 6),
 
+  -- МОЖЕТ ЛИ ЧЕЛОВЕК БЕЖАТЬ НЕПРЕРЫВНО. Развилка методики новичка, а не
+  -- уточнение: от неё зависит первая, диагностическая тренировка — 5x(4+2) с
+  -- шагом или 20–25 минут непрерывно. Спросить это дешевле и честнее, чем
+  -- угадать: у человека без истории данных, из которых это выводится, нет.
+  -- NULL — вопрос не задавали (не сегмент новичка).
+  can_run_continuously boolean,
+
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
 
   -- Цель «старт» без даты и дистанции — это не цель, а намерение. Такой строкой
   -- нельзя сфазировать цикл, и пускать её нельзя.
   constraint intervals_onboarding_race_needs_details
-    check (goal_kind <> 'race' or (race_date is not null and race_distance_km is not null))
+    check (goal_kind <> 'race' or (race_date is not null and race_distance_km is not null)),
+
+  -- Методика новичка ограничивает три беговыми днями в неделю в первые 12
+  -- недель. Констрейнт стоит здесь, чтобы анкету с четырьмя днями нельзя было
+  -- завести вообще: отказ должен случаться на входе, а не при генерации.
+  constraint intervals_onboarding_beginner_days_cap
+    check (goal_kind <> 'start_running' or days_per_week <= 3),
+
+  -- У новичка развилка обязана быть заполнена: без неё неизвестно, какую
+  -- диагностическую тренировку назначать.
+  constraint intervals_onboarding_beginner_needs_continuity
+    check (goal_kind <> 'start_running' or can_run_continuously is not null)
 );
 
 comment on table public.intervals_onboarding_answers is
@@ -171,7 +192,55 @@ comment on table public.intervals_plan_sessions is
 create index if not exists intervals_plan_sessions_cycle_date_idx
   on public.intervals_plan_sessions (cycle_id, session_date);
 
+-- ── 4. Состояние прогрессии новичка ─────────────────────────────────────────
+--
+-- Прогрессия по лестнице шаг-бега управляется ОБРАТНОЙ СВЯЗЬЮ, а не номером
+-- недели: человек переходит на следующую ступень, когда две сессии подряд дались
+-- на RPE 2–3 без боли, и повторяет ступень сколько понадобится. Поэтому
+-- состояние нельзя вывести из цикла — его надо хранить.
+create table if not exists public.intervals_beginner_progression (
+  id uuid primary key default gen_random_uuid(),
+  source_id uuid not null unique
+    references public.student_data_sources(id) on delete cascade,
+
+  -- Версия методики, по которой человек идёт. Хранится СТРОКОЙ рядом с
+  -- состоянием: правила меняются, а ученик, начавший по v2, должен доходить по
+  -- v2 — иначе его ступень внезапно означает другую нагрузку.
+  methodology_id text not null,
+  methodology_version text not null,
+
+  -- Ступень 1…7 из BEGINNER_LADDER (src/features/methodology/beginner.ts).
+  current_step integer not null default 1 check (current_step between 1 and 7),
+  -- Сколько сессий уже отработано НА ЭТОЙ ступени. Обнуляется при переходе.
+  sessions_at_step integer not null default 0 check (sessions_at_step >= 0),
+  last_transition_at date,
+
+  -- Обратная связь последних сессий, свежие первыми:
+  -- [{ date, rpe, pain, step }]. Хранится ряд, а не последнее значение:
+  -- правило перехода смотрит на две сессии подряд, а правило отката — на две
+  -- тяжёлые подряд.
+  recent_sessions jsonb not null default '[]'::jsonb,
+
+  -- Ответ анкеты на момент старта: он определил первую тренировку.
+  can_run_continuously boolean,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+comment on table public.intervals_beginner_progression is
+  'Где человек находится на лестнице шаг-бега. Прогрессия управляется обратной связью (RPE + боль), а не календарём, поэтому состояние хранится, а не вычисляется из цикла.';
+
 -- ── RLS ──────────────────────────────────────────────────────────────────────
+alter table public.intervals_beginner_progression enable row level security;
+grant all on public.intervals_beginner_progression to service_role;
+
+drop trigger if exists set_intervals_beginner_progression_updated_at
+  on public.intervals_beginner_progression;
+create trigger set_intervals_beginner_progression_updated_at
+  before update on public.intervals_beginner_progression
+  for each row execute function public.set_intervals_ingest_updated_at();
+
 alter table public.intervals_onboarding_answers enable row level security;
 alter table public.intervals_plan_cycles enable row level security;
 alter table public.intervals_plan_sessions enable row level security;

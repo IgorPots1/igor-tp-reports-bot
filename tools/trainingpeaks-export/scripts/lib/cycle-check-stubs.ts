@@ -92,6 +92,9 @@ const tempo = (workMinutes: number): QualityPreset => ({
 
 export function stubCatalog(): Catalog {
   return {
+    // Лестница новичка в заглушку не входит: эти проверки про цикл взрослого
+    // атлета, и пустая карта здесь — честное «в этом сценарии её нет».
+    beginner: new Map(),
     aerobic: new Map([
       ["easy_continuous", aerobic("easy_continuous")],
       ["easy_plus_strides", aerobic("easy_plus_strides")],
