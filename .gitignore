@@ -36,3 +36,7 @@ outputs-analysis/
 
 # probeg recon response cache (local, not committed)
 probeg-cache/
+
+# Кэш страниц конвейера сбора базы кроссовок: сотни мегабайт чужого HTML.
+# В репозиторий не идёт, пересобирается запуском collect.ts.
+tools/shoes-pipeline/.cache/

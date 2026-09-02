@@ -1,0 +1,20 @@
+{
+  "//": "Корневой tsconfig проверяет только src/**, поэтому конвейер сбора без этого файла не типизировался бы вовсе: npm run typecheck:shoes-pipeline.",
+  "//paths": "paths задан НАМЕРЕННО, хотя модули подборщика сейчас обходятся относительными импортами. Урок 11.08: tsx берёт paths из БЛИЖАЙШЕГО tsconfig.json, и появление файла без paths молча ломает разворачивание алиаса @/ во всём, что импортируется транзитивно из src/. Стоит кому-то в src/features/shoes перейти на @/ — конвейер упадёт на импорте без этой строки. НЕ УДАЛЯТЬ.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"],
+    "paths": { "@/*": ["../../src/*"] }
+  },
+  "include": ["**/*.ts", "../../src/features/shoes/**/*.ts"],
+  "exclude": ["node_modules", ".cache", "reports"]
+}
