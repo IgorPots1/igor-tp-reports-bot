@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
 import { Onest, JetBrains_Mono } from "next/font/google";
 import { Send, Users, Zap } from "lucide-react";
-import { FLOW, seatsWord } from "@/lib/flow";
-import { getSeatsLeft } from "@/features/intensive/repository";
+import { formatFlowStartDate, seatsWord } from "@/lib/flow";
+import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
 import "./_hub/hub.css";
 
 // КОРЕНЬ САЙТА — страница-хаб (раньше жила по /start). Голый igorp.run отдаёт
@@ -39,7 +39,8 @@ const TG_LINK =
   "https://t.me/IgorPotseluev?text=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%21%20%D0%A5%D0%BE%D1%87%D1%83%20%D0%B7%D0%B0%D0%BF%D0%B8%D1%81%D0%B0%D1%82%D1%8C%D1%81%D1%8F%20%D0%BD%D0%B0%20%D0%B1%D0%B5%D0%B3%D0%BE%D0%B2%D0%BE%D0%B9%20%D0%B8%D0%BD%D1%82%D0%B5%D0%BD%D1%81%D0%B8%D0%B2";
 
 export default async function StartPage() {
-  const seatsLeft = await getSeatsLeft();
+  const flow = await getFlowConfig();
+  const seatsLeft = await getSeatsLeft(flow);
 
   return (
     <div className={`start-root ${onest.variable} ${jetbrains.variable}`}>
@@ -74,7 +75,7 @@ export default async function StartPage() {
                     <>&#128337; Набор в этот поток закрыт</>
                   ) : (
                     <>
-                      &#128337; Старт {FLOW.startDate} · осталось{" "}
+                      &#128337; Старт {formatFlowStartDate(flow.startDateIso)} · осталось{" "}
                       {seatsLeft} {seatsWord(seatsLeft)}
                     </>
                   )}

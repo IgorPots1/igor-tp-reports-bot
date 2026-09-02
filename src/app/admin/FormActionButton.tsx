@@ -10,6 +10,11 @@ type FormActionButtonProps = {
   disabled?: boolean;
   form?: string;
   pendingText?: string;
+  // Для формы с НЕСКОЛЬКИМИ действиями на разных кнопках (например
+  // «Сохранить» и «Открыть новый поток» над одними и теми же полями):
+  // передаётся вместо общего action у <form>, как штатный HTML-атрибут
+  // formaction, который Next.js понимает и для server actions.
+  formAction?: (formData: FormData) => void | Promise<void>;
 };
 
 export default function FormActionButton({
@@ -19,6 +24,7 @@ export default function FormActionButton({
   disabled = false,
   form,
   pendingText,
+  formAction,
 }: FormActionButtonProps) {
   const { pending } = useFormStatus();
 
@@ -28,6 +34,7 @@ export default function FormActionButton({
       className={className}
       disabled={disabled || pending}
       form={form}
+      formAction={formAction}
       onClick={(event) => {
         if (confirmMessage && !window.confirm(confirmMessage)) {
           event.preventDefault();

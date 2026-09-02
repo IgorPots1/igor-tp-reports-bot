@@ -9,6 +9,92 @@ import {
 } from "@/features/supabase/server";
 import { FLOW, SEATS_TOTAL } from "@/lib/flow";
 
+const FLOW_CONFIG_TABLE = "intensive_flow_config";
+
+/** Настройки текущего потока — то, что видят /, /camp и апи анкеты. */
+export type FlowConfig = {
+  number: number;
+  startDateIso: string;
+  seatsTotal: number;
+  priceRub: string;
+  priceEur: string;
+};
+
+/** То же самое плюс id строки — нужен только админке, чтобы знать, что обновлять. */
+export type FlowConfigRow = FlowConfig & { id: string };
+
+function fallbackFlowConfig(): FlowConfig {
+  return {
+    number: FLOW.number,
+    startDateIso: FLOW.startDateIso,
+    seatsTotal: SEATS_TOTAL,
+    priceRub: FLOW.price,
+    priceEur: FLOW.priceEur,
+  };
+}
+
+type FlowConfigDbRow = {
+  id: string;
+  flow_number: number;
+  start_date: string;
+  seats_total: number;
+  price_rub: string;
+  price_eur: string;
+};
+
+function mapFlowConfigRow(row: FlowConfigDbRow): FlowConfigRow {
+  return {
+    id: row.id,
+    number: row.flow_number,
+    startDateIso: row.start_date,
+    seatsTotal: row.seats_total,
+    priceRub: row.price_rub,
+    priceEur: row.price_eur,
+  };
+}
+
+/**
+ * Активная строка настроек потока как есть, БЕЗ фолбэка — бросает исключение,
+ * если база недоступна. Для админки: там ошибку показывают тренеру прямым
+ * текстом (так же, как loadError у списка заявок), а не подсовывают
+ * fallback-константы, которые он мог бы принять за настоящие и молча
+ * пересохранить.
+ */
+export async function getActiveFlowConfigRow(): Promise<FlowConfigRow | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from(FLOW_CONFIG_TABLE)
+      .select("id, flow_number, start_date, seats_total, price_rub, price_eur")
+      .eq("is_active", true)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  );
+
+  if (error) {
+    throw new Error(`flow config read failed: ${describeSupabaseError(error)}`);
+  }
+
+  return data ? mapFlowConfigRow(data as FlowConfigDbRow) : null;
+}
+
+/**
+ * Настройки текущего потока для публичных страниц и апи анкеты. НИКОГДА не
+ * бросает исключение и не роняет вызывающую страницу — при недоступной базе
+ * или отсутствующей активной строке тихо возвращает fallbackFlowConfig().
+ * Тот же принцип, что у getSeatsLeft: живой сайт важнее точного числа.
+ */
+export async function getFlowConfig(): Promise<FlowConfig> {
+  try {
+    const row = await getActiveFlowConfigRow();
+    return row ?? fallbackFlowConfig();
+  } catch (error) {
+    console.error("[intensive] flow config failed, using fallback:", error);
+    return fallbackFlowConfig();
+  }
+}
+
 export const APPLICATION_STATUSES = [
   "new",
   "confirmed",
@@ -175,42 +261,52 @@ function mapRow(row: ApplicationRow): IntensiveApplication {
 /**
  * Сколько мест осталось В ТЕКУЩЕМ ПОТОКЕ. Считается по базе, руками не правится.
  *
+ * Номер потока и общее число мест передаёт вызывающая сторона — раньше это
+ * были константы FLOW.number/SEATS_TOTAL, теперь оба значения приходят из
+ * getFlowConfig() и меняются формой в админке без деплоя.
+ *
  * Фильтр по flow_number обязателен: без него анкеты прошлых потоков продолжают
  * занимать места в новом, и свежий набор открывается уже «закрытым». Ровно это
- * и случилось бы при переходе на 29-й поток — десять участников 28-го держали
- * все места. Номер берётся из FLOW, так что смена потока в конфиге сама
+ * случилось бы при переходе на 29-й поток — десять участников 28-го держали
+ * все места. Номер берётся из переданного конфига, так что смена потока сама
  * обнуляет счётчик.
  *
- * Если база недоступна — возвращаем SEATS_TOTAL, а не ноль и не исключение:
- * упавший запрос не должен ни ронять публичную страницу, ни показывать
- * «набор закрыт» живому потоку. Перекос в эту сторону безопаснее — человек
- * напишет, и тренер разберётся вручную.
+ * Если база недоступна — возвращаем переданный seatsTotal, а не ноль и не
+ * исключение: упавший запрос не должен ни ронять публичную страницу, ни
+ * показывать «набор закрыт» живому потоку. Перекос в эту сторону безопаснее —
+ * человек напишет, и тренер разберётся вручную.
  */
-export async function getSeatsLeft(): Promise<number> {
+export async function getSeatsLeft(flow: {
+  number: number;
+  seatsTotal: number;
+}): Promise<number> {
   try {
     const supabase = createSupabaseServerClient();
     const { count, error } = await withSupabaseNetworkRetry(() =>
       supabase
         .from("intensive_applications")
         .select("id", { count: "exact", head: true })
-        .eq("flow_number", String(FLOW.number))
+        .eq("flow_number", String(flow.number))
         .in("status", OCCUPYING_STATUSES)
     );
 
     if (error) {
       console.error("[intensive] seats count failed:", describeSupabaseError(error));
-      return SEATS_TOTAL;
+      return flow.seatsTotal;
     }
 
-    return Math.max(0, SEATS_TOTAL - (count ?? 0));
+    return Math.max(0, flow.seatsTotal - (count ?? 0));
   } catch (error) {
     console.error("[intensive] seats count threw:", describeSupabaseError(error));
-    return SEATS_TOTAL;
+    return flow.seatsTotal;
   }
 }
 
-export async function getSeatsTaken(): Promise<number> {
-  return SEATS_TOTAL - (await getSeatsLeft());
+export async function getSeatsTaken(flow: {
+  number: number;
+  seatsTotal: number;
+}): Promise<number> {
+  return flow.seatsTotal - (await getSeatsLeft(flow));
 }
 
 /**
@@ -478,4 +574,38 @@ export async function createScreenshotUrls(
     screenshot,
     url: byPath.get(screenshot.path) ?? null,
   }));
+}
+
+/**
+ * Обновляет активную строку настроек потока. updated_at ставится явно, а не
+ * оставлен на default — иначе при обновлении через .update() он бы не
+ * тронулся сам (default срабатывает только на insert), а именно на нём
+ * держится «последняя активная по updated_at» в getActiveFlowConfigRow.
+ */
+export async function updateFlowConfig(
+  id: string,
+  patch: {
+    number: number;
+    startDateIso: string;
+    seatsTotal: number;
+    priceRub: string;
+    priceEur: string;
+  }
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from(FLOW_CONFIG_TABLE)
+    .update({
+      flow_number: patch.number,
+      start_date: patch.startDateIso,
+      seats_total: patch.seatsTotal,
+      price_rub: patch.priceRub,
+      price_eur: patch.priceEur,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    throw new Error(`flow config update failed: ${describeSupabaseError(error)}`);
+  }
 }

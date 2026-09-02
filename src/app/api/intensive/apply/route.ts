@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 
-import { FLOW } from "@/lib/flow";
 import {
   createIntensiveApplication,
+  getFlowConfig,
   getSeatsLeft,
   setApplicationScreenshots,
   uploadScreenshot,
@@ -132,7 +132,8 @@ export async function POST(req: NextRequest) {
   // таблице, ни файлов в bucket, ни уведомления тренеру, ни записи в логе.
   // Теперь мест нет → анкета всё равно сохраняется, но со статусом waitlist;
   // кого пустить в поток, решает тренер в админке.
-  const seatsBefore = await getSeatsLeft();
+  const flow = await getFlowConfig();
+  const seatsBefore = await getSeatsLeft(flow);
   const status: ApplicationStatus = seatsBefore > 0 ? "new" : "waitlist";
 
   // ── Файлы. Проверяем до вставки, чтобы не плодить анкеты с мусором.
@@ -155,7 +156,7 @@ export async function POST(req: NextRequest) {
   let applicationId: string;
   try {
     applicationId = await createIntensiveApplication({
-      flowNumber: String(FLOW.number),
+      flowNumber: String(flow.number),
       fullName,
       birthDate: dateOrNull(form, "birth_date"),
       sex: text(form, "sex", 20),
@@ -211,7 +212,7 @@ export async function POST(req: NextRequest) {
 
   // ── Уведомление независимо от базы: анкета уже сохранена, и упавший
   // Telegram не должен превращаться в ошибку для человека.
-  const seatsLeft = await getSeatsLeft();
+  const seatsLeft = await getSeatsLeft(flow);
   try {
     await notifyTelegram({
       fullName,

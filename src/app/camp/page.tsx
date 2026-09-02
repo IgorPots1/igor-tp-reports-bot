@@ -5,8 +5,8 @@ import Image from "next/image";
 import fs from "fs";
 import path from "path";
 import Carousel from "../club/Carousel";
-import { FLOW, SEATS_TOTAL, pastFlows, seatsWord } from "@/lib/flow";
-import { getSeatsLeft } from "@/features/intensive/repository";
+import { formatFlowStartDate, pastFlowsCount, seatsWord } from "@/lib/flow";
+import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
 import "./camp.css";
 
 // Число мест живое — считается по заявкам на каждый показ страницы.
@@ -47,7 +47,8 @@ const TgIcon = () => (
 );
 
 export default async function IntensivePage() {
-  const seatsLeft = await getSeatsLeft();
+  const flow = await getFlowConfig();
+  const seatsLeft = await getSeatsLeft(flow);
   const seatsClosed = seatsLeft <= 0;
   const hasHeroPhoto = fs.existsSync(
     path.join(process.cwd(), "public/intensive/hero.jpg")
@@ -85,11 +86,11 @@ export default async function IntensivePage() {
             <div className="flow-band">
               <div className="fb">
                 <div className="k">Поток</div>
-                <div className="v">{FLOW.number}-й</div>
+                <div className="v">{flow.number}-й</div>
               </div>
               <div className="fb">
                 <div className="k">Старт</div>
-                <div className="v">{FLOW.startDate}</div>
+                <div className="v">{formatFlowStartDate(flow.startDateIso)}</div>
               </div>
               <div className="fb">
                 <div className="k">{seatsClosed ? "Мест" : "Осталось"}</div>
@@ -110,7 +111,7 @@ export default async function IntensivePage() {
             </div>
             <div className="hero-trust">
               <span>
-                <b>{pastFlows}</b> потоков
+                <b>{pastFlowsCount(flow.number)}</b> потоков
               </span>
               <span>
                 <b>300+</b> участников
@@ -218,7 +219,7 @@ export default async function IntensivePage() {
           <div className="stats">
             <div className="stat">
               <div className="v">
-                <span className="u">{pastFlows}</span>
+                <span className="u">{pastFlowsCount(flow.number)}</span>
               </div>
               <div className="k">потоков интенсива уже прошло</div>
             </div>
@@ -745,7 +746,7 @@ export default async function IntensivePage() {
             </div>
             <div className="bandi">
               <div className="v">
-                Всего {SEATS_TOTAL} {seatsWord(SEATS_TOTAL)}
+                Всего {flow.seatsTotal} {seatsWord(flow.seatsTotal)}
               </div>
               <div className="k">каждого веду лично</div>
             </div>
@@ -759,7 +760,7 @@ export default async function IntensivePage() {
                 Стоимость
               </div>
               <div className="big">
-                {FLOW.price} <span>· {FLOW.priceEur}</span>
+                {flow.priceRub} <span>· {flow.priceEur}</span>
               </div>
             </div>
             <ul className="price-stack">
@@ -795,7 +796,7 @@ export default async function IntensivePage() {
               ) : (
                 <>
                   &#9203; Осталось {seatsLeft} {seatsWord(seatsLeft)} в{" "}
-                  {FLOW.number}-м потоке
+                  {flow.number}-м потоке
                 </>
               )}
             </span>

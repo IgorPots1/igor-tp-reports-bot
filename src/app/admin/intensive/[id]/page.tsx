@@ -3,11 +3,11 @@ import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
 import { getSingleSearchParam } from "@/app/admin/lib";
-import { SEATS_TOTAL } from "@/lib/flow";
 import {
   APPLICATION_STATUSES,
   createScreenshotUrls,
   getApplication,
+  getFlowConfig,
   getSeatsLeft,
 } from "@/features/intensive/repository";
 import {
@@ -73,7 +73,8 @@ export default async function IntensiveApplicationPage({
 
   // Сколько мест свободно СЕЙЧАС, без учёта этой анкеты, если она места не
   // занимает. Нужно, чтобы предупредить о переполнении до нажатия, а не после.
-  const seatsLeft = await getSeatsLeft();
+  const flow = await getFlowConfig();
+  const seatsLeft = await getSeatsLeft(flow);
   const wouldExceedLimit = seatsLeft <= 0 && !statusTakesSeat(application.status);
 
   return (
@@ -104,7 +105,7 @@ export default async function IntensiveApplicationPage({
         {wouldExceedLimit ? (
           <div className="admin-alert admin-alert-warning" style={{ marginTop: 10 }}>
             Свободных мест нет. Если переведёшь эту анкету в «Новая» или
-            «Подтверждена», в потоке станет больше {SEATS_TOTAL} человек.
+            «Подтверждена», в потоке станет больше {flow.seatsTotal} человек.
             Это разрешено — решение за тобой.
           </div>
         ) : null}
@@ -114,7 +115,7 @@ export default async function IntensiveApplicationPage({
             // момент нажатия, даже если проскроллил плашку выше.
             const overflows = wouldExceedLimit && statusTakesSeat(value);
             const confirmMessage = overflows
-              ? `Свободных мест нет — в потоке станет больше ${SEATS_TOTAL} человек. Всё равно перевести в «${statusLabel(value)}»?`
+              ? `Свободных мест нет — в потоке станет больше ${flow.seatsTotal} человек. Всё равно перевести в «${statusLabel(value)}»?`
               : `Перевести анкету в «${statusLabel(value)}»?`;
 
             return (
