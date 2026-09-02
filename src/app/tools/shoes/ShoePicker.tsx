@@ -296,9 +296,11 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT);
   const [done, setDone] = useState(false);
-  // Сохранять ли ответы. По умолчанию да — на этих ответах держится калибровка
-  // весов, — но человек видит уведомление и может снять галочку одним касанием.
-  const [saveAnswers, setSaveAnswers] = useState(true);
+  // Сохранять ли ответы. По умолчанию НЕТ: среди ответов вес и история травм,
+  // то есть данные о здоровье, и брать их можно только с явного согласия, а не
+  // с молчаливого. Калибровка весов держится на этих ответах, но она не повод
+  // забирать их у того, кто не отметил галочку.
+  const [saveAnswers, setSaveAnswers] = useState(false);
   const [restored, setRestored] = useState(false);
   const sent = useRef(false);
 
@@ -711,8 +713,9 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
               вес и история травм — данные о здоровье, и забирать их молча
               нельзя. Отказ ничего не ломает: выдачу человек получает так же. */}
           <div className={styles.privacyNote}>
-            Ответы сохраняются обезличенно — чтобы понимать, чем реально бегает
-            аудитория, и чинить подбор там, где он промахивается. Ни имени, ни
+            Если разрешишь, ответы сохранятся обезличенно — чтобы понимать, чем
+            реально бегает аудитория, и чинить подбор там, где он
+            промахивается. Ни имени, ни
             почты, ни телефона на этом шаге не спрашиваем и не сохраняем; ни
             IP, ни данные браузера не пишем. Связка с тобой появится, только
             если ты сам перейдёшь в бот.{" "}
@@ -727,7 +730,7 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
                 onChange={(e) => setSaveAnswers(e.target.checked)}
               />
               <span>
-                Можно сохранить мои ответы. Снимешь галочку — выдачу всё равно
+                Можно сохранить мои ответы. Не отметишь — выдачу всё равно
                 увидишь, просто ничего не сохранится.
               </span>
             </label>

@@ -204,6 +204,16 @@ for (const p of PROFILES) {
       .map((x) => `${x.shoe.brand} ${x.shoe.model} (${x.score})`)
       .join(" · ");
     console.log(`  ${r.slot.title}: ${line}`);
+
+    // Карбон в темповом слоте — сожжённая пара: ресурс порядка 250 км при цене
+    // двух обычных. Инвариант проверяется на КАЖДОМ профиле, а не один раз:
+    // выпасть он может от любой правки весов или категорий.
+    if (r.slot.id === "tempo") {
+      const carbon = r.picks.filter((x) => x.shoe.plate === "carbon");
+      if (carbon.length > 0) {
+        fail(`карбон в темповом слоте: ${carbon.map((c) => c.shoe.id).join(", ")}`);
+      }
+    }
     const first = r.picks[0];
     if (first.pros.length === 0) fail(`у лучшего совпадения в «${r.slot.title}» нет ни одного плюса`);
 
@@ -238,6 +248,36 @@ for (const p of PROFILES) {
     const low = results.flatMap((r) => r.picks).filter((x) => x.shoe.drop_mm < 6);
     if (low.length > 0) fail(`при больном ахилле предложен дроп < 6 мм: ${low.map((t) => t.shoe.id).join(", ")}`);
   }
+}
+
+console.log("\n=== Карбон: темповый слот против стартового ===");
+{
+  // Формулировка проверки — из дополнения №3: полумарафон, скоростные есть,
+  // три пары. В темповом карбона быть не должно, в стартовом он должен остаться.
+  const a: Answers = { ...base, goal: "half", speedwork: true, pairs: 3 };
+  const results = recommend(clientCatalog, a);
+  const tempo = results.find((r) => r.slot.id === "tempo");
+  const race = results.find((r) => r.slot.id === "race");
+
+  console.log(
+    "  темповый: " +
+      (tempo?.picks.map((p) => `${p.shoe.brand} ${p.shoe.model} [${p.shoe.plate}]`).join(" · ") ?? "пусто")
+  );
+  console.log(
+    "  стартовый: " +
+      (race?.picks.map((p) => `${p.shoe.brand} ${p.shoe.model} [${p.shoe.plate}]`).join(" · ") ?? "пусто")
+  );
+
+  if (!tempo || tempo.picks.length === 0) fail("темповый слот пуст — карбон убрали вместе со всем остальным");
+  if ((tempo?.picks ?? []).some((p) => p.shoe.plate === "carbon")) fail("карбон остался в темповом слоте");
+  if (!race || race.picks.length === 0) fail("стартовый слот пуст");
+  if (!(race?.picks ?? []).some((p) => p.shoe.plate === "carbon")) {
+    fail("карбон пропал из стартового слота — фильтр задел не тот слот");
+  }
+  // Нейлон и модели без пластины в темповом остаться обязаны: отсекается
+  // именно карбон, а не всё, что быстрее ежедневных.
+  const kinds = new Set((tempo?.picks ?? []).map((p) => p.shoe.plate));
+  console.log(`  пластины в темповом: ${[...kinds].join(", ") || "—"}`);
 }
 
 console.log("\n=== Жёсткость задника ===");

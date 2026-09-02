@@ -27,7 +27,8 @@ type RejectReason =
   | "category"
   | "surface"
   | "notWinter"
-  | "winterOnly";
+  | "winterOnly"
+  | "carbonInTempo";
 
 function reject(shoe: ClientShoe, a: Answers, slot: Slot): RejectReason | null {
   if (a.market !== "any" && !shoe.available.includes(a.market)) return "market";
@@ -45,6 +46,12 @@ function reject(shoe: ClientShoe, a: Answers, slot: Slot): RejectReason | null {
     if (shoe.categories.includes("winter")) return "winterOnly";
     if (slot.surface !== null && shoe.surface !== slot.surface) return "surface";
     if (!shoe.categories.some((c) => slot.categories.includes(c))) return "category";
+
+    // В темповый слот карбон не проходит НИКОГДА — ни из категории race, ни из
+    // категории tempo. Дело не в ощущениях: карбоновая стартовая держит порядка
+    // 250 км и стоит как две обычные пары, поэтому еженедельные интервалы в ней
+    // — способ сжечь пару впустую. Для дня гонки есть отдельный слот.
+    if (slot.id === "tempo" && shoe.plate === "carbon") return "carbonInTempo";
   }
 
   if (a.tier !== "any") {
@@ -73,6 +80,8 @@ function explainEmpty(counts: Record<RejectReason, number>, slot: Slot): string 
       return `${base}В базе нет версий в выбранном поле — попробуй «любые».`;
     case "notWinter":
       return `${base}В базе нет моделей с мембраной или зимним сцеплением под твои ограничения.`;
+    case "carbonInTempo":
+      return `${base}Карбоновые модели сюда не идут — их ресурс на еженедельную работу не рассчитан, а в базе не нашлось темповых без пластины.`;
     case "category":
     case "surface":
     case "winterOnly":
@@ -103,6 +112,7 @@ export function recommend(catalog: ClientCatalog, a: Answers): SlotResult[] {
       surface: 0,
       notWinter: 0,
       winterOnly: 0,
+      carbonInTempo: 0,
     };
 
     const candidates = catalog.shoes.filter((shoe) => {
