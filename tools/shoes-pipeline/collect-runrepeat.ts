@@ -111,6 +111,7 @@ console.log(`Разобрано: ${parsed.length}, отказов: ${failures.le
 console.log(`\nЗаполненность полей, которых нет больше нигде:`);
 for (const f of [
   "midsole_softness_ac",
+  "midsole_softness_old_ha",
   "midsole_softness_cold_old_ha",
   "heel_counter_stiffness",
   "outsole_thickness_mm",

@@ -108,6 +108,13 @@ export function parseRunRepeat(html: string, url: string): RunRepeatShoe {
      * перевод шкалы — отдельное решение.
      */
     midsole_softness_ac: fromRow(rows, "Midsole softness", /([\d.]+)\s*AC/i),
+    /**
+     * Та же величина по СТАРОЙ шкале Шора — и это ровно то, что просит поле
+     * схемы midsole_durometer_ha. Обзоры до перехода на Asker C держат её в
+     * строке «Midsole softness (old method)». Значит часть базы закрывается
+     * без всякого пересчёта, честным замером в нужной шкале.
+     */
+    midsole_softness_old_ha: fromRow(rows, "Midsole softness (old method)", /([\d.]+)\s*HA/i),
     midsole_softness_cold_old_ha: fromRow(rows, "Midsole softness in cold (old method)", /([\d.]+)\s*HA/i),
     midsole_softness_cold_pct: fromRow(rows, "Midsole softness in cold (%)", /([\d.]+)\s*%/),
 

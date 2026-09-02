@@ -22,6 +22,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { durabilityFromWear, wearBounds } from "./lib/durability";
+import { softnessFromHa } from "../../src/features/shoes/scoring";
 import { validateCatalog } from "../../src/features/shoes/schema";
 import { mergeSources, RUNREPEAT_ONLY, type RtingsModel, type RunRepeatModel } from "./lib/merge";
 
@@ -40,6 +42,15 @@ if (!rt || !rr) {
 
 const { models, matched } = mergeSources(rt.parsed, rr.parsed);
 
+// Границы шкалы износостойкости считаем по ВСЕЙ собранной базе, до сборки
+// записей: иначе каждая запись получила бы балл по своей линейке.
+const bounds = wearBounds(
+  models
+    .map((m) => m.single.outsole_wear_mm?.value)
+    .filter((v): v is number => typeof v === "number")
+);
+console.log(`Абразивный тест: выработка ${bounds.p5.toFixed(2)}–${bounds.p95.toFixed(2)} мм (5-й и 95-й перцентили) → шкала 10–1\n`);
+
 /** Происхождение по полям — сайдкар, схема приложения не расширяется. */
 type FieldProvenance = { sources: string[]; kind: string; evidence: string; single_source?: true };
 const provenance: Record<string, Record<string, FieldProvenance>> = {};
@@ -54,6 +65,10 @@ const titleFromKey = (key: string) =>
 const records = models.map((m) => {
   const fields: Record<string, FieldProvenance> = {};
   const value: Record<string, number | null> = {};
+  const haSpec = m.single.midsole_softness_old_ha;
+  const ha = typeof haSpec?.value === "number" ? haSpec.value : null;
+  const wearSpec = m.single.outsole_wear_mm;
+  const wear = typeof wearSpec?.value === "number" ? wearSpec.value : null;
 
   for (const [field, r] of Object.entries(m.reconciled)) {
     if (r.status === "ok") {
@@ -92,16 +107,25 @@ const records = models.map((m) => {
     stack_heel_mm: value.stack_heel_mm ?? null,
     stack_fore_mm: value.stack_fore_mm ?? null,
     drop_mm: value.drop_mm ?? null,
-    // Твёрдость в Asker C, а поле схемы — под Shore HA. Не подменяем шкалу.
-    midsole_durometer_ha: null,
-    softness: null,
+    /**
+     * Твёрдость берём ТОЛЬКО из замеров в шкале Шора — той самой, под которую
+     * написано поле и откалибрована формула приложения. Обзоры на Asker C сюда
+     * не идут: ни одна модель не измерена в обеих шкалах, значит вывести
+     * пересчёт из этих данных невозможно, а придумать его — та самая подмена,
+     * от которой конвейер и защищает.
+     *
+     * Мягкость считается функцией ПРИЛОЖЕНИЯ, а не своей копией: валидатор
+     * сверяет их между собой, и две реализации разошлись бы на первой правке.
+     */
+    midsole_durometer_ha: ha,
+    softness: ha === null ? null : softnessFromHa(ha),
     foam_type: null,
     plate: null,
     stability: null,
     last_width: null,
     platform_width_heel_mm: value.platform_width_heel_mm ?? null,
     platform_width_fore_mm: value.platform_width_fore_mm ?? null,
-    outsole_durability: null,
+    outsole_durability: wear === null ? null : durabilityFromWear(wear, bounds),
     outsole_thickness_mm:
       typeof m.single.outsole_thickness_mm?.value === "number" ? m.single.outsole_thickness_mm.value : null,
     membrane: null,

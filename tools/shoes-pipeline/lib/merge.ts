@@ -47,6 +47,8 @@ export const COMPARABLE: { field: string; rtings: string; runrepeat: string; not
 
 /** Поля, которые есть только у RunRepeat: подтверждать их нечем и некем. */
 export const RUNREPEAT_ONLY = [
+  // Замер в ТОЙ ЖЕ шкале, что просит схема, — закрывает поле без пересчёта.
+  "midsole_softness_old_ha",
   "midsole_softness_ac",
   "heel_counter_stiffness",
   "outsole_thickness_mm",
