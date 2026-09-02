@@ -28,8 +28,19 @@ const CACHE_DIR = resolve("tools/shoes-pipeline/.cache");
 const TERMS_PATH = resolve("tools/shoes-pipeline/reports/source-terms.json");
 
 type TermsReport = {
+  checkedAt: string;
   sources: { id: string; status: string; note: string; crawlDelaySec: number | null }[];
 };
+
+/**
+ * Через сколько дней вердикт по источникам протухает.
+ *
+ * Отчёт аудита намеренно НЕ хранится в репозитории (правило reports/ в
+ * .gitignore) и намеренно стареет: robots.txt и условия использования меняются,
+ * а унаследованный из прошлого года вердикт «можно» — это разрешение, которое
+ * никто не проверял. Гейт должен переспрашивать, а не помнить.
+ */
+const TERMS_MAX_AGE_DAYS = 30;
 
 let terms: TermsReport | null = null;
 function loadTerms(): TermsReport {
@@ -40,6 +51,15 @@ function loadTerms(): TermsReport {
     );
   }
   terms = JSON.parse(readFileSync(TERMS_PATH, "utf8")) as TermsReport;
+
+  const ageDays = (Date.now() - new Date(terms.checkedAt).getTime()) / 86400000;
+  if (!Number.isFinite(ageDays) || ageDays > TERMS_MAX_AGE_DAYS) {
+    throw new Error(
+      `Проверка условий источников устарела (${Math.round(ageDays)} дн.). ` +
+        `Условия и robots.txt меняются — перепроверь: ` +
+        `npx tsx tools/shoes-pipeline/audit-sources.ts`
+    );
+  }
   return terms;
 }
 
