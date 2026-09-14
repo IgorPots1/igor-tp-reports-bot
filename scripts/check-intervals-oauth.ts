@@ -115,10 +115,27 @@ async function main(): Promise<void> {
   const scope = url.searchParams.get("scope") ?? "";
   console.log(`     scope: ${scope}`);
   expect(
-    scope === "ACTIVITY:READ,ACTIVITY:WRITE,WELLNESS:READ,CALENDAR",
-    "права ровно те, что в наряде, через запятую и без пробелов"
+    scope === "ACTIVITY,CALENDAR,WELLNESS",
+    "права ровно те, что понимает провайдер, через запятую и без пробелов"
   );
-  expect(INTERVALS_SCOPES.length === 4, "лишних прав не просим");
+  expect(INTERVALS_SCOPES.length === 3, "лишних прав не просим");
+
+  // ДУБЛЬ ИМЕНИ ЛОВИМ ЗДЕСЬ, А НЕ У ПРОВАЙДЕРА. Именно на этом подключение
+  // падало: ACTIVITY:READ и ACTIVITY:WRITE — два разных значения у нас, но одно
+  // и то же право у Intervals, и он отвечал «Duplicate scope ACTIVITY».
+  const bases = INTERVALS_SCOPES.map((value) => value.split(":")[0]);
+  expect(
+    new Set(bases).size === bases.length,
+    "одно и то же право не просим дважды (проверка на Duplicate scope)"
+  );
+  expect(
+    INTERVALS_SCOPES.every((value) => !value.includes(":")),
+    "суффиксов :READ и :WRITE нет, у провайдера права называются без них"
+  );
+  expect(
+    !INTERVALS_SCOPES.includes("SETTINGS" as (typeof INTERVALS_SCOPES)[number]),
+    "SETTINGS не просим: зоны и пороги у Intervals не читаем"
+  );
 
   // ── Идентификатор атлета ──
   step("ИДЕНТИФИКАТОР АТЛЕТА");
@@ -154,7 +171,7 @@ async function main(): Promise<void> {
       JSON.stringify({
         token_type: "Bearer",
         access_token: "d842c1fc25f241e5ae440d09756448a9",
-        scope: "ACTIVITY:READ,ACTIVITY:WRITE,WELLNESS:READ,CALENDAR",
+        scope: "ACTIVITY,CALENDAR,WELLNESS",
         athlete: { id: ATHLETE_RAW, name: "Проверка OAuth" },
       }),
       { status: 200 }
