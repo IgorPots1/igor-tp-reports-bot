@@ -53,8 +53,29 @@ export type StudentLadderView = {
   progressNoteRu: string;
 };
 
+/**
+ * Что показать, пока плана нет.
+ *
+ * РАНЬШЕ ЗДЕСЬ БЫЛ ТУПИК: одна строчка «план ещё готовится» и пустой экран.
+ * Человек только что подключил часы и ответил на восемь вопросов, а в ответ
+ * получил стену. Он не знает ни дошли ли его ответы, ни идут ли данные, ни
+ * сколько ждать — и идёт спрашивать тренера ровно то, что система знает.
+ *
+ * Поэтому экран ожидания показывает ТРИ вещи: что уже сделано (и значит не
+ * потеряно), что происходит сейчас, и что будет дальше.
+ */
+export type WaitingView = {
+  messageRu: string;
+  /** Пройденные шаги: человек видит, что его работа не пропала. */
+  doneRu: string[];
+  /** Что сейчас происходит и от кого зависит. */
+  nextRu: string;
+  /** Короткая сводка ответов анкеты, чтобы можно было заметить ошибку. */
+  answersSummaryRu: string[];
+};
+
 export type StudentView =
-  | { state: "no_plan"; messageRu: string }
+  | { state: "no_plan"; messageRu: string; waiting: WaitingView }
   | {
       state: "ready";
       today: StudentSessionCard | null;
@@ -157,13 +178,29 @@ export function buildStudentView(input: {
   unavailableWeekdays: number[];
   /** Есть ли уже сегодняшний чек-ин по незапланированной пробежке. */
   hasUnplannedCheckinToday: boolean;
+  /** Короткая сводка анкеты: показывается на экране ожидания. */
+  answersSummary?: string[];
   upcomingDays?: number;
 }): StudentView {
   if (input.sessions === null) {
+    const messageRu =
+      "План ещё готовится, тренер его проверяет. Как только будет готов, он появится здесь.";
     return {
       state: "no_plan",
-      messageRu:
-        "План ещё готовится, тренер его проверяет. Как только будет готов, он появится здесь.",
+      messageRu,
+      waiting: {
+        messageRu,
+        doneRu: [
+          "Часы подключены, тренировки приходят",
+          ...(input.answersSummary && input.answersSummary.length > 0
+            ? ["Анкета заполнена, ответы у тренера"]
+            : []),
+        ],
+        nextRu:
+          "Сейчас ход за тренером: он собирает план и проверяет его перед тем, как показать вам. " +
+          "Обычно это занимает день. Ничего делать не нужно, экран обновится сам.",
+        answersSummaryRu: input.answersSummary ?? [],
+      },
     };
   }
 

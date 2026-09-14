@@ -493,6 +493,38 @@ export async function clearAuthFailure(sourceId: string): Promise<void> {
   if (error) console.warn("[intervals.oauth] не удалось снять отметку отказа", { error: error.message });
 }
 
+/**
+ * СПОСОБЕН ЛИ ИСТОЧНИК ОТДАВАТЬ ДАННЫЕ, а не «заведена ли строка».
+ *
+ * ПОЙМАНО НА ЖИВОМ ПРОГОНЕ 15.09.2026. Тестовая карточка тренера имела активный
+ * источник с ключом-заглушкой: строка есть, данных нет и быть не может. Гард
+ * спрашивал «есть ли источник», видел строку и пропускал экран подключения —
+ * человек заполнял анкету, не подключив ничего, и мы этого не замечали.
+ *
+ * Признак пригодности: подключение через OAuth состоялось ЛИБО хоть раз прошла
+ * синхронизация ЛИБО в базе есть хоть одна привезённая тренировка. Наличие
+ * строки не значит ничего: её заводит скрипт, а данные приносит провайдер.
+ */
+export function isConnectionUsable(
+  connection: SourceConnection | null,
+  activitiesCount: number
+): boolean {
+  if (!connection || !connection.isActive) return false;
+  if (connection.authFailedAt) return false;
+  if (connection.authMethod === "oauth" && connection.connectedAt) return true;
+  return connection.lastSyncedAt !== null || activitiesCount > 0;
+}
+
+export async function countActivitiesForSource(sourceId: string): Promise<number> {
+  const supabase = createSupabaseServerClient();
+  const { count, error } = await supabase
+    .from("intervals_activities")
+    .select("id", { count: "exact", head: true })
+    .eq("source_id", sourceId);
+  if (error) throw new Error(`intervals_activities count: ${describeSupabaseError(error)}`);
+  return count ?? 0;
+}
+
 export type SourceConnection = {
   sourceId: string;
   externalAthleteId: string;

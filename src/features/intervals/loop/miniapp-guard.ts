@@ -32,7 +32,12 @@ import { parseTelegramInitDataUser, validateTelegramInitData } from "@/features/
 import { listActiveStudentsByTelegramUserId } from "@/features/trainingpeaks/repository";
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
-import { getSourceConnection, type SourceConnection } from "../repository";
+import {
+  countActivitiesForSource,
+  getSourceConnection,
+  isConnectionUsable,
+  type SourceConnection,
+} from "../repository";
 import { isValidTimeZone } from "./clock";
 
 export function isRunAppEnabled(): boolean {
@@ -124,12 +129,16 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
   // упирался в «напишите тренеру» и дальше зависел от переписки. Теперь он
   // попадает на экран подключения, и весь путь проходит сам.
   const connection = await getSourceConnection(student.id);
+  // sourceId отдаём ТОЛЬКО когда источник реально способен отдавать данные.
+  // Строка без единой синхронизации — это не подключение, а заготовка.
+  const activities = connection ? await countActivitiesForSource(connection.sourceId) : 0;
+  const usable = isConnectionUsable(connection, activities);
 
   return {
     ok: true,
     studentUuid: student.id,
     studentName: student.studentName,
-    sourceId: connection && connection.isActive ? connection.sourceId : null,
+    sourceId: usable ? connection!.sourceId : null,
     connection,
     telegramUserId: tgUser.id,
     timezone: card?.timezone ?? null,

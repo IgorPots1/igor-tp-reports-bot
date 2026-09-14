@@ -5,12 +5,17 @@ import { Onest, JetBrains_Mono } from "next/font/google";
 import { publicPageMetadata } from "@/lib/site";
 import {
   DEVICE_GUIDES,
+  NO_WATCH_BODY_RU,
+  NO_WATCH_TITLE_RU,
+  STEP_LEAD_RU,
+  STEP_TITLE_RU,
   WHERE_TO_LOOK_RU,
   WHY_NOT_STRAVA_RU,
   type GuideStepKind,
 } from "@/features/intervals/device-guide";
 
 import { CONNECT_PAGE } from "./content";
+import { renderMarkdown } from "./markdown";
 
 // Инструкция ДЛЯ УЧЕНИКА, живущая на сайте, а не в пересланном сообщении.
 // Пересланное сообщение нельзя поправить: оно расходится с реальностью в тот
@@ -76,6 +81,7 @@ const S: Record<string, CSSProperties> = {
   h1: { margin: "12px 0 0", fontSize: 34, fontWeight: 700, letterSpacing: "-.02em", lineHeight: 1.1 },
   intro: { margin: "16px 0 0", color: INK_2 },
   h2: { margin: "40px 0 0", fontSize: 22, fontWeight: 700, letterSpacing: "-.01em" },
+  h3: { margin: "26px 0 0", fontSize: 18, fontWeight: 700 },
   card: {
     background: SURFACE,
     border: `1px solid ${LINE}`,
@@ -147,11 +153,16 @@ export default function ConnectPage() {
       <div style={S.wrap}>
         <span style={S.eyebrow}>{CONNECT_PAGE.eyebrowRu}</span>
         <h1 style={S.h1}>{CONNECT_PAGE.titleRu}</h1>
-        {CONNECT_PAGE.introRu ? <p style={S.intro}>{CONNECT_PAGE.introRu}</p> : null}
 
+        {/* ЕДИНОЕ ПОВЕСТВОВАНИЕ ИЗ ДВУХ ИСТОЧНИКОВ. Порядок на странице:
+            вступление и шаг 1 (текст тренера) → ШАГ 2 целиком из device-guide
+            → шаги 3-5 (текст тренера) → почему не Strava → что делать, если.
+            Читателю швов не видно: он видит подряд идущие шаги. */}
+        {renderMarkdown(CONNECT_PAGE.introRu, "intro")}
+
+        <h2 style={S.h2}>{STEP_TITLE_RU}</h2>
+        <p style={S.intro}>{STEP_LEAD_RU}</p>
         <div style={S.where}>{WHERE_TO_LOOK_RU}</div>
-
-        <h2 style={S.h2}>{CONNECT_PAGE.stepsTitleRu}</h2>
         {DEVICE_GUIDES.map((guide) => (
           <section key={guide.code} style={S.card}>
             <p style={S.deviceName}>{guide.labelRu}</p>
@@ -169,7 +180,14 @@ export default function ConnectPage() {
           </section>
         ))}
 
-        {CONNECT_PAGE.afterStepsRu ? <p style={S.intro}>{CONNECT_PAGE.afterStepsRu}</p> : null}
+        {NO_WATCH_BODY_RU ? (
+          <>
+            <h3 style={S.h3}>{NO_WATCH_TITLE_RU}</h3>
+            {renderMarkdown(NO_WATCH_BODY_RU, "nowatch")}
+          </>
+        ) : null}
+
+        {renderMarkdown(CONNECT_PAGE.afterStepsRu, "after")}
 
         <h2 style={S.h2}>{WHY_NOT_STRAVA_RU.titleRu}</h2>
         <ul style={S.list}>
@@ -183,7 +201,7 @@ export default function ConnectPage() {
         {CONNECT_PAGE.troubleRu ? (
           <>
             <h2 style={S.h2}>{CONNECT_PAGE.troubleTitleRu}</h2>
-            <p style={S.intro}>{CONNECT_PAGE.troubleRu}</p>
+            {renderMarkdown(CONNECT_PAGE.troubleRu, "trouble")}
           </>
         ) : null}
 

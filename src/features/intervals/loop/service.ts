@@ -26,6 +26,46 @@ import type { Checkin } from "./types";
 
 const DAY_MS = 86_400_000;
 
+const DAY_RU_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+
+/**
+ * Сводка анкеты словами человека.
+ *
+ * Показывается, пока плана нет, чтобы ошибку в ответах можно было заметить
+ * СЕЙЧАС, а не через неделю по неудобному плану. Только то, что человек
+ * отвечал сам: поля, заданные тренером, он не выбирал и подтверждать ему нечего.
+ */
+function summariseAnswersRu(
+  answers: Awaited<ReturnType<typeof getOnboardingAnswers>>
+): string[] {
+  if (!answers) return [];
+  const coachSet = new Set(answers.coachSetFields);
+  const lines: string[] = [];
+  const mine = (field: string) => !coachSet.has(field);
+
+  if (mine("weekStability") && answers.weekStability) {
+    lines.push(
+      answers.weekStability === "stable" ? "Неделя примерно одинаковая" : "Неделя каждый раз разная"
+    );
+  }
+  if (mine("availableWeekdays") && answers.availableWeekdays.length > 0) {
+    lines.push(`Свободны: ${answers.availableWeekdays.map((d) => DAY_RU_SHORT[d]).join(", ")}`);
+  }
+  if (mine("unavailableWeekdays") && answers.unavailableWeekdays.length > 0) {
+    lines.push(`Заняты: ${answers.unavailableWeekdays.map((d) => DAY_RU_SHORT[d]).join(", ")}`);
+  }
+  if (mine("preferredLongWeekday") && answers.preferredLongWeekday !== null) {
+    lines.push(`Длинная тренировка: ${DAY_RU_SHORT[answers.preferredLongWeekday]}`);
+  }
+  if (mine("maxSessionMinutes") && answers.maxSessionMinutes !== null) {
+    lines.push(`На тренировку есть до ${answers.maxSessionMinutes} минут`);
+  }
+  if (mine("runSurfaces") && answers.runSurfaces.length > 0) {
+    lines.push(`Бегаете: ${answers.runSurfaces.join(", ")}`);
+  }
+  return lines;
+}
+
 function shiftIso(iso: string, days: number): string {
   return new Date(Date.parse(`${iso}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 }
@@ -67,6 +107,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
       progression,
       unavailableWeekdays: answers?.unavailableWeekdays ?? [],
       hasUnplannedCheckinToday: false,
+      answersSummary: summariseAnswersRu(answers),
     });
   }
 

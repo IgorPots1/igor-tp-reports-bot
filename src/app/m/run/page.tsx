@@ -60,8 +60,15 @@ type LadderView = {
   progressNoteRu: string;
 };
 
+type WaitingView = {
+  messageRu: string;
+  doneRu: string[];
+  nextRu: string;
+  answersSummaryRu: string[];
+};
+
 type View =
-  | { state: "no_plan"; messageRu: string }
+  | { state: "no_plan"; messageRu: string; waiting?: WaitingView }
   | {
       state: "ready";
       today: SessionCard | null;
@@ -229,7 +236,7 @@ export default function RunAppPage() {
     <Shell>
       {toast ? <Banner text={toast} /> : null}
       {view.state === "no_plan" ? (
-        <Banner text={view.messageRu} />
+        <WaitingScreen view={view.waiting ?? null} fallbackRu={view.messageRu} />
       ) : (
         <PlanScreen
           view={view}
@@ -241,6 +248,61 @@ export default function RunAppPage() {
         />
       )}
     </Shell>
+  );
+}
+
+/**
+ * Экран ожидания плана. НЕ ТУПИК: человек видит, что его работа не пропала,
+ * что происходит сейчас и от кого это зависит.
+ */
+function WaitingScreen(props: { view: WaitingView | null; fallbackRu: string }) {
+  if (!props.view) return <Banner text={props.fallbackRu} />;
+  const { view } = props;
+  return (
+    <div>
+      <h1 style={{ fontSize: 22, margin: "0 0 6px" }}>План готовится</h1>
+      <p style={{ color: MUTED, margin: "0 0 18px", lineHeight: 1.5 }}>{view.nextRu}</p>
+
+      {view.doneRu.length > 0 ? (
+        <div
+          style={{
+            background: "#fff",
+            border: `1px solid ${LINE}`,
+            borderRadius: 14,
+            padding: "14px 16px",
+            marginBottom: 12,
+          }}
+        >
+          <p style={{ margin: 0, fontWeight: 600 }}>Уже готово</p>
+          <ul style={{ margin: "8px 0 0", paddingLeft: 18, color: GREEN, lineHeight: 1.7, fontSize: 15 }}>
+            {view.doneRu.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {view.answersSummaryRu.length > 0 ? (
+        <div
+          style={{
+            background: "#fff",
+            border: `1px solid ${LINE}`,
+            borderRadius: 14,
+            padding: "14px 16px",
+          }}
+        >
+          <p style={{ margin: 0, fontWeight: 600 }}>Что вы ответили</p>
+          <ul style={{ margin: "8px 0 0", paddingLeft: 18, color: MUTED, lineHeight: 1.7, fontSize: 15 }}>
+            {view.answersSummaryRu.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          <p style={{ margin: "10px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+            Если здесь ошибка, скажите тренеру сейчас: поправить до плана проще, чем после.
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
