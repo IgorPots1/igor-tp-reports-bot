@@ -12,6 +12,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import {
+  SURFACE_OPTIONS,
+  TIME_OF_DAY_OPTIONS,
+  WEEK_STABILITY_OPTIONS,
+} from "@/features/intervals/loop/schedule";
+
 type TelegramWebApp = {
   initData: string;
   ready: () => void;
@@ -70,6 +76,10 @@ const GREEN = "#2E7D45";
 const MUTED = "#6C675A";
 const LINE = "#E2DDD1";
 
+const WEEK_STABILITY = WEEK_STABILITY_OPTIONS;
+const TIME_OF_DAY = TIME_OF_DAY_OPTIONS;
+const SURFACES = SURFACE_OPTIONS;
+
 const DAYS = [
   { idx: 0, label: "Пн" },
   { idx: 1, label: "Вт" },
@@ -106,7 +116,7 @@ export default function RunAppPage() {
       tries += 1;
       if (tries > 40) {
         setLoading(false);
-        setError("Открой приложение из Telegram.");
+        setError("Откройте приложение из Telegram.");
         return;
       }
       window.setTimeout(tick, 100);
@@ -140,7 +150,7 @@ export default function RunAppPage() {
       setPresetGoal(json.presetGoalKind ?? null);
       setView(json.view ?? null);
     } catch {
-      setError("Нет связи. Попробуй ещё раз.");
+      setError("Нет связи. Попробуйте ещё раз.");
     } finally {
       setLoading(false);
     }
@@ -229,7 +239,12 @@ function Banner({ text }: { text: string }) {
   );
 }
 
-// ── Анкета ───────────────────────────────────────────────────────────────────
+// ── Настройка графика ────────────────────────────────────────────────────────
+//
+// НЕ АНКЕТА-ЗНАКОМСТВО. Опыт, травмы, история бега, цели живут в развёрнутой
+// анкете ДО приложения (интенсив или форма тренера) и приезжают сюда
+// предзаполнением. Здесь спрашиваем только то, чего генератор не берёт из
+// данных и чего тренер не знает про человека: расписание.
 
 function OnboardingForm(props: {
   initData: string;
@@ -237,28 +252,45 @@ function OnboardingForm(props: {
   presetGoal: string | null;
   onDone: (note: string) => void;
 }) {
-  // Поле, которого нет в списке, тренер задал за ученицу. Оно не рисуется и не
-  // отправляется: «спрятать, но прислать» оставило бы в базе значение, которого
-  // человек не выбирал.
+  // Поле, которого нет в списке, тренер задал за человека либо оно вообще не
+  // задаётся в приложении. Оно не рисуется и не отправляется: «спрятать, но
+  // прислать» оставило бы в базе значение, которого человек не выбирал.
   const shows = (field: string) => props.fields.includes(field);
-  // Цель, заданную тренером, форма не показывает, но знать её обязана: от неё
-  // зависит, спрашивать ли дату старта и вопрос про непрерывный бег.
-  const [goalKind, setGoalKind] = useState(props.presetGoal ?? "start_running");
+
+  const [stability, setStability] = useState<string | null>(null);
+  const [free, setFree] = useState<number[]>([]);
+  const [busy, setBusy] = useState<number[]>([]);
+  const [longDay, setLongDay] = useState<number | null>(null);
+  const [qualityDay, setQualityDay] = useState<number | null>(null);
+  const [timeOfDay, setTimeOfDay] = useState<string | null>(null);
+  const [surfaces, setSurfaces] = useState<string[]>([]);
+  const [breakers, setBreakers] = useState("");
+  const [goalKind, setGoalKind] = useState(props.presetGoal ?? "");
   const [raceDate, setRaceDate] = useState("");
   const [raceKm, setRaceKm] = useState("");
-  const [days, setDays] = useState(3);
-  const [unavailable, setUnavailable] = useState<number[]>([]);
-  const [longDay, setLongDay] = useState<number | null>(null);
-  const [canRun, setCanRun] = useState<boolean | null>(null);
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const toggleDay = (idx: number) =>
-    setUnavailable((prev) => (prev.includes(idx) ? prev.filter((d) => d !== idx) : [...prev, idx]));
+  // Неделя плавающая: расписанием дальше не мучаем. Человек со сменным
+  // графиком назовёт удобные дни, а через неделю они будут другими, и план,
+  // построенный на этом ответе, он нарушит и сочтёт себя виноватым.
+  const asksSchedule = stability === "stable";
+
+  const toggleDay = (day: number, target: "free" | "busy") => {
+    if (target === "free") {
+      setBusy((prev) => prev.filter((d) => d !== day));
+      setFree((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
+    } else {
+      setFree((prev) => prev.filter((d) => d !== day));
+      setBusy((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]));
+    }
+  };
+
+  const toggleSurface = (value: string) =>
+    setSurfaces((prev) => (prev.includes(value) ? prev.filter((s) => s !== value) : [...prev, value]));
 
   const submit = async () => {
-    setBusy(true);
+    setSending(true);
     setErr(null);
     try {
       const res = await fetch("/api/m/run/onboarding", {
@@ -267,16 +299,19 @@ function OnboardingForm(props: {
         body: JSON.stringify({
           initData: props.initData,
           answers: {
-            ...(shows("goalKind") ? { goalKind } : {}),
+            ...(shows("weekStability") ? { weekStability: stability } : {}),
+            ...(shows("availableWeekdays") && asksSchedule ? { availableWeekdays: free } : {}),
+            ...(shows("unavailableWeekdays") && asksSchedule ? { unavailableWeekdays: busy } : {}),
+            ...(shows("preferredLongWeekday") && asksSchedule ? { preferredLongWeekday: longDay } : {}),
+            ...(shows("preferredQualityWeekday") && asksSchedule
+              ? { preferredQualityWeekday: qualityDay }
+              : {}),
+            ...(shows("timeOfDay") ? { timeOfDay } : {}),
+            ...(shows("runSurfaces") ? { runSurfaces: surfaces } : {}),
+            ...(shows("weekBreakers") ? { weekBreakers: breakers } : {}),
+            ...(shows("goalKind") && goalKind ? { goalKind } : {}),
             ...(shows("raceDate") && goalKind === "race" ? { raceDate } : {}),
             ...(shows("raceDistanceKm") && goalKind === "race" ? { raceDistanceKm: raceKm } : {}),
-            ...(shows("daysPerWeek") ? { daysPerWeek: days } : {}),
-            ...(shows("unavailableWeekdays") ? { unavailableWeekdays: unavailable } : {}),
-            ...(shows("preferredLongWeekday") ? { preferredLongWeekday: longDay } : {}),
-            ...(shows("canRunContinuously") && goalKind === "start_running"
-              ? { canRunContinuously: canRun }
-              : {}),
-            coachNote: note,
           },
         }),
       });
@@ -285,35 +320,182 @@ function OnboardingForm(props: {
         setErr(json.error ?? "Не получилось сохранить.");
         return;
       }
-      props.onDone(json.noteRu ?? "Анкета сохранена.");
+      props.onDone(json.noteRu ?? "Сохранено.");
     } catch {
-      setErr("Нет связи. Попробуй ещё раз.");
+      setErr("Нет связи. Попробуйте ещё раз.");
     } finally {
-      setBusy(false);
+      setSending(false);
     }
   };
 
   return (
     <div>
-      <h1 style={{ fontSize: 22, margin: "0 0 6px" }}>Пара вопросов — и соберём план</h1>
+      <h1 style={{ fontSize: 22, margin: "0 0 6px" }}>Настроим график</h1>
       <p style={{ color: MUTED, margin: "0 0 22px", lineHeight: 1.5 }}>
-        Отвечать один раз. Если что-то поменяется — скажешь тренеру, поправим.
+        Всё остальное тренер про вас уже знает. Здесь только про то, когда и где вам удобно
+        бегать. Если что-то поменяется, скажите тренеру, поправим.
       </p>
 
+      {shows("weekStability") ? (
+        <Field label="Ваша неделя обычно одинаковая?">
+          <div style={{ display: "grid", gap: 6 }}>
+            {WEEK_STABILITY.map((option) => (
+              <button
+                key={option.code}
+                type="button"
+                onClick={() => setStability(option.code)}
+                style={optionStyle(stability === option.code)}
+              >
+                <span style={{ fontWeight: 600 }}>{option.labelRu}</span>
+                <span style={{ display: "block", color: MUTED, fontSize: 13, marginTop: 2 }}>
+                  {option.hintRu}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Field>
+      ) : null}
+
+      {stability === "varies" ? (
+        <Banner text="Понятно. Тогда расписание жёстко задавать не будем: тренировки можно будет переносить внутри недели прямо здесь." />
+      ) : null}
+
+      {asksSchedule && shows("availableWeekdays") ? (
+        <Field
+          label="Какие дни точно свободны, а какие точно нет?"
+          hint="Нажмите на день один раз, чтобы отметить его свободным, ещё раз, чтобы снять. Дни, про которые не уверены, не отмечайте никак."
+        >
+          <div style={{ display: "grid", gap: 6 }}>
+            {DAYS.map((d) => (
+              <div key={d.idx} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 28, color: MUTED, fontSize: 14 }}>{d.label}</span>
+                <button
+                  type="button"
+                  onClick={() => toggleDay(d.idx, "free")}
+                  style={miniChipStyle(free.includes(d.idx), GREEN)}
+                >
+                  свободен
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleDay(d.idx, "busy")}
+                  style={miniChipStyle(busy.includes(d.idx), ACCENT)}
+                >
+                  занят
+                </button>
+              </div>
+            ))}
+          </div>
+        </Field>
+      ) : null}
+
+      {asksSchedule && shows("preferredLongWeekday") ? (
+        <Field
+          label="В какой день удобнее самая длинная пробежка?"
+          hint="Обычно её ставят на выходной, когда никуда не надо спешить."
+        >
+          <DayPicker
+            days={DAYS.filter((d) => !busy.includes(d.idx))}
+            value={longDay}
+            onChange={(v) => setLongDay(v)}
+          />
+        </Field>
+      ) : null}
+
+      {asksSchedule && shows("preferredQualityWeekday") ? (
+        <Field
+          label="А в какой день вы готовы поработать потяжелее?"
+          hint="После такой тренировки нужен спокойный день, поэтому её ставят не вплотную к длинной."
+        >
+          <DayPicker
+            days={DAYS.filter((d) => !busy.includes(d.idx) && d.idx !== longDay)}
+            value={qualityDay}
+            onChange={(v) => setQualityDay(v)}
+          />
+        </Field>
+      ) : null}
+
+      {shows("timeOfDay") ? (
+        <Field label="Когда вам удобнее бегать?">
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {TIME_OF_DAY.map((option) => (
+              <button
+                key={option.code}
+                type="button"
+                onClick={() => setTimeOfDay(option.code)}
+                style={chipStyle(timeOfDay === option.code)}
+              >
+                {option.labelRu}
+              </button>
+            ))}
+          </div>
+        </Field>
+      ) : null}
+
+      {shows("runSurfaces") ? (
+        <Field
+          label="Где вы обычно бегаете?"
+          hint="Можно отметить несколько. Одна и та же тренировка в холмистом парке и на стадионе получается разной."
+        >
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {SURFACES.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => toggleSurface(option)}
+                style={chipStyle(surfaces.includes(option))}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </Field>
+      ) : null}
+
+      {shows("weekBreakers") ? (
+        <Field
+          label="Что чаще всего срывает вам неделю?"
+          hint="Командировки, сменный график, дети, поездки. Напишите как есть, это читает тренер."
+        >
+          <textarea
+            value={breakers}
+            onChange={(e) => setBreakers(e.target.value)}
+            rows={3}
+            style={{ ...inputStyle, resize: "vertical" }}
+          />
+        </Field>
+      ) : null}
+
       {shows("goalKind") ? (
-      <Field label="Что впереди?">
-        <Choice value={goalKind} onChange={setGoalKind} options={[
-          { value: "start_running", label: "Хочу начать бегать" },
-          { value: "regular", label: "Просто бегать регулярно" },
-          { value: "race", label: "Готовлюсь к старту" },
-        ]} />
-      </Field>
+        <Field label="Есть цель впереди?" hint="Необязательно. Если цели нет, просто пропустите.">
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[
+              { value: "", label: "Пока нет" },
+              { value: "regular", label: "Бегать регулярно" },
+              { value: "race", label: "Готовлюсь к старту" },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setGoalKind(option.value)}
+                style={chipStyle(goalKind === option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </Field>
       ) : null}
 
       {goalKind === "race" && (shows("raceDate") || shows("raceDistanceKm")) ? (
-        <Field label="Когда старт и какая дистанция">
+        <Field label="Когда старт и какая дистанция?">
           <div style={{ display: "flex", gap: 8 }}>
-            <input type="date" value={raceDate} onChange={(e) => setRaceDate(e.target.value)} style={inputStyle} />
+            <input
+              type="date"
+              value={raceDate}
+              onChange={(e) => setRaceDate(e.target.value)}
+              style={inputStyle}
+            />
             <input
               type="number"
               inputMode="decimal"
@@ -326,88 +508,32 @@ function OnboardingForm(props: {
         </Field>
       ) : null}
 
-      {goalKind === "start_running" && shows("canRunContinuously") ? (
-        <Field
-          label="Можешь сейчас бежать без остановки хотя бы 20 минут?"
-          hint="Честный ответ важнее удобного: от него зависит самая первая тренировка."
-        >
-          <Choice
-            value={canRun === null ? "" : canRun ? "yes" : "no"}
-            onChange={(v) => setCanRun(v === "yes")}
-            options={[
-              { value: "no", label: "Нет, пока с передышками" },
-              { value: "yes", label: "Да, могу" },
-            ]}
-          />
-        </Field>
-      ) : null}
-
-      {shows("daysPerWeek") ? (
-      <Field label="Сколько дней в неделю готова бегать?">
-        <Choice
-          value={String(days)}
-          onChange={(v) => setDays(Number(v))}
-          options={[
-            { value: "2", label: "2" },
-            { value: "3", label: "3" },
-            { value: "4", label: "4" },
-            { value: "5", label: "5" },
-          ]}
-        />
-      </Field>
-      ) : null}
-
-      {shows("unavailableWeekdays") ? (
-      <Field label="В какие дни бегать точно не получится?" hint="Можно ничего не выбирать.">
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {DAYS.map((d) => (
-            <button
-              key={d.idx}
-              type="button"
-              onClick={() => toggleDay(d.idx)}
-              style={chipStyle(unavailable.includes(d.idx))}
-            >
-              {d.label}
-            </button>
-          ))}
-        </div>
-      </Field>
-      ) : null}
-
-      {shows("preferredLongWeekday") ? (
-      <Field label="Какой день удобнее для самой длинной тренировки?" hint="Если всё равно — не выбирай.">
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {DAYS.filter((d) => !unavailable.includes(d.idx)).map((d) => (
-            <button
-              key={d.idx}
-              type="button"
-              onClick={() => setLongDay(longDay === d.idx ? null : d.idx)}
-              style={chipStyle(longDay === d.idx)}
-            >
-              {d.label}
-            </button>
-          ))}
-        </div>
-      </Field>
-      ) : null}
-
-      <Field
-        label="Что важно знать тренеру?"
-        hint="Всё, что не влезло в вопросы выше: здоровье, страхи, режим, прошлый опыт. Это читает человек."
-      >
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={4}
-          style={{ ...inputStyle, resize: "vertical" }}
-        />
-      </Field>
-
       {err ? <p style={{ color: ACCENT, fontWeight: 600, lineHeight: 1.5 }}>{err}</p> : null}
 
-      <button type="button" onClick={submit} disabled={busy} style={primaryButtonStyle(busy)}>
-        {busy ? "Сохраняю…" : "Готово"}
+      <button type="button" onClick={submit} disabled={sending} style={primaryButtonStyle(sending)}>
+        {sending ? "Сохраняю…" : "Готово"}
       </button>
+    </div>
+  );
+}
+
+function DayPicker(props: {
+  days: Array<{ idx: number; label: string }>;
+  value: number | null;
+  onChange: (value: number | null) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {props.days.map((d) => (
+        <button
+          key={d.idx}
+          type="button"
+          onClick={() => props.onChange(props.value === d.idx ? null : d.idx)}
+          style={chipStyle(props.value === d.idx)}
+        >
+          {d.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -582,7 +708,7 @@ function UnplannedCheckin(props: {
   return (
     <div style={{ marginTop: 10 }}>
       <button type="button" onClick={() => setOpen((v) => !v)} style={secondaryButtonStyle}>
-        {open ? "Свернуть" : "Я всё равно бегала — отметиться"}
+        {open ? "Свернуть" : "Я всё равно бегал(а), отметиться"}
       </button>
       {open ? (
         <div
@@ -622,7 +748,7 @@ function CheckinForm(props: {
 
   const submit = async () => {
     if (!effort || !pain) {
-      setErr("Ответь на оба вопроса.");
+      setErr("Ответьте на оба вопроса.");
       return;
     }
     setBusy(true);
@@ -646,7 +772,7 @@ function CheckinForm(props: {
       }
       props.onChanged(json.replyRu ?? "Записал.");
     } catch {
-      setErr("Нет связи. Попробуй ещё раз.");
+      setErr("Нет связи. Попробуйте ещё раз.");
     } finally {
       setBusy(false);
     }
@@ -688,7 +814,7 @@ function CheckinForm(props: {
         value={comment}
         onChange={(e) => setComment(e.target.value)}
         rows={3}
-        placeholder="Хочешь что-то добавить? Необязательно."
+        placeholder="Хотите что-то добавить? Необязательно."
         style={{ ...inputStyle, marginTop: 14, resize: "vertical" }}
       />
 
@@ -723,9 +849,9 @@ function MoveForm(props: {
         setErr(json.error ?? "Не получилось перенести.");
         return;
       }
-      props.onChanged("Перенесла. План обновлён.");
+      props.onChanged("Готово, план обновлён.");
     } catch {
-      setErr("Нет связи. Попробуй ещё раз.");
+      setErr("Нет связи. Попробуйте ещё раз.");
     } finally {
       setBusy(false);
     }
@@ -748,7 +874,7 @@ function MoveForm(props: {
         ))}
       </div>
       <p style={{ margin: "10px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
-        Переносить можно внутри недели и только на свободные дни — неделя это доза нагрузки.
+        Переносить можно внутри недели и только на свободные дни.
       </p>
       {err ? <p style={{ color: ACCENT, fontWeight: 600 }}>{err}</p> : null}
     </div>
@@ -765,27 +891,6 @@ function Field(props: { label: string; hint?: string; children: React.ReactNode 
         <p style={{ margin: "0 0 8px", color: MUTED, fontSize: 13, lineHeight: 1.4 }}>{props.hint}</p>
       ) : null}
       {props.children}
-    </div>
-  );
-}
-
-function Choice(props: {
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
-}) {
-  return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-      {props.options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => props.onChange(option.value)}
-          style={chipStyle(props.value === option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
     </div>
   );
 }
@@ -810,6 +915,20 @@ function chipStyle(active: boolean): React.CSSProperties {
     background: active ? ACCENT : "#fff",
     color: active ? "#fff" : INK,
     fontSize: 15,
+    fontFamily: "inherit",
+    cursor: "pointer",
+  };
+}
+
+/** Компактная кнопка состояния дня. Цвет несёт смысл: зелёный свободен, оранжевый занят. */
+function miniChipStyle(active: boolean, color: string): React.CSSProperties {
+  return {
+    padding: "6px 12px",
+    borderRadius: 999,
+    border: `1px solid ${active ? color : LINE}`,
+    background: active ? color : "#fff",
+    color: active ? "#fff" : MUTED,
+    fontSize: 13,
     fontFamily: "inherit",
     cursor: "pointer",
   };

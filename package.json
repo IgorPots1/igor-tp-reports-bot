@@ -358,7 +358,8 @@
     "club-autobind-dryrun": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/club-autobind-dryrun.ts",
     "check:first-student-loop": "npx tsx scripts/check-first-student-loop.ts",
     "intervals:sync": "npx tsx scripts/intervals-sync-active.ts",
-    "check:onboarding-prefill": "npx tsx scripts/check-onboarding-prefill.ts"
+    "check:onboarding-prefill": "npx tsx scripts/check-onboarding-prefill.ts",
+    "check:valentina-form": "npx tsx scripts/check-valentina-form.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",

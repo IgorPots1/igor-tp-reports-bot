@@ -14,24 +14,54 @@
 
 /** Поля анкеты, которые тренер вправе задать за ученика. */
 export const PREFILLABLE_FIELDS = [
+  // Из развёрнутой анкеты (интенсив или форма тренера). В приложении этих
+  // вопросов НЕТ ВООБЩЕ — ни одного из них.
   "goalKind",
   "raceDate",
   "raceDistanceKm",
   "daysPerWeek",
   "selfReportedWeeklyMinutes",
+  "canRunContinuously",
+  "healthLimits",
+  "experienceNote",
+  // Про график. Эти вопросы приложение задаёт, но тренер вправе закрыть любой
+  // из них: про выпускника интенсива он может знать и расписание.
+  "weekStability",
+  "availableWeekdays",
   "unavailableWeekdays",
   "preferredLongWeekday",
-  "canRunContinuously",
+  "preferredQualityWeekday",
+  "timeOfDay",
+  "runSurfaces",
+  "weekBreakers",
 ] as const;
+
+/**
+ * Поля, которых в форме приложения нет НИКОГДА, даже когда тренер их не задал.
+ *
+ * Вход в приложение — настройка графика. Опыт, травмы, история и «может ли
+ * бежать непрерывно» живут в развёрнутой анкете ДО него: спрашивать это в
+ * приложении значит просить пересказать то, что тренер уже прочитал.
+ */
+export const NEVER_IN_APP_FORM: readonly PrefillableField[] = [
+  // Форма спрашивает КОНКРЕТНЫЕ ДНИ, а не количество: «сколько раз в неделю
+  // готовы бегать» — вопрос к тренеру, а не к человеку, который ещё не начал.
+  // Число либо задаёт тренер, либо оно выводится из свободных дней.
+  "daysPerWeek",
+  "selfReportedWeeklyMinutes",
+  "canRunContinuously",
+  "healthLimits",
+  "experienceNote",
+];
 
 export type PrefillableField = (typeof PREFILLABLE_FIELDS)[number];
 
 /**
- * coachNote в этот список НЕ входит и не войдёт. Поле называется «что важно
- * знать тренеру» — оно по определению принадлежит ученику. Заполнить его за
- * него значит записать свои слова его голосом, а потом читать их как его.
+ * Заметка о том, что срывает неделю, тренером задаётся редко и по делу: он
+ * может знать про сменный график. Но если он молчит, поле остаётся у человека —
+ * подставлять туда свои слова его голосом нельзя.
  */
-export const STUDENT_ONLY_FIELDS = ["coachNote"] as const;
+export const STUDENT_ONLY_FIELDS = ["weekBreakers"] as const;
 
 export type PrefillValues = {
   goalKind: "race" | "regular" | "start_running" | null;
@@ -39,9 +69,17 @@ export type PrefillValues = {
   raceDistanceKm: number | null;
   daysPerWeek: number | null;
   selfReportedWeeklyMinutes: number | null;
+  canRunContinuously: boolean | null;
+  healthLimits: string | null;
+  experienceNote: string | null;
+  weekStability: "stable" | "varies" | null;
+  availableWeekdays: number[] | null;
   unavailableWeekdays: number[] | null;
   preferredLongWeekday: number | null;
-  canRunContinuously: boolean | null;
+  preferredQualityWeekday: number | null;
+  timeOfDay: "morning" | "evening" | "varies" | null;
+  runSurfaces: string[] | null;
+  weekBreakers: string | null;
 };
 
 export type Prefill = {
@@ -71,19 +109,30 @@ export const EMPTY_PREFILL: Prefill = {
     raceDistanceKm: null,
     daysPerWeek: null,
     selfReportedWeeklyMinutes: null,
+    canRunContinuously: null,
+    healthLimits: null,
+    experienceNote: null,
+    weekStability: null,
+    availableWeekdays: null,
     unavailableWeekdays: null,
     preferredLongWeekday: null,
-    canRunContinuously: null,
+    preferredQualityWeekday: null,
+    timeOfDay: null,
+    runSurfaces: null,
+    weekBreakers: null,
   },
   note: null,
   setBy: "coach",
 };
 
-export type StudentAnswerInput = Partial<PrefillValues> & { coachNote: string | null };
+/**
+ * Ответ человека. Все поля необязательны: что задал тренер, форма не рисует и
+ * не присылает.
+ */
+export type StudentAnswerInput = Partial<PrefillValues>;
 
 export type MergedAnswers = {
   values: PrefillValues;
-  coachNote: string | null;
   /** Снимок: какие поля пришли от тренера. Ложится в анкету вместе с ответами. */
   coachSetFields: PrefillableField[];
   /**
@@ -124,7 +173,6 @@ export function mergeAnswers(prefill: Prefill | null, student: StudentAnswerInpu
 
   return {
     values,
-    coachNote: student.coachNote,
     coachSetFields: [...source.setFields],
     ignoredFromStudent: ignored,
   };
@@ -137,7 +185,18 @@ export function mergeAnswers(prefill: Prefill | null, student: StudentAnswerInpu
  * не увидит, — это решение, а не оформление, и оно должно проверяться.
  */
 export function visibleFormFields(prefill: Prefill | null): PrefillableField[] {
-  const hidden = new Set(prefill?.setFields ?? []);
+  const hidden = new Set<PrefillableField>(prefill?.setFields ?? []);
+  for (const field of NEVER_IN_APP_FORM) hidden.add(field);
+
+  // Дата и дистанция старта имеют смысл ТОЛЬКО при цели «готовлюсь к старту».
+  // Когда тренер задал другую цель, вопроса быть не может, и список обязан это
+  // отражать: иначе он обещает форму, которой человек не увидит.
+  const goalFixed = prefill?.setFields.includes("goalKind") === true;
+  if (goalFixed && prefill?.values.goalKind !== "race") {
+    hidden.add("raceDate");
+    hidden.add("raceDistanceKm");
+  }
+
   return PREFILLABLE_FIELDS.filter((field) => !hidden.has(field));
 }
 
@@ -147,10 +206,18 @@ const FIELD_LABELS_RU: Record<PrefillableField | "coachNote", string> = {
   raceDistanceKm: "дистанция",
   daysPerWeek: "дней в неделю",
   selfReportedWeeklyMinutes: "текущий объём со слов",
-  unavailableWeekdays: "недоступные дни",
-  preferredLongWeekday: "день длительной",
   canRunContinuously: "может бежать непрерывно",
-  coachNote: "что важно знать тренеру",
+  healthLimits: "ограничения по здоровью",
+  experienceNote: "беговой опыт",
+  weekStability: "стабильность недели",
+  availableWeekdays: "свободные дни",
+  unavailableWeekdays: "занятые дни",
+  preferredLongWeekday: "день длинной тренировки",
+  preferredQualityWeekday: "день тяжёлой тренировки",
+  timeOfDay: "время суток",
+  runSurfaces: "где бегает",
+  weekBreakers: "что срывает неделю",
+  coachNote: "что важно знать тренеру (старое поле)",
 };
 
 export function fieldLabelRu(field: string): string {

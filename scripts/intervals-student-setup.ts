@@ -24,7 +24,19 @@
  * --pre-long-day=5             день длительной; none = «всё равно»
  * --pre-can-run-continuously=true|false
  * --pre-race-date=YYYY-MM-DD   --pre-race-km=21.1   --pre-weekly-minutes=120
- * --pre-note="почему так решил"  основание — для корпуса оно ценнее значения
+ * --pre-week-stability=stable|varies
+ * --pre-free-days=1,3,5        дни, когда точно свободен
+ * --pre-quality-day=3          день тяжёлой тренировки; none = «всё равно»
+ * --pre-time-of-day=morning|evening|varies
+ * --pre-surfaces="Стадион,Улица / парк"
+ * --pre-week-breakers="сменный график 2/2"
+ * --pre-health-limits="берёг ахилл, без быстрых спусков"   ЧУВСТВИТЕЛЬНОЕ
+ * --pre-experience="интенсив 2026-08, непрерывно 30 мин, 5 км за 31:00"
+ * --pre-note="почему так решил"  основание; для корпуса оно ценнее значения
+ *
+ * В ПРИЛОЖЕНИИ НЕ СПРАШИВАЮТСЯ НИКОГДА, даже если тренер их не задал:
+ * объём со слов, «может ли бежать непрерывно», ограничения по здоровью,
+ * беговой опыт. Их место — развёрнутая анкета до приложения.
  *
  * КЛЮЧ НЕ ПРИНИМАЕТСЯ АРГУМЕНТОМ. Только имя переменной окружения: аргументы
  * командной строки видны в истории shell и в списке процессов, и секрет туда
@@ -129,6 +141,72 @@ function collectPrefill(): {
     if (!Number.isFinite(n) || n <= 0) errors.push("--pre-race-km — положительное число");
     setFields.push("raceDistanceKm");
     values.raceDistanceKm = n;
+  }
+
+  const stability = arg("pre-week-stability");
+  if (stability !== null) {
+    if (stability !== "stable" && stability !== "varies") {
+      errors.push("--pre-week-stability принимает stable или varies");
+    }
+    setFields.push("weekStability");
+    values.weekStability = stability;
+  }
+
+  const freeDays = arg("pre-free-days");
+  if (freeDays !== null) {
+    const parsed = freeDays.split(",").map((v) => v.trim()).filter(Boolean).map(Number);
+    if (parsed.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
+      errors.push("--pre-free-days — дни 0..6 через запятую (0=Пн)");
+    }
+    setFields.push("availableWeekdays");
+    values.availableWeekdays = [...new Set(parsed)];
+  }
+
+  const qualityDay = arg("pre-quality-day");
+  if (qualityDay !== null) {
+    if (qualityDay === "none") {
+      values.preferredQualityWeekday = null;
+    } else {
+      const n = Number(qualityDay);
+      if (!Number.isInteger(n) || n < 0 || n > 6) errors.push("--pre-quality-day — 0..6 или none");
+      values.preferredQualityWeekday = n;
+    }
+    setFields.push("preferredQualityWeekday");
+  }
+
+  const timeOfDay = arg("pre-time-of-day");
+  if (timeOfDay !== null) {
+    if (!["morning", "evening", "varies"].includes(timeOfDay)) {
+      errors.push("--pre-time-of-day принимает morning, evening или varies");
+    }
+    setFields.push("timeOfDay");
+    values.timeOfDay = timeOfDay;
+  }
+
+  const surfaces = arg("pre-surfaces");
+  if (surfaces !== null) {
+    setFields.push("runSurfaces");
+    values.runSurfaces = surfaces.split(",").map((v) => v.trim()).filter(Boolean);
+  }
+
+  const breakers = arg("pre-week-breakers");
+  if (breakers !== null) {
+    setFields.push("weekBreakers");
+    values.weekBreakers = breakers;
+  }
+
+  // ЧУВСТВИТЕЛЬНОЕ. Вывод тренера об ограничениях, а не копия медицинских
+  // ответов анкеты. Наружу не отдаётся: ни ученику, ни в Telegram, ни в логи.
+  const health = arg("pre-health-limits");
+  if (health !== null) {
+    setFields.push("healthLimits");
+    values.healthLimits = health;
+  }
+
+  const experience = arg("pre-experience");
+  if (experience !== null) {
+    setFields.push("experienceNote");
+    values.experienceNote = experience;
   }
 
   const weekly = arg("pre-weekly-minutes");

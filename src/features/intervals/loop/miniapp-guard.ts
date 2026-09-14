@@ -61,7 +61,7 @@ export type RunAppResolution =
 export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunAppResolution> {
   const initData = typeof initDataRaw === "string" ? initDataRaw.trim() : "";
   if (!initData) {
-    return { ok: false, httpStatus: 401, code: "no_init_data", error: "Открой приложение из Telegram." };
+    return { ok: false, httpStatus: 401, code: "no_init_data", error: "Откройте приложение из Telegram." };
   }
   if (!validateTelegramInitData(initData)) {
     return { ok: false, httpStatus: 401, code: "bad_signature", error: "Подпись Telegram не сошлась." };
@@ -77,7 +77,7 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
       ok: false,
       httpStatus: 403,
       code: "not_linked",
-      error: "Этот Telegram-аккаунт ещё не связан с учеником. Напиши тренеру — он свяжет.",
+      error: "Этот аккаунт Telegram ещё не связан с учеником. Напишите тренеру, он свяжет.",
     };
   }
 
@@ -93,7 +93,7 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
       ok: false,
       httpStatus: 403,
       code: "wrong_platform",
-      error: "Твои тренировки ведутся в другом приложении.",
+      error: "Ваши тренировки ведутся в другом приложении.",
     };
   }
 
@@ -110,7 +110,7 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
       ok: false,
       httpStatus: 403,
       code: "no_source",
-      error: "Intervals ещё не подключён. Напиши тренеру.",
+      error: "Intervals ещё не подключён. Напишите тренеру.",
     };
   }
 

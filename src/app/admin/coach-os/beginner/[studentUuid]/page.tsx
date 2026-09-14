@@ -13,6 +13,9 @@ import { publishPlanAction, sendCoachMessageAction } from "../actions";
 export const dynamic = "force-dynamic";
 
 const cell = { padding: "6px 10px", verticalAlign: "top" as const };
+
+const WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+const weekdayRu = (day: number): string => WEEKDAYS_RU[day] ?? String(day);
 const box = {
   border: "1px solid #e0e0e0",
   borderRadius: 10,
@@ -118,21 +121,59 @@ export default async function BeginnerStudentPage({
               {view.answers.raceDistanceKm ? ` · ${view.answers.raceDistanceKm} км` : ""}
             </p>
             <p style={{ margin: "0 0 6px" }}>
-              дней в неделю: {view.answers.daysPerWeek} · недоступные дни:{" "}
+              неделя:{" "}
+              {view.answers.weekStability === "stable"
+                ? "стабильная"
+                : view.answers.weekStability === "varies"
+                  ? "плавающая (план на переносах)"
+                  : "не спрашивали"}{" "}
+              · дней в неделю: {view.answers.daysPerWeek}{" "}
+              <span style={{ color: "#7a4a00" }}>({view.answers.daysPerWeekSource})</span>
+            </p>
+            <p style={{ margin: "0 0 6px" }}>
+              свободные дни:{" "}
+              {view.answers.availableWeekdays.length > 0
+                ? view.answers.availableWeekdays.map(weekdayRu).join(", ")
+                : "не отмечены"}{" "}
+              · занятые:{" "}
               {view.answers.unavailableWeekdays.length > 0
-                ? view.answers.unavailableWeekdays.join(", ")
-                : "нет"}{" "}
-              · длительная:{" "}
+                ? view.answers.unavailableWeekdays.map(weekdayRu).join(", ")
+                : "нет"}
+            </p>
+            <p style={{ margin: "0 0 6px" }}>
+              длинная:{" "}
               {view.answers.preferredLongWeekday === null
                 ? "не задана"
-                : String(view.answers.preferredLongWeekday)}{" "}
+                : weekdayRu(view.answers.preferredLongWeekday)}{" "}
+              · тяжёлая:{" "}
+              {view.answers.preferredQualityWeekday === null
+                ? "не задана"
+                : weekdayRu(view.answers.preferredQualityWeekday)}{" "}
+              · время:{" "}
+              {view.answers.timeOfDay === "morning"
+                ? "утро"
+                : view.answers.timeOfDay === "evening"
+                  ? "вечер"
+                  : view.answers.timeOfDay === "varies"
+                    ? "по-разному"
+                    : "не спрашивали"}
+            </p>
+            <p style={{ margin: "0 0 6px" }}>
+              где бегает:{" "}
+              {view.answers.runSurfaces.length > 0 ? view.answers.runSurfaces.join(", ") : "не отмечено"}{" "}
               · непрерывно:{" "}
               {view.answers.canRunContinuously === null
-                ? "не спрашивали"
+                ? "не задано"
                 : view.answers.canRunContinuously
                   ? "может"
                   : "пока нет"}
             </p>
+            {view.answers.weekBreakers ? (
+              <div style={{ marginTop: 10, background: "#fffbe6", padding: "10px 12px", borderRadius: 8 }}>
+                <strong>Что срывает неделю:</strong>
+                <p style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>{view.answers.weekBreakers}</p>
+              </div>
+            ) : null}
             {view.answers.coachNote ? (
               <div style={{ marginTop: 10, background: "#fffbe6", padding: "10px 12px", borderRadius: 8 }}>
                 <strong>Что важно знать тренеру:</strong>

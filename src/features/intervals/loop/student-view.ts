@@ -78,11 +78,11 @@ function progressNote(state: ProgressionState): string {
   const current = stepByIndex(state.currentStep);
   const isLast = state.currentStep >= BEGINNER_LADDER[BEGINNER_LADDER.length - 1].index;
   if (isLast) {
-    return "Это последняя ступень программы новичка. Дальше — обычные беговые планы, тренер скажет когда.";
+    return "Это последняя ступень программы новичка. Дальше обычные беговые планы, тренер скажет когда.";
   }
   const next = stepByIndex(state.currentStep + 1);
   if (state.sessionsAtStep === 0) {
-    return `Эту ступень только начали. Следующая — ${next.labelRu}.`;
+    return `Эту ступень только начали. Следующая: ${next.labelRu}.`;
   }
   return (
     `На этой ступени отработано ${state.sessionsAtStep} ${plural(state.sessionsAtStep, "тренировка", "тренировки", "тренировок")}. ` +
@@ -163,7 +163,7 @@ export function buildStudentView(input: {
     return {
       state: "no_plan",
       messageRu:
-        "План ещё готовится — тренер его проверяет. Как только будет готов, он появится здесь.",
+        "План ещё готовится, тренер его проверяет. Как только будет готов, он появится здесь.",
     };
   }
 
@@ -204,8 +204,8 @@ export function buildStudentView(input: {
   const restNote =
     todaySession === null
       ? upcoming.length > 0
-        ? `Сегодня отдых. Ближайшая тренировка — ${DAY_RU_SHORT[upcoming[0].dayIdx]}, ${formatRuDay(upcoming[0].sessionDate)}. Отдых у новичка — это часть плана, а не пропуск: тело растёт между тренировками, а не на них.`
-        : "Сегодня отдых. Ближайших тренировок в плане пока нет — тренер добавит."
+        ? `Сегодня отдых. Ближайшая тренировка — ${DAY_RU_SHORT[upcoming[0].dayIdx]}, ${formatRuDay(upcoming[0].sessionDate)}. Отдых у новичка это часть плана, а не пропуск: тело растёт между тренировками, а не на них.`
+        : "Сегодня отдых. Ближайших тренировок в плане пока нет, тренер их добавит."
       : null;
 
   return {

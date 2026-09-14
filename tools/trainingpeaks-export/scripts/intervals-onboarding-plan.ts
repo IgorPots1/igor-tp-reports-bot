@@ -222,7 +222,11 @@ async function main(): Promise<void> {
       if (!answers) {
         answers = {
           sourceId: source.id as string,
-          goalKind: answersRow.goal_kind,
+          // ЦЕЛЬ ТЕПЕРЬ НЕОБЯЗАТЕЛЬНА. NULL в базе означает «не спрашивали и
+          // тренер не задал»; для планирования это читается как «просто
+          // бегать». Подменяем ЗДЕСЬ, а не в базе: в базе разница между
+          // «выбрал регулярный бег» и «не ответил» должна сохраниться.
+          goalKind: answersRow.goal_kind ?? "regular",
           raceDate: answersRow.race_date,
           raceDistanceKm: answersRow.race_distance_km === null ? null : Number(answersRow.race_distance_km),
           daysPerWeek: answersRow.days_per_week,

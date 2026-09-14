@@ -3,36 +3,45 @@ import type { NextRequest } from "next/server";
 import { isRunAppEnabled, jsonResponse, resolveRunAppStudent } from "@/features/intervals/loop/miniapp-guard";
 import { fieldLabelRu, mergeAnswers } from "@/features/intervals/loop/prefill";
 import { getPrefill, saveOnboardingAnswers } from "@/features/intervals/loop/repository";
+import {
+  conflictingDays,
+  dayNameRu,
+  deriveDaysPerWeek,
+  SURFACE_OPTIONS,
+  type TimeOfDay,
+  type WeekStability,
+} from "@/features/intervals/loop/schedule";
 
 export const runtime = "nodejs";
 
 const GOALS = new Set(["race", "regular", "start_running"]);
+const SURFACES = new Set<string>(SURFACE_OPTIONS);
 
 function toInt(value: unknown): number | null {
   const n = typeof value === "number" ? value : Number(value);
   return Number.isInteger(n) ? n : null;
 }
 
-// Отказ базы — человеческим текстом. Правила (потолок трёх дней у новичка,
-// обязательная развилка про непрерывный бег, дата и дистанция у старта) стоят
-// констрейнтами и здесь НЕ продублированы: вторая копия разошлась бы с первой.
+function toDays(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  return [...new Set(value.map(toInt).filter((d): d is number => d !== null && d >= 0 && d <= 6))];
+}
+
+// Отказ базы человеческим текстом. Правила стоят констрейнтами и здесь НЕ
+// продублированы: вторая копия разошлась бы с первой.
 function humaniseConstraint(message: string, coachSet: Set<string>): string {
   if (message.includes("beginner_days_cap")) {
-    // Число дней мог задать тренер. Тогда объяснять его ученице как её выбор —
-    // значит спорить с человеком о решении, которого он не принимал.
     return coachSet.has("daysPerWeek")
-      ? "Здесь не сходится: при программе новичка стоит больше трёх беговых дней. Это ставил тренер — напиши ему, поправит."
-      : "Больше трёх беговых дней в неделю на старте мы не ставим — и это не про дисциплину. " +
-          "У начинающего тело перестраивается в дни отдыха, а не на пробежке: четвёртый день " +
-          "забирает именно тот день, за счёт которого идёт прогресс. Поставь 2 или 3.";
+      ? "Здесь не сходится: при программе новичка стоит больше трёх беговых дней. Это ставил тренер, напишите ему."
+      : "Больше трёх беговых дней в неделю на старте мы не ставим. Отметьте меньше свободных дней или напишите тренеру.";
   }
   if (message.includes("beginner_needs_continuity")) {
-    return "Ответь, пожалуйста, можешь ли сейчас бежать без остановки — от этого зависит первая тренировка.";
+    return "Тренер ещё не отметил, можете ли вы бежать без остановки. Напишите ему, он допишет.";
   }
   if (message.includes("race_needs_details")) {
-    return "Для старта нужны дата и дистанция — без них план не к чему привязать.";
+    return "Для старта нужны дата и дистанция. Заполните оба поля или уберите цель.";
   }
-  return "Не удалось сохранить анкету. Проверь ответы и попробуй ещё раз.";
+  return "Не получилось сохранить. Проверьте ответы и попробуйте ещё раз.";
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -55,43 +64,48 @@ export async function POST(request: NextRequest): Promise<Response> {
   const raw = body.answers ?? {};
   const prefill = await getPrefill(auth.sourceId);
 
-  const goalFromStudent =
-    typeof raw.goalKind === "string" && GOALS.has(raw.goalKind) ? raw.goalKind : null;
-  const daysFromStudent = toInt(raw.daysPerWeek);
-  const unavailableFromStudent = Array.isArray(raw.unavailableWeekdays)
-    ? [
-        ...new Set(
-          raw.unavailableWeekdays
-            .map(toInt)
-            .filter((d): d is number => d !== null && d >= 0 && d <= 6)
-        ),
-      ]
+  const stability =
+    raw.weekStability === "stable" || raw.weekStability === "varies"
+      ? (raw.weekStability as WeekStability)
+      : null;
+  const timeOfDay =
+    raw.timeOfDay === "morning" || raw.timeOfDay === "evening" || raw.timeOfDay === "varies"
+      ? (raw.timeOfDay as TimeOfDay)
+      : null;
+  const surfaces = Array.isArray(raw.runSurfaces)
+    ? [...new Set(raw.runSurfaces.filter((v): v is string => typeof v === "string" && SURFACES.has(v)))]
     : null;
-  const longFromStudent = toInt(raw.preferredLongWeekday);
+  const longDay = toInt(raw.preferredLongWeekday);
+  const qualityDay = toInt(raw.preferredQualityWeekday);
 
-  // Сведение: заданное тренером побеждает всегда. Не потому, что он главный, а
-  // потому, что этих полей ученица в форме не видела — значение по ним не может
-  // быть её осознанным ответом.
+  // Сведение: заданное тренером побеждает всегда. Не по старшинству, а потому
+  // что этих полей человек в форме не видел, и присланное по ним значение не
+  // может быть его осознанным ответом.
   const merged = mergeAnswers(prefill, {
-    goalKind: goalFromStudent as "race" | "regular" | "start_running" | null,
+    goalKind: (typeof raw.goalKind === "string" && GOALS.has(raw.goalKind)
+      ? raw.goalKind
+      : null) as "race" | "regular" | "start_running" | null,
     raceDate: typeof raw.raceDate === "string" && raw.raceDate ? raw.raceDate : null,
     raceDistanceKm:
       raw.raceDistanceKm === null || raw.raceDistanceKm === undefined || raw.raceDistanceKm === ""
         ? null
         : Number(raw.raceDistanceKm),
-    daysPerWeek: daysFromStudent,
-    selfReportedWeeklyMinutes: toInt(raw.selfReportedWeeklyMinutes),
-    unavailableWeekdays: unavailableFromStudent,
-    preferredLongWeekday:
-      longFromStudent !== null && longFromStudent >= 0 && longFromStudent <= 6 ? longFromStudent : null,
-    canRunContinuously:
-      raw.canRunContinuously === true ? true : raw.canRunContinuously === false ? false : null,
-    coachNote: typeof raw.coachNote === "string" ? raw.coachNote.trim().slice(0, 4000) : null,
+    daysPerWeek: null,
+    selfReportedWeeklyMinutes: null,
+    canRunContinuously: null,
+    healthLimits: null,
+    experienceNote: null,
+    weekStability: stability,
+    availableWeekdays: toDays(raw.availableWeekdays),
+    unavailableWeekdays: toDays(raw.unavailableWeekdays),
+    preferredLongWeekday: longDay !== null && longDay >= 0 && longDay <= 6 ? longDay : null,
+    preferredQualityWeekday:
+      qualityDay !== null && qualityDay >= 0 && qualityDay <= 6 ? qualityDay : null,
+    timeOfDay,
+    runSurfaces: surfaces,
+    weekBreakers: typeof raw.weekBreakers === "string" ? raw.weekBreakers.trim().slice(0, 4000) : null,
   });
 
-  // Значение по полю, которого в форме не было, — признак старой версии формы
-  // или подделанного запроса. Не падаем (ответ ученицы важнее), но в лог это
-  // обязано попасть: молча разойтись с тем, что человек видел, нельзя.
   if (merged.ignoredFromStudent.length > 0) {
     console.warn("[m.run.onboarding] клиент прислал поля, заданные тренером", {
       sourceId: auth.sourceId,
@@ -102,33 +116,41 @@ export async function POST(request: NextRequest): Promise<Response> {
   const values = merged.values;
   const coachSet = new Set<string>(merged.coachSetFields);
 
-  if (!values.goalKind || !GOALS.has(values.goalKind)) {
+  const available = values.availableWeekdays ?? [];
+  const unavailable = values.unavailableWeekdays ?? [];
+
+  // День не может быть одновременно свободным и занятым. Форма такого не
+  // допускает, но запрос приходит от клиента, и верить ему нельзя.
+  const clash = conflictingDays(available, unavailable);
+  if (clash.length > 0) {
     return jsonResponse(400, {
       ok: false,
-      error: coachSet.has("goalKind")
-        ? "Тренер не задал цель. Напиши ему."
-        : "Не выбрана цель.",
-    });
-  }
-  if (values.daysPerWeek === null || values.daysPerWeek < 2 || values.daysPerWeek > 7) {
-    return jsonResponse(400, {
-      ok: false,
-      error: coachSet.has("daysPerWeek")
-        ? "Тренер не задал, сколько дней в неделю бегать. Напиши ему."
-        : "Сколько дней в неделю готова бегать — от 2 до 7.",
+      error: `Один и тот же день отмечен и свободным, и занятым: ${clash.map(dayNameRu).join(", ")}.`,
     });
   }
 
-  const unavailable = values.unavailableWeekdays ?? [];
-  if (7 - unavailable.length < values.daysPerWeek) {
-    // Формулировка зависит от того, чей это выбор: ученице, которой число дней
-    // поставил тренер, нельзя говорить «бегать ты хочешь N раза».
+  if (values.weekStability === null) {
+    return jsonResponse(400, { ok: false, error: "Ответьте, одинаковая у вас неделя или нет." });
+  }
+
+  // ЦЕЛЬ НЕОБЯЗАТЕЛЬНА. Пустая читается как «просто бегать», но хранится как
+  // NULL: разница между «выбрал регулярный бег» и «не ответил» нужна тренеру.
+  const isBeginner = values.goalKind === "start_running";
+
+  const days = deriveDaysPerWeek({
+    coachSetDays: coachSet.has("daysPerWeek") ? values.daysPerWeek : null,
+    weekStability: values.weekStability,
+    availableWeekdays: available,
+    isBeginner,
+  });
+  if (!days.ok) {
+    return jsonResponse(400, { ok: false, error: days.messageRu });
+  }
+
+  if (7 - unavailable.length < days.daysPerWeek) {
     return jsonResponse(400, {
       ok: false,
-      error:
-        coachSet.has("daysPerWeek") || coachSet.has("unavailableWeekdays")
-          ? `Свободных дней остаётся ${7 - unavailable.length}, а тренировок в неделе ${values.daysPerWeek}. Убери один запрет или напиши тренеру.`
-          : `Свободных дней осталось ${7 - unavailable.length}, а бегать ты хочешь ${values.daysPerWeek} раза в неделю. Убери один запрет или поставь меньше дней.`,
+      error: `Свободных дней остаётся ${7 - unavailable.length}, а тренировок в неделе ${days.daysPerWeek}. Снимите один запрет или напишите тренеру.`,
     });
   }
 
@@ -137,12 +159,19 @@ export async function POST(request: NextRequest): Promise<Response> {
     goalKind: values.goalKind,
     raceDate: values.raceDate,
     raceDistanceKm: values.raceDistanceKm,
-    daysPerWeek: values.daysPerWeek,
+    daysPerWeek: days.daysPerWeek,
     selfReportedWeeklyMinutes: values.selfReportedWeeklyMinutes,
     unavailableWeekdays: unavailable,
     preferredLongWeekday: values.preferredLongWeekday,
     canRunContinuously: values.canRunContinuously,
-    coachNote: merged.coachNote && merged.coachNote.length > 0 ? merged.coachNote : null,
+    coachNote: null,
+    weekStability: values.weekStability,
+    availableWeekdays: available,
+    preferredQualityWeekday: values.preferredQualityWeekday,
+    timeOfDay: values.timeOfDay,
+    runSurfaces: values.runSurfaces ?? [],
+    weekBreakers: values.weekBreakers,
+    daysPerWeekSource: days.source,
     coachSetFields: merged.coachSetFields,
   });
 
@@ -150,13 +179,15 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(400, { ok: false, error: humaniseConstraint(saved.message, coachSet) });
   }
 
-  // ПЛАН ЗДЕСЬ НЕ ГЕНЕРИТСЯ. Анкета сохранена — дальше тренер запускает
-  // генерацию и подтверждает план. Пока он этого не сделал, ученица видит
+  // ПЛАН ЗДЕСЬ НЕ СОБИРАЕТСЯ. Анкета сохранена, дальше тренер запускает
+  // генерацию и подтверждает план. Пока он этого не сделал, человек видит
   // «план готовится», а не пустоту и не черновик.
   return jsonResponse(200, {
     ok: true,
     answersId: saved.id,
     noteRu: "Спасибо. Тренер соберёт план и покажет его здесь.",
+    daysPerWeek: days.daysPerWeek,
+    daysReasonRu: days.reasonRu,
     coachSetFields: merged.coachSetFields.map(fieldLabelRu),
   });
 }

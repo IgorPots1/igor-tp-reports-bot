@@ -181,6 +181,13 @@ async function main(): Promise<void> {
     preferredLongWeekday: null,
     canRunContinuously: false,
     coachNote: null,
+    weekStability: "stable",
+    availableWeekdays: [1, 3, 5],
+    preferredQualityWeekday: null,
+    timeOfDay: "morning",
+    runSurfaces: [],
+    weekBreakers: null,
+    daysPerWeekSource: "derived",
   });
   expect(
     !tooManyDays.ok && tooManyDays.message.includes("beginner_days_cap"),
@@ -198,6 +205,13 @@ async function main(): Promise<void> {
     preferredLongWeekday: null,
     canRunContinuously: null,
     coachNote: null,
+    weekStability: "stable",
+    availableWeekdays: [1, 3, 5],
+    preferredQualityWeekday: null,
+    timeOfDay: "morning",
+    runSurfaces: [],
+    weekBreakers: null,
+    daysPerWeekSource: "derived",
   });
   expect(
     !noContinuity.ok && noContinuity.message.includes("beginner_needs_continuity"),
@@ -216,6 +230,13 @@ async function main(): Promise<void> {
     preferredLongWeekday: 5,
     canRunContinuously: false,
     coachNote: "Год назад было воспаление ахилла, сейчас не болит. Бегаю только утром.",
+    weekStability: "stable",
+    availableWeekdays: [1, 3, 5],
+    preferredQualityWeekday: null,
+    timeOfDay: "morning",
+    runSurfaces: [],
+    weekBreakers: null,
+    daysPerWeekSource: "derived",
   });
   expect(saved.ok, "анкета новичка сохранена: 3 дня, Пн и Вс закрыты, «не может непрерывно»");
   const { data: answersCheck } = await supabase

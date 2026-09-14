@@ -515,7 +515,7 @@ export async function getOnboardingAnswers(
   client?: Client
 ): Promise<{
   id: string;
-  goalKind: string;
+  goalKind: string | null;
   raceDate: string | null;
   raceDistanceKm: number | null;
   daysPerWeek: number;
@@ -525,13 +525,22 @@ export async function getOnboardingAnswers(
   canRunContinuously: boolean | null;
   coachNote: string | null;
   coachSetFields: string[];
+  weekStability: string | null;
+  availableWeekdays: number[];
+  preferredQualityWeekday: number | null;
+  timeOfDay: string | null;
+  runSurfaces: string[];
+  weekBreakers: string | null;
+  daysPerWeekSource: string;
 } | null> {
   const supabase = client ?? createSupabaseServerClient();
   const { data, error } = await supabase
     .from("intervals_onboarding_answers")
     .select(
       "id, goal_kind, race_date, race_distance_km, days_per_week, self_reported_weekly_minutes, " +
-        "unavailable_weekdays, preferred_long_weekday, can_run_continuously, coach_note, coach_set_fields"
+        "unavailable_weekdays, preferred_long_weekday, can_run_continuously, coach_note, coach_set_fields, " +
+        "week_stability, available_weekdays, preferred_quality_weekday, time_of_day, run_surfaces, " +
+        "week_breakers, days_per_week_source"
     )
     .eq("source_id", sourceId)
     .maybeSingle();
@@ -540,7 +549,7 @@ export async function getOnboardingAnswers(
   const row = data as unknown as Record<string, unknown>;
   return {
     id: String(row.id),
-    goalKind: String(row.goal_kind),
+    goalKind: row.goal_kind === null || row.goal_kind === undefined ? null : String(row.goal_kind),
     raceDate: (row.race_date as string | null) ?? null,
     raceDistanceKm:
       row.race_distance_km === null || row.race_distance_km === undefined
@@ -564,12 +573,24 @@ export async function getOnboardingAnswers(
         : Number(row.self_reported_weekly_minutes),
     coachNote: (row.coach_note as string | null) ?? null,
     coachSetFields: Array.isArray(row.coach_set_fields) ? (row.coach_set_fields as string[]) : [],
+    weekStability: (row.week_stability as string | null) ?? null,
+    availableWeekdays: Array.isArray(row.available_weekdays)
+      ? (row.available_weekdays as number[]).map(Number)
+      : [],
+    preferredQualityWeekday:
+      row.preferred_quality_weekday === null || row.preferred_quality_weekday === undefined
+        ? null
+        : Number(row.preferred_quality_weekday),
+    timeOfDay: (row.time_of_day as string | null) ?? null,
+    runSurfaces: Array.isArray(row.run_surfaces) ? (row.run_surfaces as string[]) : [],
+    weekBreakers: (row.week_breakers as string | null) ?? null,
+    daysPerWeekSource: String(row.days_per_week_source ?? "answer"),
   };
 }
 
 export type OnboardingAnswersInput = {
   sourceId: string;
-  goalKind: "race" | "regular" | "start_running";
+  goalKind: "race" | "regular" | "start_running" | null;
   raceDate: string | null;
   raceDistanceKm: number | null;
   daysPerWeek: number;
@@ -578,6 +599,13 @@ export type OnboardingAnswersInput = {
   preferredLongWeekday: number | null;
   canRunContinuously: boolean | null;
   coachNote: string | null;
+  weekStability: "stable" | "varies" | null;
+  availableWeekdays: number[];
+  preferredQualityWeekday: number | null;
+  timeOfDay: "morning" | "evening" | "varies" | null;
+  runSurfaces: string[];
+  weekBreakers: string | null;
+  daysPerWeekSource: "answer" | "coach" | "derived";
   /** Снимок: какие поля пришли от тренера, а не от ученика. */
   coachSetFields: string[];
 };
@@ -610,6 +638,13 @@ export async function saveOnboardingAnswers(
         preferred_long_weekday: input.preferredLongWeekday,
         can_run_continuously: input.canRunContinuously,
         coach_note: input.coachNote,
+        week_stability: input.weekStability,
+        available_weekdays: input.availableWeekdays,
+        preferred_quality_weekday: input.preferredQualityWeekday,
+        time_of_day: input.timeOfDay,
+        run_surfaces: input.runSurfaces,
+        week_breakers: input.weekBreakers,
+        days_per_week_source: input.daysPerWeekSource,
         coach_set_fields: input.coachSetFields,
         updated_at: new Date().toISOString(),
       },
@@ -666,6 +701,23 @@ export async function getPrefill(sourceId: string, client?: Client): Promise<Pre
         row.can_run_continuously === null || row.can_run_continuously === undefined
           ? null
           : row.can_run_continuously === true,
+      healthLimits: (row.health_limits as string | null) ?? null,
+      experienceNote: (row.experience_note as string | null) ?? null,
+      weekStability:
+        row.week_stability === "stable" || row.week_stability === "varies" ? row.week_stability : null,
+      availableWeekdays: Array.isArray(row.available_weekdays)
+        ? (row.available_weekdays as number[]).map(Number)
+        : null,
+      preferredQualityWeekday:
+        row.preferred_quality_weekday === null || row.preferred_quality_weekday === undefined
+          ? null
+          : Number(row.preferred_quality_weekday),
+      timeOfDay:
+        row.time_of_day === "morning" || row.time_of_day === "evening" || row.time_of_day === "varies"
+          ? row.time_of_day
+          : null,
+      runSurfaces: Array.isArray(row.run_surfaces) ? (row.run_surfaces as string[]) : null,
+      weekBreakers: (row.week_breakers as string | null) ?? null,
     },
     note: (row.note as string | null) ?? null,
     setBy: String(row.set_by ?? "coach"),
@@ -695,6 +747,14 @@ export async function savePrefill(
       unavailable_weekdays: input.values.unavailableWeekdays ?? null,
       preferred_long_weekday: input.values.preferredLongWeekday ?? null,
       can_run_continuously: input.values.canRunContinuously ?? null,
+      health_limits: input.values.healthLimits ?? null,
+      experience_note: input.values.experienceNote ?? null,
+      week_stability: input.values.weekStability ?? null,
+      available_weekdays: input.values.availableWeekdays ?? null,
+      preferred_quality_weekday: input.values.preferredQualityWeekday ?? null,
+      time_of_day: input.values.timeOfDay ?? null,
+      run_surfaces: input.values.runSurfaces ?? null,
+      week_breakers: input.values.weekBreakers ?? null,
       note: input.note,
       set_by: input.setBy,
       updated_at: new Date().toISOString(),

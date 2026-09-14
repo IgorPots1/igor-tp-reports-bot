@@ -166,7 +166,7 @@ export async function submitCheckin(input: {
     // проверять принадлежность обязан сервер.
     const cycle = await getPublishedCycle(input.sourceId);
     if (!cycle || cycle.id !== session.cycleId) {
-      return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из твоего плана." };
+      return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из вашего плана." };
     }
     sessionDate = session.sessionDate;
   }
@@ -242,7 +242,7 @@ export async function moveStudentSession(input: {
   }
   const cycle = await getPublishedCycle(input.sourceId);
   if (!cycle || cycle.id !== session.cycleId) {
-    return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из твоего плана." };
+    return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из вашего плана." };
   }
 
   const [answers, checkin, siblings] = await Promise.all([

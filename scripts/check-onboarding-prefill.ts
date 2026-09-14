@@ -146,6 +146,13 @@ async function main(): Promise<void> {
     unavailableWeekdays: [2],
     preferredLongWeekday: 5,
     coachNote: "По утрам бегать удобнее",
+    weekStability: "stable",
+    availableWeekdays: [1, 3, 5],
+    preferredQualityWeekday: null,
+    timeOfDay: "morning",
+    runSurfaces: [],
+    weekBreakers: null,
+    daysPerWeekSource: "derived",
   });
   expect(merged.values.canRunContinuously === true, "непрерывный бег взят у тренера");
   expect(merged.values.daysPerWeek === 3, "число дней взято у тренера");
@@ -162,6 +169,13 @@ async function main(): Promise<void> {
     canRunContinuously: false,
     daysPerWeek: 6,
     coachNote: null,
+    weekStability: "stable",
+    availableWeekdays: [1, 3, 5],
+    preferredQualityWeekday: null,
+    timeOfDay: "morning",
+    runSurfaces: [],
+    weekBreakers: null,
+    daysPerWeekSource: "derived",
   });
   expect(
     forged.values.canRunContinuously === true && forged.values.daysPerWeek === 3,
@@ -185,6 +199,13 @@ async function main(): Promise<void> {
     preferredLongWeekday: merged.values.preferredLongWeekday,
     canRunContinuously: merged.values.canRunContinuously,
     coachNote: merged.coachNote,
+    weekStability: "stable",
+    availableWeekdays: [1, 3, 5],
+    preferredQualityWeekday: null,
+    timeOfDay: "morning",
+    runSurfaces: [],
+    weekBreakers: null,
+    daysPerWeekSource: "derived",
     coachSetFields: merged.coachSetFields,
   });
   expect(written.ok, "анкета сохранена");
@@ -217,11 +238,28 @@ async function main(): Promise<void> {
   // ── Пустое предзаполнение = его отсутствие ──
   step("БЕЗ ПРЕДЗАПОЛНЕНИЯ — КАК БЫЛО");
   const noPrefill = visibleFormFields(null);
-  expect(noPrefill.length === 8, `форма показывает все восемь полей: ${noPrefill.length}`);
+  expect(
+    !noPrefill.includes("canRunContinuously") &&
+      !noPrefill.includes("selfReportedWeeklyMinutes") &&
+      !noPrefill.includes("healthLimits") &&
+      !noPrefill.includes("experienceNote"),
+    "даже без предзаполнения в приложении НЕТ вопросов про опыт, травмы, объём и непрерывный бег"
+  );
+  expect(
+    noPrefill.includes("weekStability") && noPrefill.includes("runSurfaces"),
+    `остались только вопросы про график: ${noPrefill.join(", ")}`
+  );
   const plain = mergeAnswers(null, {
     goalKind: "regular",
     daysPerWeek: 4,
     coachNote: null,
+    weekStability: "stable",
+    availableWeekdays: [1, 3, 5],
+    preferredQualityWeekday: null,
+    timeOfDay: "morning",
+    runSurfaces: [],
+    weekBreakers: null,
+    daysPerWeekSource: "derived",
   });
   expect(
     plain.values.daysPerWeek === 4 && plain.coachSetFields.length === 0,
