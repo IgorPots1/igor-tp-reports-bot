@@ -38,6 +38,65 @@ export type IntervalsStudentRow = {
   timezone: string | null;
 };
 
+/**
+ * Сигналы в списке: что видно, не заходя в карточку.
+ *
+ * ЗАЧЕМ. На десяти учениках обход «открыть карточку, прокрутить, закрыть»
+ * стоит полсотни кликов каждое утро, и это при том, что писать обычно надо
+ * троим. Список без сигналов заставляет открывать всех, потому что заранее
+ * неизвестно, у кого есть что отвечать. Сигналы переворачивают это: тренер
+ * открывает тех, у кого горит.
+ */
+export type StudentSignals = {
+  /** Чек-ины, на которые тренер ещё не ответил ни одним текстом. */
+  unansweredCheckins: number;
+  /**
+   * Пробежка приехала, а отметки за тот день нет. Это НЕ то же самое, что
+   * «нет данных»: данные как раз есть, молчит человек.
+   */
+  missedCheckinDates: string[];
+  /** Состояние связи с Intervals, тот же диагноз, что и в карточке. */
+  connection: ConnectionHealth["state"];
+  /** План собран, но ученица его ещё не видит. */
+  planWaitingPublish: boolean;
+  /** Плана нет вообще: ни черновика, ни опубликованного. */
+  noPlan: boolean;
+};
+
+/**
+ * Насколько срочно смотреть этого человека. Чем больше, тем выше в списке.
+ *
+ * ПОРЯДОК ВАЖНЕЕ КРАСОТЫ: сломанная связь бьёт по всему остальному (данных нет
+ * — нечего разбирать), поэтому она выше неотвеченных чек-инов. План, который
+ * ждёт публикации, идёт следом: пока тренер не нажал, человек сидит без плана.
+ */
+export function signalWeight(signals: StudentSignals): number {
+  let weight = 0;
+  if (signals.connection === "auth_revoked") weight += 1000;
+  if (signals.connection === "connected_but_silent") weight += 800;
+  if (signals.connection === "not_connected") weight += 600;
+  if (signals.planWaitingPublish) weight += 500;
+  if (signals.noPlan) weight += 400;
+  weight += signals.unansweredCheckins * 50;
+  weight += signals.missedCheckinDates.length * 30;
+  return weight;
+}
+
+/** Короткая строка «что делать», словами тренера. Пусто — всё спокойно. */
+export function signalLabelsRu(signals: StudentSignals): string[] {
+  const labels: string[] = [];
+  if (signals.connection === "auth_revoked") labels.push("доступ отозван");
+  if (signals.connection === "connected_but_silent") labels.push("данных нет, а бегает");
+  if (signals.connection === "not_connected") labels.push("часы не подключены");
+  if (signals.noPlan) labels.push("плана нет");
+  if (signals.planWaitingPublish) labels.push("план ждёт публикации");
+  if (signals.unansweredCheckins > 0) labels.push(`ответить: ${signals.unansweredCheckins}`);
+  if (signals.missedCheckinDates.length > 0) {
+    labels.push(`не отметилась: ${signals.missedCheckinDates.length}`);
+  }
+  return labels;
+}
+
 /** Список учеников, которых ведут в Intervals. Ростера TP не касается. */
 export async function listIntervalsStudents(): Promise<IntervalsStudentRow[]> {
   const supabase = createSupabaseServerClient();
@@ -85,6 +144,151 @@ export async function listIntervalsStudents(): Promise<IntervalsStudentRow[]> {
       timezone: (row.timezone as string | null) ?? null,
     };
   });
+}
+
+/**
+ * Сигналы по всем ученикам сразу.
+ *
+ * ОДНОЙ ПАЧКОЙ, А НЕ ПО ОДНОМУ. Обход по ученику дал бы пять запросов на
+ * человека и пятьдесят на десятерых, то есть список открывался бы дольше, чем
+ * карточка. Здесь пять запросов на весь список независимо от его длины.
+ *
+ * ОКНО 14 ДНЕЙ. Чек-ин двухнедельной давности, на который не ответили, это уже
+ * не «надо ответить», а «поезд ушёл»; тянуть его в сигналы значит держать
+ * красную метку, которую невозможно погасить.
+ */
+export async function loadStudentsSignals(
+  students: IntervalsStudentRow[],
+  todayIso: string
+): Promise<Map<string, StudentSignals>> {
+  const result = new Map<string, StudentSignals>();
+  const sourceIds = students.map((student) => student.sourceId).filter((id): id is string => id !== null);
+  if (sourceIds.length === 0) {
+    for (const student of students) {
+      result.set(student.studentUuid, {
+        unansweredCheckins: 0,
+        missedCheckinDates: [],
+        connection: "not_connected",
+        planWaitingPublish: false,
+        noPlan: true,
+      });
+    }
+    return result;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const from = shift(todayIso, -14);
+  const activityFrom = shift(todayIso, -3);
+
+  const [cycles, checkins, messages, activities, sources] = await Promise.all([
+    supabase
+      .from("intervals_plan_cycles")
+      .select("id, source_id, status, created_at")
+      .in("source_id", sourceIds)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("intervals_checkins")
+      .select("id, source_id, session_date")
+      .in("source_id", sourceIds)
+      .gte("session_date", from),
+    supabase
+      .from("intervals_coach_messages")
+      .select("checkin_id, source_id")
+      .in("source_id", sourceIds)
+      .not("checkin_id", "is", null),
+    supabase
+      .from("intervals_activities")
+      .select("source_id, start_date_local")
+      .in("source_id", sourceIds)
+      .gte("start_date_local", `${activityFrom}T00:00:00`),
+    supabase
+      .from("student_data_sources")
+      .select("id, is_active, connected_at, auth_failed_at")
+      .in("id", sourceIds),
+  ]);
+
+  const latestCycleBySource = new Map<string, { status: string }>();
+  for (const raw of cycles.data ?? []) {
+    const row = raw as unknown as Record<string, unknown>;
+    const key = String(row.source_id);
+    if (!latestCycleBySource.has(key)) latestCycleBySource.set(key, { status: String(row.status) });
+  }
+
+  const answered = new Set(
+    (messages.data ?? []).map((raw) => String((raw as Record<string, unknown>).checkin_id))
+  );
+
+  const checkinsBySource = new Map<string, Array<{ id: string; date: string }>>();
+  for (const raw of checkins.data ?? []) {
+    const row = raw as unknown as Record<string, unknown>;
+    const key = String(row.source_id);
+    const list = checkinsBySource.get(key) ?? [];
+    list.push({ id: String(row.id), date: String(row.session_date) });
+    checkinsBySource.set(key, list);
+  }
+
+  const activityDatesBySource = new Map<string, Set<string>>();
+  for (const raw of activities.data ?? []) {
+    const row = raw as unknown as Record<string, unknown>;
+    const key = String(row.source_id);
+    const date = String(row.start_date_local ?? "").slice(0, 10);
+    if (!date) continue;
+    const set = activityDatesBySource.get(key) ?? new Set<string>();
+    set.add(date);
+    activityDatesBySource.set(key, set);
+  }
+
+  const sourceById = new Map<string, Record<string, unknown>>();
+  for (const raw of sources.data ?? []) {
+    const row = raw as unknown as Record<string, unknown>;
+    sourceById.set(String(row.id), row);
+  }
+
+  for (const student of students) {
+    if (!student.sourceId) {
+      result.set(student.studentUuid, {
+        unansweredCheckins: 0,
+        missedCheckinDates: [],
+        connection: "not_connected",
+        planWaitingPublish: false,
+        noPlan: true,
+      });
+      continue;
+    }
+    const sourceId = student.sourceId;
+    const own = checkinsBySource.get(sourceId) ?? [];
+    const checkinDates = new Set(own.map((item) => item.date));
+    const activityDates = activityDatesBySource.get(sourceId) ?? new Set<string>();
+    const sourceRow = sourceById.get(sourceId);
+    const cycle = latestCycleBySource.get(sourceId);
+
+    const health = assessConnectionHealth({
+      todayIso,
+      connection: sourceRow
+        ? {
+            connectedAtIso: (sourceRow.connected_at as string | null) ?? null,
+            authFailedAtIso: (sourceRow.auth_failed_at as string | null) ?? null,
+            isActive: sourceRow.is_active === true,
+          }
+        : null,
+      activityDates: [...activityDates],
+      checkinDates: own.map((item) => item.date),
+    });
+
+    result.set(student.studentUuid, {
+      unansweredCheckins: own.filter((item) => !answered.has(item.id)).length,
+      // Сегодняшний день не считаем: человек ещё бежит или только вернулся, и
+      // требовать отметку через час после пробежки значит торопить.
+      missedCheckinDates: [...activityDates]
+        .filter((date) => date < todayIso && !checkinDates.has(date))
+        .sort(),
+      connection: health.state,
+      planWaitingPublish: cycle?.status === "draft",
+      noPlan: cycle === undefined,
+    });
+  }
+
+  return result;
 }
 
 export type CoachStudentView = {

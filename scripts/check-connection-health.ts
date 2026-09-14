@@ -11,6 +11,7 @@ import {
   assessConnectionHealth,
   SILENT_DAYS_THRESHOLD,
 } from "@/features/intervals/loop/connection-health";
+import { signalLabelsRu, signalWeight } from "@/features/intervals/loop/coach-view";
 import {
   DEVICE_GUIDES,
   MARK_ALL_RU,
@@ -161,6 +162,40 @@ function main(): void {
   }
 
   expect(WHY_NOT_STRAVA_RU.pointsRu.length >= 3, "блок про Strava не пустой");
+
+  step("СИГНАЛЫ В СПИСКЕ УЧЕНИКОВ");
+  // Список должен отвечать на один вопрос: кого открывать сегодня. Проверяем
+  // порядок, потому что именно он экономит тренеру утро.
+  const calm = {
+    unansweredCheckins: 0,
+    missedCheckinDates: [],
+    connection: "ok" as const,
+    planWaitingPublish: false,
+    noPlan: false,
+  };
+  expect(signalWeight(calm) === 0, "у спокойного ученика вес ноль: открывать не нужно");
+  expect(signalLabelsRu(calm).length === 0, "и подписи никакой");
+
+  const revokedSignals = { ...calm, connection: "auth_revoked" as const };
+  const twoUnanswered = { ...calm, unansweredCheckins: 2 };
+  expect(
+    signalWeight(revokedSignals) > signalWeight(twoUnanswered),
+    "отозванный доступ важнее двух неотвеченных: без данных разбирать нечего"
+  );
+  const draft = { ...calm, planWaitingPublish: true };
+  expect(
+    signalWeight(draft) > signalWeight(twoUnanswered),
+    "план, ждущий публикации, важнее неотвеченных: человек сидит без плана"
+  );
+  expect(
+    signalLabelsRu(twoUnanswered).some((label) => label.includes("2")),
+    "в подписи названо число неотвеченных"
+  );
+  const silentMissed = { ...calm, missedCheckinDates: ["2026-09-12", "2026-09-13"] };
+  expect(
+    signalLabelsRu(silentMissed).some((label) => label.startsWith("не отметилась")),
+    "«не отметилась» видно в списке, а не только в карточке"
+  );
 
   console.log("");
   if (failures === 0) {
