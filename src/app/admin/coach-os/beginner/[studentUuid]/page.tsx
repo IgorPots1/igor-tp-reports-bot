@@ -55,6 +55,34 @@ export default async function BeginnerStudentPage({
         </p>
       ) : null}
 
+      {/* ── Идут ли данные ── ПЕРВЫМ БЛОКОМ: всё остальное на экране теряет
+          смысл, если тренировки не приезжают. */}
+      {view.connectionHealth.state === "connected_but_silent" ? (
+        <div style={{ ...box, background: "#FDE8E0", border: "1px solid #E5480E" }}>
+          <h2 style={{ marginTop: 0, color: "#a3330a" }}>Данные не идут, хотя человек бегает</h2>
+          <p style={{ margin: 0 }}>{view.connectionHealth.messageRu}</p>
+          <p style={{ margin: "10px 0 0", color: "#555" }}>
+            Что сказать: открыть intervals.icu → Settings → блок своих часов → отметить галочку про
+            скачивание тренировок. Инструкция: <a href="/connect">igorp.run/connect</a>
+          </p>
+        </div>
+      ) : null}
+      {view.connectionHealth.state === "auth_revoked" ? (
+        <div style={{ ...box, background: "#FDE8E0", border: "1px solid #E5480E" }}>
+          <h2 style={{ marginTop: 0, color: "#a3330a" }}>Доступ отозван</h2>
+          <p style={{ margin: 0 }}>
+            С {view.connectionHealth.sinceIso} Intervals не принимает наш доступ. Обновить токен
+            нельзя, у них нет срока жизни: нужно повторное подключение учеником в приложении.
+          </p>
+        </div>
+      ) : null}
+      {view.connectionHealth.state === "not_connected" ? (
+        <div style={{ ...box, background: "#FBF3E4" }}>
+          <h2 style={{ marginTop: 0 }}>Часы не подключены</h2>
+          <p style={{ margin: 0 }}>Плана не будет, пока не подключит: данных нет.</p>
+        </div>
+      ) : null}
+
       {/* ── Ступень ── */}
       <div style={box}>
         <h2 style={{ marginTop: 0 }}>Ступень</h2>

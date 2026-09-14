@@ -24,6 +24,7 @@ import {
 } from "@/features/trainingpeaks/context-observer";
 import { handleTrainingPeaksGroupProbe } from "@/features/trainingpeaks/group-probe";
 import { handleClubStartCommand } from "@/features/club/start-onboarding";
+import { handleRunStartCommand, RUN_START_PARAM } from "@/features/intervals/run-start-onboarding";
 import { describeSupabaseError } from "@/features/supabase/server";
 import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
@@ -282,6 +283,17 @@ export async function POST(request: Request) {
   // the bot a DM with them, so later form broadcasts can reach them. Falls through when it is
   // not a club start or the club is off — existing /start (case_/action_/student_/coach) intact.
   const clubStartParam = messageText.match(/^\/start(?:@\w+)?\s+(\S+)/)?.[1];
+  // Тариф с подключением часов: /start run. Отвечаем ссылкой на инструкцию.
+  // Проверяется ДО клубной ветки и не задевает её: параметры разные.
+  if (clubStartParam === RUN_START_PARAM) {
+    const from = update.message?.from;
+    const handled = await handleRunStartCommand({
+      chatId: parsedMessage.chatId,
+      from: from ? { id: from.id } : null,
+    });
+    if (handled) return okResponse();
+  }
+
   if (clubStartParam === "club") {
     const from = update.message?.from;
     const handled = await handleClubStartCommand({

@@ -60,6 +60,8 @@ export type TrainingPeaksStudent = {
   notes: string | null;
   sex: TrainingPeaksStudentSex | null;
   isServiceAccount: boolean;
+  /** Где ученика ведут: trainingpeaks или intervals. */
+  coachingPlatform: "trainingpeaks" | "intervals";
   createdAt: string;
   updatedAt: string;
 };
@@ -127,6 +129,7 @@ type TrainingPeaksStudentRow = {
   notes: string | null;
   sex: string | null;
   is_service_account: boolean;
+  coaching_platform?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1440,6 +1443,7 @@ function mapTrainingPeaksStudentRow(row: TrainingPeaksStudentRow): TrainingPeaks
     notes: row.notes,
     sex: row.sex === "female" || row.sex === "male" ? row.sex : null,
     isServiceAccount: row.is_service_account,
+    coachingPlatform: row.coaching_platform === "intervals" ? "intervals" : "trainingpeaks",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -3210,29 +3214,62 @@ export async function getTrainingPeaksStudentByStudentId(
   return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
 }
 
-export async function getTrainingPeaksStudentByTelegramUserId(
+/**
+ * ВСЕ действующие карточки по telegram user.id.
+ *
+ * ОДИН ЧЕЛОВЕК МОЖЕТ ИМЕТЬ ДВЕ КАРТОЧКИ [14.09.2026]. Ученик, переходящий с
+ * основного тарифа на Intervals или обратно, получает вторую карточку на том же
+ * Telegram: старая ведётся в TrainingPeaks, новая в Intervals. Уникального
+ * индекса на telegram_user_id нет и не должно быть — это не ошибка данных, это
+ * нормальное состояние человека в переходе.
+ *
+ * Разбирать его обязан ВЫЗЫВАЮЩИЙ, потому что ответ зависит от приложения:
+ * «Отчёты» и клуб про TrainingPeaks, /m/run про Intervals.
+ */
+export async function listActiveStudentsByTelegramUserId(
   telegramUserId: number,
   client?: SupabaseServerClientLike
-): Promise<TrainingPeaksStudent | null> {
+): Promise<TrainingPeaksStudent[]> {
   const supabase = client ?? createSupabaseServerClient();
   const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_students")
     .select("*")
     .eq("telegram_user_id", telegramUserId)
-    .eq("is_active", true)
-    .maybeSingle());
+    .eq("is_active", true));
 
   if (error) {
     throw new Error(
-      `Failed to get TrainingPeaks student by telegram_user_id ${telegramUserId}: ${describeSupabaseError(error)}`
+      `Failed to list TrainingPeaks students by telegram_user_id ${telegramUserId}: ${describeSupabaseError(error)}`
     );
   }
+  return (data ?? []).map((row) => mapTrainingPeaksStudentRow(row as TrainingPeaksStudentRow));
+}
 
-  if (!data) {
-    return null;
-  }
+/**
+ * Карточка для TrainingPeaks-приложений: «Отчёты», питание, клуб.
+ *
+ * РАНЬШЕ ЗДЕСЬ БЫЛ maybeSingle И ЭТО БЫЛА МИНА. Две карточки на одном
+ * telegram_user_id (переход между тарифами) давали ошибку PostgREST, функция
+ * бросала её дальше, и человек видел «что-то пошло не так» без единой подсказки,
+ * что делать. Теперь выбор ЯВНЫЙ: эти приложения обслуживают TrainingPeaks,
+ * значит из нескольких карточек берётся TP-карточка, а расхождение попадает в
+ * лог, чтобы тренер мог развести дубли осознанно.
+ */
+export async function getTrainingPeaksStudentByTelegramUserId(
+  telegramUserId: number,
+  client?: SupabaseServerClientLike
+): Promise<TrainingPeaksStudent | null> {
+  const cards = await listActiveStudentsByTelegramUserId(telegramUserId, client);
+  if (cards.length === 0) return null;
+  if (cards.length === 1) return cards[0];
 
-  return mapTrainingPeaksStudentRow(data as TrainingPeaksStudentRow);
+  const tpCard = cards.find((card) => card.coachingPlatform === "trainingpeaks");
+  console.warn("[telegram.resolve] на одном telegram_user_id несколько карточек", {
+    telegramUserId,
+    cards: cards.map((card) => `${card.studentId}:${card.coachingPlatform}`),
+    chosen: (tpCard ?? cards[0]).studentId,
+  });
+  return tpCard ?? cards[0];
 }
 
 /**

@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { DEVICE_GUIDES, WHERE_TO_LOOK_RU } from "@/features/intervals/device-guide";
 import {
   SESSION_CAP_OPTIONS,
   SURFACE_OPTIONS,
@@ -278,6 +279,105 @@ function Banner({ text }: { text: string }) {
   );
 }
 
+/**
+ * Выбрал свои часы — увидел, что отметить.
+ *
+ * Список приходит из общего модуля device-guide: тот же самый показывается на
+ * странице-инструкции. Две копии разошлись бы молча, а цена расхождения здесь —
+ * человек не отмечает галочку и данные не идут.
+ */
+function DeviceChecklist() {
+  const [device, setDevice] = useState<string | null>(null);
+  const guide = DEVICE_GUIDES.find((item) => item.code === device) ?? null;
+
+  const badge: Record<string, { bg: string; fg: string; label: string }> = {
+    required: { bg: "#FDE8E0", fg: ACCENT, label: "обязательно" },
+    recommended: { bg: "#EAF3EC", fg: GREEN, label: "желательно" },
+    later: { bg: "#EFECE4", fg: MUTED, label: "на будущее" },
+  };
+
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${LINE}`,
+        borderRadius: 14,
+        padding: "14px 16px",
+        marginBottom: 16,
+      }}
+    >
+      <p style={{ margin: 0, fontWeight: 600 }}>Какие у вас часы?</p>
+      <p style={{ margin: "4px 0 10px", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+        Покажем, что отметить. Без нужной галочки подключение пройдёт, а тренировки не придут.
+      </p>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {DEVICE_GUIDES.map((item) => (
+          <button
+            key={item.code}
+            type="button"
+            onClick={() => setDevice(device === item.code ? null : item.code)}
+            style={chipStyle(device === item.code)}
+          >
+            {item.labelRu}
+          </button>
+        ))}
+      </div>
+
+      {guide ? (
+        <div style={{ marginTop: 14, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+          <p style={{ margin: 0, color: MUTED, fontSize: 13, lineHeight: 1.5 }}>{WHERE_TO_LOOK_RU}</p>
+          <p style={{ margin: "8px 0 0", fontSize: 13, color: MUTED }}>
+            Ищите блок «{guide.settingsBoxRu}».
+          </p>
+          {guide.steps.map((stepItem) => {
+            const mark = badge[stepItem.kind];
+            return (
+              <div key={stepItem.titleRu} style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    marginTop: 2,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: mark.bg,
+                    color: mark.fg,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {mark.label}
+                </span>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{stepItem.titleRu}</p>
+                  <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+                    {stepItem.whyRu}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+          {guide.noteRu ? (
+            <p
+              style={{
+                margin: "12px 0 0",
+                background: "#FBF3E4",
+                borderRadius: 10,
+                padding: "9px 11px",
+                color: INK,
+                fontSize: 13,
+                lineHeight: 1.5,
+              }}
+            >
+              {guide.noteRu}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ConnectScreen(props: {
   initData: string;
   lostRu: string | null;
@@ -324,6 +424,12 @@ function ConnectScreen(props: {
 
       {props.lostRu ? <Banner text={props.lostRu} /> : null}
 
+      {/* ГЛАВНОЕ НА ЭТОМ ЭКРАНЕ. В Intervals галочки скачивания отмечаются
+          отдельно, и не отметив нужную, человек проходит авторизацию и видит
+          «подключено», а данные не идут ВООБЩЕ. Поэтому список показывается ДО
+          кнопки, а не прячется в ссылку: ссылку не откроют. */}
+      <DeviceChecklist />
+
       <div
         style={{
           background: "#fff",
@@ -342,6 +448,11 @@ function ConnectScreen(props: {
         <p style={{ margin: "10px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
           Пароль от Intervals.icu мы не видим и не храним. Отозвать доступ можно в любой момент в
           настройках Intervals.icu.
+        </p>
+        <p style={{ margin: "10px 0 0", fontSize: 13 }}>
+          <a href="https://igorp.run/connect" target="_blank" rel="noreferrer" style={{ color: ACCENT }}>
+            Подробная инструкция со скриншотами
+          </a>
         </p>
       </div>
 

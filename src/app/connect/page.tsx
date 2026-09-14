@@ -1,0 +1,194 @@
+import type { Metadata } from "next";
+import type { CSSProperties } from "react";
+import { Onest, JetBrains_Mono } from "next/font/google";
+
+import { publicPageMetadata } from "@/lib/site";
+import {
+  DEVICE_GUIDES,
+  WHERE_TO_LOOK_RU,
+  WHY_NOT_STRAVA_RU,
+  type GuideStepKind,
+} from "@/features/intervals/device-guide";
+
+import { CONNECT_PAGE } from "./content";
+
+// Инструкция ДЛЯ УЧЕНИКА, живущая на сайте, а не в пересланном сообщении.
+// Пересланное сообщение нельзя поправить: оно расходится с реальностью в тот
+// день, когда Intervals меняет настройки, и тонет в переписке. Ссылку на
+// страницу можно дать сто раз, и все сто раз она будет актуальной.
+//
+// Текст — в ./content.ts, список галочек — в features/intervals/device-guide.ts
+// (он же показывается в мини-приложении). Здесь только разметка.
+
+const onest = Onest({
+  subsets: ["latin", "cyrillic"],
+  variable: "--font-onest",
+  display: "swap",
+});
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin", "cyrillic"],
+  variable: "--font-jetbrains",
+  display: "swap",
+});
+
+export const metadata: Metadata = publicPageMetadata({
+  path: "/connect",
+  title: `${CONNECT_PAGE.titleRu} — Игорь Поцелуев · Беговой клуб`,
+  description:
+    "Пошагово: как разрешить Intervals.icu забирать тренировки с часов и какие галочки нужно отметить, чтобы данные пошли.",
+});
+
+// Стили заинлайнены, как на /privacy: страницу открывают по ссылке из бота на
+// любом телефоне, и она обязана выглядеть одинаково независимо от globals.css.
+const BG = "#F6F4EF";
+const SURFACE = "#FFFFFF";
+const INK = "#16150F";
+const INK_2 = "#4D483F";
+const MUTED = "#857F73";
+const LINE = "#E7E1D5";
+const ACCENT = "#E5480E";
+const GREEN = "#2E7D45";
+const GREEN_BG = "#EAF3EC";
+const AMBER_BG = "#FBF3E4";
+
+const SANS = "var(--font-onest), 'Onest', system-ui, sans-serif";
+const MONO = "var(--font-jetbrains), ui-monospace, monospace";
+
+const S: Record<string, CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    background: BG,
+    color: INK,
+    fontFamily: SANS,
+    fontSize: 17,
+    lineHeight: 1.6,
+    padding: "40px 20px 72px",
+  },
+  wrap: { maxWidth: 680, margin: "0 auto" },
+  eyebrow: {
+    fontFamily: MONO,
+    fontSize: 12,
+    fontWeight: 500,
+    letterSpacing: ".14em",
+    textTransform: "uppercase",
+    color: ACCENT,
+  },
+  h1: { margin: "12px 0 0", fontSize: 34, fontWeight: 700, letterSpacing: "-.02em", lineHeight: 1.1 },
+  intro: { margin: "16px 0 0", color: INK_2 },
+  h2: { margin: "40px 0 0", fontSize: 22, fontWeight: 700, letterSpacing: "-.01em" },
+  card: {
+    background: SURFACE,
+    border: `1px solid ${LINE}`,
+    borderRadius: 14,
+    padding: "18px 20px",
+    marginTop: 14,
+  },
+  deviceName: { margin: 0, fontSize: 18, fontWeight: 700 },
+  boxHint: { margin: "4px 0 0", color: MUTED, fontSize: 14, fontFamily: MONO },
+  stepRow: { display: "flex", gap: 10, marginTop: 14, alignItems: "flex-start" },
+  stepBody: { flex: 1 },
+  stepTitle: { margin: 0, fontWeight: 600 },
+  stepWhy: { margin: "3px 0 0", color: MUTED, fontSize: 14.5, lineHeight: 1.5 },
+  note: {
+    margin: "14px 0 0",
+    background: AMBER_BG,
+    borderRadius: 10,
+    padding: "10px 12px",
+    color: INK_2,
+    fontSize: 14.5,
+    lineHeight: 1.5,
+  },
+  where: {
+    background: GREEN_BG,
+    border: `1px solid ${LINE}`,
+    borderRadius: 14,
+    padding: "16px 20px",
+    marginTop: 16,
+    color: INK_2,
+  },
+  list: { margin: "12px 0 0", paddingLeft: 20, color: INK_2 },
+  li: { marginTop: 8, lineHeight: 1.55 },
+  closing: { marginTop: 40, color: MUTED, fontSize: 15 },
+};
+
+/** Метка обязательности. Цвет несёт тот же смысл, что и слово. */
+function badgeStyle(kind: GuideStepKind): CSSProperties {
+  const palette: Record<GuideStepKind, { bg: string; fg: string }> = {
+    required: { bg: "#FDE8E0", fg: ACCENT },
+    recommended: { bg: GREEN_BG, fg: GREEN },
+    later: { bg: "#EFECE4", fg: MUTED },
+  };
+  const { bg, fg } = palette[kind];
+  return {
+    flexShrink: 0,
+    marginTop: 2,
+    padding: "2px 9px",
+    borderRadius: 999,
+    background: bg,
+    color: fg,
+    fontFamily: MONO,
+    fontSize: 11,
+    fontWeight: 500,
+    letterSpacing: ".06em",
+    textTransform: "uppercase",
+    whiteSpace: "nowrap",
+  };
+}
+
+const BADGE_RU: Record<GuideStepKind, string> = {
+  required: "обязательно",
+  recommended: "желательно",
+  later: "на будущее",
+};
+
+export default function ConnectPage() {
+  return (
+    <main className={`${onest.variable} ${jetbrains.variable}`} style={S.page}>
+      <div style={S.wrap}>
+        <span style={S.eyebrow}>{CONNECT_PAGE.eyebrowRu}</span>
+        <h1 style={S.h1}>{CONNECT_PAGE.titleRu}</h1>
+        {CONNECT_PAGE.introRu ? <p style={S.intro}>{CONNECT_PAGE.introRu}</p> : null}
+
+        <div style={S.where}>{WHERE_TO_LOOK_RU}</div>
+
+        <h2 style={S.h2}>{CONNECT_PAGE.stepsTitleRu}</h2>
+        {DEVICE_GUIDES.map((guide) => (
+          <section key={guide.code} style={S.card}>
+            <p style={S.deviceName}>{guide.labelRu}</p>
+            <p style={S.boxHint}>блок «{guide.settingsBoxRu}» в настройках</p>
+            {guide.steps.map((step) => (
+              <div key={step.titleRu} style={S.stepRow}>
+                <span style={badgeStyle(step.kind)}>{BADGE_RU[step.kind]}</span>
+                <div style={S.stepBody}>
+                  <p style={S.stepTitle}>{step.titleRu}</p>
+                  <p style={S.stepWhy}>{step.whyRu}</p>
+                </div>
+              </div>
+            ))}
+            {guide.noteRu ? <p style={S.note}>{guide.noteRu}</p> : null}
+          </section>
+        ))}
+
+        {CONNECT_PAGE.afterStepsRu ? <p style={S.intro}>{CONNECT_PAGE.afterStepsRu}</p> : null}
+
+        <h2 style={S.h2}>{WHY_NOT_STRAVA_RU.titleRu}</h2>
+        <ul style={S.list}>
+          {WHY_NOT_STRAVA_RU.pointsRu.map((point) => (
+            <li key={point} style={S.li}>
+              {point}
+            </li>
+          ))}
+        </ul>
+
+        {CONNECT_PAGE.troubleRu ? (
+          <>
+            <h2 style={S.h2}>{CONNECT_PAGE.troubleTitleRu}</h2>
+            <p style={S.intro}>{CONNECT_PAGE.troubleRu}</p>
+          </>
+        ) : null}
+
+        {CONNECT_PAGE.closingRu ? <p style={S.closing}>{CONNECT_PAGE.closingRu}</p> : null}
+      </div>
+    </main>
+  );
+}

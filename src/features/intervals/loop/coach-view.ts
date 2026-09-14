@@ -20,6 +20,8 @@ import {
   listSessionsInRange,
   type ActivityRow,
 } from "./repository";
+import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
+import { getSourceConnection } from "../repository";
 import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState } from "./types";
 
 export type IntervalsStudentRow = {
@@ -99,6 +101,8 @@ export type CoachStudentView = {
   messages: CoachMessage[];
   /** Чек-ины, на которые тренер ещё не ответил ни одним текстом. */
   unansweredCheckinIds: Set<string>;
+  /** Идут ли данные вообще. Главное, что тренер должен увидеть первым. */
+  connectionHealth: ConnectionHealth;
 };
 
 export async function loadCoachStudentView(
@@ -118,6 +122,7 @@ export async function loadCoachStudentView(
       activities: [],
       messages: [],
       unansweredCheckinIds: new Set(),
+      connectionHealth: { state: "not_connected" },
     };
   }
 
@@ -138,6 +143,24 @@ export async function loadCoachStudentView(
 
   const sessions = latestCycle ? await listSessionsInRange(latestCycle.id, from, to) : [];
 
+  const connection = await getSourceConnection(student.studentUuid);
+  const connectionHealth = assessConnectionHealth({
+    todayIso,
+    connection: connection
+      ? {
+          connectedAtIso: connection.connectedAt,
+          authFailedAtIso: connection.authFailedAt,
+          isActive: connection.isActive,
+        }
+      : null,
+    activityDates: activities
+      .map((activity) => activity.startDateLocal?.slice(0, 10) ?? "")
+      .filter(Boolean),
+    // Только те чек-ины, в которых человек ПОДТВЕРДИЛ тренировку: строка
+    // чек-ина существует ровно потому, что он отметил, как она прошла.
+    checkinDates: checkins.map((checkin) => checkin.sessionDate),
+  });
+
   const answered = new Set(
     messages.map((message) => message.checkinId).filter((id): id is string => id !== null)
   );
@@ -156,6 +179,7 @@ export async function loadCoachStudentView(
     unansweredCheckinIds: new Set(
       checkins.filter((checkin) => !answered.has(checkin.id)).map((checkin) => checkin.id)
     ),
+    connectionHealth,
   };
 }
 

@@ -29,7 +29,7 @@
  */
 
 import { parseTelegramInitDataUser, validateTelegramInitData } from "@/features/telegram/validate-init-data";
-import { getTrainingPeaksStudentByTelegramUserId } from "@/features/trainingpeaks/repository";
+import { listActiveStudentsByTelegramUserId } from "@/features/trainingpeaks/repository";
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
 import { getSourceConnection, type SourceConnection } from "../repository";
@@ -81,32 +81,44 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
     return { ok: false, httpStatus: 401, code: "no_init_data", error: "Telegram не передал пользователя." };
   }
 
-  const student = await getTrainingPeaksStudentByTelegramUserId(tgUser.id);
+  // ВЫБОР ПО ПРИЛОЖЕНИЮ, А НЕ ПО КАРТОЧКЕ [14.09.2026].
+  //
+  // Один Telegram может держать ДВЕ карточки: ученик переходит с основного
+  // тарифа на Intervals или обратно, и какое-то время у него есть обе. Раньше
+  // резолвер брал «единственную» карточку и на двух падал, а на одной чужой
+  // площадке отвечал «ваши тренировки ведутся в другом приложении» — фраза,
+  // которая не говорит человеку ни в каком, ни что делать.
+  //
+  // Правильный ответ: /m/run обслуживает Intervals, значит из карточек берётся
+  // Intervals-карточка. «Отчёты», питание и клуб точно так же берут свою.
+  const cards = await listActiveStudentsByTelegramUserId(tgUser.id);
+  const student = cards.find((card) => card.coachingPlatform === "intervals") ?? null;
+
   if (!student) {
+    const onTrainingPeaks = cards.some((card) => card.coachingPlatform === "trainingpeaks");
     return {
       ok: false,
       httpStatus: 403,
-      code: "not_linked",
-      error: "Этот аккаунт Telegram ещё не связан с учеником. Напишите тренеру, он свяжет.",
+      code: onTrainingPeaks ? "wrong_platform" : "not_linked",
+      error: onTrainingPeaks
+        ? // Человек нам ЗНАКОМ, просто ведётся на другом тарифе. Говорим это
+          // прямо и ведём туда, где его план, а не в тупик.
+          "Ваш план ведётся на основном тарифе, а это приложение для тарифа с подключением часов. " +
+          "Свой план вы найдёте в приложении «Отчёты». Если вы переходите на новый тариф, напишите тренеру: " +
+          "он откроет доступ, это занимает минуту."
+        : "Этот аккаунт Telegram нам ещё не знаком. Откройте приложение с того аккаунта, " +
+          "по которому вы общаетесь с тренером, или напишите ему, и он свяжет этот.",
     };
   }
 
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_students")
-    .select("coaching_platform, timezone")
+    .select("timezone")
     .eq("id", student.id)
     .maybeSingle();
   if (error) throw new Error(`trainingpeaks_students: ${describeSupabaseError(error)}`);
-  const card = data as { coaching_platform?: string; timezone?: string | null } | null;
-  if (card?.coaching_platform !== "intervals") {
-    return {
-      ok: false,
-      httpStatus: 403,
-      code: "wrong_platform",
-      error: "Ваши тренировки ведутся в другом приложении.",
-    };
-  }
+  const card = data as { timezone?: string | null } | null;
 
   // ОТСУТСТВИЕ ИСТОЧНИКА БОЛЬШЕ НЕ ОТКАЗ. Раньше человек без подключения
   // упирался в «напишите тренеру» и дальше зависел от переписки. Теперь он
