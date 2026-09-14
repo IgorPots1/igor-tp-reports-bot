@@ -532,6 +532,7 @@ export async function getOnboardingAnswers(
   runSurfaces: string[];
   weekBreakers: string | null;
   daysPerWeekSource: string;
+  maxSessionMinutes: number | null;
 } | null> {
   const supabase = client ?? createSupabaseServerClient();
   const { data, error } = await supabase
@@ -540,7 +541,7 @@ export async function getOnboardingAnswers(
       "id, goal_kind, race_date, race_distance_km, days_per_week, self_reported_weekly_minutes, " +
         "unavailable_weekdays, preferred_long_weekday, can_run_continuously, coach_note, coach_set_fields, " +
         "week_stability, available_weekdays, preferred_quality_weekday, time_of_day, run_surfaces, " +
-        "week_breakers, days_per_week_source"
+        "week_breakers, days_per_week_source, max_session_minutes"
     )
     .eq("source_id", sourceId)
     .maybeSingle();
@@ -585,6 +586,10 @@ export async function getOnboardingAnswers(
     runSurfaces: Array.isArray(row.run_surfaces) ? (row.run_surfaces as string[]) : [],
     weekBreakers: (row.week_breakers as string | null) ?? null,
     daysPerWeekSource: String(row.days_per_week_source ?? "answer"),
+    maxSessionMinutes:
+      row.max_session_minutes === null || row.max_session_minutes === undefined
+        ? null
+        : Number(row.max_session_minutes),
   };
 }
 
@@ -605,6 +610,7 @@ export type OnboardingAnswersInput = {
   timeOfDay: "morning" | "evening" | "varies" | null;
   runSurfaces: string[];
   weekBreakers: string | null;
+  maxSessionMinutes: number | null;
   daysPerWeekSource: "answer" | "coach" | "derived";
   /** Снимок: какие поля пришли от тренера, а не от ученика. */
   coachSetFields: string[];
@@ -644,6 +650,7 @@ export async function saveOnboardingAnswers(
         time_of_day: input.timeOfDay,
         run_surfaces: input.runSurfaces,
         week_breakers: input.weekBreakers,
+        max_session_minutes: input.maxSessionMinutes,
         days_per_week_source: input.daysPerWeekSource,
         coach_set_fields: input.coachSetFields,
         updated_at: new Date().toISOString(),
@@ -718,6 +725,11 @@ export async function getPrefill(sourceId: string, client?: Client): Promise<Pre
           : null,
       runSurfaces: Array.isArray(row.run_surfaces) ? (row.run_surfaces as string[]) : null,
       weekBreakers: (row.week_breakers as string | null) ?? null,
+      maxSessionMinutes:
+        row.max_session_minutes === null || row.max_session_minutes === undefined
+          ? null
+          : Number(row.max_session_minutes),
+      timezone: (row.timezone as string | null) ?? null,
     },
     note: (row.note as string | null) ?? null,
     setBy: String(row.set_by ?? "coach"),
@@ -755,6 +767,8 @@ export async function savePrefill(
       time_of_day: input.values.timeOfDay ?? null,
       run_surfaces: input.values.runSurfaces ?? null,
       week_breakers: input.values.weekBreakers ?? null,
+      max_session_minutes: input.values.maxSessionMinutes ?? null,
+      timezone: input.values.timezone ?? null,
       note: input.note,
       set_by: input.setBy,
       updated_at: new Date().toISOString(),

@@ -34,6 +34,8 @@ export const PREFILLABLE_FIELDS = [
   "timeOfDay",
   "runSurfaces",
   "weekBreakers",
+  "maxSessionMinutes",
+  "timezone",
 ] as const;
 
 /**
@@ -44,6 +46,10 @@ export const PREFILLABLE_FIELDS = [
  * приложении значит просить пересказать то, что тренер уже прочитал.
  */
 export const NEVER_IN_APP_FORM: readonly PrefillableField[] = [
+  // Часовой пояс определяется САМ из браузера. В форму он попадает только
+  // отдельной веткой, когда определить не удалось: вопрос, на который машина
+  // знает ответ, — плохой вопрос.
+  "timezone",
   // Форма спрашивает КОНКРЕТНЫЕ ДНИ, а не количество: «сколько раз в неделю
   // готовы бегать» — вопрос к тренеру, а не к человеку, который ещё не начал.
   // Число либо задаёт тренер, либо оно выводится из свободных дней.
@@ -80,6 +86,8 @@ export type PrefillValues = {
   timeOfDay: "morning" | "evening" | "varies" | null;
   runSurfaces: string[] | null;
   weekBreakers: string | null;
+  maxSessionMinutes: number | null;
+  timezone: string | null;
 };
 
 export type Prefill = {
@@ -120,6 +128,8 @@ export const EMPTY_PREFILL: Prefill = {
     timeOfDay: null,
     runSurfaces: null,
     weekBreakers: null,
+    maxSessionMinutes: null,
+    timezone: null,
   },
   note: null,
   setBy: "coach",
@@ -217,6 +227,8 @@ const FIELD_LABELS_RU: Record<PrefillableField | "coachNote", string> = {
   timeOfDay: "время суток",
   runSurfaces: "где бегает",
   weekBreakers: "что срывает неделю",
+  maxSessionMinutes: "сколько времени на тренировку",
+  timezone: "часовой пояс",
   coachNote: "что важно знать тренеру (старое поле)",
 };
 

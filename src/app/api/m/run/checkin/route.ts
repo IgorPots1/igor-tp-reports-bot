@@ -1,7 +1,12 @@
 import type { NextRequest } from "next/server";
 
-import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
-import { isRunAppEnabled, jsonResponse, resolveRunAppStudent } from "@/features/intervals/loop/miniapp-guard";
+import { todayIsoInZone } from "@/features/intervals/loop/clock";
+import {
+  isRunAppEnabled,
+  jsonResponse,
+  rememberDetectedZone,
+  resolveRunAppStudent,
+} from "@/features/intervals/loop/miniapp-guard";
 import { submitCheckin } from "@/features/intervals/loop/service";
 
 export const runtime = "nodejs";
@@ -23,6 +28,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     pain?: unknown;
     comment?: unknown;
     voiceFileId?: unknown;
+    timeZone?: unknown;
   } = {};
   try {
     body = (await request.json()) as typeof body;
@@ -37,13 +43,22 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const comment = typeof body.comment === "string" ? body.comment.trim().slice(0, 4000) : "";
 
+  // ДЕНЬ ЧЕК-ИНА СЧИТАЕТСЯ ПО ЗОНЕ УЧЕНИКА. По зоне тренера вечерняя пробежка
+  // москвича легла бы на следующий день, то есть на другую сессию и другую
+  // ступень: прогрессия двигается по дню.
+  const zone = await rememberDetectedZone({
+    studentUuid: auth.studentUuid,
+    stored: auth.timezone,
+    detected: body.timeZone,
+  });
+
   try {
     const result = await submitCheckin({
       sourceId: auth.sourceId,
       // null — «пробежала, но этого не было в плане». Такой чек-ин полноценен:
       // ни плановой сессии, ни активности из Intervals он не требует.
       planSessionId: typeof body.sessionId === "string" && body.sessionId ? body.sessionId : null,
-      sessionDate: todayIsoInCoachTimezone(),
+      sessionDate: todayIsoInZone(zone),
       effortCode: String(body.effort ?? ""),
       painCode: String(body.pain ?? ""),
       commentText: comment.length > 0 ? comment : null,

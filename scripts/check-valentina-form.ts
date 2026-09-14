@@ -22,7 +22,13 @@ import {
   visibleFormFields,
 } from "@/features/intervals/loop/prefill";
 import { getPrefill, savePrefill } from "@/features/intervals/loop/repository";
-import { dayNameRu, deriveDaysPerWeek } from "@/features/intervals/loop/schedule";
+import {
+  dayNameRu,
+  deriveDaysPerWeek,
+  sessionCapByCode,
+  sessionCapPreferences,
+} from "@/features/intervals/loop/schedule";
+import { dayOffsetFromCoach, isValidTimeZone, todayIsoInZone } from "@/features/intervals/loop/clock";
 
 const SLUG = "check-valentina";
 const ATHLETE = "iCHECKVALENTINA";
@@ -152,6 +158,7 @@ async function main(): Promise<void> {
     "timeOfDay",
     "runSurfaces",
     "weekBreakers",
+    "maxSessionMinutes",
     "goalKind",
     "raceDate",
     "raceDistanceKm",
@@ -230,6 +237,46 @@ async function main(): Promise<void> {
   });
   expect(!oneDay.ok, "один свободный день ОТКЛОНЁН с объяснением, а не достроен до двух");
   if (!oneDay.ok) console.log(`     отказ: ${oneDay.messageRu}`);
+
+  // ── Потолок длительности ──
+  console.log("");
+  console.log("── ПОТОЛОК ДЛИТЕЛЬНОСТИ ТРЕНИРОВКИ ─────────────────────────");
+  expect(sessionCapByCode("u45") === 45, "«30–45 минут» это потолок 45 минут, числом");
+  expect(sessionCapByCode("free") === null, "«больше 90 минут» это отсутствие потолка, а не число");
+  expect(sessionCapByCode("нет такого") === undefined, "неизвестный вариант отличим от «потолка нет»");
+
+  const caps = sessionCapPreferences(45);
+  expect(caps.length === 7, "потолок раскладывается в пожелания на все семь дней");
+  expect(
+    caps.every((c) => c.kind === "day_max_minutes" && c.maxMinutes === 45),
+    "используется штатный day_max_minutes, а не свой механизм резки"
+  );
+  expect(sessionCapPreferences(null).length === 0, "без потолка пожеланий не добавляется");
+
+  // ── Часовой пояс ──
+  console.log("");
+  console.log("── ЧАСОВОЙ ПОЯС ────────────────────────────────────────────");
+  expect(isValidTimeZone("Europe/Moscow"), "настоящая зона принимается");
+  expect(!isValidTimeZone("Москва"), "выдуманная зона отклоняется");
+  expect(!isValidTimeZone("UTC+3"), "смещение вместо зоны отклоняется: оно не переживёт перевод часов");
+
+  // Момент, когда в Москве уже завтра, а в Белграде ещё сегодня.
+  // Окно узкое: Белград летом UTC+2, Москва UTC+3, значит расходятся они
+  // ровно между 21:00 и 22:00 UTC. В 22:30 полночь уже прошла в обоих, и
+  // проверка проверяла бы совпадение вместо расхождения.
+  const lateNight = new Date("2026-09-14T21:30:00Z");
+  const belgrade = todayIsoInZone("Europe/Belgrade", lateNight);
+  const moscow = todayIsoInZone("Europe/Moscow", lateNight);
+  console.log(`     21:30 UTC → Белград ${belgrade}, Москва ${moscow}`);
+  expect(belgrade !== moscow, "день ученика и день тренера в этот момент РАЗНЫЕ");
+  expect(
+    dayOffsetFromCoach("Europe/Moscow", lateNight) === 1,
+    "смещение названо: у неё уже завтра"
+  );
+  expect(
+    todayIsoInZone(null, lateNight) === belgrade,
+    "без зоны падаем на зону тренера, а не на UTC"
+  );
 
   console.log("");
   console.log("── УБОРКА ──────────────────────────────────────────────────");

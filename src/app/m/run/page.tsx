@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  SESSION_CAP_OPTIONS,
   SURFACE_OPTIONS,
   TIME_OF_DAY_OPTIONS,
   WEEK_STABILITY_OPTIONS,
@@ -79,6 +80,21 @@ const LINE = "#E2DDD1";
 const WEEK_STABILITY = WEEK_STABILITY_OPTIONS;
 const TIME_OF_DAY = TIME_OF_DAY_OPTIONS;
 const SURFACES = SURFACE_OPTIONS;
+const SESSION_CAPS = SESSION_CAP_OPTIONS;
+
+/**
+ * Зона берётся у браузера и уходит на сервер с каждым запросом. Спрашиваем её
+ * только если тут ничего не вышло: вопрос, на который машина знает ответ, —
+ * плохой вопрос.
+ */
+function detectTimeZone(): string | null {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === "string" && zone.length > 0 ? zone : null;
+  } catch {
+    return null;
+  }
+}
 
 const DAYS = [
   { idx: 0, label: "Пн" },
@@ -100,6 +116,8 @@ export default function RunAppPage() {
   // наружу то, чего человек видеть не должен.
   const [formFields, setFormFields] = useState<string[]>([]);
   const [presetGoal, setPresetGoal] = useState<string | null>(null);
+  const [needsTimezone, setNeedsTimezone] = useState(false);
+  const [timezoneOptions, setTimezoneOptions] = useState<Array<{ zone: string; labelRu: string }>>([]);
   const [view, setView] = useState<View | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -130,7 +148,7 @@ export default function RunAppPage() {
       const res = await fetch("/api/m/run/state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initData: data }),
+        body: JSON.stringify({ initData: data, timeZone: detectTimeZone() }),
       });
       const json = (await res.json()) as {
         ok: boolean;
@@ -138,6 +156,8 @@ export default function RunAppPage() {
         needsOnboarding?: boolean;
         formFields?: string[];
         presetGoalKind?: string | null;
+        needsTimezone?: boolean;
+        timezoneOptions?: Array<{ zone: string; labelRu: string }>;
         view?: View;
       };
       if (!json.ok) {
@@ -148,6 +168,8 @@ export default function RunAppPage() {
       setNeedsOnboarding(json.needsOnboarding === true);
       setFormFields(json.formFields ?? []);
       setPresetGoal(json.presetGoalKind ?? null);
+      setNeedsTimezone(json.needsTimezone === true);
+      setTimezoneOptions(json.timezoneOptions ?? []);
       setView(json.view ?? null);
     } catch {
       setError("Нет связи. Попробуйте ещё раз.");
@@ -172,6 +194,8 @@ export default function RunAppPage() {
         <OnboardingForm
           fields={formFields}
           presetGoal={presetGoal}
+          needsTimezone={needsTimezone}
+          timezoneOptions={timezoneOptions}
           initData={initData}
           onDone={(note) => {
             setToast(note);
@@ -250,6 +274,8 @@ function OnboardingForm(props: {
   initData: string;
   fields: string[];
   presetGoal: string | null;
+  needsTimezone: boolean;
+  timezoneOptions: Array<{ zone: string; labelRu: string }>;
   onDone: (note: string) => void;
 }) {
   // Поле, которого нет в списке, тренер задал за человека либо оно вообще не
@@ -265,6 +291,8 @@ function OnboardingForm(props: {
   const [timeOfDay, setTimeOfDay] = useState<string | null>(null);
   const [surfaces, setSurfaces] = useState<string[]>([]);
   const [breakers, setBreakers] = useState("");
+  const [sessionCap, setSessionCap] = useState<string | null>(null);
+  const [zone, setZone] = useState<string | null>(null);
   const [goalKind, setGoalKind] = useState(props.presetGoal ?? "");
   const [raceDate, setRaceDate] = useState("");
   const [raceKm, setRaceKm] = useState("");
@@ -298,6 +326,7 @@ function OnboardingForm(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           initData: props.initData,
+          timeZone: detectTimeZone(),
           answers: {
             ...(shows("weekStability") ? { weekStability: stability } : {}),
             ...(shows("availableWeekdays") && asksSchedule ? { availableWeekdays: free } : {}),
@@ -309,6 +338,8 @@ function OnboardingForm(props: {
             ...(shows("timeOfDay") ? { timeOfDay } : {}),
             ...(shows("runSurfaces") ? { runSurfaces: surfaces } : {}),
             ...(shows("weekBreakers") ? { weekBreakers: breakers } : {}),
+            ...(shows("maxSessionMinutes") ? { maxSessionCap: sessionCap } : {}),
+            ...(props.needsTimezone && zone ? { timezone: zone } : {}),
             ...(shows("goalKind") && goalKind ? { goalKind } : {}),
             ...(shows("raceDate") && goalKind === "race" ? { raceDate } : {}),
             ...(shows("raceDistanceKm") && goalKind === "race" ? { raceDistanceKm: raceKm } : {}),
@@ -446,6 +477,46 @@ function OnboardingForm(props: {
                 style={chipStyle(surfaces.includes(option))}
               >
                 {option}
+              </button>
+            ))}
+          </div>
+        </Field>
+      ) : null}
+
+      {shows("maxSessionMinutes") ? (
+        <Field
+          label="Сколько времени вы реально можете выделить на одну тренировку?"
+          hint="Считайте вместе с дорогой и душем, если это упирается во время. Длиннее этого в плане не появится."
+        >
+          <div style={{ display: "grid", gap: 6 }}>
+            {SESSION_CAPS.map((option) => (
+              <button
+                key={option.code}
+                type="button"
+                onClick={() => setSessionCap(option.code)}
+                style={optionStyle(sessionCap === option.code)}
+              >
+                <span style={{ fontWeight: 600 }}>{option.labelRu}</span>
+              </button>
+            ))}
+          </div>
+        </Field>
+      ) : null}
+
+      {props.needsTimezone ? (
+        <Field
+          label="В каком часовом поясе вы живёте?"
+          hint="Не получилось определить автоматически. Нужно, чтобы «сегодня» у вас и в плане совпадало."
+        >
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {props.timezoneOptions.map((option) => (
+              <button
+                key={option.zone}
+                type="button"
+                onClick={() => setZone(option.zone)}
+                style={chipStyle(zone === option.zone)}
+              >
+                {option.labelRu}
               </button>
             ))}
           </div>
@@ -759,6 +830,7 @@ function CheckinForm(props: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           initData: props.initData,
+          timeZone: detectTimeZone(),
           sessionId: props.sessionId,
           effort,
           pain,
@@ -842,7 +914,12 @@ function MoveForm(props: {
       const res = await fetch("/api/m/run/move", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initData: props.initData, sessionId: props.sessionId, toDate }),
+        body: JSON.stringify({
+          initData: props.initData,
+          timeZone: detectTimeZone(),
+          sessionId: props.sessionId,
+          toDate,
+        }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (!json.ok) {

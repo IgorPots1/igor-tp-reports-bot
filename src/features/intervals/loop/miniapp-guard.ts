@@ -32,6 +32,8 @@ import { parseTelegramInitDataUser, validateTelegramInitData } from "@/features/
 import { getTrainingPeaksStudentByTelegramUserId } from "@/features/trainingpeaks/repository";
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
+import { isValidTimeZone } from "./clock";
+
 export function isRunAppEnabled(): boolean {
   return process.env.MINIAPP_ENABLED === "true" && process.env.INTERVALS_RUN_APP_ENABLED === "true";
 }
@@ -50,6 +52,8 @@ export type RunAppResolution =
       studentName: string;
       sourceId: string;
       telegramUserId: number;
+      /** Зона ученика с карточки. null — ещё не определена. */
+      timezone: string | null;
     }
   | {
       ok: false;
@@ -84,11 +88,12 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase
     .from("trainingpeaks_students")
-    .select("coaching_platform")
+    .select("coaching_platform, timezone")
     .eq("id", student.id)
     .maybeSingle();
   if (error) throw new Error(`trainingpeaks_students: ${describeSupabaseError(error)}`);
-  if ((data as { coaching_platform?: string } | null)?.coaching_platform !== "intervals") {
+  const card = data as { coaching_platform?: string; timezone?: string | null } | null;
+  if (card?.coaching_platform !== "intervals") {
     return {
       ok: false,
       httpStatus: 403,
@@ -120,5 +125,42 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
     studentName: student.studentName,
     sourceId: source.id,
     telegramUserId: tgUser.id,
+    timezone: card?.timezone ?? null,
   };
+}
+
+/**
+ * Запомнить зону, определённую браузером.
+ *
+ * ПИШЕМ ТОЛЬКО ТО, ЧЕГО НЕ БЫЛО, ИЛИ НАСТОЯЩЕЕ ИЗМЕНЕНИЕ. Тихо перетирать зону
+ * на каждом открытии нельзя: человек в командировке откроет приложение из
+ * другого пояса, и его постоянный график уедет на неделю. Поэтому переносим
+ * только когда зоны на карточке нет вовсе.
+ *
+ * Возвращает зону, с которой дальше работать.
+ */
+export async function rememberDetectedZone(input: {
+  studentUuid: string;
+  stored: string | null;
+  detected: unknown;
+}): Promise<string | null> {
+  if (input.stored) return input.stored;
+  if (!isValidTimeZone(input.detected)) return null;
+
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("trainingpeaks_students")
+    .update({ timezone: input.detected })
+    .eq("id", input.studentUuid)
+    .is("timezone", null);
+  if (error) {
+    // Не роняем экран из-за зоны: человек пришёл смотреть тренировку. Но и не
+    // молчим — без отметки в логе расхождение дат объяснить будет нечем.
+    console.warn("[m.run] не удалось запомнить часовой пояс", {
+      studentUuid: input.studentUuid,
+      error: error.message,
+    });
+    return input.detected;
+  }
+  return input.detected;
 }

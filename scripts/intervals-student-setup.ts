@@ -30,6 +30,8 @@
  * --pre-time-of-day=morning|evening|varies
  * --pre-surfaces="Стадион,Улица / парк"
  * --pre-week-breakers="сменный график 2/2"
+ * --pre-max-session-min=60     потолок длительности одной тренировки
+ * --pre-timezone=Europe/Moscow часовой пояс; иначе определится сам из приложения
  * --pre-health-limits="берёг ахилл, без быстрых спусков"   ЧУВСТВИТЕЛЬНОЕ
  * --pre-experience="интенсив 2026-08, непрерывно 30 мин, 5 км за 31:00"
  * --pre-note="почему так решил"  основание; для корпуса оно ценнее значения
@@ -52,6 +54,7 @@ import process from "node:process";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { savePrefill } from "@/features/intervals/loop/repository";
 import { fieldLabelRu, type PrefillableField } from "@/features/intervals/loop/prefill";
+import { isValidTimeZone } from "@/features/intervals/loop/clock";
 
 function arg(name: string): string | null {
   const prefix = `--${name}=`;
@@ -209,6 +212,21 @@ function collectPrefill(): {
     values.experienceNote = experience;
   }
 
+  const cap = arg("pre-max-session-min");
+  if (cap !== null) {
+    const n = Number(cap);
+    if (!Number.isInteger(n) || n < 20 || n > 300) errors.push("--pre-max-session-min — целое 20..300");
+    setFields.push("maxSessionMinutes");
+    values.maxSessionMinutes = n;
+  }
+
+  const tz = arg("pre-timezone");
+  if (tz !== null) {
+    if (!isValidTimeZone(tz)) errors.push(`--pre-timezone — имя зоны IANA, например Europe/Moscow (получено «${tz}»)`);
+    setFields.push("timezone");
+    values.timezone = tz;
+  }
+
   const weekly = arg("pre-weekly-minutes");
   if (weekly !== null) {
     const n = Number(weekly);
@@ -316,6 +334,10 @@ async function main(): Promise<void> {
         // Доставка выключена по умолчанию — включается сознательно, когда
         // тренер готов писать.
         telegram_delivery_enabled: false,
+        // Зона, заданная тренером, попадает на карточку сразу. Автоопределение
+        // из приложения её НЕ перетирает: тренер знает, где человек живёт, а
+        // браузер знает лишь, откуда он открыл приложение.
+        timezone: (prefill.values.timezone as string | undefined) ?? null,
       })
       .select("id")
       .single();
@@ -324,6 +346,7 @@ async function main(): Promise<void> {
     console.log(`Карточка заведена: ${studentUuid}`);
   } else {
     const patch: Record<string, unknown> = { coaching_platform: "intervals" };
+    if (prefill.values.timezone) patch.timezone = prefill.values.timezone;
     if (telegramUserId) patch.telegram_user_id = Number(telegramUserId);
     if (telegramChatId) patch.telegram_chat_id = telegramChatId;
     const { error } = await supabase.from("trainingpeaks_students").update(patch).eq("id", studentUuid);

@@ -1,12 +1,19 @@
 import type { NextRequest } from "next/server";
 
-import { isRunAppEnabled, jsonResponse, resolveRunAppStudent } from "@/features/intervals/loop/miniapp-guard";
+import { isValidTimeZone } from "@/features/intervals/loop/clock";
+import {
+  isRunAppEnabled,
+  jsonResponse,
+  rememberDetectedZone,
+  resolveRunAppStudent,
+} from "@/features/intervals/loop/miniapp-guard";
 import { fieldLabelRu, mergeAnswers } from "@/features/intervals/loop/prefill";
 import { getPrefill, saveOnboardingAnswers } from "@/features/intervals/loop/repository";
 import {
   conflictingDays,
   dayNameRu,
   deriveDaysPerWeek,
+  sessionCapByCode,
   SURFACE_OPTIONS,
   type TimeOfDay,
   type WeekStability,
@@ -49,7 +56,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(503, { ok: false, error: "Приложение пока не включено." });
   }
 
-  let body: { initData?: unknown; answers?: Record<string, unknown> } = {};
+  let body: { initData?: unknown; answers?: Record<string, unknown>; timeZone?: unknown } = {};
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -64,6 +71,15 @@ export async function POST(request: NextRequest): Promise<Response> {
   const raw = body.answers ?? {};
   const prefill = await getPrefill(auth.sourceId);
 
+  // Зона: сначала определённая браузером, потом выбранная человеком из списка
+  // (запасной путь, когда определить не удалось).
+  const picked = typeof raw.timezone === "string" && isValidTimeZone(raw.timezone) ? raw.timezone : null;
+  await rememberDetectedZone({
+    studentUuid: auth.studentUuid,
+    stored: auth.timezone,
+    detected: picked ?? body.timeZone,
+  });
+
   const stability =
     raw.weekStability === "stable" || raw.weekStability === "varies"
       ? (raw.weekStability as WeekStability)
@@ -75,6 +91,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   const surfaces = Array.isArray(raw.runSurfaces)
     ? [...new Set(raw.runSurfaces.filter((v): v is string => typeof v === "string" && SURFACES.has(v)))]
     : null;
+  const capCode = typeof raw.maxSessionCap === "string" ? raw.maxSessionCap : "";
+  const capMinutes = sessionCapByCode(capCode);
   const longDay = toInt(raw.preferredLongWeekday);
   const qualityDay = toInt(raw.preferredQualityWeekday);
 
@@ -104,6 +122,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     timeOfDay,
     runSurfaces: surfaces,
     weekBreakers: typeof raw.weekBreakers === "string" ? raw.weekBreakers.trim().slice(0, 4000) : null,
+    // undefined — вариант не прислан; null — прислан «больше 90 минут», то есть
+    // потолка нет. Разница существенная: первое значит «не спрашивали».
+    maxSessionMinutes: capMinutes === undefined ? null : capMinutes,
+    timezone: picked,
   });
 
   if (merged.ignoredFromStudent.length > 0) {
@@ -171,6 +193,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     timeOfDay: values.timeOfDay,
     runSurfaces: values.runSurfaces ?? [],
     weekBreakers: values.weekBreakers,
+    maxSessionMinutes: values.maxSessionMinutes,
     daysPerWeekSource: days.source,
     coachSetFields: merged.coachSetFields,
   });

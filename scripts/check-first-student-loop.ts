@@ -187,6 +187,7 @@ async function main(): Promise<void> {
     timeOfDay: "morning",
     runSurfaces: [],
     weekBreakers: null,
+    maxSessionMinutes: null,
     daysPerWeekSource: "derived",
   });
   expect(
@@ -211,6 +212,7 @@ async function main(): Promise<void> {
     timeOfDay: "morning",
     runSurfaces: [],
     weekBreakers: null,
+    maxSessionMinutes: null,
     daysPerWeekSource: "derived",
   });
   expect(
@@ -236,6 +238,7 @@ async function main(): Promise<void> {
     timeOfDay: "morning",
     runSurfaces: [],
     weekBreakers: null,
+    maxSessionMinutes: null,
     daysPerWeekSource: "derived",
   });
   expect(saved.ok, "анкета новичка сохранена: 3 дня, Пн и Вс закрыты, «не может непрерывно»");

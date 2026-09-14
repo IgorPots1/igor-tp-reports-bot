@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
-import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
+import { dayOffsetFromCoach, todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
 import { isCoachSendEnabled } from "@/features/intervals/loop/coach-message";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
 import { fieldLabelRu, PREFILLABLE_FIELDS } from "@/features/intervals/loop/prefill";
@@ -157,6 +157,19 @@ export default async function BeginnerStudentPage({
                   : view.answers.timeOfDay === "varies"
                     ? "по-разному"
                     : "не спрашивали"}
+            </p>
+            <p style={{ margin: "0 0 6px" }}>
+              на тренировку есть:{" "}
+              {view.answers.maxSessionMinutes === null
+                ? "без потолка"
+                : `${view.answers.maxSessionMinutes} мин`}{" "}
+              · часовой пояс:{" "}
+              {student.timezone ?? "не определён (считаем по твоей зоне)"}
+              {student.timezone && dayOffsetFromCoach(student.timezone) !== 0
+                ? dayOffsetFromCoach(student.timezone) > 0
+                  ? " · у неё уже завтра"
+                  : " · у неё ещё вчера"
+                : ""}
             </p>
             <p style={{ margin: "0 0 6px" }}>
               где бегает:{" "}

@@ -104,7 +104,18 @@ export function resolvePreferences(prefs: AthletePreference[], weekStart: string
   if (eff.blockedDays.size) eff.notes.push(`пожелание: недоступны ${[...eff.blockedDays].sort((a, b) => a - b).map((d) => DAY_RU[d]).join(", ")}`);
   for (const [r, d] of eff.pinnedRole) eff.notes.push(`пожелание: ${ROLE_RU[r]} в ${DAY_RU[d]}`);
   if (eff.maxDays != null) eff.notes.push(`пожелание: не больше ${eff.maxDays} беговых дней`);
-  for (const [d, m] of eff.dayMaxMinutes) eff.notes.push(`пожелание: в ${DAY_RU[d]} не длиннее ${m} мин`);
+  // ОДИН ПОТОЛОК НА ВСЕ ДНИ — ОДНА СТРОКА. Потолок длительности из анкеты
+  // («сколько времени есть на тренировку») раскладывается в семь одинаковых
+  // пожеланий по дням, и семь одинаковых строк в заметках каждой недели тренер
+  // читать не будет. Разные потолки по дням остаются перечислением: там разница
+  // и есть смысл.
+  const caps = [...eff.dayMaxMinutes.entries()];
+  const uniform = caps.length === 7 && new Set(caps.map(([, m]) => m)).size === 1;
+  if (uniform) {
+    eff.notes.push(`пожелание: тренировка не длиннее ${caps[0][1]} мин в любой день`);
+  } else {
+    for (const [d, m] of caps) eff.notes.push(`пожелание: в ${DAY_RU[d]} не длиннее ${m} мин`);
+  }
 
   // ВСЕ ДНИ ЗАКРЫТЫ — это не пожелание, это ошибка ввода. Сборщику такое отдавать нельзя:
   // он вернёт отказ «не помещается», и причина будет выглядеть как проблема нагрузки.

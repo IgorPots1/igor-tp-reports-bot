@@ -152,6 +152,7 @@ async function main(): Promise<void> {
     timeOfDay: "morning",
     runSurfaces: [],
     weekBreakers: null,
+    maxSessionMinutes: null,
     daysPerWeekSource: "derived",
   });
   expect(merged.values.canRunContinuously === true, "непрерывный бег взят у тренера");
@@ -175,6 +176,7 @@ async function main(): Promise<void> {
     timeOfDay: "morning",
     runSurfaces: [],
     weekBreakers: null,
+    maxSessionMinutes: null,
     daysPerWeekSource: "derived",
   });
   expect(
@@ -205,6 +207,7 @@ async function main(): Promise<void> {
     timeOfDay: "morning",
     runSurfaces: [],
     weekBreakers: null,
+    maxSessionMinutes: null,
     daysPerWeekSource: "derived",
     coachSetFields: merged.coachSetFields,
   });
@@ -259,6 +262,7 @@ async function main(): Promise<void> {
     timeOfDay: "morning",
     runSurfaces: [],
     weekBreakers: null,
+    maxSessionMinutes: null,
     daysPerWeekSource: "derived",
   });
   expect(

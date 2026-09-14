@@ -38,6 +38,7 @@ import type { BeginnerWeekInput } from "./lib/beginner-week.ts";
 import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
 import { forecast } from "./lib/training-cycle.ts";
 import type { AthletePreference } from "./lib/athlete-preferences.ts";
+import { sessionCapPreferences } from "@/features/intervals/loop/schedule";
 import {
   buildAnchors, buildDraftFromOnboarding, buildEnvelope,
 } from "./lib/intervals-plan-adapter.ts";
@@ -84,7 +85,22 @@ function preferencesFromAnswers(answers: OnboardingAnswers): AthletePreference[]
       reason: "анкета онбординга: удобный день длительной",
     });
   }
+  if (answers.preferredQualityWeekday !== null) {
+    prefs.push({
+      kind: "role_day",
+      role: "quality",
+      dayOfWeek: answers.preferredQualityWeekday,
+      reason: "анкета онбординга: удобный день тяжёлой тренировки",
+    });
+  }
   prefs.push({ kind: "max_days_per_week", maxDays: answers.daysPerWeek, reason: "анкета онбординга" });
+
+  // ПОТОЛОК ДЛИТЕЛЬНОСТИ СЕССИИ — через тот же day_max_minutes, что и пожелания
+  // тренера по конкретным дням. Своего механизма резки не заводим: он был бы
+  // вторым местом, где считается одно и то же, и они разошлись бы.
+  for (const cap of sessionCapPreferences(answers.maxSessionMinutes)) {
+    prefs.push(cap);
+  }
   return prefs;
 }
 
@@ -185,6 +201,8 @@ async function main(): Promise<void> {
       preferredLongWeekday: longDayArg === null ? null : Number(longDayArg),
       canRunContinuously:
         arg("can-run-continuously") === null ? null : arg("can-run-continuously") === "true",
+      maxSessionMinutes: arg("max-session-min") ? Number(arg("max-session-min")) : null,
+      preferredQualityWeekday: arg("quality-day") === null ? null : Number(arg("quality-day")),
     };
   }
 
@@ -234,6 +252,8 @@ async function main(): Promise<void> {
           unavailableWeekdays: (answersRow.unavailable_weekdays ?? []) as number[],
           preferredLongWeekday: answersRow.preferred_long_weekday,
           canRunContinuously: answersRow.can_run_continuously ?? null,
+          maxSessionMinutes: answersRow.max_session_minutes ?? null,
+          preferredQualityWeekday: answersRow.preferred_quality_weekday ?? null,
         };
       }
     }
@@ -504,6 +524,7 @@ async function runBeginnerBranch(
       rpeTarget: BEGINNER_RPE_TARGET,
       rpeCap: BEGINNER_RPE_CAP,
       progressionNote: projection[projection.length - 1].note,
+      maxSessionMinutes: answers.maxSessionMinutes,
     };
 
     const week = buildWeek(anchors, envelope, catalog, weekStart, false, null, null, prefs, input);

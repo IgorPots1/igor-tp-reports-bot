@@ -32,6 +32,8 @@ export type IntervalsStudentRow = {
   telegramUserId: number | null;
   telegramDeliveryEnabled: boolean;
   lastSyncedAt: string | null;
+  /** Зона ученика. null — не определилась, время считается по зоне тренера. */
+  timezone: string | null;
 };
 
 /** Список учеников, которых ведут в Intervals. Ростера TP не касается. */
@@ -40,7 +42,7 @@ export async function listIntervalsStudents(): Promise<IntervalsStudentRow[]> {
   const { data, error } = await supabase
     .from("trainingpeaks_students")
     .select(
-      "id, student_id, student_name, telegram_chat_id, telegram_user_id, telegram_delivery_enabled"
+      "id, student_id, student_name, telegram_chat_id, telegram_user_id, telegram_delivery_enabled, timezone"
     )
     .eq("coaching_platform", "intervals")
     .eq("is_active", true)
@@ -78,6 +80,7 @@ export async function listIntervalsStudents(): Promise<IntervalsStudentRow[]> {
           : Number(row.telegram_user_id),
       telegramDeliveryEnabled: row.telegram_delivery_enabled === true,
       lastSyncedAt: source ? ((source.last_synced_at as string | null) ?? null) : null,
+      timezone: (row.timezone as string | null) ?? null,
     };
   });
 }

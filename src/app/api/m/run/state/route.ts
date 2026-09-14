@@ -1,10 +1,15 @@
 import type { NextRequest } from "next/server";
 
-import { isRunAppEnabled, jsonResponse, resolveRunAppStudent } from "@/features/intervals/loop/miniapp-guard";
+import {
+  isRunAppEnabled,
+  jsonResponse,
+  rememberDetectedZone,
+  resolveRunAppStudent,
+} from "@/features/intervals/loop/miniapp-guard";
 import { getOnboardingAnswers, getPrefill } from "@/features/intervals/loop/repository";
 import { visibleFormFields } from "@/features/intervals/loop/prefill";
 import { loadStudentView } from "@/features/intervals/loop/service";
-import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
+import { FALLBACK_TIMEZONES, todayIsoInZone } from "@/features/intervals/loop/clock";
 
 export const runtime = "nodejs";
 
@@ -18,7 +23,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(503, { ok: false, error: "Приложение пока не включено." });
   }
 
-  let body: { initData?: unknown } = {};
+  let body: { initData?: unknown; timeZone?: unknown } = {};
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -31,6 +36,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
+    // Зона приезжает от браузера ученика и запоминается на карточке. Спрашиваем
+    // её только если определить не удалось.
+    const zone = await rememberDetectedZone({
+      studentUuid: auth.studentUuid,
+      stored: auth.timezone,
+      detected: body.timeZone,
+    });
+
     const answers = await getOnboardingAnswers(auth.sourceId);
     if (!answers) {
       // Поля, которые тренер задал за ученика, в форму НЕ попадают вовсе —
@@ -43,6 +56,9 @@ export async function POST(request: NextRequest): Promise<Response> {
         needsOnboarding: true,
         studentName: auth.studentName,
         formFields: visibleFormFields(prefill),
+        // Пояс спрашиваем ТОЛЬКО когда он не определился сам.
+        needsTimezone: zone === null,
+        timezoneOptions: zone === null ? FALLBACK_TIMEZONES : [],
         // Цель отдаём, только если её задал тренер: от неё зависит, надо ли
         // вообще спрашивать дату старта и вопрос про непрерывный бег. Это не
         // раскрытие — это цель её же плана.
@@ -50,7 +66,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           prefill && prefill.setFields.includes("goalKind") ? prefill.values.goalKind : null,
       });
     }
-    const view = await loadStudentView(auth.sourceId, todayIsoInCoachTimezone());
+    const view = await loadStudentView(auth.sourceId, todayIsoInZone(zone));
     return jsonResponse(200, {
       ok: true,
       needsOnboarding: false,

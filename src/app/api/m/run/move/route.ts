@@ -1,7 +1,12 @@
 import type { NextRequest } from "next/server";
 
-import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
-import { isRunAppEnabled, jsonResponse, resolveRunAppStudent } from "@/features/intervals/loop/miniapp-guard";
+import { todayIsoInZone } from "@/features/intervals/loop/clock";
+import {
+  isRunAppEnabled,
+  jsonResponse,
+  rememberDetectedZone,
+  resolveRunAppStudent,
+} from "@/features/intervals/loop/miniapp-guard";
 import { moveStudentSession } from "@/features/intervals/loop/service";
 
 export const runtime = "nodejs";
@@ -14,7 +19,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(503, { ok: false, error: "Приложение пока не включено." });
   }
 
-  let body: { initData?: unknown; sessionId?: unknown; toDate?: unknown } = {};
+  let body: { initData?: unknown; sessionId?: unknown; toDate?: unknown; timeZone?: unknown } = {};
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -32,12 +37,19 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(400, { ok: false, error: "Не указано, что и куда переносим." });
   }
 
+  // «Сегодня» для проверки «не в прошлое» — тоже по зоне ученика.
+  const zone = await rememberDetectedZone({
+    studentUuid: auth.studentUuid,
+    stored: auth.timezone,
+    detected: body.timeZone,
+  });
+
   try {
     const result = await moveStudentSession({
       sourceId: auth.sourceId,
       sessionId,
       toDate,
-      todayIso: todayIsoInCoachTimezone(),
+      todayIso: todayIsoInZone(zone),
       movedBy: `student:${auth.telegramUserId}`,
     });
     if (!result.ok) {

@@ -44,6 +44,50 @@ export const SURFACE_OPTIONS = [
   "Манеж",
 ] as const;
 
+/**
+ * Сколько времени человек реально может выделить на ОДНУ тренировку.
+ *
+ * ХРАНИМ ЧИСЛО, А НЕ ДИАПАЗОН. «45–60» читается человеком, но сравнивать с ним
+ * нельзя; потолок обязан быть числом, иначе каждый читатель будет разбирать
+ * строку по-своему. Берём ВЕРХНЮЮ границу диапазона: человек сказал, сколько у
+ * него есть, а не сколько он хочет бежать.
+ *
+ * Последний вариант без потолка: тот, у кого есть полтора часа и больше, не
+ * ограничен ничем, кроме методики, и выдуманное число здесь только мешало бы.
+ */
+export const SESSION_CAP_OPTIONS: Array<{ code: string; labelRu: string; minutes: number | null }> = [
+  { code: "u30", labelRu: "До 30 минут", minutes: 30 },
+  { code: "u45", labelRu: "30–45 минут", minutes: 45 },
+  { code: "u60", labelRu: "45–60 минут", minutes: 60 },
+  { code: "u90", labelRu: "60–90 минут", minutes: 90 },
+  { code: "free", labelRu: "Больше 90 минут", minutes: null },
+];
+
+export function sessionCapByCode(code: string): number | null | undefined {
+  const found = SESSION_CAP_OPTIONS.find((o) => o.code === code);
+  return found ? found.minutes : undefined;
+}
+
+/**
+ * Потолок сессии → пожелания, которые понимает сборщик недели.
+ *
+ * ВТОРОГО МЕХАНИЗМА НЕ ЗАВОДИМ. У сборщика уже есть day_max_minutes: потолок
+ * минут в конкретный день, обкатанный на ростере TP. Потолок «на любую
+ * тренировку» — это он же, выставленный на все семь дней. Своя ветка резки
+ * означала бы два места, которые разойдутся.
+ */
+export function sessionCapPreferences(
+  maxSessionMinutes: number | null
+): Array<{ kind: "day_max_minutes"; dayOfWeek: number; maxMinutes: number; reason: string }> {
+  if (maxSessionMinutes === null) return [];
+  return [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
+    kind: "day_max_minutes" as const,
+    dayOfWeek,
+    maxMinutes: maxSessionMinutes,
+    reason: "анкета: сколько времени есть на тренировку",
+  }));
+}
+
 /** Состояние дня: сказали «свободен», сказали «занят» или не уточняли. */
 export type DayState = "free" | "busy" | "unset";
 
