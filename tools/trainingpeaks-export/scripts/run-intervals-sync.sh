@@ -21,6 +21,11 @@ LOG_DIR="${REPO}/tools/trainingpeaks-export/logs"
 mkdir -p "${LOG_DIR}"
 cd "${REPO}" || exit 1
 
-OUT="$(npx tsx "${REPO}/scripts/intervals-sync-active.ts" --window=10 2>&1)"
+# ИМЕННО node --env-file, а НЕ npx tsx: tsx окружение из .env.local не читает,
+# и скрипт умирает на "Missing required environment variable: SUPABASE_URL",
+# а фильтр-штамп из пролога держит пайп открытым, и прогон выглядит зависшим.
+# Поймано попыткой запустить раннер руками, а не вычитано.
+OUT="$(node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
+  --env-file=.env.local "${REPO}/scripts/intervals-sync-active.ts" --window=10 2>&1)"
 printf '%s\n' "----- $(date '+%Y-%m-%d %H:%M') -----" "$OUT" >> "${LOG_DIR}/intervals-sync.log"
 printf '%s\n' "$OUT"
