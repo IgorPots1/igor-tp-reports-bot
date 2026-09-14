@@ -12,7 +12,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { DEVICE_GUIDES, MARK_ALL_RU, WHERE_TO_LOOK_RU } from "@/features/intervals/device-guide";
+import { CONNECT_PAGE } from "@/features/intervals/connect-content";
+import {
+  DEVICE_GUIDES,
+  MARK_ALL_RU,
+  NO_WATCH_BODY_RU,
+  NO_WATCH_TITLE_RU,
+  STEP_LEAD_RU,
+  STEP_TITLE_RU,
+  WHERE_TO_LOOK_RU,
+} from "@/features/intervals/device-guide";
+
+import { renderMiniMarkdown } from "./markdown";
 import {
   SESSION_CAP_OPTIONS,
   SURFACE_OPTIONS,
@@ -132,6 +143,12 @@ export default function RunAppPage() {
   const [timezoneOptions, setTimezoneOptions] = useState<Array<{ zone: string; labelRu: string }>>([]);
   const [view, setView] = useState<View | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // ПРАВИЛА ФОРМАТА ОТДЕЛЬНЫМ ЭКРАНОМ, А НЕ ЧАСТЬЮ ПОДКЛЮЧЕНИЯ. В момент
+  // подключения человеку нечего про них запоминать: у него ещё нет плана, не
+  // было ни одной тренировки и нечего переносить. Зато когда план появился,
+  // правила нужны не раз, поэтому это экран, куда можно вернуться, а не
+  // всплывшее один раз окно.
+  const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
     let tries = 0;
@@ -232,15 +249,28 @@ export default function RunAppPage() {
     return <Shell><p style={{ color: MUTED }}>Пока пусто.</p></Shell>;
   }
 
+  if (showGuide) {
+    return (
+      <Shell>
+        <GuideScreen onBack={() => setShowGuide(false)} />
+      </Shell>
+    );
+  }
+
   return (
     <Shell>
       {toast ? <Banner text={toast} /> : null}
       {view.state === "no_plan" ? (
-        <WaitingScreen view={view.waiting ?? null} fallbackRu={view.messageRu} />
+        <WaitingScreen
+          view={view.waiting ?? null}
+          fallbackRu={view.messageRu}
+          onOpenGuide={() => setShowGuide(true)}
+        />
       ) : (
         <PlanScreen
           view={view}
           initData={initData ?? ""}
+          onOpenGuide={() => setShowGuide(true)}
           onChanged={(note) => {
             setToast(note);
             if (initData) void load(initData);
@@ -252,10 +282,97 @@ export default function RunAppPage() {
 }
 
 /**
+ * «Как мы работаем»: что входит, правила и что делать, если.
+ *
+ * ТЕКСТ ТОТ ЖЕ, ЧТО НА САЙТЕ, из одного файла. Две копии разъехались бы на
+ * первой правке, и человек прочитал бы в приложении одно, а на странице другое.
+ */
+function GuideScreen(props: { onBack: () => void }) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={props.onBack}
+        style={{
+          background: "none",
+          border: "none",
+          padding: 0,
+          marginBottom: 10,
+          color: ACCENT,
+          fontWeight: 600,
+          fontSize: 14,
+          cursor: "pointer",
+        }}
+      >
+        ← Назад
+      </button>
+      <h1 style={{ fontSize: 22, margin: "0 0 4px" }}>Как мы работаем</h1>
+      {renderMiniMarkdown(CONNECT_PAGE.formatRu, "guide-format")}
+      <h2 style={{ fontSize: 17, fontWeight: 700, margin: "20px 0 0" }}>
+        {CONNECT_PAGE.troubleTitleRu}
+      </h2>
+      {renderMiniMarkdown(CONNECT_PAGE.troubleRu, "guide-trouble")}
+      <p style={{ marginTop: 22, color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+        {CONNECT_PAGE.closingRu}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Свёрнутый блок для подробностей, которые нужны не всем и не сразу.
+ *
+ * НЕ СПРЯТАТЬ, А УБРАТЬ С ДОРОГИ. Экран подключения обязан помещаться в голову:
+ * человек на незнакомой территории, и стена текста читается как «тут сложно».
+ * Поэтому подробности про регистрацию и про «часов нет» свёрнуты, но лежат
+ * здесь же, а не за ссылкой на сайт: по ссылке он не пойдёт.
+ */
+function Collapsible(props: { title: string; children: React.ReactNode }) {
+  return (
+    <details style={{ marginTop: 12, borderTop: `1px solid ${LINE}`, paddingTop: 10 }}>
+      <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 15, color: ACCENT }}>
+        {props.title}
+      </summary>
+      <div style={{ paddingBottom: 4 }}>{props.children}</div>
+    </details>
+  );
+}
+
+/**
  * Экран ожидания плана. НЕ ТУПИК: человек видит, что его работа не пропала,
  * что происходит сейчас и от кого это зависит.
  */
-function WaitingScreen(props: { view: WaitingView | null; fallbackRu: string }) {
+function GuideLink(props: { onClick: () => void; labelRu: string }) {
+  return (
+    <button
+      type="button"
+      onClick={props.onClick}
+      style={{
+        display: "block",
+        width: "100%",
+        marginTop: 20,
+        padding: "12px 14px",
+        background: "#fff",
+        border: `1px solid ${LINE}`,
+        borderRadius: 12,
+        color: ACCENT,
+        fontWeight: 600,
+        fontSize: 14,
+        fontFamily: "inherit",
+        textAlign: "left",
+        cursor: "pointer",
+      }}
+    >
+      {props.labelRu}
+    </button>
+  );
+}
+
+function WaitingScreen(props: {
+  view: WaitingView | null;
+  fallbackRu: string;
+  onOpenGuide: () => void;
+}) {
   if (!props.view) return <Banner text={props.fallbackRu} />;
   const { view } = props;
   return (
@@ -302,6 +419,11 @@ function WaitingScreen(props: { view: WaitingView | null; fallbackRu: string }) 
           </p>
         </div>
       ) : null}
+
+      {/* ЛУЧШИЙ МОМЕНТ ПРОЧИТАТЬ ПРАВИЛА — ИМЕННО ЗДЕСЬ. Человек только что всё
+          сделал и ждёт: заняться ему нечем, а прочитанное пригодится через день,
+          когда план появится. */}
+      <GuideLink onClick={props.onOpenGuide} labelRu="Пока ждёте: как мы будем работать →" />
     </div>
   );
 }
@@ -499,18 +621,74 @@ function ConnectScreen(props: {
     <div>
       <h1 style={{ fontSize: 22, margin: "0 0 6px" }}>Подключим часы</h1>
       <p style={{ color: MUTED, margin: "0 0 18px", lineHeight: 1.5 }}>
-        Тренер строит план по вашим тренировкам, поэтому начинаем с подключения. Одно нажатие:
-        откроется Intervals.icu, вы нажмёте «Разрешить» и вернётесь сюда. Копировать ничего не
-        нужно.
+        Чтобы тренер собрал план, ваши тренировки должны к нему приходить. Делается один раз:
+        аккаунт, часы, кнопка внизу.
       </p>
 
       {props.lostRu ? <Banner text={props.lostRu} /> : null}
+
+      {/* ИНСТРУКЦИЯ ЖИВЁТ ЗДЕСЬ, А НЕ ЗА ССЫЛКОЙ НА САЙТ [решение Игоря,
+          14.09.2026]. Уход на сайт это лишний переход ровно в тот момент, когда
+          человек и так на незнакомой территории: он теряет приложение из виду и
+          возвращается не всегда. Текст тот же самый, из общего файла, поэтому
+          двух правд не заводится.
+
+          На экране ТОЛЬКО то, что нужно, чтобы подключиться. Правила формата
+          (что входит, как отмечаться, что делать, если заболели) переехали на
+          отдельный экран «Как мы работаем»: сейчас их запоминать бессмысленно,
+          плана ещё нет. */}
+      <div
+        style={{
+          background: "#fff",
+          border: `1px solid ${LINE}`,
+          borderRadius: 14,
+          padding: "14px 16px",
+          marginBottom: 16,
+        }}
+      >
+        {renderMiniMarkdown(CONNECT_PAGE.step1Ru, "c-step1")}
+        <Collapsible title={CONNECT_PAGE.step1DetailsTitleRu}>
+          {renderMiniMarkdown(CONNECT_PAGE.step1DetailsRu, "c-step1d")}
+        </Collapsible>
+      </div>
+
+      <div
+        style={{
+          background: "#fff",
+          border: `1px solid ${LINE}`,
+          borderRadius: 14,
+          padding: "14px 16px",
+          marginBottom: 16,
+        }}
+      >
+        <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>{STEP_TITLE_RU}</h2>
+        {renderMiniMarkdown(STEP_LEAD_RU, "c-step2")}
+      </div>
 
       {/* ГЛАВНОЕ НА ЭТОМ ЭКРАНЕ. В Intervals галочки скачивания отмечаются
           отдельно, и не отметив нужную, человек проходит авторизацию и видит
           «подключено», а данные не идут ВООБЩЕ. Поэтому список показывается ДО
           кнопки, а не прячется в ссылку: ссылку не откроют. */}
       <DeviceChecklist />
+
+      {/* «Если часов нет» стоит ПОСЛЕ списка моделей, как и на странице: человек
+          без часов сначала ищет себя в списке, не находит и решает, что ему
+          сюда нельзя. Ответ должен ждать ровно там, где он упрётся. */}
+      {NO_WATCH_BODY_RU ? (
+        <div
+          style={{
+            background: "#fff",
+            border: `1px solid ${LINE}`,
+            borderRadius: 14,
+            padding: "14px 16px",
+            marginBottom: 16,
+          }}
+        >
+          <Collapsible title={NO_WATCH_TITLE_RU}>
+            {renderMiniMarkdown(NO_WATCH_BODY_RU, "c-nowatch")}
+          </Collapsible>
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -530,11 +708,6 @@ function ConnectScreen(props: {
         <p style={{ margin: "10px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
           Пароль от Intervals.icu мы не видим и не храним. Отозвать доступ можно в любой момент в
           настройках Intervals.icu.
-        </p>
-        <p style={{ margin: "10px 0 0", fontSize: 13 }}>
-          <a href="https://igorp.run/connect" target="_blank" rel="noreferrer" style={{ color: ACCENT }}>
-            Подробная инструкция со скриншотами
-          </a>
         </p>
       </div>
 
@@ -910,6 +1083,7 @@ function PlanScreen(props: {
   view: Extract<View, { state: "ready" }>;
   initData: string;
   onChanged: (note: string) => void;
+  onOpenGuide: () => void;
 }) {
   const { view } = props;
   return (
@@ -955,6 +1129,11 @@ function PlanScreen(props: {
           ))}
         </>
       ) : null}
+
+      {/* Правила нужны не раз: заболела, не пошло, уезжает. Поэтому в самом
+          низу главного экрана стоит постоянная дверь туда, а не одноразовое
+          окно, которое человек закрыл и больше не нашёл. */}
+      <GuideLink onClick={props.onOpenGuide} labelRu="Как мы работаем: правила и что делать, если →" />
     </div>
   );
 }

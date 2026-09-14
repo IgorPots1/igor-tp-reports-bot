@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 
-import { parseBlocks } from "./markdown-parse";
+import { parseBlocks } from "@/features/intervals/markdown-blocks";
 
 /**
  * Маленький разметчик для текста страницы /connect.

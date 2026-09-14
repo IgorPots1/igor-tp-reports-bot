@@ -361,7 +361,8 @@
     "check:onboarding-prefill": "npx tsx scripts/check-onboarding-prefill.ts",
     "check:valentina-form": "npx tsx scripts/check-valentina-form.ts",
     "check:intervals-oauth": "npx tsx scripts/check-intervals-oauth.ts",
-    "check:connection-health": "npx tsx scripts/check-connection-health.ts"
+    "check:connection-health": "npx tsx scripts/check-connection-health.ts",
+    "check:connect-text": "npx tsx scripts/check-connect-text.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",

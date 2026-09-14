@@ -14,7 +14,7 @@ import {
   WHY_NOT_STRAVA_RU,
 } from "@/features/intervals/device-guide";
 
-import { CONNECT_PAGE } from "./content";
+import { CONNECT_PAGE } from "@/features/intervals/connect-content";
 import { renderMarkdown } from "./markdown";
 
 // Инструкция ДЛЯ УЧЕНИКА, живущая на сайте, а не в пересланном сообщении.
@@ -143,11 +143,21 @@ export default function ConnectPage() {
         <span style={S.eyebrow}>{CONNECT_PAGE.eyebrowRu}</span>
         <h1 style={S.h1}>{CONNECT_PAGE.titleRu}</h1>
 
-        {/* ЕДИНОЕ ПОВЕСТВОВАНИЕ ИЗ ДВУХ ИСТОЧНИКОВ. Порядок на странице:
-            вступление и шаг 1 (текст тренера) → ШАГ 2 целиком из device-guide
-            → шаги 3-5 (текст тренера) → почему не Strava → что делать, если.
-            Читателю швов не видно: он видит подряд идущие шаги. */}
-        {renderMarkdown(CONNECT_PAGE.introRu, "intro")}
+        {/* ЕДИНОЕ ПОВЕСТВОВАНИЕ ИЗ РАЗНЫХ КУСКОВ. Порядок на странице:
+            вступление → правила формата → шаг 1 с подразделом → ШАГ 2 целиком
+            из device-guide → шаги 3-5 → почему не Strava → что делать, если.
+            Читателю швов не видно: он видит подряд идущие шаги.
+
+            ПОЧЕМУ КУСКОВ НЕСКОЛЬКО, А НЕ ОДИН introRu. Приложение показывает
+            правила формата и шаги подключения на РАЗНЫХ экранах: в момент
+            подключения человеку нечего запоминать про разборы, у него ещё нет
+            плана. Странице это деление не мешает: она выводит всё подряд и
+            выглядит ровно так же, как раньше. */}
+        {renderMarkdown(CONNECT_PAGE.leadRu, "lead")}
+        {renderMarkdown(CONNECT_PAGE.formatRu, "format")}
+        {renderMarkdown(CONNECT_PAGE.step1Ru, "step1")}
+        <h3 style={S.h3}>{CONNECT_PAGE.step1DetailsTitleRu}</h3>
+        {renderMarkdown(CONNECT_PAGE.step1DetailsRu, "step1d")}
 
         <h2 style={S.h2}>{STEP_TITLE_RU}</h2>
         {/* Текст шага в markdown: в нём жирные предупреждения, они несут смысл. */}
