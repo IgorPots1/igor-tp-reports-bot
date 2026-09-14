@@ -1,0 +1,288 @@
+/**
+ * Сборка контура: что дёргают маршруты. Здесь порядок действий и отказы,
+ * правила — в чистых модулях рядом.
+ */
+
+import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
+import { BEGINNER_METHODOLOGY_ID, BEGINNER_METHODOLOGY_VERSION } from "@/features/methodology/beginner";
+
+import { checkinReplyRu, effortByCode, painByCode } from "./effort-scale";
+import { decideMove, weekdayIndex, type MoveDecision } from "./move";
+import { applyCheckinToProgression } from "./progression";
+import {
+  getCheckinForSession,
+  getOnboardingAnswers,
+  getProgression,
+  getPublishedCycle,
+  getSessionById,
+  listActivitiesInRange,
+  listSessionsInRange,
+  moveSession,
+  saveCheckin,
+  saveProgression,
+} from "./repository";
+import { buildStudentView, type StudentView } from "./student-view";
+import type { Checkin } from "./types";
+
+const DAY_MS = 86_400_000;
+
+function shiftIso(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * Источник данных ученика БЕЗ СЕКРЕТА.
+ *
+ * Отдельная функция, а не getSourceWithSecret: весь контур работает с
+ * идентификатором источника и ключ ему не нужен ни разу. Не тащить секрет туда,
+ * где он не нужен, дешевле, чем потом следить, чтобы он не утёк.
+ */
+export async function getStudentSourceId(studentUuid: string): Promise<string | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("student_data_sources")
+    .select("id, is_active, kind")
+    .eq("student_id", studentUuid)
+    .eq("provider", "intervals")
+    .limit(1);
+  if (error) throw new Error(`student_data_sources: ${describeSupabaseError(error)}`);
+  const row = (data ?? [])[0] as { id: string; is_active: boolean } | undefined;
+  if (!row || row.is_active !== true) return null;
+  return row.id;
+}
+
+/** Всё, что нужно показать ученице на одном экране. */
+export async function loadStudentView(sourceId: string, todayIso: string): Promise<StudentView> {
+  const cycle = await getPublishedCycle(sourceId);
+  const [progression, answers] = await Promise.all([
+    getProgression(sourceId),
+    getOnboardingAnswers(sourceId),
+  ]);
+
+  if (!cycle) {
+    return buildStudentView({
+      todayIso,
+      sessions: null,
+      checkinsBySessionId: new Map(),
+      progression,
+      unavailableWeekdays: answers?.unavailableWeekdays ?? [],
+      hasUnplannedCheckinToday: false,
+    });
+  }
+
+  // Окно: неделя назад (чтобы видеть, что уже отмечено) и две вперёд.
+  const sessions = await listSessionsInRange(cycle.id, shiftIso(todayIso, -7), shiftIso(todayIso, 14));
+
+  const supabase = createSupabaseServerClient();
+  const { data: checkinRows, error } = await supabase
+    .from("intervals_checkins")
+    .select("id, plan_session_id, session_date, effort_label, effort_rpe, pain")
+    .eq("source_id", sourceId)
+    .gte("session_date", shiftIso(todayIso, -7));
+  if (error) throw new Error(`intervals_checkins: ${describeSupabaseError(error)}`);
+
+  const bySession = new Map<string, Checkin>();
+  let hasUnplannedToday = false;
+  for (const raw of checkinRows ?? []) {
+    const row = raw as unknown as Record<string, unknown>;
+    const planSessionId = (row.plan_session_id as string | null) ?? null;
+    const partial = {
+      id: String(row.id),
+      sourceId,
+      planSessionId,
+      activityId: null,
+      sessionDate: String(row.session_date),
+      effortRpe: row.effort_rpe === null || row.effort_rpe === undefined ? null : Number(row.effort_rpe),
+      effortLabel: (row.effort_label as string | null) ?? null,
+      pain: row.pain === true,
+      painNote: null,
+      commentText: null,
+      voiceFileId: null,
+      stepBefore: null,
+      stepAfter: null,
+      progressionAction: null,
+      progressionReason: null,
+      createdAt: "",
+    } satisfies Checkin;
+    if (planSessionId) bySession.set(planSessionId, partial);
+    else if (partial.sessionDate === todayIso) hasUnplannedToday = true;
+  }
+
+  return buildStudentView({
+    todayIso,
+    sessions,
+    checkinsBySessionId: bySession,
+    progression,
+    unavailableWeekdays: answers?.unavailableWeekdays ?? [],
+    hasUnplannedCheckinToday: hasUnplannedToday,
+  });
+}
+
+export type SubmitCheckinResult =
+  | {
+      ok: true;
+      replyRu: string;
+      stepBefore: number;
+      stepAfter: number;
+      action: string;
+      reason: string;
+      checkinId: string;
+    }
+  | { ok: false; code: "bad_effort" | "bad_pain" | "unknown_session" | "wrong_owner"; messageRu: string };
+
+/**
+ * Чек-ин: ответ ученицы → строка в базе → сдвиг ступени.
+ *
+ * НЕ ТРЕБУЕТ АКТИВНОСТИ ИЗ INTERVALS. Если тренировка уже приехала — привяжем
+ * её к ответу; если нет — ответ полноценен и без неё. Человек может пробежать
+ * и не записать, и наказывать его за это молчанием системы нельзя.
+ */
+export async function submitCheckin(input: {
+  sourceId: string;
+  /** null — пробежка вне плана. */
+  planSessionId: string | null;
+  sessionDate: string;
+  effortCode: string;
+  painCode: string;
+  commentText: string | null;
+  voiceFileId: string | null;
+}): Promise<SubmitCheckinResult> {
+  const effort = effortByCode(input.effortCode);
+  if (!effort) {
+    return { ok: false, code: "bad_effort", messageRu: "Неизвестный вариант ответа про усилие." };
+  }
+  const painOption = painByCode(input.painCode);
+  if (!painOption) {
+    return { ok: false, code: "bad_pain", messageRu: "Неизвестный вариант ответа про самочувствие." };
+  }
+
+  let sessionDate = input.sessionDate;
+  if (input.planSessionId) {
+    const session = await getSessionById(input.planSessionId);
+    if (!session) {
+      return { ok: false, code: "unknown_session", messageRu: "Тренировка не найдена." };
+    }
+    // Чужую сессию отметить нельзя: id в запросе приходит от клиента, и
+    // проверять принадлежность обязан сервер.
+    const cycle = await getPublishedCycle(input.sourceId);
+    if (!cycle || cycle.id !== session.cycleId) {
+      return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из твоего плана." };
+    }
+    sessionDate = session.sessionDate;
+  }
+
+  const [progression, answers] = await Promise.all([
+    getProgression(input.sourceId),
+    getOnboardingAnswers(input.sourceId),
+  ]);
+
+  const applied = applyCheckinToProgression({
+    state: progression,
+    sourceId: input.sourceId,
+    sessionDate,
+    rpe: effort.rpe,
+    pain: painOption.pain,
+    canRunContinuously: answers?.canRunContinuously ?? null,
+  });
+
+  // Тренировка того же дня, если она уже приехала. Отсутствие — норма, а не сбой.
+  const activities = await listActivitiesInRange(input.sourceId, sessionDate, sessionDate);
+  const activityId = activities[0]?.activityId ?? null;
+
+  const checkin = await saveCheckin({
+    sourceId: input.sourceId,
+    planSessionId: input.planSessionId,
+    activityId,
+    sessionDate,
+    effortRpe: effort.rpe,
+    effortLabel: effort.labelRu,
+    pain: painOption.pain,
+    painNote: null,
+    commentText: input.commentText,
+    voiceFileId: input.voiceFileId,
+    stepBefore: applied.stepBefore,
+    stepAfter: applied.decision.nextStep,
+    progressionAction: applied.decision.action,
+    progressionReason: applied.decision.reason,
+  });
+
+  await saveProgression({
+    ...applied.next,
+    methodologyId: applied.next.methodologyId || BEGINNER_METHODOLOGY_ID,
+    methodologyVersion: applied.next.methodologyVersion || BEGINNER_METHODOLOGY_VERSION,
+  });
+
+  return {
+    ok: true,
+    replyRu: checkinReplyRu({
+      action: applied.decision.action,
+      stepAfter: applied.decision.nextStep,
+      pain: painOption.pain,
+    }),
+    stepBefore: applied.stepBefore,
+    stepAfter: applied.decision.nextStep,
+    action: applied.decision.action,
+    reason: applied.decision.reason,
+    checkinId: checkin.id,
+  };
+}
+
+export type MoveResult = { ok: true; toDate: string } | { ok: false; code: string; messageRu: string };
+
+export async function moveStudentSession(input: {
+  sourceId: string;
+  sessionId: string;
+  toDate: string;
+  todayIso: string;
+  movedBy: string;
+}): Promise<MoveResult> {
+  const session = await getSessionById(input.sessionId);
+  if (!session) {
+    return { ok: false, code: "unknown_session", messageRu: "Тренировка не найдена." };
+  }
+  const cycle = await getPublishedCycle(input.sourceId);
+  if (!cycle || cycle.id !== session.cycleId) {
+    return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из твоего плана." };
+  }
+
+  const [answers, checkin, siblings] = await Promise.all([
+    getOnboardingAnswers(input.sourceId),
+    getCheckinForSession(session.id),
+    listSessionsInRange(cycle.id, session.weekStart, shiftIso(session.weekStart, 6)),
+  ]);
+
+  const decision: MoveDecision = decideMove({
+    session: {
+      id: session.id,
+      sessionDate: session.sessionDate,
+      dayIdx: session.dayIdx,
+      weekStart: session.weekStart,
+    },
+    toDate: input.toDate,
+    todayIso: input.todayIso,
+    unavailableWeekdays: answers?.unavailableWeekdays ?? [],
+    siblingSessions: siblings.map((other) => ({
+      id: other.id,
+      sessionDate: other.sessionDate,
+      dayIdx: other.dayIdx,
+      weekStart: other.weekStart,
+    })),
+    hasCheckin: checkin !== null,
+  });
+
+  if (!decision.ok) {
+    return { ok: false, code: decision.code, messageRu: decision.messageRu };
+  }
+
+  await moveSession({
+    sessionId: session.id,
+    toDate: input.toDate,
+    toDayIdx: weekdayIndex(input.toDate),
+    originalDate: session.sessionDate,
+    originalDayIdx: session.dayIdx,
+    alreadyMoved: session.originalSessionDate !== null,
+    movedBy: input.movedBy,
+  });
+
+  return { ok: true, toDate: input.toDate };
+}

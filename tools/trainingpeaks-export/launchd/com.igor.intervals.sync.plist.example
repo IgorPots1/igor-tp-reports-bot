@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.intervals.sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-intervals-sync.sh</string>
+  </array>
+  <!-- Каждые 30 минут. Тренировка, записанная утром, попадает к тренеру в тот же
+       день с задержкой максимум в полчаса — для разбора этого более чем достаточно,
+       а чужой API мы дёргаем 48 раз в сутки на человека, а не постоянно. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/intervals-sync.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/intervals-sync.launchd.err.log</string>
+</dict>
+</plist>

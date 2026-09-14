@@ -55,8 +55,18 @@ export type Roster = {
 };
 
 export async function loadRoster(sb: SupabaseClient): Promise<Roster> {
+  // ФИЛЬТР ПО ПЛОЩАДКЕ, а не по форме ссылки [решение 02.10.2026]. С появлением
+  // учеников, которых ведут НЕ в TrainingPeaks (план в нашей базе, тренировки из
+  // Intervals.icu), таблица людей перестала быть равной ростеру TP.
+  //
+  // Отбирать их по «ссылка не разбирается» было бы ошибкой: счётчик unparsed
+  // означает ПОРВАННУЮ связь — TP-ученика, у которого ссылка испортилась, — и
+  // молчать о нём нельзя. Ученик, которого в TP никогда не было, — это не
+  // порванная связь; смешать их значит сделать тревогу вечной и потому
+  // бесполезной.
   const { data, error } = await sb.from("trainingpeaks_students")
-    .select("trainingpeaks_athlete_url, is_active, archived_at, is_service_account");
+    .select("trainingpeaks_athlete_url, is_active, archived_at, is_service_account")
+    .eq("coaching_platform", "trainingpeaks");
   if (error) throw new Error(`trainingpeaks_students: ${error.message}`);
   const all: RosterRow[] = [];
   let unparsed = 0;

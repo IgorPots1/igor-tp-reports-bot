@@ -278,7 +278,7 @@ async function main(): Promise<void> {
   // Отдельная дорога, а не режим общей: у новичка методика назначает конкретную
   // сессию по лестнице, и считать конверт объёма не из чего и незачем.
   if (answers.goalKind === "start_running") {
-    await runBeginnerBranch(supabase, source.id as string, answers);
+    await runBeginnerBranch(supabase, source.id as string, answers, answersRowId, start);
     return;
   }
 
@@ -403,7 +403,9 @@ async function main(): Promise<void> {
 async function runBeginnerBranch(
   supabase: ReturnType<typeof createSupabaseServerClient>,
   sourceId: string,
-  answers: OnboardingAnswers
+  answers: OnboardingAnswers,
+  answersRowId: string | null,
+  start: StartingPoint
 ): Promise<void> {
   // ПОТОЛОК ЖЁСТКИЙ. Просьбу о четырёх днях отклоняем с объяснением, а не
   // урезаем молча: человек должен знать, что его услышали и почему ответили нет.
@@ -436,6 +438,12 @@ async function runBeginnerBranch(
 
   let step = stateRow ? Number(stateRow.current_step) : 1;
   let sessionsAtStep = stateRow ? Number(stateRow.sessions_at_step) : 0;
+  // Состояние НА МОМЕНТ ГЕНЕРАЦИИ. Проекция ниже двигает step/sessionsAtStep как
+  // «если всё пройдёт идеально» — записывать в базу можно только вот это,
+  // настоящее. Иначе план сам себе поставил бы ступень, которую человек ещё не
+  // отработал.
+  const realStepAtGeneration = step;
+  const realSessionsAtStep = sessionsAtStep;
   const recent: SessionFeedback[] = stateRow ? ((stateRow.recent_sessions ?? []) as SessionFeedback[]) : [];
   const isFirstPlan = !stateRow;
 
@@ -461,6 +469,7 @@ async function runBeginnerBranch(
 
   const projection: { weekStart: string; step: number; sessions: number; note: string }[] = [];
   const simulated: SessionFeedback[] = [...recent];
+  const built: { week: Week; weekIndex: number; step: number }[] = [];
 
   for (let index = 0; index < weeks; index += 1) {
     const weekStart = addDays(firstWeekStart, index * 7);
@@ -494,6 +503,7 @@ async function runBeginnerBranch(
     };
 
     const week = buildWeek(anchors, envelope, catalog, weekStart, false, null, null, prefs, input);
+    built.push({ week, weekIndex: index + 1, step });
     const runsThisWeek = week.sessions.length;
 
     console.log("");
@@ -531,7 +541,108 @@ async function runBeginnerBranch(
   if (!COMMIT) {
     console.log("");
     console.log("Ничего не записано (запуск без --commit).");
+    return;
   }
+
+  // ── Запись ────────────────────────────────────────────────────────────────
+  //
+  // Цикл ложится СО СТАТУСОМ draft. Ученице он не виден, пока тренер не нажал
+  // «Показать»: первые недели тренер хочет видеть каждый план раньше неё, и это
+  // состояние принадлежит плану, а не общему рубильнику.
+  const weeklyMinutes = weeklyRunningMinutes(stepByIndex(realStepAtGeneration), answers.daysPerWeek);
+  const { data: cycleRow, error: cycleError } = await supabase
+    .from("intervals_plan_cycles")
+    .insert({
+      source_id: sourceId,
+      answers_id: answersRowId,
+      // У новичка нет ни дистанции, ни подводки: цикл поддерживающий по форме,
+      // а содержание задаёт лестница, а не объём.
+      intent: "maintenance",
+      target_date: null,
+      first_week_start: firstWeekStart,
+      length_weeks: weeks,
+      days: answers.daysPerWeek,
+      base_aerobic_min: weeklyMinutes,
+      base_quality_min: 0,
+      start_point_source: start.source,
+      data_level: start.dataLevel,
+      start_point: start,
+      // Черновика цикла у ветки новичка нет — вместо него методика и ступень на
+      // момент генерации. Пустой объект соврал бы, что цикл посчитан обычным
+      // путём.
+      draft: {
+        kind: "beginner_ladder",
+        methodologyId: BEGINNER_METHODOLOGY_ID,
+        methodologyVersion: BEGINNER_METHODOLOGY_VERSION,
+        stepAtGeneration: realStepAtGeneration,
+        sessionsAtStepAtGeneration: realSessionsAtStep,
+        maxRunsPerWeek: BEGINNER_MAX_RUNS_PER_WEEK,
+        rpeTarget: BEGINNER_RPE_TARGET,
+        rpeCap: BEGINNER_RPE_CAP,
+        canRunContinuously: answers.canRunContinuously,
+      },
+      week_forecast: projection,
+      status: "draft",
+    })
+    .select("id")
+    .single();
+  if (cycleError) fail(`Не удалось сохранить цикл: ${cycleError.message}`);
+
+  const rows = built.flatMap(({ week, weekIndex }) =>
+    week.sessions.map((session) => ({
+      cycle_id: cycleRow.id,
+      week_index: weekIndex,
+      week_start: week.weekStart,
+      session_date: addDays(week.weekStart, session.dayIdx),
+      day_idx: session.dayIdx,
+      role: session.role,
+      title: session.title,
+      minutes: session.minutes,
+      preset_code: session.presetCode,
+      description: session.description,
+      target_mode: session.targetMode === "pace" || session.targetMode === "rpe" ? session.targetMode : null,
+      rpe: session.targetMode === "rpe" ? BEGINNER_RPE_TARGET : null,
+      anchor_source: session.anchorSource,
+      confidence: session.confidence,
+      deferred: session.deferred,
+      defer_reason: session.deferReason,
+      warnings: session.warnings,
+      coach_review: session.coachReview,
+    }))
+  );
+
+  const { error: sessionsError } = await supabase
+    .from("intervals_plan_sessions")
+    .upsert(rows, { onConflict: "cycle_id,week_index,day_idx" });
+  if (sessionsError) fail(`Не удалось сохранить сессии: ${sessionsError.message}`);
+
+  // ── Состояние прогрессии ──
+  //
+  // ТОЛЬКО ЕСЛИ СТРОКИ ЕЩЁ НЕТ. Перегенерация плана НЕ ИМЕЕТ ПРАВА сбрасывать
+  // ступень: состояние двигают чек-ины, а не генератор. Апсертом здесь можно
+  // было бы одним прогоном отправить человека с пятой ступени на первую.
+  if (!stateRow) {
+    const { error: progressionError } = await supabase
+      .from("intervals_beginner_progression")
+      .insert({
+        source_id: sourceId,
+        methodology_id: BEGINNER_METHODOLOGY_ID,
+        methodology_version: BEGINNER_METHODOLOGY_VERSION,
+        current_step: realStepAtGeneration,
+        sessions_at_step: realSessionsAtStep,
+        recent_sessions: [],
+        can_run_continuously: answers.canRunContinuously,
+      });
+    if (progressionError) fail(`Не удалось завести состояние прогрессии: ${progressionError.message}`);
+    console.log("");
+    console.log(`Состояние прогрессии заведено: ступень ${realStepAtGeneration}.`);
+  } else {
+    console.log("");
+    console.log(`Состояние прогрессии не тронуто: ступень ${realStepAtGeneration} — её двигают чек-ины, а не генерация.`);
+  }
+
+  console.log(`Записано: цикл ${cycleRow.id} (статус draft), сессий ${rows.length}.`);
+  console.log("Ученице план пока НЕ виден — подтвердите его в админке.");
 }
 
 main().catch((error) => {

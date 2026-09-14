@@ -355,7 +355,9 @@
     "check:trainingpeaks-reply-draft-context": "npx tsx scripts/check-trainingpeaks-reply-draft-context.ts",
     "check:trainingpeaks-reply-draft-feedback": "npx tsx scripts/check-trainingpeaks-reply-draft-feedback.ts",
     "nutrition:enable-test-cohort": "npx tsx scripts/nutrition-enable-test-cohort.ts",
-    "club-autobind-dryrun": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/club-autobind-dryrun.ts"
+    "club-autobind-dryrun": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/club-autobind-dryrun.ts",
+    "check:first-student-loop": "npx tsx scripts/check-first-student-loop.ts",
+    "intervals:sync": "npx tsx scripts/intervals-sync-active.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",
