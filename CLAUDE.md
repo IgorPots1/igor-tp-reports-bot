@@ -40,7 +40,13 @@ Reasons include:
 - Never modify `.env*` files or print secrets.
 - Never loosen auth, cron, token, webhook, Telegram, billing, or TrainingPeaks safety checks.
 - Never run destructive database operations.
-- Never run production migrations unless explicitly requested.
+- Migrations: Claude applies them itself, under the protocol in the global CLAUDE.md
+  («Применение миграций»). Additive DDL on the general command; `drop`/`delete`/
+  `truncate`/column-type changes/anything that rewrites rows — separate explicit
+  confirmation each time, with the affected row count stated first.
+  Applied-or-not is verified by READING THE SCHEMA, never by the migrations list:
+  on 2026-09-14 the repo holds 193 migration files against 37 rows in the database
+  history, because most were applied by hand through the SQL editor.
 - Never send Telegram messages unless explicitly requested.
 - Never perform real TrainingPeaks mutations unless explicitly requested.
 - Never change billing/payment allocation logic casually.
@@ -170,7 +176,7 @@ Every task report should include:
 
 Полная памятка: `docs/cowork-workflow.md`. Кратко:
 
-- **Поток фичи:** Claude делает работу в отдельной ветке (worktree `wt-*`) + проверки (`npm run lint`, `npx tsc --noEmit`, относящиеся `check-*`). ЗАКАНЧИВАЕТ отчётом с единым блоком включения (см. ниже) и ЖДЁТ — сам НЕ пушит и НЕ вливает по своему решению. По явной команде Игоря («пушь»/«вливай») Claude делает всё сам: ff-merge в `main` (из папки, где `[main]`) → `git push origin main` → миграции (через Supabase-MCP, если доступен; иначе SQL остаётся в блоке для ручного применения) → и говорит, что осталось на Игоре (флаги, plist, деплой). Без PR-кликанья.
+- **Поток фичи:** Claude делает работу в отдельной ветке (worktree `wt-*`) + проверки (`npm run lint`, `npx tsc --noEmit`, относящиеся `check-*`). ЗАКАНЧИВАЕТ отчётом с единым блоком включения (см. ниже) и ЖДЁТ — сам НЕ пушит и НЕ вливает по своему решению. По явной команде Игоря («пушь»/«вливай») Claude делает всё сам: ff-merge в `main` (из папки, где `[main]`) → `git push origin main` → миграции (Supabase-MCP, по протоколу применения из глобального CLAUDE.md: аддитивное сразу, разрушительное — с отдельным «да») → и говорит, что осталось на Игоре (флаги, plist, деплой). Без PR-кликанья.
 - **Push разрешён ТОЛЬКО по явной команде и ТОЛЬКО в `main` (fast-forward).** Автономно после задачи Claude не пушит НИКОГДА — заканчивает отчётом и ждёт. Хук `~/.claude/hooks/deny-guard.sh` + `~/.claude/settings.json` пропускают лишь обычный `git push origin main`; force / `--force-with-lease` / `-f` / push в чужие ветки / `--mirror` / `--delete` — заблокированы (git сам откажет в non-ff без force, так что ff гарантируется). Деплой (Vercel) и прод-миграции — по-прежнему через Игоря/по команде; миграции Claude кладёт файлом в `supabase/migrations/` и даёт в блоке включения SQL текстом.
 - **Obsidian как контекст:** волт «Igor Second Brain» (`~/Library/Mobile Documents/iCloud~md~obsidian/Documents`) можно подключать как папку — Claude читает/ищет по заметкам (теги во фронтматтере, папки Agent-Hub / AI-Running-Coach / Ученики / Inbox) и складывает итоги задач туда же в том же формате (`ГГГГ-ММ-ДД - превью - хэш.md`, фронтматтер `type/source/category/tags`). Dev-summary по этому репозиторию → папка `Agent-Hub`.
 - **Координация с Cursor:** пока активна сессия Claude, не давать Cursor делать git-операции (коммиты/checkout) — общий рабочий каталог, чужие коммиты «прилипают» к веткам Claude.
@@ -215,8 +221,8 @@ Every task report should include:
   подтверждения Игоря в текущем сообщении.
 - "Доделай / влей / смёржи / пушь" = Claude выполняет САМ ВСЮ цепочку: commit в
   feature-ветке → `git fetch origin` → (при расхождении rebase + перегон проверок) →
-  ff-merge в папке где `[main]` → `git push origin main` → миграции через Supabase-MCP,
-  если доступен → и ОСТАНАВЛИВАЕТСЯ, отдав Игорю остаток (флаги, plist, деплой).
+  ff-merge в папке где `[main]` → `git push origin main` → миграции через Supabase-MCP
+  по протоколу применения → и ОСТАНАВЛИВАЕТСЯ, отдав Игорю остаток (флаги, plist, деплой).
   Подтверждает влитие ФАКТОМ (`git cherry origin/main <branch>` пуст). Без такой команды
   Claude НЕ пушит и НЕ вливает — заканчивает отчётом с блоком включения и ждёт.
   Деплой (Vercel) Claude не запускает никогда — это всегда рука Игоря.
