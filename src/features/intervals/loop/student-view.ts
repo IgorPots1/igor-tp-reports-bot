@@ -74,6 +74,25 @@ export type WaitingView = {
   answersSummaryRu: string[];
 };
 
+/**
+ * Ответ тренера так, как его видит ученица.
+ *
+ * ПОЧЕМУ ЭТО ЕСТЬ В ПРИЛОЖЕНИИ, А НЕ ТОЛЬКО В ЧАТЕ. Она отмечается здесь, а
+ * ответ раньше приходил в переписку, и то лишь при включённом killswitch-е.
+ * Человек ищет ответ там, где задавал вопрос; в чате он к тому же тонет между
+ * другими сообщениями, а здесь лежит рядом с той самой тренировкой.
+ */
+export type CoachReplyView = {
+  id: string;
+  /** Про какой день ответ: «про 22 сентября». */
+  aboutDateLabel: string | null;
+  body: string;
+  /** Дата ответа для порядка, без времени: точность до минуты ей не нужна. */
+  dateLabel: string;
+  /** Новый — тот, что она ещё не открывала. */
+  isNew: boolean;
+};
+
 export type StudentView =
   | { state: "no_plan"; messageRu: string; waiting: WaitingView }
   | {
@@ -83,6 +102,8 @@ export type StudentView =
       ladder: StudentLadderView | null;
       /** Незапланированная пробежка: отметиться можно и без неё в плане. */
       canLogUnplanned: boolean;
+      /** Что ответил тренер. Пусто — ответов пока нет. */
+      coachReplies: CoachReplyView[];
       effortOptions: typeof EFFORT_OPTIONS;
       painOptions: typeof PAIN_OPTIONS;
       restNoteRu: string | null;
@@ -180,6 +201,8 @@ export function buildStudentView(input: {
   hasUnplannedCheckinToday: boolean;
   /** Короткая сводка анкеты: показывается на экране ожидания. */
   answersSummary?: string[];
+  /** Отданные тренером тексты, новые сверху. */
+  coachReplies?: CoachReplyView[];
   upcomingDays?: number;
 }): StudentView {
   if (input.sessions === null) {
@@ -255,6 +278,7 @@ export function buildStudentView(input: {
     // Отметиться можно ВСЕГДА, даже если в плане на сегодня ничего нет и
     // активность из Intervals не приехала: человек мог пробежать и не записать.
     canLogUnplanned: !input.hasUnplannedCheckinToday && todaySession === null,
+    coachReplies: input.coachReplies ?? [],
     effortOptions: EFFORT_OPTIONS,
     painOptions: PAIN_OPTIONS,
     restNoteRu: restNote,

@@ -17,11 +17,12 @@ import {
   getSessionById,
   listActivitiesInRange,
   listSessionsInRange,
+  listVisibleCoachMessages,
   moveSession,
   saveCheckin,
   saveProgression,
 } from "./repository";
-import { buildStudentView, type StudentView } from "./student-view";
+import { buildStudentView, formatRuDay, type CoachReplyView, type StudentView } from "./student-view";
 import type { Checkin } from "./types";
 
 const DAY_MS = 86_400_000;
@@ -92,11 +93,42 @@ export async function getStudentSourceId(studentUuid: string): Promise<string | 
 }
 
 /** Всё, что нужно показать ученице на одном экране. */
+/**
+ * Ответы тренера для экрана ученицы.
+ *
+ * ПОКАЗЫВАЕМ ТОЛЬКО ОТДАННЫЕ. Черновик и подготовленный текст — внутренняя
+ * кухня тренера, и человек не должен видеть то, что тренер ещё не решил
+ * отдать. Отбор делает сам запрос (visible_to_student_at not null), а не
+ * фильтр в разметке: фильтр в разметке однажды забудут.
+ */
+async function loadCoachReplies(sourceId: string): Promise<CoachReplyView[]> {
+  const messages = await listVisibleCoachMessages(sourceId, 5);
+  return messages.map((message) => {
+    const context = message.context as {
+      checkin?: { date?: string } | null;
+      plannedSession?: { date?: string } | null;
+    };
+    const about = context.checkin?.date ?? context.plannedSession?.date ?? null;
+    return {
+      id: message.id,
+      aboutDateLabel: about ? formatRuDay(about) : null,
+      body: message.body,
+      dateLabel: formatRuDay((message.visibleToStudentAt ?? message.createdAt).slice(0, 10)),
+      // «Новое» считаем по факту, что ответ моложе суток: отдельного признака
+      // «прочитано» в контуре нет, а заводить его ради точки на экране значит
+      // писать в базу на каждое открытие приложения.
+      isNew:
+        Date.now() - Date.parse(message.visibleToStudentAt ?? message.createdAt) < 24 * 60 * 60 * 1000,
+    };
+  });
+}
+
 export async function loadStudentView(sourceId: string, todayIso: string): Promise<StudentView> {
   const cycle = await getPublishedCycle(sourceId);
-  const [progression, answers] = await Promise.all([
+  const [progression, answers, coachReplies] = await Promise.all([
     getProgression(sourceId),
     getOnboardingAnswers(sourceId),
+    loadCoachReplies(sourceId),
   ]);
 
   if (!cycle) {
@@ -108,6 +140,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
       unavailableWeekdays: answers?.unavailableWeekdays ?? [],
       hasUnplannedCheckinToday: false,
       answersSummary: summariseAnswersRu(answers),
+      coachReplies,
     });
   }
 
@@ -156,6 +189,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     progression,
     unavailableWeekdays: answers?.unavailableWeekdays ?? [],
     hasUnplannedCheckinToday: hasUnplannedToday,
+    coachReplies,
   });
 }
 

@@ -423,6 +423,7 @@ function toCoachMessage(row: Record<string, unknown>): CoachMessage {
     body: String(row.body),
     status: status === "sent" || status === "prepared" ? status : "draft",
     sentAt: (row.sent_at as string | null) ?? null,
+    visibleToStudentAt: (row.visible_to_student_at as string | null) ?? null,
     createdAt: String(row.created_at),
     context: (row.context as unknown as Record<string, unknown>) ?? {},
   };
@@ -455,6 +456,49 @@ export async function saveCoachMessage(
     .single();
   if (error) throw new Error(`intervals_coach_messages insert: ${describeSupabaseError(error)}`);
   return toCoachMessage(data as unknown as Record<string, unknown>);
+}
+
+/**
+ * Отдать текст ученице: теперь она видит его в приложении.
+ *
+ * ОТДЕЛЬНО ОТ ДОСТАВКИ В ТЕЛЕГРАМ намеренно. Отдать ответ и уведомить о нём —
+ * разные события: первое обязано случиться всегда, когда тренер нажал кнопку,
+ * второе зависит от killswitch-а и от того, привязан ли чат.
+ */
+export async function markCoachMessageVisibleToStudent(
+  messageId: string,
+  client?: Client
+): Promise<void> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { error } = await supabase
+    .from("intervals_coach_messages")
+    .update({ visible_to_student_at: new Date().toISOString() })
+    .eq("id", messageId)
+    // Повторное нажатие не должно двигать дату: «когда ответ появился у неё»
+    // важнее, чем «когда тренер последний раз нажал».
+    .is("visible_to_student_at", null);
+  if (error) throw new Error(`intervals_coach_messages visible: ${describeSupabaseError(error)}`);
+}
+
+/**
+ * Что ученица видит в приложении. Только отданные тексты: черновики и
+ * подготовленные, но не отданные, сюда не попадают никогда.
+ */
+export async function listVisibleCoachMessages(
+  sourceId: string,
+  limit = 10,
+  client?: Client
+): Promise<CoachMessage[]> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_coach_messages")
+    .select("*")
+    .eq("source_id", sourceId)
+    .not("visible_to_student_at", "is", null)
+    .order("visible_to_student_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`intervals_coach_messages visible list: ${describeSupabaseError(error)}`);
+  return (data ?? []).map((row) => toCoachMessage(row as unknown as Record<string, unknown>));
 }
 
 export async function markCoachMessageDelivered(

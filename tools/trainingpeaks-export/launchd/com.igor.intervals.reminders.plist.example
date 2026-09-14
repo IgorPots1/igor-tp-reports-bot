@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.intervals.reminders</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-intervals-reminders.sh</string>
+  </array>
+  <!-- Каждые 30 минут. Сами напоминания уходят максимум дважды в сутки на
+       человека: раннер частый, потому что окна считаются по МЕСТНОМУ времени
+       ученика, а оно у каждого своё. Редкий раннер промахнулся бы мимо окна у
+       половины часовых поясов. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/intervals-reminders.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/intervals-reminders.launchd.err.log</string>
+</dict>
+</plist>

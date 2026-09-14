@@ -320,10 +320,21 @@ export default async function BeginnerStudentPage({
       {/* ── Чек-ины и ответ тренера ── */}
       <div style={box}>
         <h2 style={{ marginTop: 0 }}>Чек-ины</h2>
-        <p style={{ marginTop: 0, color: sendEnabled ? "#2E7D45" : "#a33" }}>
-          {sendEnabled
-            ? "Отправка ВКЛЮЧЕНА: «Написать» уйдёт ученице в Telegram."
-            : "Отправка выключена (INTERVALS_COACH_SEND_ENABLED). Текст сохранится со статусом prepared, наружу не уйдёт."}
+        {/* ДВЕ РАЗНЫЕ СТРОЧКИ, ПОТОМУ ЧТО ЭТО ДВА РАЗНЫХ СОБЫТИЯ. Текст всегда
+            появляется у неё в приложении; уведомление в телеграм зависит от
+            killswitch-а и от флага доставки у карточки. Склеивать их в одну
+            фразу значит снова путать «ответил» и «уведомил». */}
+        <p style={{ marginTop: 0, color: "#2E7D45" }}>
+          Текст сразу появится у неё в приложении, на экране «Ответ тренера».
+        </p>
+        <p style={{ marginTop: 4, color: sendEnabled && student.telegramDeliveryEnabled ? "#2E7D45" : "#a33" }}>
+          {!student.telegramChatId
+            ? "Уведомления в Telegram не будет: чат не привязан."
+            : !student.telegramDeliveryEnabled
+              ? "Уведомления в Telegram не будет: у карточки выключена доставка (telegram_delivery_enabled)."
+              : sendEnabled
+                ? "Плюс уведомление в Telegram."
+                : "Уведомления в Telegram не будет: выключен INTERVALS_COACH_SEND_ENABLED."}
         </p>
 
         {view.checkins.length === 0 ? (
@@ -382,13 +393,13 @@ export default async function BeginnerStudentPage({
                     <div style={{ marginTop: 6 }}>
                       <FormActionButton
                         confirmMessage={
-                          sendEnabled
-                            ? "Отправить этот текст ученице в Telegram?"
-                            : "Сохранить текст? Отправка выключена — наружу он не уйдёт."
+                          sendEnabled && student.telegramDeliveryEnabled
+                            ? "Отдать текст ученице? Она увидит его в приложении, плюс уйдёт уведомление в Telegram."
+                            : "Отдать текст ученице? Она увидит его в приложении. Уведомления в Telegram не будет."
                         }
-                        pendingText="Сохраняю…"
+                        pendingText="Отдаю…"
                       >
-                        {sendEnabled ? "Написать ученице" : "Сохранить (без отправки)"}
+                        Отдать ученице
                       </FormActionButton>
                     </div>
                   </form>
@@ -441,9 +452,18 @@ export default async function BeginnerStudentPage({
           view.messages.map((message) => (
             <div key={message.id} style={{ borderTop: "1px solid #eee", paddingTop: 10, marginTop: 10 }}>
               <p style={{ margin: "0 0 4px", color: "#555", fontSize: 13 }}>
-                {message.createdAt.slice(0, 16).replace("T", " ")} · статус{" "}
-                <strong>{message.status}</strong>
-                {message.status === "prepared" ? " (сохранено, не отправлено)" : ""}
+                {message.createdAt.slice(0, 16).replace("T", " ")} ·{" "}
+                {message.visibleToStudentAt ? (
+                  <strong style={{ color: "#2E7D45" }}>видит в приложении</strong>
+                ) : (
+                  <strong style={{ color: "#a33" }}>не отдано</strong>
+                )}
+                {" · телеграм: "}
+                {message.status === "sent"
+                  ? "уведомлён"
+                  : message.status === "prepared"
+                    ? "не уведомлён (отправка выключена)"
+                    : "не уведомлён"}
               </p>
               <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{message.body}</p>
             </div>

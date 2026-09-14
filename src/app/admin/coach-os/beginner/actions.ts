@@ -13,6 +13,7 @@ import {
   listActivitiesInRange,
   listCheckins,
   markCoachMessageDelivered,
+  markCoachMessageVisibleToStudent,
   publishCycle,
   saveCoachMessage,
 } from "@/features/intervals/loop/repository";
@@ -31,11 +32,18 @@ export async function publishPlanAction(formData: FormData): Promise<void> {
 }
 
 /**
- * Написать ученице.
+ * Отдать текст ученице.
  *
  * Порядок намеренно такой: СНАЧАЛА сохранить текст вместе со снимком контекста,
- * ПОТОМ пытаться доставить. Обратный порядок терял бы корпус при каждом сбое
- * доставки — а сбой доставки как раз тот случай, когда текст особенно жалко.
+ * ПОТОМ отдать его ученице, и только ПОТОМ пытаться уведомить в телеграм.
+ * Обратный порядок терял бы корпус при каждом сбое доставки — а сбой доставки
+ * как раз тот случай, когда текст особенно жалко.
+ *
+ * ДВА РАЗНЫХ СОБЫТИЯ [14.09.2026]. Нажатие кнопки означает «ответ готов, отдаю»:
+ * текст становится виден ученице в приложении всегда. Уведомление в телеграм —
+ * отдельно, и оно по-прежнему под killswitch-ем и под флагом доставки у
+ * карточки. Раньше это было одним событием, и при выключенном killswitch-е
+ * ответ не доходил до человека вообще нигде.
  */
 export async function sendCoachMessageAction(formData: FormData): Promise<void> {
   const studentUuid = String(formData.get("studentUuid") ?? "");
@@ -72,6 +80,9 @@ export async function sendCoachMessageAction(formData: FormData): Promise<void> 
     .select("telegram_chat_id, telegram_delivery_enabled")
     .eq("id", studentUuid)
     .maybeSingle();
+
+  // Отдаём ученице: с этого момента текст виден в приложении.
+  await markCoachMessageVisibleToStudent(saved.id);
 
   const result = await deliverCoachMessage({
     body,

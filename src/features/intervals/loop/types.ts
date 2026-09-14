@@ -73,6 +73,15 @@ export type CoachMessage = {
   body: string;
   status: "draft" | "prepared" | "sent";
   sentAt: string | null;
+  /**
+   * Когда текст стал виден ученице В ПРИЛОЖЕНИИ. null — не видит.
+   *
+   * ЭТО НЕ ТО ЖЕ, ЧТО status. Статус описывает судьбу уведомления в телеграм,
+   * а видимость в приложении от телеграма не зависит: killswitch стережёт
+   * push, а не сам факт ответа. Раньше это было склеено, и при выключенном
+   * флаге ученица не получала ответ вообще нигде.
+   */
+  visibleToStudentAt: string | null;
   createdAt: string;
   context: Record<string, unknown>;
 };

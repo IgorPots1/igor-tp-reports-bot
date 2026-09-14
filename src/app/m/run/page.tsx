@@ -78,14 +78,23 @@ type WaitingView = {
   answersSummaryRu: string[];
 };
 
+type CoachReply = {
+  id: string;
+  aboutDateLabel: string | null;
+  body: string;
+  dateLabel: string;
+  isNew: boolean;
+};
+
 type View =
-  | { state: "no_plan"; messageRu: string; waiting?: WaitingView }
+  | { state: "no_plan"; messageRu: string; waiting?: WaitingView; coachReplies?: CoachReply[] }
   | {
       state: "ready";
       today: SessionCard | null;
       upcoming: SessionCard[];
       ladder: LadderView | null;
       canLogUnplanned: boolean;
+      coachReplies?: CoachReply[];
       effortOptions: EffortOption[];
       painOptions: PainOption[];
       restNoteRu: string | null;
@@ -264,6 +273,7 @@ export default function RunAppPage() {
         <WaitingScreen
           view={view.waiting ?? null}
           fallbackRu={view.messageRu}
+          coachReplies={view.coachReplies ?? []}
           onOpenGuide={() => setShowGuide(true)}
         />
       ) : (
@@ -371,6 +381,7 @@ function GuideLink(props: { onClick: () => void; labelRu: string }) {
 function WaitingScreen(props: {
   view: WaitingView | null;
   fallbackRu: string;
+  coachReplies: CoachReply[];
   onOpenGuide: () => void;
 }) {
   if (!props.view) return <Banner text={props.fallbackRu} />;
@@ -419,6 +430,11 @@ function WaitingScreen(props: {
           </p>
         </div>
       ) : null}
+
+      {/* Ответ тренера может прийти и до плана: человек написал вопрос в
+          анкете или отметился о своей пробежке. Прятать его до появления плана
+          значит потерять единственный живой контакт в самые первые дни. */}
+      <CoachReplies replies={props.coachReplies} />
 
       {/* ЛУЧШИЙ МОМЕНТ ПРОЧИТАТЬ ПРАВИЛА — ИМЕННО ЗДЕСЬ. Человек только что всё
           сделал и ждёт: заняться ему нечем, а прочитанное пригодится через день,
@@ -1088,6 +1104,12 @@ function PlanScreen(props: {
   const { view } = props;
   return (
     <div>
+      {/* ОТВЕТ ТРЕНЕРА ВЫШЕ ПЛАНА, И ЭТО НЕ СЛУЧАЙНО. Ради него человек и
+          открывает приложение после тренировки: он отметился и ждёт, что
+          скажут. План на сегодня никуда не денется и через два экрана, а
+          ответ, спрятанный внизу, читается как «мне не ответили». */}
+      <CoachReplies replies={view.coachReplies ?? []} />
+
       {view.ladder ? <LadderBlock ladder={view.ladder} /> : null}
 
       <h2 style={{ fontSize: 18, margin: "22px 0 10px" }}>Сегодня</h2>
@@ -1135,6 +1157,37 @@ function PlanScreen(props: {
           окно, которое человек закрыл и больше не нашёл. */}
       <GuideLink onClick={props.onOpenGuide} labelRu="Как мы работаем: правила и что делать, если →" />
     </div>
+  );
+}
+
+/**
+ * Ответ тренера. Пусто — блока нет вовсе: пустая рамка «ответов пока нет»
+ * выглядит как упрёк и занимает место на маленьком экране.
+ */
+function CoachReplies({ replies }: { replies: CoachReply[] }) {
+  if (replies.length === 0) return null;
+  return (
+    <section style={{ marginBottom: 4 }}>
+      <h2 style={{ fontSize: 18, margin: "0 0 10px" }}>Ответ тренера</h2>
+      {replies.map((reply) => (
+        <div
+          key={reply.id}
+          style={{
+            background: "#fff",
+            border: `1px solid ${reply.isNew ? ACCENT : LINE}`,
+            borderRadius: 14,
+            padding: "14px 16px",
+            marginBottom: 10,
+          }}
+        >
+          <p style={{ margin: "0 0 6px", fontSize: 13, color: MUTED }}>
+            {reply.aboutDateLabel ? `про ${reply.aboutDateLabel}` : reply.dateLabel}
+            {reply.isNew ? <span style={{ color: ACCENT, fontWeight: 600 }}> · новое</span> : null}
+          </p>
+          <p style={{ margin: 0, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{reply.body}</p>
+        </div>
+      ))}
+    </section>
   );
 }
 

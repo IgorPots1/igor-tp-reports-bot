@@ -41,6 +41,7 @@ import {
   listCoachMessages,
   listSessionsInRange,
   markCoachMessageDelivered,
+  markCoachMessageVisibleToStudent,
   publishCycle,
   saveCoachMessage,
 } from "@/features/intervals/loop/repository";
@@ -353,6 +354,8 @@ async function main(): Promise<void> {
       body,
       context: context as unknown as Record<string, unknown>,
     });
+    // Отдаём ученице: ровно это делает кнопка тренера.
+    await markCoachMessageVisibleToStudent(saved.id);
     const delivery = await deliverCoachMessage({
       body,
       chatId: card.telegramChatId,
@@ -368,6 +371,14 @@ async function main(): Promise<void> {
       `  доставка: ${delivery.kind}${delivery.kind === "refused" ? ` · ${delivery.code} · ${delivery.messageRu}` : ""}`
     );
     console.log(`  снимок контекста: ступень ${context.step?.index ?? "—"}, чек-ин ${context.checkin?.effortLabel ?? "—"}`);
+
+    // Главная проверка петли: видит ли его ученица У СЕБЯ, а не только в чате.
+    const afterReply = await loadStudentView(card.sourceId, today);
+    const replies = afterReply.state === "ready" ? afterReply.coachReplies : [];
+    console.log(`  видно ученице в приложении: ${replies.length > 0 ? "да" : "НЕТ"}`);
+    for (const reply of replies.slice(0, 2)) {
+      console.log(`    · ${reply.aboutDateLabel ? `про ${reply.aboutDateLabel}` : reply.dateLabel}${reply.isNew ? " · новое" : ""}: ${reply.body.slice(0, 60)}…`);
+    }
   }
 
   // ── 8. Что осталось в базе ────────────────────────────────────────────────

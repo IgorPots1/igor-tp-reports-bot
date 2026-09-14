@@ -362,7 +362,10 @@
     "check:valentina-form": "npx tsx scripts/check-valentina-form.ts",
     "check:intervals-oauth": "npx tsx scripts/check-intervals-oauth.ts",
     "check:connection-health": "npx tsx scripts/check-connection-health.ts",
-    "check:connect-text": "npx tsx scripts/check-connect-text.ts"
+    "check:connect-text": "npx tsx scripts/check-connect-text.ts",
+    "check:reminders": "npx tsx scripts/check-reminders.ts",
+    "intervals:live-run": "npx tsx scripts/intervals-live-run.ts",
+    "intervals:reminders": "npx tsx scripts/intervals-reminders.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",
