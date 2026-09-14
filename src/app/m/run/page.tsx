@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { DEVICE_GUIDES, WHERE_TO_LOOK_RU } from "@/features/intervals/device-guide";
+import { DEVICE_GUIDES, MARK_ALL_RU, WHERE_TO_LOOK_RU } from "@/features/intervals/device-guide";
 import {
   SESSION_CAP_OPTIONS,
   SURFACE_OPTIONS,
@@ -352,12 +352,6 @@ function DeviceChecklist() {
   const [device, setDevice] = useState<string | null>(null);
   const guide = DEVICE_GUIDES.find((item) => item.code === device) ?? null;
 
-  const badge: Record<string, { bg: string; fg: string; label: string }> = {
-    required: { bg: "#FDE8E0", fg: ACCENT, label: "обязательно" },
-    recommended: { bg: "#EAF3EC", fg: GREEN, label: "желательно" },
-    later: { bg: "#EFECE4", fg: MUTED, label: "на будущее" },
-  };
-
   return (
     <div
       style={{
@@ -387,38 +381,64 @@ function DeviceChecklist() {
 
       {guide ? (
         <div style={{ marginTop: 14, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
-          <p style={{ margin: 0, color: MUTED, fontSize: 13, lineHeight: 1.5 }}>{WHERE_TO_LOOK_RU}</p>
-          <p style={{ margin: "8px 0 0", fontSize: 13, color: MUTED }}>
-            Ищите блок «{guide.settingsBoxRu}».
-          </p>
-          {guide.steps.map((stepItem) => {
-            const mark = badge[stepItem.kind];
-            return (
-              <div key={stepItem.titleRu} style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                <span
-                  style={{
-                    flexShrink: 0,
-                    marginTop: 2,
-                    padding: "2px 8px",
-                    borderRadius: 999,
-                    background: mark.bg,
-                    color: mark.fg,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {mark.label}
-                </span>
-                <div>
-                  <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{stepItem.titleRu}</p>
-                  <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
-                    {stepItem.whyRu}
-                  </p>
-                </div>
+          {/* «Где искать галочки» — только тем, у кого они есть. Для Apple Watch
+              отмечать в настройках Intervals нечего, и звать туда человека
+              значит отправить его искать несуществующий блок. */}
+          {guide.steps.length > 0 ? (
+            <p style={{ margin: 0, color: MUTED, fontSize: 13, lineHeight: 1.5 }}>{WHERE_TO_LOOK_RU}</p>
+          ) : null}
+          {guide.settingsBoxRu ? (
+            <p style={{ margin: "8px 0 0", fontSize: 13, color: MUTED }}>
+              Ищите блок «{guide.settingsBoxRu}».
+            </p>
+          ) : null}
+          {/* Часы без прямого подключения (Apple Watch): вместо галочек текст. */}
+          {guide.bridgeRu.map((paragraph) => (
+            <p
+              key={paragraph.slice(0, 32)}
+              style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.55 }}
+            >
+              {paragraph}
+            </p>
+          ))}
+          {guide.steps.length > 0 ? (
+            <p style={{ margin: "10px 0 0", fontSize: 13.5, lineHeight: 1.5 }}>{MARK_ALL_RU}</p>
+          ) : null}
+          {guide.steps.map((stepItem) => (
+            <div
+              key={stepItem.titleRu}
+              style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "flex-start" }}
+            >
+              {/* КВАДРАТИК ФИКСИРОВАННОГО РАЗМЕРА. У прошлой плашки со словом
+                  не было ни alignItems у строки, ни высоты у самой плашки:
+                  она растягивалась на всю высоту абзаца рядом. */}
+              <span
+                aria-hidden
+                style={{
+                  flexShrink: 0,
+                  alignSelf: "flex-start",
+                  width: 18,
+                  height: 18,
+                  marginTop: 2,
+                  borderRadius: 5,
+                  background: "#FDE8E0",
+                  color: ACCENT,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  lineHeight: "18px",
+                  textAlign: "center",
+                }}
+              >
+                ✓
+              </span>
+              <div>
+                <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{stepItem.titleRu}</p>
+                <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+                  {stepItem.whyRu}
+                </p>
               </div>
-            );
-          })}
+            </div>
+          ))}
           {guide.noteRu ? (
             <p
               style={{

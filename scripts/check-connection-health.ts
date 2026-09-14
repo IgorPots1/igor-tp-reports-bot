@@ -11,7 +11,12 @@ import {
   assessConnectionHealth,
   SILENT_DAYS_THRESHOLD,
 } from "@/features/intervals/loop/connection-health";
-import { DEVICE_GUIDES, WHY_NOT_STRAVA_RU } from "@/features/intervals/device-guide";
+import {
+  DEVICE_GUIDES,
+  MARK_ALL_RU,
+  STEP_LEAD_RU,
+  WHY_NOT_STRAVA_RU,
+} from "@/features/intervals/device-guide";
 
 let failures = 0;
 function expect(condition: boolean, message: string): void {
@@ -99,21 +104,52 @@ function main(): void {
   expect(revoked.state === "auth_revoked", "отозванный доступ имеет свой диагноз, а не этот");
 
   step("СПИСОК ГАЛОЧЕК");
-  expect(DEVICE_GUIDES.length === 6, `часов в списке: ${DEVICE_GUIDES.length}`);
+  console.log(`     карточек: ${DEVICE_GUIDES.map((g) => g.labelRu).join(", ")}`);
+
+  // Градаций больше нет: отмечаем все галочки. Проверяем не метки, а то, что
+  // карточка вообще что-то говорит человеку.
+  expect(MARK_ALL_RU.length > 0, "правило «отметьте все» сказано словами");
   for (const guide of DEVICE_GUIDES) {
-    const required = guide.steps.filter((s) => s.kind === "required");
-    const recommended = guide.steps.filter((s) => s.kind === "recommended");
+    const hasSteps = guide.steps.length > 0;
+    const hasBridge = guide.bridgeRu.length > 0;
     expect(
-      required.length === 1 && recommended.length === 1,
-      `${guide.labelRu}: ровно одна обязательная галочка и одна желательная`
+      hasSteps !== hasBridge,
+      `${guide.labelRu}: либо галочки, либо объяснение вместо них, но не пусто и не оба сразу`
+    );
+    if (hasSteps) {
+      expect(
+        guide.steps[0].titleRu.includes("Скачивание тренировок"),
+        `${guide.labelRu}: галочка про скачивание тренировок стоит первой`
+      );
+      expect(guide.settingsBoxRu !== null, `${guide.labelRu}: назван блок в настройках`);
+    }
+  }
+
+  // УРОК ПРО WAHOO, ЗАКРЕПЛЁННЫЙ ПРОВЕРКОЙ. В подводке шага 2 перечислены часы,
+  // которые человек найдёт в списке Intervals. Всё, что там названо, обязано
+  // иметь карточку; всё, что карточку имеет, но в списке не названо, обязано
+  // объяснять, почему его там нет (случай Apple Watch).
+  for (const guide of DEVICE_GUIDES) {
+    const plainName = guide.labelRu.replace(/\s*\(.*\)$/, "");
+    const namedInLead = STEP_LEAD_RU.includes(plainName);
+    expect(
+      namedInLead || guide.bridgeRu.length > 0,
+      `${guide.labelRu}: ${namedInLead ? "назван в подводке" : "не в списке Intervals, и это объяснено"}`
     );
   }
-  const withPlanned = DEVICE_GUIDES.filter((g) => g.steps.some((s) => s.kind === "later"));
-  console.log(`     где сказано про плановые тренировки: ${withPlanned.map((g) => g.labelRu).join(", ")}`);
-  expect(
-    DEVICE_GUIDES.every((g) => g.steps[0].kind === "required"),
-    "обязательная галочка всегда первая в списке"
-  );
+
+  const apple = DEVICE_GUIDES.find((g) => g.code === "apple");
+  expect(apple !== undefined, "Apple Watch есть в списке устройств");
+  if (apple) {
+    const bridgeText = apple.bridgeRu.join(" ");
+    expect(bridgeText.includes("HealthFit"), "Apple Watch: назван рабочий посредник");
+    expect(
+      bridgeText.includes("план на часы не придёт"),
+      "Apple Watch: сказано, что план на часы не придёт"
+    );
+    expect(apple.settingsBoxRu === null, "Apple Watch: блока в настройках Intervals нет");
+  }
+
   expect(WHY_NOT_STRAVA_RU.pointsRu.length >= 3, "блок про Strava не пустой");
 
   console.log("");

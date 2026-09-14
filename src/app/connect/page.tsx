@@ -5,13 +5,13 @@ import { Onest, JetBrains_Mono } from "next/font/google";
 import { publicPageMetadata } from "@/lib/site";
 import {
   DEVICE_GUIDES,
+  MARK_ALL_RU,
   NO_WATCH_BODY_RU,
   NO_WATCH_TITLE_RU,
   STEP_LEAD_RU,
   STEP_TITLE_RU,
   WHERE_TO_LOOK_RU,
   WHY_NOT_STRAVA_RU,
-  type GuideStepKind,
 } from "@/features/intervals/device-guide";
 
 import { CONNECT_PAGE } from "./content";
@@ -52,7 +52,6 @@ const INK_2 = "#4D483F";
 const MUTED = "#857F73";
 const LINE = "#E7E1D5";
 const ACCENT = "#E5480E";
-const GREEN = "#2E7D45";
 const GREEN_BG = "#EAF3EC";
 const AMBER_BG = "#FBF3E4";
 
@@ -92,6 +91,26 @@ const S: Record<string, CSSProperties> = {
   deviceName: { margin: 0, fontSize: 18, fontWeight: 700 },
   boxHint: { margin: "4px 0 0", color: MUTED, fontSize: 14, fontFamily: MONO },
   stepRow: { display: "flex", gap: 10, marginTop: 14, alignItems: "flex-start" },
+  // КВАДРАТИК, А НЕ ПЛАШКА СО СЛОВОМ. Размер задан по обеим сторонам и
+  // alignSelf прибит к верху: так его нечем растянуть, что бы ни случилось с
+  // родительским flex. Прошлые плашки («обязательно») занимали треть ширины
+  // телефона и ломали заголовок на две строки.
+  check: {
+    flexShrink: 0,
+    alignSelf: "flex-start",
+    width: 20,
+    height: 20,
+    marginTop: 3,
+    borderRadius: 6,
+    background: "#FDE8E0",
+    color: ACCENT,
+    fontSize: 12,
+    fontWeight: 700,
+    lineHeight: "20px",
+    textAlign: "center",
+  },
+  markAll: { margin: "10px 0 0", color: INK_2, fontSize: 14.5, lineHeight: 1.5 },
+  bridge: { margin: "12px 0 0", color: INK_2, fontSize: 15.5, lineHeight: 1.55 },
   stepBody: { flex: 1 },
   stepTitle: { margin: 0, fontWeight: 600 },
   stepWhy: { margin: "3px 0 0", color: MUTED, fontSize: 14.5, lineHeight: 1.5 },
@@ -117,36 +136,6 @@ const S: Record<string, CSSProperties> = {
   closing: { marginTop: 40, color: MUTED, fontSize: 15 },
 };
 
-/** Метка обязательности. Цвет несёт тот же смысл, что и слово. */
-function badgeStyle(kind: GuideStepKind): CSSProperties {
-  const palette: Record<GuideStepKind, { bg: string; fg: string }> = {
-    required: { bg: "#FDE8E0", fg: ACCENT },
-    recommended: { bg: GREEN_BG, fg: GREEN },
-    later: { bg: "#EFECE4", fg: MUTED },
-  };
-  const { bg, fg } = palette[kind];
-  return {
-    flexShrink: 0,
-    marginTop: 2,
-    padding: "2px 9px",
-    borderRadius: 999,
-    background: bg,
-    color: fg,
-    fontFamily: MONO,
-    fontSize: 11,
-    fontWeight: 500,
-    letterSpacing: ".06em",
-    textTransform: "uppercase",
-    whiteSpace: "nowrap",
-  };
-}
-
-const BADGE_RU: Record<GuideStepKind, string> = {
-  required: "обязательно",
-  recommended: "желательно",
-  later: "на будущее",
-};
-
 export default function ConnectPage() {
   return (
     <main className={`${onest.variable} ${jetbrains.variable}`} style={S.page}>
@@ -167,10 +156,22 @@ export default function ConnectPage() {
         {DEVICE_GUIDES.map((guide) => (
           <section key={guide.code} style={S.card}>
             <p style={S.deviceName}>{guide.labelRu}</p>
-            <p style={S.boxHint}>блок «{guide.settingsBoxRu}» в настройках</p>
+            {guide.settingsBoxRu ? (
+              <p style={S.boxHint}>блок «{guide.settingsBoxRu}» в настройках</p>
+            ) : null}
+            {/* Часы без прямого подключения (Apple Watch): галочек нет,
+                вместо них честный рассказ про посредника. */}
+            {guide.bridgeRu.map((paragraph) => (
+              <p key={paragraph.slice(0, 32)} style={S.bridge}>
+                {paragraph}
+              </p>
+            ))}
+            {guide.steps.length > 0 ? <p style={S.markAll}>{MARK_ALL_RU}</p> : null}
             {guide.steps.map((step) => (
               <div key={step.titleRu} style={S.stepRow}>
-                <span style={badgeStyle(step.kind)}>{BADGE_RU[step.kind]}</span>
+                <span style={S.check} aria-hidden>
+                  ✓
+                </span>
                 <div style={S.stepBody}>
                   <p style={S.stepTitle}>{step.titleRu}</p>
                   <p style={S.stepWhy}>{step.whyRu}</p>
