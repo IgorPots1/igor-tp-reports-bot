@@ -70,7 +70,7 @@ export type PrefillableField = (typeof PREFILLABLE_FIELDS)[number];
 export const STUDENT_ONLY_FIELDS = ["weekBreakers"] as const;
 
 export type PrefillValues = {
-  goalKind: "race" | "regular" | "start_running" | null;
+  goalKind: "race" | "regular" | "improve" | "start_running" | null;
   raceDate: string | null;
   raceDistanceKm: number | null;
   daysPerWeek: number | null;

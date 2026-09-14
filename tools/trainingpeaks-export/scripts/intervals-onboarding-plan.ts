@@ -177,8 +177,8 @@ async function main(): Promise<void> {
   const goalArg = arg("goal");
   let answersFromFlags: OnboardingAnswers | null = null;
   if (goalArg) {
-    if (goalArg !== "race" && goalArg !== "regular" && goalArg !== "start_running") {
-      fail("--goal принимает race, regular или start_running");
+    if (goalArg !== "race" && goalArg !== "regular" && goalArg !== "improve" && goalArg !== "start_running") {
+      fail("--goal принимает race, improve, regular или start_running");
     }
     const raceDate = arg("race-date");
     const raceKm = arg("race-km");

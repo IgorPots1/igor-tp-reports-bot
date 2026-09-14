@@ -227,7 +227,7 @@ async function main(): Promise<void> {
     return growth === 0 ? "подвод к старту в текущей форме" : "подготовка";
   }
 
-  const INTENT_RU: Record<CycleIntent, string> = { "5k": "5 км", "10k": "10 км", half: "21.1 км", marathon: "42.2 км", maintenance: "поддерживающий" };
+  const INTENT_RU: Record<CycleIntent, string> = { "5k": "5 км", "10k": "10 км", half: "21.1 км", marathon: "42.2 км", maintenance: "поддерживающий", develop: "развитие" };
 
   console.log(`ЧЕРНОВИКИ ЦИКЛА · база за ${BASE_WEEKS} недель · ${today}`);
   console.log(`качественный объём = ТОЛЬКО рабочие отрезки (правило Игоря, lib/quality-volume.ts)`);

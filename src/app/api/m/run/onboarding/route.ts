@@ -21,7 +21,7 @@ import {
 
 export const runtime = "nodejs";
 
-const GOALS = new Set(["race", "regular", "start_running"]);
+const GOALS = new Set(["race", "regular", "improve", "start_running"]);
 const SURFACES = new Set<string>(SURFACE_OPTIONS);
 
 function toInt(value: unknown): number | null {
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const merged = mergeAnswers(prefill, {
     goalKind: (typeof raw.goalKind === "string" && GOALS.has(raw.goalKind)
       ? raw.goalKind
-      : null) as "race" | "regular" | "start_running" | null,
+      : null) as "race" | "regular" | "improve" | "start_running" | null,
     raceDate: typeof raw.raceDate === "string" && raw.raceDate ? raw.raceDate : null,
     raceDistanceKm:
       raw.raceDistanceKm === null || raw.raceDistanceKm === undefined || raw.raceDistanceKm === ""

@@ -49,12 +49,14 @@ export type StartingPointInput = {
 };
 
 export type AnswersInput = {
-  goalKind: "race" | "regular" | "start_running";
+  goalKind: "race" | "regular" | "improve" | "start_running";
   raceDate: string | null;
   raceDistanceKm: number | null;
   daysPerWeek: number;
   unavailableWeekdays: number[];
   preferredLongWeekday: number | null;
+  /** Потолок одной тренировки из анкеты. null — не спрашивали. */
+  maxSessionMinutes: number | null;
 };
 
 /**
@@ -187,7 +189,11 @@ export function buildDraftFromOnboarding(
   // start_running сюда не доходит: у него своя ветка, лестница шаг-бега вместо
   // цикла по объёму. Значение оставлено ради полноты разбора.
   const intent: CycleIntent =
-    answers.goalKind === "race" ? intentFromDistance(answers.raceDistanceKm) : "maintenance";
+    answers.goalKind === "race"
+      ? intentFromDistance(answers.raceDistanceKm)
+      : answers.goalKind === "improve"
+        ? "develop"
+        : "maintenance";
 
   // ДЛИНА ЦИКЛА. У старта — сколько недель до него осталось, но не больше
   // канонической длины подготовки под эту дистанцию: если до полумарафона год,
@@ -207,6 +213,18 @@ export function buildDraftFromOnboarding(
   // выглядело как «тренер решил обойтись без работы».
   const baseQuality = 0;
   gaps.push("качественные сессии в истории Intervals не размечены — база работы принята нулевой");
+  if (intent === "develop") {
+    // ЯВНО И ПЕРВОЙ СТРОКОЙ. Цикл развития без качественных сессий — осознанное
+    // решение, а не недосмотр, и тренер обязан видеть это в плане, а не
+    // догадываться по нулям. Причина названа полностью: качество упирается в
+    // неразмеченные сессии и в отложенный якорь темпа, это отдельная работа.
+    gaps.push(
+      "В ЭТОМ ЦИКЛЕ КАЧЕСТВЕННЫХ СЕССИЙ НЕТ. Цикл построен на объёме и разгрузках. " +
+        "Причина: размеченных качественных сессий в истории Intervals нет, а темповый якорь " +
+        "из результата старта отложен — ставить работу не от чего. Для первого блока после " +
+        "интенсива этого достаточно; дальше качество добавляется решением тренера."
+    );
+  }
   if (start.source === "questionnaire") {
     gaps.push("истории нет — база целиком со слов ученика");
   }
@@ -217,9 +235,30 @@ export function buildDraftFromOnboarding(
 
   // Потолок роста — тот же расчёт, что и у ростера TP: между базой и собственным
   // историческим максимумом, с ограниченным выходом выше обоих.
-  const peakCapAerobic = Math.round(
+  let peakCapAerobic = Math.round(
     capBetween(baseAerobic * PEAK_OVER_BASE_MAX, historicMaxAerobic * PEAK_OVER_HISTORIC_MAX)
   );
+
+  // ПОТОЛОК ОГРАНИЧЕН ЕЩЁ И ВРЕМЕНЕМ, КОТОРОЕ ЧЕЛОВЕК НАЗВАЛ.
+  //
+  // История говорит, сколько он БЕГАЛ, анкета — сколько он МОЖЕТ. Пока это не
+  // сведено, цикл развития растёт в потолок, выведенный из прошлого, и упирается
+  // в календарь человека: план на 240 минут в неделю при трёх тренировках по
+  // часу невыполним, и невыполним предсказуемо.
+  //
+  // Недельная вместимость = потолок одной тренировки × число беговых дней.
+  // Считаем ТОЛЬКО когда обе величины названы: выдуманная вместимость была бы
+  // хуже её отсутствия.
+  if (answers.maxSessionMinutes !== null && answers.daysPerWeek > 0) {
+    const weeklyCapacity = answers.maxSessionMinutes * answers.daysPerWeek;
+    if (weeklyCapacity < peakCapAerobic) {
+      notes.push(
+        `потолок срезан временем из анкеты: ${answers.maxSessionMinutes} мин × ${answers.daysPerWeek} дн = ` +
+          `${weeklyCapacity} мин в неделю (по истории выходило ${peakCapAerobic})`
+      );
+      peakCapAerobic = weeklyCapacity;
+    }
+  }
 
   const draft: CycleDraft = {
     athleteId: 0,

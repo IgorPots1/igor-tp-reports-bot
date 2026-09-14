@@ -161,7 +161,8 @@ export default function ConnectPage() {
         {renderMarkdown(CONNECT_PAGE.introRu, "intro")}
 
         <h2 style={S.h2}>{STEP_TITLE_RU}</h2>
-        <p style={S.intro}>{STEP_LEAD_RU}</p>
+        {/* Текст шага в markdown: в нём жирные предупреждения, они несут смысл. */}
+        {renderMarkdown(STEP_LEAD_RU, "step2")}
         <div style={S.where}>{WHERE_TO_LOOK_RU}</div>
         {DEVICE_GUIDES.map((guide) => (
           <section key={guide.code} style={S.card}>

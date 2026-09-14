@@ -810,12 +810,15 @@ function OnboardingForm(props: {
       ) : null}
 
       {shows("goalKind") ? (
-        <Field label="Есть цель впереди?" hint="Необязательно. Если цели нет, просто пропустите.">
+        <Field
+          label="Что для вас сейчас важнее?"
+          hint="Необязательно, можно не выбирать. «Улучшать результаты» значит, что нагрузка будет постепенно расти; «просто бегать» — что останется на нынешнем уровне."
+        >
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {[
-              { value: "", label: "Пока нет" },
-              { value: "regular", label: "Бегать регулярно" },
               { value: "race", label: "Готовлюсь к старту" },
+              { value: "improve", label: "Хочу улучшать результаты" },
+              { value: "regular", label: "Просто бегать регулярно" },
             ].map((option) => (
               <button
                 key={option.value}

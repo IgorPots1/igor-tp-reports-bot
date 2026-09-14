@@ -595,7 +595,7 @@ export async function getOnboardingAnswers(
 
 export type OnboardingAnswersInput = {
   sourceId: string;
-  goalKind: "race" | "regular" | "start_running" | null;
+  goalKind: "race" | "regular" | "improve" | "start_running" | null;
   raceDate: string | null;
   raceDistanceKm: number | null;
   daysPerWeek: number;
