@@ -16,6 +16,7 @@ import {
   handleTrainingPeaksTelegramBusinessMessage,
   handleTrainingPeaksTelegramCommand,
   isTrainingPeaksCallback,
+  isCoachChat,
   isTrainingPeaksCommand,
 } from "@/features/telegram/trainingpeaks";
 import {
@@ -24,7 +25,11 @@ import {
 } from "@/features/trainingpeaks/context-observer";
 import { handleTrainingPeaksGroupProbe } from "@/features/trainingpeaks/group-probe";
 import { handleClubStartCommand } from "@/features/club/start-onboarding";
-import { handleRunStartCommand, RUN_START_PARAM } from "@/features/intervals/run-start-onboarding";
+import {
+  handleRunStartCommand,
+  isIntervalsStudent,
+  RUN_START_PARAM,
+} from "@/features/intervals/run-start-onboarding";
 import { describeSupabaseError } from "@/features/supabase/server";
 import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
@@ -304,6 +309,26 @@ export async function POST(request: Request) {
   }
 
   if (START_COMMAND_PATTERN.test(messageText)) {
+    // УЧЕНИК ТАРИФА С ПОДКЛЮЧЕНИЕМ ЧАСОВ ПОЛУЧАЕТ ВХОД В ПРИЛОЖЕНИЕ, а не
+    // тренерское меню. Проверка идёт по карточке, поэтому работает и через
+    // месяц, когда ссылка с параметром давно потеряна.
+    //
+    // ТРЕНЕР ПРОВЕРЯЕТСЯ ПЕРВЫМ И НАМЕРЕННО: у Игоря есть собственная тестовая
+    // карточка на этом тарифе с его же telegram id, и без этой проверки его
+    // /start отдавал бы ему ученический экран вместо командного центра.
+    const startFrom = update.message?.from;
+    if (
+      startFrom?.id &&
+      !isCoachChat(startFrom.id) &&
+      (await isIntervalsStudent(startFrom.id))
+    ) {
+      const handled = await handleRunStartCommand({
+        chatId: parsedMessage.chatId,
+        from: { id: startFrom.id },
+      });
+      if (handled) return okResponse();
+    }
+
     await handleTrainingPeaksTelegramCommand(
       parsedMessage,
       mapStartMessageToTrainingPeaksCommand(messageText),

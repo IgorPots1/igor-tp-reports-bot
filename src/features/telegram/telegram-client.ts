@@ -509,6 +509,54 @@ export async function sendTelegramUrlButton(input: {
   await postTelegramApi("sendMessage", body);
 }
 
+/**
+ * Inline-кнопка, открывающая мини-приложение прямо в телеграме.
+ *
+ * ПОЧЕМУ ЭТО, А НЕ ССЫЛКА t.me/bot/appname. Прямая ссылка на Mini App требует
+ * регистрации короткого имени в BotFather, то есть ручного шага, без которого
+ * ученику НЕКУДА нажать. Кнопка типа web_app работает в обычном личном чате без
+ * всякой регистрации.
+ *
+ * ГДЕ НЕ РАБОТАЕТ: в бизнес-переписке телеграм отвечает BUTTON_TYPE_INVALID
+ * (см. sendTelegramUrlButton рядом). Поэтому вызывающий код обязан иметь
+ * запасной путь, а не считать, что кнопка ушла.
+ */
+export async function sendTelegramWebAppButton(input: {
+  chatId: string | number;
+  text: string;
+  buttons: Array<{ label: string; webAppUrl?: string; url?: string }>;
+}): Promise<void> {
+  await postTelegramApi("sendMessage", {
+    chat_id: input.chatId,
+    text: input.text,
+    reply_markup: {
+      inline_keyboard: input.buttons.map((button) => [
+        button.webAppUrl
+          ? { text: button.label, web_app: { url: button.webAppUrl } }
+          : { text: button.label, url: button.url },
+      ]),
+    },
+  });
+}
+
+/**
+ * Кнопка меню ИМЕННО В ЭТОМ ЧАТЕ.
+ *
+ * Общая кнопка меню у бота одна и сейчас ведёт в клуб. Ученику этого тарифа
+ * нужен другой адрес, и менять общую ради него нельзя: клуб отвалится у всех
+ * остальных. Персональная кнопка решает это, ничего не ломая соседям.
+ */
+export async function setTelegramChatMenuButtonWebApp(input: {
+  chatId: string | number;
+  text: string;
+  url: string;
+}): Promise<void> {
+  await postTelegramApi("setChatMenuButton", {
+    chat_id: input.chatId,
+    menu_button: { type: "web_app", text: input.text, web_app: { url: input.url } },
+  });
+}
+
 let cachedBotUsername: string | null = null;
 
 /** Returns the bot's @username via getMe, cached for the process lifetime. */
