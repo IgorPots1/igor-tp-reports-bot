@@ -5,6 +5,7 @@ import FormActionButton from "@/app/admin/FormActionButton";
 import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
 import { isCoachSendEnabled } from "@/features/intervals/loop/coach-message";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
+import { fieldLabelRu, PREFILLABLE_FIELDS } from "@/features/intervals/loop/prefill";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
 
 import { publishPlanAction, sendCoachMessageAction } from "../actions";
@@ -80,6 +81,37 @@ export default async function BeginnerStudentPage({
         <h2 style={{ marginTop: 0 }}>Анкета</h2>
         {view.answers ? (
           <>
+            {/* КТО ОТВЕЧАЛ — отдельной строкой, а не мелким шрифтом сбоку.
+                «Ученица сказала, что бегает непрерывно» и «тренер знал, что она
+                бегает непрерывно» — для корпуса разные данные, и различать их
+                задним числом по значению невозможно. */}
+            <table style={{ borderCollapse: "collapse", marginBottom: 12 }}>
+              <tbody>
+                {PREFILLABLE_FIELDS.map((field) => {
+                  const byCoach = view.answers?.coachSetFields.includes(field) === true;
+                  return (
+                    <tr key={field}>
+                      <td style={{ padding: "2px 10px 2px 0", color: "#555" }}>{fieldLabelRu(field)}</td>
+                      <td
+                        style={{
+                          padding: "2px 0",
+                          color: byCoach ? "#7a4a00" : "#2E7D45",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {byCoach ? "задал тренер" : "ответила сама"}
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr>
+                  <td style={{ padding: "2px 10px 2px 0", color: "#555" }}>{fieldLabelRu("coachNote")}</td>
+                  <td style={{ padding: "2px 0", color: "#2E7D45", fontWeight: 600 }}>
+                    всегда её
+                  </td>
+                </tr>
+              </tbody>
+            </table>
             <p style={{ margin: "0 0 6px" }}>
               цель: <strong>{view.answers.goalKind}</strong>
               {view.answers.raceDate ? ` · старт ${view.answers.raceDate}` : ""}

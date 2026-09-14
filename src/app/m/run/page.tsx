@@ -85,6 +85,11 @@ export default function RunAppPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  // Поля, которые ученица вообще увидит. Приходят с сервера списком того, что
+  // ПОКАЗАТЬ, а не того, что скрыть: скрывать на клиенте значит сначала отдать
+  // наружу то, чего человек видеть не должен.
+  const [formFields, setFormFields] = useState<string[]>([]);
+  const [presetGoal, setPresetGoal] = useState<string | null>(null);
   const [view, setView] = useState<View | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -121,6 +126,8 @@ export default function RunAppPage() {
         ok: boolean;
         error?: string;
         needsOnboarding?: boolean;
+        formFields?: string[];
+        presetGoalKind?: string | null;
         view?: View;
       };
       if (!json.ok) {
@@ -129,6 +136,8 @@ export default function RunAppPage() {
       }
       setError(null);
       setNeedsOnboarding(json.needsOnboarding === true);
+      setFormFields(json.formFields ?? []);
+      setPresetGoal(json.presetGoalKind ?? null);
       setView(json.view ?? null);
     } catch {
       setError("Нет связи. Попробуй ещё раз.");
@@ -151,6 +160,8 @@ export default function RunAppPage() {
     return (
       <Shell>
         <OnboardingForm
+          fields={formFields}
+          presetGoal={presetGoal}
           initData={initData}
           onDone={(note) => {
             setToast(note);
@@ -220,8 +231,19 @@ function Banner({ text }: { text: string }) {
 
 // ── Анкета ───────────────────────────────────────────────────────────────────
 
-function OnboardingForm(props: { initData: string; onDone: (note: string) => void }) {
-  const [goalKind, setGoalKind] = useState("start_running");
+function OnboardingForm(props: {
+  initData: string;
+  fields: string[];
+  presetGoal: string | null;
+  onDone: (note: string) => void;
+}) {
+  // Поле, которого нет в списке, тренер задал за ученицу. Оно не рисуется и не
+  // отправляется: «спрятать, но прислать» оставило бы в базе значение, которого
+  // человек не выбирал.
+  const shows = (field: string) => props.fields.includes(field);
+  // Цель, заданную тренером, форма не показывает, но знать её обязана: от неё
+  // зависит, спрашивать ли дату старта и вопрос про непрерывный бег.
+  const [goalKind, setGoalKind] = useState(props.presetGoal ?? "start_running");
   const [raceDate, setRaceDate] = useState("");
   const [raceKm, setRaceKm] = useState("");
   const [days, setDays] = useState(3);
@@ -245,13 +267,15 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
         body: JSON.stringify({
           initData: props.initData,
           answers: {
-            goalKind,
-            raceDate: goalKind === "race" ? raceDate : null,
-            raceDistanceKm: goalKind === "race" ? raceKm : null,
-            daysPerWeek: days,
-            unavailableWeekdays: unavailable,
-            preferredLongWeekday: longDay,
-            canRunContinuously: goalKind === "start_running" ? canRun : null,
+            ...(shows("goalKind") ? { goalKind } : {}),
+            ...(shows("raceDate") && goalKind === "race" ? { raceDate } : {}),
+            ...(shows("raceDistanceKm") && goalKind === "race" ? { raceDistanceKm: raceKm } : {}),
+            ...(shows("daysPerWeek") ? { daysPerWeek: days } : {}),
+            ...(shows("unavailableWeekdays") ? { unavailableWeekdays: unavailable } : {}),
+            ...(shows("preferredLongWeekday") ? { preferredLongWeekday: longDay } : {}),
+            ...(shows("canRunContinuously") && goalKind === "start_running"
+              ? { canRunContinuously: canRun }
+              : {}),
             coachNote: note,
           },
         }),
@@ -276,6 +300,7 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
         Отвечать один раз. Если что-то поменяется — скажешь тренеру, поправим.
       </p>
 
+      {shows("goalKind") ? (
       <Field label="Что впереди?">
         <Choice value={goalKind} onChange={setGoalKind} options={[
           { value: "start_running", label: "Хочу начать бегать" },
@@ -283,8 +308,9 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
           { value: "race", label: "Готовлюсь к старту" },
         ]} />
       </Field>
+      ) : null}
 
-      {goalKind === "race" ? (
+      {goalKind === "race" && (shows("raceDate") || shows("raceDistanceKm")) ? (
         <Field label="Когда старт и какая дистанция">
           <div style={{ display: "flex", gap: 8 }}>
             <input type="date" value={raceDate} onChange={(e) => setRaceDate(e.target.value)} style={inputStyle} />
@@ -300,7 +326,7 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
         </Field>
       ) : null}
 
-      {goalKind === "start_running" ? (
+      {goalKind === "start_running" && shows("canRunContinuously") ? (
         <Field
           label="Можешь сейчас бежать без остановки хотя бы 20 минут?"
           hint="Честный ответ важнее удобного: от него зависит самая первая тренировка."
@@ -316,6 +342,7 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
         </Field>
       ) : null}
 
+      {shows("daysPerWeek") ? (
       <Field label="Сколько дней в неделю готова бегать?">
         <Choice
           value={String(days)}
@@ -328,7 +355,9 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
           ]}
         />
       </Field>
+      ) : null}
 
+      {shows("unavailableWeekdays") ? (
       <Field label="В какие дни бегать точно не получится?" hint="Можно ничего не выбирать.">
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {DAYS.map((d) => (
@@ -343,7 +372,9 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
           ))}
         </div>
       </Field>
+      ) : null}
 
+      {shows("preferredLongWeekday") ? (
       <Field label="Какой день удобнее для самой длинной тренировки?" hint="Если всё равно — не выбирай.">
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {DAYS.filter((d) => !unavailable.includes(d.idx)).map((d) => (
@@ -358,6 +389,7 @@ function OnboardingForm(props: { initData: string; onDone: (note: string) => voi
           ))}
         </div>
       </Field>
+      ) : null}
 
       <Field
         label="Что важно знать тренеру?"

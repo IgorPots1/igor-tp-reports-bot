@@ -8,6 +8,7 @@
 
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
+import { isPrefillableField, type Prefill, type PrefillableField } from "./prefill";
 import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState } from "./types";
 
 type Client = ReturnType<typeof createSupabaseServerClient>;
@@ -520,15 +521,17 @@ export async function getOnboardingAnswers(
   daysPerWeek: number;
   unavailableWeekdays: number[];
   preferredLongWeekday: number | null;
+  selfReportedWeeklyMinutes: number | null;
   canRunContinuously: boolean | null;
   coachNote: string | null;
+  coachSetFields: string[];
 } | null> {
   const supabase = client ?? createSupabaseServerClient();
   const { data, error } = await supabase
     .from("intervals_onboarding_answers")
     .select(
-      "id, goal_kind, race_date, race_distance_km, days_per_week, unavailable_weekdays, " +
-        "preferred_long_weekday, can_run_continuously, coach_note"
+      "id, goal_kind, race_date, race_distance_km, days_per_week, self_reported_weekly_minutes, " +
+        "unavailable_weekdays, preferred_long_weekday, can_run_continuously, coach_note, coach_set_fields"
     )
     .eq("source_id", sourceId)
     .maybeSingle();
@@ -555,7 +558,12 @@ export async function getOnboardingAnswers(
       row.can_run_continuously === null || row.can_run_continuously === undefined
         ? null
         : row.can_run_continuously === true,
+    selfReportedWeeklyMinutes:
+      row.self_reported_weekly_minutes === null || row.self_reported_weekly_minutes === undefined
+        ? null
+        : Number(row.self_reported_weekly_minutes),
     coachNote: (row.coach_note as string | null) ?? null,
+    coachSetFields: Array.isArray(row.coach_set_fields) ? (row.coach_set_fields as string[]) : [],
   };
 }
 
@@ -570,6 +578,8 @@ export type OnboardingAnswersInput = {
   preferredLongWeekday: number | null;
   canRunContinuously: boolean | null;
   coachNote: string | null;
+  /** Снимок: какие поля пришли от тренера, а не от ученика. */
+  coachSetFields: string[];
 };
 
 /**
@@ -600,6 +610,7 @@ export async function saveOnboardingAnswers(
         preferred_long_weekday: input.preferredLongWeekday,
         can_run_continuously: input.canRunContinuously,
         coach_note: input.coachNote,
+        coach_set_fields: input.coachSetFields,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "source_id" }
@@ -608,4 +619,88 @@ export async function saveOnboardingAnswers(
     .single();
   if (error) return { ok: false, message: describeSupabaseError(error) };
   return { ok: true, id: String((data as { id: string }).id) };
+}
+
+// ── Предзаполнение анкеты тренером ───────────────────────────────────────────
+
+export async function getPrefill(sourceId: string, client?: Client): Promise<Prefill | null> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_onboarding_prefill")
+    .select("*")
+    .eq("source_id", sourceId)
+    .maybeSingle();
+  if (error) throw new Error(`intervals_onboarding_prefill: ${describeSupabaseError(error)}`);
+  if (!data) return null;
+  const row = data as unknown as Record<string, unknown>;
+  const setFields = (Array.isArray(row.set_fields) ? (row.set_fields as string[]) : []).filter(
+    isPrefillableField
+  );
+  return {
+    sourceId: String(row.source_id),
+    setFields,
+    values: {
+      goalKind:
+        row.goal_kind === "race" || row.goal_kind === "regular" || row.goal_kind === "start_running"
+          ? row.goal_kind
+          : null,
+      raceDate: (row.race_date as string | null) ?? null,
+      raceDistanceKm:
+        row.race_distance_km === null || row.race_distance_km === undefined
+          ? null
+          : Number(row.race_distance_km),
+      daysPerWeek:
+        row.days_per_week === null || row.days_per_week === undefined ? null : Number(row.days_per_week),
+      selfReportedWeeklyMinutes:
+        row.self_reported_weekly_minutes === null || row.self_reported_weekly_minutes === undefined
+          ? null
+          : Number(row.self_reported_weekly_minutes),
+      unavailableWeekdays: Array.isArray(row.unavailable_weekdays)
+        ? (row.unavailable_weekdays as number[]).map(Number)
+        : null,
+      preferredLongWeekday:
+        row.preferred_long_weekday === null || row.preferred_long_weekday === undefined
+          ? null
+          : Number(row.preferred_long_weekday),
+      canRunContinuously:
+        row.can_run_continuously === null || row.can_run_continuously === undefined
+          ? null
+          : row.can_run_continuously === true,
+    },
+    note: (row.note as string | null) ?? null,
+    setBy: String(row.set_by ?? "coach"),
+  };
+}
+
+export async function savePrefill(
+  input: {
+    sourceId: string;
+    setFields: PrefillableField[];
+    values: Partial<Prefill["values"]>;
+    note: string | null;
+    setBy: string;
+  },
+  client?: Client
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { error } = await supabase.from("intervals_onboarding_prefill").upsert(
+    {
+      source_id: input.sourceId,
+      set_fields: input.setFields,
+      goal_kind: input.values.goalKind ?? null,
+      race_date: input.values.raceDate ?? null,
+      race_distance_km: input.values.raceDistanceKm ?? null,
+      days_per_week: input.values.daysPerWeek ?? null,
+      self_reported_weekly_minutes: input.values.selfReportedWeeklyMinutes ?? null,
+      unavailable_weekdays: input.values.unavailableWeekdays ?? null,
+      preferred_long_weekday: input.values.preferredLongWeekday ?? null,
+      can_run_continuously: input.values.canRunContinuously ?? null,
+      note: input.note,
+      set_by: input.setBy,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "source_id" }
+  );
+  if (error) return { ok: false, message: describeSupabaseError(error) };
+  return { ok: true };
 }
