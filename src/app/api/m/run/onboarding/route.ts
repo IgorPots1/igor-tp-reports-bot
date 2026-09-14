@@ -68,8 +68,17 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(auth.httpStatus, { ok: false, error: auth.error, code: auth.code });
   }
 
+  if (!auth.sourceId) {
+    return jsonResponse(409, {
+      ok: false,
+      code: "needs_connection",
+      error: "Сначала подключите часы: без данных план не собрать.",
+    });
+  }
+  const sourceId = auth.sourceId;
+
   const raw = body.answers ?? {};
-  const prefill = await getPrefill(auth.sourceId);
+  const prefill = await getPrefill(sourceId);
 
   // Зона: сначала определённая браузером, потом выбранная человеком из списка
   // (запасной путь, когда определить не удалось).
@@ -177,7 +186,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   const saved = await saveOnboardingAnswers({
-    sourceId: auth.sourceId,
+    sourceId,
     goalKind: values.goalKind,
     raceDate: values.raceDate,
     raceDistanceKm: values.raceDistanceKm,

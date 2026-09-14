@@ -37,6 +37,16 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse(400, { ok: false, error: "Не указано, что и куда переносим." });
   }
 
+  // Без подключённых часов данных не будет, а значит и плана. Отправляем на
+  // экран подключения вместо невнятного отказа.
+  if (!auth.sourceId) {
+    return jsonResponse(409, {
+      ok: false,
+      code: "needs_connection",
+      error: "Сначала подключите часы: без данных план не собрать.",
+    });
+  }
+
   // «Сегодня» для проверки «не в прошлое» — тоже по зоне ученика.
   const zone = await rememberDetectedZone({
     studentUuid: auth.studentUuid,

@@ -1,16 +1,37 @@
 import type { NextRequest } from "next/server";
 
-// Точка возврата OAuth-потока Intervals.icu: этот адрес указан в заявке на
-// регистрацию приложения как redirect URI, поэтому он обязан ОТВЕЧАТЬ ещё до
-// того, как обмен кода на токены написан. Пока это заглушка правильной формы:
-// разбирает ответ провайдера, отличает отказ от успеха и ничего не дёргает
-// по сети. Сюда же ляжет POST https://intervals.icu/api/oauth/token.
+import { ingestStudentActivities } from "@/features/intervals/ingest";
+import { redactSecrets } from "@/features/intervals/auth";
+import {
+  exchangeCodeForToken,
+  oauthConfigMissing,
+  readOauthConfig,
+} from "@/features/intervals/oauth";
+import {
+  connectOauthSource,
+  consumeOauthState,
+  recordOauthOutcome,
+} from "@/features/intervals/repository";
+
+/** Окно первой выгрузки. Короткое: человек ждёт ответа страницы. */
+const FIRST_PULL_DAYS = 14;
+
+// Точка возврата OAuth-потока Intervals.icu. Здесь код меняется на токен,
+// источник ученика получает доступ, и человеку показывается, ЧТО именно
+// подключилось.
 //
 // Важное про 500: провайдер приводит СЮДА живого человека. Любой отказ должен
 // стать читаемой страницей, а не стек-трейсом Next — иначе ученик видит
 // «что-то пошло не так» и идёт с этим к тренеру.
+//
+// ПЕРВАЯ ВЫГРУЗКА ИДЁТ ПРЯМО ЗДЕСЬ, окном в две недели. Иначе человек увидит
+// «подключено» и пустой экран, и не поймёт, сработало ли: «подключено» без
+// единой тренировки выглядит как неудача. Две недели — компромисс с временем
+// ответа: полная история приедет раннером.
 
 export const runtime = "nodejs";
+// Обмен кода плюс первая выгрузка не укладываются в дефолтные десять секунд.
+export const maxDuration = 60;
 // Страница — результат авторизации конкретного человека. Кэшировать нельзя ни
 // на edge, ни в браузере: закэшированное «аккаунт подключён» врало бы следующему.
 export const dynamic = "force-dynamic";
@@ -100,20 +121,6 @@ function renderPage({ status, tone, eyebrow, title, body, facts = [] }: PageOpti
   });
 }
 
-/**
- * Ключи приложения. Читаются ТОЛЬКО из окружения и наружу не отдаются — в
- * ответ уходит один бит «задан / не задан», не значение. Пока приложение не
- * зарегистрировано, обеих переменных нет, и это штатное состояние.
- */
-function readCredentialsState(): { configured: boolean; missing: string[] } {
-  const clientId = process.env.INTERVALS_CLIENT_ID?.trim() ?? "";
-  const clientSecret = process.env.INTERVALS_CLIENT_SECRET?.trim() ?? "";
-  const missing: string[] = [];
-  if (!clientId) missing.push("INTERVALS_CLIENT_ID");
-  if (!clientSecret) missing.push("INTERVALS_CLIENT_SECRET");
-  return { configured: missing.length === 0, missing };
-}
-
 export async function GET(request: NextRequest): Promise<Response> {
   const params = request.nextUrl.searchParams;
   const code = params.get("code")?.trim() ?? "";
@@ -124,15 +131,16 @@ export async function GET(request: NextRequest): Promise<Response> {
   // 1. Провайдер вернул отказ (чаще всего access_denied — человек нажал «Нет»).
   //    Это нормальный исход, а не сбой: показываем причину словами.
   if (error) {
+    if (state) await recordOauthOutcome(state, "denied");
     return renderPage({
       status: 400,
       tone: "error",
       eyebrow: "intervals.icu · подключение",
-      title: "Аккаунт не подключён",
+      title: "Часы не подключены",
       body:
-        "Intervals.icu не выдал доступ. Если вы просто передумали — ничего делать не нужно, " +
-        "данные не переданы. Если это ошибка, попробуйте пройти подключение ещё раз или " +
-        "напишите тренеру.",
+        "Intervals.icu не выдал доступ. Если вы просто передумали, ничего делать не нужно: " +
+        "данные не переданы. Если это вышло случайно, вернитесь в приложение и нажмите " +
+        "«Подключить часы» ещё раз.",
       facts: [
         `код ошибки: ${escapeHtml(clamp(error, 120))}`,
         ...(errorDescription ? [`описание: ${escapeHtml(clamp(errorDescription))}`] : []),
@@ -140,8 +148,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     });
   }
 
-  // 2. Ни отказа, ни кода — сюда пришли не из потока авторизации (открыли
-  //    адрес руками, обрезали ссылку). Отвечаем 400, но по-человечески.
+  // 2. Ни отказа, ни кода — сюда пришли не из потока авторизации.
   if (!code) {
     return renderPage({
       status: 400,
@@ -150,31 +157,151 @@ export async function GET(request: NextRequest): Promise<Response> {
       title: "Код авторизации не пришёл",
       body:
         "Эта страница — точка возврата после подключения Intervals.icu, открывать её напрямую " +
-        "незачем. Начните подключение из Intervals.icu, и вы вернётесь сюда уже с кодом.",
+        "незачем. Начните подключение из приложения, и вы вернётесь сюда уже с кодом.",
     });
   }
 
-  // 3. Код есть. Обмена на токены пока НЕТ — по сети не ходим, код никуда не
-  //    сохраняем и на страницу не выводим (это одноразовый секрет).
-  const credentials = readCredentialsState();
+  // 3. STATE ПРОВЕРЯЕТСЯ ДО ЛЮБОГО ОБРАЩЕНИЯ К ПРОВАЙДЕРУ. Он отвечает на два
+  //    вопроса: наш ли это возврат и ЧЕЙ он. Без него код, подсунутый со
+  //    стороны, привязал бы чужой аккаунт к чьей-то карточке.
+  if (!state) {
+    return renderPage({
+      status: 400,
+      tone: "error",
+      eyebrow: "intervals.icu · подключение",
+      title: "Не удалось подтвердить, чьё это подключение",
+      body:
+        "В возврате не хватает метки, по которой мы узнаём, кому выдавали ссылку. " +
+        "Вернитесь в приложение и начните подключение заново.",
+    });
+  }
+
+  const checked = await consumeOauthState(state);
+  if (!checked.ok) {
+    const titles: Record<string, string> = {
+      unknown: "Ссылка не наша",
+      replayed: "Эта ссылка уже сработала",
+      expired: "Ссылка устарела",
+    };
+    const bodies: Record<string, string> = {
+      unknown:
+        "Метка возврата нам незнакома. Так бывает, если ссылку открыли не из приложения. " +
+        "Начните подключение заново.",
+      replayed:
+        "По этой ссылке подключение уже прошло. Если часы не подключились, вернитесь в " +
+        "приложение и начните заново: каждая ссылка одноразовая.",
+      expired:
+        "С момента, когда вы начали подключение, прошло больше часа. Начните заново, это быстро.",
+    };
+    if (checked.code !== "unknown") await recordOauthOutcome(state, checked.code);
+    return renderPage({
+      status: 400,
+      tone: "error",
+      eyebrow: "intervals.icu · подключение",
+      title: titles[checked.code] ?? "Подключение не прошло",
+      body: bodies[checked.code] ?? "Начните подключение заново.",
+    });
+  }
+
+  const config = readOauthConfig();
+  if (!config) {
+    console.error("[intervals.oauth.callback] нет ключей приложения", { missing: oauthConfigMissing() });
+    await recordOauthOutcome(state, "failed");
+    return renderPage({
+      status: 503,
+      tone: "error",
+      eyebrow: "intervals.icu · подключение",
+      title: "Подключение пока недоступно",
+      body: "Напишите тренеру: на нашей стороне не хватает настройки. Ваши данные не пострадали.",
+    });
+  }
+
+  // 4. Обмен кода на токен.
+  const exchange = await exchangeCodeForToken({ config, code });
+  if (!exchange.ok) {
+    // Причина уходит в лог тренеру, человеку — человеческие слова. В причине
+    // может быть кусок ответа провайдера, поэтому она прогнана через redact.
+    console.error("[intervals.oauth.callback] обмен кода не прошёл", {
+      reason: redactSecrets(exchange.reason),
+    });
+    await recordOauthOutcome(state, "failed");
+    return renderPage({
+      status: 502,
+      tone: "error",
+      eyebrow: "intervals.icu · подключение",
+      title: "Intervals.icu не выдал доступ",
+      body:
+        "Разрешение вы дали, но обменять его на доступ не получилось. Попробуйте подключить " +
+        "ещё раз из приложения. Если повторится, напишите тренеру.",
+    });
+  }
+
+  // 5. Токен в источник. Отказ здесь — это либо чужой занятый аккаунт, либо
+  //    сбой базы; и то и другое человеку надо назвать, а не свести к «ошибке».
+  const connected = await connectOauthSource({
+    studentUuid: checked.studentUuid,
+    externalAthleteId: exchange.token.athleteId,
+    accessToken: exchange.token.accessToken,
+    scope: exchange.token.scope,
+  });
+  if (!connected.ok) {
+    console.error("[intervals.oauth.callback] не удалось привязать источник", {
+      reason: redactSecrets(connected.reason),
+    });
+    await recordOauthOutcome(state, "failed");
+    return renderPage({
+      status: 409,
+      tone: "error",
+      eyebrow: "intervals.icu · подключение",
+      title: "Не удалось привязать аккаунт",
+      body: `${escapeHtml(clamp(connected.reason, 200))}. Напишите тренеру, он разберётся.`,
+    });
+  }
+
+  await recordOauthOutcome(state, "connected");
+
+  // 6. ПЕРВАЯ ВЫГРУЗКА. Человеку нужно увидеть, что подключилось не «вообще», а
+  //    его тренировки. Окно короткое: полная история приедет раннером.
+  let pulled: number | null = null;
+  let pullNote: string | null = null;
+  try {
+    const summary = await ingestStudentActivities({
+      studentUuid: checked.studentUuid,
+      from: new Date(Date.now() - FIRST_PULL_DAYS * 86_400_000).toISOString().slice(0, 10),
+      to: new Date().toISOString().slice(0, 10),
+    });
+    pulled = summary.activitiesSaved;
+  } catch (caught) {
+    // Подключение СОСТОЯЛОСЬ, выгрузка — нет. Врать про неудачу подключения
+    // нельзя, замалчивать пустой экран тоже.
+    console.error("[intervals.oauth.callback] первая выгрузка не прошла", {
+      error: redactSecrets(caught instanceof Error ? caught.message : String(caught)),
+    });
+    pullNote = "Тренировки подтянутся в течение получаса.";
+  }
+
+  const athleteName = exchange.token.athleteName;
+  const scopeGranted = exchange.token.scope;
 
   return renderPage({
     status: 200,
     tone: "ok",
     eyebrow: "intervals.icu · подключение",
-    title: "Аккаунт подключён",
+    title: "Часы подключены",
     body:
-      "Intervals.icu подтвердил доступ. Тренер увидит ваши тренировки в ближайшей выгрузке — " +
-      "делать больше ничего не нужно. Отозвать доступ можно в любой момент в настройках " +
-      "Intervals.icu, а что именно мы читаем, описано в " +
-      `<a href="/privacy" style="color:${ACCENT};text-decoration:none;font-weight:600">политике конфиденциальности</a>.`,
+      (athleteName
+        ? `Подключён аккаунт <b>${escapeHtml(athleteName)}</b>. `
+        : "Аккаунт Intervals.icu подключён. ") +
+      (pulled !== null
+        ? pulled > 0
+          ? `За последние ${FIRST_PULL_DAYS} дней перенесли тренировок: <b>${pulled}</b>. Остальная история подтянется в ближайшие полчаса. `
+          : `За последние ${FIRST_PULL_DAYS} дней тренировок не нашлось — это нормально, если вы давно не записывали. Новые появятся сами. `
+        : `${pullNote} `) +
+      "Возвращайтесь в приложение: дальше пара вопросов про график, и тренер соберёт план.",
     facts: [
-      "код авторизации: получен",
-      `state: ${state ? "получен" : "не передан"}`,
-      credentials.configured
-        ? "ключи приложения: заданы"
-        : `ключи приложения: нет ${escapeHtml(credentials.missing.join(", "))}`,
-      "обмен кода на токены: ещё не подключён",
+      `аккаунт: ${escapeHtml(exchange.token.athleteId)}`,
+      ...(scopeGranted ? [`выданные права: ${escapeHtml(clamp(scopeGranted, 160))}`] : []),
+      "доступ можно отозвать в настройках Intervals.icu в любой момент",
     ],
   });
 }

@@ -1,5 +1,7 @@
 /** Чтение и запись приёма Intervals.icu. Только база — ни сети, ни решений. */
 
+import { randomUUID } from "node:crypto";
+
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
 import { assessDataQuality } from "./data-quality";
@@ -322,5 +324,209 @@ export async function getStreamLengths(activityId: string): Promise<{
     time: Array.isArray(data.time_s) ? data.time_s.length : 0,
     heartrate: Array.isArray(data.heartrate) ? data.heartrate.length : null,
     velocitySmooth: Array.isArray(data.velocity_smooth) ? data.velocity_smooth.length : null,
+  };
+}
+
+// ── OAuth: одноразовое состояние и привязка источника ────────────────────────
+
+/**
+ * Завести state для потока авторизации.
+ *
+ * Случайность берётся у crypto, а не у Math.random: state — это предъявление
+ * «мы выдали именно эту ссылку», и предсказуемое значение лишает его смысла.
+ */
+export async function createOauthState(studentUuid: string): Promise<string> {
+  const supabase = createSupabaseServerClient();
+  const state = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "").slice(0, 8);
+  const { error } = await supabase
+    .from("intervals_oauth_states")
+    .insert({ state, student_id: studentUuid });
+  if (error) throw new Error(`intervals_oauth_states insert: ${describeSupabaseError(error)}`);
+  return state;
+}
+
+/** Сколько живёт выданная ссылка. Человек идёт по ней сразу, час с запасом. */
+const OAUTH_STATE_TTL_MS = 60 * 60 * 1000;
+
+export type OauthStateCheck =
+  | { ok: true; studentUuid: string }
+  | { ok: false; code: "unknown" | "replayed" | "expired" };
+
+/**
+ * Погасить state и сказать, чей он был.
+ *
+ * ГАСИМ ДО ПРОВЕРКИ СРОКА и одним условным апдейтом: два параллельных возврата
+ * (человек нажал дважды, браузер повторил запрос) иначе оба прошли бы проверку
+ * и оба завели бы источник.
+ */
+export async function consumeOauthState(state: string): Promise<OauthStateCheck> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_oauth_states")
+    .update({ used_at: new Date().toISOString() })
+    .eq("state", state)
+    .is("used_at", null)
+    .select("student_id, created_at")
+    .maybeSingle();
+  if (error) throw new Error(`intervals_oauth_states update: ${describeSupabaseError(error)}`);
+
+  if (!data) {
+    // Либо такого state не было вовсе, либо он уже погашен. Различаем: первое —
+    // чужая или обрезанная ссылка, второе — повтор, и человеку это разные слова.
+    const { data: existing } = await supabase
+      .from("intervals_oauth_states")
+      .select("state")
+      .eq("state", state)
+      .maybeSingle();
+    return { ok: false, code: existing ? "replayed" : "unknown" };
+  }
+
+  const row = data as unknown as Record<string, unknown>;
+  const createdAt = Date.parse(String(row.created_at));
+  if (Number.isFinite(createdAt) && Date.now() - createdAt > OAUTH_STATE_TTL_MS) {
+    return { ok: false, code: "expired" };
+  }
+  return { ok: true, studentUuid: String(row.student_id) };
+}
+
+export async function recordOauthOutcome(
+  state: string,
+  outcome: "connected" | "denied" | "failed" | "expired" | "replayed"
+): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  // Отметка исхода не должна ронять поток: человек уже дошёл до конца.
+  const { error } = await supabase
+    .from("intervals_oauth_states")
+    .update({ outcome, used_at: new Date().toISOString() })
+    .eq("state", state);
+  if (error) console.warn("[intervals.oauth] не удалось записать исход", { error: error.message });
+}
+
+/**
+ * Положить выданный токен в источник ученика.
+ *
+ * Апсерт по (provider, external_athlete_id) — тот же ключ, что у ручного
+ * заведения. Так повторное подключение того же аккаунта обновляет строку, а не
+ * спорит с уникальным индексом.
+ *
+ * ЕСЛИ АККАУНТ УЖЕ ПРИВЯЗАН К ДРУГОМУ ЧЕЛОВЕКУ — отказываемся. Молча перевесить
+ * источник значило бы отдать чужие тренировки в чужую карточку.
+ */
+export async function connectOauthSource(input: {
+  studentUuid: string;
+  externalAthleteId: string;
+  accessToken: string;
+  scope: string | null;
+}): Promise<{ ok: true; sourceId: string } | { ok: false; reason: string }> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: existing, error: readError } = await supabase
+    .from("student_data_sources")
+    .select("id, student_id, kind")
+    .eq("provider", "intervals")
+    .eq("external_athlete_id", input.externalAthleteId)
+    .maybeSingle();
+  if (readError) return { ok: false, reason: describeSupabaseError(readError) };
+
+  const existingRow = existing as { student_id: string | null; kind?: string } | null;
+  const owner = existingRow?.student_id ?? null;
+  if (existingRow && owner !== input.studentUuid) {
+    // ВЛАДЕЛЕЦ NULL ТОЖЕ СЧИТАЕТСЯ ЧУЖИМ. Источник без ученика — это аккаунт
+    // тренера (kind='self') или техническое подключение: перехватив его,
+    // OAuth переписал бы способ доступа и владельца у строки, за которой стоят
+    // чужие привезённые тренировки. Тренер отдельным решением завёл себя НЕ
+    // учеником, и подключение через приложение не вправе это отменять.
+    return {
+      ok: false,
+      reason: owner
+        ? "этот аккаунт Intervals уже подключён к другому ученику"
+        : `аккаунт ${input.externalAthleteId} уже заведён как источник тренера (kind=${existingRow.kind ?? "?"})`,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("student_data_sources")
+    .upsert(
+      {
+        student_id: input.studentUuid,
+        provider: "intervals",
+        external_athlete_id: input.externalAthleteId,
+        auth_method: "oauth",
+        credential: input.accessToken,
+        // У токенов Intervals срока жизни нет, поэтому поле остаётся пустым
+        // осознанно, а не «пока не заполнили».
+        credential_expires_at: null,
+        kind: "student",
+        is_active: true,
+        oauth_scope: input.scope,
+        connected_at: new Date().toISOString(),
+        auth_failed_at: null,
+        auth_failure_reason: null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "provider,external_athlete_id" }
+    )
+    .select("id")
+    .single();
+  if (error) return { ok: false, reason: describeSupabaseError(error) };
+  return { ok: true, sourceId: String((data as { id: string }).id) };
+}
+
+/** Записать, что провайдер перестал принимать доступ. */
+export async function markAuthFailure(sourceId: string, reason: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("student_data_sources")
+    .update({ auth_failed_at: new Date().toISOString(), auth_failure_reason: reason.slice(0, 500) })
+    .eq("id", sourceId);
+  if (error) console.warn("[intervals.oauth] не удалось отметить отказ", { error: error.message });
+}
+
+/** Снять отметку отказа: доступ снова работает. */
+export async function clearAuthFailure(sourceId: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("student_data_sources")
+    .update({ auth_failed_at: null, auth_failure_reason: null })
+    .eq("id", sourceId)
+    .not("auth_failed_at", "is", null);
+  if (error) console.warn("[intervals.oauth] не удалось снять отметку отказа", { error: error.message });
+}
+
+export type SourceConnection = {
+  sourceId: string;
+  externalAthleteId: string;
+  authMethod: "api_key" | "oauth";
+  isActive: boolean;
+  connectedAt: string | null;
+  authFailedAt: string | null;
+  authFailureReason: string | null;
+  lastSyncedAt: string | null;
+};
+
+/** Состояние подключения БЕЗ СЕКРЕТА: всё, что нужно экранам. */
+export async function getSourceConnection(studentUuid: string): Promise<SourceConnection | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("student_data_sources")
+    .select(
+      "id, external_athlete_id, auth_method, is_active, connected_at, auth_failed_at, auth_failure_reason, last_synced_at"
+    )
+    .eq("student_id", studentUuid)
+    .eq("provider", "intervals")
+    .limit(1);
+  if (error) throw new Error(`student_data_sources: ${describeSupabaseError(error)}`);
+  const raw = (data ?? [])[0];
+  if (!raw) return null;
+  const row = raw as unknown as Record<string, unknown>;
+  return {
+    sourceId: String(row.id),
+    externalAthleteId: String(row.external_athlete_id),
+    authMethod: row.auth_method === "oauth" ? "oauth" : "api_key",
+    isActive: row.is_active === true,
+    connectedAt: (row.connected_at as string | null) ?? null,
+    authFailedAt: (row.auth_failed_at as string | null) ?? null,
+    authFailureReason: (row.auth_failure_reason as string | null) ?? null,
+    lastSyncedAt: (row.last_synced_at as string | null) ?? null,
   };
 }

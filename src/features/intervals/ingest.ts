@@ -9,11 +9,14 @@
 import { fetchActivities, fetchActivity, fetchActivityStreams, IntervalsApiError } from "./api-client";
 import { redactSecrets, type DataSourceCredentials } from "./auth";
 import { assessDataQuality } from "./data-quality";
+import { isAuthFailure } from "./oauth";
 import {
   getSourceByAthlete,
   getSourceWithSecret,
   markSourceSynced,
   saveActivity,
+  clearAuthFailure,
+  markAuthFailure,
 } from "./repository";
 import type { IngestSummary, StudentDataSource } from "./types";
 
@@ -192,14 +195,31 @@ async function ingestFromSource(
     throw new Error("Источник Intervals отключён (is_active = false)");
   }
 
-  return run({
-    credentials: source,
-    athleteId: source.externalAthleteId,
-    destination: { sourceId: source.id, studentUuid: source.studentId },
-    from: options.from ?? HISTORY_START,
-    to: options.to ?? today(),
-    onProgress: options.onProgress ?? (() => {}),
-  });
+  // ОТКАЗ В ДОСТУПЕ ОТМЕЧАЕТСЯ НА ИСТОЧНИКЕ И ПОДНИМАЕТСЯ ДАЛЬШЕ.
+  //
+  // Токены Intervals не протухают, обновлять нечего: 401/403 означает, что
+  // человек отозвал доступ или переавторизовал приложение в другом месте.
+  // Лечится это повторным подключением, а не повтором запроса, поэтому отметка
+  // нужна — иначе раннер будет тихо возвращать «активностей 0» каждые полчаса,
+  // а тренер прочитает это как «человек не бегает».
+  try {
+    const summary = await run({
+      credentials: source,
+      athleteId: source.externalAthleteId,
+      destination: { sourceId: source.id, studentUuid: source.studentId },
+      from: options.from ?? HISTORY_START,
+      to: options.to ?? today(),
+      onProgress: options.onProgress ?? (() => {}),
+    });
+    // Прошло — значит прежний отказ (если он был) больше не актуален.
+    await clearAuthFailure(source.id);
+    return summary;
+  } catch (error) {
+    if (isAuthFailure(error)) {
+      await markAuthFailure(source.id, redactSecrets(String(error)));
+    }
+    throw error;
+  }
 }
 
 export type DryRunOptions = {

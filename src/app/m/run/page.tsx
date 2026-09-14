@@ -24,6 +24,8 @@ type TelegramWebApp = {
   ready: () => void;
   expand: () => void;
   colorScheme?: "light" | "dark";
+  /** Внешний браузер Telegram. Окно согласия провайдера внутри webview не откроется. */
+  openLink?: (url: string, options?: { try_instant_view?: boolean }) => void;
 };
 
 function getTelegram(): TelegramWebApp | null {
@@ -111,6 +113,8 @@ export default function RunAppPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const [needsConnection, setNeedsConnection] = useState(false);
+  const [connectionLost, setConnectionLost] = useState<string | null>(null);
   // Поля, которые ученица вообще увидит. Приходят с сервера списком того, что
   // ПОКАЗАТЬ, а не того, что скрыть: скрывать на клиенте значит сначала отдать
   // наружу то, чего человек видеть не должен.
@@ -154,6 +158,8 @@ export default function RunAppPage() {
         ok: boolean;
         error?: string;
         needsOnboarding?: boolean;
+        needsConnection?: boolean;
+        connectionLostRu?: string | null;
         formFields?: string[];
         presetGoalKind?: string | null;
         needsTimezone?: boolean;
@@ -166,6 +172,8 @@ export default function RunAppPage() {
       }
       setError(null);
       setNeedsOnboarding(json.needsOnboarding === true);
+      setNeedsConnection(json.needsConnection === true);
+      setConnectionLost(json.connectionLostRu ?? null);
       setFormFields(json.formFields ?? []);
       setPresetGoal(json.presetGoalKind ?? null);
       setNeedsTimezone(json.needsTimezone === true);
@@ -187,6 +195,13 @@ export default function RunAppPage() {
   }
   if (error) {
     return <Shell><p style={{ color: ACCENT, fontWeight: 600 }}>{error}</p></Shell>;
+  }
+  if (needsConnection && initData) {
+    return (
+      <Shell>
+        <ConnectScreen initData={initData} lostRu={connectionLost} onRetry={() => void load(initData)} />
+      </Shell>
+    );
   }
   if (needsOnboarding && initData) {
     return (
@@ -260,6 +275,90 @@ function Banner({ text }: { text: string }) {
     >
       {text}
     </p>
+  );
+}
+
+function ConnectScreen(props: {
+  initData: string;
+  lostRu: string | null;
+  onRetry: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const connect = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/m/run/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData: props.initData }),
+      });
+      const json = (await res.json()) as { ok: boolean; url?: string; error?: string };
+      if (!json.ok || !json.url) {
+        setErr(json.error ?? "Не получилось начать подключение.");
+        return;
+      }
+      // Открываем во внешнем браузере Telegram: окно согласия Intervals внутри
+      // мини-приложения не откроется, а после разрешения человеку нужно
+      // вернуться сюда и нажать «Я подключил(а)».
+      const tg = getTelegram();
+      if (tg?.openLink) tg.openLink(json.url);
+      else window.open(json.url, "_blank");
+    } catch {
+      setErr("Нет связи. Попробуйте ещё раз.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 22, margin: "0 0 6px" }}>Подключим часы</h1>
+      <p style={{ color: MUTED, margin: "0 0 18px", lineHeight: 1.5 }}>
+        Тренер строит план по вашим тренировкам, поэтому начинаем с подключения. Одно нажатие:
+        откроется Intervals.icu, вы нажмёте «Разрешить» и вернётесь сюда. Копировать ничего не
+        нужно.
+      </p>
+
+      {props.lostRu ? <Banner text={props.lostRu} /> : null}
+
+      <div
+        style={{
+          background: "#fff",
+          border: `1px solid ${LINE}`,
+          borderRadius: 14,
+          padding: "14px 16px",
+          marginBottom: 16,
+        }}
+      >
+        <p style={{ margin: 0, fontWeight: 600 }}>Что мы будем видеть</p>
+        <ul style={{ margin: "8px 0 0", paddingLeft: 18, color: MUTED, lineHeight: 1.6, fontSize: 14 }}>
+          <li>ваши тренировки и их данные</li>
+          <li>самочувствие: пульс покоя, сон, вес</li>
+          <li>календарь, чтобы класть туда план</li>
+        </ul>
+        <p style={{ margin: "10px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+          Пароль от Intervals.icu мы не видим и не храним. Отозвать доступ можно в любой момент в
+          настройках Intervals.icu.
+        </p>
+      </div>
+
+      {err ? <p style={{ color: ACCENT, fontWeight: 600, lineHeight: 1.5 }}>{err}</p> : null}
+
+      <button type="button" onClick={connect} disabled={busy} style={primaryButtonStyle(busy)}>
+        {busy ? "Открываю…" : "Подключить часы"}
+      </button>
+
+      <button
+        type="button"
+        onClick={props.onRetry}
+        style={{ ...secondaryButtonStyle, marginTop: 10, width: "100%" }}
+      >
+        Я подключил(а), проверить
+      </button>
+    </div>
   );
 }
 

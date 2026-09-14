@@ -32,6 +32,7 @@ import { parseTelegramInitDataUser, validateTelegramInitData } from "@/features/
 import { getTrainingPeaksStudentByTelegramUserId } from "@/features/trainingpeaks/repository";
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
+import { getSourceConnection, type SourceConnection } from "../repository";
 import { isValidTimeZone } from "./clock";
 
 export function isRunAppEnabled(): boolean {
@@ -50,7 +51,12 @@ export type RunAppResolution =
       ok: true;
       studentUuid: string;
       studentName: string;
-      sourceId: string;
+      /**
+       * null — часы ещё не подключены. НЕ ошибка: именно с этого состояния
+       * человек и начинает, и экран подключения живёт внутри приложения.
+       */
+      sourceId: string | null;
+      connection: SourceConnection | null;
       telegramUserId: number;
       /** Зона ученика с карточки. null — ещё не определена. */
       timezone: string | null;
@@ -58,7 +64,7 @@ export type RunAppResolution =
   | {
       ok: false;
       httpStatus: number;
-      code: "no_init_data" | "bad_signature" | "not_linked" | "no_source" | "wrong_platform";
+      code: "no_init_data" | "bad_signature" | "not_linked" | "wrong_platform";
       error: string;
     };
 
@@ -102,28 +108,17 @@ export async function resolveRunAppStudent(initDataRaw: unknown): Promise<RunApp
     };
   }
 
-  const { data: sourceRows, error: sourceError } = await supabase
-    .from("student_data_sources")
-    .select("id, is_active")
-    .eq("student_id", student.id)
-    .eq("provider", "intervals")
-    .limit(1);
-  if (sourceError) throw new Error(`student_data_sources: ${describeSupabaseError(sourceError)}`);
-  const source = (sourceRows ?? [])[0] as { id: string; is_active: boolean } | undefined;
-  if (!source || source.is_active !== true) {
-    return {
-      ok: false,
-      httpStatus: 403,
-      code: "no_source",
-      error: "Intervals ещё не подключён. Напишите тренеру.",
-    };
-  }
+  // ОТСУТСТВИЕ ИСТОЧНИКА БОЛЬШЕ НЕ ОТКАЗ. Раньше человек без подключения
+  // упирался в «напишите тренеру» и дальше зависел от переписки. Теперь он
+  // попадает на экран подключения, и весь путь проходит сам.
+  const connection = await getSourceConnection(student.id);
 
   return {
     ok: true,
     studentUuid: student.id,
     studentName: student.studentName,
-    sourceId: source.id,
+    sourceId: connection && connection.isActive ? connection.sourceId : null,
+    connection,
     telegramUserId: tgUser.id,
     timezone: card?.timezone ?? null,
   };

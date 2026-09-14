@@ -43,6 +43,16 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const comment = typeof body.comment === "string" ? body.comment.trim().slice(0, 4000) : "";
 
+  // Без подключённых часов данных не будет, а значит и плана. Отправляем на
+  // экран подключения вместо невнятного отказа.
+  if (!auth.sourceId) {
+    return jsonResponse(409, {
+      ok: false,
+      code: "needs_connection",
+      error: "Сначала подключите часы: без данных план не собрать.",
+    });
+  }
+
   // ДЕНЬ ЧЕК-ИНА СЧИТАЕТСЯ ПО ЗОНЕ УЧЕНИКА. По зоне тренера вечерняя пробежка
   // москвича легла бы на следующий день, то есть на другую сессию и другую
   // ступень: прогрессия двигается по дню.

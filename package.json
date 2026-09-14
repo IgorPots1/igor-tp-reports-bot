@@ -359,7 +359,8 @@
     "check:first-student-loop": "npx tsx scripts/check-first-student-loop.ts",
     "intervals:sync": "npx tsx scripts/intervals-sync-active.ts",
     "check:onboarding-prefill": "npx tsx scripts/check-onboarding-prefill.ts",
-    "check:valentina-form": "npx tsx scripts/check-valentina-form.ts"
+    "check:valentina-form": "npx tsx scripts/check-valentina-form.ts",
+    "check:intervals-oauth": "npx tsx scripts/check-intervals-oauth.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",

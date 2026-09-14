@@ -29,3 +29,16 @@ OUT="$(node --experimental-strip-types --loader ./scripts/_alias-loader.mjs \
   --env-file=.env.local "${REPO}/scripts/intervals-sync-active.ts" --window=10 2>&1)"
 printf '%s\n' "----- $(date '+%Y-%m-%d %H:%M') -----" "$OUT" >> "${LOG_DIR}/intervals-sync.log"
 printf '%s\n' "$OUT"
+
+# ОТОЗВАННЫЙ ДОСТУП — единственное, из-за чего этот раннер будит тренера.
+# Токены Intervals не протухают, поэтому 401/403 означает, что человек отозвал
+# доступ или переавторизовал приложение: само это не пройдёт, и пока не
+# переподключатся, данных не будет вовсе. Пустой календарь тренер прочитает как
+# «не бегает», и это худшая из возможных ошибок.
+#
+# ВЫКЛЮЧЕНО ПО УМОЛЧАНИЮ: автоматических сообщений наружу без явного включения
+# этот контур не делает. Включить: INTERVALS_SYNC_NOTIFY=true в .env.local.
+if [ "${INTERVALS_SYNC_NOTIFY:-}" = "true" ] && printf '%s' "$OUT" | grep -q "⟦NOTIFY⟧"; then
+  MSG="$(printf '%s' "$OUT" | grep "⟦NOTIFY⟧" | sed 's/⟦NOTIFY⟧ //')"
+  npm --prefix "${REPO}/tools/trainingpeaks-export" run --silent tp-ops-notify -- "$MSG" >/dev/null 2>&1 || true
+fi

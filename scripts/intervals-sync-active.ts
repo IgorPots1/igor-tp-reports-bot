@@ -38,6 +38,7 @@
 import process from "node:process";
 
 import { ingestStudentActivities } from "@/features/intervals/ingest";
+import { isAuthFailure } from "@/features/intervals/oauth";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 function arg(name: string): string | null {
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
   // незачем, и их тренировки не должны попадать в контур ученика.
   const { data, error } = await supabase
     .from("student_data_sources")
-    .select("id, student_id, external_athlete_id, last_synced_at")
+    .select("id, student_id, external_athlete_id, last_synced_at, auth_failed_at, auth_method")
     .eq("provider", "intervals")
     .eq("kind", "student")
     .eq("is_active", true)
@@ -77,6 +78,8 @@ async function main(): Promise<void> {
     student_id: string | null;
     external_athlete_id: string;
     last_synced_at: string | null;
+    auth_failed_at: string | null;
+    auth_method: string;
   }>;
 
   const from = isoDaysAgo(WINDOW_DAYS);
@@ -87,11 +90,25 @@ async function main(): Promise<void> {
 
   let ok = 0;
   let failed = 0;
+  // Отказ в доступе считаем ОТДЕЛЬНО от сетевых сбоев: первое чинится
+  // повторным подключением у ученика, второе проходит само.
+  let authBroken = 0;
   for (const source of sources) {
     if (!source.student_id) {
       // Боевой источник без владельца невозможен по констрейнту; если он всё же
       // есть — это дефект данных, и молчать о нём нельзя.
       console.error(`  ✗ ${source.external_athlete_id}: боевой источник без ученика (source ${source.id})`);
+      failed += 1;
+      continue;
+    }
+    if (source.auth_failed_at) {
+      // Уже помечен как отвалившийся. Долбиться в него каждые полчаса
+      // бессмысленно, но и молчать нельзя: строка должна быть в каждом логе,
+      // пока человек не переподключится.
+      console.error(
+        `  ⛔ ${source.external_athlete_id}: доступ отозван с ${source.auth_failed_at}, ждём повторного подключения`
+      );
+      authBroken += 1;
       failed += 1;
       continue;
     }
@@ -113,17 +130,36 @@ async function main(): Promise<void> {
     } catch (caught) {
       // Падение одного источника НЕ останавливает остальных: иначе один
       // испорченный ключ лишает данных всех.
-      console.error(
-        `  ✗ ${source.external_athlete_id}: ${caught instanceof Error ? caught.message : String(caught)}`
-      );
+      if (isAuthFailure(caught)) {
+        // ГЛАВНОЕ, ЧТОБЫ ЭТО НЕ ПРОШЛО МОЛЧА. Токены Intervals не протухают,
+        // значит доступ отозвали или переавторизовали приложение. Пока человек
+        // не подключится заново, данных не будет вовсе, и тренер обязан узнать
+        // об этом сегодня, а не через неделю по пустому календарю.
+        console.error(
+          `  ⛔ ${source.external_athlete_id}: ДОСТУП ОТОЗВАН (${source.auth_method}). ` +
+            "Нужно повторное подключение учеником — обновлять токен нечем, срока жизни у него нет."
+        );
+        authBroken += 1;
+      } else {
+        console.error(
+          `  ✗ ${source.external_athlete_id}: ${caught instanceof Error ? caught.message : String(caught)}`
+        );
+      }
       failed += 1;
     }
   }
 
-  console.log(`Готово: успешно ${ok}, с ошибкой ${failed}.`);
-  // Ненулевой код только когда НИ ОДИН источник не прошёл: частичный успех — это
-  // норма распределённой работы, а не повод будить человека.
-  if (ok === 0 && failed > 0) process.exit(1);
+  console.log(`Готово: успешно ${ok}, с ошибкой ${failed}, доступ отозван у ${authBroken}.`);
+  if (authBroken > 0) {
+    console.error(
+      `⟦NOTIFY⟧ Intervals: у ${authBroken} ${authBroken === 1 ? "ученика" : "учеников"} отозван доступ. ` +
+        "Обновить токен нельзя, нужно повторное подключение в приложении."
+    );
+  }
+  // Ненулевой код, когда не прошёл НИ ОДИН источник, ИЛИ когда у кого-то отозван
+  // доступ. Второе — не «частичный успех»: это состояние, которое само не
+  // пройдёт, и раннер обязан быть заметным, пока его не починят.
+  if (authBroken > 0 || (ok === 0 && failed > 0)) process.exit(1);
 }
 
 main().catch((error) => {

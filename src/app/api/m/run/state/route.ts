@@ -10,6 +10,7 @@ import { getOnboardingAnswers, getPrefill } from "@/features/intervals/loop/repo
 import { visibleFormFields } from "@/features/intervals/loop/prefill";
 import { loadStudentView } from "@/features/intervals/loop/service";
 import { FALLBACK_TIMEZONES, todayIsoInZone } from "@/features/intervals/loop/clock";
+import { AUTH_FAILURE_MESSAGE_RU } from "@/features/intervals/oauth";
 
 export const runtime = "nodejs";
 
@@ -44,13 +45,29 @@ export async function POST(request: NextRequest): Promise<Response> {
       detected: body.timeZone,
     });
 
-    const answers = await getOnboardingAnswers(auth.sourceId);
+    // ПОДКЛЮЧЕНИЕ ИДЁТ ДО АНКЕТЫ. Пока часов нет, спрашивать про график
+    // бессмысленно: плана всё равно не будет, а человек уже потратил силы на
+    // ответы. Поэтому экран подключения — первый.
+    if (!auth.sourceId) {
+      return jsonResponse(200, {
+        ok: true,
+        needsConnection: true,
+        studentName: auth.studentName,
+        // Отвалившееся подключение и отсутствующее выглядят для человека
+        // по-разному: во втором случае он не знает, что что-то сломалось.
+        connectionLostRu:
+          auth.connection && auth.connection.authFailedAt ? AUTH_FAILURE_MESSAGE_RU : null,
+      });
+    }
+    const sourceId = auth.sourceId;
+
+    const answers = await getOnboardingAnswers(sourceId);
     if (!answers) {
       // Поля, которые тренер задал за ученика, в форму НЕ попадают вовсе —
       // ни заполненными, ни спрятанными под «уточните». Клиент получает список
       // того, что показывать, а не список того, что скрыть: скрывать —
       // значит сначала отдать наружу то, чего человек видеть не должен.
-      const prefill = await getPrefill(auth.sourceId);
+      const prefill = await getPrefill(sourceId);
       return jsonResponse(200, {
         ok: true,
         needsOnboarding: true,
@@ -66,7 +83,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           prefill && prefill.setFields.includes("goalKind") ? prefill.values.goalKind : null,
       });
     }
-    const view = await loadStudentView(auth.sourceId, todayIsoInZone(zone));
+    const view = await loadStudentView(sourceId, todayIsoInZone(zone));
     return jsonResponse(200, {
       ok: true,
       needsOnboarding: false,
