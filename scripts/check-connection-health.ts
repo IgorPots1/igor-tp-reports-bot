@@ -142,10 +142,20 @@ function main(): void {
   expect(apple !== undefined, "Apple Watch есть в списке устройств");
   if (apple) {
     const bridgeText = apple.bridgeRu.join(" ");
-    expect(bridgeText.includes("HealthFit"), "Apple Watch: назван рабочий посредник");
+    // Бесплатный путь ПЕРВЫМ, платная замена рядом. Порядок абзацев проверяем
+    // потому, что он и есть решение: человек ставит бесплатное, а про платное
+    // узнаёт только если упрётся.
+    const companionAt = bridgeText.indexOf("Intervals.icu Companion");
+    const healthfitAt = bridgeText.indexOf("HealthFit");
+    expect(companionAt >= 0, "Apple Watch: назван бесплатный посредник");
+    expect(healthfitAt >= 0, "Apple Watch: платная замена тоже названа");
     expect(
-      bridgeText.includes("план на часы не придёт"),
-      "Apple Watch: сказано, что план на часы не придёт"
+      companionAt >= 0 && healthfitAt >= 0 && companionAt < healthfitAt,
+      "Apple Watch: бесплатный путь идёт раньше платного"
+    );
+    expect(
+      bridgeText.includes("план на часы не"),
+      "Apple Watch: про план на часах сказано прямо"
     );
     expect(apple.settingsBoxRu === null, "Apple Watch: блока в настройках Intervals нет");
   }
