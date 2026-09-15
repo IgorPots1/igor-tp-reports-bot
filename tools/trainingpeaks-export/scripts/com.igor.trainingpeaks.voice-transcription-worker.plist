@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Voice-transcription worker: polls voice_transcription_jobs every 15s, transcribes via
+     ffmpeg + whisper.cpp, edits the bot's ack message with the result.
+     Установка (после того как ffmpeg + whisper-cli + модель поставлены — см. handoff):
+       cp com.igor.trainingpeaks.voice-transcription-worker.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.voice-transcription-worker.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.voice-transcription-worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-voice-transcription-worker.sh"</string>
+  </array>
+
+  <!-- забрать всё, что накопилось за время сна/простоя -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- каждые 15с — коротко, потому что это интерактивное ожидание (Игорь смотрит в чат) -->
+  <key>StartInterval</key>
+  <integer>15</integer>
+
+  <!-- не копить параллельные тики, если один прогон почему-то не уложился в 15с -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/voice-transcription-worker.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/voice-transcription-worker.launchd.err.log</string>
+</dict>
+</plist>

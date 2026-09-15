@@ -41,6 +41,7 @@ import {
 } from "@/features/intervals/enroll-dialog";
 import { describeSupabaseError } from "@/features/supabase/server";
 import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
+import { handleManualVoiceTranscriptionRequest } from "@/features/voice-transcription/webhook";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
 export const runtime = "nodejs";
@@ -302,6 +303,24 @@ export async function POST(request: Request) {
 
   const messageText = parsedMessage.text?.trim() ?? "";
   const messageChatType = update.message?.chat.type;
+
+  // Manual voice-transcription request (Igor forwarding/recording a voice message to himself).
+  // Silent no-op for anyone else and for non-audio messages — falls straight through to
+  // enrollment/command/observer flow below, unchanged. MUST run before the enrollment block:
+  // enrollment's own forwarded-message branch below matches on forward_from.id alone, with no
+  // content-type check, so a forwarded VOICE note would otherwise be swallowed as "enroll this
+  // person" before the voice handler ever saw it — handleManualVoiceTranscriptionRequest itself
+  // no-ops (kind: "not_applicable") for anything without transcribable media, so putting it first
+  // costs nothing for the plain-text enrollment cases.
+  if (update.message) {
+    const voiceOutcome = await handleManualVoiceTranscriptionRequest(update.message);
+    if (voiceOutcome.kind === "handled") {
+      return okResponse();
+    }
+    if (voiceOutcome.kind === "retry_later") {
+      return errorResponse(503, voiceOutcome.reason);
+    }
+  }
 
   // ── ЗАВЕДЕНИЕ УЧЕНИКА ИЗ БОТА ─────────────────────────────────────────────
   //
