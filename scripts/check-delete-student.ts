@@ -75,6 +75,7 @@ async function main(): Promise<void> {
   // И напрямую через функцию, минуя проверки в коде: заслон должен стоять в базе.
   const { error: rpcError } = await supabase.rpc("delete_intervals_student", {
     p_student_uuid: created.studentUuid,
+    p_deleted_by: "check:delete-student",
   });
   expect(rpcError !== null, "функция в базе сама отказывает, даже без проверок в коде");
   const survived = await previewStudentDeletion(created.studentUuid);
@@ -85,7 +86,7 @@ async function main(): Promise<void> {
     .update({ coaching_platform: "intervals" })
     .eq("id", created.studentUuid);
 
-  step("УДАЛЕНИЕ РАБОТАЕТ");
+  step("УДАЛЕНИЕ РАБОТАЕТ И ПИШЕТ АРХИВ");
   const done = await deleteIntervalsStudentCompletely({
     studentUuid: created.studentUuid,
     typedName: NAME,
@@ -99,6 +100,30 @@ async function main(): Promise<void> {
     .select("*", { count: "exact", head: true })
     .eq("student_id", created.studentUuid);
   expect((sourcesLeft ?? 0) === 0, "источник ушёл каскадом, а не остался сиротой");
+
+  // АРХИВ — ЕДИНСТВЕННОЕ, ЧТО ДЕЛАЕТ УДАЛЕНИЕ ОБРАТИМЫМ. Пишется в той же
+  // транзакции: архив без удаления или удаление без архива одинаково плохи.
+  const { data: archived } = await supabase
+    .from("deleted_students_archive")
+    .select("student_key, student_name, deleted_by, expires_at, payload")
+    .eq("student_uuid", created.studentUuid)
+    .maybeSingle();
+  const row = archived as Record<string, unknown> | null;
+  expect(row !== null, "снимок удалённого ученика сохранён");
+  if (row) {
+    const payload = row.payload as Record<string, unknown>;
+    expect(row.student_name === NAME, "в архиве то же имя");
+    expect(payload.card !== null && payload.card !== undefined, "карточка в снимке есть");
+    expect(Array.isArray(payload.sources), "источники в снимке есть");
+    expect(
+      typeof (payload.activities_summary as Record<string, unknown>)?.count === "number",
+      "про привезённые тренировки записано, сколько их было"
+    );
+    const months = (Date.parse(String(row.expires_at)) - Date.now()) / (30 * 24 * 3600 * 1000);
+    expect(months > 5 && months < 7, `срок хранения около полугода (${months.toFixed(1)} мес)`);
+    // Уборка за собой: проверка не оставляет мусора и в архиве.
+    await supabase.from("deleted_students_archive").delete().eq("student_uuid", created.studentUuid);
+  }
 
   console.log("");
   if (failures === 0) {

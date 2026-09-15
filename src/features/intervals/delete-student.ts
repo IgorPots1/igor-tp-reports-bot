@@ -19,6 +19,9 @@
  *    текстов?» — хороший.
  * 3. Вызывающий обязан передать ИМЯ ученика буква в букву. Промах мимо кнопки
  *    и промах мимо строки — разные вероятности.
+ * 4. Удаление пишет АРХИВ в той же транзакции: полгода удаление обратимо
+ *    руками. Это единственный барьер, который защищает не от промаха, а от
+ *    последствий промаха.
  */
 
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
@@ -133,6 +136,8 @@ export type DeletionResult =
 export async function deleteIntervalsStudentCompletely(input: {
   studentUuid: string;
   typedName: string;
+  /** Кто удалил. Попадает в архив: через полгода это единственный след. */
+  deletedBy?: string;
 }): Promise<DeletionResult> {
   const preview = await previewStudentDeletion(input.studentUuid);
   if (!preview) return { ok: false, reason: "Карточка не найдена: возможно, её уже удалили." };
@@ -153,8 +158,11 @@ export async function deleteIntervalsStudentCompletely(input: {
   }
 
   const supabase = createSupabaseServerClient();
+  // ОБА АРГУМЕНТА ПЕРЕДАЮТСЯ ВСЕГДА: функция пишет архив в той же транзакции,
+  // что и удаление, а второй аргумент говорит, чьих это рук дело.
   const { error } = await supabase.rpc("delete_intervals_student", {
     p_student_uuid: input.studentUuid,
+    p_deleted_by: input.deletedBy ?? "admin",
   });
   if (error) return { ok: false, reason: describeSupabaseError(error) };
 

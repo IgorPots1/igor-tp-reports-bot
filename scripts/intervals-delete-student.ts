@@ -19,6 +19,7 @@
  *   npm run intervals:delete-student -- --student=valentina-1234 --commit
  *   npm run intervals:delete-student -- --test-leftovers            (список мусора)
  *   npm run intervals:delete-student -- --test-leftovers --commit
+ *   npm run intervals:delete-student -- --sweep-archive            (просроченные снимки)
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -30,6 +31,7 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const COMMIT = process.argv.includes("--commit");
 const LEFTOVERS = process.argv.includes("--test-leftovers");
+const SWEEP = process.argv.includes("--sweep-archive");
 
 function arg(name: string): string | null {
   const prefix = `--${name}=`;
@@ -112,7 +114,10 @@ async function removeOne(studentUuid: string, label: string): Promise<boolean> {
   writeFileSync(file, JSON.stringify(snapshot, null, 2));
   console.log(`   снимок сохранён: ${file}`);
 
-  const { error } = await supabase.rpc("delete_intervals_student", { p_student_uuid: studentUuid });
+  const { error } = await supabase.rpc("delete_intervals_student", {
+    p_student_uuid: studentUuid,
+    p_deleted_by: "terminal",
+  });
   if (error) {
     console.error(`   ⛔ не удалено: ${error.message}`);
     return false;
@@ -124,6 +129,36 @@ async function removeOne(studentUuid: string, label: string): Promise<boolean> {
 async function main(): Promise<void> {
   const supabase = createSupabaseServerClient();
   console.log(COMMIT ? "УДАЛЕНИЕ УЧЕНИКА" : "УДАЛЕНИЕ УЧЕНИКА · холостой прогон, ничего не трогаю");
+
+  // ── Чистка архива ──
+  //
+  // ОТДЕЛЬНОЙ КОМАНДОЙ, А НЕ ПО РАСПИСАНИЮ. Архив существует, чтобы отменить
+  // ошибку; автоматическая чистка означала бы, что однажды он молча опустеет
+  // ровно перед тем, как понадобится. Пусть удаляет человек, видя список.
+  if (SWEEP) {
+    const { data, error } = await supabase
+      .from("deleted_students_archive")
+      .select("id, student_key, student_name, deleted_at, expires_at")
+      .lt("expires_at", new Date().toISOString());
+    if (error) {
+      console.error(`архив не читается: ${error.message}`);
+      process.exit(1);
+    }
+    const rows = (data ?? []) as Array<Record<string, unknown>>;
+    console.log(`\nПросроченных снимков: ${rows.length}`);
+    for (const row of rows) {
+      console.log(`  ${row.student_name} (${row.student_key}) · удалён ${String(row.deleted_at).slice(0, 10)}`);
+    }
+    if (!COMMIT) {
+      console.log(rows.length ? "\nНичего не удалено. Повторите с --commit." : "");
+      return;
+    }
+    for (const row of rows) {
+      await supabase.from("deleted_students_archive").delete().eq("id", String(row.id));
+    }
+    console.log(`Удалено снимков: ${rows.length}`);
+    return;
+  }
 
   if (LEFTOVERS) {
     const { data, error } = await supabase

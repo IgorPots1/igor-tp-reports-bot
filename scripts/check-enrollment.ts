@@ -55,7 +55,10 @@ async function cleanup(studentKey: string): Promise<void> {
     .maybeSingle();
   if (!card) return;
   const cardId = String((card as { id: string }).id);
-  const { error } = await supabase.rpc("delete_intervals_student", { p_student_uuid: cardId });
+  const { error } = await supabase.rpc("delete_intervals_student", {
+    p_student_uuid: cardId,
+    p_deleted_by: "check:enrollment",
+  });
   if (error) {
     // Не роняем проверку из-за уборки, но и не молчим.
     console.log(`  ⚠ уборка не удалась (${studentKey}): ${error.message}`);
