@@ -16,7 +16,6 @@ import {
   DEVICE_GUIDES,
   MARK_ALL_RU,
   STEP_LEAD_RU,
-  WHY_NOT_STRAVA_RU,
 } from "@/features/intervals/device-guide";
 
 let failures = 0;
@@ -146,14 +145,11 @@ function main(): void {
     // Бесплатный путь ПЕРВЫМ, платная замена рядом. Порядок абзацев проверяем
     // потому, что он и есть решение: человек ставит бесплатное, а про платное
     // узнаёт только если упрётся.
-    const companionAt = bridgeText.indexOf("Intervals.icu Companion");
-    const healthfitAt = bridgeText.indexOf("HealthFit");
-    expect(companionAt >= 0, "Apple Watch: назван бесплатный посредник");
-    expect(healthfitAt >= 0, "Apple Watch: платная замена тоже названа");
-    expect(
-      companionAt >= 0 && healthfitAt >= 0 && companionAt < healthfitAt,
-      "Apple Watch: бесплатный путь идёт раньше платного"
-    );
+    // ОДИН ПУТЬ, БЕЗ РАЗВИЛКИ. Платная альтернатива убрана намеренно: выбор из
+    // двух приложений на незнакомой территории дороже редкого случая, когда
+    // первое не подойдёт.
+    expect(bridgeText.includes("Intervals.icu Companion"), "Apple Watch: назван бесплатный посредник");
+    expect(!bridgeText.includes("HealthFit"), "Apple Watch: платной альтернативы в тексте нет");
     expect(
       bridgeText.includes("план на часы не"),
       "Apple Watch: про план на часах сказано прямо"
@@ -161,7 +157,7 @@ function main(): void {
     expect(apple.settingsBoxRu === null, "Apple Watch: блока в настройках Intervals нет");
   }
 
-  expect(WHY_NOT_STRAVA_RU.pointsRu.length >= 3, "блок про Strava не пустой");
+
 
   step("СИГНАЛЫ В СПИСКЕ УЧЕНИКОВ");
   // Список должен отвечать на один вопрос: кого открывать сегодня. Проверяем

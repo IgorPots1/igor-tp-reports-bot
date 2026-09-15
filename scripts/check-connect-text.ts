@@ -41,7 +41,6 @@ const SLOTS: Array<[string, string]> = [
   ["formatRu", CONNECT_PAGE.formatRu],
   ["step1Ru", CONNECT_PAGE.step1Ru],
   ["step1DetailsRu", CONNECT_PAGE.step1DetailsRu],
-  ["afterStepsRu", CONNECT_PAGE.afterStepsRu],
   ["troubleRu", CONNECT_PAGE.troubleRu],
   ["device-guide: подводка шага 2", STEP_LEAD_RU],
   ["device-guide: если часов нет", NO_WATCH_BODY_RU],
@@ -55,6 +54,23 @@ function main(): void {
     const bad = findUnsupported(text);
     expect(bad.length === 0, `${name}: ${bad.length === 0 ? "разметка вся поддержана" : bad.join(" | ")}`);
   }
+
+  step("САЙТ И ПРИЛОЖЕНИЕ РАЗДЕЛЕНЫ");
+  // Страница — только формат работы; подключение целиком в приложении. Если
+  // страница снова начнёт импортировать список галочек, значит подключение
+  // приползло обратно, и человек опять получит два места с одним текстом.
+  const pageCode = readFileSync("src/app/connect/page.tsx", "utf8");
+  expect(
+    !pageCode.includes("device-guide"),
+    "страница не показывает подключение: списка галочек на ней нет"
+  );
+  expect(!pageCode.includes("step1Ru"), "шага «заведите аккаунт» на странице нет");
+  expect(pageCode.includes("formatRu"), "формат работы на странице остался");
+  expect(pageCode.includes("troubleRu"), "«что делать, если» на странице осталось");
+
+  const appCode = readFileSync("src/app/m/run/page.tsx", "utf8");
+  expect(appCode.includes("step1Ru"), "шаг «заведите аккаунт» показывает приложение");
+  expect(appCode.includes("device-guide"), "галочки по часам показывает приложение");
 
   step("ПОДКЛЮЧЕНИЕ И ПРАВИЛА НЕ ПЕРЕМЕШАНЫ");
   // Экран подключения показывает step1Ru и шаг 2. Если туда просочились
@@ -75,21 +91,18 @@ function main(): void {
   expect(CONNECT_PAGE.step1DetailsTitleRu.length > 0, "у свёрнутого подраздела есть заголовок");
 
   step("ИСТОЧНИК ТЕКСТА ОДИН");
-  const surfaces: Array<[string, string]> = [
-    ["страница сайта", "src/app/connect/page.tsx"],
-    ["мини-приложение", "src/app/m/run/page.tsx"],
-  ];
-  for (const [label, path] of surfaces) {
-    const code = readFileSync(path, "utf8");
+  for (const [label, code] of [
+    ["страница сайта", pageCode],
+    ["мини-приложение", appCode],
+  ] as Array<[string, string]>) {
     expect(
       code.includes('from "@/features/intervals/connect-content"'),
       `${label} берёт текст из общего файла`
     );
   }
-  const app = readFileSync("src/app/m/run/page.tsx", "utf8");
   expect(
-    !app.includes("igorp.run/connect"),
-    "приложение больше не отправляет человека на сайт за инструкцией"
+    !appCode.includes("igorp.run/connect"),
+    "приложение не отправляет человека на сайт за инструкцией"
   );
 
   step("APPLE WATCH");

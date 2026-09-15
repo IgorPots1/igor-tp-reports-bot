@@ -242,11 +242,17 @@ async function main(): Promise<void> {
   step("БЕЗ ПРЕДЗАПОЛНЕНИЯ — КАК БЫЛО");
   const noPrefill = visibleFormFields(null);
   expect(
-    !noPrefill.includes("canRunContinuously") &&
-      !noPrefill.includes("selfReportedWeeklyMinutes") &&
+    !noPrefill.includes("selfReportedWeeklyMinutes") &&
       !noPrefill.includes("healthLimits") &&
       !noPrefill.includes("experienceNote"),
-    "даже без предзаполнения в приложении НЕТ вопросов про опыт, травмы, объём и непрерывный бег"
+    "даже без предзаполнения в приложении НЕТ вопросов про опыт, травмы и объём со слов"
+  );
+  // НЕПРЕРЫВНЫЙ БЕГ ВЕРНУЛСЯ В АНКЕТУ [15.09.2026]. Раньше его всегда закрывало
+  // предзаполнение из бота; теперь бот заводит в одно нажатие и ни о чём не
+  // спрашивает, а этот факт человек знает про себя лучше всех.
+  expect(
+    noPrefill.includes("canRunContinuously"),
+    "без предзаполнения вопрос про непрерывный бег ЗАДАЁТСЯ ей самой"
   );
   expect(
     noPrefill.includes("weekStability") && noPrefill.includes("runSurfaces"),

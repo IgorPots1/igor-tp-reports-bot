@@ -337,9 +337,19 @@ function GuideScreen(props: { onBack: () => void }) {
  * Поэтому подробности про регистрацию и про «часов нет» свёрнуты, но лежат
  * здесь же, а не за ссылкой на сайт: по ссылке он не пойдёт.
  */
-function Collapsible(props: { title: string; children: React.ReactNode }) {
+function Collapsible(props: { title: string; children: React.ReactNode; divider?: boolean }) {
+  // Черта сверху нужна, когда блок идёт ПОСЛЕ текста: она отделяет подробности
+  // от главного. Когда блок в карточке один, та же черта читается как обрезок
+  // чего-то исчезнувшего, поэтому её можно выключить.
+  const divider = props.divider !== false;
   return (
-    <details style={{ marginTop: 12, borderTop: `1px solid ${LINE}`, paddingTop: 10 }}>
+    <details
+      style={{
+        marginTop: divider ? 12 : 0,
+        borderTop: divider ? `1px solid ${LINE}` : undefined,
+        paddingTop: divider ? 10 : 0,
+      }}
+    >
       <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 15, color: ACCENT }}>
         {props.title}
       </summary>
@@ -662,8 +672,16 @@ function ConnectScreen(props: {
           marginBottom: 16,
         }}
       >
-        {renderMiniMarkdown(CONNECT_PAGE.step1Ru, "c-step1")}
-        <Collapsible title={CONNECT_PAGE.step1DetailsTitleRu}>
+        {/* ЭКРАН ЧИТАЕТСЯ ЗА ДЕСЯТЬ СЕКУНД [решение Игоря, 15.09.2026].
+            Раньше здесь лежали оба шага целиком, и человек видел простыню. Всё,
+            кроме одной строки на шаг, свёрнуто: подробности нужны не всем и не
+            сразу, но лежат тут же, а не за ссылкой на сайт. */}
+        <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>Шаг 1. Заведите аккаунт в Intervals</p>
+        <p style={{ margin: "6px 0 0", color: MUTED, fontSize: 14, lineHeight: 1.5 }}>
+          Бесплатно, пара минут. Туда приходят ваши тренировки.
+        </p>
+        <Collapsible title="Подробнее: что вводить при регистрации">
+          {renderMiniMarkdown(CONNECT_PAGE.step1Ru, "c-step1")}
           {renderMiniMarkdown(CONNECT_PAGE.step1DetailsRu, "c-step1d")}
         </Collapsible>
       </div>
@@ -677,8 +695,13 @@ function ConnectScreen(props: {
           marginBottom: 16,
         }}
       >
-        <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>{STEP_TITLE_RU}</h2>
-        {renderMiniMarkdown(STEP_LEAD_RU, "c-step2")}
+        <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{STEP_TITLE_RU}</p>
+        <p style={{ margin: "6px 0 0", color: MUTED, fontSize: 14, lineHeight: 1.5 }}>
+          Выберите свои часы ниже: покажу, что отметить именно у них.
+        </p>
+        <Collapsible title="Подробнее: где это в настройках">
+          {renderMiniMarkdown(STEP_LEAD_RU, "c-step2")}
+        </Collapsible>
       </div>
 
       {/* ГЛАВНОЕ НА ЭТОМ ЭКРАНЕ. В Intervals галочки скачивания отмечаются
@@ -700,7 +723,7 @@ function ConnectScreen(props: {
             marginBottom: 16,
           }}
         >
-          <Collapsible title={NO_WATCH_TITLE_RU}>
+          <Collapsible title={NO_WATCH_TITLE_RU} divider={false}>
             {renderMiniMarkdown(NO_WATCH_BODY_RU, "c-nowatch")}
           </Collapsible>
         </div>
@@ -715,16 +738,17 @@ function ConnectScreen(props: {
           marginBottom: 16,
         }}
       >
-        <p style={{ margin: 0, fontWeight: 600 }}>Что мы будем видеть</p>
-        <ul style={{ margin: "8px 0 0", paddingLeft: 18, color: MUTED, lineHeight: 1.6, fontSize: 14 }}>
-          <li>ваши тренировки и их данные</li>
-          <li>самочувствие: пульс покоя, сон, вес</li>
-          <li>календарь, чтобы класть туда план</li>
-        </ul>
-        <p style={{ margin: "10px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
-          Пароль от Intervals.icu мы не видим и не храним. Отозвать доступ можно в любой момент в
-          настройках Intervals.icu.
-        </p>
+        <Collapsible title="Что мы будем видеть" divider={false}>
+          <ul style={{ margin: "8px 0 0", paddingLeft: 18, color: MUTED, lineHeight: 1.6, fontSize: 14 }}>
+            <li>ваши тренировки и их данные</li>
+            <li>самочувствие: пульс покоя, сон, вес</li>
+            <li>календарь, чтобы класть туда план</li>
+          </ul>
+          <p style={{ margin: "10px 0 0", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+            Пароль от Intervals.icu мы не видим и не храним. Отозвать доступ можно в любой момент в
+            настройках Intervals.icu.
+          </p>
+        </Collapsible>
       </div>
 
       {err ? <p style={{ color: ACCENT, fontWeight: 600, lineHeight: 1.5 }}>{err}</p> : null}
@@ -775,6 +799,9 @@ function OnboardingForm(props: {
   const [sessionCap, setSessionCap] = useState<string | null>(null);
   const [zone, setZone] = useState<string | null>(null);
   const [goalKind, setGoalKind] = useState(props.presetGoal ?? "");
+  // Как проходит обычная пробежка. От этого зависит только первая тренировка:
+  // тому, кто пока чередует бег с шагом, лестница начинается раньше.
+  const [runStyle, setRunStyle] = useState<string | null>(null);
   const [raceDate, setRaceDate] = useState("");
   const [raceKm, setRaceKm] = useState("");
   const [sending, setSending] = useState(false);
@@ -822,6 +849,7 @@ function OnboardingForm(props: {
             ...(shows("maxSessionMinutes") ? { maxSessionCap: sessionCap } : {}),
             ...(props.needsTimezone && zone ? { timezone: zone } : {}),
             ...(shows("goalKind") && goalKind ? { goalKind } : {}),
+            ...(shows("canRunContinuously") && runStyle ? { runStyle } : {}),
             ...(shows("raceDate") && goalKind === "race" ? { raceDate } : {}),
             ...(shows("raceDistanceKm") && goalKind === "race" ? { raceDistanceKm: raceKm } : {}),
           },
@@ -843,6 +871,12 @@ function OnboardingForm(props: {
   return (
     <div>
       <h1 style={{ fontSize: 22, margin: "0 0 6px" }}>Настроим график</h1>
+      {/* Строка из бывшего шага 4 на сайте: страница теперь про формат работы,
+          а этот совет нужен ровно здесь, над самими вопросами. */}
+      <p style={{ margin: "0 0 14px", color: MUTED, lineHeight: 1.5 }}>
+        Отвечайте честно, а не как хотелось бы. План, который не влезает в вашу жизнь, не
+        выполняется на второй неделе.
+      </p>
       <p style={{ color: MUTED, margin: "0 0 22px", lineHeight: 1.5 }}>
         Всё остальное тренер про вас уже знает. Здесь только про то, когда и где вам удобно
         бегать. Если что-то поменяется, скажите тренеру, поправим.
@@ -1015,6 +1049,35 @@ function OnboardingForm(props: {
             rows={3}
             style={{ ...inputStyle, resize: "vertical" }}
           />
+        </Field>
+      ) : null}
+
+      {/* ПРО ФАКТ, А НЕ ПРО СПОСОБНОСТЬ. «Можете ли вы бежать двадцать минут»
+          звучит как норматив, и человек отвечает то, что считает правильным.
+          «Как проходит ваша обычная пробежка» спрашивает про вчерашний день, и
+          ответ выходит честным. Ни один вариант не хуже других: от них зависит
+          только то, с чего начнём. */}
+      {shows("canRunContinuously") ? (
+        <Field
+          label="Как сейчас проходит ваша обычная пробежка?"
+          hint="Про то, как есть, а не как хотелось бы. Нужно только для первой тренировки."
+        >
+          <div style={{ display: "grid", gap: 6 }}>
+            {[
+              { value: "continuous", label: "Бегу без остановок, двадцать минут и дольше" },
+              { value: "walk_breaks", label: "Бегу, но иногда перехожу на шаг" },
+              { value: "mostly_walk", label: "Пока больше хожу, чем бегу" },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setRunStyle(option.value)}
+                style={optionStyle(runStyle === option.value)}
+              >
+                <span style={{ fontWeight: 600 }}>{option.label}</span>
+              </button>
+            ))}
+          </div>
         </Field>
       ) : null}
 

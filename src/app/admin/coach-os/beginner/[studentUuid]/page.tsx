@@ -62,8 +62,10 @@ export default async function BeginnerStudentPage({
           <h2 style={{ marginTop: 0, color: "#a3330a" }}>Данные не идут, хотя человек бегает</h2>
           <p style={{ margin: 0 }}>{view.connectionHealth.messageRu}</p>
           <p style={{ margin: "10px 0 0", color: "#555" }}>
+            {/* Ссылки на /connect здесь больше нет: страница теперь про формат
+                работы, а инструкция по галочкам живёт в приложении ученицы. */}
             Что сказать: открыть intervals.icu → Settings → блок своих часов → отметить галочку про
-            скачивание тренировок. Инструкция: <a href="/connect">igorp.run/connect</a>
+            скачивание тренировок. То же самое написано у неё в приложении, на экране подключения.
           </p>
         </div>
       ) : null}

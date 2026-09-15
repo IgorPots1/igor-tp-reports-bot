@@ -60,7 +60,29 @@ async function main(): Promise<void> {
   expect(/^[a-z0-9-]+$/u.test(studentKey), `ключ латиницей: ${studentKey}`);
   expect(studentKey.endsWith("0111"), "в хвосте ключа telegram id: тёзки не столкнутся");
 
-  step("ЗАВЕДЕНИЕ, КАК ИЗ БОТА");
+  step("ЗАВЕДЕНИЕ ИЗ БОТА: БЕЗ ПРЕДЗАПОЛНЕНИЯ");
+  // Бот заводит в одно нажатие и НИ О ЧЁМ не спрашивает: всё, что важно,
+  // человек ответит сам за полминуты. Проверяем именно это: после заведения из
+  // бота анкета должна быть полной, включая вопрос про непрерывный бег.
+  const fromBot = await createIntervalsStudent({
+    studentKey: `${studentKey}-bot`,
+    name: "Из бота",
+    telegramUserId: TELEGRAM_ID + 1,
+    telegramChatId: String(TELEGRAM_ID + 1),
+    athleteId: null,
+    prefill: null,
+  });
+  const botPrefill = await getPrefill(fromBot.sourceId);
+  expect(botPrefill === null, "предзаполнения из бота нет вовсе");
+  const botVisible = visibleFormFields(botPrefill);
+  expect(
+    botVisible.includes("canRunContinuously"),
+    "вопрос про непрерывный бег вернулся в анкету: за человека на него не отвечают"
+  );
+  expect(botVisible.includes("goalKind"), "цель спрашиваем у неё же");
+  await cleanup(`${studentKey}-bot`);
+
+  step("ЗАВЕДЕНИЕ ИЗ СКРИПТА: ПРЕДЗАПОЛНЕНИЕ ЖИВО");
   const created = await createIntervalsStudent({
     studentKey,
     name: "Валентина Проверка",
@@ -117,6 +139,8 @@ async function main(): Promise<void> {
   for (const hidden of ["goalKind", "daysPerWeek", "canRunContinuously", "healthLimits"] as const) {
     expect(!visible.includes(hidden), `${hidden}: вопроса в анкете НЕ БУДЕТ`);
   }
+  // Механизм предзаполнения остался ровно тем же: убрали его ИЗ БОТА, а не из
+  // системы. Тренер, который действительно знает человека, задаёт поля скриптом.
   expect(visible.length > 0, `остальные вопросы на месте: ${visible.length}`);
 
   step("ОНА ПОДКЛЮЧИЛА ЧАСЫ");

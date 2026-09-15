@@ -3,27 +3,19 @@ import type { CSSProperties } from "react";
 import { Onest, JetBrains_Mono } from "next/font/google";
 
 import { publicPageMetadata } from "@/lib/site";
-import {
-  DEVICE_GUIDES,
-  MARK_ALL_RU,
-  NO_WATCH_BODY_RU,
-  NO_WATCH_TITLE_RU,
-  STEP_LEAD_RU,
-  STEP_TITLE_RU,
-  WHERE_TO_LOOK_RU,
-  WHY_NOT_STRAVA_RU,
-} from "@/features/intervals/device-guide";
 
 import { CONNECT_PAGE } from "@/features/intervals/connect-content";
 import { renderMarkdown } from "./markdown";
 
-// Инструкция ДЛЯ УЧЕНИКА, живущая на сайте, а не в пересланном сообщении.
-// Пересланное сообщение нельзя поправить: оно расходится с реальностью в тот
-// день, когда Intervals меняет настройки, и тонет в переписке. Ссылку на
-// страницу можно дать сто раз, и все сто раз она будет актуальной.
+// СТРАНИЦА ПРО ФОРМАТ РАБОТЫ, А НЕ ПРО ПОДКЛЮЧЕНИЕ [решение Игоря, 15.09.2026].
 //
-// Текст — в ./content.ts, список галочек — в features/intervals/device-guide.ts
-// (он же показывается в мини-приложении). Здесь только разметка.
+// Подключение часов отсюда убрано целиком и живёт в приложении: человек
+// подключается с телефона, и уводить его в браузер значит терять его из
+// приложения на самом хрупком шаге. Здесь осталось то, ради чего страницу
+// открывают заранее и с компьютера: во что ввязываешься, чего от тебя ждут и
+// что делать, когда пошло не так.
+//
+// Текст — в features/intervals/connect-content.ts. Здесь только разметка.
 
 const onest = Onest({
   subsets: ["latin", "cyrillic"],
@@ -40,7 +32,7 @@ export const metadata: Metadata = publicPageMetadata({
   path: "/connect",
   title: `${CONNECT_PAGE.titleRu} — Игорь Поцелуев · Беговой клуб`,
   description:
-    "Пошагово: как разрешить Intervals.icu забирать тренировки с часов и какие галочки нужно отметить, чтобы данные пошли.",
+    "Как устроена работа с тренером: что входит, что нужно от вас и что делать, если заболели, уехали или тренировка не пошла.",
 });
 
 // Стили заинлайнены, как на /privacy: страницу открывают по ссылке из бота на
@@ -143,72 +135,8 @@ export default function ConnectPage() {
         <span style={S.eyebrow}>{CONNECT_PAGE.eyebrowRu}</span>
         <h1 style={S.h1}>{CONNECT_PAGE.titleRu}</h1>
 
-        {/* ЕДИНОЕ ПОВЕСТВОВАНИЕ ИЗ РАЗНЫХ КУСКОВ. Порядок на странице:
-            вступление → правила формата → шаг 1 с подразделом → ШАГ 2 целиком
-            из device-guide → шаги 3-5 → почему не Strava → что делать, если.
-            Читателю швов не видно: он видит подряд идущие шаги.
-
-            ПОЧЕМУ КУСКОВ НЕСКОЛЬКО, А НЕ ОДИН introRu. Приложение показывает
-            правила формата и шаги подключения на РАЗНЫХ экранах: в момент
-            подключения человеку нечего запоминать про разборы, у него ещё нет
-            плана. Странице это деление не мешает: она выводит всё подряд и
-            выглядит ровно так же, как раньше. */}
         {renderMarkdown(CONNECT_PAGE.leadRu, "lead")}
         {renderMarkdown(CONNECT_PAGE.formatRu, "format")}
-        {renderMarkdown(CONNECT_PAGE.step1Ru, "step1")}
-        <h3 style={S.h3}>{CONNECT_PAGE.step1DetailsTitleRu}</h3>
-        {renderMarkdown(CONNECT_PAGE.step1DetailsRu, "step1d")}
-
-        <h2 style={S.h2}>{STEP_TITLE_RU}</h2>
-        {/* Текст шага в markdown: в нём жирные предупреждения, они несут смысл. */}
-        {renderMarkdown(STEP_LEAD_RU, "step2")}
-        <div style={S.where}>{WHERE_TO_LOOK_RU}</div>
-        {DEVICE_GUIDES.map((guide) => (
-          <section key={guide.code} style={S.card}>
-            <p style={S.deviceName}>{guide.labelRu}</p>
-            {guide.settingsBoxRu ? (
-              <p style={S.boxHint}>блок «{guide.settingsBoxRu}» в настройках</p>
-            ) : null}
-            {/* Часы без прямого подключения (Apple Watch): галочек нет,
-                вместо них честный рассказ про посредника. */}
-            {guide.bridgeRu.map((paragraph) => (
-              <p key={paragraph.slice(0, 32)} style={S.bridge}>
-                {paragraph}
-              </p>
-            ))}
-            {guide.steps.length > 0 ? <p style={S.markAll}>{MARK_ALL_RU}</p> : null}
-            {guide.steps.map((step) => (
-              <div key={step.titleRu} style={S.stepRow}>
-                <span style={S.check} aria-hidden>
-                  ✓
-                </span>
-                <div style={S.stepBody}>
-                  <p style={S.stepTitle}>{step.titleRu}</p>
-                  <p style={S.stepWhy}>{step.whyRu}</p>
-                </div>
-              </div>
-            ))}
-            {guide.noteRu ? <p style={S.note}>{guide.noteRu}</p> : null}
-          </section>
-        ))}
-
-        {NO_WATCH_BODY_RU ? (
-          <>
-            <h3 style={S.h3}>{NO_WATCH_TITLE_RU}</h3>
-            {renderMarkdown(NO_WATCH_BODY_RU, "nowatch")}
-          </>
-        ) : null}
-
-        {renderMarkdown(CONNECT_PAGE.afterStepsRu, "after")}
-
-        <h2 style={S.h2}>{WHY_NOT_STRAVA_RU.titleRu}</h2>
-        <ul style={S.list}>
-          {WHY_NOT_STRAVA_RU.pointsRu.map((point) => (
-            <li key={point} style={S.li}>
-              {point}
-            </li>
-          ))}
-        </ul>
 
         {CONNECT_PAGE.troubleRu ? (
           <>

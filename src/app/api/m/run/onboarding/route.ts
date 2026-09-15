@@ -119,7 +119,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         : Number(raw.raceDistanceKm),
     daysPerWeek: null,
     selfReportedWeeklyMinutes: null,
-    canRunContinuously: null,
+    // Как проходит обычная пробежка. Спрашиваем про ФАКТ, а не «можете ли вы»:
+    // человек отвечает про свой вчерашний день, а не сдаёт норматив. Два
+    // варианта из трёх означают «пока с перерывами», и это не хуже: от этого
+    // зависит только первая тренировка.
+    canRunContinuously:
+      raw.runStyle === "continuous" ? true : raw.runStyle === "walk_breaks" || raw.runStyle === "mostly_walk" ? false : null,
     healthLimits: null,
     experienceNote: null,
     weekStability: stability,

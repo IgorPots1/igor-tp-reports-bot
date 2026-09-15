@@ -1,6 +1,10 @@
 /**
  * Вход в приложение для ученика на тарифе с подключением часов.
  *
+ * ОДНА КНОПКА. Раньше их было две, и вторая вела на сайт с тем же текстом про
+ * подключение, что и внутри приложения. Теперь подключение объясняется только
+ * в приложении, а сайт остался про формат работы.
+ *
  * ЗАЧЕМ ЭТО СУЩЕСТВУЕТ. До 14.09.2026 войти было НЕКУДА: общая кнопка меню у
  * бота ведёт в клуб, короткое имя Mini App в BotFather не заведено, а /start
  * отвечал ссылкой на инструкцию. Человек читал инструкцию, подключал часы и
@@ -60,10 +64,6 @@ function appUrl(): string {
   return `${SITE_URL.replace(/\/+$/, "")}/m/run`;
 }
 
-function guideUrl(): string {
-  return `${SITE_URL.replace(/\/+$/, "")}/connect`;
-}
-
 export async function handleRunStartCommand(input: {
   chatId: string | number;
   from: { id: number } | null;
@@ -88,10 +88,10 @@ export async function handleRunStartCommand(input: {
     await sendTelegramWebAppButton({
       chatId: input.chatId,
       text: GREETING_RU,
-      buttons: [
-        { label: "Открыть приложение", webAppUrl: appUrl() },
-        { label: "Как подключить часы", url: guideUrl() },
-      ],
+      // ОДНА КНОПКА, А НЕ ДВЕ [решение Игоря, 15.09.2026]. Вторая вела на сайт,
+      // где лежал тот же текст про подключение, что и внутри приложения. Выбор
+      // между двумя дверями в одну комнату — это не забота, а задержка.
+      buttons: [{ label: "Открыть приложение", webAppUrl: appUrl() }],
     });
     return true;
   } catch (error) {
@@ -103,8 +103,11 @@ export async function handleRunStartCommand(input: {
     try {
       await sendTelegramMessageStrict(
         input.chatId,
-        `${GREETING_RU}\n\nПриложение открывается кнопкой меню слева от поля ввода.\n` +
-          `Инструкция: ${guideUrl()}`
+        // БЕЗ ССЫЛКИ НА САЙТ: там больше нет инструкции по подключению, она
+        // целиком живёт в приложении. Отправить человека на страницу, где нет
+        // ответа, хуже, чем не отправить никуда.
+        `${GREETING_RU}\n\nПриложение открывается кнопкой меню слева от поля ввода, ` +
+          "она называется «Мой план»."
       );
     } catch (fallbackError) {
       console.error("[run.start] не удалось ответить", {
