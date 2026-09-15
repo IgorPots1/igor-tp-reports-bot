@@ -21,6 +21,8 @@
 import type { Envelope } from "./autoplanner-context.ts";
 import { tierOf } from "./easy-anchor.ts";
 import type { AthleteAnchors, EasyAnchor } from "./pace-resolver.ts";
+import type { AthletePreference } from "./athlete-preferences.ts";
+import { sessionCapPreferences } from "@/features/intervals/loop/schedule";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, LENGTH_WEEKS,
   PEAK_OVER_BASE_MAX, PEAK_OVER_HISTORIC_MAX, STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE,
@@ -393,4 +395,50 @@ export function buildDraftFromOnboarding(
   };
 
   return { draft, intent, lengthWeeks, notes };
+}
+
+/**
+ * Пожелания атлета из анкеты.
+ *
+ * ПОЧЕМУ ЗДЕСЬ. Раньше жило внутри intervals-onboarding-plan, и второму
+ * потребителю (перегенерация после появления порога) пришлось бы завести
+ * копию. Две копии правил раскладки по дням разошлись бы на первой же правке,
+ * и человек получил бы тяжёлую в день, который сам назвал занятым.
+ */
+export function preferencesFromAnswers(answers: {
+  unavailableWeekdays: number[];
+  preferredLongWeekday: number | null;
+  preferredQualityWeekday: number | null;
+  daysPerWeek: number;
+  maxSessionMinutes: number | null;
+}): AthletePreference[] {
+  const prefs: AthletePreference[] = [];
+  for (const day of answers.unavailableWeekdays) {
+    prefs.push({ kind: "day_unavailable", dayOfWeek: day, reason: "анкета онбординга" });
+  }
+  if (answers.preferredLongWeekday !== null) {
+    prefs.push({
+      kind: "role_day",
+      role: "long",
+      dayOfWeek: answers.preferredLongWeekday,
+      reason: "анкета онбординга: удобный день длительной",
+    });
+  }
+  if (answers.preferredQualityWeekday !== null) {
+    prefs.push({
+      kind: "role_day",
+      role: "quality",
+      dayOfWeek: answers.preferredQualityWeekday,
+      reason: "анкета онбординга: удобный день тяжёлой тренировки",
+    });
+  }
+  prefs.push({ kind: "max_days_per_week", maxDays: answers.daysPerWeek, reason: "анкета онбординга" });
+
+  // ПОТОЛОК ДЛИТЕЛЬНОСТИ СЕССИИ — через тот же day_max_minutes, что и пожелания
+  // тренера по конкретным дням. Своего механизма резки не заводим: он был бы
+  // вторым местом, где считается одно и то же, и они разошлись бы.
+  for (const cap of sessionCapPreferences(answers.maxSessionMinutes)) {
+    prefs.push(cap);
+  }
+  return prefs;
 }

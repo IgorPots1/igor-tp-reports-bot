@@ -368,6 +368,7 @@
     "check:intervals-threshold": "npx tsx scripts/check-intervals-threshold.ts",
     "check:best-efforts": "npx tsx scripts/check-best-efforts.ts",
     "check:diagnostic-test": "npx tsx scripts/check-diagnostic-test.ts",
+    "check:plan-regeneration": "npx tsx scripts/check-plan-regeneration.ts",
     "check:quality-by-effort": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local tools/trainingpeaks-export/scripts/check-quality-by-effort.ts",
     "check:reminders": "npx tsx scripts/check-reminders.ts",
     "intervals:live-run": "npx tsx scripts/intervals-live-run.ts",
@@ -376,7 +377,8 @@
     "intervals:delete-student": "npx tsx scripts/intervals-delete-student.ts",
     "intervals:set-threshold": "npx tsx scripts/intervals-set-threshold.ts",
     "intervals:best-efforts": "npx tsx scripts/intervals-best-efforts.ts",
-    "intervals:test": "npx tsx scripts/intervals-diagnostic-test.ts"
+    "intervals:test": "npx tsx scripts/intervals-diagnostic-test.ts",
+    "intervals:regenerate": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local tools/trainingpeaks-export/scripts/intervals-regenerate.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",

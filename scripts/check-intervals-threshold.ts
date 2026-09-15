@@ -76,6 +76,33 @@ async function main(): Promise<void> {
   expect(manual.threshold?.confidence === "medium_low", "ручной простановке — ещё ниже: проверить нечем");
 
   step("БАЗА НЕ ПРИНИМАЕТ ПОЛОВИНУ ПОРОГА");
+
+  // ── СНАЧАЛА ЧИСТОЕ СОСТОЯНИЕ, ПОТОМ ПРОВЕРКА ─────────────────────────────
+  //
+  // ПОЙМАНО 15.09.2026: проверка упала один раз и прошла на трёх следующих.
+  // Причина: createIntervalsStudent заводит источник UPSERT-ом по паре
+  // (provider, external_athlete_id), а athlete id у заготовки детерминированный
+  // (pending-<ключ>). Значит остаток от прерванного прогона не создаётся заново,
+  // а ОЖИВАЕТ вместе с колонками порога, которые тот прогон успел записать.
+  // Дальше «обновим только темп» уже не нарушает констрейнт полноты: источник и
+  // дата на строке остались с прошлого раза. Проверка при этом сама за собой
+  // убирает, поэтому на следующем прогоне всё зелено, и дефект выглядит
+  // плавающим. Плавающая проверка хуже падающей: она приучает не смотреть.
+  const { data: leftover } = await supabase
+    .from("trainingpeaks_students")
+    .select("id")
+    .eq("student_id", KEY)
+    .maybeSingle();
+  if (leftover) {
+    const uuid = String((leftover as { id: string }).id);
+    console.log("  ⚑ остаток от прерванного прогона найден и снесён до начала");
+    await supabase.rpc("delete_intervals_student", {
+      p_student_uuid: uuid,
+      p_deleted_by: "check:intervals-threshold (уборка перед стартом)",
+    });
+    await supabase.from("deleted_students_archive").delete().eq("student_uuid", uuid);
+  }
+
   const created = await createIntervalsStudent({
     studentKey: KEY,
     name: "Проверка порога",
@@ -84,6 +111,22 @@ async function main(): Promise<void> {
     athleteId: null,
     prefill: null,
   });
+
+  // Предпосылка названа вслух: без неё следующая проверка проверяет не то, что
+  // написано в её тексте, и молча.
+  const { data: fresh } = await supabase
+    .from("student_data_sources")
+    .select("threshold_pace_sec_per_km, threshold_source, threshold_set_at")
+    .eq("id", created.sourceId)
+    .maybeSingle();
+  const freshRow = fresh as Record<string, unknown> | null;
+  expect(
+    freshRow !== null &&
+      freshRow.threshold_pace_sec_per_km === null &&
+      freshRow.threshold_source === null &&
+      freshRow.threshold_set_at === null,
+    "источник заведён пустым: порога на нём нет"
+  );
 
   const { error: halfError } = await supabase
     .from("student_data_sources")

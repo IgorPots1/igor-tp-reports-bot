@@ -38,10 +38,10 @@ import type { BeginnerWeekInput } from "./lib/beginner-week.ts";
 import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
 import { forecast } from "./lib/training-cycle.ts";
 import { placeDiagnosticTest } from "./lib/intervals-diagnostic-test.ts";
-import type { AthletePreference } from "./lib/athlete-preferences.ts";
-import { sessionCapPreferences } from "@/features/intervals/loop/schedule";
+import { parseTargetFromDescription, workBand } from "./lib/intervals-session-target.ts";
 import {
   buildAnchors, buildDraftFromOnboarding, buildEnvelope, type StoredThreshold,
+  preferencesFromAnswers,
 } from "./lib/intervals-plan-adapter.ts";
 
 function arg(name: string): string | null {
@@ -73,38 +73,6 @@ const paceText = (seconds: number | null): string => {
  * max_days_per_week уже есть и уже проверены на ростере. Анкета ложится на них
  * без остатка — это и был признак, что состав полей выбран правильно.
  */
-function preferencesFromAnswers(answers: OnboardingAnswers): AthletePreference[] {
-  const prefs: AthletePreference[] = [];
-  for (const day of answers.unavailableWeekdays) {
-    prefs.push({ kind: "day_unavailable", dayOfWeek: day, reason: "анкета онбординга" });
-  }
-  if (answers.preferredLongWeekday !== null) {
-    prefs.push({
-      kind: "role_day",
-      role: "long",
-      dayOfWeek: answers.preferredLongWeekday,
-      reason: "анкета онбординга: удобный день длительной",
-    });
-  }
-  if (answers.preferredQualityWeekday !== null) {
-    prefs.push({
-      kind: "role_day",
-      role: "quality",
-      dayOfWeek: answers.preferredQualityWeekday,
-      reason: "анкета онбординга: удобный день тяжёлой тренировки",
-    });
-  }
-  prefs.push({ kind: "max_days_per_week", maxDays: answers.daysPerWeek, reason: "анкета онбординга" });
-
-  // ПОТОЛОК ДЛИТЕЛЬНОСТИ СЕССИИ — через тот же day_max_minutes, что и пожелания
-  // тренера по конкретным дням. Своего механизма резки не заводим: он был бы
-  // вторым местом, где считается одно и то же, и они разошлись бы.
-  for (const cap of sessionCapPreferences(answers.maxSessionMinutes)) {
-    prefs.push(cap);
-  }
-  return prefs;
-}
-
 function printStartingPoint(start: StartingPoint): void {
   console.log("── Стартовая точка ──────────────────────────");
   console.log(`источник:            ${start.source === "history" ? "история Intervals" : "анкета (истории нет)"}`);
@@ -487,6 +455,13 @@ async function main(): Promise<void> {
       preset_code: session.presetCode,
       description: session.description,
       target_mode: session.targetMode === "pace" || session.targetMode === "rpe" ? session.targetMode : null,
+      // ЧИСЛА В КОЛОНКИ, А НЕ ТОЛЬКО В ТЕКСТ. Колонки pace_fast_s/pace_slow_s/rpe
+      // существовали с первой миграции и всё это время оставались пустыми: темпы
+      // жили внутри описания. Из-за этого сравнить два плана можно было только
+      // разбором текста. Пишем полосу ОСНОВНОЙ части, не разминки.
+      pace_fast_s: workBand(session.segments).fastSec,
+      pace_slow_s: workBand(session.segments).slowSec,
+      rpe: parseTargetFromDescription(session.description).rpe,
       anchor_source: session.anchorSource,
       confidence: session.confidence,
       deferred: session.deferred,
