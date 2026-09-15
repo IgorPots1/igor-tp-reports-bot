@@ -24,6 +24,19 @@ KEEP_DAYS=7
 
 mkdir -p "$DUMP_DIR"
 
+# launchd's `bash -lc` reads ~/.bash_profile, NOT .env.local (the repo's other bash launchd
+# runners rely on secrets already sitting in ~/.bash_profile — see run-club-execute-approved.sh's
+# comment on the same gotcha for CLUB_RACE_AS_EVENT). SUPABASE_ACCESS_TOKEN lives in .env.local
+# instead (Igor's choice, keeping the PAT in ONE place), so a scheduled run never had it — the
+# manual test run only worked because Igor had sourced .env.local himself first. Source it here,
+# only filling in what a launchd invocation would otherwise miss.
+if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ] && [ -f "$REPO/.env.local" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO/.env.local"
+  set +a
+fi
+
 if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
   echo "[$(date '+%F %T')] SUPABASE_ACCESS_TOKEN не задан — дамп пропущен"
   npm --prefix "$REPO/tools/trainingpeaks-export" run --silent tp-ops-notify -- \
