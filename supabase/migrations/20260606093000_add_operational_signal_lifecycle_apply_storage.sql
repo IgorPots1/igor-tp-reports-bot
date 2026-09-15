@@ -29,6 +29,14 @@ create index if not exists trainingpeaks_student_operational_signals_lifecycle_s
 create index if not exists trainingpeaks_student_operational_signals_student_lifecycle_state_idx
   on public.trainingpeaks_student_operational_signals (student_id, lifecycle_state);
 
+-- Constraint/index names below use the short opsig_lifecycle_* form, matching what actually
+-- exists on prod (verified 2026-09-15 by reading pg_constraint/pg_indexes there) rather than the
+-- table-prefixed names naively written here originally. Those long names collide after Postgres's
+-- 63-byte identifier truncation: the two check constraints and the three long-form index names
+-- below all shared an identical 63-byte prefix, so this file has NEVER actually replayed cleanly
+-- on a fresh database — prod's real table was created by hand through the SQL editor with these
+-- short names, plus an actor check and two extra lifecycle states ('reopened',
+-- 'stale_needs_review') that this file never had at all. Renamed/extended here to match reality.
 create table if not exists public.trainingpeaks_student_operational_signal_lifecycle_transitions (
   id uuid primary key default gen_random_uuid(),
   signal_id uuid not null references public.trainingpeaks_student_operational_signals(id) on delete cascade,
@@ -41,17 +49,19 @@ create table if not exists public.trainingpeaks_student_operational_signal_lifec
   evidence_snapshot jsonb not null default '{}'::jsonb,
   dry_run_fingerprint text not null,
   created_at timestamptz not null default now(),
-  constraint trainingpeaks_student_operational_signal_lifecycle_transitions_to_lifecycle_state_check
+  constraint opsig_lifecycle_to_state_chk
     check (
       to_lifecycle_state in (
         'active_problem',
         'return_planned',
         'return_trial_completed',
         'monitoring_after_return',
-        'resolved'
+        'resolved',
+        'reopened',
+        'stale_needs_review'
       )
     ),
-  constraint trainingpeaks_student_operational_signal_lifecycle_transitions_from_lifecycle_state_check
+  constraint opsig_lifecycle_from_state_chk
     check (
       from_lifecycle_state is null
       or from_lifecycle_state in (
@@ -59,18 +69,29 @@ create table if not exists public.trainingpeaks_student_operational_signal_lifec
         'return_planned',
         'return_trial_completed',
         'monitoring_after_return',
-        'resolved'
+        'resolved',
+        'reopened',
+        'stale_needs_review'
+      )
+    ),
+  constraint opsig_lifecycle_actor_chk
+    check (
+      actor in (
+        'system',
+        'system_inference',
+        'coach',
+        'athlete_message'
       )
     )
 );
 
-create index if not exists trainingpeaks_student_operational_signal_lifecycle_transitions_signal_created_idx
+create index if not exists opsig_lifecycle_transitions_signal_created_idx
   on public.trainingpeaks_student_operational_signal_lifecycle_transitions (signal_id, created_at desc);
 
-create index if not exists trainingpeaks_student_operational_signal_lifecycle_transitions_student_created_idx
+create index if not exists opsig_lifecycle_transitions_student_created_idx
   on public.trainingpeaks_student_operational_signal_lifecycle_transitions (student_id, created_at desc);
 
-create unique index if not exists trainingpeaks_student_operational_signal_lifecycle_transitions_signal_fingerprint_idx
+create unique index if not exists opsig_lifecycle_transitions_signal_fingerprint_idx
   on public.trainingpeaks_student_operational_signal_lifecycle_transitions (signal_id, dry_run_fingerprint);
 
 revoke all on table public.trainingpeaks_student_operational_signal_lifecycle_transitions from anon, authenticated, public;
