@@ -23,6 +23,7 @@ loadLocalEnv();
 
 import { createSupabaseServerClient } from "../../../src/features/supabase/server.ts";
 import { sendCoachTelegramMessage } from "./lib/coach-telegram-notify.ts";
+import { getRuntimeFlag, setRuntimeFlag } from "../../../src/features/trainingpeaks/feedback/app-runtime-flags.ts";
 
 type HeartbeatFlow = { job: string; label: string; maxH: number; cadence: string };
 const HEARTBEAT_FLOWS: HeartbeatFlow[] = [
@@ -161,6 +162,86 @@ async function main(): Promise<void> {
     const ok = age <= 26;
     state.push(`  ${ok ? "✅" : "⚠️"} импорт платежей (Vercel, дневной): последний успех ${fmt(age)} назад · порог 26ч`);
     if (!ok) stale.push(`⚠️ импорт платежей: молчит ${fmt(age)} (порог 26ч) — проверь Vercel cron billing-email-import`);
+  }
+
+  // ДОБАВЛЕНЫ 15.09 (наряд telegram-context-and-voice, блок C2). Три правила, все молчат по
+  // умолчанию — этот монитор уже не шлёт «всё ок», и новые правила не должны стать первым
+  // исключением. Регрессия A0 (коучьи сообщения тихо перестали писаться в наблюдения) должна
+  // ловиться правилом 1 на следующие сутки после того, как она случится.
+
+  // Правило 1: за сутки ноль исходящих (direction='outbound') — это ровно регрессия A0, если бы
+  // она случилась после фикса: коуч пишет ученикам постоянно, но эти реплики нигде не оседают.
+  {
+    const { data } = await sb.from("trainingpeaks_telegram_context_coverage_24h").select("outbound_count").single();
+    const outboundCount = (data as { outbound_count: number } | null)?.outbound_count ?? null;
+    const ok = outboundCount !== null && outboundCount > 0;
+    state.push(`  ${ok ? "✅" : "⚠️"} исходящие коуча за сутки: ${outboundCount ?? "нет данных"}`);
+    if (!ok) stale.push(`⚠️ исходящие коуча за сутки: 0 — репликами тренера никто не пишется в наблюдения (регрессия A0?)`);
+  }
+
+  // Правило 2: очередь транскрипции растёт два прогона подряд — берём вручную (ручной путь,
+  // voice_transcription_jobs) плюс автоматическую (transcript_status на observations) как одну
+  // суммарную глубину, потому что обе тянет один и тот же локальный воркер, и застревание любой
+  // из них выглядит для Игоря одинаково: голосовые не расшифровываются. Сравнение МЕЖДУ прогонами
+  // монитора — раз в сутки (09:30), так что «два прогона подряд» здесь буквально «два дня подряд».
+  {
+    const [{ count: manualPending }, { data: coverageRow }] = await Promise.all([
+      sb.from("voice_transcription_jobs").select("id", { count: "exact", head: true }).eq("status", "pending"),
+      sb.from("trainingpeaks_telegram_context_coverage_24h").select("voice_pending, voice_processing").single(),
+    ]);
+    const autoPending =
+      ((coverageRow as { voice_pending: number; voice_processing: number } | null)?.voice_pending ?? 0) +
+      ((coverageRow as { voice_pending: number; voice_processing: number } | null)?.voice_processing ?? 0);
+    const currentDepth = (manualPending ?? 0) + autoPending;
+    const previousDepthRaw = await getRuntimeFlag("voice_transcription_queue_depth");
+    const previousDepth = previousDepthRaw !== null ? Number(previousDepthRaw) : null;
+    const growing = previousDepth !== null && currentDepth > previousDepth && currentDepth > 0;
+    state.push(
+      `  ${growing ? "⚠️" : "✅"} очередь транскрипции: ${currentDepth} (было на прошлом прогоне: ${previousDepth ?? "нет данных"})`
+    );
+    if (growing) {
+      stale.push(`⚠️ очередь транскрипции растёт: было ${previousDepth}, стало ${currentDepth} — воркер на Маке не успевает или встал`);
+    }
+    if (!dryRun) {
+      await setRuntimeFlag({
+        key: "voice_transcription_queue_depth",
+        value: String(currentDepth),
+        actorChatId: "tp-pipeline-heartbeat-monitor",
+      });
+    }
+  }
+
+  // Правило 3: суточный объём личных или групповых-топиковых сообщений просел больше чем вдвое
+  // против скользящего среднего за 14 дней. business_dm — самый частый канал, group_topic —
+  // второй по объёму; private_dm сознательно не сторожим здесь (30 строк всего в исходном аудите,
+  // скользящее среднее на таком объёме шумит само по себе и даёт ложные тревоги).
+  {
+    const { data } = await sb
+      .from("trainingpeaks_telegram_context_coverage_24h")
+      .select("business_dm_count_24h, business_dm_avg_14d, group_topic_count_24h, group_topic_avg_14d")
+      .single();
+    const row = data as {
+      business_dm_count_24h: number;
+      business_dm_avg_14d: number | null;
+      group_topic_count_24h: number;
+      group_topic_avg_14d: number | null;
+    } | null;
+
+    for (const [label, count, avg] of [
+      ["business_dm", row?.business_dm_count_24h ?? null, row?.business_dm_avg_14d ?? null],
+      ["group_topic", row?.group_topic_count_24h ?? null, row?.group_topic_avg_14d ?? null],
+    ] as const) {
+      if (count === null || avg === null || avg < 5) {
+        // avg < 5: too little history/volume for a "vs average" comparison to mean anything.
+        state.push(`  ➖ объём ${label}: недостаточно истории для сравнения (среднее ${avg ?? "нет"})`);
+        continue;
+      }
+      const dropped = count < avg * 0.5;
+      state.push(`  ${dropped ? "⚠️" : "✅"} объём ${label} за сутки: ${count} против среднего ${avg}`);
+      if (dropped) {
+        stale.push(`⚠️ объём ${label} за сутки просел больше чем вдвое: ${count} против среднего ${avg} за 14 дней`);
+      }
+    }
   }
 
   console.log(`[tp-pipeline-heartbeat-monitor] ${new Date(now).toISOString()}`);
