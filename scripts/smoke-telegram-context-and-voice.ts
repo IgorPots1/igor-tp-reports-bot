@@ -63,6 +63,7 @@ import { insertVoiceTranscriptionJob, markVoiceTranscriptionJobDone } from "@/fe
 import { transcribeTelegramFile } from "@/features/voice-transcription/transcribe";
 import { handleManualVoiceTranscriptionRequest } from "@/features/voice-transcription/webhook";
 import type { TelegramMessage } from "@/features/telegram/types";
+import { POST as telegramWebhookPost } from "@/app/api/telegram/webhook/route";
 
 const execFileAsync = promisify(execFile);
 
@@ -254,6 +255,89 @@ async function test5_foreignChatIdNeverEnqueues(): Promise<void> {
   }
 }
 
+/**
+ * Route-level regression test (not just handleManualVoiceTranscriptionRequest in isolation,
+ * which never looks at forward_from at all): a REAL Telegram update through the actual POST
+ * handler, for the coach forwarding a voice note whose forward_from is an ALREADY-ENROLLED
+ * student. route.ts runs the voice check before the enrollment block specifically so this
+ * doesn't get swallowed by enrollment's own forward_from branch (which has no content-type
+ * check) — a real prod test on 2026-09-15 hit exactly this shape and initially looked like a
+ * regression before turning out to be a deploy-timing coincidence. This closes that gap for
+ * real, at the route level, so a genuine reordering regression would fail here.
+ */
+async function test8_forwardedVoiceFromEnrolledStudentSkipsEnrollment(coachChatId: string): Promise<void> {
+  const sb = createSupabaseServerClient();
+  const forwardedTelegramUserId = 800000000 + Math.floor(Math.random() * 99999);
+  let enrolledStudentRowId: string | null = null;
+
+  try {
+    const { data: inserted, error: insertError } = await sb
+      .from("trainingpeaks_students")
+      .insert({
+        student_id: `smoke-forward-known-${randomUUID().slice(0, 8)}`,
+        student_name: "SMOKE TEST — forwarded-voice known student",
+        is_active: true,
+        telegram_user_id: forwardedTelegramUserId,
+      })
+      .select("id")
+      .single();
+
+    if (insertError || !inserted) {
+      record("8. forwarded voice from enrolled student -> job, not enrollment", false, `fixture insert failed: ${insertError?.message}`);
+      return;
+    }
+    enrolledStudentRowId = (inserted as { id: string }).id;
+    cleanup.push(async () => { await sb.from("trainingpeaks_students").delete().eq("id", enrolledStudentRowId!); });
+
+    const messageId = 900000 + Math.floor(Math.random() * 90000);
+    const coachUserId = Number(coachChatId);
+    const fakeUpdate = {
+      update_id: 800000000 + Math.floor(Math.random() * 99999),
+      message: {
+        message_id: messageId,
+        chat: { id: coachUserId, type: "private" },
+        from: { id: coachUserId },
+        forward_from: { id: forwardedTelegramUserId, first_name: "SMOKE" },
+        voice: { file_id: "smoke-forwarded-voice-file-id", file_unique_id: "smoke-forwarded-unique", duration: 5 },
+      },
+    };
+
+    const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim();
+    const response = await telegramWebhookPost(
+      new Request("http://localhost/api/telegram/webhook", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(secret ? { "x-telegram-bot-api-secret-token": secret } : {}),
+        },
+        body: JSON.stringify(fakeUpdate),
+      })
+    );
+
+    const { data: jobs } = await sb
+      .from("voice_transcription_jobs")
+      .select("id")
+      .eq("telegram_chat_id", String(coachUserId))
+      .eq("telegram_message_id", String(messageId));
+
+    if (jobs && jobs.length > 0) {
+      cleanup.push(async () => { await sb.from("voice_transcription_jobs").delete().eq("id", jobs[0]!.id); });
+    }
+
+    const jobCreated = Array.isArray(jobs) && jobs.length === 1;
+    const ok = response.status === 200 && jobCreated;
+    record(
+      "8. forwarded voice from enrolled student -> job, not enrollment",
+      ok,
+      jobCreated
+        ? "job created — enrollment's forward_from branch did not intercept it"
+        : `no job created (status ${response.status}) — enrollment likely ran instead of the voice check`
+    );
+  } catch (error) {
+    record("8. forwarded voice from enrolled student -> job, not enrollment", false, error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function test6_coachChatIdsArePrivate(): Promise<void> {
   try {
     const coachChatIds = getTrainingPeaksCoachChatIds();
@@ -309,6 +393,7 @@ async function main(): Promise<void> {
     await test4_unlinkedChatWritesNullStudent();
     await test5_foreignChatIdNeverEnqueues();
     await test6_coachChatIdsArePrivate();
+    await test8_forwardedVoiceFromEnrolledStudentSkipsEnrollment(coachChatId);
   } finally {
     console.log(`[smoke] cleaning up ${cleanup.length} fixture(s)/row(s)...`);
     let cleanupFailures = 0;
