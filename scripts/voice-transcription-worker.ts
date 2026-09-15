@@ -20,12 +20,21 @@ import {
   markVoiceTranscriptionJobFailedOrRequeue,
   type VoiceTranscriptionJob,
 } from "@/features/voice-transcription/repository";
+import {
+  claimPendingTranscriptionObservations,
+  markObservationTranscriptDone,
+  markObservationTranscriptFailedOrRequeue,
+  type PendingTranscriptionObservation,
+} from "@/features/trainingpeaks/repository";
 import { transcribeTelegramFile } from "@/features/voice-transcription/transcribe";
 import { splitForTelegram } from "@/features/voice-transcription/telegram-message-split";
 
 const MAX_JOBS_PER_TICK = Number(process.env.VOICE_TRANSCRIPTION_MAX_JOBS_PER_TICK ?? "3");
 const MAX_ATTEMPTS = Number(process.env.VOICE_TRANSCRIPTION_MAX_ATTEMPTS ?? "3");
 const STALE_JOB_AGE_MS = 24 * 60 * 60 * 1000;
+// Same queue size/retry budget as the manual jobs table — one shared read of what "too many at
+// once" and "give up" mean, not two independently-tuned numbers.
+const MAX_OBSERVATIONS_PER_TICK = Number(process.env.VOICE_TRANSCRIPTION_MAX_OBSERVATIONS_PER_TICK ?? "5");
 
 async function deliverTranscript(job: VoiceTranscriptionJob, transcript: string): Promise<void> {
   const chunks = splitForTelegram(transcript || "(пусто — распознать нечего)");
@@ -92,18 +101,63 @@ async function processJob(job: VoiceTranscriptionJob): Promise<void> {
   }
 }
 
+// The automatic queue (attachment_type in voice/video_note on context observations, either
+// direction). No Telegram delivery here — unlike the manual path, this is silent context
+// enrichment: transcript goes into the transcript column for the feedback/reply-draft/memory
+// pipelines to read, text_preview (the original message's own text, usually empty for a voice
+// note) is never touched.
+async function processObservation(observation: PendingTranscriptionObservation): Promise<void> {
+  const ageMs = Date.now() - new Date(observation.observedAt).getTime();
+  if (ageMs > STALE_JOB_AGE_MS) {
+    await markObservationTranscriptFailedOrRequeue({
+      id: observation.id,
+      attempts: MAX_ATTEMPTS,
+      maxAttempts: MAX_ATTEMPTS,
+      error: `file_id too old to trust (observation age ${Math.round(ageMs / 3600000)}h)`,
+    });
+    console.warn(`[voice-transcription] observation ${observation.id} stale, skipping download`);
+    return;
+  }
+
+  try {
+    const result = await transcribeTelegramFile(observation.attachmentFileId);
+    await markObservationTranscriptDone({ id: observation.id, transcript: result.transcript });
+    console.log(`[voice-transcription] observation ${observation.id} done in ${result.processingMs}ms`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const outcome = await markObservationTranscriptFailedOrRequeue({
+      id: observation.id,
+      attempts: observation.attempts,
+      maxAttempts: MAX_ATTEMPTS,
+      error: message,
+    });
+    console.error(
+      `[voice-transcription] observation ${observation.id} failed (attempt ${observation.attempts}/${MAX_ATTEMPTS}): ${message} (${outcome})`
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const jobs = await claimPendingVoiceTranscriptionJobs(MAX_JOBS_PER_TICK);
 
   if (jobs.length === 0) {
-    console.log("[voice-transcription] no pending jobs");
-    return;
+    console.log("[voice-transcription] no pending manual jobs");
+  } else {
+    console.log(`[voice-transcription] claimed ${jobs.length} manual job(s)`);
+    for (const job of jobs) {
+      await processJob(job);
+    }
   }
 
-  console.log(`[voice-transcription] claimed ${jobs.length} job(s)`);
+  const observations = await claimPendingTranscriptionObservations(MAX_OBSERVATIONS_PER_TICK);
 
-  for (const job of jobs) {
-    await processJob(job);
+  if (observations.length === 0) {
+    console.log("[voice-transcription] no pending observations");
+  } else {
+    console.log(`[voice-transcription] claimed ${observations.length} observation(s)`);
+    for (const observation of observations) {
+      await processObservation(observation);
+    }
   }
 }
 

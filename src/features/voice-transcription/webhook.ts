@@ -6,16 +6,11 @@ import {
   insertVoiceTranscriptionJob,
   type VoiceTranscriptionSourceKind,
 } from "@/features/voice-transcription/repository";
+import { getMaxVoiceDurationSec } from "@/features/voice-transcription/limits";
 
 // Bot API's own getFile ceiling for regular bots — Telegram refuses to serve file_path past this,
 // so checking message.*.file_size up front (when Telegram sends it) avoids a doomed download.
 const TELEGRAM_BOT_API_MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
-
-function getMaxVoiceDurationSec(): number {
-  const raw = process.env.VOICE_TRANSCRIPTION_MAX_DURATION_SEC?.trim();
-  const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1200; // 20 min default
-}
 
 type TranscribableMedia = {
   kind: VoiceTranscriptionSourceKind;

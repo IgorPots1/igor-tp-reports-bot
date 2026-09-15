@@ -12,6 +12,7 @@ import {
   buildTelegramContextTextPreview,
   sha256TelegramContextText,
 } from "@/features/trainingpeaks/telegram-context";
+import { getMaxVoiceDurationSec } from "@/features/voice-transcription/limits";
 import {
   extractMoveSourceExecutionContextFromDryRunLog,
   INFERRED_MOVE_SOURCE_EXECUTION_BLOCK_MESSAGE_RU,
@@ -6862,6 +6863,9 @@ export type TrainingPeaksTelegramContextObservation = {
   attachmentType: string | null;
   attachmentFileId: string | null;
   attachmentDurationSec: number | null;
+  transcript: string | null;
+  transcriptStatus: string | null;
+  transcriptAt: string | null;
 };
 
 type TrainingPeaksTelegramContextObservationRow = {
@@ -6882,6 +6886,9 @@ type TrainingPeaksTelegramContextObservationRow = {
   attachment_type: string | null;
   attachment_file_id: string | null;
   attachment_duration_sec: number | null;
+  transcript: string | null;
+  transcript_status: string | null;
+  transcript_at: string | null;
 };
 
 export type InsertTrainingPeaksTelegramContextObservationInput = {
@@ -6928,6 +6935,9 @@ function mapTrainingPeaksTelegramContextObservationRow(
     attachmentType: row.attachment_type,
     attachmentFileId: row.attachment_file_id,
     attachmentDurationSec: row.attachment_duration_sec,
+    transcript: row.transcript,
+    transcriptStatus: row.transcript_status,
+    transcriptAt: row.transcript_at,
   };
 }
 
@@ -6936,6 +6946,24 @@ export async function insertTrainingPeaksTelegramContextObservation(
 ): Promise<TrainingPeaksTelegramContextObservation> {
   const supabase = createSupabaseServerClient();
   const direction = input.direction ?? "inbound";
+  // B3: any voice/video_note attachment (either direction — the coach's own voice notes get
+  // transcribed too, context is two-sided) with a real file_id enters the transcription queue
+  // automatically. No opt-in per call site: every current and future writer of this table gets
+  // it for free, which is the point — a copy of this condition at each of the 5 insert call
+  // sites would drift the way the pre-наряд senderRole logic already did once.
+  const isTranscribableAttachment =
+    (input.attachmentType === "voice" || input.attachmentType === "video_note") &&
+    Boolean(input.attachmentFileId);
+  const exceedsDurationCeiling =
+    isTranscribableAttachment &&
+    input.attachmentDurationSec !== null &&
+    input.attachmentDurationSec !== undefined &&
+    input.attachmentDurationSec > getMaxVoiceDurationSec();
+  const transcriptStatus = exceedsDurationCeiling ? "skipped" : isTranscribableAttachment ? "pending" : null;
+  const metadataWithSkipReason =
+    exceedsDurationCeiling
+      ? { ...(input.metadata ?? {}), transcriptionSkippedReason: `duration_sec=${input.attachmentDurationSec} exceeds ${getMaxVoiceDurationSec()}` }
+      : (input.metadata ?? {});
   const { data, error } = await supabase
     .from("trainingpeaks_telegram_context_observations")
     .insert({
@@ -6948,12 +6976,13 @@ export async function insertTrainingPeaksTelegramContextObservation(
       labels: input.labels,
       text_sha256: input.textSha256 ?? null,
       text_preview: input.textPreview ?? null,
-      metadata: input.metadata ?? {},
+      metadata: metadataWithSkipReason,
       direction,
       sender_role: input.senderRole ?? null,
       attachment_type: input.attachmentType ?? null,
       attachment_file_id: input.attachmentFileId ?? null,
       attachment_duration_sec: input.attachmentDurationSec ?? null,
+      transcript_status: transcriptStatus,
     })
     .select("*")
     .single();
@@ -7487,6 +7516,218 @@ export async function backfillTrainingPeaksTelegramContextStudentIdByChatId(inpu
   }
 
   return { updatedCount: Array.isArray(data) ? data.length : 0 };
+}
+
+// B3: automatic transcription queue over trainingpeaks_telegram_context_observations itself —
+// deliberately NOT a copy of voice_transcription_jobs' claim logic even though the shape is
+// similar, because this table has no attempts/last_error columns (adding them was out of scope
+// for the additive migration in A1); the retry counter lives in metadata.transcriptionAttempts
+// instead. Both queues are drained by the same worker script, calling the same
+// transcribeTelegramFile from src/features/voice-transcription/transcribe.ts.
+export type PendingTranscriptionObservation = {
+  id: string;
+  attachmentFileId: string;
+  attachmentType: string;
+  chatId: string;
+  observedAt: string;
+  attempts: number;
+};
+
+function readTranscriptionAttempts(metadata: unknown): number {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return 0;
+  }
+  const value = (metadata as Record<string, unknown>).transcriptionAttempts;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+export async function claimPendingTranscriptionObservations(
+  limit: number
+): Promise<PendingTranscriptionObservation[]> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: candidates, error: listError } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select("id")
+      .eq("transcript_status", "pending")
+      .order("observed_at", { ascending: true })
+      .limit(limit)
+  );
+
+  if (listError) {
+    throw new Error(`Failed to list pending transcription observations: ${describeSupabaseError(listError)}`);
+  }
+
+  const claimed: PendingTranscriptionObservation[] = [];
+
+  for (const candidate of (candidates as { id: string }[] | null) ?? []) {
+    const { data: existingRows, error: readError } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_telegram_context_observations")
+        .select("metadata")
+        .eq("id", candidate.id)
+        .single()
+    );
+
+    if (readError || !existingRows) {
+      continue;
+    }
+
+    const currentAttempts = readTranscriptionAttempts((existingRows as { metadata: unknown }).metadata);
+    const existingMetadata =
+      (existingRows as { metadata: unknown }).metadata &&
+      typeof (existingRows as { metadata: unknown }).metadata === "object" &&
+      !Array.isArray((existingRows as { metadata: unknown }).metadata)
+        ? ((existingRows as { metadata: Record<string, unknown> }).metadata)
+        : {};
+
+    const { data, error } = await withSupabaseNetworkRetry(() =>
+      supabase
+        .from("trainingpeaks_telegram_context_observations")
+        .update({
+          transcript_status: "processing",
+          metadata: { ...existingMetadata, transcriptionAttempts: currentAttempts + 1 },
+        })
+        .eq("id", candidate.id)
+        .eq("transcript_status", "pending")
+        .select("id, attachment_file_id, attachment_type, chat_id, observed_at")
+    );
+
+    if (error || !data || data.length !== 1) {
+      // Lost the race to another runner tick — skip, not an error.
+      continue;
+    }
+
+    const row = data[0] as {
+      id: string;
+      attachment_file_id: string | null;
+      attachment_type: string | null;
+      chat_id: string;
+      observed_at: string;
+    };
+
+    if (!row.attachment_file_id || !row.attachment_type) {
+      continue;
+    }
+
+    claimed.push({
+      id: row.id,
+      attachmentFileId: row.attachment_file_id,
+      attachmentType: row.attachment_type,
+      chatId: row.chat_id,
+      observedAt: row.observed_at,
+      attempts: currentAttempts + 1,
+    });
+  }
+
+  return claimed;
+}
+
+export async function markObservationTranscriptDone(input: {
+  id: string;
+  transcript: string;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+
+  const { error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .update({
+        transcript: input.transcript,
+        transcript_status: "done",
+        transcript_at: new Date().toISOString(),
+      })
+      .eq("id", input.id)
+  );
+
+  if (error) {
+    throw new Error(`Failed to mark transcription observation done: ${describeSupabaseError(error)}`);
+  }
+}
+
+// Same requeue-vs-fail split as voice_transcription_jobs: attempts < maxAttempts goes back to
+// 'pending' (the launchd poll interval is the backoff), otherwise 'failed'. The error reason
+// lives in metadata (no last_error column on this table).
+export async function markObservationTranscriptFailedOrRequeue(input: {
+  id: string;
+  attempts: number;
+  maxAttempts: number;
+  error: string;
+}): Promise<"requeued" | "failed"> {
+  const supabase = createSupabaseServerClient();
+  const nextStatus = input.attempts >= input.maxAttempts ? "failed" : "pending";
+
+  const { data: existing, error: readError } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select("metadata")
+      .eq("id", input.id)
+      .single()
+  );
+
+  if (readError) {
+    throw new Error(`Failed to read transcription observation before failure update: ${describeSupabaseError(readError)}`);
+  }
+
+  const existingMetadata =
+    existing?.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+      ? (existing.metadata as Record<string, unknown>)
+      : {};
+
+  const { error: updateError } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .update({
+        transcript_status: nextStatus,
+        metadata: { ...existingMetadata, transcriptionError: input.error },
+      })
+      .eq("id", input.id)
+  );
+
+  if (updateError) {
+    throw new Error(`Failed to update transcription observation after failure: ${describeSupabaseError(updateError)}`);
+  }
+
+  return nextStatus === "failed" ? "failed" : "requeued";
+}
+
+export async function markObservationTranscriptSkipped(input: {
+  id: string;
+  reason: string;
+}): Promise<void> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: existing, error: readError } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select("metadata")
+      .eq("id", input.id)
+      .single()
+  );
+
+  if (readError) {
+    throw new Error(`Failed to read transcription observation before skip: ${describeSupabaseError(readError)}`);
+  }
+
+  const existingMetadata =
+    existing?.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+      ? (existing.metadata as Record<string, unknown>)
+      : {};
+
+  const { error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .update({
+        transcript_status: "skipped",
+        metadata: { ...existingMetadata, transcriptionSkippedReason: input.reason },
+      })
+      .eq("id", input.id)
+  );
+
+  if (error) {
+    throw new Error(`Failed to mark transcription observation skipped: ${describeSupabaseError(error)}`);
+  }
 }
 
 export async function updateTrainingPeaksStudentTelegramContextById(

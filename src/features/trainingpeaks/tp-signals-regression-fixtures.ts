@@ -122,6 +122,9 @@ function makeObservation(input: {
     attachmentType: null,
     attachmentFileId: null,
     attachmentDurationSec: null,
+    transcript: null,
+    transcriptStatus: null,
+    transcriptAt: null,
   };
 }
 

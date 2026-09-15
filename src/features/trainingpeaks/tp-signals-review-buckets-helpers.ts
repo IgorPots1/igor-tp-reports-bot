@@ -297,6 +297,9 @@ function collectCueEvidenceFromSimulation(simulation: ObservationPersistenceSimu
         attachmentType: null,
         attachmentFileId: null,
         attachmentDurationSec: null,
+        transcript: null,
+        transcriptStatus: null,
+        transcriptAt: null,
       })
     );
     if (primary.signal_type) {
