@@ -75,7 +75,35 @@ function easyConfidence(sampleSize: number): EasyAnchor["confidence"] {
   return "low";
 }
 
-export function buildAnchors(start: StartingPointInput): AthleteAnchors {
+/**
+ * Порог ученика Intervals, как он лежит в источнике данных.
+ *
+ * ТРИ ПОЛЯ ВМЕСТЕ ИЛИ НИ ОДНОГО: число без происхождения и даты — это темпы
+ * всей работы цикла неизвестного качества. Констрейнт в базе стережёт то же
+ * самое, здесь просто нечего собирать из половины.
+ */
+export type StoredThreshold = {
+  paceSecPerKm: number;
+  source: "diagnostic" | "race_result" | "coach_manual";
+  setAt: string;
+};
+
+/**
+ * Доверие по происхождению.
+ *
+ * Диагностика — это измерение, сделанное специально и недавно: доверие высокое.
+ * Результат старта — тоже измерение, но обстоятельства старта нам неизвестны
+ * (жара, рельеф, форма), поэтому на ступень ниже. Ручная простановка — знание
+ * тренера о человеке: оно бывает точнее любого теста, но проверить его нечем,
+ * и в служебной строке это должно быть видно.
+ */
+function thresholdConfidence(source: StoredThreshold["source"]): "high" | "medium" | "medium_low" {
+  if (source === "diagnostic") return "high";
+  if (source === "race_result") return "medium";
+  return "medium_low";
+}
+
+export function buildAnchors(start: StartingPointInput, stored: StoredThreshold | null = null): AthleteAnchors {
   const easy: EasyAnchor | null =
     start.easyPaceSec === null
       ? null
@@ -95,11 +123,25 @@ export function buildAnchors(start: StartingPointInput): AthleteAnchors {
     athleteId: 0,
     tier: tierOf(start.medianWeeklyMinutes),
     easy,
-    // ПОРОГА НЕТ. Ни в Intervals, ни в анкете его взять неоткуда, а выдуманный
-    // порог — это выдуманные темпы всех качественных сессий цикла.
-    threshold: null,
+    // ПОРОГ — ТОЛЬКО ИЗМЕРЕННЫЙ ИЛИ ПОСТАВЛЕННЫЙ ТРЕНЕРОМ. Вывести его из якоря
+    // лёгкого через отношение нельзя: это выдуманные темпы всех отрезков цикла.
+    // Пусто — работа назначается по усилию (см. qualityByEffort ниже).
+    threshold: stored
+      ? {
+          paceSec: stored.paceSecPerKm,
+          source:
+            stored.source === "diagnostic"
+              ? "intervals_threshold_diagnostic"
+              : stored.source === "race_result"
+                ? "intervals_threshold_race"
+                : "intervals_threshold_manual",
+          confidence: thresholdConfidence(stored.source),
+        }
+      : null,
     quality: null,
-    // НО КАЧЕСТВО ВСЁ РАВНО НАЗНАЧАЕМ — ПО УСИЛИЮ [решение Игоря, 15.09.2026].
+    // КОГДА ПОРОГА НЕТ — КАЧЕСТВО ПО УСИЛИЮ [решение Игоря, 15.09.2026].
+    // Флаг остаётся включённым и при заданном пороге: он ничего не меняет там,
+    // где темпы есть, а резолвер идёт обычным путём.
     //
     // Без этого человек, попросивший развития, получал двенадцать недель одного
     // лёгкого бега: цикл рос объёмом, работы не было ни одной. Пресеты несут

@@ -40,7 +40,7 @@ import { forecast } from "./lib/training-cycle.ts";
 import type { AthletePreference } from "./lib/athlete-preferences.ts";
 import { sessionCapPreferences } from "@/features/intervals/loop/schedule";
 import {
-  buildAnchors, buildDraftFromOnboarding, buildEnvelope,
+  buildAnchors, buildDraftFromOnboarding, buildEnvelope, type StoredThreshold,
 } from "./lib/intervals-plan-adapter.ts";
 
 function arg(name: string): string | null {
@@ -162,7 +162,7 @@ async function main(): Promise<void> {
   // тянуть секрет в память ради генерации плана незачем.
   const { data: source, error: sourceError } = await supabase
     .from("student_data_sources")
-    .select("id, kind, student_id")
+    .select("id, kind, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at")
     .eq("provider", "intervals")
     .eq("external_athlete_id", athleteId)
     .maybeSingle();
@@ -308,7 +308,18 @@ async function main(): Promise<void> {
 
   // ── Цикл ──
   const firstWeekStart = arg("first-week") ?? mondayOf(addDays(today, 7));
-  const anchors = buildAnchors(start);
+  // ПОРОГ ИЗ ИСТОЧНИКА. Пока его нет, работа назначается по усилию; как только
+  // тренер или диагностика его поставят, те же сессии получат темпы, и ничего
+  // больше менять не нужно.
+  const storedThreshold: StoredThreshold | null =
+    source.threshold_pace_sec_per_km !== null && source.threshold_pace_sec_per_km !== undefined
+      ? {
+          paceSecPerKm: Number(source.threshold_pace_sec_per_km),
+          source: String(source.threshold_source) as StoredThreshold["source"],
+          setAt: String(source.threshold_set_at),
+        }
+      : null;
+  const anchors = buildAnchors(start, storedThreshold);
   const envelope = buildEnvelope(start);
   const { draft, intent, lengthWeeks, notes } = buildDraftFromOnboarding(answers, start, firstWeekStart);
 

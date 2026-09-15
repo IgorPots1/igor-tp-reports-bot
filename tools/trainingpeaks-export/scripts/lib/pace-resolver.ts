@@ -28,7 +28,13 @@ export type AnchorSource =
   // Качество, назначенное ПО УСИЛИЮ, без темпа. Отдельная метка, потому что это
   // другое обещание: не «беги 4:45», а «беги так, чтобы говорить можно было
   // короткими фразами».
-  | "methodology_rpe";
+  | "methodology_rpe"
+  // Порог ученика Intervals. Три значения, а не одно: от происхождения зависит
+  // доверие к темпам ВСЕЙ работы цикла, и тренер должен видеть его в строке
+  // сессии, а не искать в базе.
+  | "intervals_threshold_diagnostic"
+  | "intervals_threshold_race"
+  | "intervals_threshold_manual";
 
 export type Confidence = "high" | "medium" | "medium_low" | "low";
 export type Tier = "T1" | "T2" | "T3";
@@ -67,7 +73,15 @@ export type EasyAnchor = {
 
 export type ThresholdAnchor = {
   paceSec: number;
-  source: Extract<AnchorSource, "applied_threshold_coach" | "applied_threshold_bulk_only" | "cs_calibrated">;
+  source: Extract<
+    AnchorSource,
+    | "applied_threshold_coach"
+    | "applied_threshold_bulk_only"
+    | "cs_calibrated"
+    | "intervals_threshold_diagnostic"
+    | "intervals_threshold_race"
+    | "intervals_threshold_manual"
+  >;
   confidence: Confidence;
 };
 
