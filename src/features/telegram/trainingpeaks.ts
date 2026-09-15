@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import type {
   ParsedTelegramCallbackUpdate,
   ParsedTelegramMessageUpdate,
@@ -151,10 +149,6 @@ import {
   sha256TelegramContextText,
 } from "@/features/trainingpeaks/telegram-context";
 import { persistOperationalSignalsForObservation } from "@/features/trainingpeaks/operational-signals-inline";
-import {
-  extractStudentMessagesFromVoiceTranscriptDetailed,
-  type ExtractedVoiceStudentMessage,
-} from "@/features/telegram/voice-command-extraction";
 import { matchStudentByIdentity } from "@/features/trainingpeaks/student-identity-match";
 import {
   hasTrainingPeaksMessageIntentLoggingRelevance,
@@ -212,14 +206,12 @@ import {
 } from "@/features/trainingpeaks/week";
 import {
   answerTelegramCallbackQuery,
-  downloadTelegramFile,
   editTelegramMessageText,
   editTelegramMessageTextStrict,
   isTelegramMessageTooLongError,
   sendTelegramMessage,
   sendTelegramMessageStrict,
 } from "@/features/telegram/telegram-client";
-import { transcribeTelegramVoiceMessage } from "@/features/telegram/voice-transcription";
 import { extractTelegramAttachmentInfo } from "@/features/telegram/attachment";
 import type {
   TelegramChatType,
@@ -229,12 +221,6 @@ import type {
 } from "@/features/telegram/types";
 
 const COACH_ONLY_MESSAGE = "⛔ Эта команда доступна только тренеру.";
-const VOICE_COMMANDS_DISABLED_MESSAGE = "Голосовые команды пока выключены.";
-const VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE = "🎤 Распознаю голосовое сообщение…";
-const VOICE_TRANSCRIPTION_FAILED_MESSAGE =
-  "Не удалось распознать голосовое сообщение. Попробуй ещё раз или напиши текстом.";
-const VOICE_EXTRACTION_FAILED_MESSAGE =
-  "Расшифровал голосовое, но не смог разобрать команды для учеников. Попробуй переформулировать.";
 const TP_WEEKLY_DISABLED_MESSAGE =
   "⚙️ /tp_weekly отключён. Для отчётов используй «📊 Отчёты», а запуск workflow оставлен через явные preview/confirm-кнопки.";
 const TP_UNKNOWN_COMMAND_MESSAGE = "Не поняла команду. Используй кнопки внизу или отправь /start.";
@@ -275,9 +261,6 @@ const TP_CALLBACK_HEALTH = "tp:health";
 const TP_CALLBACK_CRON_STATUS = "tp:cron_status";
 const TP_CALLBACK_INTENTS = "tp:intents";
 const TP_CALLBACK_TELEGRAM_LINKS_HINT = "tp:telegram_links:hint";
-const TP_CALLBACK_VOICE_DRAFTS_CLOSE = "tp:voice_drafts:close";
-const TP_CALLBACK_VOICE_PICK_PREFIX = "tp:voice_pick:";
-const TP_CALLBACK_VOICE_PICK_NONE_PREFIX = "tp:voice_pick_none:";
 const TP_CALLBACK_REPLY_DRAFT_SEND_PREFIX = "tp:rd:s:";
 const TP_CALLBACK_REPLY_DRAFT_CANCEL_PREFIX = "tp:rd:x:";
 const TP_CALLBACK_REPLY_DRAFT_CLOSE = "tp:rd:close";
@@ -285,7 +268,6 @@ const TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX = "tp:student:weekly_hint:";
 const TP_CALLBACK_STUDENT_RUN_PREFIX = "tp:run:";
 const TP_ALL_ENABLED_WEEKLY_PREVIEW_NAME_LIMIT = 10;
 const TP_PENDING_ALL_ENABLED_WEEKLY_RUN_TTL_MS = 30 * 60 * 1000;
-const TP_PENDING_VOICE_PICK_TTL_MS = 30 * 60 * 1000;
 const TP_CALLBACK_REPORTS = "tp:reports";
 const TP_CALLBACK_REPORT_SEND_PREFIX = "tp:rs:";
 const TP_CALLBACK_REPORT_SKIP_PREFIX = "tp:rk:";
@@ -539,9 +521,6 @@ type ParsedTrainingPeaksCallback =
   | { kind: "cron_status" }
   | { kind: "intents" }
   | { kind: "telegram_links_hint" }
-  | { kind: "voice_drafts_close" }
-  | { kind: "voice_pick"; key: string; candidateIndex: number }
-  | { kind: "voice_pick_none"; key: string }
   | { kind: "student_weekly_hint"; studentId: string }
   | { kind: "student_weekly_run"; studentId: string; weekKeyword: "last" | "current" };
 
@@ -551,94 +530,6 @@ type PendingAllEnabledWeeklyRunContext = {
   previewCount: number;
   expiresAt: number;
 };
-
-type PendingVoicePickContext = {
-  chatId: string;
-  recipientQuery: string;
-  messageText: string;
-  confidence: number;
-  extractionModel: string;
-  promptContextSha256: string;
-  transcriptPreview: string;
-  voiceCommandMessageId: string | null;
-  candidateStudentIds: string[];
-  expiresAt: number;
-};
-
-type VoiceStudentMatchResult = {
-  extracted: ExtractedVoiceStudentMessage;
-  status: "matched" | "ambiguous" | "unmatched";
-  student: TrainingPeaksRegistryStudentSnapshot | null;
-  candidates: Array<{
-    id: string;
-    studentId: string;
-    studentName: string;
-    score: number;
-    matchedBy: string;
-    matchedValuePreview: string;
-  }>;
-};
-
-type VoiceDraftCreationResult = {
-  studentName: string;
-  draftPreview: string;
-  draftIdShort: string;
-  hasDraftText: boolean;
-};
-
-async function createVoiceDraftFromMatch(input: {
-  parsedMessage: ParsedTelegramMessageUpdate | ParsedTelegramCallbackUpdate;
-  student: TrainingPeaksRegistryStudentSnapshot;
-  extracted: ExtractedVoiceStudentMessage;
-  promptContextSha256: string;
-  transcriptPreview: string;
-  extractionModel: string;
-  batchKey: string;
-  batchIndex: number;
-  batchTotal: number;
-  selectedFromAmbiguity: boolean;
-  voiceCommandMessageId: string | null;
-}): Promise<VoiceDraftCreationResult | null> {
-  const studentMessageSha256 = sha256TelegramContextText(input.extracted.messageText);
-  const draftSha256 = sha256TelegramContextText(input.extracted.messageText);
-  if (!input.promptContextSha256 || !studentMessageSha256 || !draftSha256) {
-    return null;
-  }
-
-  const savedDraft = await insertTrainingPeaksReplyDraft({
-    studentId: input.student.id,
-    caseId: null,
-    source: "telegram_command",
-    actorTelegramChatId: String(input.parsedMessage.chatId),
-    aiModel: input.extractionModel,
-    promptContextSha256: input.promptContextSha256,
-    studentMessageSha256,
-    studentMessagePreview: input.transcriptPreview,
-    draftSha256,
-    draftText: input.extracted.messageText,
-    draftPreview: buildTelegramContextTextPreview(input.extracted.messageText),
-    draftCharCount: input.extracted.messageText.length,
-    metadata: {
-      origin: "voice",
-      voice_transcript_preview: input.transcriptPreview,
-      voice_command_message_id: input.voiceCommandMessageId,
-      voice_batch_key: input.batchKey,
-      batch_index: input.batchIndex,
-      batch_total: input.batchTotal,
-      recipient_query: input.extracted.recipientQuery,
-      extraction_confidence: input.extracted.confidence,
-      extraction_model: input.extractionModel,
-      selected_from_ambiguity: input.selectedFromAmbiguity,
-    },
-  });
-
-  return {
-    studentName: input.student.studentName,
-    draftPreview: input.extracted.messageText,
-    draftIdShort: savedDraft.id.slice(0, 8),
-    hasDraftText: Boolean(savedDraft.draftText?.trim()),
-  };
-}
 
 type TrainingPeaksScreen =
   | "main_menu"
@@ -712,7 +603,6 @@ type TrainingPeaksCaseListItem = Awaited<ReturnType<typeof listTrainingPeaksCoac
 const trainingPeaksChatContextByChatId = new Map<string, TrainingPeaksChatContext>();
 const trainingPeaksTelegramLinkContextByChatId = new Map<string, TrainingPeaksTelegramLinkContext>();
 const pendingAllEnabledWeeklyRunByChatId = new Map<string, PendingAllEnabledWeeklyRunContext>();
-const pendingVoicePickByKey = new Map<string, PendingVoicePickContext>();
 
 function getTrainingPeaksCommand(text: string): TrainingPeaksCommand | null {
   if (TP_CASE_RESOLVE_V2_COMMAND_PATTERN.test(text)) {
@@ -1248,32 +1138,6 @@ function clearPendingAllEnabledWeeklyRunContext(chatId: number | string): void {
   pendingAllEnabledWeeklyRunByChatId.delete(String(chatId));
 }
 
-function setPendingVoicePickContext(
-  key: string,
-  context: Omit<PendingVoicePickContext, "expiresAt">
-): void {
-  pendingVoicePickByKey.set(key, {
-    ...context,
-    expiresAt: Date.now() + TP_PENDING_VOICE_PICK_TTL_MS,
-  });
-}
-
-function getPendingVoicePickContext(key: string): PendingVoicePickContext | null {
-  const context = pendingVoicePickByKey.get(key) ?? null;
-  if (!context) {
-    return null;
-  }
-  if (context.expiresAt <= Date.now()) {
-    pendingVoicePickByKey.delete(key);
-    return null;
-  }
-  return context;
-}
-
-function clearPendingVoicePickContext(key: string): void {
-  pendingVoicePickByKey.delete(key);
-}
-
 async function sendTrainingPeaksMessage(
   chatId: number | string,
   text: string,
@@ -1376,124 +1240,12 @@ function createInlineKeyboardMarkup(
   };
 }
 
-function createSafeVoicePickKey(): string {
-  return randomUUID().replace(/-/g, "").slice(0, 12);
-}
-
-function createVoicePickCallbackData(key: string, candidateIndex: number): string {
-  return `${TP_CALLBACK_VOICE_PICK_PREFIX}${key}:${candidateIndex}`;
-}
-
 function createReplyKeyboardMarkup(rows: string[][]): TelegramReplyKeyboardMarkup {
   return {
     keyboard: rows.map((row) => row.map((text) => ({ text }))),
     resize_keyboard: true,
     is_persistent: true,
   };
-}
-
-function matchVoiceRecipientToStudent(
-  extracted: ExtractedVoiceStudentMessage,
-  students: TrainingPeaksRegistryStudentSnapshot[]
-): VoiceStudentMatchResult {
-  const matched = matchStudentByIdentity({
-    query: extracted.recipientQuery,
-    students,
-    forceAmbiguousForFirstNameOnly: true,
-    buildIdentities: (student) => [
-      {
-        value: student.studentName,
-        kind: "trainingpeaks_name",
-        weight: 1,
-      },
-      {
-        value: student.studentId,
-        kind: "trainingpeaks_id",
-        weight: 1,
-      },
-      {
-        value: student.telegramUsername,
-        kind: "telegram_username",
-        weight: 1.1,
-      },
-      // TODO: TrainingPeaksRegistryStudentSnapshot currently does not expose Telegram Business display name.
-      // Add a safe identity aggregator source before using telegram_display_name here.
-    ],
-  });
-
-  const toCandidateView = (
-    candidates: Array<{
-      student: TrainingPeaksRegistryStudentSnapshot;
-      score: number;
-      matchedBy: string;
-      matchedValuePreview: string;
-    }>
-  ) =>
-    candidates.map((candidate) => ({
-      id: candidate.student.id,
-      studentId: candidate.student.studentId,
-      studentName: candidate.student.studentName,
-      score: candidate.score,
-      matchedBy: candidate.matchedBy,
-      matchedValuePreview: candidate.matchedValuePreview,
-    }));
-
-  if (matched.status === "unmatched") {
-    return {
-      extracted,
-      status: "unmatched",
-      student: null,
-      candidates: toCandidateView(matched.candidates),
-    };
-  }
-
-  if (matched.status === "ambiguous") {
-    return {
-      extracted,
-      status: "ambiguous",
-      student: null,
-      candidates: toCandidateView(matched.candidates),
-    };
-  }
-
-  return {
-    extracted,
-    status: "matched",
-    student: matched.student,
-    candidates: [
-      {
-        id: matched.student.id,
-        studentId: matched.student.studentId,
-        studentName: matched.student.studentName,
-        score: matched.score,
-        matchedBy: matched.matchedBy,
-        matchedValuePreview: matched.matchedValuePreview,
-      },
-    ],
-  };
-}
-
-function getVoiceAmbiguousPickMarkup(input: {
-  key: string;
-  candidates: Array<{ id: string; studentName: string; studentId: string }>;
-}): TelegramInlineKeyboardMarkup {
-  const rows: TrainingPeaksMenuButton[][] = input.candidates.slice(0, 4).map((candidate, index) => [
-    createMenuButton(
-      truncateTelegramLabel(`${candidate.studentName} (${candidate.studentId})`, 64),
-      createVoicePickCallbackData(input.key, index)
-    ),
-  ]);
-  rows.push([createMenuButton("Никого из них", `${TP_CALLBACK_VOICE_PICK_NONE_PREFIX}${input.key}`)]);
-  rows.push([createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]);
-  return createInlineKeyboardMarkup(rows);
-}
-
-function getVoiceDraftPreviewMarkup(): TelegramInlineKeyboardMarkup {
-  return createInlineKeyboardMarkup([
-    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
-    [createMenuButton("✉️ Черновики", TP_CALLBACK_REPLY_DRAFT_HINT)],
-    [createMenuButton("❌ Закрыть", TP_CALLBACK_VOICE_DRAFTS_CLOSE)],
-  ]);
 }
 
 function getReplyDraftPreviewMarkup(draftIdShort: string, includeSend: boolean): TelegramInlineKeyboardMarkup {
@@ -1510,84 +1262,6 @@ function getReplyDraftFinalMarkup(): TelegramInlineKeyboardMarkup {
   return createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]]);
 }
 
-function getVoicePickNoneMarkup(): TelegramInlineKeyboardMarkup {
-  return createInlineKeyboardMarkup([
-    [createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)],
-    [createMenuButton("❌ Закрыть", TP_CALLBACK_VOICE_DRAFTS_CLOSE)],
-  ]);
-}
-
-function formatVoiceExtractionNoMessagesText(transcript: string): string {
-  return [
-    "Я расшифровал голосовое, но не нашёл понятных сообщений ученикам.",
-    "",
-    "Расшифровка:",
-    `«${transcript}»`,
-    "",
-    "Скажи, например: “Напиши Маше: ...”",
-  ].join("\n");
-}
-
-function formatVoiceMatchIssuesText(matchResults: VoiceStudentMatchResult[]): string {
-  const issueLines = matchResults
-    .filter((item) => item.status !== "matched")
-    .map((item) => {
-      if (item.status === "ambiguous") {
-        const candidatesText = item.candidates
-          .slice(0, 4)
-          .map(
-            (candidate) =>
-              `${candidate.studentName} (${candidate.studentId}; ${candidate.matchedBy}; ${candidate.matchedValuePreview})`
-          )
-          .join(", ");
-        return `- «${item.extracted.recipientQuery}» — найдено несколько: ${candidatesText}`;
-      }
-      if (item.candidates.length > 0) {
-        const weakCandidates = item.candidates
-          .slice(0, 3)
-          .map(
-            (candidate) =>
-              `${candidate.studentName} (${candidate.studentId}; ${candidate.matchedBy}; ${candidate.matchedValuePreview})`
-          )
-          .join(", ");
-        return `- «${item.extracted.recipientQuery}» — ученик не найден (слабые совпадения: ${weakCandidates})`;
-      }
-      return `- «${item.extracted.recipientQuery}» — ученик не найден`;
-    });
-
-  if (issueLines.length === 0) {
-    return "";
-  }
-
-  return [
-    "Не смог уверенно сопоставить:",
-    ...issueLines,
-    "",
-    "Черновики созданы только для уверенно найденных учеников.",
-  ].join("\n");
-}
-
-function formatVoiceDraftsCreatedText(input: {
-  createdDrafts: VoiceDraftCreationResult[];
-  transcript: string;
-}): string {
-  const draftItems = input.createdDrafts.map((item, index) =>
-    [`${index + 1}. ${item.studentName}`, `«${item.draftPreview}»`].join("\n")
-  );
-
-  return [
-    "🎤 Голосовая команда разобрана.",
-    "",
-    "Расшифровка:",
-    `«${input.transcript}»`,
-    "",
-    `Создано черновиков: ${input.createdDrafts.length}`,
-    "",
-    ...draftItems.flatMap((item, index) => (index === 0 ? [item] : ["", item])),
-    "",
-    "Пока я ничего не отправляю ученикам без явного подтверждения.",
-  ].join("\n");
-}
 
 function getTrainingPeaksMainReplyKeyboardMarkup(): TelegramReplyKeyboardMarkup {
   return createReplyKeyboardMarkup([
@@ -1606,235 +1280,6 @@ async function sendTrainingPeaksReplyScreen(
   await sendTrainingPeaksMessage(chatId, text, {
     replyMarkup,
   });
-}
-
-function isVoiceCommandsEnabled(): boolean {
-  return process.env.VOICE_COMMANDS_ENABLED === "true";
-}
-
-function isPrivateTelegramChat(parsedMessage: ParsedTelegramMessageUpdate): boolean {
-  return parsedMessage.userId !== null && String(parsedMessage.chatId) === String(parsedMessage.userId);
-}
-
-async function handleTrainingPeaksCoachVoiceTranscription(
-  parsedMessage: ParsedTelegramMessageUpdate
-): Promise<"handled" | "ignored"> {
-  if (!parsedMessage.voiceFileId) {
-    return "ignored";
-  }
-
-  if (!isCoachChat(parsedMessage.chatId) || !isPrivateTelegramChat(parsedMessage)) {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, COACH_ONLY_MESSAGE);
-    return "handled";
-  }
-
-  if (!isVoiceCommandsEnabled()) {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, VOICE_COMMANDS_DISABLED_MESSAGE);
-    return "handled";
-  }
-
-  try {
-    await sendTrainingPeaksMessage(parsedMessage.chatId, VOICE_TRANSCRIPTION_IN_PROGRESS_MESSAGE);
-
-    const audioBuffer = await downloadTelegramFile(parsedMessage.voiceFileId);
-    const transcript = await transcribeTelegramVoiceMessage({
-      audioBuffer,
-      mimeType: parsedMessage.voiceMimeType,
-      fileName: parsedMessage.voiceKind === "audio" ? "audio-message" : "voice-message",
-    });
-    const extractionResult = await extractStudentMessagesFromVoiceTranscriptDetailed({
-      transcript,
-    });
-
-    if (extractionResult.messages.length === 0) {
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        formatVoiceExtractionNoMessagesText(transcript),
-        {
-          replyMarkup: getVoiceDraftPreviewMarkup(),
-        }
-      );
-      return "handled";
-    }
-
-    const studentsRegistry = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
-    const activeStudents = studentsRegistry.filter((student) => student.isActive);
-    if (activeStudents.length === 0) {
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        [
-          "Расшифровал голосовое, но сейчас нет активных учеников для сопоставления.",
-          "",
-          "Ничего не отправлено и черновики не созданы.",
-        ].join("\n"),
-        {
-          replyMarkup: getVoiceDraftPreviewMarkup(),
-        }
-      );
-      return "handled";
-    }
-
-    const matchResults = extractionResult.messages.map((message) =>
-      matchVoiceRecipientToStudent(message, activeStudents)
-    );
-    const matchedResults = matchResults.filter((item) => item.status === "matched" && item.student);
-
-    const batchKey = randomUUID().slice(0, 8);
-    const transcriptPreview = buildTelegramContextTextPreview(transcript) ?? transcript.slice(0, 120);
-    const promptContextSha256 = sha256TelegramContextText(transcript);
-    if (!promptContextSha256) {
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        "Не удалось подготовить безопасный контекст для черновика. Повтори команду.",
-        {
-          replyMarkup: getVoiceDraftPreviewMarkup(),
-        }
-      );
-      return "handled";
-    }
-    const batchTotal = matchedResults.length;
-    const createdDrafts: VoiceDraftCreationResult[] = [];
-
-    let draftInsertFailed = false;
-    for (const [index, match] of matchedResults.entries()) {
-      const student = match.student;
-      if (!student) {
-        continue;
-      }
-      try {
-        const created = await createVoiceDraftFromMatch({
-          parsedMessage,
-          student,
-          extracted: match.extracted,
-          promptContextSha256,
-          transcriptPreview,
-          extractionModel: extractionResult.model,
-          batchKey,
-          batchIndex: index + 1,
-          batchTotal,
-          selectedFromAmbiguity: false,
-          voiceCommandMessageId:
-            parsedMessage.messageId !== null && parsedMessage.messageId !== undefined
-              ? String(parsedMessage.messageId)
-              : null,
-        });
-        if (created) {
-          createdDrafts.push(created);
-        }
-      } catch {
-        draftInsertFailed = true;
-      }
-    }
-
-    const ambiguousResults = matchResults.filter((item) => item.status === "ambiguous");
-    const voiceCommandMessageId =
-      parsedMessage.messageId !== null && parsedMessage.messageId !== undefined
-        ? String(parsedMessage.messageId)
-        : null;
-    for (const ambiguous of ambiguousResults) {
-      const key = createSafeVoicePickKey();
-      setPendingVoicePickContext(key, {
-        chatId: String(parsedMessage.chatId),
-        recipientQuery: ambiguous.extracted.recipientQuery,
-        messageText: ambiguous.extracted.messageText,
-        confidence: ambiguous.extracted.confidence,
-        extractionModel: extractionResult.model,
-        promptContextSha256,
-        transcriptPreview,
-        voiceCommandMessageId,
-        candidateStudentIds: ambiguous.candidates.map((candidate) => candidate.id).slice(0, 4),
-      });
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        `Кого ты имел в виду под «${ambiguous.extracted.recipientQuery}»?`,
-        {
-          replyMarkup: getVoiceAmbiguousPickMarkup({
-            key,
-            candidates: ambiguous.candidates.map((candidate) => ({
-              id: candidate.id,
-              studentName: candidate.studentName,
-              studentId: candidate.studentId,
-            })),
-          }),
-        }
-      );
-    }
-
-    const hasOnlyAmbiguousResults = ambiguousResults.length > 0 && matchResults.every((item) => item.status === "ambiguous");
-    if (createdDrafts.length === 0) {
-      if (hasOnlyAmbiguousResults) {
-        await sendTrainingPeaksMessage(
-          parsedMessage.chatId,
-          [
-            "Нужно уточнение, чтобы создать черновик.",
-            "Выбери ученика кнопкой ниже.",
-            "",
-            "Ничего не отправлено ученикам.",
-          ].join("\n"),
-          {
-            replyMarkup: getVoiceDraftPreviewMarkup(),
-          }
-        );
-        return "handled";
-      }
-      const issuesText = formatVoiceMatchIssuesText(matchResults);
-      await sendTrainingPeaksMessage(
-        parsedMessage.chatId,
-        [
-          "Расшифровал голосовое, но не смог создать черновики.",
-          issuesText,
-          "",
-          "Ничего не отправлено ученикам.",
-        ]
-          .filter((line) => line !== "")
-          .join("\n"),
-        {
-          replyMarkup: getVoiceDraftPreviewMarkup(),
-        }
-      );
-      return "handled";
-    }
-
-    const previewParts: string[] = [formatVoiceDraftsCreatedText({ createdDrafts, transcript })];
-    const issuesText = formatVoiceMatchIssuesText(matchResults);
-    if (issuesText) {
-      previewParts.push("", issuesText);
-    }
-    if (draftInsertFailed) {
-      previewParts.push(
-        "",
-        "⚠️ Для части сообщений черновики не сохранились. Повтори голосовую команду или используй /tp_reply_draft."
-      );
-    }
-
-    await sendTrainingPeaksMessage(parsedMessage.chatId, previewParts.join("\n"), {
-      replyMarkup: getVoiceDraftPreviewMarkup(),
-    });
-  } catch (error) {
-    const isExtractionError =
-      error instanceof Error &&
-      (error.message.includes("Voice command extraction") ||
-        error.message.includes("Voice extraction payload") ||
-        error.message.includes("OPENAI_API_KEY"));
-
-    console.warn("TrainingPeaks voice transcription failed", {
-      chatId: parsedMessage.chatId,
-      messageId: parsedMessage.messageId,
-      voiceKind: parsedMessage.voiceKind,
-      voiceDuration: parsedMessage.voiceDuration,
-      stage: isExtractionError ? "voice_extraction" : "voice_transcription",
-      error: error instanceof Error ? error.message : "Unknown voice transcription error",
-    });
-    await sendTrainingPeaksMessage(
-      parsedMessage.chatId,
-      isExtractionError ? VOICE_EXTRACTION_FAILED_MESSAGE : VOICE_TRANSCRIPTION_FAILED_MESSAGE,
-      {
-        replyMarkup: getVoiceDraftPreviewMarkup(),
-      }
-    );
-  }
-
-  return "handled";
 }
 
 async function sendTrainingPeaksMenuMessage(
@@ -4414,32 +3859,6 @@ function parseTrainingPeaksCallback(data: string | null): ParsedTrainingPeaksCal
 
   if (data === TP_CALLBACK_TELEGRAM_LINKS_HINT) {
     return { kind: "telegram_links_hint" };
-  }
-
-  if (data === TP_CALLBACK_VOICE_DRAFTS_CLOSE) {
-    return { kind: "voice_drafts_close" };
-  }
-
-  if (data.startsWith(TP_CALLBACK_VOICE_PICK_PREFIX)) {
-    const rest = data.slice(TP_CALLBACK_VOICE_PICK_PREFIX.length);
-    const separator = rest.indexOf(":");
-    if (separator <= 0) {
-      return null;
-    }
-    const key = rest.slice(0, separator).trim();
-    const candidateIndex = Number.parseInt(rest.slice(separator + 1).trim(), 10);
-    if (!key || !Number.isInteger(candidateIndex) || candidateIndex < 0) {
-      return null;
-    }
-    return { kind: "voice_pick", key, candidateIndex };
-  }
-
-  if (data.startsWith(TP_CALLBACK_VOICE_PICK_NONE_PREFIX)) {
-    const key = data.slice(TP_CALLBACK_VOICE_PICK_NONE_PREFIX.length).trim();
-    if (!key) {
-      return null;
-    }
-    return { kind: "voice_pick_none", key };
   }
 
   if (data.startsWith(TP_CALLBACK_STUDENT_WEEKLY_HINT_PREFIX)) {
@@ -8573,11 +7992,6 @@ export async function handleTrainingPeaksTelegramReplyKeyboardMessage(
   parsedMessage: ParsedTelegramMessageUpdate,
   text: string
 ): Promise<"handled" | "ignored"> {
-  const voiceHandled = await handleTrainingPeaksCoachVoiceTranscription(parsedMessage);
-  if (voiceHandled === "handled") {
-    return "handled";
-  }
-
   const action = getTrainingPeaksReplyKeyboardAction(text);
 
   if (!isCoachChat(parsedMessage.chatId)) {
@@ -10935,162 +10349,6 @@ export async function handleTrainingPeaksTelegramCallback(
         getTelegramLinksHintText(),
         getTelegramLinksHintMarkup()
       );
-      return "handled";
-    }
-
-    if (callback.kind === "voice_drafts_close") {
-      await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Закрыто");
-      try {
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          "Предпросмотр голосовых черновиков закрыт.",
-          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-        );
-      } catch {
-        await sendTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          "Предпросмотр голосовых черновиков закрыт.",
-          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-        );
-      }
-      return "handled";
-    }
-
-    if (callback.kind === "voice_pick_none") {
-      const context = getPendingVoicePickContext(callback.key);
-      clearPendingVoicePickContext(callback.key);
-      await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Понял");
-      if (!context || context.chatId !== String(parsedMessage.chatId)) {
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          "Выбор уже недоступен.",
-          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-        );
-        return "handled";
-      }
-
-      const noneText = [
-        "Черновик не создан.",
-        `Я не выбрал ученика для «${context.recipientQuery}».`,
-        "",
-        "Ничего не отправлено ученикам.",
-      ].join("\n");
-      try {
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          noneText,
-          getVoicePickNoneMarkup()
-        );
-      } catch {
-        await sendTrainingPeaksMenuMessage(parsedMessage.chatId, noneText, getVoicePickNoneMarkup());
-      }
-      return "handled";
-    }
-
-    if (callback.kind === "voice_pick") {
-      const context = getPendingVoicePickContext(callback.key);
-      clearPendingVoicePickContext(callback.key);
-      if (!context || context.chatId !== String(parsedMessage.chatId)) {
-        await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Выбор устарел");
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          "Выбор уже недоступен.",
-          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-        );
-        return "handled";
-      }
-      const pickedStudentId = context.candidateStudentIds[callback.candidateIndex] ?? null;
-      if (!pickedStudentId) {
-        await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Кандидат недоступен");
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          "Кандидат больше недоступен. Повтори голосовую команду.",
-          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-        );
-        return "handled";
-      }
-
-      const studentsRegistry = await getTrainingPeaksStudentsRegistryWithLatestReportStatus();
-      const student = studentsRegistry.find(
-        (item) => item.isActive && item.id === pickedStudentId
-      );
-      if (!student) {
-        await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Ученик не найден");
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          "Ученик больше не найден.",
-          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-        );
-        return "handled";
-      }
-
-      const extracted: ExtractedVoiceStudentMessage = {
-        recipientQuery: context.recipientQuery,
-        messageText: context.messageText,
-        confidence: context.confidence,
-      };
-
-      try {
-        const created = await createVoiceDraftFromMatch({
-          parsedMessage,
-          student,
-          extracted,
-          promptContextSha256: context.promptContextSha256,
-          transcriptPreview: context.transcriptPreview,
-          extractionModel: context.extractionModel,
-          batchKey: callback.key,
-          batchIndex: 1,
-          batchTotal: 1,
-          selectedFromAmbiguity: true,
-          voiceCommandMessageId: context.voiceCommandMessageId,
-        });
-        await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Черновик создан");
-        if (!created) {
-          await editTrainingPeaksMenuMessage(
-            parsedMessage.chatId,
-            parsedMessage.messageId,
-            "Не удалось создать черновик. Повтори голосовую команду.",
-            createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-          );
-          return "handled";
-        }
-        const successText = [
-          "✅ Черновик создан.",
-          "",
-          "Ученик:",
-          created.studentName,
-          "",
-          "Текст:",
-          `«${created.draftPreview}»`,
-          "",
-          "Ничего не отправлено ученику без подтверждения.",
-        ].join("\n");
-        const successMarkup = getReplyDraftPreviewMarkup(created.draftIdShort, created.hasDraftText);
-        try {
-          await editTrainingPeaksMenuMessage(
-            parsedMessage.chatId,
-            parsedMessage.messageId,
-            successText,
-            successMarkup
-          );
-        } catch {
-          await sendTrainingPeaksMenuMessage(parsedMessage.chatId, successText, successMarkup);
-        }
-      } catch {
-        await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Ошибка");
-        await editTrainingPeaksMenuMessage(
-          parsedMessage.chatId,
-          parsedMessage.messageId,
-          "Не удалось создать черновик. Повтори голосовую команду.",
-          createInlineKeyboardMarkup([[createMenuButton("🏠 Меню", TP_CALLBACK_MAIN_MENU)]])
-        );
-      }
       return "handled";
     }
 
