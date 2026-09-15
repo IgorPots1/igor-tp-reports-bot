@@ -36,7 +36,7 @@ export type TrainingPeaksObserverLabel =
   | "third_party_in_linked_topic";
 
 type TrainingPeaksObserverSourceType = "private_dm" | "group_topic" | "group_general";
-type ObserverSenderRole = "linked_student" | "third_party_in_linked_topic" | "known_student";
+type ObserverSenderRole = "linked_student" | "third_party_in_linked_topic" | "known_student" | "unknown_sender";
 type ObserverSenderMatchMethod = "telegram_chat_id" | "telegram_username" | "no_reliable_match";
 type PersistedObservationLabel =
   | "question_to_coach"
@@ -1234,6 +1234,29 @@ export async function handleTrainingPeaksContextObserverMessage(
           strictMoveIntent,
         }).catch(() => {/* fire-and-forget, never throws */});
       }
+
+      // No linked student — write the row anyway (student_id=null) instead of dropping a lead's
+      // or a not-yet-linked student's message. Backfilled by chat_id once the chat gets linked.
+      const unknownClassified = classifyObserverText(text);
+      await persistObserverObservation({
+        studentId: null,
+        sourceType: "private_dm",
+        chatId: String(message.chat.id),
+        messageThreadId: null,
+        messageId: message.message_id,
+        fromId: fromId === undefined ? null : String(fromId),
+        fromUsername,
+        isTopicMessage: false,
+        labels: unknownClassified.labels,
+        scores: unknownClassified.scores,
+        messageLength,
+        hasAttachment,
+        attachment,
+        text,
+        senderRole: "unknown_sender",
+        senderMatchMethod: matchMethod,
+      });
+
       return {
         handled: true,
         reason: "unknown_private_dm",
@@ -1324,6 +1347,31 @@ export async function handleTrainingPeaksContextObserverMessage(
       autoLinkResult.kind === "ambiguous" ||
       autoLinkResult.kind === "conflict"
     ) {
+      // Topic not (yet) confidently linked to a student — write the row anyway with
+      // student_id=null rather than losing an unlinked topic's messages entirely. Backfilled by
+      // chat_id once the topic is linked (a topic's chat_id is shared with its group's other
+      // topics, so the backfill also runs per message_thread_id — see the backfill function).
+      if (text || hasAttachment) {
+        const unlinkedClassified = classifyObserverText(text);
+        await persistObserverObservation({
+          studentId: null,
+          sourceType: "group_topic",
+          chatId: String(message.chat.id),
+          messageThreadId: message.message_thread_id ?? null,
+          messageId: message.message_id,
+          fromId: fromId === undefined ? null : String(fromId),
+          fromUsername,
+          isTopicMessage: true,
+          labels: unlinkedClassified.labels,
+          scores: unlinkedClassified.scores,
+          messageLength,
+          hasAttachment,
+          attachment,
+          text,
+          senderRole: "unknown_sender",
+        });
+      }
+
       return {
         handled: true,
         reason: "unlinked_group_topic_auto_link",

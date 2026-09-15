@@ -3663,6 +3663,21 @@ export async function insertTrainingPeaksStudentThread(input: {
     throw new Error(`Failed to insert TrainingPeaks student thread: ${error.message}`);
   }
 
+  try {
+    await backfillTrainingPeaksTelegramContextStudentIdByChatId({
+      studentId: input.studentId,
+      chatId: input.telegramChatId,
+      messageThreadId: input.telegramMessageThreadId,
+    });
+  } catch (backfillError) {
+    console.warn("Failed to backfill telegram context observations after topic link", {
+      studentId: input.studentId,
+      chatId: input.telegramChatId,
+      messageThreadId: input.telegramMessageThreadId,
+      error: describeSupabaseError(backfillError),
+    });
+  }
+
   return mapTrainingPeaksStudentThreadRow(data as TrainingPeaksStudentThreadRow);
 }
 
@@ -4175,6 +4190,19 @@ export async function linkTrainingPeaksStudentToBusinessChat(
     telegram_profile_url: nextProfileUrl,
     telegram_delivery_enabled: true,
   });
+
+  try {
+    await backfillTrainingPeaksTelegramContextStudentIdByChatId({
+      studentId,
+      chatId: chat.chatId,
+    });
+  } catch (backfillError) {
+    console.warn("Failed to backfill telegram context observations after business chat link", {
+      studentId,
+      chatId: chat.chatId,
+      error: describeSupabaseError(backfillError),
+    });
+  }
 
   return {
     student: updatedStudent,
@@ -7428,6 +7456,37 @@ export async function markTrainingPeaksTelegramContextObservationDeletedByChatMe
   }
 
   return { marked: true };
+}
+
+// Catch-up for A4 (chats without a student link): once a chat_id (business_dm/private_dm) or a
+// chat_id+message_thread_id (group_topic) gets linked to a student, every previously-unlinked
+// row for that same conversation is retroactively attributed. messageThreadId is REQUIRED for
+// group_topic backfills — a group's chat_id is shared by every topic in it, so omitting it would
+// misattribute every OTHER unlinked topic in the same group to this one student.
+export async function backfillTrainingPeaksTelegramContextStudentIdByChatId(input: {
+  studentId: string;
+  chatId: string;
+  messageThreadId?: number | null;
+}): Promise<{ updatedCount: number }> {
+  const supabase = createSupabaseServerClient();
+
+  let query = supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .update({ student_id: input.studentId })
+    .eq("chat_id", input.chatId)
+    .is("student_id", null);
+
+  query = input.messageThreadId === undefined || input.messageThreadId === null
+    ? query.is("message_thread_id", null)
+    : query.eq("message_thread_id", input.messageThreadId);
+
+  const { data, error } = await withSupabaseNetworkRetry(() => query.select("id"));
+
+  if (error) {
+    throw new Error(`Failed to backfill TrainingPeaks telegram context observation student_id: ${describeSupabaseError(error)}`);
+  }
+
+  return { updatedCount: Array.isArray(data) ? data.length : 0 };
 }
 
 export async function updateTrainingPeaksStudentTelegramContextById(

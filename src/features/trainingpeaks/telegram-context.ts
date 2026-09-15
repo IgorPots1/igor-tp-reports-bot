@@ -502,10 +502,9 @@ export async function recordTrainingPeaksTelegramBusinessContextObservation(inpu
     return null;
   }
 
+  // No linked student yet — write the row anyway with student_id=null rather than dropping it.
+  // A chat linked later gets backfilled by chat_id (backfillTrainingPeaksTelegramContextStudentIdByChatId).
   const student = await getTrainingPeaksStudentByTelegramChatId(input.chatId);
-  if (!student) {
-    return null;
-  }
 
   // Empty text is normal for an attachment-only message — the fact of the message matters more
   // than having something to hash/preview/classify.
@@ -514,7 +513,7 @@ export async function recordTrainingPeaksTelegramBusinessContextObservation(inpu
   const labels = messageText ? classifyTelegramContextLabels(messageText) : [];
 
   return insertTrainingPeaksTelegramContextObservation({
-    studentId: student.id,
+    studentId: student?.id ?? null,
     sourceType: "business_dm",
     chatId: input.chatId,
     messageThreadId: null,
@@ -552,15 +551,12 @@ export async function recordTrainingPeaksTelegramBusinessOutgoingContextObservat
   }
 
   const student = await getTrainingPeaksStudentByTelegramChatId(input.chatId);
-  if (!student) {
-    return null;
-  }
 
   const textSha256 = messageText ? sha256TelegramContextText(messageText) : null;
   const textPreview = messageText ? buildTelegramContextTextPreview(messageText) : null;
 
   return insertTrainingPeaksTelegramContextObservation({
-    studentId: student.id,
+    studentId: student?.id ?? null,
     sourceType: "business_dm",
     chatId: input.chatId,
     messageThreadId: null,
