@@ -8,7 +8,9 @@ import { listIntervalsStudents, loadCoachStudentView } from "@/features/interval
 import { fieldLabelRu, PREFILLABLE_FIELDS } from "@/features/intervals/loop/prefill";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
 
-import { publishPlanAction, sendCoachMessageAction } from "../actions";
+import { previewStudentDeletion } from "@/features/intervals/delete-student";
+
+import { deleteStudentAction, publishPlanAction, sendCoachMessageAction } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -26,10 +28,13 @@ const box = {
 
 export default async function BeginnerStudentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ studentUuid: string }>;
+  searchParams: Promise<{ delete_error?: string }>;
 }) {
   const { studentUuid } = await params;
+  const { delete_error: deleteError } = await searchParams;
   const students = await listIntervalsStudents();
   const student = students.find((row) => row.studentUuid === studentUuid);
   if (!student) notFound();
@@ -37,6 +42,7 @@ export default async function BeginnerStudentPage({
   const today = todayIsoInCoachTimezone();
   const view = await loadCoachStudentView(student, today);
   const sendEnabled = isCoachSendEnabled();
+  const deletion = await previewStudentDeletion(studentUuid);
 
   const draftCycle =
     view.latestCycle && view.latestCycle.status === "draft" ? view.latestCycle : null;
@@ -472,6 +478,61 @@ export default async function BeginnerStudentPage({
           ))
         )}
       </div>
+
+      {/* ── Удаление ── В САМОМ НИЗУ И ПОСЛЕДНИМ. Кнопка, стирающая человека,
+          не должна попадаться под руку по дороге к обычной работе: чтобы до
+          неё добраться, надо проскроллить всю карточку. */}
+      {deletion ? (
+        <div style={{ ...box, borderColor: "#e0b4a4", background: "#FFFBFA" }}>
+          <h2 style={{ marginTop: 0, color: "#a3330a" }}>Удалить ученика</h2>
+
+          {deleteError ? (
+            <p style={{ margin: "0 0 10px", color: "#a3330a", fontWeight: 600 }}>{deleteError}</p>
+          ) : null}
+
+          <p style={{ margin: "0 0 8px" }}>
+            Будет удалено безвозвратно, всего строк: <strong>{deletion.total}</strong>
+          </p>
+          <ul style={{ margin: "0 0 12px", paddingLeft: 20, color: "#555" }}>
+            {deletion.rows
+              .filter((row) => row.count > 0)
+              .map((row) => (
+                <li key={row.table}>
+                  {row.labelRu}: <strong>{row.count}</strong>
+                </li>
+              ))}
+          </ul>
+
+          {deletion.looksLikeRealStudent ? (
+            <p style={{ margin: "0 0 12px", color: "#a3330a" }}>
+              У этого ученика есть отметки о тренировках и ваши тексты. Похоже на живого человека,
+              а не на тестовый прогон. Восстановить это будет нечем.
+            </p>
+          ) : null}
+
+          <form action={deleteStudentAction}>
+            <input type="hidden" name="studentUuid" value={studentUuid} />
+            <label style={{ display: "block", marginBottom: 6, color: "#555" }}>
+              Чтобы удалить, введите имя ученика буква в букву: <code>{student.studentName}</code>
+            </label>
+            <input
+              className="admin-input"
+              name="typedName"
+              autoComplete="off"
+              placeholder={student.studentName}
+              style={{ maxWidth: 320 }}
+            />
+            <div style={{ marginTop: 8 }}>
+              <FormActionButton
+                confirmMessage={`Удалить «${student.studentName}» и все ${deletion.total} строк? Отменить будет нельзя.`}
+                pendingText="Удаляю…"
+              >
+                Удалить ученика
+              </FormActionButton>
+            </div>
+          </form>
+        </div>
+      ) : null}
     </section>
   );
 }

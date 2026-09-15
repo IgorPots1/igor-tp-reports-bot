@@ -37,6 +37,15 @@ function step(title: string): void {
 const TELEGRAM_ID = 999000111;
 const ATHLETE_ID = "i-check-enroll";
 
+/**
+ * Уборка УДАЛЯЕТ, а не гасит.
+ *
+ * Раньше здесь стоял is_active=false, потому что права на удаление карточек не
+ * было. От каждого прогона оставалась погашенная карточка, и за неделю их
+ * накопилась горсть. Теперь есть функция delete_intervals_student, и проверка
+ * обязана убирать за собой полностью: тест, оставляющий мусор в боевой базе,
+ * ничем не лучше мусора.
+ */
 async function cleanup(studentKey: string): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { data: card } = await supabase
@@ -46,8 +55,11 @@ async function cleanup(studentKey: string): Promise<void> {
     .maybeSingle();
   if (!card) return;
   const cardId = String((card as { id: string }).id);
-  await supabase.from("student_data_sources").delete().eq("student_id", cardId);
-  await supabase.from("trainingpeaks_students").update({ is_active: false }).eq("id", cardId);
+  const { error } = await supabase.rpc("delete_intervals_student", { p_student_uuid: cardId });
+  if (error) {
+    // Не роняем проверку из-за уборки, но и не молчим.
+    console.log(`  ⚠ уборка не удалась (${studentKey}): ${error.message}`);
+  }
 }
 
 async function main(): Promise<void> {

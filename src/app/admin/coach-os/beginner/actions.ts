@@ -19,6 +19,8 @@ import {
   saveCoachMessage,
 } from "@/features/intervals/loop/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { deleteIntervalsStudentCompletely } from "@/features/intervals/delete-student";
+import { redirect } from "next/navigation";
 
 // Действия тренера. КАЖДОЕ вызывается кнопкой — ни одно не срабатывает само.
 
@@ -134,4 +136,29 @@ export async function sendCoachMessageAction(formData: FormData): Promise<void> 
   // видно по статусу, а не додумывается.
 
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+/**
+ * Удалить ученика совсем.
+ *
+ * ТРИ ЗАСЛОНА, И КАЖДЫЙ ЛОВИТ СВОЮ ОШИБКУ:
+ *   1. вся админка за паролем тренера — от чужих;
+ *   2. имя ученика, набранное руками, — от промаха мимо кнопки;
+ *   3. функция в базе, не умеющая трогать ростер TrainingPeaks, — от ошибки
+ *      в этом коде.
+ *
+ * Возврата нет: удалённое не восстанавливается. Поэтому перед кнопкой на экране
+ * стоит пересчёт строк, а не общее «вы уверены».
+ */
+export async function deleteStudentAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const typedName = String(formData.get("typedName") ?? "");
+  if (!studentUuid) return;
+
+  const result = await deleteIntervalsStudentCompletely({ studentUuid, typedName });
+  if (!result.ok) {
+    // Отказ не молчит: он возвращается на страницу параметром и виден глазами.
+    redirect(`/admin/coach-os/beginner/${studentUuid}?delete_error=${encodeURIComponent(result.reason)}`);
+  }
+  redirect(`/admin/coach-os/beginner?deleted=${encodeURIComponent(result.preview.studentName)}`);
 }

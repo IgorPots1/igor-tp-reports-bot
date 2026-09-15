@@ -364,10 +364,12 @@
     "check:connection-health": "npx tsx scripts/check-connection-health.ts",
     "check:connect-text": "npx tsx scripts/check-connect-text.ts",
     "check:enrollment": "npx tsx scripts/check-enrollment.ts",
+    "check:delete-student": "npx tsx scripts/check-delete-student.ts",
     "check:reminders": "npx tsx scripts/check-reminders.ts",
     "intervals:live-run": "npx tsx scripts/intervals-live-run.ts",
     "intervals:reminders": "npx tsx scripts/intervals-reminders.ts",
-    "intervals:scenario-improve": "npx tsx scripts/intervals-scenario-improve.ts"
+    "intervals:scenario-improve": "npx tsx scripts/intervals-scenario-improve.ts",
+    "intervals:delete-student": "npx tsx scripts/intervals-delete-student.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",
