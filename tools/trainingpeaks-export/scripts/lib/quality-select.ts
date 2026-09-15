@@ -18,6 +18,20 @@ import { presetSessionMinutes, type Guardrail, type QualityPreset, type ReviewRu
 export type QualityContext = {
   /** качественных сессий за последние 8 недель (считается на лету из кэша) */
   qualityLast8w: number;
+  /**
+   * Гейт по истории снят снаружи, сборщиком недели.
+   *
+   * ЗАЧЕМ ФЛАГ. Сборщик уже умеет поднимать потолок, когда цикл просит работу
+   * («✋ гейт качества снят циклом»), но отбор пересчитывал тот же гейт от
+   * истории заново и всё равно отказывал. Получалась записка, обещающая
+   * снятие, и отказ следом.
+   *
+   * Флаг ставит ТОЛЬКО ветка Intervals: у неё истории качества нет по
+   * устройству, размечать её нечем, и другого способа начать работу не
+   * существует. Ростер TrainingPeaks флага не видит, и его гейт работает как
+   * работал.
+   */
+  gateLiftedByCycle?: boolean;
   /** сколько дней бегает в неделю */
   plannedRunCount: number;
   /** суммарный объём работы последней качественной, мин (null — истории нет) */
@@ -111,7 +125,7 @@ export function selectQualityFromCatalog(
   ctx: QualityContext,
 ): QualityDecision {
   const cap = qualityCapFromHistory(ctx.qualityLast8w);
-  if (cap < 1) {
+  if (cap < 1 && ctx.gateLiftedByCycle !== true) {
     return { selected: false, reason: "no_quality_slot_available",
       detail: `качественных за ${QUALITY_CAP_THRESHOLDS.windowWeeks} нед: ${ctx.qualityLast8w} (< ${QUALITY_CAP_THRESHOLDS.oneSessionMin})` };
   }

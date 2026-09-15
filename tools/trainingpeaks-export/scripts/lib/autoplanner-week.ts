@@ -314,6 +314,24 @@ export type Segment = {
   noPaceText?: string;
 };
 
+/**
+ * Усилие словами. Нужен, когда темпов нет: «усилие 7 из 10» само по себе
+ * человеку ничего не говорит, а «говорить можно короткими фразами» говорит.
+ *
+ * Шкала та же, что у чек-ина ученика (features/intervals/loop/effort-scale):
+ * 1–10, где 5 это «тяжело». Два разных словаря на одну шкалу означали бы, что
+ * человек читает в задании одно, а отмечается другим, и сравнить эти два числа
+ * стало бы нельзя.
+ */
+export function effortText(rpe: number | null): string {
+  if (rpe == null) return "по ощущениям";
+  if (rpe <= 5) return `усилие ${rpe} из 10, дыхание ровное, говорить можно предложениями`;
+  if (rpe === 6) return `усилие ${rpe} из 10, дышать заметно чаще, говорить можно предложениями`;
+  if (rpe === 7) return `усилие ${rpe} из 10, дышать тяжело, говорить можно только короткими фразами`;
+  if (rpe === 8) return `усилие ${rpe} из 10, говорить почти нельзя, но до конца отрезка держите ровно`;
+  return `усилие ${rpe} из 10, очень тяжело, разговаривать нельзя`;
+}
+
 export const fp = (sec: number): string => {
   const m = Math.floor(sec / 60), s = Math.round(sec % 60);
   return s === 60 ? `${m + 1}:00` : `${m}:${String(s).padStart(2, "0")}`;
@@ -444,14 +462,38 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     : p.intensityIntent === "threshold" ? "threshold" : "controlled_threshold";
   const work = resolvePace(a, intent, "maintenance", p.rpeTarget);
   const easy = resolvePace(a, "easy", "maintenance", null);
-  if (!work.ok || !easy.ok) {
+
+  /**
+   * КАЧЕСТВО ПО УСИЛИЮ, КОГДА ПОРОГА НЕТ [решение Игоря, 15.09.2026].
+   *
+   * Резолвер по-прежнему отказывает: его дело — перевести намерение в темпы, а
+   * темпов без порога не существует. Но отказ не обязан означать «работы не
+   * будет»: пресет несёт собственный RPE, то есть методика знает, каким должно
+   * быть усилие. «6 × 3 минуты, усилие 7 из 10» — настоящая работа, просто
+   * описанная не числами темпа.
+   *
+   * Разрешено ТОЛЬКО по флагу (ветка Intervals). У ростера TrainingPeaks отказ
+   * остаётся отказом: там он значит «сначала поставь порог».
+   *
+   * Разминка и трусца при этом идут по темпу как обычно: якорь лёгкого есть,
+   * и подменять его ощущениями незачем.
+   */
+  const byEffort =
+    !work.ok &&
+    (work as { reason: string }).reason === "no_threshold_cannot_do_quality" &&
+    a.qualityByEffort === true &&
+    p.rpeTarget !== null &&
+    easy.ok;
+
+  if ((!work.ok && !byEffort) || !easy.ok) {
     const reason = !work.ok ? work.reason : (easy as { reason: string }).reason;
     return { dayIdx, role: "quality", presetCode: p.presetCode, title: p.displayNameRu, minutes: 0, description: "",
       segments: [], anchorSource: "—", confidence: "—", targetMode: "—", pctMin: null, pctMax: null,
       roundTrip: { ok: false, expected: 0, parsedRanges: 0, parsedSegments: 0, problems: [reason] },
       deferred: true, deferReason: reason, warnings: [], coachReview: dec.coachReview };
   }
-  const w = work as Resolved, e = easy as Resolved;
+  const w = work.ok ? (work as Resolved) : null;
+  const e = easy as Resolved;
   const eb = narrowBand(e.absPaceMinS, e.absPaceMaxS);
   const warmMin = p.warmupMinutes || WARMUP_CANON_MINUTES;
   // Каноническая разминка НЕ сворачивается ради экономии минут — протокол задан уровнем
@@ -463,7 +505,10 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     // встречаются лишь в 15% — в простой разминке НЕ ставим.
     : [{ minutes: warmMin, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
   for (let i = 0; i < p.reps; i++) {
-    segs.push({ minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS });
+    segs.push(w
+      ? { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS }
+      : { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: null, slowSec: null,
+          noPaceText: effortText(p.rpeTarget) });
     if (i < p.reps - 1) segs.push({ minutes: p.recoveryMinutes, label: "Трусца", fastSec: eb.fast, slowSec: eb.slow });
   }
   segs.push({ minutes: p.cooldownMinutes, label: "Заминка, свободно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow });
@@ -471,10 +516,18 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);
   return { dayIdx, role: "quality", presetCode: p.presetCode, title: p.displayNameRu, minutes: Math.round(total),
-    description, segments: segs, anchorSource: w.anchorSource, confidence: w.confidence, targetMode: w.targetMode,
-    pctMin: w.pctMin, pctMax: w.pctMax, roundTrip: rt, deferred: !rt.ok,
+    description, segments: segs,
+    anchorSource: w ? w.anchorSource : "methodology_rpe",
+    confidence: w ? w.confidence : "medium_low",
+    targetMode: w ? w.targetMode : "rpe",
+    pctMin: w ? w.pctMin : null, pctMax: w ? w.pctMax : null,
+    roundTrip: rt, deferred: !rt.ok,
     deferReason: rt.ok ? null : "round_trip_mismatch",
-    warnings: [...w.warnings, ...dec.warnings], coachReview: dec.coachReview };
+    warnings: [
+      ...(w ? w.warnings : ["качество по усилию: порога нет, темпы не назначены"]),
+      ...dec.warnings,
+    ],
+    coachReview: dec.coachReview };
 }
 
 export type Week = {
@@ -803,15 +856,30 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     // то есть две качественные были бы двумя одинаковыми тренировками. Теперь у каждого слота
     // свой тип (отрезки / темповый, по практике атлета) и своя доля целевых минут работы.
     const slotTypes = qualitySlotTypes(counts.quality, env.hasIntervalPractice, env.hasTempoPractice);
-    const decs: QualityDecision[] = a.threshold == null
+
+    // В РЕЖИМЕ «ПО УСИЛИЮ» ГОДЯТСЯ НЕ ВСЕ ПРЕСЕТЫ. Сессия описывается числом RPE
+    // из самого пресета; пресет без RPE описать нечем, и если отбор выберет
+    // именно его, сессия молча уедет в «отложено» с пустым телом. Поэтому
+    // сужаем пул ДО отбора, а не разбираемся после.
+    const byEffortMode = a.threshold == null && a.qualityByEffort === true;
+    const qualityPool = byEffortMode
+      ? cat.quality.filter((preset) => preset.rpeTarget != null)
+      : cat.quality;
+    const decs: QualityDecision[] = a.threshold == null && a.qualityByEffort !== true
       ? [{ selected: false, reason: "no_threshold_cannot_do_quality", detail: "порога нет — качество не назначается" }]
       : slotTypes.length === 0
       // Слотов нет вовсе (гейт закрыт или дней меньше трёх) — причину пишем ЯВНО. Пустой
       // список решений оставлял дальше undefined и ронял сборку на первом же таком атлете.
       ? [{ selected: false, reason: "no_quality_slot_available",
           detail: `скелет не дал ни одного качественного дня: дней ${n}, потолок ${qualityCap}, просит практика ${qualityWant}` }]
-      : slotTypes.map((slotType) => selectQualityFromCatalog(cat.quality, cat.guardrails, cat.reviewRules, {
+      : byEffortMode && qualityPool.length === 0
+      ? [{ selected: false, reason: "no_quality_slot_available",
+          detail: "в каталоге нет качественных пресетов с заданным усилием — по ощущениям назначать нечего" }]
+      : slotTypes.map((slotType) => selectQualityFromCatalog(qualityPool, cat.guardrails, cat.reviewRules, {
         qualityLast8w: env.qualityLast8w, plannedRunCount: n,
+        // Гейт снят выше — сообщаем об этом отбору, иначе он пересчитает его
+        // заново и откажет, несмотря на записку «гейт снят циклом».
+        gateLiftedByCycle: qualityCap > gateCap && a.qualityByEffort === true,
         lastQualityWorkMinutes: env.lastQualityWorkMinutes,
         hasActiveIllnessOrInjury: hasActiveIllness, hasRaceContext: false,
         contextFlags: hasActiveIllness ? ["injury"] : [], rolling4wWeeklyMin: env.rolling4wWeeklyMin,

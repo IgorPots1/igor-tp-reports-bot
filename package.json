@@ -365,6 +365,7 @@
     "check:connect-text": "npx tsx scripts/check-connect-text.ts",
     "check:enrollment": "npx tsx scripts/check-enrollment.ts",
     "check:delete-student": "npx tsx scripts/check-delete-student.ts",
+    "check:quality-by-effort": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local tools/trainingpeaks-export/scripts/check-quality-by-effort.ts",
     "check:reminders": "npx tsx scripts/check-reminders.ts",
     "intervals:live-run": "npx tsx scripts/intervals-live-run.ts",
     "intervals:reminders": "npx tsx scripts/intervals-reminders.ts",

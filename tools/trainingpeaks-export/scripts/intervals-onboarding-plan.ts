@@ -320,7 +320,15 @@ async function main(): Promise<void> {
   console.log(`потолок роста:       ${draft.peakCapAerobicMin} мин (исторический максимум ${draft.historicMaxAerobicMin})`);
   console.log(`тир:                 ${anchors.tier}`);
   console.log(`якорь лёгкого:       ${anchors.easy ? `${paceText(anchors.easy.fastSec)}–${paceText(anchors.easy.slowSec)} (${anchors.easy.source}, ${anchors.easy.confidence})` : "нет"}`);
-  console.log(`порог:               ${anchors.threshold ? paceText(anchors.threshold.paceSec) : "нет — качество назначено не будет"}`);
+  console.log(
+    `порог:               ${
+      anchors.threshold
+        ? paceText(anchors.threshold.paceSec)
+        : anchors.qualityByEffort
+          ? "нет — работа назначается по усилию, без темпов"
+          : "нет — качество назначено не будет"
+    }`
+  );
   for (const note of notes) console.log(`  · ${note}`);
   for (const gap of draft.gaps) console.log(`  · пробел: ${gap}`);
 
