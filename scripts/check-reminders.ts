@@ -10,6 +10,7 @@
 import {
   decideReminder,
   EVENING_WINDOW,
+  MISSED_STREAK_SILENCE,
   MORNING_WINDOW,
   type ReminderInput,
 } from "@/features/intervals/loop/reminders";
@@ -31,6 +32,7 @@ const base: ReminderInput = {
   hasActivityToday: false,
   alreadySentKinds: [],
   hasPublishedPlan: true,
+  missedStreak: 0,
 };
 const at = (patch: Partial<ReminderInput>) => decideReminder({ ...base, ...patch });
 
@@ -49,16 +51,45 @@ function main(): void {
   expect(at({ localHour: 12 }).send === false, "днём молчим: окно прошло");
   expect(at({ localHour: 8, todaySession: null }).send === false, "в день отдыха утром молчим");
 
-  step("ВЕЧЕР: ОТМЕТИТЬСЯ");
-  const evening = at({ localHour: 20 });
-  expect(evening.send && evening.kind === "checkin_nudge", "в вечернем окне уходит напоминание отметиться");
+  step("ВЕЧЕР: ДВА РАЗНЫХ РАЗГОВОРА");
+  // Тренировка была — спрашиваем, как прошла.
   const afterRun = at({ localHour: 20, hasActivityToday: true });
+  expect(afterRun.send && afterRun.kind === "checkin_nudge", "после состоявшейся тренировки просим отметиться");
   expect(
     afterRun.send && afterRun.textRu.includes("Вижу, что вы сегодня бегали"),
-    "если тренировка приехала из Intervals, текст другой: мы знаем, что она бегала"
+    "текст опирается на факт: мы знаем, что она бегала"
   );
+
+  // Тренировки не было — разговор про человека, а не про отметку.
+  const missed = at({ localHour: 20, hasActivityToday: false });
+  expect(missed.send && missed.kind === "missed_nudge", "пропущенная тренировка получает свой вид напоминания");
+  expect(
+    missed.send && missed.textRu.includes("всё в порядке"),
+    "спрашиваем, всё ли в порядке, а не требуем отметиться"
+  );
+  expect(
+    missed.send && !missed.textRu.includes("Отметьтесь"),
+    "не просим отметиться о том, чего не было"
+  );
+  expect(
+    missed.send && missed.textRu.includes("догонять не нужно"),
+    "без упрёка: догонять не нужно"
+  );
+
   const noPlanNoRun = at({ localHour: 20, todaySession: null, hasActivityToday: false });
   expect(noPlanNoRun.send === false, "вечером без тренировки и без пробежки молчим");
+
+  step("НЕСКОЛЬКО ПРОПУСКОВ ПОДРЯД: БОТ ЗАМОЛКАЕТ");
+  expect(
+    at({ localHour: 20, hasActivityToday: false, missedStreak: 1 }).send === true,
+    "после первого пропуска ещё спрашиваем: бытовая случайность"
+  );
+  const longSilence = at({ localHour: 20, hasActivityToday: false, missedStreak: MISSED_STREAK_SILENCE });
+  expect(longSilence.send === false, `после ${MISSED_STREAK_SILENCE} пропусков подряд бот молчит`);
+  expect(
+    longSilence.send === false && longSilence.reason.includes("к тренеру"),
+    "и причина названа: дальше должен спросить человек, а не программа"
+  );
 
   step("ЧЕГО НЕ ДЕЛАЕМ НИКОГДА");
   expect(at({ hasCheckinToday: true }).send === false, "отметилась — утром не трогаем");
@@ -72,8 +103,12 @@ function main(): void {
     "утреннее уже уходило сегодня — второй раз нет"
   );
   expect(
-    at({ localHour: 20, alreadySentKinds: ["checkin_nudge"] }).send === false,
+    at({ localHour: 20, hasActivityToday: true, alreadySentKinds: ["checkin_nudge"] }).send === false,
     "вечернее уже уходило сегодня — второй раз нет"
+  );
+  expect(
+    at({ localHour: 20, alreadySentKinds: ["missed_nudge"] }).send === false,
+    "вопрос про пропуск тоже задаётся один раз в день"
   );
   // Утреннее ушло, вечернее нет: это РАЗНЫЕ напоминания, и второе имеет право уйти.
   expect(

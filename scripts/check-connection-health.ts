@@ -169,6 +169,7 @@ function main(): void {
   const calm = {
     unansweredCheckins: 0,
     missedCheckinDates: [],
+    missedPlannedDates: [],
     connection: "ok" as const,
     planWaitingPublish: false,
     noPlan: false,
@@ -195,6 +196,18 @@ function main(): void {
   expect(
     signalLabelsRu(silentMissed).some((label) => label.startsWith("не отметилась")),
     "«не отметилась» видно в списке, а не только в карточке"
+  );
+
+  // Бот после двух пропусков подряд замолкает намеренно. Если тренер этого не
+  // увидит, не увидит уже никто: это единственный оставшийся канал.
+  const skipping = { ...calm, missedPlannedDates: ["2026-09-12", "2026-09-13"] };
+  expect(
+    signalLabelsRu(skipping).some((label) => label.includes("бот замолчал")),
+    "два пропуска подряд подписаны прямо: бот замолчал, дальше тренер"
+  );
+  expect(
+    signalWeight(skipping) > signalWeight(silentMissed),
+    "пропуски весят больше забытых отметок"
   );
 
   console.log("");

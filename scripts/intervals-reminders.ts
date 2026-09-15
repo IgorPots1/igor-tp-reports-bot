@@ -28,6 +28,10 @@ import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
+function shiftIso(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
 function localHourInZone(timezone: string | null): number {
   const zone = timezone ?? "Europe/Belgrade";
   try {
@@ -104,23 +108,24 @@ async function main(): Promise<void> {
     const hour = localHourInZone(student.timezone);
 
     const cycle = await getPublishedCycle(student.sourceId);
-    const sessions = cycle ? await listSessionsInRange(cycle.id, today, today) : [];
-    const todaySession = sessions[0] ?? null;
+    // Окно на неделю назад нужно для одного: посчитать серию пропусков. Без неё
+    // бот не отличит «первый раз не сложилось» от «человек пропал».
+    const weekAgo = shiftIso(today, -7);
+    const sessions = cycle ? await listSessionsInRange(cycle.id, weekAgo, today) : [];
+    const todaySession = sessions.find((session) => session.sessionDate === today) ?? null;
 
     const [{ data: checkins }, { data: activities }, { data: sentRows }] = await Promise.all([
       supabase
         .from("intervals_checkins")
-        .select("id")
+        .select("session_date")
         .eq("source_id", student.sourceId)
-        .eq("session_date", today)
-        .limit(1),
+        .gte("session_date", weekAgo),
       supabase
         .from("intervals_activities")
-        .select("activity_id")
+        .select("start_date_local")
         .eq("source_id", student.sourceId)
-        .gte("start_date_local", `${today}T00:00:00`)
-        .lte("start_date_local", `${today}T23:59:59`)
-        .limit(1),
+        .gte("start_date_local", `${weekAgo}T00:00:00`)
+        .lte("start_date_local", `${today}T23:59:59`),
       supabase
         .from("intervals_reminders")
         .select("kind")
@@ -128,16 +133,38 @@ async function main(): Promise<void> {
         .eq("local_date", today),
     ]);
 
+    const checkinDates = new Set(
+      (checkins ?? []).map((row) => String((row as { session_date: string }).session_date))
+    );
+    const activityDates = new Set(
+      (activities ?? []).map((row) =>
+        String((row as { start_date_local: string }).start_date_local ?? "").slice(0, 10)
+      )
+    );
+    const plannedDates = new Set(sessions.map((session) => session.sessionDate));
+
+    // Серия пропусков: идём назад от вчерашнего дня, пока встречаются плановые
+    // дни, в которые не было ни пробежки, ни отметки. День без плана серию не
+    // рвёт и не продолжает: это просто выходной.
+    let missedStreak = 0;
+    for (let back = 1; back <= 7; back += 1) {
+      const day = shiftIso(today, -back);
+      if (!plannedDates.has(day)) continue;
+      if (activityDates.has(day) || checkinDates.has(day)) break;
+      missedStreak += 1;
+    }
+
     const decision = decideReminder({
       localHour: hour,
       todaySession: todaySession ? { title: todaySession.title, minutes: todaySession.minutes } : null,
-      hasCheckinToday: (checkins ?? []).length > 0,
-      hasActivityToday: (activities ?? []).length > 0,
+      hasCheckinToday: checkinDates.has(today),
+      hasActivityToday: activityDates.has(today),
+      missedStreak,
       alreadySentKinds: (sentRows ?? []).map((row) => (row as { kind: ReminderKind }).kind),
       hasPublishedPlan: cycle !== null,
     });
 
-    const who = `${student.studentName} (${today}, ${hour}:00 местного)`;
+    const who = `${student.studentName} (${today}, ${hour}:00 местного${missedStreak > 0 ? `, пропусков подряд ${missedStreak}` : ""})`;
     if (!decision.send) {
       console.log(`  · ${who}: молчим — ${decision.reason}`);
       continue;

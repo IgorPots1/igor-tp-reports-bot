@@ -55,6 +55,15 @@ export type StudentSignals = {
    * «нет данных»: данные как раз есть, молчит человек.
    */
   missedCheckinDates: string[];
+  /**
+   * Плановые дни, в которые не было НИЧЕГО: ни пробежки, ни отметки.
+   *
+   * ЗАЧЕМ ОТДЕЛЬНО ОТ ПРЕДЫДУЩЕГО. Это разные истории: «побегала и забыла
+   * отметиться» лечится напоминанием, «не побегала третий раз подряд» не
+   * лечится ничем автоматическим. После двух пропусков подряд бот замолкает
+   * намеренно, и единственный, кто узнает об этом, — тренер вот здесь.
+   */
+  missedPlannedDates: string[];
   /** Состояние связи с Intervals, тот же диагноз, что и в карточке. */
   connection: ConnectionHealth["state"];
   /** План собран, но ученица его ещё не видит. */
@@ -78,6 +87,9 @@ export function signalWeight(signals: StudentSignals): number {
   if (signals.planWaitingPublish) weight += 500;
   if (signals.noPlan) weight += 400;
   weight += signals.unansweredCheckins * 50;
+  // Пропуски весят больше забытых отметок: бот после двух подряд молчит, и
+  // если тренер не посмотрит, не посмотрит уже никто.
+  weight += signals.missedPlannedDates.length * 40;
   weight += signals.missedCheckinDates.length * 30;
   return weight;
 }
@@ -91,6 +103,11 @@ export function signalLabelsRu(signals: StudentSignals): string[] {
   if (signals.noPlan) labels.push("плана нет");
   if (signals.planWaitingPublish) labels.push("план ждёт публикации");
   if (signals.unansweredCheckins > 0) labels.push(`ответить: ${signals.unansweredCheckins}`);
+  if (signals.missedPlannedDates.length >= 2) {
+    labels.push(`пропускает ${signals.missedPlannedDates.length} подряд, бот замолчал`);
+  } else if (signals.missedPlannedDates.length === 1) {
+    labels.push("пропустила тренировку");
+  }
   if (signals.missedCheckinDates.length > 0) {
     labels.push(`не отметилась: ${signals.missedCheckinDates.length}`);
   }
@@ -168,6 +185,7 @@ export async function loadStudentsSignals(
       result.set(student.studentUuid, {
         unansweredCheckins: 0,
         missedCheckinDates: [],
+        missedPlannedDates: [],
         connection: "not_connected",
         planWaitingPublish: false,
         noPlan: true,
@@ -180,7 +198,7 @@ export async function loadStudentsSignals(
   const from = shift(todayIso, -14);
   const activityFrom = shift(todayIso, -3);
 
-  const [cycles, checkins, messages, activities, sources] = await Promise.all([
+  const [cycles, checkins, messages, activities, sources, sessions] = await Promise.all([
     supabase
       .from("intervals_plan_cycles")
       .select("id, source_id, status, created_at")
@@ -205,6 +223,12 @@ export async function loadStudentsSignals(
       .from("student_data_sources")
       .select("id, is_active, connected_at, auth_failed_at")
       .in("id", sourceIds),
+    // Плановые дни за окно: без них не отличить «не бегала» от «не было плана».
+    supabase
+      .from("intervals_plan_cycles")
+      .select("id, source_id, status, intervals_plan_sessions(session_date)")
+      .in("source_id", sourceIds)
+      .eq("status", "published"),
   ]);
 
   const latestCycleBySource = new Map<string, { status: string }>();
@@ -238,6 +262,17 @@ export async function loadStudentsSignals(
     activityDatesBySource.set(key, set);
   }
 
+  const plannedBySource = new Map<string, Set<string>>();
+  for (const raw of sessions.data ?? []) {
+    const row = raw as unknown as Record<string, unknown>;
+    const key = String(row.source_id);
+    const set = plannedBySource.get(key) ?? new Set<string>();
+    for (const child of (row.intervals_plan_sessions as Array<{ session_date: string }> | null) ?? []) {
+      if (child.session_date >= from) set.add(String(child.session_date));
+    }
+    plannedBySource.set(key, set);
+  }
+
   const sourceById = new Map<string, Record<string, unknown>>();
   for (const raw of sources.data ?? []) {
     const row = raw as unknown as Record<string, unknown>;
@@ -249,6 +284,7 @@ export async function loadStudentsSignals(
       result.set(student.studentUuid, {
         unansweredCheckins: 0,
         missedCheckinDates: [],
+        missedPlannedDates: [],
         connection: "not_connected",
         planWaitingPublish: false,
         noPlan: true,
@@ -275,8 +311,14 @@ export async function loadStudentsSignals(
       checkinDates: own.map((item) => item.date),
     });
 
+    const planned = plannedBySource.get(sourceId) ?? new Set<string>();
+
     result.set(student.studentUuid, {
       unansweredCheckins: own.filter((item) => !answered.has(item.id)).length,
+      // Сегодня не считаем: день ещё не кончился.
+      missedPlannedDates: [...planned]
+        .filter((date) => date < todayIso && !activityDates.has(date) && !checkinDates.has(date))
+        .sort(),
       // Сегодняшний день не считаем: человек ещё бежит или только вернулся, и
       // требовать отметку через час после пробежки значит торопить.
       missedCheckinDates: [...activityDates]

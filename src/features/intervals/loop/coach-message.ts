@@ -11,7 +11,12 @@
 import { stepByIndex } from "@/features/methodology/beginner";
 // STRICT, а не обычный sendTelegramMessage: тот глотает ошибку и логирует её,
 // то есть тренер увидел бы «отправлено» при несостоявшейся доставке.
-import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
+import {
+  sendTelegramMessageStrict,
+  sendTelegramWebAppButton,
+} from "@/features/telegram/telegram-client";
+import { createSupabaseServerClient } from "@/features/supabase/server";
+import { SITE_URL } from "@/lib/site";
 
 import type { ActivityRow } from "./repository";
 import type { Checkin, CoachMessageContext, PlanSession, ProgressionState } from "./types";
@@ -87,6 +92,87 @@ export function buildCoachMessageContext(input: {
         }
       : null,
   };
+}
+
+/**
+ * «План готов» — единственное сообщение, которое бот шлёт по действию тренера,
+ * а не по расписанию.
+ *
+ * ЗАЧЕМ. Тренер нажимает «Показать ученице», и с этой секунды план у неё есть.
+ * Узнать об этом она могла только сама открыв приложение, то есть случайно;
+ * человек, который ждёт план второй день, каждый день заходит и видит «ещё
+ * готовится» — а он уже готов.
+ *
+ * ПРАВИЛА ТЕ ЖЕ, ЧТО У ОТВЕТА ТРЕНЕРА: killswitch и флаг доставки у карточки.
+ * Плюс след в таблице напоминаний, чтобы повторное нажатие не слало второе
+ * сообщение: уникальный ключ (источник, вид, дата) это и стережёт.
+ */
+export async function notifyPlanPublished(input: {
+  sourceId: string;
+  chatId: string | null;
+  telegramDeliveryEnabled: boolean;
+  todayIso: string;
+}): Promise<CoachSendResult> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: already } = await supabase
+    .from("intervals_reminders")
+    .select("id")
+    .eq("source_id", input.sourceId)
+    .eq("kind", "plan_published")
+    .eq("local_date", input.todayIso)
+    .limit(1);
+  if ((already ?? []).length > 0) {
+    return { kind: "prepared", reason: "сегодня уже уведомляли о плане" };
+  }
+
+  const text =
+    "План готов. Откройте приложение: там тренировка на сегодня, ближайшие дни и кнопка " +
+    "отметиться после пробежки.\n\n" +
+    "Если что-то в плане не подходит по дням, тренировку можно перенести прямо там.";
+
+  let result: CoachSendResult;
+  if (!input.chatId) {
+    result = { kind: "refused", code: "no_chat", messageRu: "Чат не привязан — уведомить некуда." };
+  } else if (!input.telegramDeliveryEnabled) {
+    result = {
+      kind: "refused",
+      code: "delivery_disabled",
+      messageRu: "У карточки выключена доставка (telegram_delivery_enabled).",
+    };
+  } else if (!isCoachSendEnabled()) {
+    result = {
+      kind: "prepared",
+      reason: "Режим подготовки: INTERVALS_COACH_SEND_ENABLED выключен, наружу не ушло.",
+    };
+  } else {
+    try {
+      await sendTelegramWebAppButton({
+        chatId: input.chatId,
+        text,
+        buttons: [{ label: "Открыть план", webAppUrl: `${SITE_URL.replace(/\/+$/, "")}/m/run` }],
+      });
+      result = { kind: "sent", chatId: input.chatId };
+    } catch (error) {
+      result = {
+        kind: "refused",
+        code: "failed",
+        messageRu: `Telegram не принял: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  // След пишем всегда: тренер должен видеть, уведомили её или нет, а не гадать.
+  await supabase.from("intervals_reminders").insert({
+    source_id: input.sourceId,
+    kind: "plan_published",
+    local_date: input.todayIso,
+    status: result.kind === "sent" ? "sent" : result.kind === "prepared" ? "skipped" : "failed",
+    detail: result.kind === "sent" ? null : result.kind === "prepared" ? result.reason : result.messageRu,
+    chat_id: result.kind === "sent" ? result.chatId : null,
+  });
+
+  return result;
 }
 
 export type CoachSendResult =

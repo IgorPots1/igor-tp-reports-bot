@@ -30,7 +30,22 @@
  * угодно; напоминание в 8 утра по Белграду это 3 ночи во Владивостоке.
  */
 
-export type ReminderKind = "today_session" | "checkin_nudge";
+export type ReminderKind = "today_session" | "checkin_nudge" | "missed_nudge" | "plan_published";
+
+/**
+ * Сколько дней подряд человек пропускает, прежде чем бот замолчит.
+ *
+ * ПОЧЕМУ БОТ ВООБЩЕ ЗАМОЛКАЕТ [решение 15.09.2026]. Первый пропуск это бытовая
+ * случайность, и мягкий вопрос уместен. Третий подряд — уже не случайность, и
+ * причина почти всегда такая, которую бот не решает: заболела, уехала,
+ * навалилось, передумала. Каждый следующий одинаковый вопрос от робота в этой
+ * ситуации читается как «меня не слышат», и человек уходит молча.
+ *
+ * Поэтому после двух пропусков подряд бот молчит, а тренер видит это сигналом
+ * в списке. Спросить должен человек, а не программа: только человек может
+ * поменять план, поставить паузу или просто сказать «ничего страшного».
+ */
+export const MISSED_STREAK_SILENCE = 2;
 
 /** Утреннее окно, по местному времени ученицы. */
 export const MORNING_WINDOW = { fromHour: 7, toHour: 9 } as const;
@@ -44,6 +59,11 @@ export type ReminderDecision =
 export type ReminderInput = {
   /** Местный час ученицы, 0–23. */
   localHour: number;
+  /**
+   * Сколько ПЛАНОВЫХ дней подряд закончились ничем: ни пробежки, ни отметки.
+   * Считается по дням до сегодняшнего.
+   */
+  missedStreak?: number;
   /** Что стоит в плане на сегодня. null — сегодня отдыха или плана нет. */
   todaySession: { title: string; minutes: number } | null;
   /** Отметилась ли она сегодня. */
@@ -85,8 +105,9 @@ export function decideReminder(input: ReminderInput): ReminderDecision {
     };
   }
 
-  if (inWindow(input.localHour, EVENING_WINDOW) && !sent.has("checkin_nudge")) {
-    if (input.hasActivityToday) {
+  if (inWindow(input.localHour, EVENING_WINDOW)) {
+    // ТРЕНИРОВКА БЫЛА: спрашиваем, как прошла. Это разговор о сделанном.
+    if (input.hasActivityToday && !sent.has("checkin_nudge")) {
       return {
         send: true,
         kind: "checkin_nudge",
@@ -96,17 +117,31 @@ export function decideReminder(input: ReminderInput): ReminderDecision {
           "программа стоит на месте.",
       };
     }
-    if (input.todaySession) {
+
+    // ТРЕНИРОВКИ НЕ БЫЛО: это другой разговор, и тон у него другой.
+    //
+    // НЕ ПРО ОТМЕТКУ, А ПРО ЧЕЛОВЕКА. Просить отметиться о том, чего не было,
+    // бессмысленно и обидно: человек и так знает, что не побежал. Спрашиваем,
+    // всё ли в порядке, и не требуем ничего в ответ.
+    if (!input.hasActivityToday && input.todaySession && !sent.has("missed_nudge")) {
+      if ((input.missedStreak ?? 0) >= MISSED_STREAK_SILENCE) {
+        return {
+          send: false,
+          reason: `пропусков подряд ${input.missedStreak}: бот молчит, это к тренеру`,
+        };
+      }
       return {
         send: true,
-        kind: "checkin_nudge",
+        kind: "missed_nudge",
         textRu:
-          "Как прошла сегодняшняя тренировка?\n\n" +
-          "Если получилось, отметьтесь в приложении: это одна кнопка. Если не получилось, тоже " +
-          "ничего страшного, догонять не нужно, просто продолжайте по плану.",
+          "Сегодня по плану была тренировка, а её не видно. У вас всё в порядке?\n\n" +
+          "Если день просто не сложился, ничего страшного: догонять не нужно, продолжайте по " +
+          "плану со следующей. Если что-то мешает и так будет и дальше, напишите мне, " +
+          "пересоберём неделю под вашу жизнь.",
       };
     }
-    return { send: false, reason: "сегодня ни плановой тренировки, ни пробежки" };
+
+    return { send: false, reason: "вечером сказать нечего" };
   }
 
   return { send: false, reason: "не время: ждём утреннего или вечернего окна" };

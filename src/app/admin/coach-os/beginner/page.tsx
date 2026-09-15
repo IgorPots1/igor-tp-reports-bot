@@ -74,6 +74,7 @@ export default async function BeginnerIndexPage() {
                 <th style={cell}>Ученик</th>
                 <th style={cell}>Что делать</th>
                 <th style={cell}>Ответить</th>
+                <th style={cell}>Пропуски</th>
                 <th style={cell}>Не отметилась</th>
                 <th style={cell}>Связь</th>
                 <th style={cell}>План</th>
@@ -106,6 +107,20 @@ export default async function BeginnerIndexPage() {
                     </td>
                     <td style={cell}>
                       {own && own.unansweredCheckins > 0 ? <strong>{own.unansweredCheckins}</strong> : "—"}
+                    </td>
+                    <td style={cell}>
+                      {own && own.missedPlannedDates.length > 0 ? (
+                        <>
+                          <strong>{own.missedPlannedDates.length}</strong>
+                          {own.missedPlannedDates.length >= 2 ? (
+                            <span style={{ display: "block", color: "#a3330a", fontSize: 12 }}>
+                              бот замолчал
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td style={cell}>
                       {own && own.missedCheckinDates.length > 0

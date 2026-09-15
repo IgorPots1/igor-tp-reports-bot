@@ -2,10 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 
-import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
+import { todayIsoInCoachTimezone, todayIsoInZone } from "@/features/intervals/loop/clock";
 import {
   buildCoachMessageContext,
   deliverCoachMessage,
+  notifyPlanPublished,
 } from "@/features/intervals/loop/coach-message";
 import {
   getProgression,
@@ -28,6 +29,29 @@ export async function publishPlanAction(formData: FormData): Promise<void> {
   if (!studentUuid || !cycleId || !sourceId) return;
 
   await publishCycle(cycleId, sourceId, "coach:admin");
+
+  // СРАЗУ ГОВОРИМ ЕЙ, ЧТО ПЛАН ЕСТЬ. Иначе она узнает об этом, только если сама
+  // зайдёт в приложение, то есть случайно: человек, ждущий план второй день,
+  // заходит и видит «ещё готовится», хотя он уже готов.
+  const supabase = createSupabaseServerClient();
+  const { data: studentRow } = await supabase
+    .from("trainingpeaks_students")
+    .select("telegram_chat_id, telegram_delivery_enabled, timezone")
+    .eq("id", studentUuid)
+    .maybeSingle();
+  const row = studentRow as {
+    telegram_chat_id?: string | null;
+    telegram_delivery_enabled?: boolean;
+    timezone?: string | null;
+  } | null;
+  const notice = await notifyPlanPublished({
+    sourceId,
+    chatId: row?.telegram_chat_id ?? null,
+    telegramDeliveryEnabled: row?.telegram_delivery_enabled === true,
+    todayIso: todayIsoInZone(row?.timezone ?? null),
+  });
+  console.info("[intervals.publish] уведомление о плане", { studentUuid, result: notice.kind });
+
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
 }
 
