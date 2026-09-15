@@ -365,7 +365,8 @@
     "check:connect-text": "npx tsx scripts/check-connect-text.ts",
     "check:reminders": "npx tsx scripts/check-reminders.ts",
     "intervals:live-run": "npx tsx scripts/intervals-live-run.ts",
-    "intervals:reminders": "npx tsx scripts/intervals-reminders.ts"
+    "intervals:reminders": "npx tsx scripts/intervals-reminders.ts",
+    "intervals:scenario-improve": "npx tsx scripts/intervals-scenario-improve.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",
