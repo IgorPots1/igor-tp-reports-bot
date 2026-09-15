@@ -58,6 +58,17 @@ function getExecTimeoutMs(): number {
 // (manual test, later automatic student-voice pipeline) is Russian-language coaching traffic.
 const WHISPER_LANGUAGE = "ru";
 
+// Strip whisper's own "[00:00:00.000 --> 00:00:10.520]  " prefix from each line — the only thing
+// -nt used to do, now done here instead (see transcribeTelegramFile for why -nt itself is gone).
+// Exported for testing; not part of the module's public transcription API.
+export function stripWhisperTimestamps(rawOutput: string): string {
+  return rawOutput
+    .split("\n")
+    .map((line) => line.replace(/^\[\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\]\s*/, ""))
+    .join("\n")
+    .trim();
+}
+
 // (file_id) -> transcript. Downloads via the Bot API, converts to 16kHz mono WAV (whisper.cpp's
 // expected input), runs whisper.cpp, and ALWAYS cleans up its temp directory — success or throw.
 export async function transcribeTelegramFile(fileId: string): Promise<TranscriptionResult> {
@@ -78,6 +89,12 @@ export async function transcribeTelegramFile(fileId: string): Promise<Transcript
       { timeout: getExecTimeoutMs() }
     );
 
+    // NOT passing -nt on purpose — found empirically (2026-09-15, a real 395s voice note) that
+    // suppressing timestamps via -nt doesn't just change output FORMATTING, it visibly degrades
+    // whisper.cpp's own long-form decoding: the exact same audio produced ~half the actual speech
+    // content (4851 vs 8798 bytes) with -nt set, the back half of the recording collapsing into a
+    // short repetition loop instead of being transcribed. Keeping timestamps in whisper's own
+    // decode path avoids that; we strip them from the OUTPUT text ourselves below instead.
     await execFileAsync(
       getWhisperCliPath(),
       [
@@ -87,7 +104,6 @@ export async function transcribeTelegramFile(fileId: string): Promise<Transcript
         wavPath,
         "-l",
         WHISPER_LANGUAGE,
-        "-nt", // no per-segment timestamps in the output text
         "-otxt",
         "-of",
         txtBasePath,
@@ -97,7 +113,7 @@ export async function transcribeTelegramFile(fileId: string): Promise<Transcript
 
     const txtPath = `${txtBasePath}.txt`;
     await stat(txtPath); // throws a clear ENOENT if whisper.cpp did not produce the file
-    const transcript = (await readFile(txtPath, "utf8")).trim();
+    const transcript = stripWhisperTimestamps(await readFile(txtPath, "utf8"));
 
     return {
       transcript,

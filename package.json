@@ -23,6 +23,7 @@
     "test:tp-workout-normalization": "node --experimental-strip-types --test tools/trainingpeaks-export/scripts/lib/trainingpeaks-workout-normalization.test.ts",
     "test:voice-transcription-split": "node --experimental-strip-types --test src/features/voice-transcription/telegram-message-split.test.ts",
     "test:voice-transcription-webhook": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --test src/features/voice-transcription/webhook.test.ts",
+    "test:voice-transcription-transcribe": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --test src/features/voice-transcription/transcribe.test.ts",
     "tp-sync-reports": "node --experimental-strip-types tools/trainingpeaks-export/scripts/tp-sync-reports.ts",
     "tp-agent-once": "npm --prefix tools/trainingpeaks-export run tp-agent-once",
     "tp-actions-once": "npm --prefix tools/trainingpeaks-export run tp-actions-once --",
