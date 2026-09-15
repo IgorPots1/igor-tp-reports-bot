@@ -452,6 +452,40 @@ export async function getTelegramFilePath(fileId: string): Promise<string> {
   return filePath;
 }
 
+// getChat by id — used to verify the coach-id allowlist is actually private chats (a group id in
+// there would let anyone in that group trigger coach-only flows). Bot API returns chat.type
+// directly, no need to fetch anything else.
+export async function getTelegramChatType(chatId: string | number): Promise<string> {
+  const token = getTelegramBotToken();
+
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/getChat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      chat_id: chatId,
+    }),
+  });
+
+  const payload = (await response.json()) as {
+    ok?: boolean;
+    description?: string;
+    result?: { type?: string };
+  };
+
+  if (!response.ok || payload.ok === false) {
+    throw new Error(`Telegram getChat failed for ${chatId}: ${payload.description ?? response.status}`);
+  }
+
+  const chatType = payload.result?.type;
+  if (!chatType) {
+    throw new Error(`Telegram getChat returned no type for ${chatId}`);
+  }
+
+  return chatType;
+}
+
 /**
  * Largest-size file_id of a user's CURRENT Telegram profile photo, or null. Works only for users who
  * have started the bot (getUserProfilePhotos is a Bot API method) — which is most club members.

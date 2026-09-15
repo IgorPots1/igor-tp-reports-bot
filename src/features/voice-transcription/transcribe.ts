@@ -10,6 +10,8 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import ffmpegStaticPath from "ffmpeg-static";
+
 import { downloadTelegramFile } from "@/features/telegram/telegram-client";
 
 const execFileAsync = promisify(execFile);
@@ -20,8 +22,11 @@ export type TranscriptionResult = {
   processingMs: number;
 };
 
+// ffmpeg-static ships a prebuilt binary as an npm dependency — no Homebrew/sudo needed, and it's
+// already there after a plain `npm install` in the canonical directory. VOICE_TRANSCRIPTION_FFMPEG_PATH
+// stays as an override for anyone who wants a system ffmpeg instead.
 function getFfmpegPath(): string {
-  return process.env.VOICE_TRANSCRIPTION_FFMPEG_PATH?.trim() || "ffmpeg";
+  return process.env.VOICE_TRANSCRIPTION_FFMPEG_PATH?.trim() || ffmpegStaticPath || "ffmpeg";
 }
 
 function getWhisperCliPath(): string {
