@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Daily prod DB dump (Free-tier Supabase has no automatic backups). Dumps land in
+     ~/ops-log/igor-tp-reports-bot/db-dumps/, kept 7 days, rotated by the script itself.
+     Требует SUPABASE_ACCESS_TOKEN в .env.local (личный access token, НЕ пароль БД) —
+     сгенерировать на https://supabase.com/dashboard/account/tokens.
+     Установка: cp .../com.igor.trainingpeaks.supabase-db-dump.plist ~/Library/LaunchAgents/
+                launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.supabase-db-dump.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.supabase-db-dump</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-supabase-db-dump.sh"</string>
+  </array>
+
+  <!-- забрать пропущенный дамп после сна/простоя -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- раз в сутки, ночью, подальше от остальных плотных потоков -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/supabase-db-dump.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/supabase-db-dump.launchd.err.log</string>
+</dict>
+</plist>
