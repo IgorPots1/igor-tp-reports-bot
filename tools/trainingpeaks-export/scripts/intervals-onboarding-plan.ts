@@ -37,6 +37,7 @@ import { loadCatalog } from "./lib/autoplanner-catalog.ts";
 import type { BeginnerWeekInput } from "./lib/beginner-week.ts";
 import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
 import { forecast } from "./lib/training-cycle.ts";
+import { placeDiagnosticTest } from "./lib/intervals-diagnostic-test.ts";
 import type { AthletePreference } from "./lib/athlete-preferences.ts";
 import { sessionCapPreferences } from "@/features/intervals/loop/schedule";
 import {
@@ -319,6 +320,24 @@ async function main(): Promise<void> {
           setAt: String(source.threshold_set_at),
         }
       : null;
+  // ОТКАЗ ОТ ТЕСТА читается ОТДЕЛЬНЫМ запросом, и ошибка чтения не роняет
+  // генерацию: колонка появляется миграцией 20261015000000, а планы должны
+  // собираться и до её применения. После применения ветка перестаёт срабатывать
+  // сама, и её можно будет свернуть в общий select.
+  let testDeclined = false;
+  {
+    const { data: declineRow, error: declineError } = await supabase
+      .from("student_data_sources")
+      .select("diagnostic_test_declined_at")
+      .eq("id", source.id as string)
+      .maybeSingle();
+    if (declineError) {
+      console.log(`  (отказ от теста не прочитан: ${declineError.message})`);
+    } else {
+      testDeclined = Boolean((declineRow as { diagnostic_test_declined_at?: string | null } | null)?.diagnostic_test_declined_at);
+    }
+  }
+
   const anchors = buildAnchors(start, storedThreshold);
   const envelope = buildEnvelope(start);
   const { draft, intent, lengthWeeks, notes } = buildDraftFromOnboarding(answers, start, firstWeekStart);
@@ -362,8 +381,26 @@ async function main(): Promise<void> {
     };
     const week = buildWeek(anchors, envelope, catalog, forecastWeek.weekStart, false, null, target, prefs);
     built.push({ week, target });
-    printWeek(week, index + 1, target);
   }
+
+  // ── Диагностический тест ────────────────────────────────────────────────
+  //
+  // Вставляется ПОСЛЕ сборки недель и ДО печати: иначе тренер увидел бы в
+  // выводе сессию, которой в записанном плане не будет. Решение о месте и
+  // условиях целиком в lib/intervals-diagnostic-test.
+  const placement = placeDiagnosticTest({
+    built,
+    anchors,
+    intent: draft.intent,
+    hasThreshold: storedThreshold !== null,
+    declined: testDeclined,
+    maxSessionMinutes: answers.maxSessionMinutes,
+  });
+  console.log("");
+  console.log(`── Диагностический тест ─────────────────────`);
+  console.log(`  ${placement.note}`);
+
+  built.forEach((item, index) => printWeek(item.week, index + 1, item.target));
 
   const totalSessions = built.reduce((sum, item) => sum + item.week.sessions.length, 0);
   const deferred = built.reduce(

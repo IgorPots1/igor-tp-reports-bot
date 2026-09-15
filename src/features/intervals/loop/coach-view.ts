@@ -20,6 +20,7 @@ import {
   listSessionsInRange,
   type ActivityRow,
 } from "./repository";
+import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
 import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
 import { getSourceConnection } from "../repository";
 import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState } from "./types";
@@ -70,6 +71,19 @@ export type StudentSignals = {
   planWaitingPublish: boolean;
   /** Плана нет вообще: ни черновика, ни опубликованного. */
   noPlan: boolean;
+  /**
+   * День диагностического теста прошёл, а порога так и нет.
+   *
+   * ЗАЧЕМ СИГНАЛ, А НЕ УВЕДОМЛЕНИЕ. Тест разбирается командой, и команду надо
+   * не забыть запустить. Сигнал в списке учеников попадается тренеру на глаза
+   * сам, в то же утро, когда он и так открывает список. Дата теста нужна,
+   * чтобы подставить её в команду разбора, не ища руками.
+   *
+   * Сигнал живёт две недели после дня теста: дальше его снимет либо
+   * поставленный порог, либо следующий цикл со своим тестом. Вечный сигнал
+   * читается как «тут всегда красное» и перестаёт работать.
+   */
+  testWaitingReview: string | null;
 };
 
 /**
@@ -86,6 +100,9 @@ export function signalWeight(signals: StudentSignals): number {
   if (signals.connection === "not_connected") weight += 600;
   if (signals.planWaitingPublish) weight += 500;
   if (signals.noPlan) weight += 400;
+  // Ниже связи и плана, выше неотвеченных отметок: тест не горит, но пока его
+  // не разобрали, весь цикл идёт по усилию вместо темпов.
+  if (signals.testWaitingReview) weight += 300;
   weight += signals.unansweredCheckins * 50;
   // Пропуски весят больше забытых отметок: бот после двух подряд молчит, и
   // если тренер не посмотрит, не посмотрит уже никто.
@@ -102,6 +119,7 @@ export function signalLabelsRu(signals: StudentSignals): string[] {
   if (signals.connection === "not_connected") labels.push("часы не подключены");
   if (signals.noPlan) labels.push("плана нет");
   if (signals.planWaitingPublish) labels.push("план ждёт публикации");
+  if (signals.testWaitingReview) labels.push(`разобрать тест за ${signals.testWaitingReview}`);
   if (signals.unansweredCheckins > 0) labels.push(`ответить: ${signals.unansweredCheckins}`);
   if (signals.missedPlannedDates.length >= 2) {
     labels.push(`пропускает ${signals.missedPlannedDates.length} подряд, бот замолчал`);
@@ -112,6 +130,26 @@ export function signalLabelsRu(signals: StudentSignals): string[] {
     labels.push(`не отметилась: ${signals.missedCheckinDates.length}`);
   }
   return labels;
+}
+
+/**
+ * Тест, который прошёл и ещё не разобран.
+ *
+ * ПОЧЕМУ ОКНО В ДВЕ НЕДЕЛИ. Разбор теста это ручное действие, и оно может
+ * подождать день или два. Но если оно не сделано через две недели, напоминать
+ * уже поздно: цикл прошёл половину пути по усилию, и правильный ход не
+ * «разобрать старый тест», а поставить новый. Сигнал уходит сам, чтобы не
+ * превратиться в вечное красное пятно, которое перестают замечать.
+ */
+export function pendingTestDate(
+  testDate: string | null,
+  threshold: unknown,
+  todayIso: string
+): string | null {
+  if (!testDate) return null;
+  if (threshold !== null && threshold !== undefined) return null;
+  if (testDate > todayIso) return null;
+  return testDate >= shift(todayIso, -14) ? testDate : null;
 }
 
 /** Список учеников, которых ведут в Intervals. Ростера TP не касается. */
@@ -189,6 +227,7 @@ export async function loadStudentsSignals(
         connection: "not_connected",
         planWaitingPublish: false,
         noPlan: true,
+        testWaitingReview: null,
       });
     }
     return result;
@@ -221,12 +260,12 @@ export async function loadStudentsSignals(
       .gte("start_date_local", `${activityFrom}T00:00:00`),
     supabase
       .from("student_data_sources")
-      .select("id, is_active, connected_at, auth_failed_at")
+      .select("id, is_active, connected_at, auth_failed_at, threshold_pace_sec_per_km")
       .in("id", sourceIds),
     // Плановые дни за окно: без них не отличить «не бегала» от «не было плана».
     supabase
       .from("intervals_plan_cycles")
-      .select("id, source_id, status, intervals_plan_sessions(session_date)")
+      .select("id, source_id, status, intervals_plan_sessions(session_date, preset_code)")
       .in("source_id", sourceIds)
       .eq("status", "published"),
   ]);
@@ -263,12 +302,20 @@ export async function loadStudentsSignals(
   }
 
   const plannedBySource = new Map<string, Set<string>>();
+  const testDateBySource = new Map<string, string>();
   for (const raw of sessions.data ?? []) {
     const row = raw as unknown as Record<string, unknown>;
     const key = String(row.source_id);
     const set = plannedBySource.get(key) ?? new Set<string>();
-    for (const child of (row.intervals_plan_sessions as Array<{ session_date: string }> | null) ?? []) {
+    const children =
+      (row.intervals_plan_sessions as Array<{ session_date: string; preset_code: string | null }> | null) ?? [];
+    for (const child of children) {
       if (child.session_date >= from) set.add(String(child.session_date));
+      if (child.preset_code !== DIAGNOSTIC_TEST_PRESET) continue;
+      // Самый поздний прошедший тест: если циклов было несколько, разбирать
+      // надо последний, а не первый попавшийся.
+      const previous = testDateBySource.get(key);
+      if (!previous || child.session_date > previous) testDateBySource.set(key, String(child.session_date));
     }
     plannedBySource.set(key, set);
   }
@@ -288,6 +335,7 @@ export async function loadStudentsSignals(
         connection: "not_connected",
         planWaitingPublish: false,
         noPlan: true,
+        testWaitingReview: null,
       });
       continue;
     }
@@ -327,6 +375,11 @@ export async function loadStudentsSignals(
       connection: health.state,
       planWaitingPublish: cycle?.status === "draft",
       noPlan: cycle === undefined,
+      testWaitingReview: pendingTestDate(
+        testDateBySource.get(sourceId) ?? null,
+        sourceRow?.threshold_pace_sec_per_km ?? null,
+        todayIso
+      ),
     });
   }
 
