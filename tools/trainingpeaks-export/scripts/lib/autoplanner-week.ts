@@ -877,9 +877,19 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
           detail: "в каталоге нет качественных пресетов с заданным усилием — по ощущениям назначать нечего" }]
       : slotTypes.map((slotType) => selectQualityFromCatalog(qualityPool, cat.guardrails, cat.reviewRules, {
         qualityLast8w: env.qualityLast8w, plannedRunCount: n,
-        // Гейт снят выше — сообщаем об этом отбору, иначе он пересчитает его
-        // заново и откажет, несмотря на записку «гейт снят циклом».
-        gateLiftedByCycle: qualityCap > gateCap && a.qualityByEffort === true,
+        // ГЕЙТ СНЯТ ВЫШЕ — СООБЩАЕМ ОБ ЭТОМ ОТБОРУ [15.09.2026].
+        //
+        // Раньше здесь стояло дополнительное условие «только ветка Intervals»,
+        // и для ростера TrainingPeaks оставалась ложь в живой системе: сборщик
+        // писал в заметках «✋ гейт качества снят циклом», а отбор пересчитывал
+        // тот же гейт от истории и отказывал. Тренер читал записку о снятии и
+        // не получал работу.
+        //
+        // Условие снято: если цикл просит работу, а истории качества мало,
+        // решение принимает ОДИН раз сборщик. Записка при этом остаётся и
+        // прямо говорит «нужен взгляд тренера» — то есть предупреждение никуда
+        // не делось, исчезло только расхождение между словом и делом.
+        gateLiftedByCycle: qualityCap > gateCap,
         lastQualityWorkMinutes: env.lastQualityWorkMinutes,
         hasActiveIllnessOrInjury: hasActiveIllness, hasRaceContext: false,
         contextFlags: hasActiveIllness ? ["injury"] : [], rolling4wWeeklyMin: env.rolling4wWeeklyMin,
