@@ -362,6 +362,64 @@ export async function sendTelegramDocument(
   }
 }
 
+// Binary-safe (unlike buildTelegramDocumentPayload, which TextEncoder-encodes its content —
+// fine for text files, corrupts audio bytes) and returns the parsed message so the caller can
+// read back the real file_id Telegram assigned. Built for the C3 smoke test (it needs a live
+// file_id to exercise the real download+transcribe path — synthetic ids don't exist on
+// Telegram's servers), but generic enough for any future "send audio, need the file_id" use.
+export async function sendTelegramVoiceReturningFileId(
+  chatId: string | number,
+  audioBuffer: Buffer,
+  options: { filename: string; caption?: string }
+): Promise<{ messageId: number; fileId: string } | null> {
+  assertNotPreviewEnvironment("Telegram sendVoice");
+  const token = getTelegramBotToken();
+  const boundary = "----telegram-voice-" + Math.random().toString(16).slice(2);
+  const encoder = new TextEncoder();
+
+  const header = encoder.encode(
+    [
+      `--${boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n${String(chatId)}\r\n`,
+      options.caption
+        ? `--${boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n${options.caption}\r\n`
+        : "",
+      `--${boundary}\r\nContent-Disposition: form-data; name="voice"; filename="${options.filename}"\r\nContent-Type: audio/ogg\r\n\r\n`,
+    ].join("")
+  );
+  const closing = encoder.encode(`\r\n--${boundary}--\r\n`);
+
+  const body = new Uint8Array(header.length + audioBuffer.length + closing.length);
+  body.set(header, 0);
+  body.set(audioBuffer, header.length);
+  body.set(closing, header.length + audioBuffer.length);
+
+  const response = await fetch(`${TELEGRAM_API_BASE_URL}/bot${token}/sendVoice`, {
+    method: "POST",
+    headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+    body: body.buffer as ArrayBuffer,
+  });
+  const responseText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Telegram sendVoice failed (${response.status}): ${responseText}`);
+  }
+
+  const payload = JSON.parse(responseText) as {
+    ok?: boolean;
+    description?: string;
+    result?: { message_id?: number; voice?: { file_id?: string } };
+  };
+
+  if (payload.ok === false) {
+    throw new Error(`Telegram sendVoice failed: ${payload.description ?? "Unknown Telegram API error"}`);
+  }
+
+  const messageId = payload.result?.message_id;
+  const fileId = payload.result?.voice?.file_id;
+
+  return typeof messageId === "number" && typeof fileId === "string" ? { messageId, fileId } : null;
+}
+
 export async function editTelegramMessageText(
   chatId: string | number,
   messageId: number,
