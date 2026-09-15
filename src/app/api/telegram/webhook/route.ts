@@ -40,7 +40,11 @@ import {
   startEnrollment,
 } from "@/features/intervals/enroll-dialog";
 import { describeSupabaseError } from "@/features/supabase/server";
-import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
+import {
+  getTrainingPeaksTelegramContextObservationByChatMessage,
+  markTrainingPeaksTelegramContextObservationDeletedByChatMessage,
+  updateTrainingPeaksTelegramContextObservationTextByChatMessage,
+} from "@/features/trainingpeaks/repository";
 import { handleManualVoiceTranscriptionRequest } from "@/features/voice-transcription/webhook";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
@@ -247,23 +251,68 @@ export async function POST(request: Request) {
   if (update.edited_business_message) {
     const editedBusinessMessageText =
       update.edited_business_message.text ?? update.edited_business_message.caption ?? null;
+    const editedChatId =
+      update.edited_business_message.chat?.id === undefined || update.edited_business_message.chat?.id === null
+        ? null
+        : String(update.edited_business_message.chat.id);
 
     console.info("Telegram edited business message received", {
       businessConnectionId: update.edited_business_message.business_connection_id,
       chatId: update.edited_business_message.chat?.id,
       textPreview: buildTelegramContextTextPreview(editedBusinessMessageText),
     });
+
+    if (editedChatId && editedBusinessMessageText) {
+      try {
+        await updateTrainingPeaksTelegramContextObservationTextByChatMessage({
+          chatId: editedChatId,
+          messageId: String(update.edited_business_message.message_id),
+          text: editedBusinessMessageText,
+        });
+      } catch (error) {
+        console.warn("Failed to update edited Telegram business message observation", {
+          chatId: editedChatId,
+          error,
+        });
+      }
+    }
+
     return okResponse();
   }
 
   if (update.deleted_business_messages) {
+    const deletedChatId =
+      update.deleted_business_messages.chat?.id === undefined ||
+      update.deleted_business_messages.chat?.id === null
+        ? null
+        : String(update.deleted_business_messages.chat.id);
+    const deletedMessageIds = Array.isArray(update.deleted_business_messages.message_ids)
+      ? update.deleted_business_messages.message_ids
+      : [];
+
     console.info("Telegram deleted business messages received", {
       businessConnectionId: update.deleted_business_messages.business_connection_id,
       chatId: update.deleted_business_messages.chat?.id,
-      count: Array.isArray(update.deleted_business_messages.message_ids)
-        ? update.deleted_business_messages.message_ids.length
-        : 0,
+      count: deletedMessageIds.length,
     });
+
+    if (deletedChatId) {
+      for (const deletedMessageId of deletedMessageIds) {
+        try {
+          await markTrainingPeaksTelegramContextObservationDeletedByChatMessage({
+            chatId: deletedChatId,
+            messageId: String(deletedMessageId),
+          });
+        } catch (error) {
+          console.warn("Failed to mark deleted Telegram business message observation", {
+            chatId: deletedChatId,
+            messageId: deletedMessageId,
+            error,
+          });
+        }
+      }
+    }
+
     return okResponse();
   }
 

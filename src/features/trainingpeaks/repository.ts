@@ -3554,6 +3554,11 @@ export async function getTrainingPeaksStudentInboundRecency(
           .select("student_id, observed_at, source_type, labels, text_preview")
           .in("student_id", part)
           .gte("observed_at", since)
+          // This is INBOUND recency by name and purpose — an outbound (coach-authored) row must
+          // never count as the student having reported/replied. detectWeakConfirmation below
+          // (report-detector.ts) is a bare-text regex ("готово"/"✅"/...) with no label check at
+          // all, so a coach's own "готово" would otherwise flip a student's send-channel decision.
+          .eq("direction", "inbound")
           .order("observed_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to)
@@ -6824,6 +6829,11 @@ export type TrainingPeaksTelegramContextObservation = {
   textPreview: string | null;
   metadata: Record<string, unknown>;
   createdAt: string;
+  direction: "inbound" | "outbound";
+  senderRole: string | null;
+  attachmentType: string | null;
+  attachmentFileId: string | null;
+  attachmentDurationSec: number | null;
 };
 
 type TrainingPeaksTelegramContextObservationRow = {
@@ -6839,6 +6849,11 @@ type TrainingPeaksTelegramContextObservationRow = {
   text_preview: string | null;
   metadata: unknown;
   created_at: string;
+  direction: string;
+  sender_role: string | null;
+  attachment_type: string | null;
+  attachment_file_id: string | null;
+  attachment_duration_sec: number | null;
 };
 
 export type InsertTrainingPeaksTelegramContextObservationInput = {
@@ -6852,6 +6867,13 @@ export type InsertTrainingPeaksTelegramContextObservationInput = {
   textSha256?: string | null;
   textPreview?: string | null;
   metadata?: Record<string, unknown>;
+  // Defaults to 'inbound' (a student's own message). 'outbound' means the coach wrote it —
+  // callers must set this explicitly for coach-authored content, never infer it downstream.
+  direction?: "inbound" | "outbound";
+  senderRole?: string | null;
+  attachmentType?: string | null;
+  attachmentFileId?: string | null;
+  attachmentDurationSec?: number | null;
 };
 
 function mapTrainingPeaksTelegramContextObservationRow(
@@ -6873,6 +6895,11 @@ function mapTrainingPeaksTelegramContextObservationRow(
         ? (row.metadata as Record<string, unknown>)
         : {},
     createdAt: row.created_at,
+    direction: row.direction === "outbound" ? "outbound" : "inbound",
+    senderRole: row.sender_role,
+    attachmentType: row.attachment_type,
+    attachmentFileId: row.attachment_file_id,
+    attachmentDurationSec: row.attachment_duration_sec,
   };
 }
 
@@ -6880,6 +6907,7 @@ export async function insertTrainingPeaksTelegramContextObservation(
   input: InsertTrainingPeaksTelegramContextObservationInput
 ): Promise<TrainingPeaksTelegramContextObservation> {
   const supabase = createSupabaseServerClient();
+  const direction = input.direction ?? "inbound";
   const { data, error } = await supabase
     .from("trainingpeaks_telegram_context_observations")
     .insert({
@@ -6893,6 +6921,11 @@ export async function insertTrainingPeaksTelegramContextObservation(
       text_sha256: input.textSha256 ?? null,
       text_preview: input.textPreview ?? null,
       metadata: input.metadata ?? {},
+      direction,
+      sender_role: input.senderRole ?? null,
+      attachment_type: input.attachmentType ?? null,
+      attachment_file_id: input.attachmentFileId ?? null,
+      attachment_duration_sec: input.attachmentDurationSec ?? null,
     })
     .select("*")
     .single();
@@ -6904,6 +6937,13 @@ export async function insertTrainingPeaksTelegramContextObservation(
   }
 
   let contactSource: TrainingPeaksStudentContactEventSource | null = null;
+
+  // athlete_message means exactly that — an athlete's own message. An outbound (coach-authored)
+  // row must never fire it, or the student would show up as having "contacted" the coach with
+  // the coach's own words.
+  if (direction !== "inbound") {
+    return mapTrainingPeaksTelegramContextObservationRow(data as TrainingPeaksTelegramContextObservationRow);
+  }
 
   if (input.studentId && input.sourceType === "private_dm") {
     contactSource = "telegram_private_dm";
@@ -7033,6 +7073,9 @@ export async function listTrainingPeaksTelegramContextObservationsForStudent(
     .from("trainingpeaks_telegram_context_observations")
     .select("*")
     .eq("student_id", studentId)
+    // Feeds the reply-draft prompt as "recent things the student said" (reply-draft-context.ts) —
+    // an outbound (coach-authored) row here would quote the coach's own words back at himself.
+    .eq("direction", "inbound")
     .order("observed_at", { ascending: false })
     .limit(limit));
 
@@ -7077,10 +7120,12 @@ export async function getTrainingPeaksTelegramContextObservationById(
  * only the minimal safe fields needed by the assembler so we never widen access
  * to raw athlete text or hashes from runtime code.
  *
- * NOTE: We do not filter by sender role at the SQL layer because the
- * observation rows do not reliably encode "incoming athlete" vs other sender
- * roles for every source type. For the runtime caller (Telegram Business DM
- * handler) the chat_id is the athlete's own chat, which is the desired scope.
+ * direction='inbound' is now REQUIRED at the SQL layer (not just optional hygiene): since the
+ * telegram-context-and-voice наряд, a business-DM chat_id is shared between the athlete's own
+ * messages AND the coach's own outgoing replies (direction='outbound') — chat_id alone no longer
+ * scopes to "the athlete's messages" the way the old comment here assumed. Without this filter,
+ * the move-intent context assembler (move-multi-message-context.ts's hasWorkoutOrDayHint) would
+ * read the coach's own words as move-intent context.
  */
 export async function listRecentTrainingPeaksTelegramContextObservationsForChat(input: {
   telegramChatId: string;
@@ -7104,6 +7149,7 @@ export async function listRecentTrainingPeaksTelegramContextObservationsForChat(
       .from("trainingpeaks_telegram_context_observations")
       .select("message_id, text_preview, labels, observed_at")
       .eq("chat_id", input.telegramChatId)
+      .eq("direction", "inbound")
       .gte("observed_at", sinceIso)
       .order("observed_at", { ascending: false })
       .limit(safeLimit)
@@ -7309,6 +7355,79 @@ export async function getTrainingPeaksTelegramContextObservationByChatMessage(in
   }
 
   return { status: "found", observation: { id: (data as { id: string }).id } };
+}
+
+// edited_business_message: Telegram gives the FULL new text, not a diff — so this simply
+// overwrites text_preview/text_sha256 in place. Direction/sender_role/labels/metadata are left
+// untouched: an edit changes what was said, not who said it or how it was classified.
+export async function updateTrainingPeaksTelegramContextObservationTextByChatMessage(input: {
+  chatId: string;
+  messageId: string;
+  text: string;
+}): Promise<{ updated: boolean }> {
+  const supabase = createSupabaseServerClient();
+  const textSha256 = sha256TelegramContextText(input.text);
+  const textPreview = buildTelegramContextTextPreview(input.text);
+
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .update({ text_preview: textPreview, text_sha256: textSha256 })
+      .eq("chat_id", input.chatId)
+      .eq("message_id", input.messageId)
+      .select("id")
+  );
+
+  if (error) {
+    throw new Error(`Failed to update edited TrainingPeaks telegram context observation: ${describeSupabaseError(error)}`);
+  }
+
+  return { updated: Array.isArray(data) && data.length > 0 };
+}
+
+// deleted_business_messages: soft mark only — the row (and its text) stays, a downstream
+// consumer that ever needs "still visible in the chat" can check metadata.deletedAt. Deleting
+// the row would throw away context that was real at the time it was said.
+export async function markTrainingPeaksTelegramContextObservationDeletedByChatMessage(input: {
+  chatId: string;
+  messageId: string;
+}): Promise<{ marked: boolean }> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: existing, error: readError } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .select("id, metadata")
+      .eq("chat_id", input.chatId)
+      .eq("message_id", input.messageId)
+      .maybeSingle()
+  );
+
+  if (readError) {
+    throw new Error(`Failed to look up deleted TrainingPeaks telegram context observation: ${describeSupabaseError(readError)}`);
+  }
+
+  if (!existing) {
+    return { marked: false };
+  }
+
+  const existingMetadata =
+    existing.metadata && typeof existing.metadata === "object" && !Array.isArray(existing.metadata)
+      ? (existing.metadata as Record<string, unknown>)
+      : {};
+
+  const { error: updateError } = await withSupabaseNetworkRetry(() =>
+    supabase
+      .from("trainingpeaks_telegram_context_observations")
+      .update({ metadata: { ...existingMetadata, deletedAt: new Date().toISOString() } })
+      .eq("id", existing.id)
+  );
+
+  if (updateError) {
+    throw new Error(`Failed to mark TrainingPeaks telegram context observation deleted: ${describeSupabaseError(updateError)}`);
+  }
+
+  return { marked: true };
 }
 
 export async function updateTrainingPeaksStudentTelegramContextById(

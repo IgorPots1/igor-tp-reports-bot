@@ -292,6 +292,11 @@ function collectCueEvidenceFromSimulation(simulation: ObservationPersistenceSimu
         textPreview: text,
         metadata: {},
         createdAt: new Date().toISOString(),
+        direction: "inbound",
+        senderRole: null,
+        attachmentType: null,
+        attachmentFileId: null,
+        attachmentDurationSec: null,
       })
     );
     if (primary.signal_type) {

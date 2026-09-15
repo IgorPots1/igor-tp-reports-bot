@@ -9,6 +9,7 @@ import {
   type TrainingPeaksTelegramFormality,
 } from "@/features/trainingpeaks/repository";
 import { passesTrainingPeaksStrictMoveWorkoutIntentGate } from "@/features/trainingpeaks/service";
+import type { TelegramAttachmentInfo } from "@/features/telegram/attachment";
 
 // 120 = the SHORT preview for admin lists / logs (display only).
 export const TELEGRAM_CONTEXT_TEXT_PREVIEW_MAX_LENGTH = 120;
@@ -26,7 +27,12 @@ export type TrainingPeaksTelegramContextLabel =
   | "schedule_context"
   | "report_like"
   | "ack_or_noise"
-  | "unknown";
+  | "unknown"
+  // Never produced by classifyTelegramContextLabels (which only ever runs on a student's own
+  // text) — assigned directly to the coach's own outgoing business-DM messages instead of
+  // running the report/health/etc. classifier on them. Keeps a coach reply like "как спина?"
+  // from ever being read back as the STUDENT'S pain_or_health/report_like signal.
+  | "coach_outgoing";
 
 const TRAINING_REPORT_KEYWORDS = [
   "тренировка",
@@ -489,9 +495,10 @@ export async function recordTrainingPeaksTelegramBusinessContextObservation(inpu
   chatId: string;
   messageId: string | number | null | undefined;
   text: string | null | undefined;
+  attachment?: TelegramAttachmentInfo | null;
 }): Promise<TrainingPeaksTelegramContextObservation | null> {
-  const messageText = input.text?.trim();
-  if (!messageText) {
+  const messageText = input.text?.trim() ?? "";
+  if (!messageText && !input.attachment) {
     return null;
   }
 
@@ -500,9 +507,11 @@ export async function recordTrainingPeaksTelegramBusinessContextObservation(inpu
     return null;
   }
 
-  const textSha256 = sha256TelegramContextText(messageText);
-  const textPreview = buildTelegramContextTextPreview(messageText);
-  const labels = classifyTelegramContextLabels(messageText);
+  // Empty text is normal for an attachment-only message — the fact of the message matters more
+  // than having something to hash/preview/classify.
+  const textSha256 = messageText ? sha256TelegramContextText(messageText) : null;
+  const textPreview = messageText ? buildTelegramContextTextPreview(messageText) : null;
+  const labels = messageText ? classifyTelegramContextLabels(messageText) : [];
 
   return insertTrainingPeaksTelegramContextObservation({
     studentId: student.id,
@@ -513,6 +522,57 @@ export async function recordTrainingPeaksTelegramBusinessContextObservation(inpu
     labels,
     textSha256,
     textPreview,
+    direction: "inbound",
+    attachmentType: input.attachment?.attachmentType ?? null,
+    attachmentFileId: input.attachment?.fileId ?? null,
+    attachmentDurationSec: input.attachment?.durationSec ?? null,
+    metadata: {
+      messageLength: messageText.length,
+    },
+  });
+}
+
+// The coach's own side of a business-DM conversation. Called from a SEPARATE branch in
+// handleTrainingPeaksTelegramBusinessMessage than the athlete-incoming one above — never from
+// inside the block that also runs move-workout intent parsing (trainingpeaks.ts ~7264-7385).
+// Pure context: no classifier run on the text (see the coach_outgoing label above), no contact
+// event (insertTrainingPeaksTelegramContextObservation only fires athlete_message for
+// direction='inbound'), no memory/signal extraction (context-observer.ts's
+// persistObserverObservation skips those for direction='outbound' — this write path goes
+// through the same repository function, so the same guard applies here too).
+export async function recordTrainingPeaksTelegramBusinessOutgoingContextObservation(input: {
+  chatId: string;
+  messageId: string | number | null | undefined;
+  text: string | null | undefined;
+  attachment?: TelegramAttachmentInfo | null;
+}): Promise<TrainingPeaksTelegramContextObservation | null> {
+  const messageText = input.text?.trim() ?? "";
+  if (!messageText && !input.attachment) {
+    return null;
+  }
+
+  const student = await getTrainingPeaksStudentByTelegramChatId(input.chatId);
+  if (!student) {
+    return null;
+  }
+
+  const textSha256 = messageText ? sha256TelegramContextText(messageText) : null;
+  const textPreview = messageText ? buildTelegramContextTextPreview(messageText) : null;
+
+  return insertTrainingPeaksTelegramContextObservation({
+    studentId: student.id,
+    sourceType: "business_dm",
+    chatId: input.chatId,
+    messageThreadId: null,
+    messageId: input.messageId === null || input.messageId === undefined ? null : String(input.messageId),
+    labels: ["coach_outgoing"],
+    textSha256,
+    textPreview,
+    direction: "outbound",
+    attachmentType: input.attachment?.attachmentType ?? null,
+    attachmentFileId: input.attachment?.fileId ?? null,
+    attachmentDurationSec: input.attachment?.durationSec ?? null,
+    senderRole: "coach",
     metadata: {
       messageLength: messageText.length,
     },

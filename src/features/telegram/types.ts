@@ -88,6 +88,21 @@ export type TelegramDocument = {
   file_size?: number;
 };
 
+export type TelegramPhotoSize = {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  file_size?: number;
+};
+
+export type TelegramSticker = {
+  file_id: string;
+  file_unique_id: string;
+  emoji?: string;
+  file_size?: number;
+};
+
 export type TelegramMessage = {
   message_id: number;
   chat: TelegramChat;
@@ -99,6 +114,9 @@ export type TelegramMessage = {
   audio?: TelegramAudio;
   video_note?: TelegramVideoNote;
   document?: TelegramDocument;
+  // Telegram sends one entry per resolution; the LAST is the largest (Bot API convention).
+  photo?: TelegramPhotoSize[];
+  sticker?: TelegramSticker;
   date?: number;
   business_connection_id?: string;
   is_topic_message?: boolean;

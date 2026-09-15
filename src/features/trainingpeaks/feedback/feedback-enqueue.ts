@@ -228,7 +228,14 @@ export async function assemblePlannerInputsForWorkouts(
     "student_id, text_preview, labels, observed_at, metadata, source_type",
     "student_id",
     studentIds,
-    (q) => q.gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+    (q) =>
+      q
+        .gte("observed_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+        // direction='outbound' is the coach's own reply — excluded at the SQL layer, not just by
+        // the third-party label check below. context-packet.ts's common (trigger-known) window
+        // has NO label check at all, so a coach row reaching this far would get quoted back into
+        // the feedback prompt verbatim as "what the student said".
+        .eq("direction", "inbound")
   );
   const messagesByStudent = new Map<string, ContextPacket["studentMessages"]>();
   for (const o of obsRows) {
@@ -693,6 +700,11 @@ export async function sweepAndEnqueueReportedRunWorkouts(input?: { reportLookbac
           .from("trainingpeaks_telegram_context_observations")
           .select("id, student_id, observed_at, labels, text_preview, report_ai_label, source_type")
           .gte("observed_at", sinceIso)
+          // isReportCandidate below (report-arbiter-ai.ts) matches on bare digits/run-keywords/
+          // emoji regardless of label, and its AI arbiter prompt hardcodes "Сообщение ученика" —
+          // an outbound (coach) row must never reach it, or a coach's own "тяжёлая тренировка,
+          // 10км" reply could get drafted back as if the STUDENT reported that workout.
+          .eq("direction", "inbound")
           .order("id", { ascending: true })
           .range(from, to)
       ) as Promise<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,

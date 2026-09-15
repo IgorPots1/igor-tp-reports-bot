@@ -23,6 +23,7 @@ import { buildTelegramContextTextPreview, sha256TelegramContextText, TELEGRAM_CO
 import { tryAutoLinkTrainingPeaksTopic } from "@/features/trainingpeaks/topic-auto-link";
 import { detectTrainingReport, detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import type { TelegramMessage } from "@/features/telegram/types";
+import { extractTelegramAttachmentInfo, type TelegramAttachmentInfo } from "@/features/telegram/attachment";
 
 export type TrainingPeaksObserverLabel =
   | "noise_or_ack"
@@ -69,9 +70,19 @@ type BuildObservationLogPayloadInput = {
   scores?: Partial<Record<TrainingPeaksObserverLabel, number>>;
   messageLength: number;
   hasAttachment: boolean;
+  // Structured version of hasAttachment for the columns added in 20260915160000 — hasAttachment
+  // itself stays a broader boolean (also true for location/poll/contact, which this is null for).
+  attachment?: TelegramAttachmentInfo | null;
   text: string | null;
   senderRole?: ObserverSenderRole;
   senderMatchMethod?: ObserverSenderMatchMethod;
+  // 'outbound' means "written by the coach" — currently only the senderIsCoach branch of
+  // observeLinkedGroupTopicMessage below sets this. Defaults to 'inbound' (every other call
+  // site: a student's own report, in a DM or a group). Gates BOTH the new sender_role column
+  // value ('coach' regardless of the legacy senderRole string) and every downstream pipeline
+  // that must never treat the coach's own words as information about the student — memory
+  // extraction, operational signals, and the athlete_message contact event.
+  direction?: "inbound" | "outbound";
 };
 
 type TrainingPeaksObserverRouteResult =
@@ -202,6 +213,16 @@ function detectTelegramAttachment(message: TelegramMessage): boolean {
     "venue",
     "poll",
   ].some((key) => rawMessage[key] !== undefined);
+}
+
+// Storable attachment_type for the DB column: the specific kind when extractTelegramAttachmentInfo
+// recognised it, 'unknown' when detectTelegramAttachment's broader boolean fired on something it
+// doesn't (location/poll/contact/animation/video), null when there was no attachment at all.
+function resolveAttachmentTypeColumn(hasAttachment: boolean, attachment: TelegramAttachmentInfo | null): string | null {
+  if (attachment) {
+    return attachment.attachmentType;
+  }
+  return hasAttachment ? "unknown" : null;
 }
 
 function isTelegramBotSender(message: TelegramMessage): boolean {
@@ -729,6 +750,7 @@ export async function maybeRunCoachMemoryExtractionForObservation(input: {
 
 async function persistObserverObservation(input: BuildObservationLogPayloadInput): Promise<void> {
   const payload = buildObservationLogPayload(input);
+  const direction = input.direction ?? "inbound";
   const persistedLabels =
     input.senderRole === "third_party_in_linked_topic"
       ? (["third_party_in_linked_topic"] as PersistedObservationLabel[])
@@ -748,6 +770,14 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
       labels: persistedLabels,
       textSha256: payload.textSha256,
       textPreview: payload.textPreview,
+      direction,
+      // 'coach' is a NEW value distinct from the legacy senderRole vocabulary (which stays
+      // 'third_party_in_linked_topic' in metadata for continuity) — direction is the one thing
+      // that actually distinguishes "the coach wrote this" from "an unresolved sender".
+      senderRole: direction === "outbound" ? "coach" : (input.senderRole ?? null),
+      attachmentType: resolveAttachmentTypeColumn(input.hasAttachment, input.attachment ?? null),
+      attachmentFileId: input.attachment?.fileId ?? null,
+      attachmentDurationSec: input.attachment?.durationSec ?? null,
       metadata: {
         scores: input.scores ?? {},
         fromId: input.fromId,
@@ -760,35 +790,41 @@ async function persistObserverObservation(input: BuildObservationLogPayloadInput
       },
     });
 
-    await maybeRunCoachMemoryExtractionForObservation({
-      studentId: input.studentId,
-      observationId: insertedObservation.id,
-      observedAt: insertedObservation.observedAt,
-      textPreview: payload.textPreview,
-      labels: persistedLabels,
-      sourceType: input.sourceType,
-    });
-
-    try {
-      await persistOperationalSignalsForObservation({
+    // Everything below treats the row's content as information ABOUT the student (memory to
+    // remember, an operational signal to raise). The coach's own outgoing words are context,
+    // never a fact about the student — running these on an outbound row would attribute the
+    // coach's own phrasing to the athlete (e.g. a false injury signal from "как твоя спина?").
+    if (direction === "inbound") {
+      await maybeRunCoachMemoryExtractionForObservation({
+        studentId: input.studentId,
         observationId: insertedObservation.id,
-        studentId: insertedObservation.studentId,
-        sourceType: insertedObservation.sourceType,
-        textPreview: insertedObservation.textPreview,
-        labels: insertedObservation.labels,
-        metadata: insertedObservation.metadata,
         observedAt: insertedObservation.observedAt,
-        telegramChatId: insertedObservation.chatId,
-        telegramMessageId: insertedObservation.messageId,
-        telegramMessageThreadId: insertedObservation.messageThreadId,
+        textPreview: payload.textPreview,
+        labels: persistedLabels,
+        sourceType: input.sourceType,
       });
-    } catch (signalError) {
-      console.warn("TrainingPeaks inline operational signal persistence failed", {
-        event: "trainingpeaks_inline_operational_signal_persist_failed",
-        observationIdPrefix: insertedObservation.id.slice(0, 8),
-        studentIdPrefix: insertedObservation.studentId?.slice(0, 8) ?? null,
-        errorClass: signalError instanceof Error ? signalError.name : "UnknownError",
-      });
+
+      try {
+        await persistOperationalSignalsForObservation({
+          observationId: insertedObservation.id,
+          studentId: insertedObservation.studentId,
+          sourceType: insertedObservation.sourceType,
+          textPreview: insertedObservation.textPreview,
+          labels: insertedObservation.labels,
+          metadata: insertedObservation.metadata,
+          observedAt: insertedObservation.observedAt,
+          telegramChatId: insertedObservation.chatId,
+          telegramMessageId: insertedObservation.messageId,
+          telegramMessageThreadId: insertedObservation.messageThreadId,
+        });
+      } catch (signalError) {
+        console.warn("TrainingPeaks inline operational signal persistence failed", {
+          event: "trainingpeaks_inline_operational_signal_persist_failed",
+          observationIdPrefix: insertedObservation.id.slice(0, 8),
+          studentIdPrefix: insertedObservation.studentId?.slice(0, 8) ?? null,
+          errorClass: signalError instanceof Error ? signalError.name : "UnknownError",
+        });
+      }
     }
   }
 
@@ -806,6 +842,7 @@ async function persistKnownStudentGeneralGroupObservation(input: {
   student: TrainingPeaksStudent;
   text: string;
   hasAttachment: boolean;
+  attachment: TelegramAttachmentInfo | null;
   messageLength: number;
   fromId: number;
   fromUsername: string | null;
@@ -857,6 +894,11 @@ async function persistKnownStudentGeneralGroupObservation(input: {
       labels: mapObserverLabelsToPersistedLabels(labelsAndScores.labels),
       textSha256: payload.textSha256,
       textPreview: payload.textPreview,
+      direction: "inbound",
+      senderRole: "known_student",
+      attachmentType: resolveAttachmentTypeColumn(input.hasAttachment, input.attachment),
+      attachmentFileId: input.attachment?.fileId ?? null,
+      attachmentDurationSec: input.attachment?.durationSec ?? null,
       metadata: {
         scores: labelsAndScores.scores,
         fromId: String(input.fromId),
@@ -908,6 +950,7 @@ async function observeGeneralGroupMessage(input: {
   message: TelegramMessage;
   text: string | null;
   hasAttachment: boolean;
+  attachment: TelegramAttachmentInfo | null;
   messageLength: number;
   fromId: number | undefined;
   fromUsername: string | null;
@@ -959,17 +1002,20 @@ async function observeGeneralGroupMessage(input: {
     return { handled: false };
   }
 
-  if (!input.text) {
+  // A truly empty message (no text, no attachment we can store) has nothing to record — but an
+  // attachment WITHOUT a caption is no longer dropped (A3): the fact that the sender posted
+  // something matters even when there is no text to classify.
+  if (!input.text && !input.hasAttachment) {
     logGeneralGroupObservationEvent({
       studentId: null,
       chatId,
       messageId,
-      reason: input.hasAttachment ? "media_without_caption" : "empty_text",
+      reason: "empty_text",
     });
     return { handled: false };
   }
 
-  if (input.text.startsWith("/")) {
+  if (input.text?.startsWith("/")) {
     logGeneralGroupObservationEvent({
       studentId: null,
       chatId,
@@ -994,8 +1040,9 @@ async function observeGeneralGroupMessage(input: {
   const observationResult = await persistKnownStudentGeneralGroupObservation({
     message: input.message,
     student,
-    text: input.text,
+    text: input.text ?? "",
     hasAttachment: input.hasAttachment,
+    attachment: input.attachment,
     messageLength: input.messageLength,
     fromId: input.fromId,
     fromUsername: input.fromUsername,
@@ -1019,6 +1066,7 @@ async function observeLinkedGroupTopicMessage(input: {
   linkedStudent: TrainingPeaksStudent;
   text: string | null;
   hasAttachment: boolean;
+  attachment: TelegramAttachmentInfo | null;
   messageLength: number;
   fromId: number | undefined;
   fromUsername: string | null;
@@ -1057,9 +1105,11 @@ async function observeLinkedGroupTopicMessage(input: {
       scores: { third_party_in_linked_topic: 0.95 },
       messageLength: input.messageLength,
       hasAttachment: input.hasAttachment,
+      attachment: input.attachment,
       text: input.text,
       senderRole: "third_party_in_linked_topic",
       senderMatchMethod: senderIdentity.matchMethod,
+      direction: "outbound",
     });
 
     return {
@@ -1091,6 +1141,7 @@ async function observeLinkedGroupTopicMessage(input: {
       scores: classifiedForSender.scores,
       messageLength: input.messageLength,
       hasAttachment: input.hasAttachment,
+      attachment: input.attachment,
       text: input.text,
       senderRole: "known_student",
       senderMatchMethod: senderIdentity.matchMethod,
@@ -1116,6 +1167,7 @@ async function observeLinkedGroupTopicMessage(input: {
     scores: classified.scores,
     messageLength: input.messageLength,
     hasAttachment: input.hasAttachment,
+    attachment: input.attachment,
     text: input.text,
     senderRole: "linked_student",
     senderMatchMethod: senderIdentity.matchMethod,
@@ -1137,6 +1189,7 @@ export async function handleTrainingPeaksContextObserverMessage(
   const chatType = message.chat.type;
   const text = getTelegramMessageText(message);
   const hasAttachment = detectTelegramAttachment(message);
+  const attachment = extractTelegramAttachmentInfo(message);
   const messageLength = text?.length ?? 0;
   const fromId = message.from?.id;
   const fromUsername = message.from?.username ?? null;
@@ -1201,6 +1254,7 @@ export async function handleTrainingPeaksContextObserverMessage(
       scores: classified.scores,
       messageLength,
       hasAttachment,
+      attachment,
       text,
       senderRole: "linked_student",
       senderMatchMethod: matchMethod,
@@ -1233,6 +1287,7 @@ export async function handleTrainingPeaksContextObserverMessage(
       message,
       text,
       hasAttachment,
+      attachment,
       messageLength,
       fromId,
       fromUsername,
@@ -1257,6 +1312,7 @@ export async function handleTrainingPeaksContextObserverMessage(
         linkedStudent: autoLinkResult.student,
         text,
         hasAttachment,
+        attachment,
         messageLength,
         fromId,
         fromUsername,
@@ -1288,6 +1344,7 @@ export async function handleTrainingPeaksContextObserverMessage(
     linkedStudent,
     text,
     hasAttachment,
+    attachment,
     messageLength,
     fromId,
     fromUsername,

@@ -147,6 +147,7 @@ import {
   isAthleteIncomingBusinessDmMessage,
   recordCoachOutgoingBusinessDmContactIfSafe,
   recordTrainingPeaksTelegramBusinessContextObservation,
+  recordTrainingPeaksTelegramBusinessOutgoingContextObservation,
   sha256TelegramContextText,
 } from "@/features/trainingpeaks/telegram-context";
 import { persistOperationalSignalsForObservation } from "@/features/trainingpeaks/operational-signals-inline";
@@ -219,6 +220,7 @@ import {
   sendTelegramMessageStrict,
 } from "@/features/telegram/telegram-client";
 import { transcribeTelegramVoiceMessage } from "@/features/telegram/voice-transcription";
+import { extractTelegramAttachmentInfo } from "@/features/telegram/attachment";
 import type {
   TelegramChatType,
   TelegramInlineKeyboardMarkup,
@@ -7227,7 +7229,19 @@ function isTrainingPeaksLinkSuccessNotificationEnabled(): boolean {
 export async function handleTrainingPeaksTelegramBusinessMessage(
   message: Pick<
     TelegramMessage,
-    "business_connection_id" | "chat" | "text" | "caption" | "message_id" | "from" | "date"
+    | "business_connection_id"
+    | "chat"
+    | "text"
+    | "caption"
+    | "message_id"
+    | "from"
+    | "date"
+    | "voice"
+    | "video_note"
+    | "audio"
+    | "photo"
+    | "sticker"
+    | "document"
   >
 ): Promise<void> {
   const persistedChat = await upsertTrainingPeaksBusinessChatFromMessage(message);
@@ -7235,6 +7249,7 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
   const chatId =
     message.chat?.id === undefined || message.chat?.id === null ? null : String(message.chat.id);
   const messageText = (message.text ?? message.caption ?? "").trim();
+  const attachment = extractTelegramAttachmentInfo(message);
   const contextLabels = messageText ? classifyTelegramContextLabels(messageText) : [];
   let contextObsId: string | null = null;
 
@@ -7261,12 +7276,41 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
     });
   }
 
-  if (chatId && messageText && isAthleteIncomingBusinessDmMessage(message)) {
+  // The coach's own side of the conversation — pure context, deliberately its own branch and
+  // never inside the isAthleteIncomingBusinessDmMessage block below: that block also runs
+  // move-workout intent parsing (consumeTrainingPeaksStudentTelegramLinkCode,
+  // createTrainingPeaksMoveWorkoutActionFromTelegram, AI intent classification), and a coach
+  // reply must never be able to trigger a TrainingPeaks move action. isCoachChat is the same
+  // explicit telegram-user-id check used everywhere else in this file for "is this Igor".
+  if (
+    chatId &&
+    (messageText || attachment) &&
+    !isAthleteIncomingBusinessDmMessage(message) &&
+    message.from?.id !== undefined &&
+    isCoachChat(message.from.id)
+  ) {
+    try {
+      await recordTrainingPeaksTelegramBusinessOutgoingContextObservation({
+        chatId,
+        messageId: message.message_id,
+        text: messageText,
+        attachment,
+      });
+    } catch (error) {
+      console.warn("Failed to record outgoing TrainingPeaks business DM context observation", {
+        chatId,
+        error,
+      });
+    }
+  }
+
+  if (chatId && (messageText || attachment) && isAthleteIncomingBusinessDmMessage(message)) {
     try {
       const observation = await recordTrainingPeaksTelegramBusinessContextObservation({
         chatId,
         messageId: message.message_id,
         text: messageText,
+        attachment,
       });
       contextObsId = observation?.id ?? null;
       if (observation) {

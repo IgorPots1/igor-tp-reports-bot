@@ -117,6 +117,11 @@ function makeObservation(input: {
     messageId: null,
     messageThreadId: null,
     createdAt: input.observedAt,
+    direction: "inbound",
+    senderRole: null,
+    attachmentType: null,
+    attachmentFileId: null,
+    attachmentDurationSec: null,
   };
 }
 
