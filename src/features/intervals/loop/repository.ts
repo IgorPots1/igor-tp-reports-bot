@@ -726,8 +726,15 @@ export async function getPrefill(sourceId: string, client?: Client): Promise<Pre
     sourceId: String(row.source_id),
     setFields,
     values: {
+      // СПИСОК ЦЕЛЕЙ ЗДЕСЬ ОБЯЗАН СОВПАДАТЬ С ФОРМОЙ И С КОНСТРЕЙНТОМ В БАЗЕ.
+      // Цель improve однажды уже забыли добавить именно сюда, и предзаданная
+      // тренером цель читалась обратно как null: вопрос в анкете спрятан, а
+      // значения нет. Поймано проверкой заведения, не на человеке.
       goalKind:
-        row.goal_kind === "race" || row.goal_kind === "regular" || row.goal_kind === "start_running"
+        row.goal_kind === "race" ||
+        row.goal_kind === "regular" ||
+        row.goal_kind === "improve" ||
+        row.goal_kind === "start_running"
           ? row.goal_kind
           : null,
       raceDate: (row.race_date as string | null) ?? null,

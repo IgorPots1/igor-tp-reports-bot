@@ -52,7 +52,7 @@
 import process from "node:process";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import { savePrefill } from "@/features/intervals/loop/repository";
+import { createIntervalsStudent, intervalsMarkerUrl } from "@/features/intervals/enrollment";
 import { fieldLabelRu, type PrefillableField } from "@/features/intervals/loop/prefill";
 import { isValidTimeZone } from "@/features/intervals/loop/clock";
 
@@ -84,8 +84,10 @@ function collectPrefill(): {
 
   const goal = arg("pre-goal");
   if (goal !== null) {
-    if (!["race", "regular", "start_running"].includes(goal)) {
-      errors.push("--pre-goal принимает race, regular или start_running");
+    // Список обязан совпадать с формой, с констрейнтом в базе и с читателем
+    // предзаполнения. Цель improve уже забывали в двух местах из трёх.
+    if (!["race", "regular", "improve", "start_running"].includes(goal)) {
+      errors.push("--pre-goal принимает race, regular, improve или start_running");
     }
     setFields.push("goalKind");
     values.goalKind = goal;
@@ -243,9 +245,7 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-export function intervalsMarkerUrl(externalAthleteId: string): string {
-  return `intervals://athlete/${externalAthleteId}`;
-}
+
 
 async function main(): Promise<void> {
   const studentId = arg("student-id");
@@ -316,80 +316,39 @@ async function main(): Promise<void> {
     return;
   }
 
-  let studentUuid = existingStudent?.id as string | undefined;
-  if (!studentUuid) {
-    const { data, error } = await supabase
-      .from("trainingpeaks_students")
-      .insert({
-        student_id: studentId,
-        student_name: name,
-        trainingpeaks_athlete_url: intervalsMarkerUrl(athleteId),
-        coaching_platform: "intervals",
-        is_active: true,
-        // Недельные отчёты TP этому ученику не положены: они собираются из
-        // кэша TrainingPeaks, которого у неё нет.
-        weekly_report_enabled: false,
-        telegram_user_id: telegramUserId ? Number(telegramUserId) : null,
-        telegram_chat_id: telegramChatId ?? null,
-        // Доставка выключена по умолчанию — включается сознательно, когда
-        // тренер готов писать.
-        telegram_delivery_enabled: false,
-        // Зона, заданная тренером, попадает на карточку сразу. Автоопределение
-        // из приложения её НЕ перетирает: тренер знает, где человек живёт, а
-        // браузер знает лишь, откуда он открыл приложение.
-        timezone: (prefill.values.timezone as string | undefined) ?? null,
-      })
-      .select("id")
-      .single();
-    if (error) fail(`Не удалось завести карточку: ${error.message}`);
-    studentUuid = String(data.id);
-    console.log(`Карточка заведена: ${studentUuid}`);
-  } else {
-    const patch: Record<string, unknown> = { coaching_platform: "intervals" };
-    if (prefill.values.timezone) patch.timezone = prefill.values.timezone;
-    if (telegramUserId) patch.telegram_user_id = Number(telegramUserId);
-    if (telegramChatId) patch.telegram_chat_id = telegramChatId;
-    const { error } = await supabase.from("trainingpeaks_students").update(patch).eq("id", studentUuid);
-    if (error) fail(`Не удалось обновить карточку: ${error.message}`);
-    console.log(`Карточка обновлена: ${studentUuid}`);
-  }
-
-  const { error: sourceError } = await supabase.from("student_data_sources").upsert(
-    {
-      student_id: studentUuid,
-      provider: "intervals",
-      external_athlete_id: athleteId,
-      auth_method: "api_key",
-      credential,
-      kind,
-      is_active: true,
-    },
-    // Апсерт по athlete_id, а не по (student_id, provider): для строк с NULL
-    // владельцем второй индекс не работает, и это единственный надёжный ключ.
-    { onConflict: "provider,external_athlete_id" }
-  );
-  if (sourceError) fail(`Не удалось завести источник: ${sourceError.message}`);
-  console.log(`Источник Intervals ${athleteId} готов, kind=${kind} (ключ из ${keyEnv}, в вывод не попадает).`);
+  // ОДИН ПУТЬ ЗАВЕДЕНИЯ НА ТЕРМИНАЛ И НА БОТА [15.09.2026].
+  //
+  // Раньше карточку, источник и предзаполнение писал этот скрипт сам. Когда
+  // рядом появилось заведение из бота, две реализации означали бы расхождение
+  // на первой же правке — а расхождение здесь обнаруживается на живом человеке:
+  // ученица видит в анкете вопрос, на который тренер уже ответил за неё.
+  // Поэтому обе двери ведут в createIntervalsStudent.
+  const created = await createIntervalsStudent({
+    studentKey: studentId,
+    name,
+    telegramUserId: telegramUserId ? Number(telegramUserId) : null,
+    telegramChatId: telegramChatId ?? null,
+    athleteId,
+    credential,
+    kind,
+    timezone: (prefill.values.timezone as string | undefined) ?? null,
+    prefill:
+      prefill.setFields.length > 0
+        ? {
+            setFields: prefill.setFields,
+            values: prefill.values,
+            note: arg("pre-note"),
+            setBy: "coach",
+          }
+        : null,
+  });
+  console.log(`Карточка ${created.cardCreated ? "заведена" : "обновлена"}: ${created.studentUuid}`);
+  console.log(`Источник Intervals ${created.athleteId} готов, kind=${kind} (ключ из ${keyEnv}, в вывод не попадает).`);
   if (kind === "test") {
     console.log("  kind=test — регулярный опрос это подключение НЕ трогает.");
   }
 
   if (prefill.setFields.length > 0) {
-    const { data: sourceRow } = await supabase
-      .from("student_data_sources")
-      .select("id")
-      .eq("provider", "intervals")
-      .eq("external_athlete_id", athleteId)
-      .maybeSingle();
-    if (!sourceRow) fail("Источник не найден после записи — предзаполнение не сохранено");
-    const saved = await savePrefill({
-      sourceId: String(sourceRow.id),
-      setFields: prefill.setFields,
-      values: prefill.values,
-      note: arg("pre-note"),
-      setBy: "coach",
-    });
-    if (!saved.ok) fail(`Не удалось сохранить предзаполнение: ${saved.message}`);
     console.log("");
     console.log("Предзадано тренером — в анкете этих вопросов НЕ БУДЕТ:");
     for (const field of prefill.setFields) {

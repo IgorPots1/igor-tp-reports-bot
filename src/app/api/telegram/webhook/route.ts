@@ -30,6 +30,15 @@ import {
   isIntervalsStudent,
   RUN_START_PARAM,
 } from "@/features/intervals/run-start-onboarding";
+import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
+import { listActiveStudentsByTelegramUserId } from "@/features/trainingpeaks/repository";
+import {
+  ENROLL_CALLBACK_PREFIX,
+  handleEnrollmentCallback,
+  handleEnrollmentText,
+  noticeUnknownVisitor,
+  startEnrollment,
+} from "@/features/intervals/enroll-dialog";
 import { describeSupabaseError } from "@/features/supabase/server";
 import { getTrainingPeaksTelegramContextObservationByChatMessage } from "@/features/trainingpeaks/repository";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
@@ -265,6 +274,22 @@ export async function POST(request: Request) {
   }
 
   if (parsedMessage.kind === "callback_query") {
+    // КНОПКИ ЗАВЕДЕНИЯ — ТОЛЬКО ТРЕНЕРУ. Идентификатор кнопки виден в клиенте,
+    // и без этой проверки посторонний, подобрав callback_data, завёл бы себе
+    // карточку ученика.
+    if (parsedMessage.data?.startsWith(ENROLL_CALLBACK_PREFIX)) {
+      if (!parsedMessage.userId || !isCoachChat(parsedMessage.userId)) {
+        await answerTelegramCallbackQuery(parsedMessage.callbackQueryId, "Недоступно");
+        return okResponse();
+      }
+      await handleEnrollmentCallback({
+        coachChatId: String(parsedMessage.chatId),
+        callbackQueryId: parsedMessage.callbackQueryId,
+        data: parsedMessage.data,
+      });
+      return okResponse();
+    }
+
     if (isTrainingPeaksCallback(parsedMessage.data)) {
       await answerTelegramCallbackQuery(parsedMessage.callbackQueryId);
       await handleTrainingPeaksTelegramCallback(parsedMessage);
@@ -277,6 +302,60 @@ export async function POST(request: Request) {
 
   const messageText = parsedMessage.text?.trim() ?? "";
   const messageChatType = update.message?.chat.type;
+
+  // ── ЗАВЕДЕНИЕ УЧЕНИКА ИЗ БОТА ─────────────────────────────────────────────
+  //
+  // Стоит РАНЬШЕ разбора команд: пока у тренера открыт диалог, его «3» или
+  // «Валентина» это ответ на вопрос, а не неизвестная команда. Проверка на
+  // тренера здесь же: заводить учеников может только он.
+  const fromUser = update.message?.from;
+  const isCoachMessage = Boolean(fromUser?.id && isCoachChat(fromUser.id));
+
+  if (isCoachMessage && fromUser) {
+    // Пересланное сообщение ученицы: id берём из него, искать не нужно.
+    const forwarded = (update.message as { forward_from?: { id?: number; first_name?: string; username?: string } })
+      ?.forward_from;
+    if (forwarded?.id) {
+      await startEnrollment({
+        coachChatId: String(parsedMessage.chatId),
+        telegramUserId: Number(forwarded.id),
+        suggestedName: forwarded.first_name ?? null,
+        username: forwarded.username ?? null,
+      });
+      return okResponse();
+    }
+
+    // Пересылка с закрытым профилем: id в апдейте отсутствует, и придумать его
+    // нельзя. Говорим прямо, что делать, вместо молчания.
+    const hiddenForward = (update.message as { forward_sender_name?: string })?.forward_sender_name;
+    if (hiddenForward) {
+      await sendTelegramMessage(
+        parsedMessage.chatId,
+        `У «${hiddenForward}» закрыт профиль: телеграм не отдаёт id в пересланном сообщении.\n\n` +
+          "Попросите её написать боту самой — я покажу её вам кнопкой «Завести ученика»."
+      );
+      return okResponse();
+    }
+
+    const enrollCommand = messageText.match(/^\/enroll(?:@\w+)?\s+(\d{5,})/u);
+    if (enrollCommand) {
+      await startEnrollment({
+        coachChatId: String(parsedMessage.chatId),
+        telegramUserId: Number(enrollCommand[1]),
+        suggestedName: null,
+        username: null,
+      });
+      return okResponse();
+    }
+
+    if (!messageText.startsWith("/")) {
+      const answered = await handleEnrollmentText({
+        coachChatId: String(parsedMessage.chatId),
+        text: messageText,
+      });
+      if (answered) return okResponse();
+    }
+  }
 
   if (HELP_COMMAND_PATTERN.test(messageText)) {
     await handleTrainingPeaksTelegramHelp(parsedMessage);
@@ -327,6 +406,29 @@ export async function POST(request: Request) {
         from: { id: startFrom.id },
       });
       if (handled) return okResponse();
+    }
+
+    // НЕЗНАКОМЕЦ ЧАЩЕ ВСЕГО ЖМЁТ ИМЕННО «START». До этой правки он попадал в
+    // тренерскую ветку и получал «⛔ команда доступна только тренеру» — то есть
+    // человек, которому дали ссылку на бота, упирался в отказ, а тренер об этом
+    // не узнавал вовсе.
+    const startMessage = update.message;
+    if (startFrom?.id && !isCoachChat(startFrom.id) && startMessage && !isTelegramGroupChat(startMessage)) {
+      const known = await isKnownPerson(startFrom.id);
+      if (!known) {
+        await noticeUnknownVisitor({
+          from: startFrom,
+          chatId: parsedMessage.chatId,
+          coachChatId: getTrainingPeaksCoachChatIds()[0] ?? null,
+        });
+        // Ей отвечаем нейтрально: обещать «вы приняты» до решения тренера
+        // нельзя, а молчать в ответ на её первое действие тем более.
+        await sendTelegramMessage(
+          parsedMessage.chatId,
+          "Привет! Передал ваше сообщение тренеру. Он ответит и подскажет, что дальше."
+        );
+        return okResponse();
+      }
     }
 
     await handleTrainingPeaksTelegramCommand(
@@ -383,7 +485,32 @@ export async function POST(request: Request) {
     return okResponse();
   }
 
+  // НЕЗНАКОМЫЙ ЧЕЛОВЕК В ЛИЧКЕ. Прежде чем ответить «не поняла команду»,
+  // показываем его тренеру: это единственное место, где его telegram id
+  // достоверен, и единственный момент, когда он сам пришёл.
+  if (rawMessage && !isTelegramGroupChat(rawMessage) && fromUser?.id && !isCoachMessage) {
+    const known = await isKnownPerson(fromUser.id);
+    if (!known) {
+      await noticeUnknownVisitor({
+        from: fromUser,
+        chatId: parsedMessage.chatId,
+        coachChatId: getTrainingPeaksCoachChatIds()[0] ?? null,
+      });
+    }
+  }
+
   await sendTelegramMessage(parsedMessage.chatId, UNKNOWN_COMMAND_MESSAGE);
 
   return okResponse();
+}
+
+/** Знаем ли мы этого человека вообще: он ученик любой площадки. */
+async function isKnownPerson(telegramUserId: number): Promise<boolean> {
+  try {
+    const cards = await listActiveStudentsByTelegramUserId(telegramUserId);
+    return cards.length > 0;
+  } catch {
+    // Ошибка чтения не должна превращаться в поток уведомлений тренеру.
+    return true;
+  }
 }

@@ -412,6 +412,15 @@ export async function recordOauthOutcome(
  * ЕСЛИ АККАУНТ УЖЕ ПРИВЯЗАН К ДРУГОМУ ЧЕЛОВЕКУ — отказываемся. Молча перевесить
  * источник значило бы отдать чужие тренировки в чужую карточку.
  */
+/**
+ * Адрес источника-заготовки, заведённого тренером до подключения.
+ *
+ * Живёт здесь, а не в модуле заведения, потому что главный его читатель —
+ * именно OAuth: он обязан узнать заготовку и забрать её себе, а не завести
+ * рядом вторую строку.
+ */
+export const PENDING_ATHLETE_PREFIX = "pending-";
+
 export async function connectOauthSource(input: {
   studentUuid: string;
   externalAthleteId: string;
@@ -442,6 +451,32 @@ export async function connectOauthSource(input: {
         ? "этот аккаунт Intervals уже подключён к другому ученику"
         : `аккаунт ${input.externalAthleteId} уже заведён как источник тренера (kind=${existingRow.kind ?? "?"})`,
     };
+  }
+
+  // ЗАГОТОВКА, ЗАВЕДЁННАЯ ТРЕНЕРОМ, ЗАБИРАЕТСЯ, А НЕ ДУБЛИРУЕТСЯ. На ней уже
+  // висит предзаполнение анкеты (ключ предзаполнения — source_id), и завести
+  // рядом вторую строку значит потерять ответы тренера и оставить человеку
+  // вопросы, на которые за него уже ответили.
+  const { data: pendingRows } = await supabase
+    .from("student_data_sources")
+    .select("id, external_athlete_id")
+    .eq("provider", "intervals")
+    .eq("student_id", input.studentUuid)
+    .like("external_athlete_id", `${PENDING_ATHLETE_PREFIX}%`);
+  const pendingRow = (pendingRows ?? [])[0] as { id: string } | undefined;
+  if (pendingRow) {
+    if (existingRow) {
+      // Настоящая строка уже есть (подключался раньше) — заготовка лишняя.
+      await supabase.from("student_data_sources").delete().eq("id", pendingRow.id);
+    } else {
+      // Переименовываем ДО апсерта: после переименования апсерт найдёт её по
+      // (provider, athlete id) и дозаполнит токеном, сохранив тот же source_id.
+      const { error: claimError } = await supabase
+        .from("student_data_sources")
+        .update({ external_athlete_id: input.externalAthleteId })
+        .eq("id", pendingRow.id);
+      if (claimError) return { ok: false, reason: describeSupabaseError(claimError) };
+    }
   }
 
   const { data, error } = await supabase
