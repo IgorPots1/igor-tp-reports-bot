@@ -34,6 +34,7 @@ function stubStart() {
     medianWeeklyMinutes: 160,
     easyPaceSec: 344,
     easyPaceSampleSize: 20,
+    easyPaceManualCount: 0,
     weekly: [],
     rolling4wWeeklyMinutes: 160,
     rolling8wWeeklyMinutes: 160,
@@ -74,6 +75,49 @@ async function main(): Promise<void> {
 
   const manual = buildAnchors(start, { paceSecPerKm: 285, source: "coach_manual", setAt: "2026-09-15" });
   expect(manual.threshold?.confidence === "medium_low", "ручной простановке — ещё ниже: проверить нечем");
+
+  step("ЯКОРЬ ЛЁГКОГО: РУЧНЫЕ ЗАПИСИ ДОВЕРИЯ ДАЮТ МЕНЬШЕ, ПРИ ТОМ ЖЕ РАЗМЕРЕ [16.09.2026]");
+  const measured30 = buildAnchors(
+    { ...stubStart(), easyPaceSampleSize: 30, easyPaceManualCount: 0 } as never,
+    null
+  );
+  expect(measured30.easy?.confidence === "medium", `30 измеренных: ${measured30.easy?.confidence}`);
+
+  const manual30 = buildAnchors(
+    { ...stubStart(), easyPaceSampleSize: 30, easyPaceManualCount: 20 } as never,
+    null
+  );
+  expect(
+    manual30.easy?.confidence === "medium_low",
+    `те же 30, но 20 из них со слов (большинство) — доверие СНИЖЕНО на ступень: ${manual30.easy?.confidence}`
+  );
+
+  const fewManual30 = buildAnchors(
+    { ...stubStart(), easyPaceSampleSize: 30, easyPaceManualCount: 5 } as never,
+    null
+  );
+  expect(
+    fewManual30.easy?.confidence === "medium",
+    `30, из них 5 ручных (меньшинство) — доверие НЕ снижено, ручные тонут в измеренных: ${fewManual30.easy?.confidence}`
+  );
+
+  const manual12 = buildAnchors(
+    { ...stubStart(), easyPaceSampleSize: 12, easyPaceManualCount: 12 } as never,
+    null
+  );
+  expect(
+    manual12.easy?.confidence === "low",
+    `12 ручных (весь пул) — дно тоже понижается на ступень: medium_low → low: ${manual12.easy?.confidence}`
+  );
+
+  const allManualLow = buildAnchors(
+    { ...stubStart(), easyPaceSampleSize: 5, easyPaceManualCount: 5 } as never,
+    null
+  );
+  expect(
+    allManualLow.easy?.confidence === "low",
+    `выборка уже была low — ниже понижать некуда, дно есть дно: ${allManualLow.easy?.confidence}`
+  );
 
   step("БАЗА НЕ ПРИНИМАЕТ ПОЛОВИНУ ПОРОГА");
 

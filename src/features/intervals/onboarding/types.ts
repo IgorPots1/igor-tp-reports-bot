@@ -103,6 +103,13 @@ export type StartingPoint = {
    */
   easyPaceSec: number | null;
   easyPaceSampleSize: number;
+  /**
+   * Сколько из easyPaceSampleSize — темп СО СЛОВ (data_level='manual'), а не
+   * измеренный GPS. Доверие к якорю лёгкого должно знать это отдельно от
+   * размера выборки: тридцать записанных вручную темпов — не то же самое, что
+   * тридцать измеренных, даже посчитанные одной медианой.
+   */
+  easyPaceManualCount: number;
 
   /** Что реально есть в тренировках окна — считается по уже сохранённым уровням. */
   dataLevel: "heartrate" | "pace_only" | "none";

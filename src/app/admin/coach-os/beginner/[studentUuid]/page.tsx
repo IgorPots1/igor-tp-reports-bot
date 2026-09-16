@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import FormActionButton from "@/app/admin/FormActionButton";
 import { dayOffsetFromCoach, todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
 import { isCoachSendEnabled } from "@/features/intervals/loop/coach-message";
+import { dataLevelLabelRu } from "@/features/intervals/data-quality";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
 import { fieldLabelRu, PREFILLABLE_FIELDS } from "@/features/intervals/loop/prefill";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
@@ -376,11 +377,14 @@ export default async function BeginnerStudentPage({
                   <p style={{ margin: "0 0 4px", whiteSpace: "pre-wrap" }}>«{checkin.commentText}»</p>
                 ) : null}
                 <p style={{ margin: "0 0 8px", color: "#555", fontSize: 13 }}>
-                  тренировка из Intervals:{" "}
+                  {/* «из Intervals» верно только для того, что реально оттуда приехало.
+                      Ручная запись — не привезённая, а введённая, и подпись обязана
+                      это различать: тренер читает этот экран каждый день. */}
+                  {activity?.dataLevel === "manual" ? "тренировка (введена вручную)" : "тренировка из Intervals"}:{" "}
                   {activity
                     ? `${activity.activityType ?? "—"}, ${Math.round((activity.movingTimeS ?? 0) / 60)} мин, ${
                         activity.distanceM ? (activity.distanceM / 1000).toFixed(2) : "—"
-                      } км, данные ${activity.dataLevel}`
+                      } км, данные: ${dataLevelLabelRu(activity.dataLevel)}`
                     : "не приехала"}
                 </p>
 
@@ -418,9 +422,13 @@ export default async function BeginnerStudentPage({
         )}
       </div>
 
-      {/* ── Тренировки из Intervals ── */}
+      {/* ── Тренировки ──
+          БЕЗ «ИЗ INTERVALS» В ЗАГОЛОВКЕ [16.09.2026]. Список может целиком
+          состоять из ручных записей — заголовок, который называет источник,
+          которого нет, врёт молча каждый день. Источник строки видно в её
+          собственной колонке. */}
       <div style={box}>
-        <h2 style={{ marginTop: 0 }}>Тренировки из Intervals</h2>
+        <h2 style={{ marginTop: 0 }}>Тренировки</h2>
         {view.activities.length === 0 ? (
           <p style={{ margin: 0, color: "#555" }}>За окно ±3 недели ничего не приехало.</p>
         ) : (
@@ -431,6 +439,7 @@ export default async function BeginnerStudentPage({
                 <th style={cell}>Тип</th>
                 <th style={cell}>Время</th>
                 <th style={cell}>Дистанция</th>
+                <th style={cell}>Источник</th>
                 <th style={cell}>Данные</th>
               </tr>
             </thead>
@@ -443,7 +452,8 @@ export default async function BeginnerStudentPage({
                   <td style={cell}>
                     {activity.distanceM ? `${(activity.distanceM / 1000).toFixed(2)} км` : "—"}
                   </td>
-                  <td style={cell}>{activity.dataLevel}</td>
+                  <td style={cell}>{activity.dataLevel === "manual" ? "вручную" : "Intervals"}</td>
+                  <td style={cell}>{dataLevelLabelRu(activity.dataLevel)}</td>
                 </tr>
               ))}
             </tbody>

@@ -143,6 +143,7 @@ export function computeStartingPointFromHistory(
   // и день, в который человек её ставит.
   const longestOfWeek = new Map<string, { minutes: number; weekday: number }>();
   const paceSamples: number[] = [];
+  let paceSamplesManualCount = 0;
   let runsWithHeartrate = 0;
 
   for (const activity of runs) {
@@ -170,6 +171,12 @@ export function computeStartingPointFromHistory(
     const seconds = activity.movingTimeS ?? 0;
     if (distance >= MIN_DISTANCE_FOR_PACE_M && seconds > 0) {
       paceSamples.push(seconds / (distance / 1000));
+      // ДИСТАНЦИЯ И ВРЕМЯ У РУЧНОЙ ЗАПИСИ ТОЖЕ ЧИСЛА, И ТЕМП ИЗ НИХ СЧИТАЕТСЯ
+      // ТАК ЖЕ. Не выбрасываем её из выборки — объём и здесь достоверен как
+      // среднее. Но откуда взялся ЭТОТ темп (со слов или с GPS), нужно
+      // помнить отдельно: доверие к якорю лёгкого зависит от происхождения, а
+      // не только от того, сколько чисел набралось.
+      if (activity.dataLevel === "manual") paceSamplesManualCount += 1;
     }
   }
 
@@ -261,6 +268,7 @@ export function computeStartingPointFromHistory(
     dayHistogramLong,
     easyPaceSec,
     easyPaceSampleSize: sortedPaces.length,
+    easyPaceManualCount: paceSamplesManualCount,
     dataLevel,
     runsWithHeartrate,
     runsTotal,
@@ -303,6 +311,7 @@ export function startingPointFromAnswers(answers: OnboardingAnswers): StartingPo
     dayHistogramLong: [0, 0, 0, 0, 0, 0, 0],
     easyPaceSec: null,
     easyPaceSampleSize: 0,
+    easyPaceManualCount: 0,
     dataLevel: "none",
     runsWithHeartrate: 0,
     runsTotal: 0,

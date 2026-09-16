@@ -50,7 +50,9 @@ async function main(): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { data: sourceRow, error: sourceError } = await supabase
     .from("student_data_sources")
-    .select("id, student_id, external_athlete_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at")
+    .select(
+      "id, student_id, external_athlete_id, auth_method, threshold_pace_sec_per_km, threshold_source, threshold_set_at"
+    )
     .eq("provider", "intervals")
     .eq("external_athlete_id", athleteId)
     .maybeSingle();
@@ -65,6 +67,19 @@ async function main(): Promise<void> {
     .maybeSingle();
   const card = cardRow as { student_name?: string; coaching_platform?: string } | null;
   console.log(`Ученик: ${card?.student_name ?? "?"} (${athleteId})`);
+
+  // РУЧНОЙ ВВОД: РЯДОВ НЕ БУДЕТ НИКОГДА [16.09.2026]. Отдельно от «ряды ещё не
+  // приехали» (та ошибка чинится синхронизацией, ниже по коду) — здесь чинить
+  // нечего, ряды структурно не появятся. Отказ ДО попытки разбора: указывать
+  // на синхронизацию было бы враньём для этого случая.
+  if (!DECLINE && !ALLOW && source.auth_method === "manual") {
+    fail(
+      "У этого ученика ручной ввод: посекундных рядов не будет никогда, автоматический разбор " +
+        "теста (ровно/сомнительно/невалидно) считать не по чему.\n" +
+        "Если тест проведён по протоколу и вы доверяете её отчёту о темпе — поставьте порог сами:\n" +
+        `  npm run intervals:set-threshold -- --athlete=${athleteId} --pace=<темп> --source=coach_manual --commit`
+    );
+  }
 
   // ── Отказ от теста ──
   if (DECLINE || ALLOW) {

@@ -47,6 +47,8 @@ export type StartingPointInput = {
   runMinutesP90: number;
   easyPaceSec: number | null;
   easyPaceSampleSize: number;
+  /** Сколько из easyPaceSampleSize — темп со слов (data_level='manual'), не измеренный. */
+  easyPaceManualCount: number;
   dataLevel: "heartrate" | "pace_only" | "none";
 };
 
@@ -70,11 +72,34 @@ export type AnswersInput = {
  */
 const EASY_BAND_HALF_S = 15;
 
-/** Доверие к измеренному темпу — по размеру выборки. Границы назначенные, и это видно. */
-function easyConfidence(sampleSize: number): EasyAnchor["confidence"] {
-  if (sampleSize >= 30) return "medium";
-  if (sampleSize >= 12) return "medium_low";
+/** Соседняя ступень вниз. Дно — low, ниже не бывает: некуда понижать честно. */
+function stepDownConfidence(confidence: EasyAnchor["confidence"]): EasyAnchor["confidence"] {
+  if (confidence === "high") return "medium";
+  if (confidence === "medium") return "medium_low";
   return "low";
+}
+
+/**
+ * Доверие к темпу лёгкого — по размеру выборки, а дальше СНИЖЕНО, если
+ * бОльшая часть выборки — темп со слов, а не измеренный.
+ *
+ * ПОЧЕМУ ПОНИЖЕНИЕ, А НЕ ОТДЕЛЬНАЯ ШКАЛА. Тридцать записанных вручную темпов и
+ * тридцать измеренных GPS — не один и тот же факт, даже если медиана вышла
+ * одинаковой: у первых точность зависит от памяти и округления человека, у
+ * вторых — от приёмника. Разное происхождение обязано читаться в доверии,
+ * иначе тренер увидит «medium» и не узнает, что перепроверить стоит именно
+ * этому якорю.
+ *
+ * ПОРОГ БОЛЬШИНСТВА (>50%), А НЕ «ЕСТЬ ХОТЬ ОДНА». Одна ручная запись среди
+ * тридцати измеренных не должна красть доверие у всей выборки — она в ней
+ * тонет. Понижаем, когда ручной ввод РЕАЛЬНО определяет число, то есть когда
+ * его больше половины.
+ */
+function easyConfidence(sampleSize: number, manualCount: number): EasyAnchor["confidence"] {
+  const base: EasyAnchor["confidence"] =
+    sampleSize >= 30 ? "medium" : sampleSize >= 12 ? "medium_low" : "low";
+  if (sampleSize > 0 && manualCount / sampleSize > 0.5) return stepDownConfidence(base);
+  return base;
 }
 
 /**
@@ -113,7 +138,7 @@ export function buildAnchors(start: StartingPointInput, stored: StoredThreshold 
           fastSec: start.easyPaceSec - EASY_BAND_HALF_S,
           slowSec: start.easyPaceSec + EASY_BAND_HALF_S,
           source: "intervals_easy_measured",
-          confidence: easyConfidence(start.easyPaceSampleSize),
+          confidence: easyConfidence(start.easyPaceSampleSize, start.easyPaceManualCount),
           effectiveN: start.easyPaceSampleSize,
         };
 

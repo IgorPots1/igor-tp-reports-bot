@@ -82,3 +82,27 @@ export function assessDataQuality(streams: ActivityStreams | null): ActivityData
     pointCount,
   };
 }
+
+/**
+ * data_level человеческими словами, для админки.
+ *
+ * ОДИН МОДУЛЬ, А НЕ ТЕКСТ ПО МЕСТУ [16.09.2026]. Экраны админки печатали сырое
+ * значение колонки («manual», «pace_only») напрямую — тренер читает это
+ * каждый день, и «данные manual» ничего не говорит без объяснения, что здесь
+ * значит именно это слово. Раз слов четыре и они конечны, перевод один на всю
+ * систему, а не переизобретается на каждом экране.
+ */
+export function dataLevelLabelRu(level: string | null | undefined): string {
+  switch (level) {
+    case "heartrate":
+      return "пульс и темп по рядам";
+    case "pace_only":
+      return "темп по рядам, без пульса";
+    case "manual":
+      return "введено вручную, рядов нет";
+    case "none":
+      return "рядов нет";
+    default:
+      return level ?? "—";
+  }
+}

@@ -55,7 +55,9 @@ async function main(): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { data: source, error } = await supabase
     .from("student_data_sources")
-    .select("id, student_id, external_athlete_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at")
+    .select(
+      "id, student_id, external_athlete_id, auth_method, threshold_pace_sec_per_km, threshold_source, threshold_set_at"
+    )
     .eq("provider", "intervals")
     .eq("external_athlete_id", athleteId)
     .maybeSingle();
@@ -110,6 +112,21 @@ async function main(): Promise<void> {
   const paceSec = parsePace(paceArg);
   const sourceKind = arg("source") ?? "coach_manual";
   if (!SOURCES.has(sourceKind)) fail("--source принимает diagnostic, race_result или coach_manual");
+
+  // РУЧНОЙ ВВОД НЕ МОЖЕТ ДАТЬ diagnostic [16.09.2026]. diagnostic означает
+  // ИЗМЕРЕНИЕ: средний темп за последние двадцать минут теста, посчитанный по
+  // посекундным рядам, и детектор ровности, который эти ряды проверил. У
+  // ручной записи рядов нет НИКОГДА — число целиком со слов человека, даже
+  // если она честно провела протокол теста. Это не хуже, это ДРУГОЕ по
+  // происхождению, и называть его тем же словом, что и измеренный порог,
+  // значило бы стереть разницу, ради которой источник вообще хранится.
+  if (sourceKind === "diagnostic" && row.auth_method === "manual") {
+    fail(
+      "Отказ: у этого ученика ручной ввод (auth_method=manual), рядов не будет никогда. " +
+        "diagnostic пишется только по измерению. Даже если тест проведён по протоколу, " +
+        "источник — --source=coach_manual: число со слов, а не измеренное."
+    );
+  }
 
   // Границы те же, что в базе: опечатка должна отлетать здесь, с человеческим
   // текстом, а не констрейнтом.
