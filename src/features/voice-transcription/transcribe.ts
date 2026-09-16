@@ -25,15 +25,15 @@ export type TranscriptionResult = {
 // ffmpeg-static ships a prebuilt binary as an npm dependency — no Homebrew/sudo needed, and it's
 // already there after a plain `npm install` in the canonical directory. VOICE_TRANSCRIPTION_FFMPEG_PATH
 // stays as an override for anyone who wants a system ffmpeg instead.
-function getFfmpegPath(): string {
+export function getFfmpegPath(): string {
   return process.env.VOICE_TRANSCRIPTION_FFMPEG_PATH?.trim() || ffmpegStaticPath || "ffmpeg";
 }
 
-function getWhisperCliPath(): string {
+export function getWhisperCliPath(): string {
   return process.env.VOICE_TRANSCRIPTION_WHISPER_CLI_PATH?.trim() || "whisper-cli";
 }
 
-function getWhisperModelPath(): string {
+export function getWhisperModelPath(): string {
   const configured = process.env.VOICE_TRANSCRIPTION_WHISPER_MODEL_PATH?.trim();
   if (!configured) {
     throw new Error(

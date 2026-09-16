@@ -26,8 +26,24 @@ import {
   markObservationTranscriptFailedOrRequeue,
   type PendingTranscriptionObservation,
 } from "@/features/trainingpeaks/repository";
-import { transcribeTelegramFile } from "@/features/voice-transcription/transcribe";
+import { transcribeTelegramFile, getFfmpegPath, getWhisperCliPath, getWhisperModelPath } from "@/features/voice-transcription/transcribe";
 import { splitForTelegram } from "@/features/voice-transcription/telegram-message-split";
+
+// Log the RESOLVED paths every tick — not what .env.local is assumed to say, what this exact
+// process actually got. Added 2026-09-16 after two separate missing-env-var incidents
+// (VOICE_TRANSCRIPTION_WHISPER_MODEL_PATH, then a suspicion about CLI_PATH/FFMPEG_PATH) that
+// took live debugging to confirm; this makes it a one-line log check going forward.
+function logResolvedPaths(): void {
+  let modelPath: string;
+  try {
+    modelPath = getWhisperModelPath();
+  } catch (error) {
+    modelPath = `НЕ ЗАДАН (${error instanceof Error ? error.message : String(error)})`;
+  }
+  console.log(
+    `[voice-transcription] paths: ffmpeg=${getFfmpegPath()} whisper-cli=${getWhisperCliPath()} model=${modelPath}`
+  );
+}
 
 const MAX_JOBS_PER_TICK = Number(process.env.VOICE_TRANSCRIPTION_MAX_JOBS_PER_TICK ?? "3");
 const MAX_ATTEMPTS = Number(process.env.VOICE_TRANSCRIPTION_MAX_ATTEMPTS ?? "3");
@@ -138,6 +154,8 @@ async function processObservation(observation: PendingTranscriptionObservation):
 }
 
 async function main(): Promise<void> {
+  logResolvedPaths();
+
   const jobs = await claimPendingVoiceTranscriptionJobs(MAX_JOBS_PER_TICK);
 
   if (jobs.length === 0) {

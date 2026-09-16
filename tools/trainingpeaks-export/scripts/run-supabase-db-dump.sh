@@ -51,7 +51,13 @@ DATA_TMP="$DUMP_FILE.data.tmp"
 cd "$REPO" || { echo "[$(date '+%F %T')] нет папки $REPO"; exit 1; }
 
 echo "[$(date '+%F %T')] supabase db dump --linked (схема) -> $SCHEMA_TMP"
-if ! npx --yes supabase db dump --linked --project-ref "$PROJECT_REF" -f "$SCHEMA_TMP"; then
+# caffeinate -i: 2026-09-16, the scheduled 03:15 run hung for ~3h and died only to the runner's
+# own 600s watchdog (SIGTERM) — the Mac slept mid-dump (idle sleep is on, `pmset -g` showed
+# `sleep 1`; PowerNap being on doesn't prevent this, it only wakes briefly for background tasks).
+# caffeinate -i holds an idle-sleep assertion only while ITS child runs, releasing it the moment
+# the dump exits — scoped to this one command, not a global `pmset` sleep-disable that would also
+# keep every OTHER overnight runner's Mac awake for no reason.
+if ! caffeinate -i npx --yes supabase db dump --linked --project-ref "$PROJECT_REF" -f "$SCHEMA_TMP"; then
   echo "[$(date '+%F %T')] supabase db dump (схема) упал"
   rm -f "$SCHEMA_TMP" "$DATA_TMP"
   npm --prefix "$REPO/tools/trainingpeaks-export" run --silent tp-ops-notify -- \
@@ -60,7 +66,7 @@ if ! npx --yes supabase db dump --linked --project-ref "$PROJECT_REF" -f "$SCHEM
 fi
 
 echo "[$(date '+%F %T')] supabase db dump --linked --data-only (данные) -> $DATA_TMP"
-if ! npx --yes supabase db dump --linked --project-ref "$PROJECT_REF" --data-only --use-copy -f "$DATA_TMP"; then
+if ! caffeinate -i npx --yes supabase db dump --linked --project-ref "$PROJECT_REF" --data-only --use-copy -f "$DATA_TMP"; then
   echo "[$(date '+%F %T')] supabase db dump (данные) упал"
   rm -f "$SCHEMA_TMP" "$DATA_TMP"
   npm --prefix "$REPO/tools/trainingpeaks-export" run --silent tp-ops-notify -- \
