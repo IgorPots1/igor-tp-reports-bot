@@ -18,6 +18,8 @@ import {
   type TimeOfDay,
   type WeekStability,
 } from "@/features/intervals/loop/schedule";
+import { sendTelegramMessage } from "@/features/telegram/telegram-client";
+import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 
 export const runtime = "nodejs";
 
@@ -215,6 +217,18 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!saved.ok) {
     return jsonResponse(400, { ok: false, error: humaniseConstraint(saved.message, coachSet) });
   }
+
+  // Уведомление тренеру — best-effort, не блокирует ответ ученику: сама анкета
+  // уже сохранена выше независимо от того, дойдёт ли сообщение в Telegram.
+  const coachChatIds = getTrainingPeaksCoachChatIds();
+  const noticeText = `${auth.studentName} заполнила анкету. Можно собирать план.`;
+  await Promise.allSettled(
+    coachChatIds.map((chatId) =>
+      sendTelegramMessage(chatId, noticeText).catch((err) => {
+        console.warn("[m.run.onboarding] coach notify failed", { chatId, error: String(err) });
+      })
+    )
+  );
 
   // ПЛАН ЗДЕСЬ НЕ СОБИРАЕТСЯ. Анкета сохранена, дальше тренер запускает
   // генерацию и подтверждает план. Пока он этого не сделал, человек видит
