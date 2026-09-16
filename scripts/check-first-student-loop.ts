@@ -595,6 +595,24 @@ async function main(): Promise<void> {
 
   // ── 7. Кабинет ──
   step("7. КАБИНЕТ — то же самое, глазами ученицы");
+
+  // ГЛАВНАЯ ПРОВЕРКА ЭТОГО НАРЯДА: минуты — факт, а не план. Кладём РЕАЛЬНУЮ
+  // активность только на ОДНУ из дат чек-инов, БЕЗ привязки через
+  // checkin.activityId (его сознательно не трогаем — именно это поле раньше
+  // молчаливо не заполнялось, если активность приезжала после чек-ина).
+  const measuredDate = dates[0];
+  const { error: activityError } = await supabase.from("intervals_activities").insert({
+    source_id: sourceId,
+    student_id: studentUuid,
+    activity_id: `check-loop-activity-${sourceId}`,
+    name: "Проверочная активность",
+    activity_type: "Run",
+    start_date_local: `${measuredDate}T07:00:00`,
+    moving_time_s: 1500, // 25 минут — заведомо не совпадает с плановыми минутами сессии
+    data_level: "pace_only",
+  });
+  if (activityError) bad(`тестовая активность не легла: ${activityError.message}`);
+
   const cabinet = await loadCabinetView(sourceId, dates[dates.length - 1]);
   expect(cabinet.weeksTogether !== null && cabinet.weeksTogether >= 1, `недель вместе: ${cabinet.weeksTogether}`);
   expect(
@@ -603,7 +621,31 @@ async function main(): Promise<void> {
   );
   expect(
     cabinet.totals !== null && cabinet.totals.sessionsCompleted === checkins.length,
-    `итоги совпадают с реальными чек-инами: ${cabinet.totals?.sessionsCompleted} тренировок, ${cabinet.totals?.minutesAccumulated} мин`
+    `итоги совпадают с реальными чек-инами: ${cabinet.totals?.sessionsCompleted} тренировок`
+  );
+  expect(
+    cabinet.totals?.minutesAccumulated === 25,
+    `минуты — РОВНО факт одной измеренной тренировки (25), не сумма планов всех четырёх: ${cabinet.totals?.minutesAccumulated}`
+  );
+  expect(
+    cabinet.totals?.sessionsWithoutMeasuredMinutes === checkins.length - 1,
+    `остальные ${cabinet.totals?.sessionsWithoutMeasuredMinutes} без измеренной длительности честно названы, а не выброшены`
+  );
+  const measuredEntry = cabinet.history?.find((h) => h.date === measuredDate);
+  expect(
+    measuredEntry?.minutesActual === 25,
+    `в истории именно у этой тренировки факт: ${measuredEntry?.minutesActual} мин`
+  );
+  // Ищем именно ПЛАНОВУЮ тренировку без факта — незапланированный чек-ин тоже
+  // без факта, но у него и плана нет, это не та проверка.
+  const unmeasuredPlannedEntry = cabinet.history?.find(
+    (h) => h.date !== measuredDate && h.minutesPlanned !== null
+  );
+  expect(
+    unmeasuredPlannedEntry !== undefined &&
+      unmeasuredPlannedEntry.minutesActual === null &&
+      unmeasuredPlannedEntry.minutesPlanned !== null,
+    "у тренировки без факта минут нет, но план подписан отдельно, а не выдан за факт"
   );
   expect(
     cabinet.history !== null && cabinet.history.length === checkins.length,

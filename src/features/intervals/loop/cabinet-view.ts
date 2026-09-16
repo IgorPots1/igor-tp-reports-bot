@@ -15,6 +15,26 @@
  *   - история — только когда есть хотя бы один чек-ин;
  *   - ступени — только у программы новичка (есть прогрессия) и с реальным
  *     переходом либо хотя бы одной тренировкой на текущей ступени.
+ *
+ * МИНУТЫ — ФАКТ, А НЕ ПЛАН [17.09.2026, правка после ревью Игоря]. Раньше
+ * «минут набрано» суммировало minutes ПЛАНОВОЙ сессии — цифра выглядела
+ * измеренной, а была намерением. checkin.activityId для факта не годится:
+ * его пишет submitCheckin ОДИН РАЗ в момент чек-ина (service.ts), и если
+ * тренировка из Intervals ещё не приехала — а обычно так и есть, человек
+ * отмечается сразу после бега, синк идёт позже, — activityId навсегда
+ * остаётся пустым, хотя тренировка потом придёт. Поэтому здесь НЕ читаем
+ * checkin.activityId, а заново сопоставляем чек-ин с активностью ПО ДАТЕ на
+ * момент открытия кабинета (actualMinutesByDate передаёт вызывающий) — это
+ * тот же факт, который успел дойти к этому моменту, а не тот, что был готов
+ * ровно во время чек-ина. Ручной ввод сюда попадает тем же путём:
+ * submitManualEntry кладёт активность с тем же data_level='manual' и
+ * настоящей self-reported длительностью — это тоже факт, а не хуже часов,
+ * ровно так его уже трактует весь остальной продукт.
+ *
+ * Итог: minutesAccumulated считает ТОЛЬКО реально известные минуты; чек-ины
+ * без совпавшей активности не увеличивают минуты, но остаются в счёте
+ * тренировок (что тренировалась — факт сам по себе) и отдельно называются
+ * (sessionsWithoutMeasuredMinutes), а не тонут молча в общей цифре.
  */
 
 import { stepByIndex, BEGINNER_LADDER } from "@/features/methodology/beginner";
@@ -26,7 +46,10 @@ export type CabinetHistoryEntry = {
   date: string;
   dateLabel: string;
   title: string;
-  minutes: number | null;
+  /** Реально измеренная длительность (часы или ручной ввод). null — неизвестна. */
+  minutesActual: number | null;
+  /** Сколько занимала ПЛАНОВАЯ сессия — только как честно подписанная альтернатива, когда факта нет. */
+  minutesPlanned: number | null;
   effortLabel: string | null;
   pain: boolean;
   commentText: string | null;
@@ -41,7 +64,13 @@ export type CabinetLadderStep = {
 export type CabinetView = {
   weeksTogether: number | null;
   cycleProgress: { currentWeek: number; totalWeeks: number } | null;
-  totals: { sessionsCompleted: number; minutesAccumulated: number } | null;
+  totals: {
+    sessionsCompleted: number;
+    /** Сумма ТОЛЬКО реально известных минут. null — ни для одной тренировки минуты не известны. */
+    minutesAccumulated: number | null;
+    /** Сколько из отмеченных тренировок не имеют измеренной длительности — не прячем в общей сумме. */
+    sessionsWithoutMeasuredMinutes: number;
+  } | null;
   history: CabinetHistoryEntry[] | null;
   ladder: {
     currentLabelRu: string;
@@ -63,8 +92,10 @@ export function buildCabinetView(input: {
   /** Любой порядок — функция сама сортирует, где это важно. */
   checkins: Checkin[];
   sessionsById: Map<string, PlanSession>;
+  /** Ключ — session_date (YYYY-MM-DD) чек-ина; значение — реальные минуты активности за этот день. */
+  actualMinutesByDate: Map<string, number>;
 }): CabinetView {
-  const { todayIso, connectedAtIso, cycle, progression, checkins, sessionsById } = input;
+  const { todayIso, connectedAtIso, cycle, progression, checkins, sessionsById, actualMinutesByDate } = input;
 
   const weeksTogether = connectedAtIso
     ? Math.max(1, Math.floor(daysBetween(connectedAtIso.slice(0, 10), todayIso) / 7) + 1)
@@ -83,13 +114,23 @@ export function buildCabinetView(input: {
 
   const totals =
     checkins.length > 0
-      ? {
-          sessionsCompleted: checkins.length,
-          minutesAccumulated: checkins.reduce((sum, c) => {
-            const session = c.planSessionId ? sessionsById.get(c.planSessionId) : null;
-            return sum + (session?.minutes ?? 0);
-          }, 0),
-        }
+      ? (() => {
+          let minutesKnown: number | null = null;
+          let withoutMeasured = 0;
+          for (const c of checkins) {
+            const actual = actualMinutesByDate.get(c.sessionDate);
+            if (actual !== undefined) {
+              minutesKnown = (minutesKnown ?? 0) + actual;
+            } else {
+              withoutMeasured += 1;
+            }
+          }
+          return {
+            sessionsCompleted: checkins.length,
+            minutesAccumulated: minutesKnown,
+            sessionsWithoutMeasuredMinutes: withoutMeasured,
+          };
+        })()
       : null;
 
   const byDateDesc = [...checkins].sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));
@@ -101,7 +142,8 @@ export function buildCabinetView(input: {
             date: c.sessionDate,
             dateLabel: formatRuDay(c.sessionDate),
             title: session?.title ?? "Незапланированная тренировка",
-            minutes: session?.minutes ?? null,
+            minutesActual: actualMinutesByDate.get(c.sessionDate) ?? null,
+            minutesPlanned: session?.minutes ?? null,
             effortLabel: c.effortLabel,
             pain: c.pain,
             commentText: c.commentText,

@@ -215,6 +215,25 @@ export async function loadCabinetView(sourceId: string, todayIso: string): Promi
   const sessions = await listSessionsByIds(sessionIds);
   const sessionsById = new Map(sessions.map((s) => [s.id, s]));
 
+  // МИНУТЫ — ПО ДАТЕ, А НЕ ПО checkin.activityId. Тот пишется один раз в
+  // submitCheckin и остаётся пустым, если тренировка из Intervals ещё не
+  // приехала на момент чек-ина — а обычно так и есть. Здесь сопоставляем
+  // заново, на текущий момент: то, что успело дойти к открытию кабинета.
+  const actualMinutesByDate = new Map<string, number>();
+  if (checkins.length > 0) {
+    const dates = checkins.map((c) => c.sessionDate).sort();
+    const activities = await listActivitiesInRange(sourceId, dates[0], dates[dates.length - 1]);
+    for (const activity of activities) {
+      if (activity.movingTimeS === null || !activity.startDateLocal) continue;
+      const date = activity.startDateLocal.slice(0, 10);
+      // Несколько активностей в один день — берём более длинную: рабочая
+      // тренировка дня, а не случайная короткая прогулка тем же числом.
+      const minutes = Math.round(activity.movingTimeS / 60);
+      const existing = actualMinutesByDate.get(date);
+      if (existing === undefined || minutes > existing) actualMinutesByDate.set(date, minutes);
+    }
+  }
+
   return buildCabinetView({
     todayIso,
     connectedAtIso: (sourceRow as { connected_at: string | null } | null)?.connected_at ?? null,
@@ -222,6 +241,7 @@ export async function loadCabinetView(sourceId: string, todayIso: string): Promi
     progression,
     checkins,
     sessionsById,
+    actualMinutesByDate,
   });
 }
 

@@ -366,7 +366,8 @@ type CabinetHistoryEntry = {
   date: string;
   dateLabel: string;
   title: string;
-  minutes: number | null;
+  minutesActual: number | null;
+  minutesPlanned: number | null;
   effortLabel: string | null;
   pain: boolean;
   commentText: string | null;
@@ -377,7 +378,11 @@ type CabinetLadderStep = { step: number; labelRu: string; sinceDateLabel: string
 type CabinetData = {
   weeksTogether: number | null;
   cycleProgress: { currentWeek: number; totalWeeks: number } | null;
-  totals: { sessionsCompleted: number; minutesAccumulated: number } | null;
+  totals: {
+    sessionsCompleted: number;
+    minutesAccumulated: number | null;
+    sessionsWithoutMeasuredMinutes: number;
+  } | null;
   history: CabinetHistoryEntry[] | null;
   ladder: { currentLabelRu: string; nextLabelRu: string | null; path: CabinetLadderStep[] } | null;
 };
@@ -474,11 +479,22 @@ function CabinetScreen(props: { initData: string; onBack: () => void }) {
             {data.totals.sessionsCompleted}{" "}
             {plural(data.totals.sessionsCompleted, "тренировка", "тренировки", "тренировок")} отмечено
           </p>
-          {data.totals.minutesAccumulated > 0 ? (
+          {/* ТОЛЬКО РЕАЛЬНО ИЗМЕРЕННЫЕ МИНУТЫ [решение 17.09.2026]. Раньше здесь
+              суммировались минуты ПЛАНА — цифра выглядела как факт, а была
+              намерением. Если факта нет ни для одной тренировки — цифры нет
+              вообще, а не ноль и не план вместо неё. */}
+          {data.totals.minutesAccumulated !== null ? (
             <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 14 }}>
-              Набрано {data.totals.minutesAccumulated} мин по плану
+              Набрано {data.totals.minutesAccumulated} мин — по данным о тренировках
+              {data.totals.sessionsWithoutMeasuredMinutes > 0
+                ? ` (у ${data.totals.sessionsWithoutMeasuredMinutes} ${plural(data.totals.sessionsWithoutMeasuredMinutes, "тренировки", "тренировок", "тренировок")} длительность неизвестна, в сумму не входит)`
+                : ""}
             </p>
-          ) : null}
+          ) : (
+            <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 14 }}>
+              Длительность тренировок пока не известна: часы не прислали данные, а вручную она не указывалась.
+            </p>
+          )}
         </div>
       ) : null}
 
@@ -516,8 +532,15 @@ function CabinetScreen(props: { initData: string; onBack: () => void }) {
                 <p style={{ margin: 0, fontSize: 13, color: MUTED }}>{entry.dateLabel}</p>
                 <p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 600 }}>
                   {entry.title}
-                  {entry.minutes ? ` · ${entry.minutes} мин` : ""}
+                  {entry.minutesActual !== null ? ` · ${entry.minutesActual} мин` : ""}
                 </p>
+                {/* ПЛАН ПОКАЗАН, ТОЛЬКО КОГДА ФАКТА НЕТ, И ПОДПИСАН КАК ПЛАН —
+                    не занимает место факта и не выдаёт себя за него. */}
+                {entry.minutesActual === null && entry.minutesPlanned !== null ? (
+                  <p style={{ margin: "2px 0 0", fontSize: 13, color: MUTED, fontStyle: "italic" }}>
+                    По плану — {entry.minutesPlanned} мин; сколько вышло по факту, неизвестно
+                  </p>
+                ) : null}
                 {entry.effortLabel ? (
                   <p style={{ margin: "2px 0 0", fontSize: 13, color: MUTED }}>
                     {entry.effortLabel}
