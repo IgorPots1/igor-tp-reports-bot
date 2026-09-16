@@ -5,7 +5,7 @@ import {
   describeSupabaseError,
   withSupabaseNetworkRetry,
 } from "@/features/supabase/server";
-import { fetchAllInChunks, fetchAllRows } from "@/features/supabase/paginate";
+import { chunkIds, fetchAllInChunks, fetchAllRows, SUPABASE_MAX_ROWS } from "@/features/supabase/paginate";
 import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import type { ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
 import {
@@ -2875,6 +2875,56 @@ export async function listTrainingPeaksHealthMetricsForStudentDateRange(input: {
   return ((data as TrainingPeaksHealthMetricCacheDbRow[]) ?? []).map(mapTrainingPeaksHealthMetricCacheRow);
 }
 
+/**
+ * Batched sibling of listTrainingPeaksHealthMetricsForStudentDateRange — ONE (chunked,
+ * paginated) read for many students instead of the caller looping student-by-student.
+ * Added to fix an N+1 in getTrainingPeaksAttentionSnapshot's recovery-alert stage: with 73
+ * eligible students that was 73 sequential round trips for a 3-day window each.
+ */
+export async function listTrainingPeaksHealthMetricsForStudentsDateRange(input: {
+  studentIds: string[];
+  from: string;
+  to: string;
+  metricKey?: string;
+}): Promise<Map<string, TrainingPeaksHealthMetricCacheRow[]>> {
+  const out = new Map<string, TrainingPeaksHealthMetricCacheRow[]>();
+  const ids = Array.from(new Set(input.studentIds.filter(Boolean)));
+  if (ids.length === 0) return out;
+
+  const supabase = createSupabaseServerClient();
+  const rows = await fetchAllInChunks<TrainingPeaksHealthMetricCacheDbRow>(
+    ids,
+    150,
+    (part, from, to) => {
+      let query = supabase
+        .from("trainingpeaks_health_metrics_cache")
+        .select("*")
+        .in("student_id", part)
+        .gte("metric_date", input.from)
+        .lte("metric_date", input.to)
+        .order("student_id", { ascending: true })
+        .order("metric_date", { ascending: true })
+        .order("metric_timestamp", { ascending: true })
+        .order("metric_type_id", { ascending: true })
+        .range(from, to);
+      if (input.metricKey) query = query.eq("metric_key", input.metricKey);
+      return withSupabaseNetworkRetry(() => query) as Promise<{
+        data: TrainingPeaksHealthMetricCacheDbRow[] | null;
+        error: { message: string } | null;
+      }>;
+    },
+    { label: "health-metrics:students-date-range" }
+  );
+
+  for (const dbRow of rows) {
+    const mapped = mapTrainingPeaksHealthMetricCacheRow(dbRow);
+    const list = out.get(mapped.studentId);
+    if (list) list.push(mapped);
+    else out.set(mapped.studentId, [mapped]);
+  }
+  return out;
+}
+
 export async function getTrainingPeaksHealthMetricsFreshness(input?: {
   date?: string;
   studentId?: string;
@@ -3537,18 +3587,18 @@ export async function getTrainingPeaksStudentInboundRecency(
 
   const supabase = createSupabaseServerClient();
   const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString();
-  // Paginated per 150-student chunk. The 45-day window over a 150-student chunk can
-  // exceed 1000 observations; the old unpaged read returned only the newest 1000
-  // ACROSS the chunk, so a student whose latest DM/group message sat below that row
-  // got null recency → wrong send-channel decision. Ordered newest-first (with `id`
-  // as the stable tiebreaker) so the first business_dm / group_topic per student is
-  // still their most recent. labels/text_preview are read too so the channel can be
-  // decided by where the student REPORTS, not by their last message of any kind (a
-  // group report + a later DM "спасибо" must not flip the card to DM).
-  const rows = await fetchAllInChunks<{ student_id: string; observed_at: string; source_type: string | null; labels: unknown; text_preview: string | null }>(
-    ids,
-    150,
-    (part, from, to) =>
+  type ObsRow = { student_id: string; observed_at: string; source_type: string | null; labels: unknown; text_preview: string | null };
+
+  // Same 45-day-per-150-student-chunk read as before (the window can't be narrowed without
+  // changing WHICH recency this reports — a student inactive for weeks would wrongly read as
+  // "never reported"; see the wrong-send-channel-decision lesson below). What changed: pages
+  // used to go one `.range()` at a time via fetchAllInChunks (sequential — a chunk needing ~8
+  // pages of a 45-day window paid 8 sequential round trips). Page 0 now asks Postgres for the
+  // exact match count (`count: "exact"`), and every remaining page fires together via
+  // Promise.all instead of waiting on the one before it — same rows, same order once
+  // reassembled, same result, just not serialized on the network round trip.
+  async function fetchChunk(part: string[]): Promise<ObsRow[]> {
+    const page = (from: number, to: number) =>
       withSupabaseNetworkRetry(() =>
         supabase
           .from("trainingpeaks_telegram_context_observations")
@@ -3563,9 +3613,43 @@ export async function getTrainingPeaksStudentInboundRecency(
           .order("observed_at", { ascending: false })
           .order("id", { ascending: true })
           .range(from, to)
-      ) as Promise<{ data: Array<{ student_id: string; observed_at: string; source_type: string | null; labels: unknown; text_preview: string | null }> | null; error: { message: string } | null }>,
-    { label: "inbound-recency:observations" }
-  );
+      ) as Promise<{ data: ObsRow[] | null; error: { message: string } | null }>;
+    const firstPage = () =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_telegram_context_observations")
+          .select("student_id, observed_at, source_type, labels, text_preview", { count: "exact" })
+          .in("student_id", part)
+          .gte("observed_at", since)
+          .eq("direction", "inbound")
+          .order("observed_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(0, SUPABASE_MAX_ROWS - 1)
+      ) as Promise<{ data: ObsRow[] | null; error: { message: string } | null; count: number | null }>;
+
+    const first = await firstPage();
+    if (first.error) throw new Error(`inbound-recency:observations failed at offset 0: ${first.error.message}`);
+    const firstRows = first.data ?? [];
+    const total = first.count ?? firstRows.length;
+    if (total <= SUPABASE_MAX_ROWS) return firstRows;
+
+    const remainingPages = Math.ceil((total - SUPABASE_MAX_ROWS) / SUPABASE_MAX_ROWS);
+    const rest = await Promise.all(
+      Array.from({ length: remainingPages }, (_, i) => {
+        const from = SUPABASE_MAX_ROWS * (i + 1);
+        return page(from, from + SUPABASE_MAX_ROWS - 1);
+      })
+    );
+    const restRows: ObsRow[] = [];
+    for (const p of rest) {
+      if (p.error) throw new Error(`inbound-recency:observations failed: ${p.error.message}`);
+      restRows.push(...(p.data ?? []));
+    }
+    return firstRows.concat(restRows);
+  }
+
+  const perChunk = await Promise.all(chunkIds(ids, 150).map(fetchChunk));
+  const rows = perChunk.flat();
   const isReport = (labels: unknown, text: string | null): boolean => {
     const list = Array.isArray(labels) ? labels.map(String) : [];
     if (list.includes("report_like")) return true;

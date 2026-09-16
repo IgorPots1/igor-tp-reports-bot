@@ -69,7 +69,7 @@ import {
   listTrainingPeaksWorkoutCacheForStudentDateRange,
   listTrainingPeaksWorkoutCacheScanStatusesCoveringDate,
   listTrainingPeaksStudentsEligibleForHealthMetrics,
-  listTrainingPeaksHealthMetricsForStudentDateRange,
+  listTrainingPeaksHealthMetricsForStudentsDateRange,
   listTrainingPeaksOperationalSignals,
   expireStaleZombiePlanSignal,
   markTrainingPeaksStudentTelegramLinkCodeUsed,
@@ -6101,22 +6101,24 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     () => listTrainingPeaksStudentsEligibleForHealthMetrics(),
     []
   );
+  // ONE batched read for every eligible student's 3-day window, not one read per student —
+  // was a 73-student sequential N+1 (73 round trips for a 3-day-per-student query each).
+  const metricsByStudentId = await safeAttentionSource<
+    Awaited<ReturnType<typeof listTrainingPeaksHealthMetricsForStudentsDateRange>>
+  >(
+    "health_metrics_for_eligible_students",
+    () =>
+      listTrainingPeaksHealthMetricsForStudentsDateRange({
+        studentIds: eligibleRecoveryProfiles.map((profile) => profile.studentId),
+        from: recoveryAlertFromDate,
+        to: recoveryAlertTargetDate,
+      }),
+    new Map()
+  );
   for (const profile of eligibleRecoveryProfiles) {
-    const metrics = await safeAttentionSource<
-      Awaited<ReturnType<typeof listTrainingPeaksHealthMetricsForStudentDateRange>>
-    >(
-      `health_metrics_for_student:${profile.studentId}`,
-      () =>
-        listTrainingPeaksHealthMetricsForStudentDateRange({
-          studentId: profile.studentId,
-          from: recoveryAlertFromDate,
-          to: recoveryAlertTargetDate,
-        }),
-      []
-    );
     const alert = evaluateTrainingPeaksRecoveryAlert({
       profile,
-      metrics,
+      metrics: metricsByStudentId.get(profile.studentId) ?? [],
       targetDate: recoveryAlertTargetDate,
       lookbackDays: 3,
     });
