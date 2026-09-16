@@ -2,6 +2,8 @@
 
 import { useState, type CSSProperties } from "react";
 
+import { ConfirmButton } from "../_shared/confirm-button";
+
 // «Отчёты» tab: Igor reviews AI-drafted workout replies and consciously sends them.
 // INVARIANT: draft → read → edit if needed → tap Send. Zero auto-send. Sending is
 // gated by FEEDBACK_SEND_ENABLED server-side (view.sendEnabled here is only a UI hint;
@@ -41,7 +43,10 @@ export type ReportsView = {
   counts: { queue: number; review: number; attention: number; history: number };
 };
 
-export type ReportBusy = { id: string; op: "send" | "dismiss" | "save" | "generate" | "confirm" } | null;
+// Pending state now comes from useOptimisticAction (../_shared/use-optimistic-action): a map of
+// entity key -> op name ("send" | "dismiss" | ...) for whatever's currently in flight for that
+// row. A card's own id is its key; the two bulk buttons use "__batch__" / "__mode__".
+export type ReportPending = Record<string, string>;
 // tone "info" is a neutral (not-error) note — used for prepare-only, which is a deliberate
 // mode, not a failure. Without it a "не отправлено" note renders red and reads as a bug.
 export type ReportToast = { ok: boolean; text: string; tone?: "info" };
@@ -213,13 +218,13 @@ function SigBadge(props: { badge: ReportCardModel["significanceBadge"] }) {
 // API draft) or «Убрать» (he'll answer by hand). A signal-only coach note stays for context.
 export function ReportQueueCard(props: {
   card: ReportCardModel;
-  busy: ReportBusy;
+  pending: ReportPending;
   toast: ReportToast | undefined;
   onGenerate: (card: ReportCardModel) => void;
   onDismiss: (card: ReportCardModel, from: "queue") => void;
 }) {
   const c = props.card;
-  const busyHere = props.busy?.id === c.id ? props.busy.op : null;
+  const busyHere = props.pending[c.id] ?? null;
   const generating = c.status === "generating" || busyHere === "generate";
   const essence = essenceOf(c.transparency);
   return (
@@ -234,12 +239,17 @@ export function ReportQueueCard(props: {
       <LateBadge label={c.lateSyncLabel} />
       {essence ? <p style={R.essence}>{essence}</p> : null}
       <div style={R.queueActions}>
-        <button type="button" style={R.gen} disabled={generating} onClick={() => props.onGenerate(c)}>
-          {generating ? "Генерирую…" : "Сгенерить"}
-        </button>
-        <button type="button" style={R.genGhost} disabled={busyHere === "dismiss" || generating} onClick={() => props.onDismiss(c, "queue")}>
+        <ConfirmButton pending={generating} pendingLabel="Генерирую…" style={R.gen} onPress={() => props.onGenerate(c)}>
+          Сгенерить
+        </ConfirmButton>
+        <ConfirmButton
+          pending={busyHere === "dismiss"}
+          disabled={generating}
+          style={R.genGhost}
+          onPress={() => props.onDismiss(c, "queue")}
+        >
           Убрать
-        </button>
+        </ConfirmButton>
       </div>
       {props.toast ? <p style={toastStyle(props.toast)}>{props.toast.text}</p> : null}
     </div>
@@ -251,7 +261,7 @@ export function ReportReviewCard(props: {
   sendEnabled: boolean;
   editing: boolean;
   editValue: string;
-  busy: ReportBusy;
+  pending: ReportPending;
   toast: ReportToast | undefined;
   onStartEdit: (card: ReportCardModel) => void;
   onChangeEdit: (v: string) => void;
@@ -263,7 +273,7 @@ export function ReportReviewCard(props: {
   onDismiss: (card: ReportCardModel, from: "review" | "attention") => void;
 }) {
   const c = props.card;
-  const busyHere = props.busy?.id === c.id ? props.busy.op : null;
+  const busyHere = props.pending[c.id] ?? null;
 
   return (
     <div style={R.card}>
@@ -278,9 +288,9 @@ export function ReportReviewCard(props: {
             autoFocus
           />
           <div style={R.actions}>
-            <button type="button" style={R.save} disabled={busyHere === "save"} onClick={() => props.onSaveEdit(c)}>
-              {busyHere === "save" ? "Сохраняю…" : "Сохранить"}
-            </button>
+            <ConfirmButton pending={busyHere === "save"} pendingLabel="Сохраняю…" style={R.save} onPress={() => props.onSaveEdit(c)}>
+              Сохранить
+            </ConfirmButton>
             <button type="button" style={R.skip} onClick={props.onCancelEdit}>
               Отмена
             </button>
@@ -296,12 +306,12 @@ export function ReportReviewCard(props: {
             <>
               <p style={R.channelInfo(false)}>💬 передано в чат — проверь, что ушло в нужный чат</p>
               <div style={R.actions}>
-                <button type="button" style={sendButtonStyle(props.sendEnabled)} disabled={busyHere === "send"} onClick={() => props.onShare(c)}>
-                  {busyHere === "send" ? "…" : "Отправить ещё раз"}
-                </button>
-                <button type="button" style={R.save} disabled={busyHere === "confirm"} onClick={() => props.onConfirmShared(c)}>
-                  {busyHere === "confirm" ? "…" : "Готово"}
-                </button>
+                <ConfirmButton pending={busyHere === "send"} style={sendButtonStyle(props.sendEnabled)} onPress={() => props.onShare(c)}>
+                  Отправить ещё раз
+                </ConfirmButton>
+                <ConfirmButton pending={busyHere === "confirm"} style={R.save} onPress={() => props.onConfirmShared(c)}>
+                  Готово
+                </ConfirmButton>
               </div>
             </>
           ) : (() => {
@@ -325,21 +335,20 @@ export function ReportReviewCard(props: {
                       Нет канала
                     </button>
                   ) : (
-                    <button
-                      type="button"
+                    <ConfirmButton
+                      pending={busyHere === "send"}
                       style={sendButtonStyle(props.sendEnabled)}
-                      disabled={busyHere === "send"}
-                      onClick={() => (useShare ? props.onShare(c) : props.onSend(c))}
+                      onPress={() => (useShare ? props.onShare(c) : props.onSend(c))}
                     >
-                      {busyHere === "send" ? "…" : useShare ? "Отправить в чат" : "Отправить"}
-                    </button>
+                      {useShare ? "Отправить в чат" : "Отправить"}
+                    </ConfirmButton>
                   )}
                   <button type="button" style={R.edit} onClick={() => props.onStartEdit(c)}>
                     Править
                   </button>
-                  <button type="button" style={R.skip} disabled={busyHere === "dismiss"} onClick={() => props.onDismiss(c, "review")}>
+                  <ConfirmButton pending={busyHere === "dismiss"} style={R.skip} onPress={() => props.onDismiss(c, "review")}>
                     Пропустить
-                  </button>
+                  </ConfirmButton>
                 </div>
                 {!props.sendEnabled && c.channel !== "none" ? (
                   <p style={R.prepHint}>отправка выключена — кнопка готовит, но не шлёт (prepare-only)</p>
@@ -357,26 +366,21 @@ export function ReportReviewCard(props: {
 
 export function ReportAttentionCard(props: {
   card: ReportCardModel;
-  busy: ReportBusy;
+  pending: ReportPending;
   toast: ReportToast | undefined;
   onDismiss: (card: ReportCardModel, from: "review" | "attention") => void;
 }) {
   const c = props.card;
-  const busyHere = props.busy?.id === c.id ? props.busy.op : null;
+  const busyHere = props.pending[c.id] ?? null;
   return (
     <div style={R.attn}>
       <CardHead card={c} />
       <p style={R.attnReason}>⚠️ {c.attentionReason}</p>
       <p style={R.attnNote}>Черновика ученику нет — это сигнал разобраться, не сообщение.</p>
       <div style={R.actions}>
-        <button
-          type="button"
-          style={R.skip}
-          disabled={busyHere === "dismiss"}
-          onClick={() => props.onDismiss(c, "attention")}
-        >
-          {busyHere === "dismiss" ? "…" : "Разобрался"}
-        </button>
+        <ConfirmButton pending={busyHere === "dismiss"} style={R.skip} onPress={() => props.onDismiss(c, "attention")}>
+          Разобрался
+        </ConfirmButton>
       </div>
       {props.toast ? <p style={toastStyle(props.toast)}>{props.toast.text}</p> : null}
     </div>
@@ -388,7 +392,7 @@ export function ReportsTab(props: {
   view: ReportsView | null;
   editingId: string | null;
   editValue: string;
-  busy: ReportBusy;
+  pending: ReportPending;
   toast: ReportToasts;
   onStartEdit: (card: ReportCardModel) => void;
   onChangeEdit: (v: string) => void;
@@ -417,7 +421,8 @@ export function ReportsTab(props: {
     return <div style={R.bigEmpty}>Не удалось загрузить отчёты.</div>;
   }
   const v = props.view;
-  const batchBusy = props.busy?.op === "generate";
+  const batchBusy = props.pending.__batch__ === "generate";
+  const modeBusy = props.pending.__mode__ === "toggle";
   const QUEUE_CAP = 15;
   const queueShown = queueShowAll ? v.queue : v.queue.slice(0, QUEUE_CAP);
   if (v.queue.length === 0 && v.review.length === 0 && v.attention.length === 0 && v.history.length === 0) {
@@ -429,18 +434,18 @@ export function ReportsTab(props: {
       {/* Backend toggle (coach-only): who writes the draft — paid API or Cowork subscription. */}
       <div style={R.modeRow}>
         <span style={R.modeLabel}>Генератор</span>
-        <button type="button" style={R.modeChip(v.backend === "api")} onClick={props.onToggleMode}>
+        <ConfirmButton pending={modeBusy} style={R.modeChip(v.backend === "api")} onPress={props.onToggleMode}>
           {v.backend === "api" ? "API" : "Cowork"} · сменить
-        </button>
+        </ConfirmButton>
       </div>
 
       {v.queue.length > 0 ? (
         <>
           <p style={R.groupLabel}>Новые · {v.queue.length}</p>
           <div style={R.controlBar}>
-            <button type="button" style={R.controlBtn} disabled={batchBusy} onClick={props.onGenerateBatch}>
-              {batchBusy ? "Генерирую…" : `Сгенерить свежие (до ${MAX_BATCH_UI})`}
-            </button>
+            <ConfirmButton pending={batchBusy} pendingLabel="Генерирую…" style={R.controlBtn} onPress={props.onGenerateBatch}>
+              {`Сгенерить свежие (до ${MAX_BATCH_UI})`}
+            </ConfirmButton>
             <button type="button" style={R.controlBtn} onClick={props.onBulkDismissOld}>
               Убрать старше 3 дней
             </button>
@@ -449,7 +454,7 @@ export function ReportsTab(props: {
             <ReportQueueCard
               key={card.id}
               card={card}
-              busy={props.busy}
+              pending={props.pending}
               toast={props.toast[card.id]}
               onGenerate={props.onGenerate}
               onDismiss={props.onDismiss}
@@ -473,7 +478,7 @@ export function ReportsTab(props: {
               sendEnabled={v.sendEnabled}
               editing={props.editingId === card.id}
               editValue={props.editValue}
-              busy={props.busy}
+              pending={props.pending}
               toast={props.toast[card.id]}
               onStartEdit={props.onStartEdit}
               onChangeEdit={props.onChangeEdit}
@@ -496,7 +501,7 @@ export function ReportsTab(props: {
           </button>
           {attnOpen
             ? v.attention.map((card) => (
-                <ReportAttentionCard key={card.id} card={card} busy={props.busy} toast={props.toast[card.id]} onDismiss={props.onDismiss} />
+                <ReportAttentionCard key={card.id} card={card} pending={props.pending} toast={props.toast[card.id]} onDismiss={props.onDismiss} />
               ))
             : null}
         </>
