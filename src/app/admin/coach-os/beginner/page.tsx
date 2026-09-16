@@ -134,7 +134,9 @@ export default async function BeginnerIndexPage() {
                           ? "молчит"
                           : own?.connection === "auth_revoked"
                             ? "отозван"
-                            : "не подключены"}
+                            : own?.connection === "manual"
+                              ? "вручную"
+                              : "не подключены"}
                     </td>
                     <td style={cell}>
                       {own?.noPlan ? "нет" : own?.planWaitingPublish ? "черновик" : "опубликован"}
