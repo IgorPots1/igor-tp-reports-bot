@@ -169,6 +169,11 @@ export default function RunAppPage() {
   // правила нужны не раз, поэтому это экран, куда можно вернуться, а не
   // всплывшее один раз окно.
   const [showGuide, setShowGuide] = useState(false);
+  // ЛИЧНЫЙ КАБИНЕТ — ВХОД С ГЛАВНОГО ЭКРАНА ПЛАНА, РЯДОМ С «КАК МЫ РАБОТАЕМ»
+  // [решение 16.09.2026]. «Как мы работаем» читают один раз и держат в
+  // памяти; кабинет — статистика, на неё возвращаются часто. Разные экраны,
+  // не одна дверь с двумя комнатами.
+  const [showCabinet, setShowCabinet] = useState(false);
 
   useEffect(() => {
     let tries = 0;
@@ -284,6 +289,14 @@ export default function RunAppPage() {
     );
   }
 
+  if (showCabinet) {
+    return (
+      <Shell>
+        <CabinetScreen initData={initData ?? ""} onBack={() => setShowCabinet(false)} />
+      </Shell>
+    );
+  }
+
   return (
     <Shell>
       {toast ? <Banner text={toast} /> : null}
@@ -300,6 +313,7 @@ export default function RunAppPage() {
           initData={initData ?? ""}
           isManualEntry={isManualEntry}
           onOpenGuide={() => setShowGuide(true)}
+          onOpenCabinet={() => setShowCabinet(true)}
           onChanged={(note) => {
             setToast(note);
             if (initData) void load(initData);
@@ -344,6 +358,188 @@ function GuideScreen(props: { onBack: () => void }) {
       <p style={{ marginTop: 22, color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
         {CONNECT_PAGE.closingRu}
       </p>
+    </div>
+  );
+}
+
+type CabinetHistoryEntry = {
+  date: string;
+  dateLabel: string;
+  title: string;
+  minutes: number | null;
+  effortLabel: string | null;
+  pain: boolean;
+  commentText: string | null;
+};
+
+type CabinetLadderStep = { step: number; labelRu: string; sinceDateLabel: string };
+
+type CabinetData = {
+  weeksTogether: number | null;
+  cycleProgress: { currentWeek: number; totalWeeks: number } | null;
+  totals: { sessionsCompleted: number; minutesAccumulated: number } | null;
+  history: CabinetHistoryEntry[] | null;
+  ladder: { currentLabelRu: string; nextLabelRu: string | null; path: CabinetLadderStep[] } | null;
+};
+
+function cardStyle(): React.CSSProperties {
+  return {
+    background: "#fff",
+    border: `1px solid ${LINE}`,
+    borderRadius: 14,
+    padding: "14px 16px",
+    marginBottom: 16,
+  };
+}
+
+/**
+ * Личный кабинет: то, что уже есть в базе и раньше не показывалось.
+ *
+ * ПУСТЫХ БЛОКОВ НЕТ [решение 16.09.2026]. Сервер уже решил, какой блок
+ * содержателен (buildCabinetView), а не декоративен — здесь только null-чек
+ * на каждый, без собственных «0 тренировок» и подобных пустышек.
+ */
+function CabinetScreen(props: { initData: string; onBack: () => void }) {
+  const [data, setData] = useState<CabinetData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/m/run/cabinet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData: props.initData }),
+        });
+        const json = (await res.json()) as { ok: boolean; error?: string; view?: CabinetData };
+        if (cancelled) return;
+        if (!json.ok) {
+          setErr(json.error ?? "Не получилось загрузить.");
+          return;
+        }
+        setData(json.view ?? null);
+      } catch {
+        if (!cancelled) setErr("Нет связи. Попробуйте ещё раз.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [props.initData]);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={props.onBack}
+        style={{
+          background: "none",
+          border: "none",
+          padding: 0,
+          marginBottom: 10,
+          color: ACCENT,
+          fontWeight: 600,
+          fontSize: 14,
+          cursor: "pointer",
+        }}
+      >
+        ← Назад
+      </button>
+      <h1 style={{ fontSize: 22, margin: "0 0 14px" }}>Кабинет</h1>
+
+      {loading ? <p style={{ color: MUTED }}>Загружаю…</p> : null}
+      {err ? <p style={{ color: ACCENT, fontWeight: 600 }}>{err}</p> : null}
+
+      {data?.weeksTogether !== null && data?.weeksTogether !== undefined ? (
+        <div style={cardStyle()}>
+          <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>
+            Работаем вместе {data.weeksTogether} {plural(data.weeksTogether, "неделю", "недели", "недель")}
+          </p>
+          {data.cycleProgress ? (
+            <p style={{ margin: "4px 0 0", color: MUTED, fontSize: 14 }}>
+              Текущий план: неделя {data.cycleProgress.currentWeek} из {data.cycleProgress.totalWeeks}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {data?.totals ? (
+        <div style={cardStyle()}>
+          <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>Итоги</p>
+          <p style={{ margin: "6px 0 0", fontSize: 14 }}>
+            {data.totals.sessionsCompleted}{" "}
+            {plural(data.totals.sessionsCompleted, "тренировка", "тренировки", "тренировок")} отмечено
+          </p>
+          {data.totals.minutesAccumulated > 0 ? (
+            <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 14 }}>
+              Набрано {data.totals.minutesAccumulated} мин по плану
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {data?.ladder ? (
+        <div style={cardStyle()}>
+          <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>Ступени</p>
+          <p style={{ margin: "6px 0 0", fontSize: 14 }}>Сейчас: {data.ladder.currentLabelRu}</p>
+          {data.ladder.nextLabelRu ? (
+            <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 14 }}>
+              Дальше: {data.ladder.nextLabelRu}
+            </p>
+          ) : (
+            <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 14 }}>
+              Последняя ступень программы новичка
+            </p>
+          )}
+          {data.ladder.path.length > 1 ? (
+            <div style={{ marginTop: 10, borderTop: `1px solid ${LINE}`, paddingTop: 10 }}>
+              {data.ladder.path.map((step) => (
+                <p key={step.step} style={{ margin: "4px 0 0", color: MUTED, fontSize: 13 }}>
+                  Ступень {step.step} — {step.labelRu} (с {step.sinceDateLabel})
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {data?.history && data.history.length > 0 ? (
+        <div style={cardStyle()}>
+          <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>История</p>
+          <div style={{ marginTop: 8, display: "grid", gap: 10 }}>
+            {data.history.map((entry) => (
+              <div key={entry.date} style={{ borderTop: `1px solid ${LINE}`, paddingTop: 8 }}>
+                <p style={{ margin: 0, fontSize: 13, color: MUTED }}>{entry.dateLabel}</p>
+                <p style={{ margin: "2px 0 0", fontSize: 14, fontWeight: 600 }}>
+                  {entry.title}
+                  {entry.minutes ? ` · ${entry.minutes} мин` : ""}
+                </p>
+                {entry.effortLabel ? (
+                  <p style={{ margin: "2px 0 0", fontSize: 13, color: MUTED }}>
+                    {entry.effortLabel}
+                    {entry.pain ? " · что-то беспокоило" : ""}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {!loading &&
+      !err &&
+      !data?.weeksTogether &&
+      !data?.totals &&
+      !data?.history &&
+      !data?.ladder ? (
+        <p style={{ color: MUTED, fontSize: 14 }}>
+          Пока рано: кабинет наполнится, как только появятся первые отметки о тренировках.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1298,6 +1494,7 @@ function PlanScreen(props: {
   isManualEntry: boolean;
   onChanged: (note: string) => void;
   onOpenGuide: () => void;
+  onOpenCabinet: () => void;
 }) {
   const { view } = props;
   return (
@@ -1357,6 +1554,7 @@ function PlanScreen(props: {
           низу главного экрана стоит постоянная дверь туда, а не одноразовое
           окно, которое человек закрыл и больше не нашёл. */}
       <GuideLink onClick={props.onOpenGuide} labelRu="Как мы работаем: правила и что делать, если →" />
+      <GuideLink onClick={props.onOpenCabinet} labelRu="Кабинет: недели, итоги, ступени →" />
     </div>
   );
 }
@@ -1422,6 +1620,15 @@ function LadderBlock({ ladder }: { ladder: LadderView }) {
       <p style={{ margin: 0, color: MUTED, lineHeight: 1.5, fontSize: 14 }}>{ladder.progressNoteRu}</p>
     </section>
   );
+}
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = n % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
 }
 
 /** «5:30» из секунд на километр. Тот же формат, что и в остальном приложении. */

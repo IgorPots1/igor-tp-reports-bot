@@ -7,6 +7,7 @@ import { createSupabaseServerClient, describeSupabaseError } from "@/features/su
 import { BEGINNER_METHODOLOGY_ID, BEGINNER_METHODOLOGY_VERSION } from "@/features/methodology/beginner";
 
 import { checkinReplyRu, effortByCode, painByCode } from "./effort-scale";
+import { buildCabinetView, type CabinetView } from "./cabinet-view";
 import { decideMove, weekdayIndex, type MoveDecision } from "./move";
 import { applyCheckinToProgression } from "./progression";
 import {
@@ -16,6 +17,8 @@ import {
   getPublishedCycle,
   getSessionById,
   listActivitiesInRange,
+  listCheckins,
+  listSessionsByIds,
   listSessionsInRange,
   listVisibleCoachMessages,
   moveSession,
@@ -190,6 +193,35 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     unavailableWeekdays: answers?.unavailableWeekdays ?? [],
     hasUnplannedCheckinToday: hasUnplannedToday,
     coachReplies,
+  });
+}
+
+/**
+ * Личный кабинет: недель вместе, неделя цикла, итоги, история, ступени.
+ * Загрузка тут; решения о том, что показать, а что скрыть пустым — в
+ * buildCabinetView (cabinet-view.ts).
+ */
+export async function loadCabinetView(sourceId: string, todayIso: string): Promise<CabinetView> {
+  const supabase = createSupabaseServerClient();
+  const [{ data: sourceRow, error: sourceError }, cycle, progression, checkins] = await Promise.all([
+    supabase.from("student_data_sources").select("connected_at").eq("id", sourceId).maybeSingle(),
+    getPublishedCycle(sourceId),
+    getProgression(sourceId),
+    listCheckins(sourceId, 200),
+  ]);
+  if (sourceError) throw new Error(`student_data_sources: ${describeSupabaseError(sourceError)}`);
+
+  const sessionIds = [...new Set(checkins.map((c) => c.planSessionId).filter((id): id is string => id !== null))];
+  const sessions = await listSessionsByIds(sessionIds);
+  const sessionsById = new Map(sessions.map((s) => [s.id, s]));
+
+  return buildCabinetView({
+    todayIso,
+    connectedAtIso: (sourceRow as { connected_at: string | null } | null)?.connected_at ?? null,
+    cycle,
+    progression,
+    checkins,
+    sessionsById,
   });
 }
 

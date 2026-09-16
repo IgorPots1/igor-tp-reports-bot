@@ -160,6 +160,25 @@ export async function getSessionById(
   return data ? toSession(data as unknown as Record<string, unknown>) : null;
 }
 
+/**
+ * Сессии по id, вне окна дат и вне одного цикла — для кабинета, где чек-ины
+ * (значит и сессии) могут переживать перегенерацию плана и относиться к
+ * нескольким циклам подряд.
+ */
+export async function listSessionsByIds(
+  sessionIds: string[],
+  client?: Client
+): Promise<PlanSession[]> {
+  if (sessionIds.length === 0) return [];
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_plan_sessions")
+    .select(SESSION_COLUMNS)
+    .in("id", sessionIds);
+  if (error) throw new Error(`intervals_plan_sessions: ${describeSupabaseError(error)}`);
+  return (data ?? []).map((row) => toSession(row as unknown as Record<string, unknown>));
+}
+
 export async function getProgression(
   sourceId: string,
   client?: Client

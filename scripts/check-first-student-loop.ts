@@ -30,7 +30,7 @@ import {
   saveCoachMessage,
   saveOnboardingAnswers,
 } from "@/features/intervals/loop/repository";
-import { loadStudentView, moveStudentSession, submitCheckin } from "@/features/intervals/loop/service";
+import { loadCabinetView, loadStudentView, moveStudentSession, submitCheckin } from "@/features/intervals/loop/service";
 
 const KEEP = process.argv.includes("--keep");
 
@@ -123,6 +123,10 @@ async function ensureSandbox(): Promise<{ studentUuid: string; sourceId: string 
         credential: "check-loop-not-a-real-key",
         kind: "test",
         is_active: true,
+        // Реальные источники получают connected_at через manual-entry.ts /
+        // connectOauthSource — без него кабинет не смог бы посчитать «недель
+        // вместе», а песочница тогда проверяла бы нереалистичное состояние.
+        connected_at: new Date().toISOString(),
       },
       { onConflict: "provider,external_athlete_id" }
     )
@@ -588,6 +592,27 @@ async function main(): Promise<void> {
   );
   console.log(`     в снимке: ступень ${JSON.stringify(storedContext.step)}`);
   console.log(`     в снимке чек-ин: ${JSON.stringify(storedContext.checkin).slice(0, 200)}…`);
+
+  // ── 7. Кабинет ──
+  step("7. КАБИНЕТ — то же самое, глазами ученицы");
+  const cabinet = await loadCabinetView(sourceId, dates[dates.length - 1]);
+  expect(cabinet.weeksTogether !== null && cabinet.weeksTogether >= 1, `недель вместе: ${cabinet.weeksTogether}`);
+  expect(
+    cabinet.cycleProgress !== null && cabinet.cycleProgress.totalWeeks > 0,
+    `неделя цикла: ${cabinet.cycleProgress?.currentWeek} из ${cabinet.cycleProgress?.totalWeeks}`
+  );
+  expect(
+    cabinet.totals !== null && cabinet.totals.sessionsCompleted === checkins.length,
+    `итоги совпадают с реальными чек-инами: ${cabinet.totals?.sessionsCompleted} тренировок, ${cabinet.totals?.minutesAccumulated} мин`
+  );
+  expect(
+    cabinet.history !== null && cabinet.history.length === checkins.length,
+    "история показывает ровно те же тренировки, что и реальные чек-ины"
+  );
+  expect(
+    cabinet.ladder !== null && cabinet.ladder.path.length >= 2,
+    `путь по ступеням отражает реальный переход 1→2: ${cabinet.ladder?.path.map((p) => p.step).join("→")}`
+  );
 
   // ── Итог ──
   step("ИТОГ");
