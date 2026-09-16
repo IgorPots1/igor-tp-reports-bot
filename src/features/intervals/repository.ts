@@ -466,30 +466,36 @@ export async function connectOauthSource(input: {
     };
   }
 
-  // ЗАГОТОВКА, ЗАВЕДЁННАЯ ТРЕНЕРОМ, ЗАБИРАЕТСЯ, А НЕ ДУБЛИРУЕТСЯ. На ней уже
-  // висит предзаполнение анкеты (ключ предзаполнения — source_id), и завести
-  // рядом вторую строку значит потерять ответы тренера и оставить человеку
-  // вопросы, на которые за него уже ответили.
-  const { data: pendingRows } = await supabase
+  // ЗАГОТОВКА ТРЕНЕРА (pending-*) ИЛИ РУЧНОЙ ИСТОЧНИК (manual-*) ЗАБИРАЕТСЯ, А НЕ
+  // ДУБЛИРУЕТСЯ. На строке уже висит предзаполнение анкеты (ключ — source_id) и,
+  // для ручного источника, вся история — тренировки, чек-ины, прогрессия
+  // (ключ везде тот же source_id) — второй строкой рядом всё это осиротело бы,
+  // а `unique (student_id, provider)` ниже запретил бы саму вторую строку:
+  // апсерт упал бы отказом базы, который человек увидел бы как «напишите
+  // тренеру» без единого шанса подключиться [найдено 16.09.2026 по обратному
+  // пути «начала вручную → подключила часы» — до этой правки не работал].
+  //
+  // ЗАПРОС НАМЕРЕННО БЕЗ ФИЛЬТРА ПО ПРЕФИКСУ: `unique (student_id, provider)`
+  // гарантирует не больше одной строки на студента, так что искать «по
+  // префиксу» и «по студенту» — один и тот же результат, а фильтр только
+  // прятал бы ручные источники, которые к pending- не имеют отношения.
+  const { data: claimableRows } = await supabase
     .from("student_data_sources")
     .select("id, external_athlete_id")
     .eq("provider", "intervals")
-    .eq("student_id", input.studentUuid)
-    .like("external_athlete_id", `${PENDING_ATHLETE_PREFIX}%`);
-  const pendingRow = (pendingRows ?? [])[0] as { id: string } | undefined;
-  if (pendingRow) {
-    if (existingRow) {
-      // Настоящая строка уже есть (подключался раньше) — заготовка лишняя.
-      await supabase.from("student_data_sources").delete().eq("id", pendingRow.id);
-    } else {
-      // Переименовываем ДО апсерта: после переименования апсерт найдёт её по
-      // (provider, athlete id) и дозаполнит токеном, сохранив тот же source_id.
-      const { error: claimError } = await supabase
-        .from("student_data_sources")
-        .update({ external_athlete_id: input.externalAthleteId })
-        .eq("id", pendingRow.id);
-      if (claimError) return { ok: false, reason: describeSupabaseError(claimError) };
-    }
+    .eq("student_id", input.studentUuid);
+  const claimableRow = (claimableRows ?? [])[0] as { id: string; external_athlete_id: string } | undefined;
+  // Совпадающий athlete_id — это ПОВТОРНАЯ авторизация уже настоящего
+  // подключения (тот же аккаунт), а не заготовка/ручной ввод: переименовывать
+  // нечего, апсерт ниже обновит эту же строку по (provider, athlete id).
+  if (claimableRow && claimableRow.external_athlete_id !== input.externalAthleteId) {
+    // Переименовываем ДО апсерта: после переименования апсерт найдёт её по
+    // (provider, athlete id) и дозаполнит токеном, сохранив тот же source_id.
+    const { error: claimError } = await supabase
+      .from("student_data_sources")
+      .update({ external_athlete_id: input.externalAthleteId })
+      .eq("id", claimableRow.id);
+    if (claimError) return { ok: false, reason: describeSupabaseError(claimError) };
   }
 
   const { data, error } = await supabase
