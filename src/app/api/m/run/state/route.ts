@@ -72,6 +72,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         ok: true,
         needsOnboarding: true,
         studentName: auth.studentName,
+        isManualEntry: auth.connection?.authMethod === "manual",
         formFields: visibleFormFields(prefill),
         // Пояс спрашиваем ТОЛЬКО когда он не определился сам.
         needsTimezone: zone === null,
@@ -88,6 +89,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       ok: true,
       needsOnboarding: false,
       studentName: auth.studentName,
+      isManualEntry: auth.connection?.authMethod === "manual",
       view,
     });
   } catch (error) {

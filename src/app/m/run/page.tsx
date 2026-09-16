@@ -151,6 +151,7 @@ export default function RunAppPage() {
   const [needsTimezone, setNeedsTimezone] = useState(false);
   const [timezoneOptions, setTimezoneOptions] = useState<Array<{ zone: string; labelRu: string }>>([]);
   const [view, setView] = useState<View | null>(null);
+  const [isManualEntry, setIsManualEntry] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   // ПРАВИЛА ФОРМАТА ОТДЕЛЬНЫМ ЭКРАНОМ, А НЕ ЧАСТЬЮ ПОДКЛЮЧЕНИЯ. В момент
   // подключения человеку нечего про них запоминать: у него ещё нет плана, не
@@ -198,6 +199,7 @@ export default function RunAppPage() {
         presetGoalKind?: string | null;
         needsTimezone?: boolean;
         timezoneOptions?: Array<{ zone: string; labelRu: string }>;
+        isManualEntry?: boolean;
         view?: View;
       };
       if (!json.ok) {
@@ -212,6 +214,7 @@ export default function RunAppPage() {
       setPresetGoal(json.presetGoalKind ?? null);
       setNeedsTimezone(json.needsTimezone === true);
       setTimezoneOptions(json.timezoneOptions ?? []);
+      setIsManualEntry(json.isManualEntry === true);
       setView(json.view ?? null);
     } catch {
       setError("Нет связи. Попробуйте ещё раз.");
@@ -233,7 +236,12 @@ export default function RunAppPage() {
   if (needsConnection && initData) {
     return (
       <Shell>
-        <ConnectScreen initData={initData} lostRu={connectionLost} onRetry={() => void load(initData)} />
+        <ConnectScreen
+          initData={initData}
+          lostRu={connectionLost}
+          onRetry={() => void load(initData)}
+          onManualEntry={() => void load(initData)}
+        />
       </Shell>
     );
   }
@@ -280,6 +288,7 @@ export default function RunAppPage() {
         <PlanScreen
           view={view}
           initData={initData ?? ""}
+          isManualEntry={isManualEntry}
           onOpenGuide={() => setShowGuide(true)}
           onChanged={(note) => {
             setToast(note);
@@ -612,6 +621,7 @@ function ConnectScreen(props: {
   initData: string;
   lostRu: string | null;
   onRetry: () => void;
+  onManualEntry: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -729,6 +739,15 @@ function ConnectScreen(props: {
         </div>
       ) : null}
 
+      {/* ЭКРАН ПОДКЛЮЧЕНИЯ БЫЛ ТУПИКОМ [решение 16.09.2026]. Polar Beat выше
+          всё равно приводит в Intervals.icu и требует телефон, приложение,
+          иногда покупку датчика. Кому и это не подходит, упирался: дальше
+          анкеты и плана не было вообще. Этот блок — вторая, последняя дверь:
+          без Intervals, без приложений, совсем вручную. Стоит ПОСЛЕ Polar
+          Beat, а не вместо него — это путь для того, кому не подошёл первый,
+          а не более лёгкая альтернатива по умолчанию. */}
+      <ManualEntryDoor onDone={props.onManualEntry} />
+
       <div
         style={{
           background: "#fff",
@@ -764,6 +783,81 @@ function ConnectScreen(props: {
       >
         Я подключил(а), проверить
       </button>
+    </div>
+  );
+}
+
+/**
+ * Последняя дверь: без часов, без Intervals, без стороннего приложения.
+ *
+ * ЧЕСТНО ПРО ПОТЕРИ, А НЕ ПРО УДОБСТВО. Кнопка не должна выглядеть равноценной
+ * альтернативой Polar Beat выше — она хуже по данным, и человек должен решать
+ * с открытыми глазами, а не потому что кнопка ближе к началу экрана.
+ */
+function ManualEntryDoor(props: { onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    const tg = getTelegram();
+    if (!tg?.initData) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/m/run/connect-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData: tg.initData }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        setErr(json.error ?? "Не получилось.");
+        return;
+      }
+      props.onDone();
+    } catch {
+      setErr("Нет связи. Попробуйте ещё раз.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${LINE}`,
+        borderRadius: 14,
+        padding: "14px 16px",
+        marginBottom: 16,
+      }}
+    >
+      <Collapsible title="Совсем без приложений: вписывать вручную" divider={false}>
+        <p style={{ margin: "0 0 10px", lineHeight: 1.5, fontSize: 14 }}>
+          Работаем и так. После каждой тренировки открываете это же приложение и вписываете: сколько
+          длилась, сколько километров, если знаете, и как прошло. Пульс и темп — если помните
+          навскидку, не обязательно.
+        </p>
+        <p style={{ margin: "0 0 10px", lineHeight: 1.5, fontSize: 14, color: MUTED }}>
+          Чего не будет по сравнению с часами или Polar Beat: карты маршрута, точного темпа по
+          километрам, подтверждённого пульса. Я буду видеть только то, что вы напишете, и не смогу
+          сказать, ровно ли шла тренировка внутри — только по вашим словам и самочувствию. План
+          строим и так, темпы отрезков поначалу — по усилию, а не по цифрам.
+        </p>
+        {open ? (
+          <>
+            {err ? <p style={{ color: ACCENT, fontWeight: 600, margin: "0 0 10px" }}>{err}</p> : null}
+            <button type="button" onClick={submit} disabled={busy} style={primaryButtonStyle(busy)}>
+              {busy ? "Включаю…" : "Да, буду вписывать сама"}
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => setOpen(true)} style={secondaryButtonStyle}>
+            Мне подходит этот путь
+          </button>
+        )}
+      </Collapsible>
     </div>
   );
 }
@@ -1161,6 +1255,7 @@ function DayPicker(props: {
 function PlanScreen(props: {
   view: Extract<View, { state: "ready" }>;
   initData: string;
+  isManualEntry: boolean;
   onChanged: (note: string) => void;
   onOpenGuide: () => void;
 }) {
@@ -1183,6 +1278,7 @@ function PlanScreen(props: {
           effortOptions={view.effortOptions}
           painOptions={view.painOptions}
           onChanged={props.onChanged}
+          isManualEntry={props.isManualEntry}
           isToday
         />
       ) : (
@@ -1195,6 +1291,7 @@ function PlanScreen(props: {
           effortOptions={view.effortOptions}
           painOptions={view.painOptions}
           onChanged={props.onChanged}
+          isManualEntry={props.isManualEntry}
         />
       ) : null}
 
@@ -1209,6 +1306,7 @@ function PlanScreen(props: {
               effortOptions={view.effortOptions}
               painOptions={view.painOptions}
               onChanged={props.onChanged}
+              isManualEntry={props.isManualEntry}
               isToday={false}
             />
           ))}
@@ -1292,6 +1390,7 @@ function SessionBlock(props: {
   effortOptions: EffortOption[];
   painOptions: PainOption[];
   onChanged: (note: string) => void;
+  isManualEntry: boolean;
   isToday: boolean;
 }) {
   const { card } = props;
@@ -1344,6 +1443,8 @@ function SessionBlock(props: {
           effortOptions={props.effortOptions}
           painOptions={props.painOptions}
           onChanged={props.onChanged}
+          manualEntry={props.isManualEntry}
+          defaultDate={card.date}
         />
       ) : null}
 
@@ -1364,12 +1465,17 @@ function UnplannedCheckin(props: {
   effortOptions: EffortOption[];
   painOptions: PainOption[];
   onChanged: (note: string) => void;
+  isManualEntry: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ marginTop: 10 }}>
       <button type="button" onClick={() => setOpen((v) => !v)} style={secondaryButtonStyle}>
-        {open ? "Свернуть" : "Я всё равно бегал(а), отметиться"}
+        {open
+          ? "Свернуть"
+          : props.isManualEntry
+            ? "Записать тренировку"
+            : "Я всё равно бегал(а), отметиться"}
       </button>
       {open ? (
         <div
@@ -1387,6 +1493,7 @@ function UnplannedCheckin(props: {
             effortOptions={props.effortOptions}
             painOptions={props.painOptions}
             onChanged={props.onChanged}
+            manualEntry={props.isManualEntry}
           />
         </div>
       ) : null}
@@ -1400,10 +1507,19 @@ function CheckinForm(props: {
   effortOptions: EffortOption[];
   painOptions: PainOption[];
   onChanged: (note: string) => void;
+  /** Часов нет: перед вопросами про усилие — время, дистанция, пульс, темп. */
+  manualEntry?: boolean;
+  /** Дата тренировки по умолчанию. Пусто — сервер возьмёт «сегодня». */
+  defaultDate?: string;
 }) {
   const [effort, setEffort] = useState<string | null>(null);
   const [pain, setPain] = useState<string | null>(null);
   const [comment, setComment] = useState("");
+  const [date, setDate] = useState(props.defaultDate ?? "");
+  const [durationMinutes, setDurationMinutes] = useState("");
+  const [distanceKm, setDistanceKm] = useState("");
+  const [averageHeartrate, setAverageHeartrate] = useState("");
+  const [averagePace, setAveragePace] = useState(""); // "5:30"
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -1412,20 +1528,42 @@ function CheckinForm(props: {
       setErr("Ответьте на оба вопроса.");
       return;
     }
+    if (props.manualEntry && !durationMinutes.trim()) {
+      setErr("Укажите время тренировки — это единственное обязательное поле.");
+      return;
+    }
+    let paceSecPerKm: number | null = null;
+    if (props.manualEntry && averagePace.trim()) {
+      const match = averagePace.trim().match(/^(\d{1,2}):(\d{2})$/);
+      if (!match) {
+        setErr("Темп пишите как 5:30 (минуты:секунды на километр).");
+        return;
+      }
+      paceSecPerKm = Number(match[1]) * 60 + Number(match[2]);
+    }
     setBusy(true);
     setErr(null);
     try {
-      const res = await fetch("/api/m/run/checkin", {
+      const url = props.manualEntry ? "/api/m/run/manual-entry" : "/api/m/run/checkin";
+      const body: Record<string, unknown> = {
+        initData: props.initData,
+        timeZone: detectTimeZone(),
+        sessionId: props.sessionId,
+        effort,
+        pain,
+        comment,
+      };
+      if (props.manualEntry) {
+        body.date = date || undefined;
+        body.durationMinutes = Number(durationMinutes);
+        body.distanceKm = distanceKm.trim() ? Number(distanceKm) : null;
+        body.averageHeartrate = averageHeartrate.trim() ? Number(averageHeartrate) : null;
+        body.averagePaceSecPerKm = paceSecPerKm;
+      }
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          initData: props.initData,
-          timeZone: detectTimeZone(),
-          sessionId: props.sessionId,
-          effort,
-          pain,
-          comment,
-        }),
+        body: JSON.stringify(body),
       });
       const json = (await res.json()) as { ok: boolean; error?: string; replyRu?: string };
       if (!json.ok) {
@@ -1442,6 +1580,76 @@ function CheckinForm(props: {
 
   return (
     <div style={{ marginTop: 14, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+      {props.manualEntry ? (
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Тренировка</p>
+          <div style={{ display: "grid", gap: 8 }}>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>Дата</span>
+              <input
+                type="date"
+                value={date}
+                max={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setDate(e.target.value)}
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
+                Сколько длилась, минут *
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={durationMinutes}
+                onChange={(e) => setDurationMinutes(e.target.value)}
+                placeholder="40"
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
+                Дистанция, км — если знаете
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={distanceKm}
+                onChange={(e) => setDistanceKm(e.target.value)}
+                placeholder="6.5"
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
+                Средний пульс — если помните
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                value={averageHeartrate}
+                onChange={(e) => setAverageHeartrate(e.target.value)}
+                placeholder="148"
+                style={inputStyle}
+              />
+            </label>
+            <label style={{ display: "block" }}>
+              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
+                Средний темп, мин:сек на км — если знаете и не вписали дистанцию
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={averagePace}
+                onChange={(e) => setAveragePace(e.target.value)}
+                placeholder="5:30"
+                style={inputStyle}
+              />
+            </label>
+          </div>
+        </div>
+      ) : null}
+
       <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Как далось?</p>
       <div style={{ display: "grid", gap: 6 }}>
         {props.effortOptions.map((option) => (

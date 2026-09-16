@@ -25,6 +25,19 @@ type SourceRow = {
 };
 
 function toDomainSource(row: SourceRow): StudentDataSource {
+  // ВТОРОЙ СЛОЙ ЗАЩИТЫ [16.09.2026]. Раннер синхронизации уже фильтрует
+  // auth_method='manual' в своём запросе — здесь та же граница на случай
+  // ЛЮБОГО другого пути к API-клиенту (ручной прогон intervals-ingest-once.ts,
+  // повторная выгрузка из OAuth-коллбэка, будущий вызов, который забудет
+  // фильтр). У ручного источника credential — заглушка «manual-entry», а не
+  // ключ: молчаливое падение в 401 выглядело бы как поломка провайдера, хотя
+  // это структурно другой источник, которому сюда вообще нельзя.
+  if (row.auth_method === "manual") {
+    throw new Error(
+      "Источник ведётся вручную (auth_method=manual), у Intervals.icu забирать нечего: " +
+        "credential — заглушка, а не ключ."
+    );
+  }
   return {
     id: row.id,
     studentId: row.student_id,
@@ -119,7 +132,7 @@ export async function upsertSource(input: {
   studentUuid: string | null;
   kind: DataSourceKind;
   externalAthleteId: string;
-  authMethod: "api_key" | "oauth";
+  authMethod: "api_key" | "oauth" | "manual";
   credential: string;
   credentialExpiresAt?: string | null;
 }): Promise<string> {
@@ -546,6 +559,13 @@ export function isConnectionUsable(
 ): boolean {
   if (!connection || !connection.isActive) return false;
   if (connection.authFailedAt) return false;
+  // РУЧНОЙ ИСТОЧНИК ГОТОВ СРАЗУ, ДО ПЕРВОЙ ЗАПИСИ. У него нет ни синка, ни
+  // токена, которые доказывали бы готовность постфактум: то, что человек
+  // ВЫБРАЛ ручной ввод, и есть готовность. Без этой ветки она осталась бы
+  // недостижимой на пустом источнике — до первой тренировки activitiesCount=0
+  // и lastSyncedAt=null, а получить sourceId нужно РАНЬШЕ, чтобы дойти до
+  // анкеты и вообще завести первую тренировку.
+  if (connection.authMethod === "manual") return true;
   if (connection.authMethod === "oauth" && connection.connectedAt) return true;
   return connection.lastSyncedAt !== null || activitiesCount > 0;
 }
@@ -563,7 +583,7 @@ export async function countActivitiesForSource(sourceId: string): Promise<number
 export type SourceConnection = {
   sourceId: string;
   externalAthleteId: string;
-  authMethod: "api_key" | "oauth";
+  authMethod: "api_key" | "oauth" | "manual";
   isActive: boolean;
   connectedAt: string | null;
   authFailedAt: string | null;
@@ -589,7 +609,7 @@ export async function getSourceConnection(studentUuid: string): Promise<SourceCo
   return {
     sourceId: String(row.id),
     externalAthleteId: String(row.external_athlete_id),
-    authMethod: row.auth_method === "oauth" ? "oauth" : "api_key",
+    authMethod: row.auth_method === "oauth" ? "oauth" : row.auth_method === "manual" ? "manual" : "api_key",
     isActive: row.is_active === true,
     connectedAt: (row.connected_at as string | null) ?? null,
     authFailedAt: (row.auth_failed_at as string | null) ?? null,

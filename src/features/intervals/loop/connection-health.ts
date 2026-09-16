@@ -14,10 +14,20 @@
  *
  * Отдельно от auth_failed_at: там доступ ОТОЗВАН и провайдер отвечает 401.
  * Здесь доступ рабочий, запросы проходят, просто отдавать провайдеру нечего.
+ *
+ * РУЧНОЙ ВВОД СЮДА НЕ ПОПАДАЕТ ВООБЩЕ [16.09.2026]. У auth_method='manual'
+ * нет ни подключения, которое может отвалиться, ни провайдера, который может
+ * не отдать данные: человек сам решает, когда и что записать, и «молчание»
+ * для него означает «не бегала», а не поломку. Проверка выходит РАНЬШЕ
+ * is_active/authFailedAt намеренно: у ручного источника оба этих поля
+ * технически «в порядке» (is_active=true, отказов нет), и без явного
+ * короткого замыкания сигнал прошёл бы дальше по случайности значений, а не
+ * по смыслу.
  */
 
 export type ConnectionHealth =
   | { state: "ok" }
+  | { state: "manual" }
   | { state: "not_connected" }
   | { state: "auth_revoked"; sinceIso: string }
   | {
@@ -39,6 +49,8 @@ export type ConnectionHealthInput = {
     connectedAtIso: string | null;
     authFailedAtIso: string | null;
     isActive: boolean;
+    /** 'manual' выключает весь дальнейший разбор, см. комментарий выше. */
+    authMethod?: string | null;
   } | null;
   /** Даты активностей, приехавших из Intervals (любые, не только беговые). */
   activityDates: string[];
@@ -54,6 +66,7 @@ function daysBetween(fromIso: string, toIso: string): number {
 
 export function assessConnectionHealth(input: ConnectionHealthInput): ConnectionHealth {
   const { connection } = input;
+  if (connection?.authMethod === "manual") return { state: "manual" };
   if (!connection || !connection.isActive) return { state: "not_connected" };
   if (connection.authFailedAtIso) {
     return { state: "auth_revoked", sinceIso: connection.authFailedAtIso.slice(0, 10) };

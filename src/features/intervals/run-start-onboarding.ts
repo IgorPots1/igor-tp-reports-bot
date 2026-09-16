@@ -24,6 +24,7 @@
  */
 
 import { SITE_URL } from "@/lib/site";
+import { isManualEntryStudent } from "@/features/intervals/manual-entry";
 import { listActiveStudentsByTelegramUserId } from "@/features/trainingpeaks/repository";
 import {
   sendTelegramMessageStrict,
@@ -60,6 +61,16 @@ const GREETING_RU =
   "Откройте приложение кнопкой ниже. Если часы ещё не подключены, оно само проведёт по шагам: " +
   "это делается один раз и занимает пару минут.";
 
+/**
+ * Для тех, кто ведёт тренировки вручную [16.09.2026]. Текст про часы им не
+ * подходит: часов нет и не будет, а «оно само проведёт по шагам» звучало бы
+ * так, будто что-то подключать всё же придётся.
+ */
+const GREETING_MANUAL_RU =
+  "Привет! Здесь ваш план: что сегодня, как отметиться после тренировки и что ответил тренер.\n\n" +
+  "После тренировки открывайте приложение и вписывайте её сами: сколько длилась, дистанция и " +
+  "пульс — если знаете.";
+
 function appUrl(): string {
   return `${SITE_URL.replace(/\/+$/, "")}/m/run`;
 }
@@ -70,12 +81,28 @@ export async function handleRunStartCommand(input: {
 }): Promise<boolean> {
   if (!input.from?.id) return false;
 
+  // ОДНА ЛИШНЯЯ ПРОВЕРКА РАДИ ТОЧНОГО ТЕКСТА КНОПКИ. Обе двери — что кнопка
+  // меню, что кнопка сообщения — ведут в ОДИН И ТОТ ЖЕ /m/run: экран внутри
+  // сам знает, показать ли форму подключения часов или форму ручного ввода.
+  // Разное здесь — только слова, которые видит человек, а слова решают, придёт
+  // ли он вообще: «Открыть приложение» ничего не говорит про то, зачем.
+  let manual = false;
+  try {
+    const cards = await listActiveStudentsByTelegramUserId(input.from.id);
+    const card = cards.find((c) => c.coachingPlatform === "intervals");
+    if (card) manual = await isManualEntryStudent(card.id);
+  } catch (error) {
+    console.warn("[run.start] не удалось проверить способ ведения тренировок", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   // СНАЧАЛА КНОПКА МЕНЮ, ПОТОМ СООБЩЕНИЕ. Она не зависит от того, примет ли чат
   // inline-кнопку, и остаётся дверью, даже если сообщение уйдёт без неё.
   try {
     await setTelegramChatMenuButtonWebApp({
       chatId: input.chatId,
-      text: "Мой план",
+      text: manual ? "Записать тренировку" : "Мой план",
       url: appUrl(),
     });
   } catch (error) {
@@ -84,14 +111,17 @@ export async function handleRunStartCommand(input: {
     });
   }
 
+  const greeting = manual ? GREETING_MANUAL_RU : GREETING_RU;
+  const buttonLabel = manual ? "Ввести тренировку вручную" : "Открыть приложение";
+
   try {
     await sendTelegramWebAppButton({
       chatId: input.chatId,
-      text: GREETING_RU,
+      text: greeting,
       // ОДНА КНОПКА, А НЕ ДВЕ [решение Игоря, 15.09.2026]. Вторая вела на сайт,
       // где лежал тот же текст про подключение, что и внутри приложения. Выбор
       // между двумя дверями в одну комнату — это не забота, а задержка.
-      buttons: [{ label: "Открыть приложение", webAppUrl: appUrl() }],
+      buttons: [{ label: buttonLabel, webAppUrl: appUrl() }],
     });
     return true;
   } catch (error) {
@@ -106,8 +136,8 @@ export async function handleRunStartCommand(input: {
         // БЕЗ ССЫЛКИ НА САЙТ: там больше нет инструкции по подключению, она
         // целиком живёт в приложении. Отправить человека на страницу, где нет
         // ответа, хуже, чем не отправить никуда.
-        `${GREETING_RU}\n\nПриложение открывается кнопкой меню слева от поля ввода, ` +
-          "она называется «Мой план»."
+        `${greeting}\n\nПриложение открывается кнопкой меню слева от поля ввода, ` +
+          `она называется «${manual ? "Записать тренировку" : "Мой план"}».`
       );
     } catch (fallbackError) {
       console.error("[run.start] не удалось ответить", {

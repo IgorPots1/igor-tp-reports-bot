@@ -260,7 +260,7 @@ export async function loadStudentsSignals(
       .gte("start_date_local", `${activityFrom}T00:00:00`),
     supabase
       .from("student_data_sources")
-      .select("id, is_active, connected_at, auth_failed_at, threshold_pace_sec_per_km")
+      .select("id, is_active, connected_at, auth_failed_at, auth_method, threshold_pace_sec_per_km")
       .in("id", sourceIds),
     // Плановые дни за окно: без них не отличить «не бегала» от «не было плана».
     supabase
@@ -353,6 +353,7 @@ export async function loadStudentsSignals(
             connectedAtIso: (sourceRow.connected_at as string | null) ?? null,
             authFailedAtIso: (sourceRow.auth_failed_at as string | null) ?? null,
             isActive: sourceRow.is_active === true,
+            authMethod: (sourceRow.auth_method as string | null) ?? null,
           }
         : null,
       activityDates: [...activityDates],
@@ -450,6 +451,7 @@ export async function loadCoachStudentView(
           connectedAtIso: connection.connectedAt,
           authFailedAtIso: connection.authFailedAt,
           isActive: connection.isActive,
+          authMethod: connection.authMethod,
         }
       : null,
     activityDates: activities

@@ -371,6 +371,7 @@
     "check:connect-text": "npx tsx scripts/check-connect-text.ts",
     "check:enrollment": "npx tsx scripts/check-enrollment.ts",
     "check:delete-student": "npx tsx scripts/check-delete-student.ts",
+    "check:manual-entry": "npx tsx scripts/check-manual-entry.ts",
     "check:intervals-threshold": "npx tsx scripts/check-intervals-threshold.ts",
     "check:best-efforts": "npx tsx scripts/check-best-efforts.ts",
     "check:diagnostic-test": "npx tsx scripts/check-diagnostic-test.ts",

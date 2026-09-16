@@ -66,6 +66,11 @@ async function main(): Promise<void> {
     .eq("provider", "intervals")
     .eq("kind", "student")
     .eq("is_active", true)
+    // РУЧНОЙ ВВОД НЕ ОПРАШИВАЕМ [16.09.2026]. У auth_method='manual' credential —
+    // заглушка, а не ключ: запрос к Intervals с ней гарантированно 401, и раз в
+    // тридцать минут навсегда, на каждого такого ученика. Фильтр в запросе, а не
+    // в цикле ниже: так источник не попадёт даже в счётчик «к опросу».
+    .neq("auth_method", "manual")
     .order("last_synced_at", { ascending: true, nullsFirst: true })
     .limit(200);
   if (error) {
