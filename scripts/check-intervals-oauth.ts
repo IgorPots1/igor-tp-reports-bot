@@ -30,9 +30,13 @@ import {
   getSourceConnection,
   markAuthFailure,
 } from "@/features/intervals/repository";
+import { provisionManualSource } from "@/features/intervals/manual-entry";
 
 const SLUG = "check-oauth-student";
 const ATHLETE_RAW = "9900112";
+
+const MANUAL_CLAIM_SLUG = "check-oauth-manual-claim-student";
+const MANUAL_CLAIM_ATHLETE_RAW = "9900114";
 
 let failures = 0;
 function step(title: string): void {
@@ -95,6 +99,38 @@ async function ensureSandbox(): Promise<string> {
     .single();
   if (error) throw new Error(`карточка песочницы: ${error.message}`);
   return String(data.id);
+}
+
+// Второй, отдельный от основного, песочный ученик — чтобы не пересекаться с
+// уже подключённым studentUuid из первой части файла.
+async function ensureManualClaimSandbox(): Promise<string> {
+  const { data: existing } = await supabase
+    .from("trainingpeaks_students")
+    .select("id")
+    .eq("student_id", MANUAL_CLAIM_SLUG)
+    .maybeSingle();
+  const id = existing
+    ? String(existing.id)
+    : String(
+        (
+          await supabase
+            .from("trainingpeaks_students")
+            .insert({
+              student_id: MANUAL_CLAIM_SLUG,
+              student_name: "Проверка ручной→OAuth",
+              trainingpeaks_athlete_url: `intervals://athlete/${normaliseAthleteId(MANUAL_CLAIM_ATHLETE_RAW)}`,
+              coaching_platform: "intervals",
+              is_active: true,
+              weekly_report_enabled: false,
+              telegram_delivery_enabled: false,
+            })
+            .select("id")
+            .single()
+        ).data!.id
+      );
+  await supabase.from("student_data_sources").delete().eq("student_id", id).eq("provider", "intervals");
+  await supabase.from("trainingpeaks_students").update({ is_active: true }).eq("id", id);
+  return id;
 }
 
 async function main(): Promise<void> {
@@ -273,6 +309,60 @@ async function main(): Promise<void> {
     } else {
       console.log("     (источника тренера в базе нет — проверка пропущена)");
     }
+  }
+
+  // ── Обратный путь: начала вручную, потом подключила часы ──
+  //
+  // 16.09.2026: connectOauthSource искала заготовку только по префиксу
+  // pending-, ручной источник (external_athlete_id='manual-<uuid>') под этот
+  // фильтр не попадал — апсерт пытался вставить вторую строку для того же
+  // (student_id, provider) и падал на unique-констрейнте. Студентка видела
+  // «Не удалось привязать аккаунт» и не могла подключиться вообще.
+  step("ПРИВЯЗКА ПОВЕРХ РУЧНОГО ВВОДА (started manual → connected watch)");
+  {
+    const manualStudentUuid = await ensureManualClaimSandbox();
+    const provisioned = await provisionManualSource(manualStudentUuid);
+    expect(provisioned.ok, "ручной источник заведён");
+    if (provisioned.ok) {
+      const manualSourceId = provisioned.sourceId;
+
+      const realAthleteId = normaliseAthleteId(MANUAL_CLAIM_ATHLETE_RAW);
+      const claimed = await connectOauthSource({
+        studentUuid: manualStudentUuid,
+        externalAthleteId: realAthleteId,
+        accessToken: "MANUAL_CLAIM_TOKEN",
+        scope: "ACTIVITY,CALENDAR,WELLNESS",
+      });
+      expect(claimed.ok, "OAuth-подключение поверх ручного источника прошло, а не упало на констрейнте");
+      if (claimed.ok) {
+        expect(
+          claimed.sourceId === manualSourceId,
+          "source_id тот же самый — история (тренировки, чек-ины, прогрессия) не осиротела"
+        );
+        const { data: row } = await supabase
+          .from("student_data_sources")
+          .select("auth_method, external_athlete_id, credential")
+          .eq("id", manualSourceId)
+          .maybeSingle();
+        const claimedRow = row as { auth_method: string; external_athlete_id: string; credential: string } | null;
+        expect(claimedRow?.auth_method === "oauth", "способ авторизации стал oauth, а не остался manual");
+        expect(claimedRow?.external_athlete_id === realAthleteId, "external_athlete_id — настоящий, не manual-*");
+        expect(claimedRow?.credential === "MANUAL_CLAIM_TOKEN", "токен лёг вместо заглушки ручного ввода");
+
+        // Повторная авторизация ТОГО ЖЕ уже-реального аккаунта не должна
+        // пересоздавать строку — иначе как раз тот краевой случай, который
+        // рождает эта же правка (проверка на "уже совпадает").
+        const reauthed = await connectOauthSource({
+          studentUuid: manualStudentUuid,
+          externalAthleteId: realAthleteId,
+          accessToken: "MANUAL_CLAIM_TOKEN_2",
+          scope: "ACTIVITY,CALENDAR,WELLNESS",
+        });
+        expect(reauthed.ok && reauthed.sourceId === manualSourceId, "повторная авторизация не плодит вторую строку");
+      }
+    }
+    await supabase.from("student_data_sources").delete().eq("student_id", manualStudentUuid).eq("provider", "intervals");
+    await supabase.from("trainingpeaks_students").update({ is_active: false }).eq("id", manualStudentUuid);
   }
 
   // ── Отказ в доступе ──
