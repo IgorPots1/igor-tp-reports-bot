@@ -66,12 +66,13 @@ export async function previewStudentDeletion(studentUuid: string): Promise<Delet
   const supabase = createSupabaseServerClient();
   const { data: card, error } = await supabase
     .from("trainingpeaks_students")
-    .select("id, student_id, student_name, coaching_platform, is_active")
+    .select("id, student_id, student_name, coaching_platform, is_active, telegram_user_id")
     .eq("id", studentUuid)
     .maybeSingle();
   if (error) throw new Error(`trainingpeaks_students: ${describeSupabaseError(error)}`);
   if (!card) return null;
   const row = card as Record<string, unknown>;
+  const telegramUserId = row.telegram_user_id as number | null;
 
   const { data: sources } = await supabase
     .from("student_data_sources")
@@ -104,6 +105,16 @@ export async function previewStudentDeletion(studentUuid: string): Promise<Delet
     { labelRu: "напоминания", table: "intervals_reminders", count: await bySource("intervals_reminders") },
     { labelRu: "привезённые тренировки", table: "intervals_activities", count: await countRows("intervals_activities", "student_id", studentUuid) },
     { labelRu: "заявки на подключение", table: "intervals_oauth_states", count: await countRows("intervals_oauth_states", "student_id", studentUuid) },
+    {
+      labelRu: "след «постучался в бота»",
+      table: "intervals_bot_visitors",
+      count: telegramUserId === null ? 0 : await countRows("intervals_bot_visitors", "telegram_user_id", String(telegramUserId)),
+    },
+    {
+      labelRu: "диалоги заведения",
+      table: "intervals_enrollment_drafts",
+      count: telegramUserId === null ? 0 : await countRows("intervals_enrollment_drafts", "telegram_user_id", String(telegramUserId)),
+    },
   ];
 
   const checkins = rows.find((item) => item.table === "intervals_checkins")?.count ?? 0;
