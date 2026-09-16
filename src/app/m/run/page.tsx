@@ -505,9 +505,12 @@ function Banner({ text }: { text: string }) {
  * странице-инструкции. Две копии разошлись бы молча, а цена расхождения здесь —
  * человек не отмечает галочку и данные не идут.
  */
-function DeviceChecklist() {
+const NO_WATCH_CODE = "__no_watch__";
+
+function DeviceChecklist(props: { onManualEntry: () => void }) {
   const [device, setDevice] = useState<string | null>(null);
   const guide = DEVICE_GUIDES.find((item) => item.code === device) ?? null;
+  const noWatchActive = device === NO_WATCH_CODE;
 
   return (
     <div
@@ -523,6 +526,13 @@ function DeviceChecklist() {
       <p style={{ margin: "4px 0 10px", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
         Покажем, что отметить. Без нужной галочки подключение пройдёт, а тренировки не придут.
       </p>
+      {/* «Моих часов тут нет» — ЗАМЕТНАЯ ПОЗИЦИЯ РЯДОМ С МОДЕЛЯМИ, А НЕ СВЁРНУТАЯ
+          СТРОКА ПОД СПИСКОМ [решение 16.09.2026]. Человек с неподдерживаемыми
+          часами (Honor, Xiaomi, любая мелочь) листал семь карточек, не находил
+          себя и упирался: дверь была, но под катом после Polar Beat, а найти
+          кат можно только предположив, что «часов нет» — это ещё один пункт
+          списка. Здесь она — такой же по виду пункт списка, как остальные, а
+          не примечание к нему. */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {DEVICE_GUIDES.map((item) => (
           <button
@@ -534,9 +544,18 @@ function DeviceChecklist() {
             {item.labelRu}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setDevice(noWatchActive ? null : NO_WATCH_CODE)}
+          style={chipStyle(noWatchActive)}
+        >
+          Моих часов тут нет
+        </button>
       </div>
 
-      {guide ? (
+      {noWatchActive ? (
+        <NoWatchFork onManualEntry={props.onManualEntry} />
+      ) : guide ? (
         <div style={{ marginTop: 14, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
           {/* «Где искать галочки» — только тем, у кого они есть. Для Apple Watch
               отмечать в настройках Intervals нечего, и звать туда человека
@@ -613,6 +632,112 @@ function DeviceChecklist() {
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Развилка «моих часов тут нет»: два честных пути, Polar Beat первым.
+ *
+ * ОБА ВЕДУТ ДАЛЬШЕ, К АНКЕТЕ [решение 16.09.2026]. Раньше это были два разных
+ * места на экране: инструкция про Polar Beat лежала здесь же под списком, без
+ * собственного «дальше» — человек читал её и должен был сам сообразить, что
+ * нужная кнопка снизу называется «Подключить часы» и относится и к нему тоже.
+ * Ручной ввод жил ещё ниже отдельной карточкой. Одна дверь с двумя честными
+ * описаниями вместо двух карточек, найденных порознь.
+ *
+ * ПОРЯДОК НЕ СЛУЧАЕН: Polar Beat даёт трек, темп и (с датчиком) пульс — это
+ * данные, по которым можно судить об интенсивности внутри тренировки. Ручной
+ * ввод не даёт ничего из этого. Он не должен выглядеть равноценной
+ * альтернативой первому — только показываться вторым, для тех, кому первый
+ * путь не подошёл.
+ */
+function NoWatchFork(props: { onManualEntry: () => void }) {
+  const [path, setPath] = useState<"polar" | "manual" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submitManual = async () => {
+    const tg = getTelegram();
+    if (!tg?.initData) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/m/run/connect-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData: tg.initData }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        setErr(json.error ?? "Не получилось.");
+        return;
+      }
+      props.onManualEntry();
+    } catch {
+      setErr("Нет связи. Попробуйте ещё раз.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 14, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+      <p style={{ margin: "0 0 10px", color: MUTED, fontSize: 13, lineHeight: 1.5 }}>
+        Тоже работаем, просто данных будет меньше. Выберите, как будем получать тренировки.
+      </p>
+      <div style={{ display: "grid", gap: 6 }}>
+        <button
+          type="button"
+          onClick={() => setPath(path === "polar" ? null : "polar")}
+          style={optionStyle(path === "polar")}
+        >
+          <span style={{ fontWeight: 600 }}>Телефон через Polar Beat</span>
+          <span style={{ display: "block", color: MUTED, fontSize: 13, marginTop: 2 }}>
+            Настоящий трек и темп; с нагрудным датчиком пульса — ещё и пульс.
+          </span>
+        </button>
+        {path === "polar" ? (
+          <div style={{ padding: "2px 2px 8px" }}>
+            <p style={{ margin: "0 0 8px", fontWeight: 600, fontSize: 14 }}>{NO_WATCH_TITLE_RU}</p>
+            {renderMiniMarkdown(NO_WATCH_BODY_RU, "c-nowatch")}
+            <p style={{ margin: "10px 0 0", fontWeight: 600, fontSize: 14 }}>
+              Когда всё готово — нажмите «Подключить часы» ниже: для Polar Beat это тот же шаг, через
+              Intervals.
+            </p>
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => setPath(path === "manual" ? null : "manual")}
+          style={optionStyle(path === "manual")}
+        >
+          <span style={{ fontWeight: 600 }}>Вручную, без приложений</span>
+          <span style={{ display: "block", color: MUTED, fontSize: 13, marginTop: 2 }}>
+            Цифры со слов: без анализа интенсивности внутри тренировки и без диагностического теста.
+          </span>
+        </button>
+        {path === "manual" ? (
+          <div style={{ padding: "2px 2px 0" }}>
+            <p style={{ margin: "0 0 10px", lineHeight: 1.5, fontSize: 14 }}>
+              После каждой тренировки открываете это же приложение и вписываете: сколько длилась,
+              сколько километров, если знаете, и как прошло. Пульс и темп — если помните навскидку, не
+              обязательно.
+            </p>
+            <p style={{ margin: "0 0 10px", lineHeight: 1.5, fontSize: 14, color: MUTED }}>
+              Чего не будет по сравнению с часами или Polar Beat: карты маршрута, точного темпа по
+              километрам, подтверждённого пульса. Я буду видеть только то, что вы напишете, и не смогу
+              сказать, ровно ли шла тренировка внутри — только по вашим словам и самочувствию. План
+              строим и так, темпы отрезков поначалу — по усилию, а не по цифрам.
+            </p>
+            {err ? <p style={{ color: ACCENT, fontWeight: 600, margin: "0 0 10px" }}>{err}</p> : null}
+            <button type="button" onClick={submitManual} disabled={busy} style={primaryButtonStyle(busy)}>
+              {busy ? "Включаю…" : "Да, буду вписывать сама"}
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -717,36 +842,16 @@ function ConnectScreen(props: {
       {/* ГЛАВНОЕ НА ЭТОМ ЭКРАНЕ. В Intervals галочки скачивания отмечаются
           отдельно, и не отметив нужную, человек проходит авторизацию и видит
           «подключено», а данные не идут ВООБЩЕ. Поэтому список показывается ДО
-          кнопки, а не прячется в ссылку: ссылку не откроют. */}
-      <DeviceChecklist />
+          кнопки, а не прячется в ссылку: ссылку не откроют.
 
-      {/* «Если часов нет» стоит ПОСЛЕ списка моделей, как и на странице: человек
-          без часов сначала ищет себя в списке, не находит и решает, что ему
-          сюда нельзя. Ответ должен ждать ровно там, где он упрётся. */}
-      {NO_WATCH_BODY_RU ? (
-        <div
-          style={{
-            background: "#fff",
-            border: `1px solid ${LINE}`,
-            borderRadius: 14,
-            padding: "14px 16px",
-            marginBottom: 16,
-          }}
-        >
-          <Collapsible title={NO_WATCH_TITLE_RU} divider={false}>
-            {renderMiniMarkdown(NO_WATCH_BODY_RU, "c-nowatch")}
-          </Collapsible>
-        </div>
-      ) : null}
-
-      {/* ЭКРАН ПОДКЛЮЧЕНИЯ БЫЛ ТУПИКОМ [решение 16.09.2026]. Polar Beat выше
-          всё равно приводит в Intervals.icu и требует телефон, приложение,
-          иногда покупку датчика. Кому и это не подходит, упирался: дальше
-          анкеты и плана не было вообще. Этот блок — вторая, последняя дверь:
-          без Intervals, без приложений, совсем вручную. Стоит ПОСЛЕ Polar
-          Beat, а не вместо него — это путь для того, кому не подошёл первый,
-          а не более лёгкая альтернатива по умолчанию. */}
-      <ManualEntryDoor onDone={props.onManualEntry} />
+          «МОИХ ЧАСОВ ТУТ НЕТ» — ПУНКТ ЭТОГО ЖЕ СПИСКА, А НЕ ОТДЕЛЬНЫЙ БЛОК ПОД
+          НИМ [решение 16.09.2026]. Раньше это были две карточки НИЖЕ списка —
+          инструкция про Polar Beat и отдельно ручной ввод. Человек с
+          неподдерживаемыми часами листал семь моделей, не находил себя и
+          решал, что ему сюда нельзя: дверь была, но под катом после Polar
+          Beat. Теперь она — такой же по виду пункт списка, как остальные, и
+          по нажатию даёт честную развилку из двух путей (см. NoWatchFork). */}
+      <DeviceChecklist onManualEntry={props.onManualEntry} />
 
       <div
         style={{
@@ -783,81 +888,6 @@ function ConnectScreen(props: {
       >
         Я подключил(а), проверить
       </button>
-    </div>
-  );
-}
-
-/**
- * Последняя дверь: без часов, без Intervals, без стороннего приложения.
- *
- * ЧЕСТНО ПРО ПОТЕРИ, А НЕ ПРО УДОБСТВО. Кнопка не должна выглядеть равноценной
- * альтернативой Polar Beat выше — она хуже по данным, и человек должен решать
- * с открытыми глазами, а не потому что кнопка ближе к началу экрана.
- */
-function ManualEntryDoor(props: { onDone: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const submit = async () => {
-    const tg = getTelegram();
-    if (!tg?.initData) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await fetch("/api/m/run/connect-manual", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initData: tg.initData }),
-      });
-      const json = (await res.json()) as { ok: boolean; error?: string };
-      if (!json.ok) {
-        setErr(json.error ?? "Не получилось.");
-        return;
-      }
-      props.onDone();
-    } catch {
-      setErr("Нет связи. Попробуйте ещё раз.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div
-      style={{
-        background: "#fff",
-        border: `1px solid ${LINE}`,
-        borderRadius: 14,
-        padding: "14px 16px",
-        marginBottom: 16,
-      }}
-    >
-      <Collapsible title="Совсем без приложений: вписывать вручную" divider={false}>
-        <p style={{ margin: "0 0 10px", lineHeight: 1.5, fontSize: 14 }}>
-          Работаем и так. После каждой тренировки открываете это же приложение и вписываете: сколько
-          длилась, сколько километров, если знаете, и как прошло. Пульс и темп — если помните
-          навскидку, не обязательно.
-        </p>
-        <p style={{ margin: "0 0 10px", lineHeight: 1.5, fontSize: 14, color: MUTED }}>
-          Чего не будет по сравнению с часами или Polar Beat: карты маршрута, точного темпа по
-          километрам, подтверждённого пульса. Я буду видеть только то, что вы напишете, и не смогу
-          сказать, ровно ли шла тренировка внутри — только по вашим словам и самочувствию. План
-          строим и так, темпы отрезков поначалу — по усилию, а не по цифрам.
-        </p>
-        {open ? (
-          <>
-            {err ? <p style={{ color: ACCENT, fontWeight: 600, margin: "0 0 10px" }}>{err}</p> : null}
-            <button type="button" onClick={submit} disabled={busy} style={primaryButtonStyle(busy)}>
-              {busy ? "Включаю…" : "Да, буду вписывать сама"}
-            </button>
-          </>
-        ) : (
-          <button type="button" onClick={() => setOpen(true)} style={secondaryButtonStyle}>
-            Мне подходит этот путь
-          </button>
-        )}
-      </Collapsible>
     </div>
   );
 }
