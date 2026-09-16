@@ -10,7 +10,7 @@ import { BEGINNER_LADDER, stepByIndex } from "@/features/methodology/beginner";
 
 import { EFFORT_OPTIONS, PAIN_OPTIONS } from "./effort-scale";
 import { allowedMoveTargets } from "./move";
-import type { Checkin, PlanSession, ProgressionState } from "./types";
+import type { Checkin, PlanSession, ProgressionState, SessionSegment } from "./types";
 
 const DAY_RU_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const RU_MONTHS = [
@@ -34,6 +34,8 @@ export type StudentSessionCard = {
   title: string;
   minutes: number;
   description: string | null;
+  /** null — сессия сгенерирована до появления колонки, структуры нет. */
+  segments: SessionSegment[] | null;
   /** Уже отмечена? Тогда вместо кнопок — что она ответила. */
   checkedIn: boolean;
   checkinLabel: string | null;
@@ -176,6 +178,7 @@ function toCard(
     title: session.title,
     minutes: session.minutes,
     description: session.description,
+    segments: session.segments,
     checkedIn: checkin !== null,
     checkinLabel: checkin
       ? checkin.pain

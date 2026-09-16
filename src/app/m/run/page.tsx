@@ -48,6 +48,14 @@ function getTelegram(): TelegramWebApp | null {
 type EffortOption = { code: string; labelRu: string; hintRu: string; rpe: number };
 type PainOption = { code: string; labelRu: string; hintRu: string; pain: boolean };
 
+type SessionSegment = {
+  minutes: number;
+  fastSec: number | null;
+  slowSec: number | null;
+  label: string;
+  noPaceText?: string;
+};
+
 type SessionCard = {
   sessionId: string;
   date: string;
@@ -56,6 +64,8 @@ type SessionCard = {
   title: string;
   minutes: number;
   description: string | null;
+  /** null — сессия сгенерирована до появления структуры, только проза. */
+  segments: SessionSegment[] | null;
   checkedIn: boolean;
   checkinLabel: string | null;
   moveTargets: Array<{ date: string; label: string }>;
@@ -1414,6 +1424,52 @@ function LadderBlock({ ladder }: { ladder: LadderView }) {
   );
 }
 
+/** «5:30» из секунд на километр. Тот же формат, что и в остальном приложении. */
+function formatPace(sec: number): string {
+  const total = Math.round(sec);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Структура тренировки — разминка/работа/заминка видно с одного взгляда, а не
+ * абзацем прозы [решение 16.09.2026]. Один ряд на сегмент: сколько минут, что
+ * делать, каким темпом (или чем заменить темп, если его нет — «стоя», «по
+ * ощущениям»).
+ */
+function SegmentList({ segments }: { segments: SessionSegment[] }) {
+  return (
+    <div style={{ margin: "10px 0 0", display: "grid", gap: 6 }}>
+      {segments.map((seg, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, fontSize: 14, lineHeight: 1.4 }}>
+          <span style={{ flexShrink: 0, minWidth: 52, color: MUTED, fontVariantNumeric: "tabular-nums" }}>
+            {seg.minutes} мин
+          </span>
+          <span>
+            {seg.label}
+            {seg.fastSec != null && seg.slowSec != null
+              ? ` — ${formatPace(seg.fastSec)}–${formatPace(seg.slowSec)} на км`
+              : seg.noPaceText
+                ? ` — ${seg.noPaceText}`
+                : ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Прозе есть куда пойти, только если она длиннее одной строки — короткое
+ * "Лёгкий бег: 35 минут 5:30–5:50 на километр." от renderDescription не
+ * прячем, это и так одна строка. В стену текста (диагностический тест: правила
+ * записи, разбор по шагам, исключения) превращаются только многоабзацные
+ * описания — их узнаём по переносу строки, который renderDescription никогда
+ * не производит (join(". ")), а ручной текст диагностического теста — всегда.
+ */
+function isLongFormDescription(text: string): boolean {
+  return text.includes("\n") || text.length > 140;
+}
+
 function SessionBlock(props: {
   card: SessionCard;
   initData: string;
@@ -1426,6 +1482,8 @@ function SessionBlock(props: {
   const { card } = props;
   const [openCheckin, setOpenCheckin] = useState(false);
   const [openMove, setOpenMove] = useState(false);
+  const segments = card.segments && card.segments.length > 0 ? card.segments : null;
+  const longForm = card.description ? isLongFormDescription(card.description) : false;
 
   return (
     <article
@@ -1443,8 +1501,21 @@ function SessionBlock(props: {
       </p>
       <p style={{ margin: "4px 0 0", fontSize: 17, fontWeight: 700 }}>{card.title}</p>
       <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 14 }}>{card.minutes} мин</p>
+
+      {segments ? <SegmentList segments={segments} /> : null}
+
       {card.description ? (
-        <p style={{ margin: "10px 0 0", lineHeight: 1.5, fontSize: 15 }}>{card.description}</p>
+        longForm ? (
+          <div style={{ margin: "10px 0 0" }}>
+            <Collapsible title="Подробнее" divider={false}>
+              <p style={{ margin: 0, lineHeight: 1.5, fontSize: 15, whiteSpace: "pre-wrap" }}>
+                {card.description}
+              </p>
+            </Collapsible>
+          </div>
+        ) : !segments ? (
+          <p style={{ margin: "10px 0 0", lineHeight: 1.5, fontSize: 15 }}>{card.description}</p>
+        ) : null
       ) : null}
 
       {card.checkedIn ? (

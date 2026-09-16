@@ -454,6 +454,11 @@ async function main(): Promise<void> {
       minutes: session.minutes,
       preset_code: session.presetCode,
       description: session.description,
+      // СТРУКТУРА ОТДЕЛЬНОЙ КОЛОНКОЙ, А НЕ ТОЛЬКО В ТЕКСТЕ. Разминка/работа/
+      // заминка уже посчитаны здесь (session.segments) и раньше терялись при
+      // сплющивании в description — мини-приложение показывало один абзац
+      // вместо структуры, видной с одного взгляда.
+      segments: session.segments,
       target_mode: session.targetMode === "pace" || session.targetMode === "rpe" ? session.targetMode : null,
       // ЧИСЛА В КОЛОНКИ, А НЕ ТОЛЬКО В ТЕКСТ. Колонки pace_fast_s/pace_slow_s/rpe
       // существовали с первой миграции и всё это время оставались пустыми: темпы
@@ -689,6 +694,7 @@ async function runBeginnerBranch(
       minutes: session.minutes,
       preset_code: session.presetCode,
       description: session.description,
+      segments: session.segments,
       target_mode: session.targetMode === "pace" || session.targetMode === "rpe" ? session.targetMode : null,
       rpe: session.targetMode === "rpe" ? BEGINNER_RPE_TARGET : null,
       anchor_source: session.anchorSource,

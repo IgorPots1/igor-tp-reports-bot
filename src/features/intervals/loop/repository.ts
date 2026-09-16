@@ -9,13 +9,13 @@
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
 import { isPrefillableField, type Prefill, type PrefillableField } from "./prefill";
-import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState } from "./types";
+import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState, SessionSegment } from "./types";
 
 type Client = ReturnType<typeof createSupabaseServerClient>;
 
 const SESSION_COLUMNS =
   "id, cycle_id, week_index, week_start, session_date, day_idx, role, title, minutes, preset_code, " +
-  "description, target_mode, rpe, deferred, defer_reason, original_session_date, moved_at";
+  "description, segments, target_mode, rpe, deferred, defer_reason, original_session_date, moved_at";
 
 const CYCLE_COLUMNS =
   "id, source_id, intent, first_week_start, length_weeks, days, status, published_at, " +
@@ -34,6 +34,7 @@ function toSession(row: Record<string, unknown>): PlanSession {
     minutes: Number(row.minutes),
     presetCode: (row.preset_code as string | null) ?? null,
     description: (row.description as string | null) ?? null,
+    segments: Array.isArray(row.segments) ? (row.segments as SessionSegment[]) : null,
     targetMode: row.target_mode === "pace" || row.target_mode === "rpe" ? row.target_mode : null,
     rpe: row.rpe === null || row.rpe === undefined ? null : Number(row.rpe),
     deferred: row.deferred === true,

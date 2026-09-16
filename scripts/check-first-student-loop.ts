@@ -300,7 +300,7 @@ async function main(): Promise<void> {
   const cycleId = String((cycleRow as { id: string }).id);
   const { data: sessionRows } = await supabase
     .from("intervals_plan_sessions")
-    .select("id, session_date, day_idx, title, minutes, week_index")
+    .select("id, session_date, day_idx, title, minutes, week_index, segments")
     .eq("cycle_id", cycleId)
     .order("session_date", { ascending: true });
   const sessions = (sessionRows ?? []) as Array<Record<string, unknown>>;
@@ -308,6 +308,13 @@ async function main(): Promise<void> {
   expect(
     sessions.every((s) => Number(s.day_idx) !== 0 && Number(s.day_idx) !== 6),
     "ни одна сессия не попала в закрытые анкетой дни (Пн, Вс)"
+  );
+  // СТРУКТУРА (разминка/работа/заминка) ПЕРЕЖИВАЕТ ЗАПИСЬ, А НЕ ТОЛЬКО ТЕКСТ.
+  // До 20261020000000 генератор считал Session.segments и тут же терял их при
+  // сплющивании в description — колонка была NULL у каждой сессии.
+  expect(
+    sessions.every((s) => Array.isArray(s.segments) && (s.segments as unknown[]).length > 0),
+    "у каждой сессии есть сохранённая структура (segments), не только текст"
   );
 
   const progressionAfterPlan = await getProgression(sourceId);
@@ -338,6 +345,10 @@ async function main(): Promise<void> {
   }
   expect(view.today !== null, `карточка на сегодня: ${view.today?.title ?? "—"}`);
   expect(view.upcoming.length > 0, `ближайшие дни показаны: ${view.upcoming.length} тренировок`);
+  expect(
+    Array.isArray(view.today?.segments) && (view.today?.segments?.length ?? 0) > 0,
+    `structure дошла до карточки ученицы: ${view.today?.segments?.length ?? 0} сегментов`
+  );
   expect(
     view.ladder !== null && view.ladder.step === 1,
     `ступень показана: ${view.ladder?.step} из ${view.ladder?.totalSteps} — ${view.ladder?.labelRu}`

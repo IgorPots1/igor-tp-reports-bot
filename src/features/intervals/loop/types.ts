@@ -1,5 +1,18 @@
 /** Типы рабочего контура ученика: план, чек-ин, перенос, текст тренера. */
 
+/**
+ * Один отрезок тренировки: разминка, работа, заминка. Та же форма, что строит
+ * autoplanner-week.ts (Segment) до сплющивания в description — see
+ * intervals_plan_sessions.segments.
+ */
+export type SessionSegment = {
+  minutes: number;
+  fastSec: number | null;
+  slowSec: number | null;
+  label: string;
+  noPaceText?: string;
+};
+
 export type PlanSession = {
   id: string;
   cycleId: string;
@@ -12,6 +25,8 @@ export type PlanSession = {
   minutes: number;
   presetCode: string | null;
   description: string | null;
+  /** null — сессия сгенерирована до появления колонки, структуры нет. */
+  segments: SessionSegment[] | null;
   targetMode: "pace" | "rpe" | null;
   rpe: number | null;
   deferred: boolean;

@@ -365,6 +365,10 @@ async function main(): Promise<void> {
       minutes: session.minutes,
       preset_code: session.presetCode,
       description: session.description,
+      // Структура (разминка/работа/заминка) отдельной колонкой — та же причина,
+      // что и у intervals-onboarding-plan.ts: без неё мини-приложение видит
+      // только сплющенный текст.
+      segments: session.segments,
       target_mode: session.targetMode === "pace" || session.targetMode === "rpe" ? session.targetMode : null,
       // Числа в колонки, а не только в текст описания: без них следующая
       // перегенерация не сможет показать разницу и будет разбирать текст.
