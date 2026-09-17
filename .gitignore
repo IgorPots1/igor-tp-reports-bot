@@ -1,6 +1,12 @@
 node_modules
 .next
+.next-admin*
 out
+# Next.js переписывает эту ссылку под текущий distDir на каждом next dev/build
+# (./.next/types/routes.d.ts меняется на ./.next-admin/types/routes.d.ts и обратно).
+# Локальная админка и Vercel собираются в разные distDir из одной WorkingDirectory,
+# поэтому файл не может стабильно лежать в гите — Next пересоздаёт его сам всегда.
+next-env.d.ts
 coverage
 .env
 .env.local

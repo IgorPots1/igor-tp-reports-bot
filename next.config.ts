@@ -19,7 +19,12 @@ const LEGACY_REDIRECTS = [
   { source: "/intensive", destination: "/camp" },
 ];
 
+// Локальная админка (com.igor.coachos.localadmin) собирается отдельно от Vercel
+// в свою папку — .next-admin, а не .next, — чтобы `next build` там не сталкивался
+// с параллельно работающим `next dev`/`next start` в той же WorkingDirectory.
+// Vercel и обычный `npm run dev` эту переменную не задают, distDir остаётся ".next".
 const nextConfig: NextConfig = {
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas"],
   // Хвост запроса (utm_source и прочее) Next переносит на новый адрес сам, пока
   // в destination нет своей строки запроса. На этих метках держится вся
