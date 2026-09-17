@@ -11,10 +11,10 @@
 
 import { assessConnectionHealth } from "@/features/intervals/loop/connection-health";
 import { getOnboardingAnswers, getProgression, saveOnboardingAnswers } from "@/features/intervals/loop/repository";
-import { isManualEntryStudent, provisionManualSource, submitManualEntry } from "@/features/intervals/manual-entry";
+import { coachConvertSourceToManual, isManualEntryStudent, provisionManualSource, submitManualEntry } from "@/features/intervals/manual-entry";
 import { computeStartingPointFromHistory, loadActivitiesForSource } from "@/features/intervals/onboarding/starting-point";
 import { createIntervalsStudent } from "@/features/intervals/enrollment";
-import { getSourceConnection, isConnectionUsable } from "@/features/intervals/repository";
+import { connectOauthSource, getSourceConnection, isConnectionUsable } from "@/features/intervals/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 let failures = 0;
@@ -247,6 +247,86 @@ async function main(): Promise<void> {
     await isManualEntryStudent("00000000-0000-0000-0000-000000000000") === false,
     "и честно отвечает false на несуществующего/чужого"
   );
+
+  // ── Обратный путь: реальное подключение → ручной ввод ──────────────────────
+  //
+  // Валентина и её Honor [17.09.2026]: часы завели настоящее OAuth-подключение
+  // (i714595), которое НИКОГДА не отдаст данные — Honor к Intervals.icu не
+  // подключается. Система ждала бы синка вечно. Отдельная песочница, а не
+  // переиспользование созданной выше: та к этому моменту уже manual, и
+  // проверка ничего не проверила бы.
+  step("ОБРАТНЫЙ ПУТЬ: РЕАЛЬНОЕ ПОДКЛЮЧЕНИЕ → РУЧНОЙ ВВОД");
+  const REVERSE_KEY = "check-manual-entry-reverse";
+  const REVERSE_ATHLETE = "i900321";
+  const reverseCreated = await createIntervalsStudent({
+    studentKey: REVERSE_KEY,
+    name: "Проверка обратного пути",
+    telegramUserId: 999000333,
+    telegramChatId: "999000333",
+    athleteId: null, // источник-заготовка, реальное подключение — отдельным шагом ниже
+  });
+  const connected = await connectOauthSource({
+    studentUuid: reverseCreated.studentUuid,
+    externalAthleteId: REVERSE_ATHLETE,
+    accessToken: "check-manual-entry-reverse-token",
+    scope: "ACTIVITY,CALENDAR,WELLNESS",
+  });
+  expect(connected.ok, "песочница подключена по-настоящему (oauth), как у Валентины");
+  const beforeConvert = await getSourceConnection(reverseCreated.studentUuid);
+  expect(beforeConvert?.authMethod === "oauth", "до перевода источник — oauth, не manual");
+  const sourceIdBeforeConvert = beforeConvert?.sourceId;
+
+  const converted = await coachConvertSourceToManual(reverseCreated.studentUuid);
+  expect(converted.ok, `перевод на ручной ввод прошёл${converted.ok ? "" : `: ${converted.message}`}`);
+  if (converted.ok) {
+    expect(converted.previousAuthMethod === "oauth", "функция назвала прежний способ верно");
+    expect(converted.sourceId === sourceIdBeforeConvert, "source_id тот же самый — история (её пока нет, но принцип общий) не осиротела");
+  }
+  const afterConvert = await getSourceConnection(reverseCreated.studentUuid);
+  expect(afterConvert?.authMethod === "manual", "после перевода источник стал manual");
+  expect(afterConvert?.sourceId === sourceIdBeforeConvert, "тот же source_id виден и через обычное чтение подключения");
+
+  const healthAfterConvert = assessConnectionHealth({
+    todayIso: "2026-09-17",
+    connection: {
+      connectedAtIso: afterConvert?.connectedAt ?? null,
+      authFailedAtIso: null,
+      isActive: true,
+      authMethod: "manual",
+    },
+    activityDates: [],
+    checkinDates: [],
+  });
+  expect(
+    healthAfterConvert.state === "manual",
+    "«подключено, а данных нет» больше не грозит: manual гасит проверку раньше неё"
+  );
+
+  const repeatConvert = await coachConvertSourceToManual(reverseCreated.studentUuid);
+  expect(
+    repeatConvert.ok && repeatConvert.previousAuthMethod === "manual",
+    "повторный вызов идемпотентен — не падает и не путает предыдущий способ"
+  );
+
+  // И ОБРАТНО, ЕСЛИ ПОЯВЯТСЯ ПОДКЛЮЧАЕМЫЕ ЧАСЫ: тот же connectOauthSource,
+  // никакого отдельного пути не заводили специально под этот тест — значит и
+  // для настоящего человека сработает так же.
+  const reconnected = await connectOauthSource({
+    studentUuid: reverseCreated.studentUuid,
+    externalAthleteId: "i900322",
+    accessToken: "check-manual-entry-reverse-token-2",
+    scope: "ACTIVITY,CALENDAR,WELLNESS",
+  });
+  expect(reconnected.ok, "manual → oauth снова работает — полный круг замкнулся");
+  if (reconnected.ok) {
+    expect(reconnected.sourceId === sourceIdBeforeConvert, "и на этом развороте source_id не поменялся");
+  }
+
+  await supabase.rpc("delete_intervals_student", {
+    p_student_uuid: reverseCreated.studentUuid,
+    p_deleted_by: "check:manual-entry:reverse",
+  });
+  await supabase.from("deleted_students_archive").delete().eq("student_uuid", reverseCreated.studentUuid);
 
   step("УБОРКА");
   const { error: deleteError } = await supabase.rpc("delete_intervals_student", {

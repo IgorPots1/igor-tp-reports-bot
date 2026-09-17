@@ -113,6 +113,71 @@ export async function provisionManualSource(
   return { ok: true, sourceId: String((inserted as { id: string }).id) };
 }
 
+/**
+ * Перевести УЖЕ ПОДКЛЮЧЁННЫЙ источник (oauth/api_key) на ручной ввод — решение
+ * тренера, не кнопка ученика.
+ *
+ * ЗАЧЕМ ЭТО ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ СНЯТЫЙ ЗАСЛОН У provisionManualSource.
+ * Тот заслон охраняет самообслуживание: ученик жмёт кнопку сам, и тихая потеря
+ * настоящего подключения тихой кнопкой — это ровно то, чего заслон не даёт.
+ * Здесь другая ситуация: тренер УЖЕ ЗНАЕТ, что подключение никогда не отдаст
+ * данные (весь сегмент часов без API — Honor и подобные, см. заголовок файла),
+ * и решение принимает он, глазами, а не человек по ошибке.
+ *
+ * ПОЧЕМУ ЭТО БЕЗОПАСНО ДЛЯ ДАННЫХ. Ничего не удаляется: intervals_activities
+ * привязаны к source_id, а не к auth_method, и остаются на месте, если они
+ * вообще были. Меняется только СПОСОБ, которым источник получает будущие
+ * данные — с ожидания синка на самостоятельный ввод.
+ *
+ * ИДЕМПОТЕНТНО, КАК И provisionManualSource: повторный вызов на уже ручном
+ * источнике — no-op, а не ошибка.
+ */
+export async function coachConvertSourceToManual(
+  studentUuid: string
+): Promise<
+  | { ok: true; sourceId: string; previousAuthMethod: string }
+  | { ok: false; message: string }
+> {
+  const supabase = createSupabaseServerClient();
+
+  const { data: existing, error: readError } = await supabase
+    .from("student_data_sources")
+    .select("id, auth_method")
+    .eq("provider", "intervals")
+    .eq("student_id", studentUuid)
+    .maybeSingle();
+  if (readError) return { ok: false, message: describeSupabaseError(readError) };
+
+  const row = existing as { id: string; auth_method: string } | null;
+  if (!row) return { ok: false, message: "У ученика нет источника Intervals — переводить нечего." };
+  if (row.auth_method === "manual") {
+    return { ok: true, sourceId: row.id, previousAuthMethod: "manual" };
+  }
+
+  const externalAthleteId = `${MANUAL_ATHLETE_PREFIX}${studentUuid}`;
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from("student_data_sources")
+    .update({
+      external_athlete_id: externalAthleteId,
+      auth_method: "manual",
+      credential: MANUAL_CREDENTIAL_PLACEHOLDER,
+      credential_expires_at: null,
+      // СЛЕДЫ OAUTH СНИМАЮТСЯ ЯВНО, А НЕ ОСТАЮТСЯ ВИСЕТЬ. Токен настоящего
+      // подключения после перевода — не секрет с истёкшим смыслом, а мусор,
+      // который мог бы читаться как «подключение всё ещё где-то живо».
+      oauth_scope: null,
+      is_active: true,
+      connected_at: now,
+      auth_failed_at: null,
+      auth_failure_reason: null,
+      updated_at: now,
+    })
+    .eq("id", row.id);
+  if (updateError) return { ok: false, message: describeSupabaseError(updateError) };
+  return { ok: true, sourceId: row.id, previousAuthMethod: row.auth_method };
+}
+
 /** Границы поля — опечатка не должна пройти как факт. */
 const MAX_DURATION_MIN = 480; // восемь часов: длиннее не бывает у бегового плана
 const MIN_DURATION_MIN = 3;
