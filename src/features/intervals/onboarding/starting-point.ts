@@ -44,6 +44,15 @@ const MIN_RUNS_FOR_EASY_PACE = 5;
 export const MIN_RUNS_FOR_HISTORY = 4;
 export const MIN_WEEKS_WITH_RUNS_FOR_HISTORY = 2;
 
+/**
+ * Дорожка среди покрытий анкеты? Независимо от того, откуда взята стартовая
+ * точка (история или анкета) — покрытия не про объём, ставится поверх обеих
+ * веток в вызывающем коде.
+ */
+export function runSurfacesIncludeTreadmill(runSurfaces: string[] | null | undefined): boolean {
+  return Array.isArray(runSurfaces) && runSurfaces.some((surface) => /дорожк/i.test(surface));
+}
+
 /** Годится ли измеренная стартовая точка как база цикла. */
 export function hasUsableHistory(start: StartingPoint): boolean {
   return (

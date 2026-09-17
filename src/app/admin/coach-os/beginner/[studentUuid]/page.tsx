@@ -2,11 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import FormActionButton from "@/app/admin/FormActionButton";
-import { dayOffsetFromCoach, todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
+import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
 import { isCoachSendEnabled } from "@/features/intervals/loop/coach-message";
 import { dataLevelLabelRu } from "@/features/intervals/data-quality";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
-import { fieldLabelRu, PREFILLABLE_FIELDS } from "@/features/intervals/loop/prefill";
+import { IntervalsAnketaCard } from "@/features/intervals/loop/anketa-card";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
 
 import { previewStudentDeletion } from "@/features/intervals/delete-student";
@@ -17,8 +17,6 @@ export const dynamic = "force-dynamic";
 
 const cell = { padding: "6px 10px", verticalAlign: "top" as const };
 
-const WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-const weekdayRu = (day: number): string => WEEKDAYS_RU[day] ?? String(day);
 const box = {
   border: "1px solid #e0e0e0",
   borderRadius: 10,
@@ -119,121 +117,7 @@ export default async function BeginnerStudentPage({
       {/* ── Анкета ── */}
       <div style={box}>
         <h2 style={{ marginTop: 0 }}>Анкета</h2>
-        {view.answers ? (
-          <>
-            {/* КТО ОТВЕЧАЛ — отдельной строкой, а не мелким шрифтом сбоку.
-                «Ученица сказала, что бегает непрерывно» и «тренер знал, что она
-                бегает непрерывно» — для корпуса разные данные, и различать их
-                задним числом по значению невозможно. */}
-            <table style={{ borderCollapse: "collapse", marginBottom: 12 }}>
-              <tbody>
-                {PREFILLABLE_FIELDS.map((field) => {
-                  const byCoach = view.answers?.coachSetFields.includes(field) === true;
-                  return (
-                    <tr key={field}>
-                      <td style={{ padding: "2px 10px 2px 0", color: "#555" }}>{fieldLabelRu(field)}</td>
-                      <td
-                        style={{
-                          padding: "2px 0",
-                          color: byCoach ? "#7a4a00" : "#2E7D45",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {byCoach ? "задал тренер" : "ответила сама"}
-                      </td>
-                    </tr>
-                  );
-                })}
-                <tr>
-                  <td style={{ padding: "2px 10px 2px 0", color: "#555" }}>{fieldLabelRu("coachNote")}</td>
-                  <td style={{ padding: "2px 0", color: "#2E7D45", fontWeight: 600 }}>
-                    всегда её
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <p style={{ margin: "0 0 6px" }}>
-              цель: <strong>{view.answers.goalKind}</strong>
-              {view.answers.raceDate ? ` · старт ${view.answers.raceDate}` : ""}
-              {view.answers.raceDistanceKm ? ` · ${view.answers.raceDistanceKm} км` : ""}
-            </p>
-            <p style={{ margin: "0 0 6px" }}>
-              неделя:{" "}
-              {view.answers.weekStability === "stable"
-                ? "стабильная"
-                : view.answers.weekStability === "varies"
-                  ? "плавающая (план на переносах)"
-                  : "не спрашивали"}{" "}
-              · дней в неделю: {view.answers.daysPerWeek}{" "}
-              <span style={{ color: "#7a4a00" }}>({view.answers.daysPerWeekSource})</span>
-            </p>
-            <p style={{ margin: "0 0 6px" }}>
-              свободные дни:{" "}
-              {view.answers.availableWeekdays.length > 0
-                ? view.answers.availableWeekdays.map(weekdayRu).join(", ")
-                : "не отмечены"}{" "}
-              · занятые:{" "}
-              {view.answers.unavailableWeekdays.length > 0
-                ? view.answers.unavailableWeekdays.map(weekdayRu).join(", ")
-                : "нет"}
-            </p>
-            <p style={{ margin: "0 0 6px" }}>
-              длинная:{" "}
-              {view.answers.preferredLongWeekday === null
-                ? "не задана"
-                : weekdayRu(view.answers.preferredLongWeekday)}{" "}
-              · тяжёлая:{" "}
-              {view.answers.preferredQualityWeekday === null
-                ? "не задана"
-                : weekdayRu(view.answers.preferredQualityWeekday)}{" "}
-              · время:{" "}
-              {view.answers.timeOfDay === "morning"
-                ? "утро"
-                : view.answers.timeOfDay === "evening"
-                  ? "вечер"
-                  : view.answers.timeOfDay === "varies"
-                    ? "по-разному"
-                    : "не спрашивали"}
-            </p>
-            <p style={{ margin: "0 0 6px" }}>
-              на тренировку есть:{" "}
-              {view.answers.maxSessionMinutes === null
-                ? "без потолка"
-                : `${view.answers.maxSessionMinutes} мин`}{" "}
-              · часовой пояс:{" "}
-              {student.timezone ?? "не определён (считаем по твоей зоне)"}
-              {student.timezone && dayOffsetFromCoach(student.timezone) !== 0
-                ? dayOffsetFromCoach(student.timezone) > 0
-                  ? " · у неё уже завтра"
-                  : " · у неё ещё вчера"
-                : ""}
-            </p>
-            <p style={{ margin: "0 0 6px" }}>
-              где бегает:{" "}
-              {view.answers.runSurfaces.length > 0 ? view.answers.runSurfaces.join(", ") : "не отмечено"}{" "}
-              · непрерывно:{" "}
-              {view.answers.canRunContinuously === null
-                ? "не задано"
-                : view.answers.canRunContinuously
-                  ? "может"
-                  : "пока нет"}
-            </p>
-            {view.answers.weekBreakers ? (
-              <div style={{ marginTop: 10, background: "#fffbe6", padding: "10px 12px", borderRadius: 8 }}>
-                <strong>Что срывает неделю:</strong>
-                <p style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>{view.answers.weekBreakers}</p>
-              </div>
-            ) : null}
-            {view.answers.coachNote ? (
-              <div style={{ marginTop: 10, background: "#fffbe6", padding: "10px 12px", borderRadius: 8 }}>
-                <strong>Что важно знать тренеру:</strong>
-                <p style={{ margin: "6px 0 0", whiteSpace: "pre-wrap" }}>{view.answers.coachNote}</p>
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <p style={{ margin: 0, color: "#555" }}>Анкета ещё не заполнена.</p>
-        )}
+        <IntervalsAnketaCard answers={view.answers} studentTimezone={student.timezone} />
       </div>
 
       {/* ── План ── */}

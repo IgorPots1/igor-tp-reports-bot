@@ -40,6 +40,12 @@ export type OnboardingAnswers = {
   maxSessionMinutes: number | null;
   /** Удобный день более тяжёлой тренировки. Отдельно от дня длительной. */
   preferredQualityWeekday: number | null;
+  /**
+   * Покрытия из анкеты (`intervals_onboarding_answers.run_surfaces`), напр.
+   * ["Улица / парк", "Дорожка"]. Факт, не флаг: не переопределяется прогоном,
+   * читается независимо от того, каким --goal собран план.
+   */
+  runSurfaces?: string[] | null;
 };
 
 /**
@@ -123,6 +129,16 @@ export type StartingPoint = {
    */
   easyPaceOrigin?: "measured" | "coach_stated";
 
+  /**
+   * Бегает преимущественно на дорожке (из `run_surfaces` анкеты) [решение
+   * Игоря, 17.09.2026]. Сегмент немаленький — «людей на дорожке будет
+   * много» — поэтому это поле стартовой точки, а не разовый флаг: попадает в
+   * start_point при генерации и переживает перегенерацию без переспроса.
+   * Меняет ТОЛЬКО формулировку разминки/трусцы/заминки качественной сессии
+   * (см. zone2Segment в autoplanner-week.ts) — сам выбор формата и усилие не
+   * трогает.
+   */
+  runsOnTreadmill?: boolean;
 
   /** Что реально есть в тренировках окна — считается по уже сохранённым уровням. */
   dataLevel: "heartrate" | "pace_only" | "none";

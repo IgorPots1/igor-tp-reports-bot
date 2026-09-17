@@ -52,6 +52,9 @@ import {
 } from "@/features/trainingpeaks/telegram-context";
 import { getTrainingPeaksWeeklyReportForStudentWeekFromService } from "@/features/trainingpeaks/service";
 import { getPreviousTrainingPeaksWeek } from "@/features/trainingpeaks/week";
+import { getSourceConnection } from "@/features/intervals/repository";
+import { getOnboardingAnswers } from "@/features/intervals/loop/repository";
+import { IntervalsAnketaCard } from "@/features/intervals/loop/anketa-card";
 type StudentDetailPageProps = {
   params: Promise<{
     studentId: string;
@@ -213,6 +216,15 @@ export default async function AdminStudentDetailPage({
   const primaryStudentThread = studentThreads[0] ?? null;
   const billingClient = await getBillingClientForStudent(student.id);
   const billingDetail = billingClient ? await getBillingClientDetail(billingClient.id) : null;
+
+  // АНКЕТА INTERVALS — С ЭТОГО ТРЕНЕР НАЧИНАЕТ РАБОТУ С ЧЕЛОВЕКОМ [решение
+  // Игоря, 17.09.2026]. До этой правки блок существовал только на отдельной
+  // карточке /admin/coach-os/beginner/[studentUuid] («Ученики Intervals»),
+  // куда с этой страницы нет ссылки, — то есть анкета технически была, но
+  // тренер её не видел, открывая обычную карточку ученика.
+  const intervalsSource =
+    student.coachingPlatform === "intervals" ? await getSourceConnection(student.id) : null;
+  const intervalsAnketa = intervalsSource ? await getOnboardingAnswers(intervalsSource.sourceId) : null;
 
   const [lastKnownBusinessChat, capturedBusinessChat, suggestedTelegramMatches, recentChats, usernameLookup, contextObservations] =
     await Promise.all([
@@ -388,6 +400,13 @@ export default async function AdminStudentDetailPage({
               </tbody>
             </table>
           </div>
+        </article>
+      )}
+
+      {student.coachingPlatform === "intervals" && (
+        <article className="admin-card">
+          <h3>Анкета</h3>
+          <IntervalsAnketaCard answers={intervalsAnketa} studentTimezone={null} />
         </article>
       )}
 

@@ -52,6 +52,8 @@ export type StartingPointInput = {
   /** "coach_stated" — темп назвал тренер лично, доверие ниже, чем у медианы по выборке. */
   easyPaceOrigin?: "measured" | "coach_stated";
   dataLevel: "heartrate" | "pace_only" | "none";
+  /** Из run_surfaces анкеты — см. AthleteAnchors.runsOnTreadmill в pace-resolver.ts. */
+  runsOnTreadmill?: boolean;
 };
 
 export type AnswersInput = {
@@ -197,6 +199,7 @@ export function buildAnchors(start: StartingPointInput, stored: StoredThreshold 
     // видит и ведёт себя ровно как раньше: там отказ означает «сначала поставь
     // порог», и это правильное поведение.
     qualityByEffort: true,
+    runsOnTreadmill: start.runsOnTreadmill === true,
   };
 }
 

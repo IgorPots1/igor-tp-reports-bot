@@ -422,9 +422,26 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
  * Если порога нет, «чуть быстрее» и «в темпе» опускаются — разминка вырождается в спокойный
  * бег с ускорениями, но сессия не падает в defer из-за разминки.
  */
+/**
+ * Zone-2 сегмент разминки/трусцы/заминки от якоря лёгкого.
+ *
+ * НА ДОРОЖКЕ ТЕМП ЗАДАЁТСЯ ИНАЧЕ, ЧЕМ НА УЛИЦЕ [решение Игоря, 17.09.2026]:
+ * там это число на панели, а не собственный шаг, и «по ощущению» читается
+ * человеку понятнее, чем диапазон мин/км. Цифра при этом не пропадает — она
+ * остаётся ориентиром для уличной пробежки, только не выдаётся за цель.
+ * Флаг runsOnTreadmill ставится ОДИН РАЗ на стартовой точке (из run_surfaces
+ * анкеты) и не спрашивается заново на каждой сессии — см. types.ts.
+ */
+function zone2Segment(a: AthleteAnchors, minutes: number, label: string, eb: { fast: number; slow: number }): Segment {
+  if (a.runsOnTreadmill) {
+    return { minutes, label, fastSec: null, slowSec: null, noPaceText: `по ощущению, на улице ориентир ${rangeText(eb.fast, eb.slow)}` };
+  }
+  return { minutes, label, fastSec: eb.fast, slowSec: eb.slow };
+}
+
 function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }): Segment[] {
   const C = CANONICAL_WARMUP;
-  const segs: Segment[] = [{ minutes: C.easyIn, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
+  const segs: Segment[] = [zone2Segment(a, C.easyIn, "Разминка, спокойно (Zone 2)", eb)];
   const faster = resolvePace(a, "steady_tempo", "maintenance", null);
   const tempo = resolvePace({ ...a, quality: null }, "controlled_threshold", "maintenance", null);
   const t = tempo.ok ? (tempo as Resolved) : null;
@@ -439,7 +456,7 @@ function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }):
   }
   if (t) segs.push({ minutes: C.tempo, label: "В темпе", fastSec: t.absPaceMinS, slowSec: t.absPaceMaxS });
   segs.push({ minutes: C.strides, label: "Ускорения, 3–4 коротких по пятнадцать секунд", fastSec: null, slowSec: null, noPaceText: "свободно, по ощущениям" });
-  segs.push({ minutes: C.easyOut, label: "Спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow });
+  segs.push(zone2Segment(a, C.easyOut, "Спокойно (Zone 2)", eb));
   segs.push({ minutes: C.pause, label: "Пауза перед работой", fastSec: null, slowSec: null, noPaceText: "полный отдых, часы на паузу" });
   return segs;
 }
@@ -503,15 +520,15 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     // Простая разминка (L0–L1) по методологии из РЕАЛЬНЫХ описаний: 86% качественных — 10 минут,
     // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно». Ускорения внутри разминки
     // встречаются лишь в 15% — в простой разминке НЕ ставим.
-    : [{ minutes: warmMin, label: "Разминка, спокойно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow }];
+    : [zone2Segment(a, warmMin, "Разминка, спокойно (Zone 2)", eb)];
   for (let i = 0; i < p.reps; i++) {
     segs.push(w
       ? { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS }
       : { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: null, slowSec: null,
           noPaceText: effortText(p.rpeTarget) });
-    if (i < p.reps - 1) segs.push({ minutes: p.recoveryMinutes, label: "Трусца", fastSec: eb.fast, slowSec: eb.slow });
+    if (i < p.reps - 1) segs.push(zone2Segment(a, p.recoveryMinutes, "Трусца", eb));
   }
-  segs.push({ minutes: p.cooldownMinutes, label: "Заминка, свободно (Zone 2)", fastSec: eb.fast, slowSec: eb.slow });
+  segs.push(zone2Segment(a, p.cooldownMinutes, "Заминка, свободно (Zone 2)", eb));
   const total = segs.reduce((s, x) => s + x.minutes, 0);
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);

@@ -318,6 +318,8 @@ export type TrainingPeaksRegistryStudentSnapshot = {
   latestReportStatus: TrainingPeaksRegistryStatus;
   hasGroupTopic: boolean;
   groupTopicCount: number;
+  /** Нужно карточке /admin/students/[studentId], чтобы решить, показывать ли блок «Анкета». */
+  coachingPlatform: "trainingpeaks" | "intervals";
 };
 
 export type TrainingPeaksStudentCard =
@@ -11177,6 +11179,7 @@ export async function getTrainingPeaksStudentsRegistryWithLatestReportStatus(opt
         latestReportStatus: getRegistryStudentStatus(latestReport),
         hasGroupTopic: groupTopicCount > 0,
         groupTopicCount,
+        coachingPlatform: student.coachingPlatform,
       };
     })
     .sort((left, right) => left.studentName.localeCompare(right.studentName, "ru"));

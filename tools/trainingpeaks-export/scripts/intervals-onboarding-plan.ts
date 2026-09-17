@@ -23,6 +23,7 @@ import {
   hasUsableHistory,
   loadActivitiesForSource,
   mondayOf,
+  runSurfacesIncludeTreadmill,
   startingPointFromAnswers,
 } from "@/features/intervals/onboarding/starting-point";
 import type { OnboardingAnswers, StartingPoint } from "@/features/intervals/onboarding/types";
@@ -97,6 +98,7 @@ function printStartingPoint(start: StartingPoint): void {
     console.log(`дни длительной:      ${start.dayHistogramLong.join(" ")}`);
   }
   console.log(`уровень данных:      ${start.dataLevel}`);
+  console.log(`дорожка:             ${start.runsOnTreadmill ? "да — качественная формулируется по ощущению" : "нет"}`);
   for (const note of start.notes) console.log(`  · ${note}`);
 }
 
@@ -230,7 +232,13 @@ async function main(): Promise<void> {
           canRunContinuously: answersRow.can_run_continuously ?? null,
           maxSessionMinutes: answersRow.max_session_minutes ?? null,
           preferredQualityWeekday: answersRow.preferred_quality_weekday ?? null,
+          runSurfaces: (answersRow.run_surfaces ?? null) as string[] | null,
         };
+      } else {
+        // ПОКРЫТИЯ — ФАКТ АНКЕТЫ, НЕ ФЛАГ ПРОГОНА. Даже когда цель/объём/дни
+        // пришли флагами (--goal=…), покрытия остаются тем, что человек
+        // реально отметил, а не тем, что передано в этом вызове.
+        answers.runSurfaces = (answersRow.run_surfaces ?? null) as string[] | null;
       }
     }
   }
@@ -273,6 +281,11 @@ async function main(): Promise<void> {
   const start: StartingPoint = usable
     ? fromHistory
     : startingPointFromAnswers(answers, manualEasyPaceSec !== null ? { manualEasyPaceSec } : {});
+  // ПОКРЫТИЯ — НЕЗАВИСИМО ОТ ВЕТКИ ОБЪЁМА (история/анкета): человек может иметь
+  // измеренную историю и всё равно бегать в основном на дорожке. Ставится
+  // ПОСЛЕ выбора ветки и живёт в start_point, поэтому переживает перегенерацию
+  // (intervals-regenerate.ts читает start_point как есть, без пересчёта).
+  start.runsOnTreadmill = runSurfacesIncludeTreadmill(answers.runSurfaces);
   if (!usable && fromHistory.runsTotal > 0) {
     console.log(
       `Истории на окне недостаточно: пробежек ${fromHistory.runsTotal} в ${fromHistory.weeksWithRuns} нед. ` +

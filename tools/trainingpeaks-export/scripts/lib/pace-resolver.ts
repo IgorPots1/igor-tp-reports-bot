@@ -111,6 +111,14 @@ export type AthleteAnchors = {
   qualityByEffort?: boolean;
   /** null → полоса качества считается от порога узким фолбэком */
   quality?: QualityAnchor | null;
+  /**
+   * Бегает преимущественно на дорожке (анкета, поле run_surfaces) [решение
+   * Игоря, 17.09.2026]. Резолвер его не читает — темп по-прежнему считается
+   * как обычно; флаг видит только сборщик Zone-2 сегментов качественной
+   * сессии (zone2Segment в autoplanner-week.ts), который меняет только
+   * ФОРМУЛИРОВКУ разминки/трусцы/заминки, не саму цифру.
+   */
+  runsOnTreadmill?: boolean;
 };
 
 export type Resolved = {
