@@ -66,6 +66,13 @@ const paceText = (seconds: number | null): string => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}/км`;
 };
 
+/** "7:22" → 442 (сек/км). Формат совпадает с тем, что показывает paceText. */
+function parsePaceArg(value: string): number | null {
+  const match = value.match(/^(\d+):(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
 /**
  * Анкета → пожелания, которые понимает сборщик.
  *
@@ -254,7 +261,18 @@ async function main(): Promise<void> {
   // start_point_source. Молча подставлять нули вместо базы нельзя: получился бы
   // «план из данных», построенный ни на чём.
   const usable = hasUsableHistory(fromHistory);
-  const start: StartingPoint = usable ? fromHistory : startingPointFromAnswers(answers);
+  // ТЕМП ЛЁГКОГО ОТ ТРЕНЕРА — ТОЛЬКО НА ВЕТКЕ АНКЕТЫ. У истории он уже
+  // измерен по пробежкам; --easy-pace существует для случая, когда истории не
+  // будет никогда (нет подключаемых часов) и объём/темп целиком со слов
+  // человека, который тренер знает лично.
+  const easyPaceArg = arg("easy-pace");
+  const manualEasyPaceSec = easyPaceArg ? parsePaceArg(easyPaceArg) : null;
+  if (easyPaceArg && manualEasyPaceSec === null) {
+    fail("--easy-pace принимает формат M:SS, например 7:22");
+  }
+  const start: StartingPoint = usable
+    ? fromHistory
+    : startingPointFromAnswers(answers, manualEasyPaceSec !== null ? { manualEasyPaceSec } : {});
   if (!usable && fromHistory.runsTotal > 0) {
     console.log(
       `Истории на окне недостаточно: пробежек ${fromHistory.runsTotal} в ${fromHistory.weeksWithRuns} нед. ` +
@@ -305,6 +323,12 @@ async function main(): Promise<void> {
       testDeclined = Boolean((declineRow as { diagnostic_test_declined_at?: string | null } | null)?.diagnostic_test_declined_at);
     }
   }
+  // --defer-diagnostic — ПРЕДПРОСМОТР ОТКАЗА, БЕЗ ЗАПИСИ В КОЛОНКУ. Тренер
+  // решил не ставить тест сейчас (например, дорожка не откалибрована, а на
+  // улицу пока рано) — это то же самое поле diagnostic_test_declined_at, но
+  // холостой прогон должен показать план, который получится, ДО того, как
+  // решение записано на источник.
+  if (process.argv.includes("--defer-diagnostic")) testDeclined = true;
 
   const anchors = buildAnchors(start, storedThreshold);
   const envelope = buildEnvelope(start);
@@ -418,6 +442,20 @@ async function main(): Promise<void> {
     console.log("");
     console.log("Ничего не записано (запуск без --commit).");
     return;
+  }
+
+  // --defer-diagnostic ПРИ --commit ЗАКРЕПЛЯЕТ решение на источнике, а не
+  // только на этом прогоне: без записи следующая перегенерация снова
+  // поставила бы тест — colonne diagnostic_test_declined_at читается заново
+  // каждый раз (см. выше), и без строки здесь флаг работал бы только один
+  // раз, что тренер не ожидает от «дадим позже».
+  if (process.argv.includes("--defer-diagnostic")) {
+    const { error: deferError } = await supabase
+      .from("student_data_sources")
+      .update({ diagnostic_test_declined_at: new Date().toISOString() })
+      .eq("id", source.id as string);
+    if (deferError) fail(`Не удалось отложить диагностический тест: ${deferError.message}`);
+    console.log("Диагностический тест отложен (diagnostic_test_declined_at проставлен).");
   }
 
   const { data: cycleRow, error: cycleError } = await supabase

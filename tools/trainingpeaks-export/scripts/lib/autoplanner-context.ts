@@ -142,6 +142,18 @@ export type Envelope = {
   dayHistogramQuality: number[];
   dayHistogramEasy: number[];
   weeksObserved: number;
+  /**
+   * ОБЪЁМ КОНВЕРТА НАЗВАН СО СЛОВ, А НЕ ИЗМЕРЕН [решение Игоря, 17.09.2026].
+   * weeksObserved остаётся честным нулём у анкетной стартовой точки — недель
+   * правда не наблюдали. Но «нет измеренного ряда» и «нет вообще ничего, от
+   * чего строить конверт» — разные вещи: у человека БЕЗ подключаемых часов
+   * (Honor и весь этот сегмент) история не появится никогда, а план нужен
+   * сегодня. Этот флаг — явное разрешение buildWeek пройти мимо порога
+   * MIN_WEEKS_FOR_ENVELOPE, если объём назван, а не молчаливое ослабление
+   * порога для всех. Ростер TrainingPeaks и ветка истории Intervals это поле
+   * никогда не ставят (undefined = false) — их путь не меняется ни на бит.
+   */
+  volumeIsReported?: boolean;
 };
 
 export type AthleteContext = AthleteAnchors & {

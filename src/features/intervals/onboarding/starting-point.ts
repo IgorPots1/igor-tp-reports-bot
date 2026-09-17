@@ -279,16 +279,53 @@ export function computeStartingPointFromHistory(
 /**
  * Стартовая точка по анкете — ОТДЕЛЬНАЯ ВЕТКА, а не история с подстановками.
  *
- * Здесь нечего измерять: нет ни ряда недель, ни распределения дней, ни темпа.
- * Всё, что есть, — объём со слов и число дней, которое человек готов бегать.
- * Разница с историей должна быть видна снаружи, поэтому поля, которых нет,
- * остаются пустыми, а не заполняются правдоподобными числами.
+ * Здесь нечего измерять: нет ни ряда недель, ни распределения дней. Всё, что
+ * есть, — объём со слов, число дней и, если тренер назвал его лично, темп
+ * лёгкого. Разница с историей должна быть видна снаружи, поэтому поля,
+ * которых НЕТ (длительная, распределение дней), остаются пустыми, а не
+ * заполняются правдоподобными числами.
+ *
+ * ОБЪЁМ СО СЛОВ ДАЁТ КОНВЕРТ, А НЕ ПУСТУЮ НЕДЕЛЮ [решение Игоря, 17.09.2026].
+ * До этой правки medianWeeklyMinutes был проставлен, а typicalRunMinutes и
+ * personal p10/p90 — намеренно нулевые: движок (buildWeek) читает их как
+ * «нет личных данных» и подставляет КОГОРТНЫЕ умолчания, игнорируя число,
+ * которое человек только что назвал. Теперь типичная тренировка выводится ИЗ
+ * ТОГО ЖЕ объёма (weekly / дней в неделю), а p10/p90 — ШИРОКАЯ полоса вокруг
+ * неё (±40%, а не измеренные перцентили: у нас нет ряда пробежек, чтобы
+ * посчитать настоящие). Ширина — это и есть «низкое доверие», выраженное
+ * числом, а не только пометкой в notes.
  */
-export function startingPointFromAnswers(answers: OnboardingAnswers): StartingPoint {
+export function startingPointFromAnswers(
+  answers: OnboardingAnswers,
+  options: { manualEasyPaceSec?: number } = {}
+): StartingPoint {
   const weekly = answers.selfReportedWeeklyMinutes ?? 0;
   const notes = ["истории в Intervals нет — стартовая точка целиком со слов ученика"];
-  if (!answers.selfReportedWeeklyMinutes) {
+
+  let typicalRunMinutes = 0;
+  let runMinutesP10 = 0;
+  let runMinutesP90 = 0;
+  if (weekly > 0) {
+    typicalRunMinutes = round(weekly / Math.max(answers.daysPerWeek, 1));
+    // ШИРЕ, ЧЕМ ИЗМЕРЕННЫЙ ПЕРЦЕНТИЛЬ БЫЛ БЫ У РЕАЛЬНОЙ ИСТОРИИ: там разброс
+    // редко превышает ±25–30% от медианы (замер на ростере). ±40% — намеренный
+    // запас поверх этого: число со слов может быть неточным само по себе, а не
+    // только «типично изменчивым», и полоса обязана нести оба источника шума.
+    runMinutesP10 = round(typicalRunMinutes * 0.6);
+    runMinutesP90 = round(typicalRunMinutes * 1.4);
+    notes.push(
+      `объём со слов: типичная тренировка ${typicalRunMinutes} мин выведена из недельного объёма и числа дней, ` +
+        `полоса ${runMinutesP10}–${runMinutesP90} мин намеренно широкая (±40%) — измеренного разброса нет`
+    );
+  } else {
     notes.push("объём со слов не указан — база нулевая, цикл начнётся с минимальной недели");
+  }
+
+  const hasManualEasyPace = options.manualEasyPaceSec !== undefined;
+  if (hasManualEasyPace) {
+    notes.push(
+      "темп лёгкого назван тренером лично, не измерен по выборке — доверие ниже, чем у медианы по пробежкам"
+    );
   }
 
   return {
@@ -303,15 +340,16 @@ export function startingPointFromAnswers(answers: OnboardingAnswers): StartingPo
     runsPerWeek: answers.daysPerWeek,
     dayHistogram: [0, 0, 0, 0, 0, 0, 0],
     weeksWithRuns: 0,
-    typicalRunMinutes: 0,
+    typicalRunMinutes,
     longestRunMinutes: 0,
     longRunMedianMinutes: 0,
-    runMinutesP10: 0,
-    runMinutesP90: 0,
+    runMinutesP10,
+    runMinutesP90,
     dayHistogramLong: [0, 0, 0, 0, 0, 0, 0],
-    easyPaceSec: null,
+    easyPaceSec: hasManualEasyPace ? (options.manualEasyPaceSec as number) : null,
     easyPaceSampleSize: 0,
     easyPaceManualCount: 0,
+    easyPaceOrigin: hasManualEasyPace ? "coach_stated" : undefined,
     dataLevel: "none",
     runsWithHeartrate: 0,
     runsTotal: 0,

@@ -167,7 +167,74 @@ const fromAnswers = startingPointFromAnswers(answers);
 assert.equal(fromAnswers.source, "questionnaire");
 assert.equal(fromAnswers.medianWeeklyMinutes, 200, "база со слов");
 assert.equal(fromAnswers.dataLevel, "none", "у ветки анкеты нет данных вообще");
-assert.equal(fromAnswers.easyPaceSec, null, "темп не выдумывается");
+assert.equal(fromAnswers.easyPaceSec, null, "темп не выдумывается без явного якоря от тренера");
+assert.equal(fromAnswers.easyPaceOrigin, undefined, "без якоря происхождение не проставляется");
 assert.equal(hasUsableHistory(fromAnswers), false, "анкета никогда не выдаёт себя за историю");
+
+// ── Объём со слов даёт конверт, а не пустую неделю [17.09.2026] ─────────────
+//
+// Сегмент без подключаемых часов (Honor и подобные) никогда не наберёт
+// историю: ждать её значит никогда не собрать план. buildWeek должен пройти
+// мимо порога MIN_WEEKS_FOR_ENVELOPE, когда объём назван, и по-прежнему
+// отказывать, когда не назван — это не смягчение порога вообще, а именно
+// узкое, явное исключение.
+const noVolumeAnswers: OnboardingAnswers = {
+  ...answers,
+  goalKind: "regular",
+  selfReportedWeeklyMinutes: null,
+};
+const noVolumeStart = startingPointFromAnswers(noVolumeAnswers);
+assert.equal(noVolumeStart.typicalRunMinutes, 0, "без объёма со слов типичная тренировка остаётся нулевой");
+assert.equal(noVolumeStart.runMinutesP10, 0);
+assert.equal(noVolumeStart.runMinutesP90, 0);
+
+const reportedAnswers: OnboardingAnswers = {
+  ...answers,
+  goalKind: "regular",
+  daysPerWeek: 3,
+  selfReportedWeeklyMinutes: 70,
+};
+const EASY_PACE_7_22 = 7 * 60 + 22; // 442 с/км
+const reportedStart = startingPointFromAnswers(reportedAnswers, { manualEasyPaceSec: EASY_PACE_7_22 });
+assert.equal(reportedStart.typicalRunMinutes, 23, "70 мин / 3 дня ≈ 23 мин типичная тренировка");
+assert.equal(reportedStart.runMinutesP10, 14, "пол — 60% от типичной, полоса намеренно широкая");
+assert.equal(reportedStart.runMinutesP90, 32, "потолок — 140% от типичной");
+assert.equal(reportedStart.easyPaceSec, EASY_PACE_7_22, "якорь — ровно тот, что назвал тренер");
+assert.equal(reportedStart.easyPaceOrigin, "coach_stated");
+assert.ok(
+  reportedStart.notes.some((note) => note.includes("широкая")),
+  "широкая полоса названа в заметках, а не молчит числом"
+);
+
+{
+  const { buildAnchors, buildEnvelope } = await import("../tools/trainingpeaks-export/scripts/lib/intervals-plan-adapter.ts");
+  const { buildWeek } = await import("../tools/trainingpeaks-export/scripts/lib/autoplanner-week.ts");
+  const { stubCatalog } = await import("../tools/trainingpeaks-export/scripts/lib/cycle-check-stubs.ts");
+
+  const cat = stubCatalog();
+  const weekStart = "2026-09-21"; // понедельник
+
+  // Без объёма — ОТКАЗ, как и раньше. Регресс здесь был бы тихим и опасным:
+  // случайно ослабленный порог пустил бы в план людей вообще без данных.
+  const envNoVolume = buildEnvelope(noVolumeStart);
+  const anchorsNoVolume = buildAnchors(noVolumeStart, null);
+  const weekNoVolume = buildWeek(anchorsNoVolume, envNoVolume, cat, weekStart, false);
+  assert.equal(weekNoVolume.refusedKind, "insufficient_data", "без объёма со слов buildWeek по-прежнему отказывает");
+
+  // С объёмом — план собирается, работа по усилию, якорь — тот, что назвал
+  // тренер, с пониженным доверием.
+  const envReported = buildEnvelope(reportedStart);
+  assert.equal(envReported.volumeIsReported, true, "конверт помечен как со слов");
+  const anchorsReported = buildAnchors(reportedStart, null);
+  assert.equal(anchorsReported.easy?.source, "easy_description", "якорь помечен как названный тренером");
+  assert.equal(anchorsReported.easy?.confidence, "medium_low", "доверие ниже, чем у измеренного якоря");
+  const weekReported = buildWeek(anchorsReported, envReported, cat, weekStart, false);
+  assert.equal(weekReported.refusedKind, null, "с объёмом со слов buildWeek больше не отказывает");
+  assert.ok(weekReported.sessions.length > 0, "неделя реально собралась, не осталась пустой");
+  assert.ok(
+    weekReported.notes.some((note) => note.includes("СО СЛОВ")),
+    "тренер видит прямым текстом, что конверт этой недели не измерен"
+  );
+}
 
 console.log("check:intervals-onboarding — все проверки пройдены");

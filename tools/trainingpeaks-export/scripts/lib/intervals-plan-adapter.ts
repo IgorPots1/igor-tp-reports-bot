@@ -49,6 +49,8 @@ export type StartingPointInput = {
   easyPaceSampleSize: number;
   /** Сколько из easyPaceSampleSize — темп со слов (data_level='manual'), не измеренный. */
   easyPaceManualCount: number;
+  /** "coach_stated" — темп назвал тренер лично, доверие ниже, чем у медианы по выборке. */
+  easyPaceOrigin?: "measured" | "coach_stated";
   dataLevel: "heartrate" | "pace_only" | "none";
 };
 
@@ -131,16 +133,31 @@ function thresholdConfidence(source: StoredThreshold["source"]): "high" | "mediu
 }
 
 export function buildAnchors(start: StartingPointInput, stored: StoredThreshold | null = null): AthleteAnchors {
+  // ТЕМП, НАЗВАННЫЙ ТРЕНЕРОМ ЛИЧНО, — ОТДЕЛЬНАЯ ВЕТКА, НЕ "ИЗМЕРЕН НУЛЁМ
+  // ВЫБОРКИ" [решение Игоря, 17.09.2026]. source: "intervals_easy_measured" при
+  // easyPaceSampleSize=0 читался бы как противоречие — «измерено», но нечем.
+  // easy_description — тот же слот, которым уже помечается темп со слов
+  // тренера на ростере TP; доверие здесь ниже фиксировано, а не через
+  // easyConfidence (та функция ждёт размер ВЫБОРКИ, а тут выборки нет вообще —
+  // одно наблюдение одного человека, который знает атлета).
   const easy: EasyAnchor | null =
     start.easyPaceSec === null
       ? null
-      : {
-          fastSec: start.easyPaceSec - EASY_BAND_HALF_S,
-          slowSec: start.easyPaceSec + EASY_BAND_HALF_S,
-          source: "intervals_easy_measured",
-          confidence: easyConfidence(start.easyPaceSampleSize, start.easyPaceManualCount),
-          effectiveN: start.easyPaceSampleSize,
-        };
+      : start.easyPaceOrigin === "coach_stated"
+        ? {
+            fastSec: start.easyPaceSec - EASY_BAND_HALF_S,
+            slowSec: start.easyPaceSec + EASY_BAND_HALF_S,
+            source: "easy_description",
+            confidence: "medium_low",
+            effectiveN: 1,
+          }
+        : {
+            fastSec: start.easyPaceSec - EASY_BAND_HALF_S,
+            slowSec: start.easyPaceSec + EASY_BAND_HALF_S,
+            source: "intervals_easy_measured",
+            confidence: easyConfidence(start.easyPaceSampleSize, start.easyPaceManualCount),
+            effectiveN: start.easyPaceSampleSize,
+          };
 
   return {
     // Числового идентификатора TrainingPeaks у этого человека нет. Ноль здесь —
@@ -239,6 +256,10 @@ export function buildEnvelope(start: StartingPointInput): Envelope {
     dayHistogramEasy: start.dayHistogram,
 
     weeksObserved: start.weeksObserved,
+    // Явно, а не "весь questionnaire": человек мог не назвать объём вообще
+    // (weekly=0), и тогда это по-прежнему НЕЧЕГО планировать, а не низкое
+    // доверие — buildWeek обязан отказать так же, как отказывал раньше.
+    volumeIsReported: start.source === "questionnaire" && start.medianWeeklyMinutes > 0,
   };
 }
 
