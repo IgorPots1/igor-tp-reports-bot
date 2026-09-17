@@ -126,6 +126,7 @@ type View =
       canLogUnplanned: boolean;
       coachReplies?: CoachReply[];
       effortOptions: EffortOption[];
+      effortQuestionRu: string;
       painOptions: PainOption[];
       restNoteRu: string | null;
       weekNotes: SessionNote[];
@@ -1596,19 +1597,28 @@ function PlanScreen(props: {
           card={view.today}
           initData={props.initData}
           effortOptions={view.effortOptions}
+          effortQuestionRu={view.effortQuestionRu}
           painOptions={view.painOptions}
           onChanged={props.onChanged}
           isManualEntry={props.isManualEntry}
           isToday
         />
       ) : (
-        <Banner text={view.restNoteRu ?? "Сегодня тренировки нет."} />
+        // ТИХАЯ СТРОКА, НЕ КАРТОЧКА [решение Игоря, 17.09.2026]. Раньше здесь
+        // стоял Banner — тот же бокс, что у карточки тренировки, — и день без
+        // тренировки читался как ещё одно задание. Объяснение «отдых это
+        // часть плана» теперь сказано один раз в weekNotes выше; здесь только
+        // факт: когда следующая.
+        <p style={{ margin: "0 0 16px", color: MUTED, lineHeight: 1.5 }}>
+          {view.restNoteRu ?? "Сегодня тренировки нет."}
+        </p>
       )}
 
       {view.canLogUnplanned ? (
         <UnplannedCheckin
           initData={props.initData}
           effortOptions={view.effortOptions}
+          effortQuestionRu={view.effortQuestionRu}
           painOptions={view.painOptions}
           onChanged={props.onChanged}
           isManualEntry={props.isManualEntry}
@@ -1624,6 +1634,7 @@ function PlanScreen(props: {
               card={card}
               initData={props.initData}
               effortOptions={view.effortOptions}
+              effortQuestionRu={view.effortQuestionRu}
               painOptions={view.painOptions}
               onChanged={props.onChanged}
               isManualEntry={props.isManualEntry}
@@ -1854,6 +1865,7 @@ function SessionBlock(props: {
   card: SessionCard;
   initData: string;
   effortOptions: EffortOption[];
+  effortQuestionRu: string;
   painOptions: PainOption[];
   onChanged: (note: string) => void;
   isManualEntry: boolean;
@@ -1966,6 +1978,7 @@ function SessionBlock(props: {
           initData={props.initData}
           sessionId={card.sessionId}
           effortOptions={props.effortOptions}
+          effortQuestionRu={props.effortQuestionRu}
           painOptions={props.painOptions}
           onChanged={props.onChanged}
           manualEntry={props.isManualEntry}
@@ -1988,6 +2001,7 @@ function SessionBlock(props: {
 function UnplannedCheckin(props: {
   initData: string;
   effortOptions: EffortOption[];
+  effortQuestionRu: string;
   painOptions: PainOption[];
   onChanged: (note: string) => void;
   isManualEntry: boolean;
@@ -2016,6 +2030,7 @@ function UnplannedCheckin(props: {
             initData={props.initData}
             sessionId={null}
             effortOptions={props.effortOptions}
+            effortQuestionRu={props.effortQuestionRu}
             painOptions={props.painOptions}
             onChanged={props.onChanged}
             manualEntry={props.isManualEntry}
@@ -2030,6 +2045,7 @@ function CheckinForm(props: {
   initData: string;
   sessionId: string | null;
   effortOptions: EffortOption[];
+  effortQuestionRu: string;
   painOptions: PainOption[];
   onChanged: (note: string) => void;
   /** Часов нет: перед вопросами про усилие — время, дистанция, пульс, темп. */
@@ -2175,7 +2191,7 @@ function CheckinForm(props: {
         </div>
       ) : null}
 
-      <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Как далось?</p>
+      <p style={{ margin: "0 0 8px", fontWeight: 600 }}>{props.effortQuestionRu}</p>
       <div style={{ display: "grid", gap: 6 }}>
         {props.effortOptions.map((option) => (
           <button

@@ -8,11 +8,15 @@
 
 import { BEGINNER_LADDER, stepByIndex } from "@/features/methodology/beginner";
 
-import { EFFORT_OPTIONS, PAIN_OPTIONS } from "./effort-scale";
+import { EFFORT_OPTIONS, PAIN_OPTIONS, SIMPLE_EFFORT_OPTIONS } from "./effort-scale";
 import { allowedMoveTargets } from "./move";
 import type { Checkin, PlanSession, ProgressionState, SessionNote, SessionSegment, SessionStep } from "./types";
 
 const DAY_RU_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+/** Предложный падеж дня недели — «во вторник», не «в Вторник». */
+const DAY_RU_LOCATIVE = [
+  "в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье",
+];
 const RU_MONTHS = [
   "января", "февраля", "марта", "апреля", "мая", "июня",
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
@@ -110,6 +114,8 @@ export type StudentView =
       /** Что ответил тренер. Пусто — ответов пока нет. */
       coachReplies: CoachReplyView[];
       effortOptions: typeof EFFORT_OPTIONS;
+      /** Заголовок вопроса об усилии — разный для лестницы и для лёгкой формы. */
+      effortQuestionRu: string;
       painOptions: typeof PAIN_OPTIONS;
       restNoteRu: string | null;
       /** Заметки к неделе целиком — один раз наверху экрана, не в каждой карточке. */
@@ -270,14 +276,17 @@ export function buildStudentView(input: {
       }
     : null;
 
-  // ДЕНЬ БЕЗ ТРЕНИРОВКИ ОБЪЯСНЯЕТСЯ. Пустой экран новичок читает как «что-то
-  // сломалось» или «я что-то пропустила». У новичка отдых — часть методики, и
-  // сказать это прямо дешевле, чем потом отвечать на вопрос в личке.
+  // ДЕНЬ БЕЗ ТРЕНИРОВКИ ОБЪЯСНЯЕТСЯ, НО НЕ КАЖДЫЙ РАЗ ОДНИМ И ТЕМ ЖЕ ТЕКСТОМ
+  // [решение Игоря, 17.09.2026]. Пустой экран читается как «что-то сломалось»,
+  // и совсем без объяснения нельзя — но «отдых это часть плана» сказанное на
+  // КАЖДЫЙ такой день выглядит как будто отдых сам по себе задание. Обяснение
+  // теперь живёт один раз в weekNotes (see PlanCycle.weekNotes); здесь —
+  // только факт, тихой строкой, а не карточкой: когда следующая тренировка.
   const restNote =
     todaySession === null
       ? upcoming.length > 0
-        ? `Сегодня отдых. Ближайшая тренировка — ${DAY_RU_SHORT[upcoming[0].dayIdx]}, ${formatRuDay(upcoming[0].sessionDate)}. Отдых у новичка это часть плана, а не пропуск: тело растёт между тренировками, а не на них.`
-        : "Сегодня отдых. Ближайших тренировок в плане пока нет, тренер их добавит."
+        ? `Следующая тренировка ${DAY_RU_LOCATIVE[upcoming[0].dayIdx]}, ${formatRuDay(upcoming[0].sessionDate)}.`
+        : "Без тренировки сегодня. Тренер скоро добавит следующую."
       : null;
 
   return {
@@ -291,7 +300,13 @@ export function buildStudentView(input: {
     // активность из Intervals не приехала: человек мог пробежать и не записать.
     canLogUnplanned: !input.hasUnplannedCheckinToday && todaySession === null,
     coachReplies: input.coachReplies ?? [],
-    effortOptions: EFFORT_OPTIONS,
+    // ЛЕСТНИЦА ЛИ — ПО ПРОГРЕССИИ, ТОТ ЖЕ ПРИЗНАК, ЧТО У ladder ВЫШЕ [решение
+    // Игоря, 17.09.2026]. Три варианта не различают четыре полосы RPE, по
+    // которым decideNextStep двигает ступень — поэтому лёгкая форма только
+    // там, где прогрессия вообще не считается (см. submitCheckin, ветка
+    // "progression === null" в service.ts).
+    effortOptions: input.progression ? EFFORT_OPTIONS : SIMPLE_EFFORT_OPTIONS,
+    effortQuestionRu: input.progression ? "Как далось?" : "Как прошла тренировка?",
     painOptions: PAIN_OPTIONS,
     restNoteRu: restNote,
     weekNotes: input.weekNotes ?? [],

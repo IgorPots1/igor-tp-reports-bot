@@ -24,7 +24,7 @@
 
 export type EffortOption = {
   /** Код кнопки. Уходит в callback/запрос, в базе не хранится. */
-  code: EffortCode;
+  code: EffortCode | SimpleEffortCode;
   /** Текст на кнопке. Хранится рядом с числом. */
   labelRu: string;
   /** Подпись под кнопкой — то, по чему человек узнаёт своё состояние. */
@@ -34,6 +34,13 @@ export type EffortOption = {
 };
 
 export type EffortCode = "very_easy" | "easy" | "noticeable" | "hard" | "very_hard";
+
+/**
+ * Лёгкая шкала для тех, кто не на лестнице новичка [решение Игоря,
+ * 17.09.2026]. Коды НЕ пересекаются с EffortCode лестницы — один BY_CODE
+ * ниже обслуживает оба набора, и коллизия кода молча подменила бы чужой ответ.
+ */
+export type SimpleEffortCode = "simple_good" | "simple_normal" | "simple_hard";
 
 export const EFFORT_OPTIONS: EffortOption[] = [
   {
@@ -68,10 +75,52 @@ export const EFFORT_OPTIONS: EffortOption[] = [
   },
 ];
 
-const BY_CODE = new Map<string, EffortOption>(EFFORT_OPTIONS.map((option) => [option.code, option]));
+/**
+ * Три варианта вместо пяти [решение Игоря, 17.09.2026]. НЕ ДЛЯ ЛЕСТНИЦЫ:
+ * decideNextStep различает четыре полосы RPE, и три кнопки их не покроют —
+ * поэтому submitCheckin (service.ts) не зовёт прогрессию вообще, когда
+ * человек не на лестнице, а не пытается втиснуть три ответа в четыре полосы.
+ */
+export const SIMPLE_EFFORT_OPTIONS: EffortOption[] = [
+  {
+    code: "simple_good",
+    labelRu: "Хорошо",
+    hintRu: "дышалось ровно, разговаривать могли",
+    rpe: 3,
+  },
+  {
+    code: "simple_normal",
+    labelRu: "Нормально",
+    hintRu: "как и планировали, без сюрпризов",
+    rpe: 5,
+  },
+  {
+    code: "simple_hard",
+    labelRu: "Тяжело",
+    hintRu: "к концу было тяжело, еле дотерпели",
+    rpe: 7,
+  },
+];
+
+const BY_CODE = new Map<string, EffortOption>(
+  [...EFFORT_OPTIONS, ...SIMPLE_EFFORT_OPTIONS].map((option) => [option.code, option])
+);
 
 export function effortByCode(code: string): EffortOption | null {
   return BY_CODE.get(code) ?? null;
+}
+
+/**
+ * Ответ для НЕ-лестничного чек-ина: без «ступени», прогрессия его не решает.
+ * checkinReplyRu (выше по файлу) остаётся ТОЛЬКО для лестницы.
+ */
+export function simpleCheckinReplyRu(pain: boolean): string {
+  if (pain) {
+    return (
+      "Записал. Если болит сильно или не проходит за пару дней, не бегите — напишите тренеру."
+    );
+  }
+  return "Записал. Тренер видит ваш отчёт.";
 }
 
 /**

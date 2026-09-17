@@ -153,11 +153,30 @@ async function main(): Promise<void> {
     expect(c.comment_text === "бежала вдоль набережной", "комментарий долетел");
   }
 
+  // ИСПРАВЛЕНО [17.09.2026]: раньше здесь ожидалось ОБРАТНОЕ — что прогрессия
+  // ЗАВЕДЁТСЯ даже для этой песочницы без единой строки в
+  // intervals_beginner_progression. Это была не проверка правильного
+  // поведения, а фиксация бага: applyCheckinToProgression звался безусловно
+  // для всех, и человек без лестницы получал фантомную ступень 1→2 и ответ
+  // «идём на ступень». submitCheckin теперь гейтит прогрессию по
+  // progression !== null — у этой песочницы прогрессии нет и не появляется.
   const progressionAfter = await getProgression(sourceId);
-  expect(
-    JSON.stringify(progressionBefore) !== JSON.stringify(progressionAfter) || progressionAfter !== null,
-    "прогрессия обновилась (applyCheckinToProgression отработал как для обычного чек-ина)"
-  );
+  expect(progressionBefore === null, "до чек-ина прогрессии не было — песочница не на лестнице");
+  expect(progressionAfter === null, "и после чек-ина прогрессия НЕ завелась — не на лестнице, не считаем");
+  if (entry1.ok) {
+    const { data: checkinRow2 } = await supabase
+      .from("intervals_checkins")
+      .select("step_before, step_after, progression_action")
+      .eq("id", entry1.checkin.checkinId)
+      .single();
+    const c2 = checkinRow2 as Record<string, unknown>;
+    expect(c2.step_before === null, "чек-ин записан без ступени, а не с выдуманной");
+    expect(c2.progression_action === null, "и без progression_action");
+    expect(
+      entry1.checkin.replyRu === "Записал. Тренер видит ваш отчёт.",
+      `ответ — простой, без «ступени»: ${entry1.checkin.replyRu}`
+    );
+  }
 
   step("ВТОРАЯ ЗАПИСЬ: ТОЛЬКО ВРЕМЯ, БЕЗ ДИСТАНЦИИ И ПУЛЬСА");
   const entry2 = await submitManualEntry({

@@ -6,7 +6,7 @@
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 import { BEGINNER_METHODOLOGY_ID, BEGINNER_METHODOLOGY_VERSION } from "@/features/methodology/beginner";
 
-import { checkinReplyRu, effortByCode, painByCode } from "./effort-scale";
+import { checkinReplyRu, effortByCode, painByCode, simpleCheckinReplyRu } from "./effort-scale";
 import { buildCabinetView, type CabinetView } from "./cabinet-view";
 import { decideMove, weekdayIndex, type MoveDecision } from "./move";
 import { applyCheckinToProgression } from "./progression";
@@ -250,10 +250,11 @@ export type SubmitCheckinResult =
   | {
       ok: true;
       replyRu: string;
-      stepBefore: number;
-      stepAfter: number;
-      action: string;
-      reason: string;
+      /** null — не на лестнице, прогрессия эту тренировку не решала вообще. */
+      stepBefore: number | null;
+      stepAfter: number | null;
+      action: string | null;
+      reason: string | null;
       checkinId: string;
     }
   | { ok: false; code: "bad_effort" | "bad_pain" | "unknown_session" | "wrong_owner"; messageRu: string };
@@ -304,6 +305,46 @@ export async function submitCheckin(input: {
     getOnboardingAnswers(input.sourceId),
   ]);
 
+  // Тренировка того же дня, если она уже приехала. Отсутствие — норма, а не сбой.
+  const activities = await listActivitiesInRange(input.sourceId, sessionDate, sessionDate);
+  const activityId = activities[0]?.activityId ?? null;
+
+  // НЕ НА ЛЕСТНИЦЕ — ПРОГРЕССИЮ НЕ СЧИТАЕМ ВООБЩЕ [решение Игоря, 17.09.2026].
+  // Раньше applyCheckinToProgression звался безусловно для всех: у неё
+  // state?.currentStep ?? 1 молча подставлял ступень 1 человеку, который на
+  // лестнице не стоял вообще (Валентина, Дарья — обычный цикл, не методика
+  // новичка), а saveProgression следом заводил ей фантомную строку
+  // intervals_beginner_progression и ответ «идём на ступень 2». Гейт — по
+  // прогрессии: она существует ТОЛЬКО у тех, кого реально ведёт лестница
+  // (заводится при первой генерации плана новичка, см. runBeginnerBranch).
+  if (progression === null) {
+    const checkin = await saveCheckin({
+      sourceId: input.sourceId,
+      planSessionId: input.planSessionId,
+      activityId,
+      sessionDate,
+      effortRpe: effort.rpe,
+      effortLabel: effort.labelRu,
+      pain: painOption.pain,
+      painNote: null,
+      commentText: input.commentText,
+      voiceFileId: input.voiceFileId,
+      stepBefore: null,
+      stepAfter: null,
+      progressionAction: null,
+      progressionReason: null,
+    });
+    return {
+      ok: true,
+      replyRu: simpleCheckinReplyRu(painOption.pain),
+      stepBefore: null,
+      stepAfter: null,
+      action: null,
+      reason: null,
+      checkinId: checkin.id,
+    };
+  }
+
   const applied = applyCheckinToProgression({
     state: progression,
     sourceId: input.sourceId,
@@ -312,10 +353,6 @@ export async function submitCheckin(input: {
     pain: painOption.pain,
     canRunContinuously: answers?.canRunContinuously ?? null,
   });
-
-  // Тренировка того же дня, если она уже приехала. Отсутствие — норма, а не сбой.
-  const activities = await listActivitiesInRange(input.sourceId, sessionDate, sessionDate);
-  const activityId = activities[0]?.activityId ?? null;
 
   const checkin = await saveCheckin({
     sourceId: input.sourceId,
