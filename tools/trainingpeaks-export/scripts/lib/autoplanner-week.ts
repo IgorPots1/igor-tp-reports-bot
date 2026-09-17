@@ -431,10 +431,17 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
  * остаётся ориентиром для уличной пробежки, только не выдаётся за цель.
  * Флаг runsOnTreadmill ставится ОДИН РАЗ на стартовой точке (из run_surfaces
  * анкеты) и не спрашивается заново на каждой сессии — см. types.ts.
+ *
+ * ФОРМУЛИРОВКА «МЕЖДУ X И Y», А НЕ «X–Y» [пойман живым прогоном]. Канонический
+ * парсер темпа (easy-pace-parse.ts, общий с ростером TP) читает тире/«до» между
+ * двумя M:SS как настоящий диапазон — «X–Y» в noPaceText давало бы round-trip
+ * ЛИШНИЙ диапазон при нуле сегментов с реальной целью, и вся сессия молча уходила
+ * в defer (round_trip_mismatch). Парсер общий и трогать его нельзя, поэтому число
+ * остаётся, но связка слов — та, которую он не ловит ни одним из трёх правил.
  */
-function zone2Segment(a: AthleteAnchors, minutes: number, label: string, eb: { fast: number; slow: number }): Segment {
+export function zone2Segment(a: AthleteAnchors, minutes: number, label: string, eb: { fast: number; slow: number }): Segment {
   if (a.runsOnTreadmill) {
-    return { minutes, label, fastSec: null, slowSec: null, noPaceText: `по ощущению, на улице ориентир ${rangeText(eb.fast, eb.slow)}` };
+    return { minutes, label, fastSec: null, slowSec: null, noPaceText: `по ощущению, на улице ориентир между ${fp(eb.fast)} и ${fp(eb.slow)}` };
   }
   return { minutes, label, fastSec: eb.fast, slowSec: eb.slow };
 }

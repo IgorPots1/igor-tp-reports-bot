@@ -235,6 +235,31 @@ assert.ok(
     weekReported.notes.some((note) => note.includes("СО СЛОВ")),
     "тренер видит прямым текстом, что конверт этой недели не измерен"
   );
+
+  // ── Дорожка: оговорка не должна обманывать канонический парсер темпа
+  // [пойман живым прогоном на Валентине, 17.09.2026] ──
+  //
+  // «7:07–7:37» в noPaceText читается ranges() (easy-pace-parse.ts, ОБЩИЙ с
+  // ростером TP) как настоящий диапазон, хотя сегмент структурно без цели
+  // (fastSec/slowSec = null) — round-trip находит диапазон, которого не
+  // ждал, и ВСЯ качественная сессия уходит в defer молча. Живой прогон снёс
+  // качество на всех 12 неделях Валентины именно так; регресс закрывает
+  // ровно эту дыру, а не общее поведение zone2Segment.
+  const { zone2Segment, renderDescription, verifyRoundTrip } = await import(
+    "../tools/trainingpeaks-export/scripts/lib/autoplanner-week.ts"
+  );
+  const anchorsTreadmill = { ...anchorsReported, runsOnTreadmill: true };
+  const eb = { fast: 427, slow: 457 }; // 7:07–7:37 /км
+  const treadmillSeg = zone2Segment(anchorsTreadmill, 15, "Разминка, спокойно (Zone 2)", eb);
+  assert.equal(treadmillSeg.fastSec, null, "на дорожке сегмент разминки без числовой цели");
+  assert.ok(treadmillSeg.noPaceText?.includes("между"), "оговорка сформулирована через «между X и Y»");
+  const treadmillDesc = renderDescription([treadmillSeg]);
+  const treadmillRt = verifyRoundTrip(treadmillDesc, [treadmillSeg]);
+  assert.equal(treadmillRt.parsedRanges, 0, "оговорка не должна давать канонический диапазон темпа");
+  assert.equal(treadmillRt.ok, true, "round-trip не должен спотыкаться о слова «на улице ориентир»");
+
+  const nonTreadmillSeg = zone2Segment(anchorsReported, 15, "Разминка, спокойно (Zone 2)", eb);
+  assert.equal(nonTreadmillSeg.fastSec, eb.fast, "без флага дорожки сегмент остаётся с числовой целью, как раньше");
 }
 
 console.log("check:intervals-onboarding — все проверки пройдены");
