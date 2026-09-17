@@ -250,7 +250,7 @@ assert.ok(
   );
   const anchorsTreadmill = { ...anchorsReported, runsOnTreadmill: true };
   const eb = { fast: 427, slow: 457 }; // 7:07–7:37 /км
-  const treadmillSeg = zone2Segment(anchorsTreadmill, 15, "Разминка, спокойно (Zone 2)", eb);
+  const treadmillSeg = zone2Segment(anchorsTreadmill, 15, "Разминка, спокойно", eb);
   assert.equal(treadmillSeg.fastSec, null, "на дорожке сегмент разминки без числовой цели");
   assert.ok(treadmillSeg.noPaceText?.includes("между"), "оговорка сформулирована через «между X и Y»");
   const treadmillDesc = renderDescription([treadmillSeg]);
@@ -258,8 +258,38 @@ assert.ok(
   assert.equal(treadmillRt.parsedRanges, 0, "оговорка не должна давать канонический диапазон темпа");
   assert.equal(treadmillRt.ok, true, "round-trip не должен спотыкаться о слова «на улице ориентир»");
 
-  const nonTreadmillSeg = zone2Segment(anchorsReported, 15, "Разминка, спокойно (Zone 2)", eb);
+  const nonTreadmillSeg = zone2Segment(anchorsReported, 15, "Разминка, спокойно", eb);
   assert.equal(nonTreadmillSeg.fastSec, eb.fast, "без флага дорожки сегмент остаётся с числовой целью, как раньше");
+
+  // ── Расстановка дней при нулевой истории — не подряд [пойман живым прогоном
+  // на Валентине, 17.09.2026] ──
+  //
+  // У анкетной ветки все четыре гистограммы дней нулевые, и старый фолбэк
+  // (daysByPreference на нулях) вырождался в голое возрастание индекса: длительная
+  // воскресеньем (LONG_DAY_FALLBACK), а качество с лёгким доставались первым двум
+  // свободным дням — понедельнику и вторнику. Итог: три тренировки недели без
+  // единого дня отдыха между любой парой соседних (пн+вт подряд, и вс→пн через
+  // границу недель тоже подряд). Игорь поймал это глазами в готовом плане.
+  const { placeRolesByPractice, DAY_RU } = await import(
+    "../tools/trainingpeaks-export/scripts/lib/autoplanner-week.ts"
+  );
+  const zeroHist = { all: [0, 0, 0, 0, 0, 0, 0], long: [0, 0, 0, 0, 0, 0, 0],
+    quality: [0, 0, 0, 0, 0, 0, 0], easy: [0, 0, 0, 0, 0, 0, 0] };
+  const placed = placeRolesByPractice(3, { quality: 1, long: 1 }, zeroHist);
+  const trainingDays = [...placed.roles.keys()].sort((x, y) => x - y);
+  assert.equal(trainingDays.length, 3, `дней получилось ${trainingDays.length}, ждали 3`);
+  const isAdjacentCircular = (a: number, b: number): boolean => {
+    const diff = Math.abs(a - b) % 7;
+    return Math.min(diff, 7 - diff) <= 1;
+  };
+  for (let i = 0; i < trainingDays.length; i++) {
+    for (let j = i + 1; j < trainingDays.length; j++) {
+      assert.ok(
+        !isAdjacentCircular(trainingDays[i], trainingDays[j]),
+        `при нулевой истории дни ${DAY_RU[trainingDays[i]]} и ${DAY_RU[trainingDays[j]]} стоят подряд — нет ни одного дня отдыха между ними`
+      );
+    }
+  }
 }
 
 console.log("check:intervals-onboarding — все проверки пройдены");

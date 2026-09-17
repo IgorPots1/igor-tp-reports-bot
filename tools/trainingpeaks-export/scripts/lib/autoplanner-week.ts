@@ -203,6 +203,46 @@ function daysByPreference(own: number[], all: number[]): number[] {
   return own.map((c, i) => ({ c, i })).sort((x, y) => y.c - x.c || all[y.i] - all[x.i] || x.i - y.i).map((x) => x.i);
 }
 
+/** Расстояние между днями по кругу недели (Вс→Пн — тоже соседний день, не край). */
+function circularDayDistance(a: number, b: number): number {
+  const diff = Math.abs(a - b) % 7;
+  return Math.min(diff, 7 - diff);
+}
+
+/**
+ * ПОРЯДОК ДНЕЙ ПРИ НУЛЕВОЙ ИСТОРИИ ЦЕЛИКОМ [решение Игоря, 17.09.2026].
+ *
+ * У анкетной ветки (истории в Intervals нет вообще — Honor и подобные) все четыре
+ * гистограммы нулевые с рождения. daysByPreference на нулях вырождается в сортировку
+ * по возрастанию индекса — то есть «бери понедельник, потом вторник, потом...». У
+ * Валентины (3 беговых дня, длительная зафиксирована воскресеньем по LONG_DAY_FALLBACK)
+ * это дало лёгкий+лёгкий подряд пн-вт внутри недели И длительную в воскресенье вплотную
+ * к лёгкому в понедельник следующей — то есть три тренировки недели без единого дня
+ * отдыха между любой парой соседних. Ноль наблюдений — не повод расставлять дни
+ * ХУЖЕ, чем наугад; это НАРОЧНЫЙ порядок, который жадно берёт день, дальше всего по
+ * кругу недели от уже занятых, вместо голого возрастания индекса.
+ */
+function spreadDayOrder(alreadyUsed: number[]): number[] {
+  const used = [...alreadyUsed];
+  const remaining = new Set([0, 1, 2, 3, 4, 5, 6]);
+  const order: number[] = [];
+  while (remaining.size > 0) {
+    let best: number | null = null;
+    let bestScore = -1;
+    for (const d of remaining) {
+      const score = used.length === 0 ? 0 : Math.min(...used.map((u) => circularDayDistance(d, u)));
+      if (score > bestScore || (score === bestScore && (best === null || d < best))) {
+        bestScore = score;
+        best = d;
+      }
+    }
+    order.push(best as number);
+    used.push(best as number);
+    remaining.delete(best as number);
+  }
+  return order;
+}
+
 /**
  * РОЛЬ СТАВИТСЯ В СВОЙ ОБЫЧНЫЙ ДЕНЬ, А НЕ В ЛЮБОЙ СВОБОДНЫЙ (правка 12.08).
  *
@@ -273,12 +313,19 @@ export function placeRolesByPractice(
     take(longDay, "long");
   }
 
+  // ИСТОРИИ НЕТ ВООБЩЕ (все четыре гистограммы нулевые) — daysByPreference на нулях
+  // выродился бы в голое возрастание индекса. Считаем РАЗ, до качественных и лёгких:
+  // жадный порядок должен видеть уже занятую длительную, чтобы не лепить лёгкий
+  // вплотную к ней тем же способом, каким раньше это делала ascending-заглушка.
+  const noHistoryAtAll = hist.all.every((c) => c === 0);
+  const spreadOrderFromLong = noHistoryAtAll ? spreadDayOrder(longDay != null ? [longDay] : []) : null;
+
   // (2) КАЧЕСТВЕННЫЕ — в свои дни, с соблюдением смежности.
   const picked: number[] = [];
   // Желаемый день качества идёт ПЕРВЫМ кандидатом; инварианты смежности всё равно проверяются
   // ниже и могут его отклонить — тогда спор уходит пометкой тренеру, а не молча.
   const wantQ = pinned.get("quality");
-  const qPref = [...(wantQ != null ? [wantQ] : []), ...daysByPreference(hist.quality, hist.all)];
+  const qPref = [...(wantQ != null ? [wantQ] : []), ...(spreadOrderFromLong ?? daysByPreference(hist.quality, hist.all))];
   for (const d of qPref) {
     if (picked.length >= counts.quality || used.size >= n) break;
     if (used.has(d) || !allowed(d)) continue;
@@ -292,7 +339,12 @@ export function placeRolesByPractice(
   }
 
   // (3) ЛЁГКИЕ — остаток по своей гистограмме, затем по общей, затем любые свободные дни.
-  for (const d of [...daysByPreference(hist.easy, hist.all), ...daysByPreference(hist.all, hist.all), 0, 1, 2, 3, 4, 5, 6]) {
+  // При нулевой истории — пересчитанный порядок: длительная и качественные уже заняли
+  // часть недели, и лёгкий должен уйти дальше от НИХ, а не от одной длительной.
+  const easyOrder = noHistoryAtAll
+    ? spreadDayOrder([...used])
+    : [...daysByPreference(hist.easy, hist.all), ...daysByPreference(hist.all, hist.all), 0, 1, 2, 3, 4, 5, 6];
+  for (const d of easyOrder) {
     if (used.size >= n) break;
     if (used.has(d) || !allowed(d)) continue;
     take(d, "easy");
@@ -448,7 +500,7 @@ export function zone2Segment(a: AthleteAnchors, minutes: number, label: string, 
 
 function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }): Segment[] {
   const C = CANONICAL_WARMUP;
-  const segs: Segment[] = [zone2Segment(a, C.easyIn, "Разминка, спокойно (Zone 2)", eb)];
+  const segs: Segment[] = [zone2Segment(a, C.easyIn, "Разминка, спокойно", eb)];
   const faster = resolvePace(a, "steady_tempo", "maintenance", null);
   const tempo = resolvePace({ ...a, quality: null }, "controlled_threshold", "maintenance", null);
   const t = tempo.ok ? (tempo as Resolved) : null;
@@ -463,7 +515,7 @@ function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }):
   }
   if (t) segs.push({ minutes: C.tempo, label: "В темпе", fastSec: t.absPaceMinS, slowSec: t.absPaceMaxS });
   segs.push({ minutes: C.strides, label: "Ускорения, 3–4 коротких по пятнадцать секунд", fastSec: null, slowSec: null, noPaceText: "свободно, по ощущениям" });
-  segs.push(zone2Segment(a, C.easyOut, "Спокойно (Zone 2)", eb));
+  segs.push(zone2Segment(a, C.easyOut, "Спокойно", eb));
   segs.push({ minutes: C.pause, label: "Пауза перед работой", fastSec: null, slowSec: null, noPaceText: "полный отдых, часы на паузу" });
   return segs;
 }
@@ -527,7 +579,7 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     // Простая разминка (L0–L1) по методологии из РЕАЛЬНЫХ описаний: 86% качественных — 10 минут,
     // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно». Ускорения внутри разминки
     // встречаются лишь в 15% — в простой разминке НЕ ставим.
-    : [zone2Segment(a, warmMin, "Разминка, спокойно (Zone 2)", eb)];
+    : [zone2Segment(a, warmMin, "Разминка, спокойно", eb)];
   for (let i = 0; i < p.reps; i++) {
     segs.push(w
       ? { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS }
@@ -535,7 +587,7 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
           noPaceText: effortText(p.rpeTarget) });
     if (i < p.reps - 1) segs.push(zone2Segment(a, p.recoveryMinutes, "Трусца", eb));
   }
-  segs.push(zone2Segment(a, p.cooldownMinutes, "Заминка, свободно (Zone 2)", eb));
+  segs.push(zone2Segment(a, p.cooldownMinutes, "Заминка, свободно", eb));
   const total = segs.reduce((s, x) => s + x.minutes, 0);
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);

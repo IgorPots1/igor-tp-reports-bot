@@ -147,11 +147,23 @@ async function main(): Promise<void> {
   if (sourceError) fail(`Не удалось прочитать источник: ${sourceError.message}`);
   if (!source) fail(`Источник для athlete ${athleteId} не заведён`);
 
-  // ── Анкета ──
+  // ── Параметры генерации (из флагов) ──
   //
-  // Из флагов она собирается ВСЕГДА, а в базу уходит только при --commit.
-  // Показать план должно быть можно до того, как заведена хоть одна строка:
-  // холостой прогон — это разговор с тренером, а не операция над данными.
+  // ФЛАГИ — ЭТО НЕ АНКЕТА [решение Игоря, 17.09.2026]. Раньше --commit писал
+  // --goal/--days/--weekly-minutes/... ПРЯМО В intervals_onboarding_answers,
+  // поверх того, что человек реально ответил в форме — план для Валентины
+  // (--goal=improve, объём/дни от тренера) стёр её настоящие regular/3/70,
+  // а бейдж «ответила сама» продолжал показывать это как её слова. Параметры
+  // ПЛАНА и ОТВЕТЫ УЧЕНИКА — разные вещи с разной судьбой: план можно
+  // пересобрать хоть каждую неделю, а её ответ — это то, что она сказала
+  // один раз, и трогать его должна только её собственная форма (или явная,
+  // отдельная команда тренера на подмену конкретного поля — такой команды
+  // здесь нет и не должно быть).
+  //
+  // Флаги ниже живут только в памяти этого прогона и решают, каким цикл
+  // ПОСЧИТАТЬ; в intervals_onboarding_answers ничего не пишут. Настоящие
+  // параметры генерации остаются в самом цикле (intervals_plan_cycles),
+  // это его законное поле.
   const goalArg = arg("goal");
   let answersFromFlags: OnboardingAnswers | null = null;
   if (goalArg) {
@@ -184,27 +196,10 @@ async function main(): Promise<void> {
     };
   }
 
-  if (goalArg && COMMIT) {
-    const { error } = await supabase.from("intervals_onboarding_answers").upsert(
-      {
-        source_id: source.id,
-        goal_kind: answersFromFlags!.goalKind,
-        race_date: answersFromFlags!.raceDate,
-        race_distance_km: answersFromFlags!.raceDistanceKm,
-        days_per_week: answersFromFlags!.daysPerWeek,
-        self_reported_weekly_minutes: answersFromFlags!.selfReportedWeeklyMinutes,
-        unavailable_weekdays: answersFromFlags!.unavailableWeekdays,
-        preferred_long_weekday: answersFromFlags!.preferredLongWeekday,
-        can_run_continuously: answersFromFlags!.canRunContinuously,
-      },
-      { onConflict: "source_id" }
-    );
-    if (error) fail(`Не удалось сохранить анкету: ${error.message}`);
-    console.log("Анкета сохранена.");
-  }
-
-  // Сохранённая анкета нужна только когда флагов не передали. Ошибка её чтения
-  // при работающих флагах не должна мешать показать план.
+  // Сохранённая анкета читается ВСЕГДА, даже когда флаги переданы: покрытия,
+  // стабильность недели, что срывает неделю и прочие поля, которых во флагах
+  // нет вообще, должны дойти до старта (см. runsOnTreadmill) и до отчёта
+  // тренеру, а не потеряться потому, что кто-то передал --goal.
   let answers: OnboardingAnswers | null = answersFromFlags;
   let answersRowId: string | null = null;
   {
