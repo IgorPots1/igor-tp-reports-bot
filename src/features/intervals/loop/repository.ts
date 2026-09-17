@@ -587,6 +587,13 @@ export async function getOnboardingAnswers(
   preferredLongWeekday: number | null;
   selfReportedWeeklyMinutes: number | null;
   canRunContinuously: boolean | null;
+  /**
+   * Как сейчас проходит обычная пробежка, три варианта из формы /m/run —
+   * см. миграцию intervals_onboarding_run_style. null у старых строк, где
+   * этой колонки ещё не было (тогда осталась только сжатая до boolean
+   * canRunContinuously версия того же факта).
+   */
+  runStyle: "continuous" | "walk_breaks" | "mostly_walk" | null;
   coachNote: string | null;
   coachSetFields: string[];
   weekStability: string | null;
@@ -603,9 +610,9 @@ export async function getOnboardingAnswers(
     .from("intervals_onboarding_answers")
     .select(
       "id, goal_kind, race_date, race_distance_km, days_per_week, self_reported_weekly_minutes, " +
-        "unavailable_weekdays, preferred_long_weekday, can_run_continuously, coach_note, coach_set_fields, " +
-        "week_stability, available_weekdays, preferred_quality_weekday, time_of_day, run_surfaces, " +
-        "week_breakers, days_per_week_source, max_session_minutes"
+        "unavailable_weekdays, preferred_long_weekday, can_run_continuously, run_style, coach_note, " +
+        "coach_set_fields, week_stability, available_weekdays, preferred_quality_weekday, time_of_day, " +
+        "run_surfaces, week_breakers, days_per_week_source, max_session_minutes"
     )
     .eq("source_id", sourceId)
     .maybeSingle();
@@ -632,6 +639,10 @@ export async function getOnboardingAnswers(
       row.can_run_continuously === null || row.can_run_continuously === undefined
         ? null
         : row.can_run_continuously === true,
+    runStyle:
+      row.run_style === "continuous" || row.run_style === "walk_breaks" || row.run_style === "mostly_walk"
+        ? row.run_style
+        : null,
     selfReportedWeeklyMinutes:
       row.self_reported_weekly_minutes === null || row.self_reported_weekly_minutes === undefined
         ? null
@@ -667,6 +678,7 @@ export type OnboardingAnswersInput = {
   unavailableWeekdays: number[];
   preferredLongWeekday: number | null;
   canRunContinuously: boolean | null;
+  runStyle: "continuous" | "walk_breaks" | "mostly_walk" | null;
   coachNote: string | null;
   weekStability: "stable" | "varies" | null;
   availableWeekdays: number[];
@@ -707,6 +719,7 @@ export async function saveOnboardingAnswers(
         unavailable_weekdays: input.unavailableWeekdays,
         preferred_long_weekday: input.preferredLongWeekday,
         can_run_continuously: input.canRunContinuously,
+        run_style: input.runStyle,
         coach_note: input.coachNote,
         week_stability: input.weekStability,
         available_weekdays: input.availableWeekdays,

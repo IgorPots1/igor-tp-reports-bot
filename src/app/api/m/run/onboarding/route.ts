@@ -102,6 +102,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const surfaces = Array.isArray(raw.runSurfaces)
     ? [...new Set(raw.runSurfaces.filter((v): v is string => typeof v === "string" && SURFACES.has(v)))]
     : null;
+  // Три варианта из формы, а не только их сжатая до boolean версия
+  // (canRunContinuously ниже). Не через mergeAnswers: это не префилл-поле,
+  // тренер не отвечает на него за ученика — mergeAnswers его бы и не увидел,
+  // он идёт строго по PREFILLABLE_FIELDS.
+  const runStyle =
+    raw.runStyle === "continuous" || raw.runStyle === "walk_breaks" || raw.runStyle === "mostly_walk"
+      ? raw.runStyle
+      : null;
   const capCode = typeof raw.maxSessionCap === "string" ? raw.maxSessionCap : "";
   const capMinutes = sessionCapByCode(capCode);
   const longDay = toInt(raw.preferredLongWeekday);
@@ -202,6 +210,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     unavailableWeekdays: unavailable,
     preferredLongWeekday: values.preferredLongWeekday,
     canRunContinuously: values.canRunContinuously,
+    runStyle,
     coachNote: null,
     weekStability: values.weekStability,
     availableWeekdays: available,

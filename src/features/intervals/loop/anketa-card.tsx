@@ -17,6 +17,23 @@ export type AnketaAnswers = NonNullable<Awaited<ReturnType<typeof getOnboardingA
 const WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const weekdayRu = (day: number): string => WEEKDAYS_RU[day] ?? String(day);
 
+/**
+ * «Как сейчас проходит ваша обычная пробежка?» — вопрос из формы /m/run,
+ * буква в букву те же три варианта, что видит она [решение Игоря,
+ * 17.09.2026]. run_style — новая колонка; у строк, заполненных до неё, есть
+ * только сжатый boolean canRunContinuously, и различить по нему
+ * walk_breaks/mostly_walk нельзя — честно помечаем это в тексте, а не
+ * притворяемся, что знаем больше, чем есть.
+ */
+function runStyleLabelRu(answers: AnketaAnswers): string {
+  if (answers.runStyle === "continuous") return "бегает без остановок, двадцать минут и дольше";
+  if (answers.runStyle === "walk_breaks") return "бегает, но иногда переходит на шаг";
+  if (answers.runStyle === "mostly_walk") return "пока больше ходит, чем бегает";
+  if (answers.canRunContinuously === true) return "бегает без остановок (отвечала до трёх вариантов)";
+  if (answers.canRunContinuously === false) return "бегает с перерывами на шаг (какими именно — не уточнялось)";
+  return "не отвечала";
+}
+
 export function IntervalsAnketaCard({
   answers,
   studentTimezone,
@@ -111,10 +128,9 @@ export function IntervalsAnketaCard({
           : ""}
       </p>
       <p style={{ margin: "0 0 6px" }}>
-        где бегает: {answers.runSurfaces.length > 0 ? answers.runSurfaces.join(", ") : "не отмечено"}{" "}
-        · непрерывно:{" "}
-        {answers.canRunContinuously === null ? "не задано" : answers.canRunContinuously ? "может" : "пока нет"}
+        где бегает: {answers.runSurfaces.length > 0 ? answers.runSurfaces.join(", ") : "не отмечено"}
       </p>
+      <p style={{ margin: "0 0 6px" }}>как проходит обычная пробежка: {runStyleLabelRu(answers)}</p>
       {answers.weekBreakers ? (
         <div style={{ marginTop: 10, background: "#fffbe6", padding: "10px 12px", borderRadius: 8 }}>
           <strong>Что срывает неделю:</strong>
