@@ -127,7 +127,7 @@ type View =
       effortOptions: EffortOption[];
       painOptions: PainOption[];
       restNoteRu: string | null;
-      weekNote: string | null;
+      weekNotes: SessionNote[];
     };
 
 const BG = "#F6F4EF";
@@ -1550,24 +1550,44 @@ function PlanScreen(props: {
 
       {view.ladder ? <LadderBlock ladder={view.ladder} /> : null}
 
-      {/* Заметка к неделе целиком — один раз здесь, не копируется в описание
-          каждой тренировки [решение Игоря, 17.09.2026]. */}
-      {view.weekNote ? (
-        <div
-          style={{
-            background: "#FDF0E8",
-            borderLeft: `3px solid ${ACCENT}`,
-            borderRadius: 10,
-            padding: "12px 14px",
-            marginBottom: 14,
-            fontSize: 14,
-            lineHeight: 1.5,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {view.weekNote}
-        </div>
-      ) : null}
+      {/* Заметки к неделе целиком — один раз здесь, не копируются в описание
+          каждой тренировки [решение Игоря, 17.09.2026]. Без заголовка — баннер
+          сразу виден; с заголовком — отдельная подписанная карточка, тоже видна
+          сразу (не свёрнута: это не пояснение по желанию, а обязательное к
+          прочтению на всю неделю). */}
+      {view.weekNotes.map((note, i) =>
+        note.title === null ? (
+          <div
+            key={i}
+            style={{
+              background: "#FDF0E8",
+              borderLeft: `3px solid ${ACCENT}`,
+              borderRadius: 10,
+              padding: "12px 14px",
+              marginBottom: 10,
+              fontSize: 14,
+              lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {note.body}
+          </div>
+        ) : (
+          <div
+            key={i}
+            style={{
+              background: "#fff",
+              border: `1px solid ${LINE}`,
+              borderRadius: 10,
+              padding: "12px 14px",
+              marginBottom: 10,
+            }}
+          >
+            <p style={{ margin: "0 0 4px", fontWeight: 700, fontSize: 14, color: ACCENT }}>{note.title}</p>
+            <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{note.body}</p>
+          </div>
+        )
+      )}
 
       <h2 style={{ fontSize: 18, margin: "22px 0 10px" }}>Сегодня</h2>
       {view.today ? (

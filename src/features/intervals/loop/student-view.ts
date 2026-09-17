@@ -112,8 +112,8 @@ export type StudentView =
       effortOptions: typeof EFFORT_OPTIONS;
       painOptions: typeof PAIN_OPTIONS;
       restNoteRu: string | null;
-      /** Заметка к неделе целиком — один раз наверху экрана, не в каждой карточке. */
-      weekNote: string | null;
+      /** Заметки к неделе целиком — один раз наверху экрана, не в каждой карточке. */
+      weekNotes: SessionNote[];
     };
 
 /**
@@ -214,8 +214,8 @@ export function buildStudentView(input: {
   /** Отданные тренером тексты, новые сверху. */
   coachReplies?: CoachReplyView[];
   upcomingDays?: number;
-  /** Заметка к неделе целиком — с опубликованного цикла. */
-  weekNote?: string | null;
+  /** Заметки к неделе целиком — с опубликованного цикла. */
+  weekNotes?: SessionNote[] | null;
 }): StudentView {
   if (input.sessions === null) {
     const messageRu =
@@ -294,6 +294,6 @@ export function buildStudentView(input: {
     effortOptions: EFFORT_OPTIONS,
     painOptions: PAIN_OPTIONS,
     restNoteRu: restNote,
-    weekNote: input.weekNote ?? null,
+    weekNotes: input.weekNotes ?? [],
   };
 }

@@ -48,8 +48,11 @@ export type SessionStep = {
  * Пояснение к тренировке ЦЕЛИКОМ, а не к одному шагу — «как подобрать
  * скорость», «почему 55, а не 70». Отдельно от SessionStep.detail: тому
  * положена одна строка, здесь — сколько нужно текста.
+ *
+ * title: null — ТОЛЬКО для заметок к неделе целиком (PlanCycle.weekNotes):
+ * баннер без заголовка наверху экрана. У заметок к тренировке title всегда есть.
  */
-export type SessionNote = { title: string; body: string };
+export type SessionNote = { title: string | null; body: string };
 
 export type PlanSession = {
   id: string;
@@ -89,8 +92,12 @@ export type PlanCycle = {
   dataLevel: "heartrate" | "pace_only" | "none";
   startPointSource: "history" | "questionnaire";
   createdAt: string;
-  /** Заметка к неделе целиком (дорожка, травма) — показывается один раз, не в каждой сессии. */
-  weekNote: string | null;
+  /**
+   * Заметки к неделе целиком (дорожка/дыхание, «обязательно записывайте...») —
+   * показываются один раз вверху экрана, не копируются в каждую сессию.
+   * title: null — баннер без заголовка; title задан — отдельная видимая карточка.
+   */
+  weekNotes: SessionNote[] | null;
 };
 
 export type ProgressionState = {

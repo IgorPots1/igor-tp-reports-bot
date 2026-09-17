@@ -21,7 +21,7 @@ const SESSION_COLUMNS =
 
 const CYCLE_COLUMNS =
   "id, source_id, intent, first_week_start, length_weeks, days, status, published_at, " +
-  "data_level, start_point_source, created_at, week_note";
+  "data_level, start_point_source, created_at, week_notes";
 
 function toSession(row: Record<string, unknown>): PlanSession {
   return {
@@ -63,7 +63,7 @@ function toCycle(row: Record<string, unknown>): PlanCycle {
       row.data_level === "heartrate" || row.data_level === "pace_only" ? row.data_level : "none",
     startPointSource: row.start_point_source === "history" ? "history" : "questionnaire",
     createdAt: String(row.created_at),
-    weekNote: (row.week_note as string | null) ?? null,
+    weekNotes: Array.isArray(row.week_notes) ? (row.week_notes as SessionNote[]) : null,
   };
 }
 
