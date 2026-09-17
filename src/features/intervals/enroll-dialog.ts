@@ -261,6 +261,7 @@ export async function startEnrollment(input: {
     await handleRunStartCommand({
       chatId: input.telegramUserId,
       from: { id: input.telegramUserId },
+      skipGreeting: true,
     });
   } catch (error) {
     await sendTelegramMessageStrict(

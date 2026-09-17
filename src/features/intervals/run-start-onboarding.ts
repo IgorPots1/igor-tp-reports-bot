@@ -71,6 +71,20 @@ const GREETING_MANUAL_RU =
   "После тренировки открывайте приложение и вписывайте её сами: сколько длилась, дистанция и " +
   "пульс — если знаете.";
 
+/**
+ * Сразу после того, как тренер завёл карточку [решение Игоря, 17.09.2026] —
+ * ВТОРОЕ сообщение в цепочке заведения, БЕЗ «привет»: она уже поздоровалась
+ * сама первым сообщением боту, и второе приветствие читается как то, что бот
+ * не помнит предыдущей минуты разговора.
+ *
+ * ОБА ВАРИАНТА СРАЗУ (часы или без часов), а не выбор по галочке: на этом
+ * шаге решение ещё не принято — то же самое /m/run само разберётся дальше.
+ */
+const POST_ENROLL_RU =
+  "Тренер добавил вас в приложение. Дальше два дела: подключить часы или выбрать вариант без " +
+  "часов, и ответить на несколько вопросов про расписание. Это займёт минут десять.\n\n" +
+  "Откройте приложение кнопкой ниже — оно само проведёт по шагам.";
+
 function appUrl(): string {
   return `${SITE_URL.replace(/\/+$/, "")}/m/run`;
 }
@@ -78,6 +92,8 @@ function appUrl(): string {
 export async function handleRunStartCommand(input: {
   chatId: string | number;
   from: { id: number } | null;
+  /** Она уже поздоровалась сама первым сообщением боту — второе «привет» лишнее. */
+  skipGreeting?: boolean;
 }): Promise<boolean> {
   if (!input.from?.id) return false;
 
@@ -111,7 +127,7 @@ export async function handleRunStartCommand(input: {
     });
   }
 
-  const greeting = manual ? GREETING_MANUAL_RU : GREETING_RU;
+  const greeting = input.skipGreeting ? POST_ENROLL_RU : manual ? GREETING_MANUAL_RU : GREETING_RU;
   const buttonLabel = manual ? "Ввести тренировку вручную" : "Открыть приложение";
 
   try {
