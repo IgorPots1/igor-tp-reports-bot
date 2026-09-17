@@ -13,6 +13,44 @@ export type SessionSegment = {
   noPaceText?: string;
 };
 
+/**
+ * Ориентир шага: чем именно человек должен управлять усилием.
+ *
+ * ЧЕТЫРЕ ВИДА, А НЕ ДВА (число/без числа), потому что «подберите сами» и
+ * «фиксированное усилие 6 из 10» — разные обещания ученику, хотя оба «без
+ * темпа». Раньше их различить было нельзя: любой шаг без пары чисел падал в
+ * noPaceText одной кучей.
+ */
+export type StepTarget =
+  | { kind: "pace"; fastSec: number; slowSec: number }
+  | { kind: "rpe"; rpe: number }
+  /** «Подберите сами» — читается иначе (ключевым словом), а не как ощущение вообще. */
+  | { kind: "self_discovery"; hint?: string }
+  | { kind: "free"; text: string };
+
+/**
+ * Один шаг тренировки при РУЧНОМ авторстве плана [решение Игоря, 17.09.2026].
+ *
+ * ВЛОЖЕННОСТЬ НА ОДИН УРОВЕНЬ — ЭТОГО ДОСТАТОЧНО. «7 × (бег + шаг)» встречается
+ * в практике, «повтор внутри повтора» — нет; глубже одного уровня усложняет
+ * модель ради случая, которого не было ни разу.
+ */
+export type SessionStep = {
+  minutes: number;
+  name: string;
+  /** Одна строка, не абзац — длинное объяснение уходит в SessionNote. */
+  detail?: string;
+  target: StepTarget;
+  repeat?: { count: number; steps: SessionStep[] };
+};
+
+/**
+ * Пояснение к тренировке ЦЕЛИКОМ, а не к одному шагу — «как подобрать
+ * скорость», «почему 55, а не 70». Отдельно от SessionStep.detail: тому
+ * положена одна строка, здесь — сколько нужно текста.
+ */
+export type SessionNote = { title: string; body: string };
+
 export type PlanSession = {
   id: string;
   cycleId: string;
@@ -27,6 +65,10 @@ export type PlanSession = {
   description: string | null;
   /** null — сессия сгенерирована до появления колонки, структуры нет. */
   segments: SessionSegment[] | null;
+  /** Ручное авторство. Заполнено — рендер идёт по шагам, а не по segments/description. */
+  steps: SessionStep[] | null;
+  /** Пояснения к тренировке целиком, отдельной свёрнутой карточкой. */
+  notes: SessionNote[] | null;
   targetMode: "pace" | "rpe" | null;
   rpe: number | null;
   deferred: boolean;
@@ -47,6 +89,8 @@ export type PlanCycle = {
   dataLevel: "heartrate" | "pace_only" | "none";
   startPointSource: "history" | "questionnaire";
   createdAt: string;
+  /** Заметка к неделе целиком (дорожка, травма) — показывается один раз, не в каждой сессии. */
+  weekNote: string | null;
 };
 
 export type ProgressionState = {

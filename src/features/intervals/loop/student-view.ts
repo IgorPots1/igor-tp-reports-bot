@@ -10,7 +10,7 @@ import { BEGINNER_LADDER, stepByIndex } from "@/features/methodology/beginner";
 
 import { EFFORT_OPTIONS, PAIN_OPTIONS } from "./effort-scale";
 import { allowedMoveTargets } from "./move";
-import type { Checkin, PlanSession, ProgressionState, SessionSegment } from "./types";
+import type { Checkin, PlanSession, ProgressionState, SessionNote, SessionSegment, SessionStep } from "./types";
 
 const DAY_RU_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const RU_MONTHS = [
@@ -36,6 +36,9 @@ export type StudentSessionCard = {
   description: string | null;
   /** null — сессия сгенерирована до появления колонки, структуры нет. */
   segments: SessionSegment[] | null;
+  /** Ручное авторство — заполнено, значит рендерим по шагам, не по segments/description. */
+  steps: SessionStep[] | null;
+  notes: SessionNote[] | null;
   /** Уже отмечена? Тогда вместо кнопок — что она ответила. */
   checkedIn: boolean;
   checkinLabel: string | null;
@@ -109,6 +112,8 @@ export type StudentView =
       effortOptions: typeof EFFORT_OPTIONS;
       painOptions: typeof PAIN_OPTIONS;
       restNoteRu: string | null;
+      /** Заметка к неделе целиком — один раз наверху экрана, не в каждой карточке. */
+      weekNote: string | null;
     };
 
 /**
@@ -179,6 +184,8 @@ function toCard(
     minutes: session.minutes,
     description: session.description,
     segments: session.segments,
+    steps: session.steps,
+    notes: session.notes,
     checkedIn: checkin !== null,
     checkinLabel: checkin
       ? checkin.pain
@@ -207,6 +214,8 @@ export function buildStudentView(input: {
   /** Отданные тренером тексты, новые сверху. */
   coachReplies?: CoachReplyView[];
   upcomingDays?: number;
+  /** Заметка к неделе целиком — с опубликованного цикла. */
+  weekNote?: string | null;
 }): StudentView {
   if (input.sessions === null) {
     const messageRu =
@@ -285,5 +294,6 @@ export function buildStudentView(input: {
     effortOptions: EFFORT_OPTIONS,
     painOptions: PAIN_OPTIONS,
     restNoteRu: restNote,
+    weekNote: input.weekNote ?? null,
   };
 }

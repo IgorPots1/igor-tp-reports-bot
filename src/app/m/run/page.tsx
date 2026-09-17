@@ -56,6 +56,22 @@ type SessionSegment = {
   noPaceText?: string;
 };
 
+type StepTarget =
+  | { kind: "pace"; fastSec: number; slowSec: number }
+  | { kind: "rpe"; rpe: number }
+  | { kind: "self_discovery"; hint?: string }
+  | { kind: "free"; text: string };
+
+type SessionStep = {
+  minutes: number;
+  name: string;
+  detail?: string;
+  target: StepTarget;
+  repeat?: { count: number; steps: SessionStep[] };
+};
+
+type SessionNote = { title: string; body: string };
+
 type SessionCard = {
   sessionId: string;
   date: string;
@@ -66,6 +82,9 @@ type SessionCard = {
   description: string | null;
   /** null — сессия сгенерирована до появления структуры, только проза. */
   segments: SessionSegment[] | null;
+  /** Ручное авторство — заполнено, значит рендерим по шагам, не по segments/description. */
+  steps: SessionStep[] | null;
+  notes: SessionNote[] | null;
   checkedIn: boolean;
   checkinLabel: string | null;
   moveTargets: Array<{ date: string; label: string }>;
@@ -108,6 +127,7 @@ type View =
       effortOptions: EffortOption[];
       painOptions: PainOption[];
       restNoteRu: string | null;
+      weekNote: string | null;
     };
 
 const BG = "#F6F4EF";
@@ -1530,6 +1550,25 @@ function PlanScreen(props: {
 
       {view.ladder ? <LadderBlock ladder={view.ladder} /> : null}
 
+      {/* Заметка к неделе целиком — один раз здесь, не копируется в описание
+          каждой тренировки [решение Игоря, 17.09.2026]. */}
+      {view.weekNote ? (
+        <div
+          style={{
+            background: "#FDF0E8",
+            borderLeft: `3px solid ${ACCENT}`,
+            borderRadius: 10,
+            padding: "12px 14px",
+            marginBottom: 14,
+            fontSize: 14,
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {view.weekNote}
+        </div>
+      ) : null}
+
       <h2 style={{ fontSize: 18, margin: "22px 0 10px" }}>Сегодня</h2>
       {view.today ? (
         <SessionBlock
@@ -1688,6 +1727,94 @@ function SegmentList({ segments }: { segments: SessionSegment[] }) {
   );
 }
 
+/** Ориентир шага словами: то, чем человек управляет усилием, а не абзац объяснения. */
+function stepAimText(target: StepTarget): string {
+  if (target.kind === "pace") return `${formatPace(target.fastSec)}–${formatPace(target.slowSec)}`;
+  if (target.kind === "rpe") return `усилие ${target.rpe} из 10`;
+  if (target.kind === "self_discovery") return target.hint ?? "подобрать";
+  return target.text;
+}
+
+function stepAimColor(target: StepTarget): string {
+  // «Подберите сами» — не легче лёгкого и не порог: своя, третья краска, чтобы
+  // глаз сразу отличал шаг с открытым решением от готовой цифры.
+  if (target.kind === "self_discovery") return ACCENT;
+  if (target.kind === "pace" || target.kind === "rpe") return GREEN;
+  return MUTED;
+}
+
+/**
+ * Строка шага: длительность слева, ориентир рядом, название и одна строка
+ * пояснения справа [решение Игоря, 17.09.2026]. Заменяет абзац прозы для
+ * ручного авторства плана — SegmentList выше остаётся для автогенератора.
+ */
+function StepRow({ step }: { step: SessionStep }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "44px 84px 1fr", gap: "2px 10px", padding: "8px 0" }}>
+      <span style={{ fontWeight: 600, fontSize: 13, fontVariantNumeric: "tabular-nums" }}>{step.minutes} мин</span>
+      <span style={{ fontSize: 12, color: stepAimColor(step.target), fontVariantNumeric: "tabular-nums" }}>
+        {stepAimText(step.target)}
+      </span>
+      <span style={{ gridColumn: 3, fontWeight: 600, fontSize: 15 }}>{step.name}</span>
+      {step.detail ? (
+        <span style={{ gridColumn: 3, fontSize: 13, color: MUTED, marginTop: 1, lineHeight: 1.4 }}>{step.detail}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function StepList({ steps }: { steps: SessionStep[] }) {
+  return (
+    <div style={{ margin: "10px 0 0" }}>
+      {steps.map((step, i) =>
+        step.repeat ? (
+          <div key={i} style={{ border: `1px dashed ${LINE}`, borderRadius: 12, margin: "9px 0", padding: "0 10px" }}>
+            <div
+              style={{
+                fontSize: 12,
+                color: MUTED,
+                padding: "8px 0",
+                borderBottom: `1px solid ${LINE}`,
+                display: "flex",
+                gap: 6,
+                alignItems: "baseline",
+              }}
+            >
+              <b style={{ color: ACCENT, fontSize: 14 }}>{step.repeat.count} ×</b> {step.name}
+            </div>
+            {step.repeat.steps.map((inner, j) => (
+              <div key={j} style={{ borderTop: j > 0 ? `1px solid ${LINE}` : undefined }}>
+                <StepRow step={inner} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div key={i} style={{ borderTop: i > 0 ? `1px solid ${LINE}` : undefined }}>
+            <StepRow step={step} />
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+/**
+ * Пояснения к тренировке целиком («как подобрать скорость») — своей
+ * свёрнутой карточкой, отдельно от шагов. Шаг несёт одну строку детали;
+ * сюда уходит всё, что длиннее.
+ */
+function NoteCards({ notes }: { notes: SessionNote[] }) {
+  return (
+    <>
+      {notes.map((note, i) => (
+        <Collapsible key={i} title={note.title}>
+          <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{note.body}</p>
+        </Collapsible>
+      ))}
+    </>
+  );
+}
+
 /**
  * Прозе есть куда пойти, только если она длиннее одной строки — короткое
  * "Лёгкий бег: 35 минут 5:30–5:50 на километр." от renderDescription не
@@ -1712,6 +1839,12 @@ function SessionBlock(props: {
   const { card } = props;
   const [openCheckin, setOpenCheckin] = useState(false);
   const [openMove, setOpenMove] = useState(false);
+  // Развёрнуто сразу для сегодняшней — она уже открыла экран ради неё. Для
+  // «дальше» шаги свёрнуты за той же кнопкой, что и раньше «Подробнее»: под
+  // катом лежит РАБОТА, а не как раньше проза, но принцип «сегодня видно
+  // сразу» не менялся [решение Игоря, 17.09.2026].
+  const [openSteps, setOpenSteps] = useState(props.isToday);
+  const steps = card.steps && card.steps.length > 0 ? card.steps : null;
   const segments = card.segments && card.segments.length > 0 ? card.segments : null;
   const longForm = card.description ? isLongFormDescription(card.description) : false;
 
@@ -1732,21 +1865,53 @@ function SessionBlock(props: {
       <p style={{ margin: "4px 0 0", fontSize: 17, fontWeight: 700 }}>{card.title}</p>
       <p style={{ margin: "2px 0 0", color: MUTED, fontSize: 14 }}>{card.minutes} мин</p>
 
-      {segments ? <SegmentList segments={segments} /> : null}
+      {steps ? (
+        props.isToday || openSteps ? (
+          <>
+            <StepList steps={steps} />
+            {card.notes ? <NoteCards notes={card.notes} /> : null}
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpenSteps(true)}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 10,
+              padding: 0,
+              background: "none",
+              border: "none",
+              textAlign: "left",
+              fontFamily: "inherit",
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: 14,
+              color: ACCENT,
+            }}
+          >
+            Показать тренировку →
+          </button>
+        )
+      ) : (
+        <>
+          {segments ? <SegmentList segments={segments} /> : null}
 
-      {card.description ? (
-        longForm ? (
-          <div style={{ margin: "10px 0 0" }}>
-            <Collapsible title="Подробнее" divider={false}>
-              <p style={{ margin: 0, lineHeight: 1.5, fontSize: 15, whiteSpace: "pre-wrap" }}>
-                {card.description}
-              </p>
-            </Collapsible>
-          </div>
-        ) : !segments ? (
-          <p style={{ margin: "10px 0 0", lineHeight: 1.5, fontSize: 15 }}>{card.description}</p>
-        ) : null
-      ) : null}
+          {card.description ? (
+            longForm ? (
+              <div style={{ margin: "10px 0 0" }}>
+                <Collapsible title="Подробнее" divider={false}>
+                  <p style={{ margin: 0, lineHeight: 1.5, fontSize: 15, whiteSpace: "pre-wrap" }}>
+                    {card.description}
+                  </p>
+                </Collapsible>
+              </div>
+            ) : !segments ? (
+              <p style={{ margin: "10px 0 0", lineHeight: 1.5, fontSize: 15 }}>{card.description}</p>
+            ) : null
+          ) : null}
+        </>
+      )}
 
       {card.checkedIn ? (
         <p style={{ margin: "12px 0 0", color: GREEN, fontWeight: 600, fontSize: 14 }}>

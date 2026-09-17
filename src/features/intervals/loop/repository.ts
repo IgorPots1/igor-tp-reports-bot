@@ -9,17 +9,19 @@
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
 import { isPrefillableField, type Prefill, type PrefillableField } from "./prefill";
-import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState, SessionSegment } from "./types";
+import type {
+  Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState, SessionNote, SessionSegment, SessionStep,
+} from "./types";
 
 type Client = ReturnType<typeof createSupabaseServerClient>;
 
 const SESSION_COLUMNS =
   "id, cycle_id, week_index, week_start, session_date, day_idx, role, title, minutes, preset_code, " +
-  "description, segments, target_mode, rpe, deferred, defer_reason, original_session_date, moved_at";
+  "description, segments, steps, notes, target_mode, rpe, deferred, defer_reason, original_session_date, moved_at";
 
 const CYCLE_COLUMNS =
   "id, source_id, intent, first_week_start, length_weeks, days, status, published_at, " +
-  "data_level, start_point_source, created_at";
+  "data_level, start_point_source, created_at, week_note";
 
 function toSession(row: Record<string, unknown>): PlanSession {
   return {
@@ -35,6 +37,8 @@ function toSession(row: Record<string, unknown>): PlanSession {
     presetCode: (row.preset_code as string | null) ?? null,
     description: (row.description as string | null) ?? null,
     segments: Array.isArray(row.segments) ? (row.segments as SessionSegment[]) : null,
+    steps: Array.isArray(row.steps) ? (row.steps as SessionStep[]) : null,
+    notes: Array.isArray(row.notes) ? (row.notes as SessionNote[]) : null,
     targetMode: row.target_mode === "pace" || row.target_mode === "rpe" ? row.target_mode : null,
     rpe: row.rpe === null || row.rpe === undefined ? null : Number(row.rpe),
     deferred: row.deferred === true,
@@ -59,6 +63,7 @@ function toCycle(row: Record<string, unknown>): PlanCycle {
       row.data_level === "heartrate" || row.data_level === "pace_only" ? row.data_level : "none",
     startPointSource: row.start_point_source === "history" ? "history" : "questionnaire",
     createdAt: String(row.created_at),
+    weekNote: (row.week_note as string | null) ?? null,
   };
 }
 

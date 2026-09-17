@@ -193,6 +193,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     unavailableWeekdays: answers?.unavailableWeekdays ?? [],
     hasUnplannedCheckinToday: hasUnplannedToday,
     coachReplies,
+    weekNote: cycle.weekNote,
   });
 }
 
