@@ -66,7 +66,8 @@ type SessionStep = {
   minutes: number;
   name: string;
   detail?: string;
-  target: StepTarget;
+  /** Необязателен только у обёртки повтора. */
+  target?: StepTarget;
   repeat?: { count: number; steps: SessionStep[] };
 };
 
@@ -1748,16 +1749,18 @@ function SegmentList({ segments }: { segments: SessionSegment[] }) {
 }
 
 /** Ориентир шага словами: то, чем человек управляет усилием, а не абзац объяснения. */
-function stepAimText(target: StepTarget): string {
+function stepAimText(target: StepTarget | undefined): string {
+  if (!target) return "";
   if (target.kind === "pace") return `${formatPace(target.fastSec)}–${formatPace(target.slowSec)}`;
   if (target.kind === "rpe") return `усилие ${target.rpe} из 10`;
   if (target.kind === "self_discovery") return target.hint ?? "подобрать";
   return target.text;
 }
 
-function stepAimColor(target: StepTarget): string {
+function stepAimColor(target: StepTarget | undefined): string {
   // «Подберите сами» — не легче лёгкого и не порог: своя, третья краска, чтобы
   // глаз сразу отличал шаг с открытым решением от готовой цифры.
+  if (!target) return MUTED;
   if (target.kind === "self_discovery") return ACCENT;
   if (target.kind === "pace" || target.kind === "rpe") return GREEN;
   return MUTED;
@@ -1888,6 +1891,12 @@ function SessionBlock(props: {
       {steps ? (
         props.isToday || openSteps ? (
           <>
+            {/* Подзаголовок тренировки — короткая строка описания формата, не
+                абзац: у ручного авторства description несёт эту роль вместо
+                прозы всей сессии. */}
+            {card.description ? (
+              <p style={{ margin: "6px 0 0", fontSize: 13.5, color: MUTED, fontStyle: "italic" }}>{card.description}</p>
+            ) : null}
             <StepList steps={steps} />
             {card.notes ? <NoteCards notes={card.notes} /> : null}
           </>

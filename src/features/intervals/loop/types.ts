@@ -40,7 +40,8 @@ export type SessionStep = {
   name: string;
   /** Одна строка, не абзац — длинное объяснение уходит в SessionNote. */
   detail?: string;
-  target: StepTarget;
+  /** Необязателен ТОЛЬКО у обёртки повтора — там сам показывается repeat.count, а не ориентир. */
+  target?: StepTarget;
   repeat?: { count: number; steps: SessionStep[] };
 };
 
