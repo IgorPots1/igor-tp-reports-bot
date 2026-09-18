@@ -114,6 +114,61 @@ export default async function BeginnerStudentPage({
         )}
       </div>
 
+      {/* ── Сигнал недели ──
+          ДВА РАЗНЫХ БЛОКА, ПОТОМУ ЧТО ЭТО ДВА РАЗНЫХ РЕШЕНИЯ. Боль ведёт к
+          разговору и не несёт ни одной цифры: что делать с объёмом, решается
+          ПОСЛЕ разговора. Полоса по RPE ведёт к объёму следующей недели и про
+          боль ничего не знает. Склеить их в один блок значит снова смешать
+          «поговори» и «посчитай». */}
+      {view.weekSignal.painFlags.slice(0, 3).map((flag) => (
+        <div key={flag.checkinId} style={{ ...box, background: "#FDE8E0", border: "1px solid #E5480E" }}>
+          <h2 style={{ marginTop: 0, color: "#a3330a" }}>Была отмечена боль — сначала разговор, не формула</h2>
+          <p style={{ margin: 0 }}>
+            {flag.sessionDate}
+            {flag.effortLabel ? `, «${flag.effortLabel}»` : null}
+            {flag.painNote ? (
+              <>
+                {". Её слова: "}
+                <em>«{flag.painNote}»</em>
+              </>
+            ) : ". Что именно беспокоило, она не написала."}
+          </p>
+          <p style={{ margin: "10px 0 0", color: "#555" }}>
+            Ответ по этому чек-ину ещё не написан. Что делать с объёмом следующей недели — решать
+            после разговора, этот блок числа не предлагает. Форма ответа ниже, в «Чек-инах»: как
+            только ответите, блок пропадёт.
+          </p>
+        </div>
+      ))}
+
+      {view.weekSignal.volume ? (
+        view.weekSignal.volume.band === "calm" ? (
+          <p style={{ margin: "0 0 18px", color: "#555", maxWidth: 900 }}>
+            Неделя {view.weekSignal.volume.weekStart} — {view.weekSignal.volume.weekEnd}:{" "}
+            {view.weekSignal.volume.checkinCount} чек-ина, тяжелее всего —{" "}
+            «{view.weekSignal.volume.worstLabel ?? `RPE ${view.weekSignal.volume.worstRpe}`}».{" "}
+            {view.weekSignal.volume.adviceRu}
+          </p>
+        ) : (
+          <div
+            style={{
+              ...box,
+              background: view.weekSignal.volume.band === "cut" ? "#FDF0E8" : "#FBF3E4",
+              border: view.weekSignal.volume.band === "cut" ? "1px solid #D98A3D" : "1px solid #e0e0e0",
+            }}
+          >
+            <h2 style={{ marginTop: 0 }}>{view.weekSignal.volume.headlineRu}</h2>
+            <p style={{ margin: 0 }}>
+              {view.weekSignal.volume.weekStart} — {view.weekSignal.volume.weekEnd}:{" "}
+              {view.weekSignal.volume.checkinCount} чек-ина, тяжелее всего —{" "}
+              «{view.weekSignal.volume.worstLabel ?? `RPE ${view.weekSignal.volume.worstRpe}`}» (
+              {view.weekSignal.volume.worstDate}).
+            </p>
+            <p style={{ margin: "10px 0 0" }}>{view.weekSignal.volume.adviceRu}</p>
+          </div>
+        )
+      ) : null}
+
       {/* ── Анкета ── */}
       <div style={box}>
         <h2 style={{ marginTop: 0 }}>Анкета</h2>

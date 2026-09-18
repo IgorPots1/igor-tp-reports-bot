@@ -22,6 +22,7 @@ import {
 } from "./repository";
 import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
 import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
+import { buildWeekSignal, type WeekSignal } from "./week-signal";
 import { getSourceConnection } from "../repository";
 import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState } from "./types";
 
@@ -403,6 +404,8 @@ export type CoachStudentView = {
   unansweredCheckinIds: Set<string>;
   /** Идут ли данные вообще. Главное, что тренер должен увидеть первым. */
   connectionHealth: ConnectionHealth;
+  /** Что чек-ины говорят про следующую неделю. Сигнал, план не трогает. */
+  weekSignal: WeekSignal;
 };
 
 export async function loadCoachStudentView(
@@ -423,6 +426,7 @@ export async function loadCoachStudentView(
       messages: [],
       unansweredCheckinIds: new Set(),
       connectionHealth: { state: "not_connected" },
+      weekSignal: { painFlags: [], volume: null },
     };
   }
 
@@ -465,6 +469,9 @@ export async function loadCoachStudentView(
   const answered = new Set(
     messages.map((message) => message.checkinId).filter((id): id is string => id !== null)
   );
+  const unansweredCheckinIds = new Set(
+    checkins.filter((checkin) => !answered.has(checkin.id)).map((checkin) => checkin.id)
+  );
 
   return {
     student,
@@ -477,10 +484,9 @@ export async function loadCoachStudentView(
     checkins,
     activities,
     messages,
-    unansweredCheckinIds: new Set(
-      checkins.filter((checkin) => !answered.has(checkin.id)).map((checkin) => checkin.id)
-    ),
+    unansweredCheckinIds,
     connectionHealth,
+    weekSignal: buildWeekSignal({ checkins, unansweredCheckinIds, todayIso }),
   };
 }
 
