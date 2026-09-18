@@ -1076,12 +1076,32 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     }
   }
   if (!plan) return refuse(lastRefusal, "does_not_fit");
-  if (plan.n < nWant) {
-    notes.push(plan.dec.selected
-      ? `беговых дней ${nWant} → ${plan.n}: столько дней с качественной не помещается в потолок ${weekly} мин`
-      : `беговых дней ${nWant} → ${plan.n}: больше не помещается в потолок ${weekly} мин`);
+  // ── ДВА ПРАВИЛА СТОЛКНУЛИСЬ — ГОВОРИМ ОДНОЙ ФРАЗОЙ [18.09.2026] ──
+  //
+  // На узкой неделе (глубокая разгрузка) выходило так: минимальная неделя из
+  // трёх дней не влезала в потолок, дни резались до двух, а гейт качества
+  // требует трёх беговых дней — и качество отменялось. Тренер видел ДВА
+  // отдельных отказа в разных концах заметок и должен был сам догадаться, что
+  // это одно событие, а не два. Причина у него одна: неделя слишком узка,
+  // чтобы вместить и три дня, и работу.
+  const daysCut = plan.n < nWant;
+  const qualityLostToDayCut =
+    daysCut && !plan.dec.selected && plan.dec.reason === "no_quality_slot_available"
+    && /беговых дней/u.test(plan.dec.detail);
+  if (qualityLostToDayCut) {
+    notes.push(
+      `неделя не вмещает и три дня, и работу: при ${nWant} днях минимум ${tryPlan(nWant).minWeek} мин ` +
+        `выше потолка ${weekly} мин, поэтому дней ${nWant} → ${plan.n}, а гейт качества требует трёх ` +
+        `беговых дней — работы на этой неделе не будет. Это ОДНА причина, а не две.`
+    );
+  } else {
+    if (daysCut) {
+      notes.push(plan.dec.selected
+        ? `беговых дней ${nWant} → ${plan.n}: столько дней с качественной не помещается в потолок ${weekly} мин`
+        : `беговых дней ${nWant} → ${plan.n}: больше не помещается в потолок ${weekly} мин`);
+    }
+    if (!plan.dec.selected) notes.push(`качество не назначено: ${plan.dec.reason} (${plan.dec.detail})`);
   }
-  if (!plan.dec.selected) notes.push(`качество не назначено: ${plan.dec.reason} (${plan.dec.detail})`);
 
   const { days, roles, dec, decs, qSessions, easyRoles } = plan;
   // Споры пожелания с инвариантом — ПОМЕТКОЙ тренеру. Неделя при этом собирается:

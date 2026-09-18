@@ -140,7 +140,10 @@ async function main(): Promise<void> {
   // тянуть секрет в память ради генерации плана незачем.
   const { data: source, error: sourceError } = await supabase
     .from("student_data_sources")
-    .select("id, kind, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at")
+    .select(
+      "id, kind, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at, " +
+        "easy_pace_sec_per_km, easy_pace_source, easy_pace_set_at"
+    )
     .eq("provider", "intervals")
     .eq("external_athlete_id", athleteId)
     .maybeSingle();
@@ -282,9 +285,28 @@ async function main(): Promise<void> {
   // будет никогда (нет подключаемых часов) и объём/темп целиком со слов
   // человека, который тренер знает лично.
   const easyPaceArg = arg("easy-pace");
-  const manualEasyPaceSec = easyPaceArg ? parsePaceArg(easyPaceArg) : null;
-  if (easyPaceArg && manualEasyPaceSec === null) {
+  const flagEasyPaceSec = easyPaceArg ? parsePaceArg(easyPaceArg) : null;
+  if (easyPaceArg && flagEasyPaceSec === null) {
     fail("--easy-pace принимает формат M:SS, например 7:22");
+  }
+  // ЯКОРЬ ИЗ БАЗЫ, ФЛАГ — ТОЛЬКО ПЕРЕКРЫТИЕ [18.09.2026].
+  //
+  // Раньше якорь существовал ТОЛЬКО как флаг и нигде не сохранялся: следующая
+  // генерация снова оставалась без него, и весь цикл уходил в отказ
+  // no_easy_anchor_and_no_fallback. У Валентины так отказались все 36 сессий.
+  // Теперь число живёт в student_data_sources рядом с порогом, а флаг остаётся
+  // для разового «а если бы темп был другой» — и тогда честно говорит об этом.
+  const storedEasyPaceSec =
+    source.easy_pace_sec_per_km === null || source.easy_pace_sec_per_km === undefined
+      ? null
+      : Number(source.easy_pace_sec_per_km);
+  const manualEasyPaceSec = flagEasyPaceSec ?? storedEasyPaceSec;
+  if (flagEasyPaceSec !== null && storedEasyPaceSec !== null && flagEasyPaceSec !== storedEasyPaceSec) {
+    console.log(
+      `⚠️  Якорь лёгкого взят из флага (${paceText(flagEasyPaceSec)}), а в базе стоит ` +
+        `${paceText(storedEasyPaceSec)}. Этот прогон использует флаг; в базе ничего не меняется. ` +
+        "Чтобы поменять насовсем: npm run intervals:set-easy-pace."
+    );
   }
   const start: StartingPoint = usable
     ? fromHistory
