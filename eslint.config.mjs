@@ -11,7 +11,13 @@ const compat = new FlatCompat({
 
 const eslintConfig = [
   {
-    ignores: [".next/**", "next-env.d.ts"]
+    // `.next-admin*` — это сборочные каталоги локальной админки (см. CLAUDE.md §16:
+    // NEXT_DIST_DIR=.next-admin, пересборка через localadmin-rebuild.sh в .next-admin-new
+    // с атомарной подменой и откатом в .next-admin-old). В .gitignore они исключены
+    // наравне с `.next`, а здесь — нет, поэтому eslint заходил в сгенерированные Next.js
+    // route-валидаторы и ругался на машинный код: тысячи @ts-ignore / __Unused / handler,
+    // которых никто не писал руками. Из-за них настоящие замечания тонули в выдаче.
+    ignores: [".next/**", ".next-admin*/**", "next-env.d.ts"]
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
