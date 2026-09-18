@@ -509,7 +509,14 @@ export async function recordTrainingPeaksTelegramBusinessContextObservation(inpu
   // Empty text is normal for an attachment-only message — the fact of the message matters more
   // than having something to hash/preview/classify.
   const textSha256 = messageText ? sha256TelegramContextText(messageText) : null;
-  const textPreview = messageText ? buildTelegramContextTextPreview(messageText) : null;
+  // Business DM — главный канал ученика, и до 2026-09-18 он писался с дефолтом 120 символов,
+  // тогда как групповой путь (context-observer.ts) давно пишет 500. Обрывались ровно те
+  // сообщения, ради которых таблица и заведена: «рейс до Уфы переносят четвёртый раз»,
+  // «можно 20 сентября пробежать добрый забег, там 10 и 5» — факт почти всегда стоит
+  // дальше 120-го символа. Храним по тому же лимиту, что и группы.
+  const textPreview = messageText
+    ? buildTelegramContextTextPreview(messageText, TELEGRAM_CONTEXT_OBSERVATION_MAX_LENGTH)
+    : null;
   const labels = messageText ? classifyTelegramContextLabels(messageText) : [];
 
   return insertTrainingPeaksTelegramContextObservation({
@@ -553,7 +560,12 @@ export async function recordTrainingPeaksTelegramBusinessOutgoingContextObservat
   const student = await getTrainingPeaksStudentByTelegramChatId(input.chatId);
 
   const textSha256 = messageText ? sha256TelegramContextText(messageText) : null;
-  const textPreview = messageText ? buildTelegramContextTextPreview(messageText) : null;
+  // Тот же лимит, что и на входящих: ответ тренера («бежим по 5:20, на горке сбавляй»)
+  // обрывался на 120-м символе ровно так же, а читается он потом как контекст к вопросу
+  // ученика — половина ответа делает пару вопрос-ответ бесполезной.
+  const textPreview = messageText
+    ? buildTelegramContextTextPreview(messageText, TELEGRAM_CONTEXT_OBSERVATION_MAX_LENGTH)
+    : null;
 
   return insertTrainingPeaksTelegramContextObservation({
     studentId: student?.id ?? null,
