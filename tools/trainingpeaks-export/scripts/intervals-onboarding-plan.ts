@@ -234,6 +234,19 @@ async function main(): Promise<void> {
         // пришли флагами (--goal=…), покрытия остаются тем, что человек
         // реально отметил, а не тем, что передано в этом вызове.
         answers.runSurfaces = (answersRow.run_surfaces ?? null) as string[] | null;
+        // ФЛАГ ПЕРЕКРЫВАЕТ ТОЛЬКО ТО, ЧТО РЕАЛЬНО ПЕРЕДАЛИ [18.09.2026].
+        //
+        // Раньше --goal=improve в одиночку подменял ещё и дни (дефолт 4), и
+        // объём (null): у человека с 70 мин и тремя днями выходил цикл «0 мин
+        // аэробного» на двенадцать недель. Тренер при этом просил поменять
+        // ТОЛЬКО цель. Это тот же класс ошибки, что и перезапись анкеты
+        // флагами, только без записи в базу: флаг притворяется ответом.
+        if (arg("days") === null && answersRow.days_per_week != null) {
+          answers.daysPerWeek = answersRow.days_per_week as number;
+        }
+        if (arg("weekly-minutes") === null && answersRow.self_reported_weekly_minutes != null) {
+          answers.selfReportedWeeklyMinutes = answersRow.self_reported_weekly_minutes as number;
+        }
       }
     }
   }

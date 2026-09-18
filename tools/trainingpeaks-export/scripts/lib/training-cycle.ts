@@ -268,6 +268,29 @@ export const TAPER_NO_PEAK_FACTOR = 0.90;
 export const MAX_SHARE_DEVIATION_PP = 2.0;
 
 /**
+ * ДОПУСК НЕ МОЖЕТ БЫТЬ ТОНЬШЕ СЕТКИ, НА КОТОРОЙ ЖИВУТ ЧИСЛА [18.09.2026].
+ *
+ * Два процентных пункта — допуск В ДОЛЯХ, и в минутах он зависит от объёма
+ * недели: при 400 мин это ±8 минут, при 80 мин — ±1.6. А все минуты в цикле
+ * округляются к пяти (round5), то есть одно только округление двигает работу на
+ * ±2.5. Допуск уже шага округления не управляет ничем — он срезает ровно то,
+ * что округление и положило.
+ *
+ * Поймано так: при 70 мин в неделю база работы 10 мин давала долю 12.5%,
+ * упиралась в потолок 12% и срезалась до ПЯТИ минут. Пять минут работы — не
+ * тренировка, а строка в плане.
+ *
+ * ПОЧЕМУ ТРИ, А НЕ ПЯТЬ. Сначала стояло пять — шаг сетки. Проверка отклонения
+ * доли (tp-cycle-forecast-check, случай «высокая доля») это ПОЙМАЛА: на неделе
+ * 240 минут пять минут шире двух пунктов, и допуск уезжал до 2.08 п.п. То есть
+ * правка для сегмента без часов молча трогала бы ростер. Три минуты дают тот же
+ * эффект там, где он нужен (на неделе 80 минут допуск становится 3.75 п.п., и
+ * работа 10 минут проходит вместо срезанных пяти), и НЕ ТРОГАЮТ НИ ОДНОЙ недели
+ * от 150 минут: выше неё шире оказываются пункты, а не минуты.
+ */
+export const MIN_SHARE_DEVIATION_MIN = 3;
+
+/**
  * Прижать минуты работы так, чтобы доля не ушла от обычной больше допустимого.
  * Возвращает исправленные минуты и пометку, если пришлось вмешаться.
  */
@@ -280,8 +303,12 @@ export function clampShare(
   const total = aerobicMin + qualityMin;
   if (total <= 0) return { q: qualityMin, note: null };
   const share = 100 * qualityMin / total;
-  const hi = ownSharePct + MAX_SHARE_DEVIATION_PP;
-  const lo = Math.max(0, ownSharePct - MAX_SHARE_DEVIATION_PP);
+  // Допуск берётся в ПУНКТАХ или в МИНУТАХ, смотря что шире на этой неделе:
+  // см. MIN_SHARE_DEVIATION_MIN. На неделях от 250 минут побеждают пункты, то
+  // есть поведение ростера не меняется ни на бит.
+  const deviationPp = Math.max(MAX_SHARE_DEVIATION_PP, (100 * MIN_SHARE_DEVIATION_MIN) / total);
+  const hi = ownSharePct + deviationPp;
+  const lo = Math.max(0, ownSharePct - deviationPp);
   // q такое, что q/(a+q) = s  =>  q = s·a/(1−s)
   // ВНИЗ, а не к ближайшему: округление к пяти само выводило за допуск
   // (у Пономаревой оставалось 2.1 п.п. при пороге 2.0).
@@ -291,15 +318,16 @@ export function clampShare(
     const raw = (s * aerobicMin) / (1 - s);
     return (dir === "down" ? Math.floor(raw / 5) : Math.ceil(raw / 5)) * 5;
   };
+  const ppText = deviationPp.toFixed(1);
   if (share > hi) {
     const q = Math.min(qualityMin, qFor(hi, "down"));
-    return { q, note: `работа срезана до ${q} мин: доля упиралась в +${MAX_SHARE_DEVIATION_PP} п.п. к обычной` };
+    return { q, note: `работа срезана до ${q} мин: доля упиралась в +${ppText} п.п. к обычной` };
   }
   if (share < lo) {
     // мирроринг вверх, но не выше личного потолка минут
     const q = Math.min(capQualityMin, Math.max(qualityMin, qFor(lo, "up")));
     return q > qualityMin
-      ? { q, note: `работа поднята до ${q} мин: доля проваливалась ниже −${MAX_SHARE_DEVIATION_PP} п.п.` }
+      ? { q, note: `работа поднята до ${q} мин: доля проваливалась ниже −${ppText} п.п.` }
       : { q: qualityMin, note: null };
   }
   return { q: qualityMin, note: null };

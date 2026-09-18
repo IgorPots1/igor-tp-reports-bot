@@ -38,6 +38,24 @@ export const ROUND_TO_MIN = 5;
 export const EASY_FLOOR_MIN = 25;
 
 /**
+ * ПОЛ ЛЁГКОЙ ДЛЯ СЕГМЕНТА С ОБЪЁМОМ СО СЛОВ [18.09.2026].
+ *
+ * Инвариант 25 замерен по практике тренера на ростере, где неделя 300–400
+ * минут. У человека с 70 минутами в неделю на три дня это 23 минуты на
+ * пробежку — то есть ВСЯ его неделя ниже инварианта. Дальше происходило вот
+ * что: минимальная неделя из трёх дней (25 + 25 + 30) не влезала в потолок 75,
+ * и сборщик молча выбрасывал третий день. Человек просил три дня, получал два,
+ * и узнать об этом мог только из строки в заметках.
+ *
+ * Пятнадцать минут — граница, ниже которой это уже не пробежка, а разминка.
+ * Число выбрано, а не замерено: практики на таком объёме у тренера нет.
+ *
+ * ПРИМЕНЯЕТСЯ ТОЛЬКО ПРИ volumeIsReported. Ростер и ветка истории Intervals
+ * этот флаг не ставят никогда (autoplanner-context.ts), их пол остаётся 25.
+ */
+export const EASY_FLOOR_REPORTED_MIN = 15;
+
+/**
  * ПРАВИЛО, КОТОРОЕ ЛЕГКО ПЕРЕПУТАТЬ: нижний край распределения — это ПОЛ, медиана — это ЦЕЛЬ.
  * Ставить целью p05 значит целиться в самую короткую тренировку, какую тренер вообще писал,
  * и систематически недобирать. Пол защищает от бессмыслицы, цель задаёт норму.
@@ -866,6 +884,20 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   if (easyFloorPersonal > 0) {
     const scaled = cycle ? easyFloorPersonal * (floorScale > 0 ? floorScale : 1) : easyFloorPersonal;
     EASY_FLOOR = Math.max(EASY_FLOOR_MIN, round5(scaled));
+  }
+  // ОБЪЁМ СО СЛОВ: пол опускается до личного, но не ниже EASY_FLOOR_REPORTED_MIN.
+  // Иначе когортный инвариант 25, замеренный на неделях 300–400 мин, съедает у
+  // человека с 70 минутами третий день — тот самый, который он и просил.
+  if (env.volumeIsReported && easyFloorPersonal > 0) {
+    const personalFloor = Math.max(EASY_FLOOR_REPORTED_MIN, round5(easyFloorPersonal));
+    if (personalFloor < EASY_FLOOR) {
+      notes.push(
+        `пол лёгкой ${EASY_FLOOR} → ${personalFloor} мин: объём со слов (${env.rolling4wWeeklyMin} мин/нед) ` +
+          `ниже того, на чём замерен инвариант ${EASY_FLOOR_MIN} — иначе день, который человек просил, ` +
+          `не помещается в неделю. Проверьте длительности глазами.`
+      );
+      EASY_FLOOR = personalFloor;
+    }
   }
 
   const gateCap = qualityCapFromHistory(env.qualityLast8w);

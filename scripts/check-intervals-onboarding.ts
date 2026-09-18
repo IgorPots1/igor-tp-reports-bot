@@ -291,6 +291,44 @@ assert.ok(
     }
   }
 
+  // ── Пол лёгкой не съедает день, который человек просил [18.09.2026] ──────────
+  //
+  // Инвариант 25 мин замерен на ростере (недели 300–400). У человека с 70 мин на
+  // три дня минимальная неделя выходила 25 + 25 + 30 = 80 при потолке 75, и
+  // сборщик МОЛЧА оставлял два дня вместо трёх. Теперь при объёме со слов пол
+  // опускается до личного (но не ниже EASY_FLOOR_REPORTED_MIN), и это названо
+  // пометкой, а не спрятано в потерянном дне.
+  {
+    const cycleTarget = {
+      weekIndex: 1, totalWeeks: 12, role: "рост" as const,
+      aerobicMin: 70, qualityMin: 10, days: 3, baseWeekMin: 80,
+      hasTargetRace: false, intent: "develop" as const,
+    };
+    const threeDays = buildWeek(
+      anchorsReported, envReported, cat, weekStart, false, null, cycleTarget, null
+    );
+    assert.equal(
+      threeDays.sessions.length,
+      3,
+      `человек просил 3 дня, получил ${threeDays.sessions.length} — день потерян молча`
+    );
+    assert.ok(
+      threeDays.notes.some((note) => note.includes("пол лёгкой")),
+      "опущенный пол обязан быть назван пометкой, а не молчать"
+    );
+
+    // ЗЕРКАЛЬНАЯ ПРОВЕРКА: без объёма со слов пол остаётся когортным. Ростер и
+    // ветка истории Intervals volumeIsReported не ставят никогда.
+    const measured = buildWeek(
+      anchorsReported, { ...envReported, volumeIsReported: false }, cat, weekStart,
+      false, null, cycleTarget, null
+    );
+    assert.ok(
+      !measured.notes.some((note) => note.includes("пол лёгкой")),
+      "без объёма со слов пол лёгкой не трогается: это путь ростера"
+    );
+  }
+
   // ── Предохранитель: поддержание при объёме, которого не хватает [18.09.2026] ──
   //
   // Валентина: goal_kind='regular' → intent='maintenance' → восемь недель с

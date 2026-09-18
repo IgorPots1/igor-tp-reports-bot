@@ -41,7 +41,7 @@ import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
   MAX_SINGLE_STEP, STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, TAPER_NO_PEAK_FACTOR,
-  forecast, pickTargetRace, weightedWeeklyBase, type CycleDraft, type CycleIntent,
+  clampShare, forecast, pickTargetRace, weightedWeeklyBase, type CycleDraft, type CycleIntent,
 } from "./lib/training-cycle.ts";
 
 const addWeeks = (d: string, n: number): string => new Date(Date.parse(d) + n * 7 * 86400000).toISOString().slice(0, 10);
@@ -125,6 +125,24 @@ async function main(): Promise<void> {
       check(`отклонение доли ≤ ${MAX_SHARE_DEVIATION_PP} п.п. (${name})`,
         worst <= MAX_SHARE_DEVIATION_PP + 0.001, `максимум ${worst.toFixed(2)} п.п. при своей ${d.ownSharePct.toFixed(1)}%`);
     }
+
+    // ── МАЛЫЙ ОБЪЁМ: допуск в минутах, а не только в пунктах [18.09.2026] ──
+    //
+    // При 70 мин аэробного и 10 мин работы доля 12.5% упиралась в потолок 12% и
+    // работа срезалась до ПЯТИ минут — не тренировка, а строка в плане. Теперь
+    // допуск берётся шире из двух: два пункта или MIN_SHARE_DEVIATION_MIN минут.
+    const small = clampShare(70, 10, 10, 15);
+    check("малый объём: работа 10 мин не срезается зажимом доли",
+      small.q === 10, `получилось ${small.q} мин (было бы 5 до правки)`);
+
+    // ЗЕРКАЛЬНАЯ ПРОВЕРКА: на неделе ростера правка не должна значить ничего.
+    // 200 + 40 = 240 мин — ровно тот случай, на котором первая версия (5 минут)
+    // сдвинула допуск до 2.08 п.п. и была поймана проверкой выше.
+    const roster = clampShare(200, 40, 16.7, 60);
+    const rosterPp = Math.abs((100 * roster.q) / (200 + roster.q) - 16.7);
+    check("ростер: допуск в минутах не шире пунктов на неделе 240 мин",
+      rosterPp <= MAX_SHARE_DEVIATION_PP + 0.001,
+      `отклонение ${rosterPp.toFixed(2)} п.п. при работе ${roster.q} мин`);
   }
 
   // ── 4. подводка не глубже профиля ──
