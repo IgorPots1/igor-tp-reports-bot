@@ -329,6 +329,41 @@ assert.ok(
     );
   }
 
+  // ── Обвязка по пропорции при объёме со слов [18.09.2026] ────────────────────
+  //
+  // Разминка/заминка в каталоге зашиты числом (15/10 у steady_tempo, 12/12 у
+  // thr_*), поэтому самый короткий формат стоил 35 минут при десяти минутах
+  // работы, а бюджет качественной у человека с 70 мин в неделю — 30. Неделя за
+  // неделей уходила без работы с причиной no_preset_fits_week.
+  {
+    const { withScaledWarmup, presetSessionMinutes } = await import(
+      "../tools/trainingpeaks-export/scripts/lib/autoplanner-catalog.ts"
+    );
+    // Пресет задан здесь явно, а не взят из стаба: withScaledWarmup — чистая
+    // функция, и проверять надо её арифметику, а не состав стаба.
+    const short = {
+      presetCode: "steady_continuous_10", displayNameRu: "Темповый бег 10 минут",
+      intensityIntent: "steady_tempo", reps: 1, workMinutes: 10, recoveryMinutes: 0,
+      rpeTarget: 6, rpeCap: 7, avoidAcidosis: false, coachReviewRequired: false,
+      requiresExplicitVo2: false, warmupMinutes: 15, cooldownMinutes: 10,
+      totalWorkMinutes: 10, athleteLevelMin: "L0",
+    };
+    const scaled = withScaledWarmup(short);
+    assert.ok(
+      presetSessionMinutes(scaled) < presetSessionMinutes(short),
+      "пропорциональная обвязка обязана делать сессию короче каталожной"
+    );
+    // Пропорция из карточек тренера: разминка треть сессии, заминка восьмая.
+    const block = short.reps * short.workMinutes + Math.max(0, short.reps - 1) * short.recoveryMinutes;
+    assert.equal(scaled.warmupMinutes, Math.max(5, Math.round((block * 8) / 13)));
+    assert.equal(scaled.cooldownMinutes, Math.max(3, Math.round((block * 3) / 13)));
+
+    // ПОЛЫ: короче пяти и трёх это уже не разминка и не заминка.
+    const tinyScaled = withScaledWarmup({ ...short, reps: 1, workMinutes: 1, recoveryMinutes: 0 });
+    assert.equal(tinyScaled.warmupMinutes, 5, "разминка не опускается ниже пяти минут");
+    assert.equal(tinyScaled.cooldownMinutes, 3, "заминка не опускается ниже трёх минут");
+  }
+
   // ── Предохранитель: поддержание при объёме, которого не хватает [18.09.2026] ──
   //
   // Валентина: goal_kind='regular' → intent='maintenance' → восемь недель с

@@ -9,7 +9,7 @@
 import { ranges, parseSegments } from "./tp-recompute.ts";
 import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, type Tier } from "./pace-resolver.ts";
 import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, NOT_RUNNING_RATIO, NOT_RUNNING_WEEKS, type Envelope } from "./autoplanner-context.ts";
-import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
+import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, withScaledWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, QUALITY_CAP_THRESHOLDS, type QualityDecision } from "./quality-select.ts";
 import { LONG_DAY_FALLBACK, confidentLongDay, qualityCountWanted } from "./practice-signals.ts";
 import { availableDayCount, resolvePreferences, type AthletePreference, type PreferenceEffect, type PreferenceRole } from "./athlete-preferences.ts";
@@ -985,9 +985,14 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     // именно его, сессия молча уедет в «отложено» с пустым телом. Поэтому
     // сужаем пул ДО отбора, а не разбираемся после.
     const byEffortMode = a.threshold == null && a.qualityByEffort === true;
+    // ОБВЯЗКА ПО ПРОПОРЦИИ — ТОЛЬКО ПРИ ОБЪЁМЕ СО СЛОВ. Пересчитываем ДО отбора,
+    // а не при сборке сессии: иначе отбор фильтровал бы по каталожной полной
+    // длительности (35 мин), а в неделю уходила бы пропорциональная (21), то
+    // есть бюджет считался бы по одному числу, а план строился по другому.
+    const scaledPool = env.volumeIsReported ? cat.quality.map(withScaledWarmup) : cat.quality;
     const qualityPool = byEffortMode
-      ? cat.quality.filter((preset) => preset.rpeTarget != null)
-      : cat.quality;
+      ? scaledPool.filter((preset) => preset.rpeTarget != null)
+      : scaledPool;
     const decs: QualityDecision[] = a.threshold == null && a.qualityByEffort !== true
       ? [{ selected: false, reason: "no_threshold_cannot_do_quality", detail: "порога нет — качество не назначается" }]
       : slotTypes.length === 0
