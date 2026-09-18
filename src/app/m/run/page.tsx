@@ -25,6 +25,7 @@ import {
 
 import { renderMiniMarkdown } from "./markdown";
 import {
+  GOAL_OPTIONS,
   SESSION_CAP_OPTIONS,
   SURFACE_OPTIONS,
   TIME_OF_DAY_OPTIONS,
@@ -1459,21 +1460,20 @@ function OnboardingForm(props: {
       {shows("goalKind") ? (
         <Field
           label="Что для вас сейчас важнее?"
-          hint="Необязательно, можно не выбирать. «Улучшать результаты» значит, что нагрузка будет постепенно расти; «просто бегать» — что останется на нынешнем уровне."
+          hint="Необязательно, можно не выбирать. От этого зависит, что будет происходить с нагрузкой ближайшие недели."
         >
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {[
-              { value: "race", label: "Готовлюсь к старту" },
-              { value: "improve", label: "Хочу улучшать результаты" },
-              { value: "regular", label: "Просто бегать регулярно" },
-            ].map((option) => (
+          <div style={{ display: "grid", gap: 6 }}>
+            {GOAL_OPTIONS.map((option) => (
               <button
-                key={option.value}
+                key={option.code}
                 type="button"
-                onClick={() => setGoalKind(option.value)}
-                style={chipStyle(goalKind === option.value)}
+                onClick={() => setGoalKind(option.code)}
+                style={optionStyle(goalKind === option.code)}
               >
-                {option.label}
+                <span style={{ fontWeight: 600 }}>{option.labelRu}</span>
+                <span style={{ display: "block", color: MUTED, fontSize: 13, marginTop: 2 }}>
+                  {option.hintRu}
+                </span>
               </button>
             ))}
           </div>

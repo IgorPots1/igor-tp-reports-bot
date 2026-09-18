@@ -271,11 +271,39 @@ function weeksBetween(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / (7 * 86_400_000));
 }
 
+/**
+ * ПОРОГ, НИЖЕ КОТОРОГО «ПОДДЕРЖАНИЕ» НЕ ЗНАЧИТ НИЧЕГО.
+ *
+ * Считается не абсолютным числом, а от дней: неделя из трёх пробежек по 15
+ * минут и неделя из двух по 30 дают одинаковые 60 минут, но первая бессмысленна,
+ * а вторая нормальна. Минимум на одну пробежку берётся из EASY_FLOOR_MIN (25) —
+ * это ИЗМЕРЕННЫЙ инвариант: короче двадцати пяти минут тренер не пишет лёгкую
+ * ни разу ни в одном тире. Значит неделя, которая не вмещает даже дни × 25,
+ * не раскладывается по правилам сборщика в принципе.
+ *
+ * ПОЧЕМУ ЭТО ВАЖНО ИМЕННО ДЛЯ ПОДДЕРЖАНИЯ. У остальных целей цикл растёт и сам
+ * выходит из этой зоны за две-три недели. Поддержание идёт с шагом ×1.00 и не
+ * выходит из неё никогда: человек просит сохранить форму, а сохранять нечего —
+ * объёма не хватает даже на одну пробежку, какие тренер пишет ростеру.
+ */
+export const EASY_RUN_FLOOR_MIN = 25;
+
+export function maintenanceVolumeFloor(daysPerWeek: number): number {
+  return Math.max(1, daysPerWeek) * EASY_RUN_FLOOR_MIN;
+}
+
+/** Что мешает выдать цикл молча. Пусто — генератор работает как обычно. */
+export type CycleBlocker = {
+  code: "low_volume_maintenance";
+  messageRu: string;
+};
+
 export type CycleShape = {
   draft: CycleDraft;
   intent: CycleIntent;
   lengthWeeks: number;
   notes: string[];
+  blockers: CycleBlocker[];
 };
 
 /**
@@ -443,7 +471,22 @@ export function buildDraftFromOnboarding(
     gaps,
   };
 
-  return { draft, intent, lengthWeeks, notes };
+  const blockers: CycleBlocker[] = [];
+  if (intent === "maintenance") {
+    const floor = maintenanceVolumeFloor(answers.daysPerWeek);
+    if (baseAerobic < floor) {
+      blockers.push({
+        code: "low_volume_maintenance",
+        messageRu:
+          `Поддержание при объёме ${baseAerobic} мин в неделю на ${answers.daysPerWeek} ` +
+          `дня: это ${Math.round(baseAerobic / Math.max(1, answers.daysPerWeek))} мин на пробежку ` +
+          `при инварианте ${EASY_RUN_FLOOR_MIN} (короче тренер не пишет лёгкую ни разу). ` +
+          `Минимум для этих дней — ${floor} мин.`,
+      });
+    }
+  }
+
+  return { draft, intent, lengthWeeks, notes, blockers };
 }
 
 /**

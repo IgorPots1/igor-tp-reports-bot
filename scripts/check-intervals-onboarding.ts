@@ -290,6 +290,61 @@ assert.ok(
       );
     }
   }
+
+  // ── Предохранитель: поддержание при объёме, которого не хватает [18.09.2026] ──
+  //
+  // Валентина: goal_kind='regular' → intent='maintenance' → восемь недель с
+  // шагом ×1.00 и нулём работы, молча. Порог считается ОТ ДНЕЙ (дни × 25),
+  // потому что 3×15 и 2×30 дают одинаковые минуты при разном смысле, а 25 —
+  // измеренный инвариант лёгкой пробежки (EASY_FLOOR_MIN).
+  const { buildDraftFromOnboarding, maintenanceVolumeFloor } = await import(
+    "../tools/trainingpeaks-export/scripts/lib/intervals-plan-adapter.ts"
+  );
+  const startFor = (weeklyMinutes: number) =>
+    startingPointFromAnswers({
+      ...answers,
+      goalKind: "regular",
+      daysPerWeek: 3,
+      selfReportedWeeklyMinutes: weeklyMinutes,
+    });
+  const answersFor = (goalKind: "regular" | "improve") => ({
+    goalKind,
+    raceDate: null,
+    raceDistanceKm: null,
+    daysPerWeek: 3,
+    unavailableWeekdays: [],
+    preferredLongWeekday: null,
+    preferredQualityWeekday: null,
+    maxSessionMinutes: null,
+  });
+
+  assert.equal(maintenanceVolumeFloor(3), 75, "порог для трёх дней — 75 мин (3 × инвариант 25)");
+  assert.equal(maintenanceVolumeFloor(2), 50, "порог считается от дней, а не общей константой");
+
+  const valentina = buildDraftFromOnboarding(answersFor("regular"), startFor(70), weekStart);
+  assert.equal(valentina.intent, "maintenance");
+  assert.equal(
+    valentina.blockers.length,
+    1,
+    "70 мин на 3 дня — это 23 мин на пробежку; поддержание тут молчать не должно"
+  );
+  assert.equal(valentina.blockers[0].code, "low_volume_maintenance");
+
+  const enoughVolume = buildDraftFromOnboarding(answersFor("regular"), startFor(90), weekStart);
+  assert.equal(enoughVolume.intent, "maintenance");
+  assert.equal(
+    enoughVolume.blockers.length,
+    0,
+    "90 мин на 3 дня выше порога — осознанное поддержание не трогаем"
+  );
+
+  const improving = buildDraftFromOnboarding(answersFor("improve"), startFor(70), weekStart);
+  assert.equal(improving.intent, "develop");
+  assert.equal(
+    improving.blockers.length,
+    0,
+    "развитие при том же объёме не блокируется: цикл растёт и выходит из этой зоны сам"
+  );
 }
 
 console.log("check:intervals-onboarding — все проверки пройдены");

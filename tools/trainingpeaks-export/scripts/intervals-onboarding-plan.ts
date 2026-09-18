@@ -340,7 +340,11 @@ async function main(): Promise<void> {
 
   const anchors = buildAnchors(start, storedThreshold);
   const envelope = buildEnvelope(start);
-  const { draft, intent, lengthWeeks, notes } = buildDraftFromOnboarding(answers, start, firstWeekStart);
+  const { draft, intent, lengthWeeks, notes, blockers } = buildDraftFromOnboarding(
+    answers,
+    start,
+    firstWeekStart
+  );
 
   console.log("── Цикл ─────────────────────────────────────");
   console.log(`тип:                 ${intent}`);
@@ -361,6 +365,22 @@ async function main(): Promise<void> {
   );
   for (const note of notes) console.log(`  · ${note}`);
   for (const gap of draft.gaps) console.log(`  · пробел: ${gap}`);
+
+  // ПОДДЕРЖАНИЕ ПРИ ОБЪЁМЕ, КОТОРОГО НЕТ. Печатаем ВСЕГДА, ещё до недель: в
+  // холостом прогоне тренер должен увидеть и тревогу, и тот самый план из
+  // восьми одинаковых недель, чтобы решать со знанием, а не по описанию.
+  // Запись при этом закрыта, пока он не скажет явно (см. ниже, перед --commit).
+  for (const blocker of blockers) {
+    console.log("");
+    console.log("⚠️  ВНИМАНИЕ ТРЕНЕРА");
+    console.log(`  ${blocker.messageRu}`);
+    console.log(
+      "  Человек выбрал «сохранить нынешнюю форму, ничего не меняя», но сохранять нечего:\n" +
+        "  при таком объёме поддержание — это восемь недель с шагом ×1.00, где ничего не\n" +
+        "  происходит. Скорее всего он хотел «бегать больше и лучше» (--goal=improve),\n" +
+        "  либо он действительно новичок и его ведёт лестница (--goal=start_running)."
+    );
+  }
 
   const weeks = forecast(draft, firstWeekStart, lengthWeeks);
   const catalog = await loadCatalog(supabase);
@@ -450,6 +470,21 @@ async function main(): Promise<void> {
     console.log("");
     console.log("Ничего не записано (запуск без --commit).");
     return;
+  }
+
+  // ОТКАЗ, А НЕ ПОМЕТКА В ЦИКЛЕ. Пометку внутри записанного плана тренер
+  // увидит, когда план уже у ученицы; смысл предохранителя в том, чтобы
+  // решение было принято ДО записи. Обойти можно одной явной строкой — это
+  // не запрет, а требование сказать «да» вслух.
+  if (blockers.length > 0 && !process.argv.includes("--maintenance-anyway")) {
+    fail(
+      "Отказ: поддержание при объёме ниже минимального. В базу ничего не записано.\n" +
+        blockers.map((blocker) => `  · ${blocker.messageRu}`).join("\n") +
+        "\nЧто с этим делать:\n" +
+        "  · человек хотел развития — перегенерировать с --goal=improve;\n" +
+        "  · человек начинает с нуля — его ведёт лестница: --goal=start_running;\n" +
+        "  · поддержание выбрано осознанно и вы согласны — добавьте --maintenance-anyway."
+    );
   }
 
   // --defer-diagnostic ПРИ --commit ЗАКРЕПЛЯЕТ решение на источнике, а не
