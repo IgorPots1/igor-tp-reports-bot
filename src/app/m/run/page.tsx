@@ -10,7 +10,7 @@
  * расстроиться, а не измерить.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CONNECT_PAGE } from "@/features/intervals/connect-content";
 import {
@@ -31,6 +31,13 @@ import {
   TIME_OF_DAY_OPTIONS,
   WEEK_STABILITY_OPTIONS,
 } from "@/features/intervals/loop/schedule";
+import {
+  paceTextRu,
+  parseDistanceKm,
+  parseDurationMinutes,
+  parseHeartrate,
+  parsePaceSecPerKm,
+} from "@/features/intervals/loop/manual-entry-parse";
 
 type TelegramWebApp = {
   initData: string;
@@ -2063,24 +2070,50 @@ function CheckinForm(props: {
   const [averagePace, setAveragePace] = useState(""); // "5:30"
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /**
+   * ОШИБКА ЖИВЁТ У СВОЕГО ПОЛЯ [19.09.2026].
+   *
+   * Было: одна строка над кнопкой. Ученица написала в темпе «812» вместо 8:12,
+   * форма не отправлялась, а подсказка про формат висела внизу и читалась как
+   * общая инструкция — понять, ЧТО ИМЕННО мешает, было нельзя. Отчёт не ушёл
+   * вообще: в intervals_checkins осталось ноль строк.
+   */
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const submit = async () => {
-    if (!effort || !pain) {
-      setErr("Ответьте на оба вопроса.");
-      return;
-    }
-    if (props.manualEntry && !durationMinutes.trim()) {
-      setErr("Укажите время тренировки — это единственное обязательное поле.");
-      return;
-    }
+    const errors: Record<string, string> = {};
     let paceSecPerKm: number | null = null;
-    if (props.manualEntry && averagePace.trim()) {
-      const match = averagePace.trim().match(/^(\d{1,2}):(\d{2})$/);
-      if (!match) {
-        setErr("Темп пишите как 5:30 (минуты:секунды на километр).");
-        return;
-      }
-      paceSecPerKm = Number(match[1]) * 60 + Number(match[2]);
+    let durationValue: number | null = null;
+    let distanceValue: number | null = null;
+    let heartrateValue: number | null = null;
+
+    if (props.manualEntry) {
+      const duration = parseDurationMinutes(durationMinutes);
+      if (!duration.ok) errors.duration = duration.errorRu;
+      else if (duration.value === null) {
+        errors.duration = "Без времени отчёт не отправить: это единственное обязательное поле.";
+      } else durationValue = duration.value;
+
+      const distance = parseDistanceKm(distanceKm);
+      if (!distance.ok) errors.distance = distance.errorRu;
+      else distanceValue = distance.value;
+
+      const heartrate = parseHeartrate(averageHeartrate);
+      if (!heartrate.ok) errors.heartrate = heartrate.errorRu;
+      else heartrateValue = heartrate.value;
+
+      const pace = parsePaceSecPerKm(averagePace);
+      if (!pace.ok) errors.pace = pace.errorRu;
+      else paceSecPerKm = pace.value;
+    }
+
+    if (!effort) errors.effort = "Выберите, как далась тренировка.";
+    if (!pain) errors.pain = "Ответьте, беспокоило ли что-то.";
+
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setErr(null);
+      return;
     }
     setBusy(true);
     setErr(null);
@@ -2096,9 +2129,11 @@ function CheckinForm(props: {
       };
       if (props.manualEntry) {
         body.date = date || undefined;
-        body.durationMinutes = Number(durationMinutes);
-        body.distanceKm = distanceKm.trim() ? Number(distanceKm) : null;
-        body.averageHeartrate = averageHeartrate.trim() ? Number(averageHeartrate) : null;
+        // На сервер уходят уже РАЗОБРАННЫЕ числа, а не то, что человек напечатал:
+        // запятая, двоеточие и «812» остаются заботой формы.
+        body.durationMinutes = durationValue;
+        body.distanceKm = distanceValue;
+        body.averageHeartrate = heartrateValue;
         body.averagePaceSecPerKm = paceSecPerKm;
       }
       const res = await fetch(url, {
@@ -2125,8 +2160,7 @@ function CheckinForm(props: {
         <div style={{ marginBottom: 16 }}>
           <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Тренировка</p>
           <div style={{ display: "grid", gap: 8 }}>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>Дата</span>
+            <FormField label="Дата">
               <input
                 type="date"
                 value={date}
@@ -2134,59 +2168,78 @@ function CheckinForm(props: {
                 onChange={(e) => setDate(e.target.value)}
                 style={inputStyle}
               />
-            </label>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
-                Сколько длилась, минут *
-              </span>
+            </FormField>
+            {/* type="text", А НЕ "number" — ВЕЗДЕ [19.09.2026]. У type="number"
+                значение с запятой браузер отдаёт ПУСТОЙ строкой: человек пишет
+                «6,5», поле молча оказывается пустым, и никто не понимает почему.
+                Разбирает ввод manual-entry-parse, а не браузер. */}
+            <FormField
+              label="Сколько длилась *"
+              hint="минуты числом: 40. Час пять — 1:05 или 65"
+              error={fieldErrors.duration}
+            >
               <input
-                type="number"
+                type="text"
                 inputMode="numeric"
                 value={durationMinutes}
                 onChange={(e) => setDurationMinutes(e.target.value)}
                 placeholder="40"
-                style={inputStyle}
+                style={fieldInputStyle(Boolean(fieldErrors.duration))}
               />
-            </label>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
-                Дистанция, км — если знаете
-              </span>
+            </FormField>
+            <FormField
+              label="Дистанция, км — если знаете"
+              hint="можно с запятой: 6,5"
+              error={fieldErrors.distance}
+            >
               <input
-                type="number"
+                type="text"
                 inputMode="decimal"
                 value={distanceKm}
                 onChange={(e) => setDistanceKm(e.target.value)}
-                placeholder="6.5"
-                style={inputStyle}
+                placeholder="6,5"
+                style={fieldInputStyle(Boolean(fieldErrors.distance))}
               />
-            </label>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
-                Средний пульс — если помните
-              </span>
+            </FormField>
+            <FormField
+              label="Средний пульс — если помните"
+              error={fieldErrors.heartrate}
+            >
               <input
-                type="number"
+                type="text"
                 inputMode="numeric"
                 value={averageHeartrate}
                 onChange={(e) => setAverageHeartrate(e.target.value)}
                 placeholder="148"
-                style={inputStyle}
+                style={fieldInputStyle(Boolean(fieldErrors.heartrate))}
               />
-            </label>
-            <label style={{ display: "block" }}>
-              <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
-                Средний темп, мин:сек на км — если знаете и не вписали дистанцию
-              </span>
+            </FormField>
+            {/* ДВОЕТОЧИЕ НЕ ОБЯЗАТЕЛЬНО, И ЭТО НАПИСАНО У ПОЛЯ. На числовой
+                клавиатуре его просто нет — из-за этого отчёт и не ушёл. */}
+            <FormField
+              label="Средний темп — если знаете и не вписали дистанцию"
+              hint="как удобно: 8:12, 812 или 8,12"
+              error={fieldErrors.pace}
+              confirm={
+                !fieldErrors.pace && parsePaceSecPerKm(averagePace).ok && averagePace.trim()
+                  ? (() => {
+                      const parsed = parsePaceSecPerKm(averagePace);
+                      return parsed.ok && parsed.value !== null
+                        ? `понял как ${paceTextRu(parsed.value)} на километр`
+                        : null;
+                    })()
+                  : null
+              }
+            >
               <input
                 type="text"
-                inputMode="numeric"
+                inputMode="decimal"
                 value={averagePace}
                 onChange={(e) => setAveragePace(e.target.value)}
-                placeholder="5:30"
-                style={inputStyle}
+                placeholder="8:12"
+                style={fieldInputStyle(Boolean(fieldErrors.pace))}
               />
-            </label>
+            </FormField>
           </div>
         </div>
       ) : null}
@@ -2205,6 +2258,7 @@ function CheckinForm(props: {
           </button>
         ))}
       </div>
+      {fieldErrors.effort ? <FieldError text={fieldErrors.effort} /> : null}
 
       <p style={{ margin: "16px 0 8px", fontWeight: 600 }}>Что-то беспокоило?</p>
       <div style={{ display: "grid", gap: 6 }}>
@@ -2220,13 +2274,15 @@ function CheckinForm(props: {
           </button>
         ))}
       </div>
+      {fieldErrors.pain ? <FieldError text={fieldErrors.pain} /> : null}
 
-      <textarea
+      {/* РАСТЁТ ПО МЕРЕ НАБОРА. Было rows={3} намертво, и длинный рассказ
+          («закрыла тренировку и открыла заново») человек писал вслепую, видя
+          две строки из нескольких. */}
+      <GrowingTextarea
         value={comment}
-        onChange={(e) => setComment(e.target.value)}
-        rows={3}
+        onChange={setComment}
         placeholder="Хотите что-то добавить? Необязательно."
-        style={{ ...inputStyle, marginTop: 14, resize: "vertical" }}
       />
 
       {err ? <p style={{ color: ACCENT, fontWeight: 600 }}>{err}</p> : null}
@@ -2234,6 +2290,74 @@ function CheckinForm(props: {
         {busy ? "Сохраняю…" : "Отправить"}
       </button>
     </div>
+  );
+}
+
+/** Красная строка ПОД своим полем, а не общая внизу формы. */
+function FieldError(props: { text: string }) {
+  return (
+    <p style={{ margin: "4px 0 0", color: ACCENT, fontSize: 13, fontWeight: 600 }}>{props.text}</p>
+  );
+}
+
+function FormField(props: {
+  label: string;
+  hint?: string;
+  error?: string;
+  /** «понял как 8:12» — показываем, КАК разобрали, пока человек не ушёл. */
+  confirm?: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <label style={{ display: "block" }}>
+      <span style={{ display: "block", fontSize: 13, color: MUTED, marginBottom: 4 }}>
+        {props.label}
+        {props.hint ? (
+          <span style={{ display: "block", fontSize: 12, color: MUTED, opacity: 0.85 }}>
+            {props.hint}
+          </span>
+        ) : null}
+      </span>
+      {props.children}
+      {props.error ? <FieldError text={props.error} /> : null}
+      {!props.error && props.confirm ? (
+        <span style={{ display: "block", marginTop: 4, color: GREEN, fontSize: 13 }}>
+          {props.confirm}
+        </span>
+      ) : null}
+    </label>
+  );
+}
+
+function fieldInputStyle(hasError: boolean): React.CSSProperties {
+  return hasError ? { ...inputStyle, borderColor: ACCENT, borderWidth: 2 } : inputStyle;
+}
+
+/**
+ * Textarea, которая растёт под текст. Высота задаётся из scrollHeight на каждом
+ * изменении: фиксированные rows прятали от человека то, что он сам написал.
+ */
+function GrowingTextarea(props: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${Math.max(node.scrollHeight, 72)}px`;
+  }, [props.value]);
+  return (
+    <textarea
+      ref={ref}
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+      rows={3}
+      placeholder={props.placeholder}
+      style={{ ...inputStyle, marginTop: 14, resize: "none", overflow: "hidden", minHeight: 72 }}
+    />
   );
 }
 
