@@ -38,6 +38,7 @@ import {
   parseHeartrate,
   parsePaceSecPerKm,
 } from "@/features/intervals/loop/manual-entry-parse";
+import { clearDraft, readDraft, writeDraft } from "@/features/intervals/loop/checkin-draft";
 
 type TelegramWebApp = {
   initData: string;
@@ -2079,6 +2080,46 @@ function CheckinForm(props: {
    * вообще: в intervals_checkins осталось ноль строк.
    */
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  /**
+   * ЧЕРНОВИК НА УСТРОЙСТВЕ [19.09.2026].
+   *
+   * Ученица написала длинный рассказ, форма не пропустила из-за темпа, и текст
+   * исчез: чек-ин не сохранился, черновика не было. Теряла его ЛЮБАЯ неудачная
+   * отправка, не только эта.
+   *
+   * Восстановление показывается ЯВНО: текст, появившийся в полях сам по себе,
+   * пугает сильнее, чем пустая форма.
+   */
+  const [restored, setRestored] = useState(false);
+  const draftLoaded = useRef(false);
+
+  useEffect(() => {
+    if (draftLoaded.current) return;
+    draftLoaded.current = true;
+    const saved = readDraft(props.sessionId, Date.now());
+    if (!saved) return;
+    setEffort(saved.effort);
+    setPain(saved.pain);
+    setComment(saved.comment);
+    if (saved.date) setDate(saved.date);
+    setDurationMinutes(saved.durationMinutes);
+    setDistanceKm(saved.distanceKm);
+    setAverageHeartrate(saved.averageHeartrate);
+    setAveragePace(saved.averagePace);
+    setRestored(true);
+  }, [props.sessionId]);
+
+  // ПО МЕРЕ НАБОРА, а не по кнопке: кнопку человек и не нажмёт, если форма его
+  // не пускает. Первый проход пропускаем, чтобы не затереть только что
+  // прочитанный черновик пустыми начальными значениями.
+  useEffect(() => {
+    if (!draftLoaded.current) return;
+    writeDraft(props.sessionId, {
+      effort, pain, comment, date,
+      durationMinutes, distanceKm, averageHeartrate, averagePace,
+      savedAt: Date.now(),
+    });
+  }, [props.sessionId, effort, pain, comment, date, durationMinutes, distanceKm, averageHeartrate, averagePace]);
 
   const submit = async () => {
     const errors: Record<string, string> = {};
@@ -2146,6 +2187,9 @@ function CheckinForm(props: {
         setErr(json.error ?? "Не получилось сохранить.");
         return;
       }
+      // ЧИСТИМ ТОЛЬКО ПОСЛЕ УСПЕХА. Отчёт принят — черновику больше незачем
+      // жить, и при следующем открытии он не должен подставляться заново.
+      clearDraft(props.sessionId);
       props.onChanged(json.replyRu ?? "Записал.");
     } catch {
       setErr("Нет связи. Попробуйте ещё раз.");
@@ -2154,8 +2198,57 @@ function CheckinForm(props: {
     }
   };
 
+  const forgetDraft = () => {
+    clearDraft(props.sessionId);
+    setEffort(null);
+    setPain(null);
+    setComment("");
+    setDurationMinutes("");
+    setDistanceKm("");
+    setAverageHeartrate("");
+    setAveragePace("");
+    setFieldErrors({});
+    setRestored(false);
+  };
+
   return (
     <div style={{ marginTop: 14, borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+      {/* СКАЗАТЬ ВСЛУХ, ЧТО ЭТО ЕЁ СОБСТВЕННЫЙ ТЕКСТ. Поля, заполнившиеся сами,
+          без объяснения читаются как чужие данные или как сбой. И дать способ
+          начать заново: восстановление не должно превращаться в ловушку. */}
+      {restored ? (
+        <div
+          style={{
+            background: "#EAF5EC",
+            borderLeft: `3px solid ${GREEN}`,
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 14,
+            fontSize: 13,
+            lineHeight: 1.5,
+          }}
+        >
+          Вернул то, что вы писали в прошлый раз: отчёт тогда не ушёл.
+          <button
+            type="button"
+            onClick={forgetDraft}
+            style={{
+              display: "block",
+              marginTop: 6,
+              padding: 0,
+              border: "none",
+              background: "none",
+              color: ACCENT,
+              fontWeight: 600,
+              fontSize: 13,
+              fontFamily: "inherit",
+            }}
+          >
+            Очистить и заполнить заново
+          </button>
+        </div>
+      ) : null}
+
       {props.manualEntry ? (
         <div style={{ marginBottom: 16 }}>
           <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Тренировка</p>
