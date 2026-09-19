@@ -35,5 +35,14 @@ CODE=1
 } >> "${LOG_FILE}" 2>&1
 
 # Heartbeat for the pipeline monitor — success only when the scan actually succeeded.
-npm --prefix "${WORK_DIR}" run --silent tp-heartbeat -- --job=health_metrics_scan --status="$([ "${CODE}" -eq 0 ] && echo sent || echo failed)" || true
+# При неуспехе к отметке прикладывается хвост лога: 18.09.2026 у health_metrics_scan было 13 строк
+# `failed` подряд с пустым error_message, и причина существовала ТОЛЬКО в этом файле на Маке —
+# по журналу в базе диагностировать было нечего. Теперь причина уезжает вместе со статусом.
+# Аргументы собираются массивом, а не подстановкой в строку: текст ошибки содержит пробелы, и
+# незакавыченное разворачивание разнесло бы его по нескольким аргументам.
+HEARTBEAT_ARGS=(--job=health_metrics_scan --status="$([ "${CODE}" -eq 0 ] && echo sent || echo failed)")
+if [ "${CODE}" -ne 0 ]; then
+  HEARTBEAT_ARGS+=(--error="exit=${CODE}; $(tail -n 20 "${LOG_FILE}" 2>/dev/null | tr '\n' ';' | tail -c 900)")
+fi
+npm --prefix "${WORK_DIR}" run --silent tp-heartbeat -- "${HEARTBEAT_ARGS[@]}" || true
 exit "${CODE}"

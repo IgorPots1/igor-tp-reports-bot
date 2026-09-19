@@ -4,7 +4,7 @@
 // only when the underlying scan actually succeeded, so a flow that fails every time never looks
 // alive. Never throws: a heartbeat write must not change the caller's exit code.
 //
-// Usage: tsx tp-heartbeat.ts --job=<name> --status=sent|failed [--note="..."]
+// Usage: tsx tp-heartbeat.ts --job=<name> --status=sent|failed [--note="..."] [--error="..."]
 
 import { loadLocalEnv } from "./lib/local-env.ts";
 loadLocalEnv();
@@ -34,6 +34,11 @@ async function main(): Promise<void> {
       status,
       requestPath: "launchd:heartbeat",
       counts: { heartbeat: true, note: arg("note") ?? null },
+      // --error пишется в error_message. Хартбит создаёт строку сразу в терминальном статусе и
+      // никогда не зовёт finishTrainingPeaksCronRunLog, поэтому другого места для причины нет:
+      // без этого `failed` в trainingpeaks_cron_run_logs говорит «упало» и молчит о том, почему.
+      // Обрезка — чтобы хвост лога не раздул строку журнала.
+      errorMessage: status === "failed" ? arg("error")?.slice(0, 1000) ?? null : null,
     });
     console.log(`[tp-heartbeat] ${job} = ${status}`);
   } catch (error) {

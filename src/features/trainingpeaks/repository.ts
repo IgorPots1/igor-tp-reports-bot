@@ -6813,6 +6813,14 @@ export type CreateTrainingPeaksCronRunLogInput = {
   userAgent?: string | null;
   requestPath?: string | null;
   counts?: Record<string, unknown>;
+  /**
+   * Причина неуспеха для строки, которая создаётся УЖЕ в терминальном статусе — так пишут
+   * хартбиты локальных раннеров (см. tp-heartbeat.ts): они не зовут finishTrainingPeaksCronRunLog,
+   * поэтому единственный их шанс сохранить текст ошибки — здесь. Без этого поля 18.09.2026
+   * у health_metrics_scan было 13 строк `failed` подряд с error_message = null: факт падения
+   * виден, причина — нигде, и диагностика упиралась в локальный лог на Маке.
+   */
+  errorMessage?: string | null;
 };
 
 export async function createTrainingPeaksCronRunLog(
@@ -6829,6 +6837,7 @@ export async function createTrainingPeaksCronRunLog(
       user_agent: input.userAgent ?? null,
       request_path: input.requestPath ?? null,
       counts: input.counts ?? {},
+      error_message: input.errorMessage ?? null,
     })
     .select("*")
     .single();
