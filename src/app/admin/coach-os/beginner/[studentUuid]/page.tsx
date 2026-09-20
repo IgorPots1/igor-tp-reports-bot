@@ -9,6 +9,7 @@ import { listIntervalsStudents, loadCoachStudentView } from "@/features/interval
 import { IntervalsAnketaCard } from "@/features/intervals/loop/anketa-card";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
 import type { PlanSession, SessionStep, StepTarget } from "@/features/intervals/loop/types";
+import { formatRuDay } from "@/features/intervals/loop/student-view";
 
 import { previewStudentDeletion } from "@/features/intervals/delete-student";
 
@@ -262,7 +263,17 @@ export default async function BeginnerStudentPage({
                         background: isReleased ? "#EAF5EC" : isEditing ? "#FBF3E4" : "#fff",
                       }}
                     >
-                      <strong style={{ minWidth: 110 }}>{week.weekStart}</strong>
+                      {/* ДАТА ЦЕЛИКОМ И ДИАПАЗОН [20.09.2026]. Голая ISO-строка
+                          в узкой колонке ломалась переносом, и тренер читал
+                          обрывки («девятое, семнадцатое»). Понедельник словами
+                          плюс конец недели читается с одного взгляда и не
+                          разваливается при переносе. */}
+                      <strong style={{ minWidth: 190, whiteSpace: "nowrap" }}>
+                        {formatRuDay(week.weekStart)} — {formatRuDay(shiftIso(week.weekStart, 6))}
+                      </strong>
+                      <span style={{ color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>
+                        {week.weekStart}
+                      </span>
                       <span style={{ color: isReleased ? "#2E7D45" : "#a33" }}>
                         {isReleased
                           ? `отдана ${(week.releasedAt ?? "").slice(0, 10)} — ученица её видит`
@@ -668,4 +679,9 @@ function SessionContent({ session }: { session: PlanSession }) {
   }
 
   return session.description ? <span style={small}>{session.description}</span> : null;
+}
+
+/** Сдвиг ISO-даты на дни. Локальная копия: страница не тянет ради этого сервис. */
+function shiftIso(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 }
