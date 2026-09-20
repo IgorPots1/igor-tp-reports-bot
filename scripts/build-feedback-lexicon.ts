@@ -8,6 +8,33 @@
 //                across many cards (systematically cut), become blacklist CANDIDATES (shown, not banned).
 //
 // Usage: NODE_PATH=.../node_modules npx tsx scripts/build-feedback-lexicon.ts <bootstrap|grow|blacklist> [days]
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// ЕСЛИ ВЫ СТАВИТЕ ЭТОТ СКРИПТ НА РАСПИСАНИЕ — СНАЧАЛА ПРОЧТИТЕ ЭТО.
+//
+// Сегодня он запускается РУКОЙ, и результат — три JSON, лежащих в git. Это
+// работает ровно потому, что между прогоном и продом стоит человек, который
+// коммитит. Связка держится на нём.
+//
+// В ТОТ ДЕНЬ, КОГДА РОСТ СТАНЕТ АВТОМАТИЧЕСКИМ (cron, launchd, Vercel-крон,
+// GitHub Action — неважно), ХРАНЕНИЕ ОБЯЗАНО ПЕРЕЕХАТЬ В БАЗУ. Не «желательно»,
+// а обязано: автоматический писатель в файл, который версионируется, разойдётся
+// ГАРАНТИРОВАННО. Раннер пишет на своей машине, прод собирается из репозитория,
+// коммитить некому. Расхождение будет тихим — draft-lexicon.ts импортирует JSON
+// напрямую, файл остаётся валидным, ни тип, ни тест, ни сборка не пожалуются.
+// Узнаете вы об этом по странному поведению разбора, а не по ошибке.
+//
+// Что это стоит (оценено 20.09.2026): миграция + бэкфилл трёх JSON, переписать
+// запись этого скрипта на строки — обе части простые. Настоящая цена в
+// draft-lexicon.ts: там синхронный API (checkDraftVocabulary, bannedWordsForPrompt,
+// lexiconStats) и множества, собранные на импорте модуля. База асинхронна, значит
+// либо эти функции становятся async и правятся четыре места вызова, либо
+// появляется loadLexicon(), который кто-то обязан позвать раньше — второй путь
+// плох тем, что забытый вызов даёт ПУСТОЙ лексикон без единой ошибки.
+//
+// Пока рост ручной, дыру закрывают чек check:lexicon-committed и напоминание в
+// конце этого прогона. Автоматизация их обоих обесценивает.
+// ─────────────────────────────────────────────────────────────────────────────
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -100,7 +127,34 @@ async function blacklistDiff() {
   for (const c of bl.candidates.slice(0, 25)) console.log(`   ✂︎ ${c.word} (стем ${c.stem}, вырезан ${c.cutCount}×)`);
 }
 
+/**
+ * НАПОМИНАНИЕ В МОМЕНТ, КОГДА ФАЙЛЫ ТОЛЬКО ЧТО ПЕРЕПИСАНЫ.
+ *
+ * 14.09.2026 прогон сделали, а результат не закоммитили — и шесть дней локальная
+ * сборка разбирала черновики не так, как прод. Молча: JSON валиден, импорт
+ * работает, жаловаться нечему. Единственный момент, когда об этом можно сказать
+ * вовремя, — вот этот.
+ */
+function remindToCommit(): void {
+  console.log("");
+  console.log("─".repeat(70));
+  console.log("ФАЙЛЫ ЛЕКСИКОНА ПЕРЕПИСАНЫ. Закоммитьте их, иначе прод их не увидит:");
+  console.log("");
+  console.log("   git add src/features/trainingpeaks/feedback/lexicon");
+  console.log('   git commit -m "chore(feedback): выросший лексикон"');
+  console.log("");
+  console.log("draft-lexicon.ts импортирует эти JSON напрямую: у вас они уже есть,");
+  console.log("на Vercel их нет, и ни один тест этого не покажет.");
+  console.log("Проверить в любой момент: npm run check:lexicon-committed");
+  console.log("─".repeat(70));
+}
+
 const mode = process.argv[2];
 const days = Number(process.argv[3] ?? "7");
 const run = mode === "bootstrap" ? bootstrap() : mode === "grow" ? grow(days) : mode === "blacklist" ? blacklistDiff() : Promise.reject(new Error("mode: bootstrap|grow|blacklist"));
-run.then(() => process.exit(0)).catch((e) => { console.error(e.message || e); process.exit(1); });
+run
+  .then(() => {
+    remindToCommit();
+    process.exit(0);
+  })
+  .catch((e) => { console.error(e.message || e); process.exit(1); });

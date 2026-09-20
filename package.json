@@ -374,6 +374,7 @@
     "check:delete-student": "npx tsx scripts/check-delete-student.ts",
     "check:manual-entry": "npx tsx scripts/check-manual-entry.ts",
     "check:manual-entry-parse": "npx tsx scripts/check-manual-entry-parse.ts",
+    "check:lexicon-committed": "npx tsx scripts/check-lexicon-committed.ts",
     "check:checkin-draft": "npx tsx scripts/check-checkin-draft.ts",
     "check:week-signal": "npx tsx scripts/check-week-signal.ts",
     "check:onboarding-answers-not-overwritten": "npx tsx scripts/check-onboarding-answers-not-overwritten.ts",
