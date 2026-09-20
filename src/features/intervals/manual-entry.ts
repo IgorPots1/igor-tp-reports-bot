@@ -307,6 +307,35 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
     voiceFileId: null,
   });
   if (!checkin.ok) {
+    /**
+     * ПОЛОВИНЧАТОЙ ЗАПИСИ НЕ ОСТАЁТСЯ [20.09.2026].
+     *
+     * Две записи идут подряд: активность, потом чек-ин. Если падал второй,
+     * первая ОСТАВАЛАСЬ — и получалась пробежка без отчёта: человек видел
+     * отказ и был уверен, что не отправил ничего, а в базе висела тренировка.
+     * Дальше она молча участвовала в расчётах, как настоящая.
+     *
+     * Транзакции здесь нет (две отдельные записи через PostgREST), поэтому
+     * откатываем компенсацией: удаляем активность, которую только что завели.
+     * Удаляем ИМЕННО свою, по сгенерированному activity_id — чужого не трогаем
+     * ни при каком исходе.
+     *
+     * Если и откат не прошёл, говорим об этом ОТДЕЛЬНОЙ строкой в логе: тогда
+     * сирота всё-таки осталась, и это должно быть видно, а не выясняться через
+     * неделю по странным числам.
+     */
+    const { error: rollbackError } = await supabase
+      .from("intervals_activities")
+      .delete()
+      .eq("source_id", input.sourceId)
+      .eq("activity_id", activityId);
+    if (rollbackError) {
+      console.error("[intervals.manual-entry] откат активности не прошёл", {
+        activityId,
+        sourceId: input.sourceId,
+        error: describeSupabaseError(rollbackError),
+      });
+    }
     return { ok: false, code: checkin.code, messageRu: checkin.messageRu };
   }
   return { ok: true, activityId, checkin };

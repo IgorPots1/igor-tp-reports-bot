@@ -347,6 +347,39 @@ async function main(): Promise<void> {
   });
   await supabase.from("deleted_students_archive").delete().eq("student_uuid", reverseCreated.studentUuid);
 
+  step("ПОЛОВИНЧАТАЯ ЗАПИСЬ НЕ ОСТАЁТСЯ");
+  // Две записи идут подряд: активность, потом чек-ин. Раньше при падении
+  // второго первая оставалась — пробежка без отчёта, которая дальше молча
+  // участвовала в расчётах. Ломаем чек-ин заведомо неверным кодом усилия и
+  // смотрим, что активность не осела.
+  const { count: beforeCount } = await supabase
+    .from("intervals_activities")
+    .select("activity_id", { count: "exact", head: true })
+    .eq("source_id", created.sourceId);
+
+  const broken = await submitManualEntry({
+    sourceId,
+    planSessionId: null,
+    date: "2026-09-16",
+    durationMinutes: 41,
+    distanceKm: null,
+    averageHeartrate: null,
+    averagePaceSecPerKm: null,
+    effortCode: "такого_усилия_нет",
+    painCode: "no_pain",
+    commentText: null,
+  });
+  expect(!broken.ok, `отчёт с неизвестным усилием отклонён${broken.ok ? "" : ` (${broken.code})`}`);
+
+  const { count: afterCount } = await supabase
+    .from("intervals_activities")
+    .select("activity_id", { count: "exact", head: true })
+    .eq("source_id", created.sourceId);
+  expect(
+    (afterCount ?? 0) === (beforeCount ?? 0),
+    `активностей было ${beforeCount ?? 0}, стало ${afterCount ?? 0} — сироты быть не должно`
+  );
+
   step("УБОРКА");
   const { error: deleteError } = await supabase.rpc("delete_intervals_student", {
     p_student_uuid: created.studentUuid,
