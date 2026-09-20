@@ -952,3 +952,80 @@ export async function saveWeeklyReport(
   if (error) return { ok: false, message: describeSupabaseError(error) };
   return { ok: true };
 }
+
+/* ── Состояние недели плана ───────────────────────────────────────────────── */
+
+export type PlanWeekStatus = "generated" | "editing" | "released";
+
+export type PlanWeek = {
+  cycleId: string;
+  weekStart: string;
+  status: PlanWeekStatus;
+  releasedAt: string | null;
+};
+
+function toPlanWeek(row: Record<string, unknown>): PlanWeek {
+  const raw = String(row.status);
+  return {
+    cycleId: String(row.cycle_id),
+    weekStart: String(row.week_start),
+    status: raw === "released" || raw === "editing" ? raw : "generated",
+    releasedAt: (row.released_at as string | null) ?? null,
+  };
+}
+
+export async function listPlanWeeks(cycleId: string, client?: Client): Promise<PlanWeek[]> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_plan_weeks")
+    .select("cycle_id, week_start, status, released_at")
+    .eq("cycle_id", cycleId)
+    .order("week_start", { ascending: true });
+  if (error) throw new Error(`intervals_plan_weeks: ${describeSupabaseError(error)}`);
+  return (data ?? []).map((row) => toPlanWeek(row as unknown as Record<string, unknown>));
+}
+
+/**
+ * Завести недели цикла как ЧЕРНОВИКИ. Зовётся генератором сразу после записи
+ * сессий: неделя без строки состояния считается невидимой, и забыть эту запись
+ * значит отдать ученику пустой план.
+ */
+export async function createGeneratedWeeks(
+  cycleId: string,
+  weekStarts: string[],
+  client?: Client
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (weekStarts.length === 0) return { ok: true };
+  const supabase = client ?? createSupabaseServerClient();
+  const { error } = await supabase.from("intervals_plan_weeks").upsert(
+    [...new Set(weekStarts)].map((weekStart) => ({
+      cycle_id: cycleId,
+      week_start: weekStart,
+      status: "generated",
+    })),
+    { onConflict: "cycle_id,week_start", ignoreDuplicates: true }
+  );
+  if (error) return { ok: false, message: describeSupabaseError(error) };
+  return { ok: true };
+}
+
+export async function setPlanWeekStatus(
+  input: { cycleId: string; weekStart: string; status: PlanWeekStatus },
+  client?: Client
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { error } = await supabase.from("intervals_plan_weeks").upsert(
+    {
+      cycle_id: input.cycleId,
+      week_start: input.weekStart,
+      status: input.status,
+      // Дата проставляется ОДИН раз, при первой отдаче: повторное «отдать»
+      // после правки не должно выглядеть как новая публикация.
+      ...(input.status === "released" ? { released_at: new Date().toISOString() } : {}),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "cycle_id,week_start" }
+  );
+  if (error) return { ok: false, message: describeSupabaseError(error) };
+  return { ok: true };
+}

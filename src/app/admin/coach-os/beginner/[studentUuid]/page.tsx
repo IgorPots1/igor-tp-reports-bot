@@ -11,7 +11,13 @@ import { BEGINNER_LADDER } from "@/features/methodology/beginner";
 
 import { previewStudentDeletion } from "@/features/intervals/delete-student";
 
-import { deleteStudentAction, publishPlanAction, sendCoachMessageAction } from "../actions";
+import {
+  deleteStudentAction,
+  publishPlanAction,
+  releaseWeekAction,
+  sendCoachMessageAction,
+  takeWeekIntoWorkAction,
+} from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -229,9 +235,72 @@ export default async function BeginnerStudentPage({
               </form>
             ) : (
               <p style={{ margin: "0 0 12px", color: "#2E7D45" }}>
-                Опубликован {view.latestCycle.publishedAt ?? "—"} — ученица его видит.
+                Опубликован {view.latestCycle.publishedAt ?? "—"}. Что именно она видит — по неделям ниже.
               </p>
             )}
+
+            {/* ── НЕДЕЛИ ── Единица публикации теперь неделя, а не цикл. Пока
+                неделя не отдана, ученица её не видит, сколько бы раз вы её ни
+                правили. */}
+            <div style={{ marginBottom: 14 }}>
+              {view.planWeeks.length === 0 ? (
+                <p style={{ margin: 0, color: "#555" }}>Недель у цикла не заведено.</p>
+              ) : (
+                view.planWeeks.map((week) => {
+                  const isReleased = week.status === "released";
+                  const isEditing = week.status === "editing";
+                  return (
+                    <div
+                      key={week.weekStart}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        padding: "8px 10px",
+                        marginBottom: 6,
+                        borderRadius: 8,
+                        border: "1px solid #e0e0e0",
+                        background: isReleased ? "#EAF5EC" : isEditing ? "#FBF3E4" : "#fff",
+                      }}
+                    >
+                      <strong style={{ minWidth: 110 }}>{week.weekStart}</strong>
+                      <span style={{ color: isReleased ? "#2E7D45" : "#a33" }}>
+                        {isReleased
+                          ? `отдана ${(week.releasedAt ?? "").slice(0, 10)} — ученица её видит`
+                          : isEditing
+                            ? "в работе — ученица НЕ видит"
+                            : "собрана машиной — ученица НЕ видит"}
+                      </span>
+                      {!isReleased ? (
+                        <>
+                          <form action={releaseWeekAction} style={{ margin: 0 }}>
+                            <input type="hidden" name="studentUuid" value={studentUuid} />
+                            <input type="hidden" name="cycleId" value={view.latestCycle?.id ?? ""} />
+                            <input type="hidden" name="sourceId" value={student.sourceId ?? ""} />
+                            <input type="hidden" name="weekStart" value={week.weekStart} />
+                            <FormActionButton
+                              confirmMessage={`Отдать неделю с ${week.weekStart} ученице? Она увидит её в приложении, плюс уйдёт уведомление.`}
+                              pendingText="Отдаю…"
+                            >
+                              Отдать ученице
+                            </FormActionButton>
+                          </form>
+                          {!isEditing ? (
+                            <form action={takeWeekIntoWorkAction} style={{ margin: 0 }}>
+                              <input type="hidden" name="studentUuid" value={studentUuid} />
+                              <input type="hidden" name="cycleId" value={view.latestCycle?.id ?? ""} />
+                              <input type="hidden" name="weekStart" value={week.weekStart} />
+                              <FormActionButton pendingText="Отмечаю…">Взять в работу</FormActionButton>
+                            </form>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
 
             <table style={{ borderCollapse: "collapse", width: "100%" }}>
               <thead>

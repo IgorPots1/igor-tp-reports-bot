@@ -26,6 +26,7 @@ import {
   saveCheckin,
   saveProgression,
   getWeeklyReport,
+  listPlanWeeks,
 } from "./repository";
 import { buildStudentView, formatRuDay, type CoachReplyView, type StudentView } from "./student-view";
 import type { Checkin } from "./types";
@@ -150,7 +151,24 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
   }
 
   // Окно: неделя назад (чтобы видеть, что уже отмечено) и две вперёд.
-  const sessions = await listSessionsInRange(cycle.id, shiftIso(todayIso, -7), shiftIso(todayIso, 14));
+  const allSessions = await listSessionsInRange(cycle.id, shiftIso(todayIso, -7), shiftIso(todayIso, 14));
+
+  /**
+   * НЕДЕЛЯ БЕЗ released ЧЕЛОВЕКУ НЕ ПОКАЗЫВАЕТСЯ [20.09.2026].
+   *
+   * Раньше единицей публикации был цикл: опубликован — видно всё, включая
+   * недоделанную правку будущей недели. Теперь видно только то, что тренер
+   * отдал отдельным нажатием.
+   *
+   * Неделя без строки состояния считается НЕ отданной. Это осознанно строгая
+   * сторона: забытая строка даёт пустой экран, который тренер заметит, а
+   * забытый released отдал бы черновик ученице молча.
+   */
+  const weeks = await listPlanWeeks(cycle.id);
+  const releasedWeeks = new Set(
+    weeks.filter((week) => week.status === "released").map((week) => week.weekStart)
+  );
+  const sessions = allSessions.filter((session) => releasedWeeks.has(session.weekStart));
 
   const supabase = createSupabaseServerClient();
   const { data: checkinRows, error } = await supabase

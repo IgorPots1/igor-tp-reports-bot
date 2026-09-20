@@ -17,9 +17,11 @@ import {
   listActivitiesInRange,
   listCheckins,
   listCoachMessages,
+  listPlanWeeks,
   listSessionsInRange,
   listWeeklyReports,
   type ActivityRow,
+  type PlanWeek,
   type WeeklyReport,
 } from "./repository";
 import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
@@ -87,6 +89,12 @@ export type StudentSignals = {
    * читается как «тут всегда красное» и перестаёт работать.
    */
   testWaitingReview: string | null;
+  /**
+   * Пора отдать следующую неделю: она собрана, но ученица её не видит, а
+   * ближайший понедельник уже рядом. Внутри — её слова из недельной формы,
+   * чтобы решать, не открывая карточку.
+   */
+  weekToRelease: { weekStart: string; voiceRu: string | null } | null;
 };
 
 /**
@@ -102,6 +110,9 @@ export function signalWeight(signals: StudentSignals): number {
   if (signals.connection === "connected_but_silent") weight += 800;
   if (signals.connection === "not_connected") weight += 600;
   if (signals.planWaitingPublish) weight += 500;
+  // Ниже «плана нет вообще», выше разбора теста: неделя собрана, дело за
+  // нажатием, и у этого есть срок — понедельник.
+  if (signals.weekToRelease) weight += 450;
   if (signals.noPlan) weight += 400;
   // Ниже связи и плана, выше неотвеченных отметок: тест не горит, но пока его
   // не разобрали, весь цикл идёт по усилию вместо темпов.
@@ -122,6 +133,12 @@ export function signalLabelsRu(signals: StudentSignals): string[] {
   if (signals.connection === "not_connected") labels.push("часы не подключены");
   if (signals.noPlan) labels.push("плана нет");
   if (signals.planWaitingPublish) labels.push("план ждёт публикации");
+  if (signals.weekToRelease) {
+    labels.push(
+      `пора отдать неделю с ${signals.weekToRelease.weekStart}` +
+        (signals.weekToRelease.voiceRu ? ` · ${signals.weekToRelease.voiceRu}` : "")
+    );
+  }
   if (signals.testWaitingReview) labels.push(`разобрать тест за ${signals.testWaitingReview}`);
   if (signals.unansweredCheckins > 0) labels.push(`ответить: ${signals.unansweredCheckins}`);
   if (signals.missedPlannedDates.length >= 2) {
@@ -224,6 +241,7 @@ export async function loadStudentsSignals(
   if (sourceIds.length === 0) {
     for (const student of students) {
       result.set(student.studentUuid, {
+        weekToRelease: null,
         unansweredCheckins: 0,
         missedCheckinDates: [],
         missedPlannedDates: [],
@@ -273,11 +291,13 @@ export async function loadStudentsSignals(
       .eq("status", "published"),
   ]);
 
-  const latestCycleBySource = new Map<string, { status: string }>();
+  const latestCycleBySource = new Map<string, { id: string; status: string }>();
   for (const raw of cycles.data ?? []) {
     const row = raw as unknown as Record<string, unknown>;
     const key = String(row.source_id);
-    if (!latestCycleBySource.has(key)) latestCycleBySource.set(key, { status: String(row.status) });
+    if (!latestCycleBySource.has(key)) {
+      latestCycleBySource.set(key, { id: String(row.id), status: String(row.status) });
+    }
   }
 
   const answered = new Set(
@@ -323,6 +343,46 @@ export async function loadStudentsSignals(
     plannedBySource.set(key, set);
   }
 
+  /**
+   * НЕДЕЛИ И ГОЛОС ЧЕЛОВЕКА — ДЛЯ СИГНАЛА «ПОРА ОТДАТЬ НЕДЕЛЮ».
+   *
+   * Сигнал складывается из трёх фактов: неделя собрана, ученица её не видит, и
+   * она уже началась или начнётся в ближайшие дни. Слова из недельной формы
+   * едут рядом, чтобы решение принималось в списке, а не после открытия
+   * карточки.
+   */
+  const cycleIds = [...latestCycleBySource.values()].map((cycle) => cycle.id);
+  const weeksByCycle = new Map<string, Array<{ weekStart: string; status: string }>>();
+  const reportBySource = new Map<string, { weekStart: string; scheduleCode: string; wellbeingCode: string }>();
+  if (cycleIds.length > 0) {
+    const [{ data: weekRows }, { data: reportRows }] = await Promise.all([
+      supabase.from("intervals_plan_weeks").select("cycle_id, week_start, status").in("cycle_id", cycleIds),
+      supabase
+        .from("intervals_weekly_reports")
+        .select("source_id, week_start, schedule_code, wellbeing_code")
+        .order("week_start", { ascending: false }),
+    ]);
+    for (const raw of weekRows ?? []) {
+      const row = raw as unknown as Record<string, unknown>;
+      const key = String(row.cycle_id);
+      const list = weeksByCycle.get(key) ?? [];
+      list.push({ weekStart: String(row.week_start), status: String(row.status) });
+      weeksByCycle.set(key, list);
+    }
+    for (const raw of reportRows ?? []) {
+      const row = raw as unknown as Record<string, unknown>;
+      const key = String(row.source_id);
+      // Строки идут от новых к старым — берём первую, то есть свежайшую форму.
+      if (!reportBySource.has(key)) {
+        reportBySource.set(key, {
+          weekStart: String(row.week_start),
+          scheduleCode: String(row.schedule_code),
+          wellbeingCode: String(row.wellbeing_code),
+        });
+      }
+    }
+  }
+
   const sourceById = new Map<string, Record<string, unknown>>();
   for (const raw of sources.data ?? []) {
     const row = raw as unknown as Record<string, unknown>;
@@ -339,6 +399,7 @@ export async function loadStudentsSignals(
         planWaitingPublish: false,
         noPlan: true,
         testWaitingReview: null,
+        weekToRelease: null,
       });
       continue;
     }
@@ -365,7 +426,28 @@ export async function loadStudentsSignals(
 
     const planned = plannedBySource.get(sourceId) ?? new Set<string>();
 
+    // Ближайшая НЕ отданная неделя, которая уже идёт или начнётся в течение
+    // недели. Дальше не смотрим: неделя, до которой две недели, не горит.
+    const horizon = shift(todayIso, 7);
+    const pending = (weeksByCycle.get(cycle?.id ?? "") ?? [])
+      .filter((week) => week.status !== "released" && week.weekStart <= horizon)
+      .sort((a, b) => (a.weekStart < b.weekStart ? -1 : 1))[0];
+    const report = reportBySource.get(sourceId);
+    const voiceRu = report
+      ? report.scheduleCode === "almost_none"
+        ? "сама пишет: почти ничего не получилось"
+        : report.wellbeingCode === "tired"
+          ? "сама пишет про усталость"
+          : report.scheduleCode === "some_missed"
+            ? "часть тренировок пропущена"
+            : "неделя выполнена, самочувствие обычное"
+      : null;
+
     result.set(student.studentUuid, {
+      weekToRelease:
+        cycle !== undefined && cycle.status === "published" && pending
+          ? { weekStart: pending.weekStart, voiceRu }
+          : null,
       unansweredCheckins: own.filter((item) => !answered.has(item.id)).length,
       // Сегодня не считаем: день ещё не кончился.
       missedPlannedDates: [...planned]
@@ -410,6 +492,8 @@ export type CoachStudentView = {
   weekSignal: WeekSignal;
   /** Недельные формы: что человек сам сказал про свои недели. */
   weeklyReports: WeeklyReport[];
+  /** Состояние недель последнего цикла: что ученица видит, а что нет. */
+  planWeeks: PlanWeek[];
 };
 
 export async function loadCoachStudentView(
@@ -431,6 +515,7 @@ export async function loadCoachStudentView(
       unansweredCheckinIds: new Set(),
       connectionHealth: { state: "not_connected" },
       weeklyReports: [],
+      planWeeks: [],
       weekSignal: { painFlags: [], volume: null, weekly: null },
     };
   }
@@ -452,6 +537,7 @@ export async function loadCoachStudentView(
     ]);
 
   const sessions = latestCycle ? await listSessionsInRange(latestCycle.id, from, to) : [];
+  const planWeeks = latestCycle ? await listPlanWeeks(latestCycle.id) : [];
 
   const connection = await getSourceConnection(student.studentUuid);
   const connectionHealth = assessConnectionHealth({
@@ -493,6 +579,7 @@ export async function loadCoachStudentView(
     unansweredCheckinIds,
     connectionHealth,
     weeklyReports,
+    planWeeks,
     weekSignal: buildWeekSignal({ checkins, unansweredCheckinIds, todayIso, weeklyReports }),
   };
 }

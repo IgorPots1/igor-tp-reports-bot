@@ -17,6 +17,7 @@ import {
   markCoachMessageVisibleToStudent,
   publishCycle,
   saveCoachMessage,
+  setPlanWeekStatus,
 } from "@/features/intervals/loop/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { deleteIntervalsStudentCompletely } from "@/features/intervals/delete-student";
@@ -161,4 +162,60 @@ export async function deleteStudentAction(formData: FormData): Promise<void> {
     redirect(`/admin/coach-os/beginner/${studentUuid}?delete_error=${encodeURIComponent(result.reason)}`);
   }
   redirect(`/admin/coach-os/beginner?deleted=${encodeURIComponent(result.preview.studentName)}`);
+}
+
+/**
+ * Отдать ОДНУ неделю ученице.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНО ОТ ПУБЛИКАЦИИ ЦИКЛА. Публикация цикла делает его активным;
+ * видимость отдельной недели — другое решение и другой момент. Пока их не
+ * разделили, любая правка будущей недели уезжала человеку мгновенно, включая
+ * недоделанную: второго нажатия, которым говорят «теперь готово», не было.
+ *
+ * Уведомление переиспользуем то же, что и у публикации цикла: для ученицы
+ * событие одно и то же — «есть неделя, которую можно смотреть».
+ */
+export async function releaseWeekAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const cycleId = String(formData.get("cycleId") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  const weekStart = String(formData.get("weekStart") ?? "");
+  if (!studentUuid || !cycleId || !sourceId || !weekStart) return;
+
+  const saved = await setPlanWeekStatus({ cycleId, weekStart, status: "released" });
+  if (!saved.ok) {
+    console.error("[intervals.week] неделя не отдана", { studentUuid, weekStart, error: saved.message });
+    return;
+  }
+
+  const supabase = createSupabaseServerClient();
+  const { data: studentRow } = await supabase
+    .from("trainingpeaks_students")
+    .select("telegram_chat_id, telegram_delivery_enabled, timezone")
+    .eq("id", studentUuid)
+    .maybeSingle();
+  const row = studentRow as {
+    telegram_chat_id?: string | null;
+    telegram_delivery_enabled?: boolean;
+    timezone?: string | null;
+  } | null;
+  const notice = await notifyPlanPublished({
+    sourceId,
+    chatId: row?.telegram_chat_id ?? null,
+    telegramDeliveryEnabled: row?.telegram_delivery_enabled === true,
+    todayIso: todayIsoInZone(row?.timezone ?? null),
+  });
+  console.info("[intervals.week] неделя отдана", { studentUuid, weekStart, result: notice.kind });
+
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+/** Взять неделю в работу: ученица её не видит, а в списке видно «занято». */
+export async function takeWeekIntoWorkAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const cycleId = String(formData.get("cycleId") ?? "");
+  const weekStart = String(formData.get("weekStart") ?? "");
+  if (!studentUuid || !cycleId || !weekStart) return;
+  await setPlanWeekStatus({ cycleId, weekStart, status: "editing" });
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
 }

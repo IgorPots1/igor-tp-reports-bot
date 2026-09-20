@@ -140,10 +140,11 @@ async function main(): Promise<void> {
   // тянуть секрет в память ради генерации плана незачем.
   const { data: source, error: sourceError } = await supabase
     .from("student_data_sources")
-    .select(
-      "id, kind, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at, " +
-        "easy_pace_sec_per_km, easy_pace_source, easy_pace_set_at"
-    )
+    // ОДНОЙ СТРОКОЙ, БЕЗ СКЛЕЙКИ [20.09.2026]. Конкатенация ломает вывод типов
+    // supabase-js: аргумент перестаёт быть литералом, и весь ряд схлопывается в
+    // GenericStringError. В src при этом ни одной ошибки — зато шестнадцать в
+    // tools, и приехали они вместе с якорем лёгкого 19.09.
+    .select("id, kind, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at, easy_pace_sec_per_km, easy_pace_source, easy_pace_set_at")
     .eq("provider", "intervals")
     .eq("external_athlete_id", athleteId)
     .maybeSingle();
@@ -597,6 +598,18 @@ async function main(): Promise<void> {
     .upsert(rows, { onConflict: "cycle_id,week_index,day_idx" });
   if (sessionsError) fail(`Не удалось сохранить сессии: ${sessionsError.message}`);
 
+  // НЕДЕЛИ ЗАВОДЯТСЯ ЧЕРНОВИКАМИ. Машинная неделя не видна ученику, пока тренер
+  // не отдаст её отдельным нажатием: до этого она может быть недоделанной.
+  const { error: weeksError } = await supabase.from("intervals_plan_weeks").upsert(
+    [...new Set(rows.map((row) => String(row.week_start)))].map((weekStart) => ({
+      cycle_id: String(cycleRow.id),
+      week_start: weekStart,
+      status: "generated",
+    })),
+    { onConflict: "cycle_id,week_start", ignoreDuplicates: true }
+  );
+  if (weeksError) fail(`Не удалось завести недели: ${weeksError.message}`);
+
   console.log("");
   console.log(`Записано: цикл ${cycleRow.id}, сессий ${rows.length}.`);
 }
@@ -837,6 +850,18 @@ async function runBeginnerBranch(
     .from("intervals_plan_sessions")
     .upsert(rows, { onConflict: "cycle_id,week_index,day_idx" });
   if (sessionsError) fail(`Не удалось сохранить сессии: ${sessionsError.message}`);
+
+  // НЕДЕЛИ ЗАВОДЯТСЯ ЧЕРНОВИКАМИ. Машинная неделя не видна ученику, пока тренер
+  // не отдаст её отдельным нажатием: до этого она может быть недоделанной.
+  const { error: weeksError } = await supabase.from("intervals_plan_weeks").upsert(
+    [...new Set(rows.map((row) => String(row.week_start)))].map((weekStart) => ({
+      cycle_id: String(cycleRow.id),
+      week_start: weekStart,
+      status: "generated",
+    })),
+    { onConflict: "cycle_id,week_start", ignoreDuplicates: true }
+  );
+  if (weeksError) fail(`Не удалось завести недели: ${weeksError.message}`);
 
   // ── Состояние прогрессии ──
   //

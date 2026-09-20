@@ -389,6 +389,32 @@ async function main(): Promise<void> {
     .upsert([...carried, ...fresh], { onConflict: "cycle_id,week_index,day_idx" });
   if (rowsError) fail(`сессии черновика не записаны: ${rowsError.message}`);
 
+  // ПЕРЕНЕСЁННЫЕ НЕДЕЛИ СОХРАНЯЮТ СВОЁ СОСТОЯНИЕ, ПЕРЕСОБРАННЫЕ — ЧЕРНОВИКИ.
+  // Прошлое человек уже видел, и прятать его перегенерацией нельзя. А недели,
+  // собранные заново, он не видел ни разу: они ждут нажатия тренера.
+  const carriedWeeks = [...new Set(carried.map((row) => String(row.week_start)))];
+  const freshWeeks = [...new Set(fresh.map((row) => String(row.week_start)))];
+  const { data: oldWeekRows } = await supabase
+    .from("intervals_plan_weeks")
+    .select("week_start, status")
+    .eq("cycle_id", String(cycle.id));
+  const releasedBefore = new Set(
+    (oldWeekRows ?? [])
+      .filter((row) => String((row as Record<string, unknown>).status) === "released")
+      .map((row) => String((row as Record<string, unknown>).week_start))
+  );
+  const { error: weeksError } = await supabase.from("intervals_plan_weeks").upsert(
+    [...carriedWeeks, ...freshWeeks].map((weekStart) => ({
+      cycle_id: newCycleId,
+      week_start: weekStart,
+      // Перенесённая неделя сохраняет released: прошлое человек уже видел, и
+      // прятать его перегенерацией нельзя. Пересобранная — черновик.
+      status: carriedWeeks.includes(weekStart) && releasedBefore.has(weekStart) ? "released" : "generated",
+    })),
+    { onConflict: "cycle_id,week_start" }
+  );
+  if (weeksError) fail(`недели черновика не заведены: ${weeksError.message}`);
+
   console.log("");
   console.log(`Записано: черновик ${newCycleId.slice(0, 8)}, тренировок ${carried.length + fresh.length}.`);
   console.log("Ученица его НЕ видит. Откройте карточку и нажмите «Показать ученице», когда согласитесь.");
