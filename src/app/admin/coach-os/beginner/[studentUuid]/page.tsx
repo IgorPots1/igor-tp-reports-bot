@@ -8,6 +8,7 @@ import { dataLevelLabelRu } from "@/features/intervals/data-quality";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
 import { IntervalsAnketaCard } from "@/features/intervals/loop/anketa-card";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
+import type { PlanSession, SessionStep, StepTarget } from "@/features/intervals/loop/types";
 
 import { previewStudentDeletion } from "@/features/intervals/delete-student";
 
@@ -96,29 +97,26 @@ export default async function BeginnerStudentPage({
         </div>
       ) : null}
 
-      {/* ── Ступень ── */}
-      <div style={box}>
-        <h2 style={{ marginTop: 0 }}>Ступень</h2>
-        {view.progression ? (
-          <>
-            <p style={{ margin: "0 0 6px", fontSize: 18 }}>
-              <strong>
-                {view.progression.currentStep} из {BEGINNER_LADDER.length}
-              </strong>{" "}
-              — {view.stepLabelRu}
-            </p>
-            <p style={{ margin: 0, color: "#555" }}>
-              сессий на ступени: {view.progression.sessionsAtStep} · методика{" "}
-              {view.progression.methodologyId} {view.progression.methodologyVersion} · последний переход:{" "}
-              {view.progression.lastTransitionAt ?? "не было"}
-            </p>
-          </>
-        ) : (
-          <p style={{ margin: 0, color: "#555" }}>
-            Состояния нет — прогрессия заведётся при записи первого плана.
+      {/* ── Ступень ── ТОЛЬКО ДЛЯ ТЕХ, КТО НА ЛЕСТНИЦЕ [20.09.2026].
+          Раньше блок стоял всегда и у остальных сообщал «Состояния нет». Это
+          не информация: человек вне лестницы никогда её и не получит, а строка
+          занимает первый экран и приучает пролистывать верх карточки. */}
+      {view.progression ? (
+        <div style={box}>
+          <h2 style={{ marginTop: 0 }}>Ступень</h2>
+          <p style={{ margin: "0 0 6px", fontSize: 18 }}>
+            <strong>
+              {view.progression.currentStep} из {BEGINNER_LADDER.length}
+            </strong>{" "}
+            — {view.stepLabelRu}
           </p>
-        )}
-      </div>
+          <p style={{ margin: 0, color: "#555" }}>
+            сессий на ступени: {view.progression.sessionsAtStep} · методика{" "}
+            {view.progression.methodologyId} {view.progression.methodologyVersion} · последний переход:{" "}
+            {view.progression.lastTransitionAt ?? "не было"}
+          </p>
+        </div>
+      ) : null}
 
       {/* ── Сигнал недели ──
           ДВА РАЗНЫХ БЛОКА, ПОТОМУ ЧТО ЭТО ДВА РАЗНЫХ РЕШЕНИЯ. Боль ведёт к
@@ -331,12 +329,8 @@ export default async function BeginnerStudentPage({
                         ) : null}
                       </td>
                       <td style={cell}>
-                        {session.title}
-                        {session.description ? (
-                          <span style={{ display: "block", color: "#666", fontSize: 12 }}>
-                            {session.description}
-                          </span>
-                        ) : null}
+                        <strong>{session.title}</strong>
+                        <SessionContent session={session} />
                       </td>
                       <td style={cell}>{session.minutes}</td>
                       <td style={cell}>
@@ -587,4 +581,91 @@ export default async function BeginnerStudentPage({
       ) : null}
     </section>
   );
+}
+
+/** Темп шага словами: 427 → «7:07». */
+function paceText(sec: number): string {
+  return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`;
+}
+
+function targetText(target: StepTarget | undefined): string | null {
+  if (!target) return null;
+  if (target.kind === "pace") return `${paceText(target.fastSec)}–${paceText(target.slowSec)} /км`;
+  if (target.kind === "rpe") return `усилие ${target.rpe} из 10`;
+  if (target.kind === "self_discovery") return target.hint ? `подобрать: ${target.hint}` : "подобрать самой";
+  return target.text;
+}
+
+function StepLines({ steps, depth = 0 }: { steps: SessionStep[]; depth?: number }) {
+  return (
+    <>
+      {steps.map((step, i) => {
+        const target = targetText(step.target);
+        return (
+          <span key={i} style={{ display: "block", paddingLeft: depth * 12 }}>
+            {step.repeat ? (
+              <>
+                <span style={{ color: "#7a4a00" }}>{step.repeat.count} ×</span>
+                <StepLines steps={step.repeat.steps} depth={depth + 1} />
+              </>
+            ) : (
+              <>
+                {step.minutes} мин — {step.name}
+                {target ? <span style={{ color: "#555" }}> · {target}</span> : null}
+                {step.detail ? <span style={{ color: "#888" }}> · {step.detail}</span> : null}
+              </>
+            )}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * ЧТО ИМЕННО В ТРЕНИРОВКЕ — ПРЯМО В ТАБЛИЦЕ [20.09.2026].
+ *
+ * Было видно только название, минуты и отметку. У машинных сессий под
+ * названием стояло плоское description, у написанных РУКОЙ — ничего: их
+ * содержание живёт в steps, и его никто не рисовал. Тренер работает по этому
+ * экрану и должен видеть состав, не открывая ничего.
+ *
+ * Порядок источников: steps (ручное авторство, самый подробный), потом
+ * segments (машинная структура), потом плоский текст описания.
+ */
+function SessionContent({ session }: { session: PlanSession }) {
+  const small = { display: "block", color: "#666", fontSize: 12, lineHeight: 1.45 } as const;
+
+  if (session.steps && session.steps.length > 0) {
+    return (
+      <span style={small}>
+        <StepLines steps={session.steps} />
+        {session.notes?.map((note, i) => (
+          <span key={i} style={{ display: "block", color: "#7a4a00", marginTop: 2 }}>
+            {note.title ? `${note.title}: ` : ""}
+            {note.body}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  if (session.segments && session.segments.length > 0) {
+    return (
+      <span style={small}>
+        {session.segments.map((seg, i) => (
+          <span key={i} style={{ display: "block" }}>
+            {seg.minutes} мин — {seg.label}
+            {seg.fastSec !== null && seg.slowSec !== null ? (
+              <span style={{ color: "#555" }}> · {paceText(seg.fastSec)}–{paceText(seg.slowSec)} /км</span>
+            ) : seg.noPaceText ? (
+              <span style={{ color: "#555" }}> · {seg.noPaceText}</span>
+            ) : null}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  return session.description ? <span style={small}>{session.description}</span> : null;
 }

@@ -522,7 +522,18 @@ export async function loadCoachStudentView(
 
   const sourceId = student.sourceId;
   const from = shift(todayIso, -21);
-  const to = shift(todayIso, 21);
+  /**
+   * ВПЕРЁД — ВЕСЬ ЦИКЛ, А НЕ ТРИ НЕДЕЛИ [20.09.2026].
+   *
+   * Было ±21 день. Для ученицы это верно: ей дальше двух недель смотреть незачем.
+   * Тренеру — нет: он правит неделю за неделей и должен видеть, куда цикл идёт,
+   * иначе правка ближайшей недели делается вслепую. Цикл на 14 недель в окно
+   * ±21 просто не помещался, и половина плана существовала только в базе.
+   *
+   * Назад окно осталось прежним: прошлое нужно ровно настолько, чтобы видеть
+   * свежие отметки.
+   */
+  const to = shift(todayIso, 180);
 
   const [answers, progression, latestCycle, publishedCycle, checkins, activities, messages, weeklyReports] =
     await Promise.all([

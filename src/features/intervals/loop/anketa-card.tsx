@@ -47,11 +47,18 @@ export function IntervalsAnketaCard({
 
   return (
     <>
-      {/* КТО ОТВЕЧАЛ — отдельной строкой, а не мелким шрифтом сбоку.
-          «Ученица сказала, что бегает непрерывно» и «тренер знал, что она
-          бегает непрерывно» — для корпуса разные данные, и различать их
-          задним числом по значению невозможно. */}
-      <table style={{ borderCollapse: "collapse", marginBottom: 12 }}>
+      {/* ОТВЕТЫ СНАЧАЛА, ПРОИСХОЖДЕНИЕ ПОД СВЁРТКОЙ [20.09.2026].
+          Было наоборот: восемнадцать строк «ответила сама» сверху, а сами
+          ответы под ними. Происхождение нужно редко — когда сверяешь, чьё это
+          знание; ответы нужны каждый раз, когда открываешь карточку. Порядок
+          на экране должен повторять частоту вопроса, а не важность идеи. */}
+      <AnketaAnswersBlock answers={answers} studentTimezone={studentTimezone} />
+      <details style={{ marginTop: 12 }}>
+        <summary style={{ cursor: "pointer", color: "#555" }}>Кто отвечал на каждое поле</summary>
+        {/* «Ученица сказала, что бегает непрерывно» и «тренер знал, что она
+            бегает непрерывно» — для корпуса разные данные, и различать их
+            задним числом по значению невозможно. Поэтому таблица остаётся. */}
+        <table style={{ borderCollapse: "collapse", marginTop: 8 }}>
         <tbody>
           {PREFILLABLE_FIELDS.map((field) => {
             const byCoach = answers.coachSetFields.includes(field);
@@ -75,7 +82,22 @@ export function IntervalsAnketaCard({
             <td style={{ padding: "2px 0", color: "#2E7D45", fontWeight: 600 }}>всегда её</td>
           </tr>
         </tbody>
-      </table>
+        </table>
+      </details>
+    </>
+  );
+}
+
+/** Сами ответы. Вынесено отдельно, чтобы порядок блоков читался с одного взгляда. */
+function AnketaAnswersBlock({
+  answers,
+  studentTimezone,
+}: {
+  answers: AnketaAnswers;
+  studentTimezone: string | null;
+}) {
+  return (
+    <>
       <p style={{ margin: "0 0 6px" }}>
         цель: <strong>{answers.goalKind}</strong>
         {answers.raceDate ? ` · старт ${answers.raceDate}` : ""}
