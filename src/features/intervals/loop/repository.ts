@@ -867,3 +867,88 @@ export async function savePrefill(
   if (error) return { ok: false, message: describeSupabaseError(error) };
   return { ok: true };
 }
+
+/* ── Недельная форма ──────────────────────────────────────────────────────── */
+
+export type WeeklyReport = {
+  id: string;
+  sourceId: string;
+  weekStart: string;
+  scheduleCode: string;
+  wellbeingCode: string;
+  commentText: string | null;
+  createdAt: string;
+};
+
+function toWeeklyReport(row: Record<string, unknown>): WeeklyReport {
+  return {
+    id: String(row.id),
+    sourceId: String(row.source_id),
+    weekStart: String(row.week_start),
+    scheduleCode: String(row.schedule_code),
+    wellbeingCode: String(row.wellbeing_code),
+    commentText: (row.comment_text as string | null) ?? null,
+    createdAt: String(row.created_at),
+  };
+}
+
+export async function getWeeklyReport(
+  sourceId: string,
+  weekStart: string,
+  client?: Client
+): Promise<WeeklyReport | null> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_weekly_reports")
+    .select("*")
+    .eq("source_id", sourceId)
+    .eq("week_start", weekStart)
+    .maybeSingle();
+  if (error) throw new Error(`intervals_weekly_reports: ${describeSupabaseError(error)}`);
+  return data ? toWeeklyReport(data as unknown as Record<string, unknown>) : null;
+}
+
+export async function listWeeklyReports(
+  sourceId: string,
+  limit = 12,
+  client?: Client
+): Promise<WeeklyReport[]> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_weekly_reports")
+    .select("*")
+    .eq("source_id", sourceId)
+    .order("week_start", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`intervals_weekly_reports: ${describeSupabaseError(error)}`);
+  return (data ?? []).map((row) => toWeeklyReport(row as unknown as Record<string, unknown>));
+}
+
+/**
+ * Одна форма на неделю: повторная отправка ПЕРЕПИСЫВАЕТ ответ, а не заводит
+ * второй. Человек имеет право передумать до того, как тренер собрал неделю.
+ */
+export async function saveWeeklyReport(
+  input: {
+    sourceId: string;
+    weekStart: string;
+    scheduleCode: string;
+    wellbeingCode: string;
+    commentText: string | null;
+  },
+  client?: Client
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { error } = await supabase.from("intervals_weekly_reports").upsert(
+    {
+      source_id: input.sourceId,
+      week_start: input.weekStart,
+      schedule_code: input.scheduleCode,
+      wellbeing_code: input.wellbeingCode,
+      comment_text: input.commentText,
+    },
+    { onConflict: "source_id,week_start" }
+  );
+  if (error) return { ok: false, message: describeSupabaseError(error) };
+  return { ok: true };
+}

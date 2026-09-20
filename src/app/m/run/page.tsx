@@ -39,6 +39,13 @@ import {
   parsePaceSecPerKm,
 } from "@/features/intervals/loop/manual-entry-parse";
 import { clearDraft, readDraft, writeDraft } from "@/features/intervals/loop/checkin-draft";
+import {
+  COMMENT_PLACEHOLDER_RU,
+  SCHEDULE_OPTIONS,
+  SCHEDULE_QUESTION_RU,
+  WELLBEING_OPTIONS,
+  WELLBEING_QUESTION_RU,
+} from "@/features/intervals/loop/weekly-report";
 
 type TelegramWebApp = {
   initData: string;
@@ -139,6 +146,7 @@ type View =
       painOptions: PainOption[];
       restNoteRu: string | null;
       weekNotes: SessionNote[];
+      weeklyFormWeekStart: string | null;
     };
 
 const BG = "#F6F4EF";
@@ -1558,6 +1566,17 @@ function PlanScreen(props: {
           ответ, спрятанный внизу, читается как «мне не ответили». */}
       <CoachReplies replies={view.coachReplies ?? []} />
 
+      {/* НЕДЕЛЬНАЯ ФОРМА — ВЫШЕ ПЛАНА, НО НИЖЕ ОТВЕТА ТРЕНЕРА. Она приходит раз
+          в неделю и живёт один день: спрятать её под план значит не получить
+          ответа. Ответ тренера всё равно важнее — его ждут. */}
+      {view.weeklyFormWeekStart ? (
+        <WeeklyFormBlock
+          initData={props.initData}
+          weekStart={view.weeklyFormWeekStart}
+          onChanged={props.onChanged}
+        />
+      ) : null}
+
       {view.ladder ? <LadderBlock ladder={view.ladder} /> : null}
 
       {/* Заметки к неделе целиком — один раз здесь, не копируются в описание
@@ -2381,6 +2400,126 @@ function CheckinForm(props: {
       {err ? <p style={{ color: ACCENT, fontWeight: 600 }}>{err}</p> : null}
       <button type="button" onClick={submit} disabled={busy} style={primaryButtonStyle(busy)}>
         {busy ? "Сохраняю…" : "Отправить"}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Недельная форма: три вопроса про неделю целиком.
+ *
+ * ПОЧЕМУ ЗДЕСЬ, А НЕ ОТДЕЛЬНЫМ ЭКРАНОМ. Отдельный экран требует навигации и
+ * собственного состояния «открыт/закрыт», а форма живёт один день в неделю.
+ * Блок на главном экране человек видит сразу, как открыл приложение по
+ * уведомлению, и ему не надо никуда идти.
+ */
+function WeeklyFormBlock(props: {
+  initData: string;
+  weekStart: string;
+  onChanged: (note: string) => void;
+}) {
+  const [schedule, setSchedule] = useState<string | null>(null);
+  const [wellbeing, setWellbeing] = useState<string | null>(null);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [done, setDone] = useState(false);
+
+  const submit = async () => {
+    const errors: Record<string, string> = {};
+    if (!schedule) errors.schedule = "Выберите, как прошла неделя.";
+    if (!wellbeing) errors.wellbeing = "Выберите, как самочувствие.";
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/m/run/weekly-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          initData: props.initData,
+          timeZone: detectTimeZone(),
+          schedule,
+          wellbeing,
+          comment,
+        }),
+      });
+      const json = (await res.json()) as { ok: boolean; error?: string; replyRu?: string };
+      if (!json.ok) {
+        setErr(json.error ?? "Не получилось сохранить.");
+        return;
+      }
+      setDone(true);
+      props.onChanged(json.replyRu ?? "Спасибо, записал.");
+    } catch {
+      setErr("Нет связи. Попробуйте ещё раз.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done) return null;
+
+  return (
+    <div
+      style={{
+        background: "#fff",
+        border: `1px solid ${LINE}`,
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 12,
+      }}
+    >
+      <p style={{ margin: "0 0 4px", fontWeight: 700, fontSize: 15 }}>Как прошла неделя?</p>
+      <p style={{ margin: "0 0 12px", color: MUTED, fontSize: 13, lineHeight: 1.45 }}>
+        Три коротких вопроса про неделю целиком. По отдельным тренировкам этого не видно, а мне
+        нужно, чтобы собрать следующую.
+      </p>
+
+      <p style={{ margin: "0 0 8px", fontWeight: 600 }}>{SCHEDULE_QUESTION_RU}</p>
+      <div style={{ display: "grid", gap: 6 }}>
+        {SCHEDULE_OPTIONS.map((option) => (
+          <button
+            key={option.code}
+            type="button"
+            onClick={() => setSchedule(option.code)}
+            style={optionStyle(schedule === option.code)}
+          >
+            <span style={{ fontWeight: 600 }}>{option.labelRu}</span>
+            <span style={{ display: "block", color: MUTED, fontSize: 13, marginTop: 2 }}>
+              {option.hintRu}
+            </span>
+          </button>
+        ))}
+      </div>
+      {fieldErrors.schedule ? <FieldError text={fieldErrors.schedule} /> : null}
+
+      <p style={{ margin: "16px 0 8px", fontWeight: 600 }}>{WELLBEING_QUESTION_RU}</p>
+      <div style={{ display: "grid", gap: 6 }}>
+        {WELLBEING_OPTIONS.map((option) => (
+          <button
+            key={option.code}
+            type="button"
+            onClick={() => setWellbeing(option.code)}
+            style={optionStyle(wellbeing === option.code)}
+          >
+            <span style={{ fontWeight: 600 }}>{option.labelRu}</span>
+            <span style={{ display: "block", color: MUTED, fontSize: 13, marginTop: 2 }}>
+              {option.hintRu}
+            </span>
+          </button>
+        ))}
+      </div>
+      {fieldErrors.wellbeing ? <FieldError text={fieldErrors.wellbeing} /> : null}
+
+      <GrowingTextarea value={comment} onChange={setComment} placeholder={COMMENT_PLACEHOLDER_RU} />
+
+      {err ? <FieldError text={err} /> : null}
+      <button type="button" onClick={submit} disabled={busy} style={primaryButtonStyle(busy)}>
+        {busy ? "Отправляю…" : "Отправить"}
       </button>
     </div>
   );

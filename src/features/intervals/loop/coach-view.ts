@@ -18,7 +18,9 @@ import {
   listCheckins,
   listCoachMessages,
   listSessionsInRange,
+  listWeeklyReports,
   type ActivityRow,
+  type WeeklyReport,
 } from "./repository";
 import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
 import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
@@ -406,6 +408,8 @@ export type CoachStudentView = {
   connectionHealth: ConnectionHealth;
   /** Что чек-ины говорят про следующую неделю. Сигнал, план не трогает. */
   weekSignal: WeekSignal;
+  /** Недельные формы: что человек сам сказал про свои недели. */
+  weeklyReports: WeeklyReport[];
 };
 
 export async function loadCoachStudentView(
@@ -426,7 +430,8 @@ export async function loadCoachStudentView(
       messages: [],
       unansweredCheckinIds: new Set(),
       connectionHealth: { state: "not_connected" },
-      weekSignal: { painFlags: [], volume: null },
+      weeklyReports: [],
+      weekSignal: { painFlags: [], volume: null, weekly: null },
     };
   }
 
@@ -434,7 +439,7 @@ export async function loadCoachStudentView(
   const from = shift(todayIso, -21);
   const to = shift(todayIso, 21);
 
-  const [answers, progression, latestCycle, publishedCycle, checkins, activities, messages] =
+  const [answers, progression, latestCycle, publishedCycle, checkins, activities, messages, weeklyReports] =
     await Promise.all([
       getOnboardingAnswers(sourceId),
       getProgression(sourceId),
@@ -443,6 +448,7 @@ export async function loadCoachStudentView(
       listCheckins(sourceId, 40),
       listActivitiesInRange(sourceId, from, to),
       listCoachMessages(sourceId, 40),
+      listWeeklyReports(sourceId, 12),
     ]);
 
   const sessions = latestCycle ? await listSessionsInRange(latestCycle.id, from, to) : [];
@@ -486,7 +492,8 @@ export async function loadCoachStudentView(
     messages,
     unansweredCheckinIds,
     connectionHealth,
-    weekSignal: buildWeekSignal({ checkins, unansweredCheckinIds, todayIso }),
+    weeklyReports,
+    weekSignal: buildWeekSignal({ checkins, unansweredCheckinIds, todayIso, weeklyReports }),
   };
 }
 

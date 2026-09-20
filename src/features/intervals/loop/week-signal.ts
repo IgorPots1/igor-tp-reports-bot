@@ -57,11 +57,30 @@ export type WeekVolumeSignal = {
   adviceRu: string;
 };
 
+export type WeeklyReportForSignal = {
+  weekStart: string;
+  scheduleCode: string;
+  wellbeingCode: string;
+  commentText: string | null;
+};
+
+export type WeeklyVoice = {
+  scheduleCode: string;
+  wellbeingCode: string;
+  commentText: string | null;
+  /** Одной строкой: что из ответа следует для тренера. */
+  headlineRu: string;
+  /** Неделя не состоялась: объём обсуждать рано, сначала разговор. */
+  needsTalk: boolean;
+};
+
 export type WeekSignal = {
   /** Неотвеченные чек-ины с болью. Ведут к разговору, не к числу. */
   painFlags: PainFlag[];
   /** Итог завершённой недели. null — чек-инов за неё не было, говорить нечего. */
   volume: WeekVolumeSignal | null;
+  /** Что человек сам сказал про неделю. null — форму не заполнил. */
+  weekly: WeeklyVoice | null;
 };
 
 const DAY_MS = 86_400_000;
@@ -91,10 +110,40 @@ export function lastCompletedWeek(todayIso: string): { start: string; end: strin
   return { start: shift(currentMonday, -7), end: shift(currentMonday, -1) };
 }
 
+/**
+ * Голос человека про неделю. Сюда приходит форма за ТУ ЖЕ завершённую неделю,
+ * что считает полоса объёма, — иначе тренер увидел бы слова про одну неделю
+ * рядом с числами про другую.
+ */
+function weeklyVoiceOf(report: WeeklyReportForSignal | null): WeeklyVoice | null {
+  if (!report) return null;
+  const needsTalk = report.scheduleCode === "almost_none";
+  const headlineRu = needsTalk
+    ? "Неделя не состоялась: человек сам сказал, что почти ничего не получилось"
+    : report.wellbeingCode === "tired"
+      ? report.scheduleCode === "all_done"
+        ? "График выполнен полностью, но человек говорит про накопленную усталость"
+        : "Часть тренировок пропущена, и человек говорит про накопленную усталость"
+      : report.scheduleCode === "some_missed"
+        ? "Часть тренировок пропущена, самочувствие при этом обычное"
+        : report.wellbeingCode === "fresh"
+          ? "Неделя выполнена, сил к концу не меньше, чем в начале"
+          : "Неделя выполнена, самочувствие обычное";
+  return {
+    scheduleCode: report.scheduleCode,
+    wellbeingCode: report.wellbeingCode,
+    commentText: report.commentText,
+    headlineRu,
+    needsTalk,
+  };
+}
+
 export function buildWeekSignal(input: {
   checkins: CheckinForSignal[];
   unansweredCheckinIds: Set<string>;
   todayIso: string;
+  /** Формы за последние недели. Берётся та, что за завершённую неделю. */
+  weeklyReports?: WeeklyReportForSignal[];
 }): WeekSignal {
   const painFlags: PainFlag[] = input.checkins
     .filter((checkin) => checkin.pain && input.unansweredCheckinIds.has(checkin.id))
@@ -114,8 +163,12 @@ export function buildWeekSignal(input: {
       checkin.effortRpe !== null
   );
 
+  const weekly = weeklyVoiceOf(
+    (input.weeklyReports ?? []).find((report) => report.weekStart === week.start) ?? null
+  );
+
   if (inWeek.length === 0) {
-    return { painFlags, volume: null };
+    return { painFlags, volume: null, weekly };
   }
 
   // Худший, а не средний: одна по-настоящему тяжёлая тренировка — это факт про
@@ -124,17 +177,36 @@ export function buildWeekSignal(input: {
     (checkin.effortRpe ?? 0) > (acc.effortRpe ?? 0) ? checkin : acc
   );
   const worstRpe = worst.effortRpe ?? 0;
-  const band = bandOf(worstRpe);
+  /**
+   * СЛОВО ЧЕЛОВЕКА ПОДНИМАЕТ ПОЛОСУ, НО НИКОГДА НЕ ОПУСКАЕТ.
+   *
+   * «Усталость» за неделю — это то, чего в отметках по тренировкам не видно:
+   * каждая по отдельности могла даться нормально, а к воскресенью человек всё
+   * равно выжат. Поэтому tired двигает полосу минимум в «держим».
+   *
+   * Обратное не делаем НИКОГДА: «свежесть» при RPE 7 не означает, что тяжёлой
+   * недели не было. Человек оценивает самочувствие, а не нагрузку, и снимать
+   * по его бодрости уже увиденную тяжесть значит спорить с фактом.
+   */
+  const rpeBand = bandOf(worstRpe);
+  const band: VolumeBand =
+    weekly?.wellbeingCode === "tired" && rpeBand === "calm" ? "hold" : rpeBand;
+  const raisedByVoice = band !== rpeBand;
 
-  const headlineRu =
-    band === "cut"
+  const headlineRu = raisedByVoice
+    ? "Неделя по отметкам спокойная, но человек говорит про усталость"
+    : band === "cut"
       ? "Неделя была тяжёлой"
       : band === "hold"
         ? "Неделя далась тяжелее обычного"
         : "Неделя прошла спокойно";
 
-  const adviceRu =
-    band === "cut"
+  // НЕДЕЛЯ НЕ СОСТОЯЛАСЬ — СОВЕТА ПРО ОБЪЁМ НЕ ДАЁМ ВООБЩЕ. Считать «срезать
+  // или держать» по двум отметкам из шести запланированных дней значит выдать
+  // арифметику за понимание. Тут сначала разговор, как и с болью.
+  const adviceRu = weekly?.needsTalk
+    ? "Про объём следующей недели советовать нечего: человек сам сказал, что неделя не сложилась. Сначала разговор, потом план."
+    : band === "cut"
       ? "Предлагаем срезать объём следующей недели примерно на 10–20% против обычного расчёта — дать восстановиться, прежде чем продолжать расти."
       : band === "hold"
         ? "Предлагаем на следующей неделе не увеличивать объём — держать примерно на уровне этой недели, дать втянуться."
@@ -142,6 +214,7 @@ export function buildWeekSignal(input: {
 
   return {
     painFlags,
+    weekly,
     volume: {
       weekStart: week.start,
       weekEnd: week.end,

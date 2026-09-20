@@ -141,6 +141,32 @@ export default async function BeginnerStudentPage({
         </div>
       ))}
 
+      {/* ЧТО СКАЗАЛ САМ ЧЕЛОВЕК — ОТДЕЛЬНО ОТ ТОГО, ЧТО ПОСЧИТАНО ПО ОТМЕТКАМ.
+          Полоса объёма считается из RPE тренировок, недельная форма — это его
+          собственные слова про график и усталость. Склеить их в одну строку
+          значило бы выдать его фразу за наш вывод. */}
+      {view.weekSignal.weekly ? (
+        <div
+          style={{
+            ...box,
+            background: view.weekSignal.weekly.needsTalk ? "#FDE8E0" : "#FBF3E4",
+            border: view.weekSignal.weekly.needsTalk ? "1px solid #E5480E" : "1px solid #e0e0e0",
+          }}
+        >
+          <h2 style={{ marginTop: 0, color: view.weekSignal.weekly.needsTalk ? "#a3330a" : undefined }}>
+            Недельная форма
+          </h2>
+          <p style={{ margin: 0 }}>{view.weekSignal.weekly.headlineRu}.</p>
+          {view.weekSignal.weekly.commentText ? (
+            <p style={{ margin: "10px 0 0", whiteSpace: "pre-wrap" }}>
+              Её словами: <em>«{view.weekSignal.weekly.commentText}»</em>
+            </p>
+          ) : (
+            <p style={{ margin: "10px 0 0", color: "#555" }}>Свободное поле она не заполнила.</p>
+          )}
+        </div>
+      ) : null}
+
       {view.weekSignal.volume ? (
         view.weekSignal.volume.band === "calm" ? (
           <p style={{ margin: "0 0 18px", color: "#555", maxWidth: 900 }}>

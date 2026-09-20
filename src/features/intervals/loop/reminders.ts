@@ -30,7 +30,12 @@
  * угодно; напоминание в 8 утра по Белграду это 3 ночи во Владивостоке.
  */
 
-export type ReminderKind = "today_session" | "checkin_nudge" | "missed_nudge" | "plan_published";
+export type ReminderKind =
+  | "today_session"
+  | "checkin_nudge"
+  | "missed_nudge"
+  | "plan_published"
+  | "weekly_form";
 
 /**
  * Сколько дней подряд человек пропускает, прежде чем бот замолчит.
@@ -51,6 +56,17 @@ export const MISSED_STREAK_SILENCE = 2;
 export const MORNING_WINDOW = { fromHour: 7, toHour: 9 } as const;
 /** Вечернее окно, по местному времени ученицы. */
 export const EVENING_WINDOW = { fromHour: 19, toHour: 21 } as const;
+
+/**
+ * Воскресное окно недельной формы, по местному времени ученицы.
+ *
+ * ПОЧЕМУ 10–12, А НЕ УТРЕННЕЕ 7–9. В воскресенье у многих стоит длительная, и
+ * в 7–9 уже уходит напоминание «сегодня по плану». Две просьбы подряд в одно
+ * утро — это шум, в котором тонут обе. К десяти утра человек либо уже сбегал,
+ * либо решил, что побежит позже, и вопрос про прошедшую неделю не спорит с
+ * сегодняшней тренировкой.
+ */
+export const SUNDAY_FORM_WINDOW = { fromHour: 10, toHour: 12 } as const;
 
 export type ReminderDecision =
   | { send: false; reason: string }
@@ -74,6 +90,12 @@ export type ReminderInput = {
   alreadySentKinds: ReminderKind[];
   /** Опубликован ли план: без него напоминать не о чем. */
   hasPublishedPlan: boolean;
+  /** Сегодня воскресенье по местному времени ученицы. */
+  isSunday?: boolean;
+  /** Отмечалась ли она хоть раз на этой неделе. */
+  hasCheckinThisWeek?: boolean;
+  /** Заполнена ли недельная форма за эту неделю. */
+  hasWeeklyReportThisWeek?: boolean;
 };
 
 function inWindow(hour: number, window: { fromHour: number; toHour: number }): boolean {
@@ -84,13 +106,40 @@ export function decideReminder(input: ReminderInput): ReminderDecision {
   if (!input.hasPublishedPlan) {
     return { send: false, reason: "плана нет или он не опубликован" };
   }
-  // ОТМЕТИЛАСЬ — ЗНАЧИТ НЕ ТРОГАЕМ. Оба напоминания существуют ради отметки;
+  const sent = new Set(input.alreadySentKinds);
+
+  // ── НЕДЕЛЬНАЯ ФОРМА ── ВЫШЕ ГЕЙТА «уже отметилась сегодня».
+  //
+  // Это не напоминание про отметку, а отдельный разговор про прошедшую неделю.
+  // Воскресная отметка о длительной его не отменяет: она про одну тренировку,
+  // а форма — про неделю целиком.
+  //
+  // НЕ ШЛЁМ, ЕСЛИ НА НЕДЕЛЕ НЕ БЫЛО НИ ОДНОЙ ОТМЕТКИ [решение Игоря]. Спрашивать
+  // «как прошла неделя» у человека, который на этой неделе не появлялся, —
+  // значит послать упрёк под видом заботы. Такой случай уходит тренеру сигналом,
+  // а не боту.
+  if (input.isSunday === true && inWindow(input.localHour, SUNDAY_FORM_WINDOW) && !sent.has("weekly_form")) {
+    if (input.hasWeeklyReportThisWeek === true) {
+      return { send: false, reason: "форма за эту неделю уже заполнена" };
+    }
+    if (input.hasCheckinThisWeek !== true) {
+      return { send: false, reason: "на этой неделе ни одной отметки — форму не шлём, это к тренеру" };
+    }
+    return {
+      send: true,
+      kind: "weekly_form",
+      textRu:
+        "Неделя заканчивается. Расскажите, как она прошла: три коротких вопроса, минута времени.\n\n" +
+        "Это то, чего я не вижу по отдельным тренировкам — успели ли вы по графику и не " +
+        "накопилась ли усталость. От вашего ответа зависит, какой я соберу следующую неделю.",
+    };
+  }
+
+  // ОТМЕТИЛАСЬ — ЗНАЧИТ НЕ ТРОГАЕМ. Оба напоминания ниже существуют ради отметки;
   // после неё любое из них становится шумом.
   if (input.hasCheckinToday) {
     return { send: false, reason: "уже отметилась сегодня" };
   }
-
-  const sent = new Set(input.alreadySentKinds);
 
   if (inWindow(input.localHour, MORNING_WINDOW) && !sent.has("today_session")) {
     if (!input.todaySession) {

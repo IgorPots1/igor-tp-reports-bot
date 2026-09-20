@@ -126,3 +126,83 @@ assert.equal(empty.volume, null, "без чек-инов сигнал не вы�
 assert.equal(empty.painFlags.length, 0);
 
 console.log("check:week-signal — все проверки пройдены");
+
+// ── НЕДЕЛЬНАЯ ФОРМА В СИГНАЛЕ [20.09.2026] ──────────────────────────────────
+//
+// Форма отвечает на то, чего в отметках по тренировкам не видно: успел ли
+// человек по графику и не накопилась ли усталость.
+{
+  const report = (over: Partial<{ scheduleCode: string; wellbeingCode: string; commentText: string | null }>) => [
+    {
+      weekStart: WEEK.start,
+      scheduleCode: "all_done",
+      wellbeingCode: "normal",
+      commentText: null,
+      ...over,
+    },
+  ];
+  const calmCheckins = [checkin({ id: "a", sessionDate: "2026-09-09", effortRpe: 3 })];
+
+  // УСТАЛОСТЬ ПОДНИМАЕТ ПОЛОСУ. По отметкам неделя спокойная, а человек выжат.
+  const tired = buildWeekSignal({
+    checkins: calmCheckins,
+    unansweredCheckinIds: new Set(),
+    todayIso: TODAY,
+    weeklyReports: report({ wellbeingCode: "tired" }),
+  });
+  assert.equal(tired.volume?.band, "hold", "усталость обязана поднять спокойную полосу до «держим»");
+  assert.ok(
+    tired.volume?.headlineRu.includes("усталость"),
+    "тренер должен видеть, что полосу подняли его слова, а не RPE"
+  );
+
+  // СВЕЖЕСТЬ НЕ ОПУСКАЕТ. Человек оценивает самочувствие, а не нагрузку.
+  const freshAfterHard = buildWeekSignal({
+    checkins: [checkin({ id: "b", sessionDate: "2026-09-10", effortRpe: 7 })],
+    unansweredCheckinIds: new Set(),
+    todayIso: TODAY,
+    weeklyReports: report({ wellbeingCode: "fresh" }),
+  });
+  assert.equal(freshAfterHard.volume?.band, "cut", "бодрость не отменяет уже увиденную тяжёлую неделю");
+
+  // НЕДЕЛЯ НЕ СОСТОЯЛАСЬ — СОВЕТА ПРО ОБЪЁМ НЕТ ВООБЩЕ.
+  const almostNone = buildWeekSignal({
+    checkins: calmCheckins,
+    unansweredCheckinIds: new Set(),
+    todayIso: TODAY,
+    weeklyReports: report({ scheduleCode: "almost_none" }),
+  });
+  assert.equal(almostNone.weekly?.needsTalk, true);
+  assert.ok(
+    almostNone.volume?.adviceRu.includes("Сначала разговор"),
+    "по двум отметкам из шести дней объём не советуют"
+  );
+
+  // ФОРМА ЗА ЧУЖУЮ НЕДЕЛЮ НЕ БЕРЁТСЯ.
+  const otherWeek = buildWeekSignal({
+    checkins: calmCheckins,
+    unansweredCheckinIds: new Set(),
+    todayIso: TODAY,
+    weeklyReports: [{ weekStart: "2026-09-14", scheduleCode: "almost_none", wellbeingCode: "tired", commentText: null }],
+  });
+  assert.equal(otherWeek.weekly, null, "слова про одну неделю не приписываем другой");
+  assert.equal(otherWeek.volume?.band, "calm", "и полосу они не двигают");
+
+  // БЕЗ ФОРМЫ ВСЁ КАК БЫЛО.
+  const noReport = buildWeekSignal({
+    checkins: calmCheckins,
+    unansweredCheckinIds: new Set(),
+    todayIso: TODAY,
+  });
+  assert.equal(noReport.weekly, null);
+  assert.equal(noReport.volume?.band, "calm");
+}
+
+// ── КОГДА ПОКАЗЫВАТЬ ФОРМУ ───────────────────────────────────────────────────
+{
+  const { reportedWeekStart } = await import("@/features/intervals/loop/weekly-report");
+  assert.equal(reportedWeekStart("2026-09-20"), "2026-09-14", "воскресенье: неделя, которая кончается сегодня");
+  assert.equal(reportedWeekStart("2026-09-21"), "2026-09-14", "понедельник: неделя, которая кончилась вчера");
+  assert.equal(reportedWeekStart("2026-09-22"), null, "во вторник уже поздно");
+  assert.equal(reportedWeekStart("2026-09-17"), null, "в середине недели спрашивать нечего");
+}

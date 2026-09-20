@@ -122,6 +122,37 @@ function main(): void {
   const morningHits = [7, 8, 9].filter((hour) => at({ localHour: hour }).send);
   expect(morningHits.length === 3, `в утреннее окно попадает ${morningHits.length} часа из трёх`);
 
+  step("НЕДЕЛЬНАЯ ФОРМА");
+  // Своё окно, 10–12: в 7–9 в воскресенье уже уходит «сегодня по плану», и две
+  // просьбы в одно утро тонут обе.
+  const sunday = (over: Record<string, unknown> = {}) =>
+    decideReminder({
+      localHour: 11,
+      todaySession: { title: "Длительный аэробный", minutes: 30 },
+      hasCheckinToday: false,
+      hasActivityToday: false,
+      alreadySentKinds: [],
+      hasPublishedPlan: true,
+      isSunday: true,
+      hasCheckinThisWeek: true,
+      hasWeeklyReportThisWeek: false,
+      ...over,
+    } as Parameters<typeof decideReminder>[0]);
+
+  expect(sunday().send === true && sunday().kind === "weekly_form", "в воскресенье в окно форма уходит");
+  expect(sunday({ localHour: 9 }).send !== true || sunday({ localHour: 9 }).kind !== "weekly_form",
+    "в 9 утра форма не уходит: это окно тренировочного напоминания");
+  expect(sunday({ isSunday: false }).kind !== "weekly_form", "в будни форма не уходит");
+  expect(sunday({ hasWeeklyReportThisWeek: true }).send === false, "заполненную форму второй раз не просим");
+  expect(sunday({ hasCheckinThisWeek: false }).send === false,
+    "без единой отметки за неделю форму не шлём: это к тренеру, а не к боту");
+  expect(sunday({ alreadySentKinds: ["weekly_form"] }).send === false, "один раз в сутки, как и остальные");
+
+  // ГЛАВНОЕ: воскресная отметка о длительной НЕ отменяет форму. Она про одну
+  // тренировку, форма — про неделю целиком.
+  expect(sunday({ hasCheckinToday: true }).kind === "weekly_form",
+    "отметка о сегодняшней тренировке не должна съедать недельную форму");
+
   console.log("");
   if (failures === 0) {
     console.log("ВСЁ ПРОШЛО. Провалов: 0.");

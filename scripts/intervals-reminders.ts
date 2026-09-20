@@ -22,6 +22,7 @@ import {
   decideReminder,
   type ReminderKind,
 } from "@/features/intervals/loop/reminders";
+import { reportedWeekStart } from "@/features/intervals/loop/weekly-report";
 import { getPublishedCycle, listSessionsInRange } from "@/features/intervals/loop/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
@@ -154,8 +155,29 @@ async function main(): Promise<void> {
       missedStreak += 1;
     }
 
+    // НЕДЕЛЬНАЯ ФОРМА. Неделя считается по зоне ученика: воскресенье у неё и
+    // воскресенье у тренера — разные сутки.
+    const weekForForm = reportedWeekStart(today);
+    const weekdayLocal = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+    let hasWeeklyReportThisWeek = false;
+    let hasCheckinThisWeek = false;
+    if (weekForForm) {
+      const weekEnd = shiftIso(weekForForm, 6);
+      hasCheckinThisWeek = [...checkinDates].some((date) => date >= weekForForm && date <= weekEnd);
+      const { data: reportRow } = await supabase
+        .from("intervals_weekly_reports")
+        .select("id")
+        .eq("source_id", student.sourceId)
+        .eq("week_start", weekForForm)
+        .maybeSingle();
+      hasWeeklyReportThisWeek = reportRow !== null;
+    }
+
     const decision = decideReminder({
       localHour: hour,
+      isSunday: weekdayLocal === 6,
+      hasCheckinThisWeek,
+      hasWeeklyReportThisWeek,
       todaySession: todaySession ? { title: todaySession.title, minutes: todaySession.minutes } : null,
       hasCheckinToday: checkinDates.has(today),
       hasActivityToday: activityDates.has(today),

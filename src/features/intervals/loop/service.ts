@@ -10,6 +10,7 @@ import { checkinReplyRu, effortByCode, painByCode, simpleCheckinReplyRu } from "
 import { buildCabinetView, type CabinetView } from "./cabinet-view";
 import { decideMove, weekdayIndex, type MoveDecision } from "./move";
 import { applyCheckinToProgression } from "./progression";
+import { reportedWeekStart } from "./weekly-report";
 import {
   getCheckinForSession,
   getOnboardingAnswers,
@@ -24,6 +25,7 @@ import {
   moveSession,
   saveCheckin,
   saveProgression,
+  getWeeklyReport,
 } from "./repository";
 import { buildStudentView, formatRuDay, type CoachReplyView, type StudentView } from "./student-view";
 import type { Checkin } from "./types";
@@ -185,6 +187,24 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     else if (partial.sessionDate === todayIso) hasUnplannedToday = true;
   }
 
+  // НЕДЕЛЬНАЯ ФОРМА. Показываем только в её дни (вс/пн), только если человек на
+  // этой неделе хоть раз отмечался, и только если ответа ещё нет. Условие про
+  // отметки то же, что и у напоминания: спрашивать «как прошла неделя» у того,
+  // кто не появлялся, значит послать упрёк под видом заботы.
+  const weekForForm = reportedWeekStart(todayIso);
+  let weeklyFormWeekStart: string | null = null;
+  if (weekForForm) {
+    const weekEnd = shiftIso(weekForForm, 6);
+    const checkedInThatWeek = (checkinRows ?? []).some((raw) => {
+      const date = String((raw as unknown as Record<string, unknown>).session_date);
+      return date >= weekForForm && date <= weekEnd;
+    });
+    if (checkedInThatWeek) {
+      const existing = await getWeeklyReport(sourceId, weekForForm);
+      if (!existing) weeklyFormWeekStart = weekForForm;
+    }
+  }
+
   return buildStudentView({
     todayIso,
     sessions,
@@ -194,6 +214,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     hasUnplannedCheckinToday: hasUnplannedToday,
     coachReplies,
     weekNotes: cycle.weekNotes,
+    weeklyFormWeekStart,
   });
 }
 

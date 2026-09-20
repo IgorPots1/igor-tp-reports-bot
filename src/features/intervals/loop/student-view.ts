@@ -120,6 +120,11 @@ export type StudentView =
       restNoteRu: string | null;
       /** Заметки к неделе целиком — один раз наверху экрана, не в каждой карточке. */
       weekNotes: SessionNote[];
+      /**
+       * Пора заполнить недельную форму. null — не её день или уже заполнена.
+       * Внутри — неделя, про которую спрашиваем, чтобы экран мог её назвать.
+       */
+      weeklyFormWeekStart: string | null;
     };
 
 /**
@@ -222,6 +227,8 @@ export function buildStudentView(input: {
   upcomingDays?: number;
   /** Заметки к неделе целиком — с опубликованного цикла. */
   weekNotes?: SessionNote[] | null;
+  /** Неделя, за которую ждём форму. null — форму не показываем. */
+  weeklyFormWeekStart?: string | null;
 }): StudentView {
   if (input.sessions === null) {
     const messageRu =
@@ -310,5 +317,6 @@ export function buildStudentView(input: {
     painOptions: PAIN_OPTIONS,
     restNoteRu: restNote,
     weekNotes: input.weekNotes ?? [],
+    weeklyFormWeekStart: input.weeklyFormWeekStart ?? null,
   };
 }
