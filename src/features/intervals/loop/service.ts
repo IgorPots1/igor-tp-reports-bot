@@ -205,22 +205,26 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     else if (partial.sessionDate === todayIso) hasUnplannedToday = true;
   }
 
-  // НЕДЕЛЬНАЯ ФОРМА. Показываем только в её дни (вс/пн), только если человек на
-  // этой неделе хоть раз отмечался, и только если ответа ещё нет. Условие про
-  // отметки то же, что и у напоминания: спрашивать «как прошла неделя» у того,
-  // кто не появлялся, значит послать упрёк под видом заботы.
+  /**
+   * НЕДЕЛЬНАЯ ФОРМА: в свои дни (вс/пн) и пока ответа за эту неделю нет.
+   *
+   * УСЛОВИЕ ПРО ОТМЕТКИ ЖИВЁТ НА УВЕДОМЛЕНИИ, А НЕ ЗДЕСЬ [21.09.2026].
+   *
+   * Сначала я повторил его и тут — и получилось ровно наоборот задуманному:
+   * человеку, у которого неделя не сложилась и отметок нет, форма НЕ
+   * открывалась. То есть вариант «почти ничего не получилось» был недоступен
+   * ровно тем, для кого он написан. Поймано на Валентине: ноль чек-инов за
+   * неделю (форма отчёта у неё падала), и открыть недельную форму она не может.
+   *
+   * Бот по-прежнему МОЛЧИТ, когда отметок не было: навязываться человеку,
+   * который не появлялся, нельзя. Но если он открыл приложение сам или тренер
+   * прислал форму руками — она должна работать.
+   */
   const weekForForm = reportedWeekStart(todayIso);
   let weeklyFormWeekStart: string | null = null;
   if (weekForForm) {
-    const weekEnd = shiftIso(weekForForm, 6);
-    const checkedInThatWeek = (checkinRows ?? []).some((raw) => {
-      const date = String((raw as unknown as Record<string, unknown>).session_date);
-      return date >= weekForForm && date <= weekEnd;
-    });
-    if (checkedInThatWeek) {
-      const existing = await getWeeklyReport(sourceId, weekForForm);
-      if (!existing) weeklyFormWeekStart = weekForForm;
-    }
+    const existing = await getWeeklyReport(sourceId, weekForForm);
+    if (!existing) weeklyFormWeekStart = weekForForm;
   }
 
   return buildStudentView({
