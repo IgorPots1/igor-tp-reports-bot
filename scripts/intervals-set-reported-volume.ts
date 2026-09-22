@@ -26,8 +26,13 @@
  *
  * По умолчанию НИЧЕГО НЕ ПИШЕТ.
  *
+ * ИМЯ ПОЛЯ В ПОМЕТКЕ — КАНОНИЧЕСКОЕ, ИЗ PREFILLABLE_FIELDS. Первая версия
+ * писала «weeklyMinutes», которого в списке нет: карточка такую пометку просто
+ * не показывала, и правка тренера выглядела как ответ ученицы. Ровно та беда,
+ * ради которой команда и писалась.
+ *
  *   npx tsx scripts/intervals-set-reported-volume.ts --chat=780530798 --minutes=185
- *   npx tsx scripts/intervals-set-reported-volume.ts --chat=780530798 --minutes=185 --commit
+ *   npx tsx scripts/intervals-set-reported-volume.ts --chat=780530798 --max-session=80 --commit
  */
 
 import process from "node:process";
@@ -50,14 +55,25 @@ function fail(message: string): never {
 async function main(): Promise<void> {
   const chat = arg("chat");
   const minutesArg = arg("minutes");
+  const maxSessionArg = arg("max-session");
   if (!chat) fail("Нужен --chat=<telegram chat id>");
-  if (!minutesArg) fail("Нужен --minutes=185");
-  const minutes = Number(minutesArg);
-  if (!Number.isFinite(minutes) || minutes <= 0) fail(`Не понял объём «${minutesArg}»`);
-  // Границы человеческие: меньше двадцати в неделю — это не режим, больше
-  // тысячи — опечатка на порядок.
-  if (minutes < 20 || minutes > 1000) {
-    fail(`${minutes} минут в неделю вне разумного (20–1000). Похоже на опечатку.`);
+  if (!minutesArg && !maxSessionArg) fail("Нужен --minutes=185 и/или --max-session=80");
+
+  let minutes: number | null = null;
+  if (minutesArg) {
+    minutes = Number(minutesArg);
+    // Границы человеческие: меньше двадцати в неделю — это не режим, больше
+    // тысячи — опечатка на порядок.
+    if (!Number.isFinite(minutes) || minutes < 20 || minutes > 1000) {
+      fail(`Недельный объём ${minutesArg} вне разумного (20–1000). Похоже на опечатку.`);
+    }
+  }
+  let maxSession: number | null = null;
+  if (maxSessionArg) {
+    maxSession = Number(maxSessionArg);
+    if (!Number.isFinite(maxSession) || maxSession < 15 || maxSession > 300) {
+      fail(`Потолок одной тренировки ${maxSessionArg} вне разумного (15–300). Похоже на опечатку.`);
+    }
   }
 
   const supabase = createSupabaseServerClient();
@@ -80,21 +96,36 @@ async function main(): Promise<void> {
 
   const { data: answersRow } = await supabase
     .from("intervals_onboarding_answers")
-    .select("id, self_reported_weekly_minutes, days_per_week, coach_set_fields")
+    .select("id, self_reported_weekly_minutes, max_session_minutes, days_per_week, coach_set_fields")
     .eq("source_id", sourceId)
     .maybeSingle();
   if (!answersRow) fail("Анкета не заполнена — править нечего");
   const a = answersRow as Record<string, unknown>;
-  const was = a.self_reported_weekly_minutes;
   const coachSet = new Set<string>(Array.isArray(a.coach_set_fields) ? (a.coach_set_fields as string[]) : []);
+  // Хвост первой версии: неканоническое имя, которого нет в PREFILLABLE_FIELDS.
+  coachSet.delete("weeklyMinutes");
   const days = Number(a.days_per_week);
+  const wasWeekly = a.self_reported_weekly_minutes;
+  const wasCap = a.max_session_minutes;
+  const nextWeekly = minutes ?? (wasWeekly === null || wasWeekly === undefined ? null : Number(wasWeekly));
+  const nextCap = maxSession ?? (wasCap === null || wasCap === undefined ? null : Number(wasCap));
 
   console.log(`Ученик:        ${(card as Record<string, unknown>).student_name}`);
-  console.log(`Было:          ${was ?? "не указано"} мин/нед${was ? ` (${Math.round(Number(was) / Math.max(1, days))} мин на пробежку при ${days} днях)` : ""}`);
-  console.log(`Станет:        ${minutes} мин/нед (${Math.round(minutes / Math.max(1, days))} мин на пробежку при ${days} днях)`);
-  console.log(`Происхождение: ${coachSet.has("weeklyMinutes") ? "уже помечено «задал тренер»" : "«ответила сама» → «задал тренер»"}`);
+  if (minutes !== null) {
+    console.log(`Объём/нед:     ${wasWeekly ?? "не указано"} → ${minutes}`);
+  }
+  if (maxSession !== null) {
+    console.log(`Потолок одной: ${wasCap ?? "не указано"} → ${maxSession} мин`);
+  }
+  if (nextWeekly !== null && nextCap !== null) {
+    const capacity = nextCap * Math.max(1, days);
+    console.log(`Вместимость:   ${nextCap} мин × ${days} дн = ${capacity} мин/нед` +
+      (capacity < nextWeekly
+        ? ` — МЕНЬШЕ объёма ${nextWeekly}: цикл расти не сможет`
+        : ` — объём ${nextWeekly} помещается, есть запас ${capacity - nextWeekly} мин`));
+  }
   console.log("");
-  console.log("Это БАЗА цикла: следующая генерация посчитает недели от нового числа.");
+  console.log("Это БАЗА цикла: следующая генерация посчитает недели от новых чисел.");
   console.log("Уже записанные недели не изменятся — их пересобирают отдельно.");
 
   if (!COMMIT) {
@@ -102,16 +133,23 @@ async function main(): Promise<void> {
     return;
   }
 
-  coachSet.add("weeklyMinutes");
+  const patch: Record<string, unknown> = { coach_set_fields: [] as string[] };
+  if (minutes !== null) {
+    patch.self_reported_weekly_minutes = minutes;
+    coachSet.add("selfReportedWeeklyMinutes");
+  }
+  if (maxSession !== null) {
+    patch.max_session_minutes = maxSession;
+    coachSet.add("maxSessionMinutes");
+  }
+  patch.coach_set_fields = [...coachSet];
+
   const { error } = await supabase
     .from("intervals_onboarding_answers")
-    .update({
-      self_reported_weekly_minutes: minutes,
-      coach_set_fields: [...coachSet],
-    })
+    .update(patch)
     .eq("id", String(a.id));
   if (error) fail(`не записали: ${error.message}`);
-  console.log(`\nЗаписано: ${minutes} мин/нед, помечено как заданное тренером.`);
+  console.log(`\nЗаписано и помечено как заданное тренером: ${[...coachSet].join(", ")}`);
 }
 
 main().catch((error) => {
