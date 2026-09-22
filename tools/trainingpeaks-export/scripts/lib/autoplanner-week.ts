@@ -468,7 +468,20 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
   const warnings = [...res.warnings];
   if (band.narrowed) warnings.push(`полоса лёгкого сужена до ${EASY_BAND_MAX_S} с/км симметрично к середине`);
 
-  const segs: Segment[] = [{ minutes, label: title, fastSec: byFeel ? null : band.fast, slowSec: byFeel ? null : band.slow }];
+  /**
+   * ДОРОЖКА ДЕЙСТВУЕТ И НА ОСНОВНОЙ ШАГ [22.09.2026].
+   *
+   * Было: оговорка про дорожку жила только в zone2Segment, а он зовётся в
+   * разминке, трусце и заминке качественной. Лёгкая и длительная строили свой
+   * единственный сегмент ЗДЕСЬ, напрямую, и уезжали к человеку с полосой темпа.
+   * У непрокалиброванной дорожки это число не значит ничего: на панели своя
+   * шкала, и «7:07–7:37» там читается как требование, которое не выполнить.
+   */
+  const segs: Segment[] = [
+    byFeel
+      ? { minutes, label: title, fastSec: null, slowSec: null }
+      : zone2Segment(a, minutes, title, { fast: band.fast, slow: band.slow }),
+  ];
   if (role === "easy_strides") segs.push({ minutes: 2, label: "Ускорения в конце, 4–6 коротких по пятнадцать секунд, свободно", fastSec: null, slowSec: null });
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);
@@ -603,7 +616,12 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
       ? { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS }
       : { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: null, slowSec: null,
           noPaceText: effortText(p.rpeTarget) });
-    if (i < p.reps - 1) segs.push(zone2Segment(a, p.recoveryMinutes, "Трусца", eb));
+    // ПОДПИСЬ ВОССТАНОВЛЕНИЯ ИЗ ПРЕСЕТА, А НЕ ЗАШИТАЯ [22.09.2026]. У форматов
+    // семейства int_walk восстановление идёт ШАГОМ, и называть его трусцой —
+    // прямая неправда в тексте, который человек читает на бегу.
+    if (i < p.reps - 1) {
+      segs.push(zone2Segment(a, p.recoveryMinutes, p.recoveryType === "walk" ? "Шагом" : "Трусца", eb));
+    }
   }
   segs.push(zone2Segment(a, p.cooldownMinutes, "Заминка, свободно", eb));
   const total = segs.reduce((s, x) => s + x.minutes, 0);
@@ -978,21 +996,58 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     // ОТБОР ИДЁТ ПО СЛОТАМ. Раньше решение было ОДНО и копировалось на все качественные дни —
     // то есть две качественные были бы двумя одинаковыми тренировками. Теперь у каждого слота
     // свой тип (отрезки / темповый, по практике атлета) и своя доля целевых минут работы.
-    const slotTypes = qualitySlotTypes(counts.quality, env.hasIntervalPractice, env.hasTempoPractice);
+    const byEffortMode = a.threshold == null && a.qualityByEffort === true;
+    /**
+     * НА ДОРОЖКЕ И ПО УСИЛИЮ — ОТРЕЗКИ, А НЕ НЕПРЕРЫВНЫЙ КУСОК [22.09.2026].
+     *
+     * Отбор берёт формат, ближайший к цели цикла по минутам работы, и при цели
+     * 20 минут непрерывный steady_continuous_20 выигрывал у отрезков точным
+     * совпадением. Для человека с порогом это верно. Для человека БЕЗ порога,
+     * бегущего на непрокалиброванной дорожке, — нет: двадцать минут «ровно
+     * суб-порогово» держать не по чему, а «четыре минуты бега через полторы
+     * шагом» выполнимо по ощущению и ровно так тренер и пишет этот сегмент
+     * рукой.
+     *
+     * Сужаем ТОЛЬКО когда совпало оба условия: работа идёт по усилию И человек
+     * на дорожке. У всех остальных выбор формата не меняется ни на бит.
+     */
+    const preferIntervals = byEffortMode && a.runsOnTreadmill === true;
+    const slotTypes = preferIntervals
+      ? Array.from({ length: counts.quality }, () => "intervals" as const)
+      : qualitySlotTypes(counts.quality, env.hasIntervalPractice, env.hasTempoPractice);
+    if (preferIntervals && counts.quality > 0) {
+      notes.push("формат сужен до отрезков: работа по усилию и бег на дорожке — непрерывный кусок держать не по чему");
+    }
 
     // В РЕЖИМЕ «ПО УСИЛИЮ» ГОДЯТСЯ НЕ ВСЕ ПРЕСЕТЫ. Сессия описывается числом RPE
     // из самого пресета; пресет без RPE описать нечем, и если отбор выберет
     // именно его, сессия молча уедет в «отложено» с пустым телом. Поэтому
     // сужаем пул ДО отбора, а не разбираемся после.
-    const byEffortMode = a.threshold == null && a.qualityByEffort === true;
     // ОБВЯЗКА ПО ПРОПОРЦИИ — ТОЛЬКО ПРИ ОБЪЁМЕ СО СЛОВ. Пересчитываем ДО отбора,
     // а не при сборке сессии: иначе отбор фильтровал бы по каталожной полной
     // длительности (35 мин), а в неделю уходила бы пропорциональная (21), то
     // есть бюджет считался бы по одному числу, а план строился по другому.
     const scaledPool = env.volumeIsReported ? cat.quality.map(withScaledWarmup) : cat.quality;
-    const qualityPool = byEffortMode
+    let qualityPool = byEffortMode
       ? scaledPool.filter((preset) => preset.rpeTarget != null)
       : scaledPool;
+    /**
+     * ВОССТАНОВЛЕНИЕ ШАГОМ, А НЕ ТРУСЦОЙ [22.09.2026].
+     *
+     * Сузить до «отрезков» оказалось мало: внутри отрезков с целью 20 минут
+     * работы побеждал thr_5x4 — трусца между кусками и усилие 7 из 10. Это
+     * формат для человека С порогом. Тому, кто бежит по ощущению на
+     * непрокалиброванной дорожке, тренер пишет другое: бег через ШАГ и усилие
+     * пониже (семейство int_walk_*, RPE 6/7). Отсюда предпочтение по типу
+     * восстановления, а не по коду пресета: коды меняются, смысл нет.
+     *
+     * Если форматов с шагом в каталоге не окажется, пул остаётся прежним —
+     * отсутствие предпочтения лучше пустого отбора.
+     */
+    if (preferIntervals) {
+      const walkRecovery = qualityPool.filter((preset) => preset.recoveryType === "walk");
+      if (walkRecovery.length > 0) qualityPool = walkRecovery;
+    }
     const decs: QualityDecision[] = a.threshold == null && a.qualityByEffort !== true
       ? [{ selected: false, reason: "no_threshold_cannot_do_quality", detail: "порога нет — качество не назначается" }]
       : slotTypes.length === 0
@@ -1323,6 +1378,37 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     notes.push(`${DAY_RU[d]}: ${minutes} → ${cap} мин по пожеланию тренера`);
     return Math.max(ROUND_TO_MIN, Math.round(cap / ROUND_TO_MIN) * ROUND_TO_MIN);
   };
+  /**
+   * ДЛИТЕЛЬНАЯ ОБЯЗАНА ОСТАТЬСЯ ДЛИННЕЕ ЛЁГКОЙ, ДАЖЕ КОГДА ОБЕ УПЁРЛИСЬ В
+   * ПОТОЛОК ДНЯ [22.09.2026].
+   *
+   * У Валентины потолок одной тренировки 60 минут. Лёгкая хотела 62, длительная
+   * 96 — обе срезались до 60, и в плане стояли две одинаковые шестидесятиминутки,
+   * одна из которых называлась длительной. Это не «почти правильно»: смысл
+   * длительной в том, что она самая длинная на неделе, иначе роль врёт.
+   *
+   * Уступает ЛЁГКАЯ, а не длительная: срезать длительную значит убрать из недели
+   * то, ради чего она и собиралась.
+   */
+  const dayCapFor = (d: number): number | null => pref?.dayMaxMinutes.get(d) ?? null;
+  const longDay = [...roles.entries()].find(([, r]) => r === "long")?.[0] ?? null;
+  const longCapped = longDay !== null ? Math.min(longMin, dayCapFor(longDay) ?? longMin) : null;
+  let easyCeilFromLong: number | null = null;
+  if (longCapped !== null) {
+    const wouldCollide = easyVariants.some((minutes, i) => {
+      const day = days.filter((x) => (roles.get(x) ?? "easy") !== "long")[i % Math.max(1, days.length)];
+      const capped = Math.min(minutes, dayCapFor(day ?? 0) ?? minutes);
+      return capped >= longCapped;
+    });
+    if (wouldCollide) {
+      easyCeilFromLong = Math.max(EASY_FLOOR, longCapped - ROUND_TO_MIN);
+      notes.push(
+        `лёгкая срезана до ${easyCeilFromLong} мин: длительная упёрлась в потолок дня ` +
+          `(${longCapped} мин) и иначе перестала бы быть самой длинной на неделе`
+      );
+    }
+  }
+
   for (const d of days) {
     const role = roles.get(d) ?? "easy";
     {
@@ -1372,7 +1458,12 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
                          : `обычной лёгкой (${env.typicalEasyMinutes} мин)`));
       sessions.push(aerobicSession(d, isReallyLong ? "long" : "easy", a, cat, capDay(d, longMin)));
     }
-    else { sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, capDay(d, easyVariants[easyIdx % easyVariants.length]))); easyIdx++; }
+    else {
+      const wanted = easyVariants[easyIdx % easyVariants.length];
+      const limited = easyCeilFromLong !== null ? Math.min(wanted, easyCeilFromLong) : wanted;
+      sessions.push(aerobicSession(d, role === "quality" ? "easy" : role, a, cat, capDay(d, limited)));
+      easyIdx++;
+    }
   }
   return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, refused: null, refusedKind: null,
     weeklyCap: weekly, plannedMinutes: sessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0),

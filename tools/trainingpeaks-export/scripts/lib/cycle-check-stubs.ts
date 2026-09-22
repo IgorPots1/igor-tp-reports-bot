@@ -73,7 +73,7 @@ const aerobic = (presetCode: string): AerobicPreset => ({
 
 const quality = (presetCode: string, reps: number, workMinutes: number): QualityPreset => ({
   presetCode, displayNameRu: presetCode, intensityIntent: "controlled_threshold",
-  reps, workMinutes, recoveryMinutes: 1, rpeTarget: null, rpeCap: null,
+  reps, workMinutes, recoveryType: null, recoveryMinutes: 1, rpeTarget: null, rpeCap: null,
   avoidAcidosis: true, coachReviewRequired: false, requiresExplicitVo2: false,
   warmupMinutes: 12, cooldownMinutes: 12, totalWorkMinutes: reps * workMinutes,
   athleteLevelMin: "L1",
@@ -85,7 +85,7 @@ const quality = (presetCode: string, reps: number, workMinutes: number): Quality
  */
 const tempo = (workMinutes: number): QualityPreset => ({
   presetCode: `steady_continuous_${workMinutes}`, displayNameRu: `Темповый бег ${workMinutes} минут`,
-  intensityIntent: "steady_tempo", reps: 1, workMinutes, recoveryMinutes: 0,
+  intensityIntent: "steady_tempo", reps: 1, workMinutes, recoveryType: null, recoveryMinutes: 0,
   rpeTarget: 6, rpeCap: 7, avoidAcidosis: false, coachReviewRequired: false, requiresExplicitVo2: false,
   warmupMinutes: 15, cooldownMinutes: 10, totalWorkMinutes: workMinutes, athleteLevelMin: "L0",
 });

@@ -344,10 +344,63 @@ export default async function BeginnerStudentPage({
                         <SessionContent session={session} />
                       </td>
                       <td style={cell}>{session.minutes}</td>
+                      {/* ОТВЕТ ЦЕЛИКОМ И ФОРМА ОТВЕТА — ЗДЕСЬ ЖЕ [22.09.2026].
+                          Было одно слово в колонке, а её текст, боль и ваш ответ
+                          жили в другом блоке экрана. Тренер читает тренировку и
+                          отвечает на неё же: разносить это по разным местам
+                          значит заставлять соединять их глазами каждый раз. */}
                       <td style={cell}>
-                        {checkin
-                          ? `${checkin.effortLabel ?? "—"}${checkin.pain ? " · БОЛЬ" : ""}`
-                          : "—"}
+                        {!checkin ? (
+                          <span style={{ color: "#999" }}>не отметилась</span>
+                        ) : (
+                          <>
+                            <div>
+                              <strong>{checkin.effortLabel ?? "—"}</strong>
+                              {checkin.effortRpe !== null ? (
+                                <span style={{ color: "#888" }}> (RPE {checkin.effortRpe})</span>
+                              ) : null}
+                              {checkin.pain ? (
+                                <span style={{ color: "#c00", fontWeight: 600 }}> · БОЛЬ</span>
+                              ) : null}
+                            </div>
+                            {checkin.painNote ? (
+                              <div style={{ color: "#c00", marginTop: 2 }}>«{checkin.painNote}»</div>
+                            ) : null}
+                            {checkin.commentText ? (
+                              <div style={{ marginTop: 2, whiteSpace: "pre-wrap" }}>
+                                «{checkin.commentText}»
+                              </div>
+                            ) : null}
+                            {view.unansweredCheckinIds.has(checkin.id) ? (
+                              <form action={sendCoachMessageAction} style={{ marginTop: 6 }}>
+                                <input type="hidden" name="studentUuid" value={studentUuid} />
+                                <input type="hidden" name="sourceId" value={student.sourceId ?? ""} />
+                                <input type="hidden" name="checkinId" value={checkin.id} />
+                                <input type="hidden" name="planSessionId" value={checkin.planSessionId ?? ""} />
+                                <textarea
+                                  name="body"
+                                  rows={2}
+                                  placeholder="Что ответить"
+                                  style={{ width: "100%", minWidth: 220, padding: 6, fontFamily: "inherit" }}
+                                />
+                                <div style={{ marginTop: 4 }}>
+                                  <FormActionButton
+                                    confirmMessage={
+                                      sendEnabled && student.telegramDeliveryEnabled
+                                        ? "Отдать текст ученице? Она увидит его в приложении, плюс уйдёт уведомление в Telegram."
+                                        : "Отдать текст ученице? Она увидит его в приложении. Уведомления в Telegram не будет."
+                                    }
+                                    pendingText="Отдаю…"
+                                  >
+                                    Ответить
+                                  </FormActionButton>
+                                </div>
+                              </form>
+                            ) : (
+                              <div style={{ color: "#2E7D45", marginTop: 4 }}>✓ ответ написан</div>
+                            )}
+                          </>
+                        )}
                       </td>
                     </tr>
                   );

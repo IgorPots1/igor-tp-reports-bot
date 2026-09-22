@@ -33,6 +33,8 @@ export type QualityPreset = {
   reps: number;
   workMinutes: number;
   recoveryMinutes: number;
+  /** Чем восстанавливаются между отрезками: трусцой или ШАГОМ. */
+  recoveryType: string | null;
   rpeTarget: number | null;
   rpeCap: number | null;
   avoidAcidosis: boolean;
@@ -213,7 +215,7 @@ export function tempoPresetsFrom(p: AerobicPreset): QualityPreset[] {
       // Формулировка тренера буква в букву: «Темповый бег 30 минут» — так он их и называет.
       displayNameRu: `Темповый бег ${w} минут`,
       intensityIntent: "steady_tempo",
-      reps: 1, workMinutes: w, recoveryMinutes: 0,
+      reps: 1, workMinutes: w, recoveryMinutes: 0, recoveryType: null,
       rpeTarget: p.rpeTarget, rpeCap: p.rpeCap,
       avoidAcidosis: false, coachReviewRequired: false, requiresExplicitVo2: false,
       warmupMinutes: TEMPO_WARMUP_MIN, cooldownMinutes: TEMPO_COOLDOWN_MIN,
@@ -244,7 +246,7 @@ export function presetLevelAllowed(presetLevel: string | null, athleteLevel: str
 
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 
-type ParamRow = { reps?: number | null; work_duration_min?: number | null; recovery_duration_min?: number | null;
+type ParamRow = { reps?: number | null; work_duration_min?: number | null; recovery_duration_min?: number | null; recovery_type?: string | null;
   target_mode?: string | null; rpe_target?: number | null; rpe_cap?: number | null; avoid_acidosis?: boolean | null;
   extra_params?: Record<string, unknown> | null };
 type RefRow = { duration_min_approx?: number | null };
@@ -270,7 +272,7 @@ export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | nul
     .select(`preset_code, display_name_ru, coach_only, coach_review_required, requires_explicit_vo2_intensity,
              athlete_level_min, is_enabled, enabled_by_default,
              workout_template_variants!inner(variant_code, intensity_intent, workout_template_families!inner(family_code)),
-             workout_template_preset_parameters(reps, work_duration_min, recovery_duration_min, run_duration_min, walk_duration_min, target_mode, rpe_target, rpe_cap, avoid_acidosis, extra_params),
+             workout_template_preset_parameters(reps, work_duration_min, recovery_duration_min, recovery_type, run_duration_min, walk_duration_min, target_mode, rpe_target, rpe_cap, avoid_acidosis, extra_params),
              workout_template_warmup_refs(duration_min_approx),
              workout_template_cooldown_refs(duration_min_approx)`)
     .eq("is_enabled", true);
@@ -342,6 +344,7 @@ export async function loadCatalog(sb: SupabaseClient, athleteLevel: string | nul
       presetCode: r.preset_code, displayNameRu: r.display_name_ru,
       intensityIntent: v.intensity_intent, reps, workMinutes: work,
       recoveryMinutes: Number(pp.recovery_duration_min ?? 2),
+      recoveryType: pp.recovery_type ?? null,
       rpeTarget: num(pp.rpe_target), rpeCap: num(pp.rpe_cap),
       avoidAcidosis: pp.avoid_acidosis === true,
       coachReviewRequired: r.coach_review_required === true,
