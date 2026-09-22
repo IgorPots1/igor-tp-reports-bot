@@ -53,6 +53,11 @@ export type QualityContext = {
    */
   targetWorkMinutes?: number | null;
   /**
+   * Пол объёма работы: сколько минут стояло в ПОСЛЕДНЕЙ ОТДАННОЙ неделе.
+   * Сгенерированная неделя не имеет права опуститься ниже него.
+   */
+  minWorkMinutes?: number | null;
+  /**
    * НЕДЕЛЬНЫЙ ОБЪЁМ ЭТОЙ НЕДЕЛИ ПО ЦИКЛУ, мин. Задан — потолок доли работы считается ОТ НЕГО.
    * Без цикла null, и знаменателем остаётся исторический rolling4wWeeklyMin.
    */
@@ -206,6 +211,39 @@ export function selectQualityFromCatalog(
   // Цикл уже посчитал, сколько минут работы должно быть на этой неделе; брать поверх этого
   // ещё и шаг «+20% к прошлой» значило бы планировать дважды. Выбираем формат, ближайший
   // к цели цикла, среди тех, что прошли гейты и потолки.
+  /**
+   * ПОЛ ОТ ПОСЛЕДНЕЙ ОТДАННОЙ НЕДЕЛИ [22.09.2026].
+   *
+   * Цель цикла считается от объёма и ничего не знает о том, что тренер УЖЕ дал
+   * человеку руками. У Валентины на неделе стояло 7 × 4 мин (28 минут работы),
+   * а генератор на следующую предлагал 5 × 3 (15 минут) — шаг назад почти
+   * вдвое, потому что цель цикла была 20 и ближайшим оказался меньший формат.
+   *
+   * Правило простое: назад не ходим. Если пол выше цели, цель уступает — то,
+   * что человек уже делал, важнее арифметики конверта.
+   *
+   * Пол НЕ ЛОМАЕТ потолки: он применяется к тому, что уже прошло бюджет недели
+   * и долю работы. Если ни один формат не дотягивает до пола, берём самый
+   * длинный из доступных и ГОВОРИМ об этом — молча отступать нельзя.
+   */
+  const floor = ctx.minWorkMinutes ?? null;
+  let floorNote: string | null = null;
+  if (floor !== null && floor > 0) {
+    const atOrAbove = pool.filter((p) => p.totalWorkMinutes >= floor);
+    if (atOrAbove.length > 0) {
+      if (atOrAbove.length < pool.length) {
+        floorNote = `не ниже последней отданной недели (${floor} мин работы)`;
+      }
+      pool = atOrAbove;
+    } else {
+      const best = pool.reduce((a, b) => (b.totalWorkMinutes > a.totalWorkMinutes ? b : a));
+      floorNote =
+        `✋ последняя отданная неделя несла ${floor} мин работы, а в бюджет этой помещается ` +
+        `максимум ${best.totalWorkMinutes} — шаг назад неизбежен, нужен взгляд тренера`;
+      pool = [best];
+    }
+  }
+
   let chosen: QualityPreset; let reason: string;
   if (ctx.targetWorkMinutes != null && ctx.targetWorkMinutes > 0) {
     const t = ctx.targetWorkMinutes;
@@ -228,6 +266,8 @@ export function selectQualityFromCatalog(
 
   // ── coach_review: из пресета и из правил каталога ──
   const coachReview: string[] = [];
+  if (floorNote && floorNote.startsWith("✋")) coachReview.push(floorNote);
+  else if (floorNote) warnings.push(floorNote);
   if (chosen.coachReviewRequired) coachReview.push("пресет помечен coach_review_required");
   for (const g of guardrails) {
     if (g.severity !== "coach_review") continue;

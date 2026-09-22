@@ -716,6 +716,15 @@ export type CycleWeekTarget = {
    */
   baseWeekMin?: number;
   /**
+   * Сколько минут работы несла ПОСЛЕДНЯЯ ОТДАННАЯ ученику неделя.
+   *
+   * Цель цикла считается от объёма и не знает, что тренер уже дал человеку
+   * руками. Без этого числа генератор спокойно предлагает шаг назад: у
+   * Валентины стояло 7 × 4 (28 мин), а следующая неделя собиралась на 5 × 3
+   * (15 мин). Заполняет ВЫЗЫВАЮЩАЯ сторона: она знает, какие недели отданы.
+   */
+  minQualityWorkMin?: number | null;
+  /**
    * Есть ли у атлета БУДУЩИЙ целевой старт (из trainingpeaks_race_events через черновик цикла).
    * У кого старт есть — длительная режется ПОСЛЕДНЕЙ: при понижении недели она уменьшается
    * пропорционально, а не обнуляется [решение Игоря 12.08].
@@ -1080,6 +1089,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         // ЦЕЛЬ ЦИКЛА ПО МИНУТАМ РАБОТЫ ДЕЛИТСЯ МЕЖДУ СЕССИЯМИ: цикл задаёт объём работы НА НЕДЕЛЮ,
         // и целиться каждой сессией в недельное число значило бы удвоить работу.
         targetWorkMinutes: cycle ? Math.round(cycle.qualityMin / Math.max(1, counts.quality)) : null,
+        minWorkMinutes: cycle?.minQualityWorkMin ?? null,
         // доля работы считается от недели ЦИКЛА, а не от исторического факта
         cycleWeeklyMin: cycle ? weekly : null,
         sessionsThisWeek: Math.max(1, counts.quality), slotType,
@@ -1156,6 +1166,28 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         : `беговых дней ${nWant} → ${plan.n}: больше не помещается в потолок ${weekly} мин`);
     }
     if (!plan.dec.selected) notes.push(`качество не назначено: ${plan.dec.reason} (${plan.dec.detail})`);
+
+  /**
+   * ШАГ НАЗАД ПО РАБОТЕ — В ЗАМЕТКИ НЕДЕЛИ, А НЕ В ПОМЕТКУ СЕССИИ [22.09.2026].
+   *
+   * Пол от последней отданной недели не всегда достижим: формат обязан ещё и
+   * поместиться в бюджет сессии. Когда не дотянули, тренер должен увидеть это
+   * в плане недели, а не найти случайно в coach_review одной тренировки —
+   * именно шаг назад он и просил не допускать молча.
+   */
+  const floorWanted = cycle?.minQualityWorkMin ?? null;
+  if (floorWanted != null && floorWanted > 0) {
+    for (const d of plan.decs) {
+      if (!d.selected) continue;
+      const got = d.preset.totalWorkMinutes;
+      if (got < floorWanted) {
+        notes.push(
+          `✋ работа ${got} мин НИЖЕ последней отданной недели (${floorWanted} мин): ` +
+            `формат покрупнее не помещается в бюджет сессии. Это шаг назад, нужен взгляд тренера`
+        );
+      }
+    }
+  }
   }
 
   const { days, roles, dec, decs, qSessions, easyRoles } = plan;
