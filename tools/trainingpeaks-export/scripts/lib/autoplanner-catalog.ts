@@ -162,7 +162,15 @@ export function presetSessionMinutes(p: QualityPreset): number {
  * восьмая на заминку [подтверждено Игорем 18.09.2026].
  *
  * Арифметика: блок работы B задан пресетом, доли заданы от ПОЛНОЙ сессии S.
- * W = S/3, C = S/8  =>  B = S·(1 − 1/3 − 1/8) = S·13/24  =>  W = B·8/13, C = B·3/13.
+ * W = S/3, C = S/13  =>  B = S·(1 − 1/3 − 1/13) = S·23/39  =>  W = B·13/23, C = B·3/23.
+ *
+ * ЗАМИНКА ТРИНАДЦАТАЯ, А НЕ ВОСЬМАЯ [правка 22.09.2026]. Сначала стояла восьмая,
+ * и на блоке 37 минут заминка выходила 8.5 — вдвое длиннее того, что тренер
+ * пишет рукой. Сессия 7 x 4 собиралась на 69 минут вместо его 64 и переставала
+ * помещаться в бюджет разгрузочной недели, то есть пропорция, выведенная из его
+ * же карточек, начинала спорить с ними. Пересчитано по той самой карточке:
+ * разминка 21 из 64, заминка 5. Новые доли дают 20.9 и 4.8 — совпадение с
+ * рукой тренера, а не приближение к нему.
  *
  * ПОЛЫ: разминка короче пяти минут и заминка короче трёх — уже не разминка и не
  * заминка, а строчка в плане.
@@ -177,8 +185,8 @@ export const SCALED_COOLDOWN_MIN = 3;
 export function withScaledWarmup(p: QualityPreset): QualityPreset {
   const block = p.reps * p.workMinutes + Math.max(0, p.reps - 1) * p.recoveryMinutes;
   if (block <= 0) return p;
-  const warm = Math.max(SCALED_WARMUP_MIN, Math.round((block * 8) / 13));
-  const cool = Math.max(SCALED_COOLDOWN_MIN, Math.round((block * 3) / 13));
+  const warm = Math.max(SCALED_WARMUP_MIN, Math.round((block * 13) / 23));
+  const cool = Math.max(SCALED_COOLDOWN_MIN, Math.round((block * 3) / 23));
   // athleteLevelMin обнуляется намеренно: каноническая разминка привязана к
   // уровню и живёт отдельной веткой в presetSessionMinutes. Без обнуления
   // пропорция посчиталась бы, а в бюджет ушла бы всё та же константа.

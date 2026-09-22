@@ -355,8 +355,8 @@ assert.ok(
     );
     // Пропорция из карточек тренера: разминка треть сессии, заминка восьмая.
     const block = short.reps * short.workMinutes + Math.max(0, short.reps - 1) * short.recoveryMinutes;
-    assert.equal(scaled.warmupMinutes, Math.max(5, Math.round((block * 8) / 13)));
-    assert.equal(scaled.cooldownMinutes, Math.max(3, Math.round((block * 3) / 13)));
+    assert.equal(scaled.warmupMinutes, Math.max(5, Math.round((block * 13) / 23)));
+    assert.equal(scaled.cooldownMinutes, Math.max(3, Math.round((block * 3) / 23)));
 
     // ПОЛЫ: короче пяти и трёх это уже не разминка и не заминка.
     const tinyScaled = withScaledWarmup({ ...short, reps: 1, workMinutes: 1, recoveryMinutes: 0 });
