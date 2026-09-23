@@ -27,6 +27,7 @@ import {
   listSessionsInRange,
   markCoachMessageDelivered,
   publishCycle,
+  setPlanWeekStatus,
   saveCoachMessage,
   saveOnboardingAnswers,
 } from "@/features/intervals/loop/repository";
@@ -341,6 +342,40 @@ async function main(): Promise<void> {
   await publishCycle(cycleId, sourceId, "check-loop");
   const published = await getPublishedCycle(sourceId);
   expect(published?.id === cycleId, "тренер подтвердил план — цикл стал published");
+
+  /**
+   * ПУБЛИКАЦИИ ЦИКЛА МАЛО [20.09.2026, чек догнал это 23.09.2026].
+   *
+   * Единицей выдачи стала НЕДЕЛЯ: опубликованный цикл сам по себе ученице
+   * ничего не показывает, пока тренер не отдал конкретную неделю отдельным
+   * нажатием (loadStudentView отбрасывает всё, кроме released).
+   *
+   * Чек три дня стоял красный именно здесь: он публиковал цикл и ждал, что
+   * экран наполнится, как раньше. Это была не поломка, а незамеченная смена
+   * правила — и пока чек был красный, он не сторожил вообще ничего.
+   *
+   * Поэтому теперь сначала ПРОВЕРЯЕМ ЗАСЛОН (неделя не отдана — экран пуст),
+   * и только потом отдаём неделю. Заслон важнее самого показа: он охраняет
+   * недоделанную правку будущей недели от мгновенной доставки человеку.
+   */
+  const notReleased = await loadStudentView(sourceId, firstSessionDate);
+  expect(
+    notReleased.state === "no_plan" ||
+      (notReleased.state === "ready" && notReleased.today === null),
+    "цикл опубликован, но НЕОТДАННАЯ неделя ученице не видна"
+  );
+
+  /**
+   * Недели берём ИЗ САМИХ СЕССИЙ, а не из intervals_plan_weeks: у свежего
+   * цикла строк состояния может не быть вовсе, и «недель ноль» тогда значило
+   * бы «отдавать нечего», а не «экран пуст».
+   */
+  const weekStarts = [...new Set(sessions.map((s) => mondayOf(String(s.session_date))))].sort();
+  expect(weekStarts.length > 0, `недель с тренировками: ${weekStarts.length}`);
+  for (const weekStart of weekStarts) {
+    const released = await setPlanWeekStatus({ cycleId, weekStart, status: "released" });
+    expect(released.ok, `неделя ${weekStart} отдана ученице`);
+  }
 
   const view = await loadStudentView(sourceId, firstSessionDate);
   if (view.state !== "ready") {
