@@ -1,12 +1,16 @@
-/* Брендинг igorp.run: фон zinc-950, акцент yellow-400, Oswald (заголовки) + Manrope (текст).
-   Тот же визуальный набор, что и калькулятор калорий (/tools/nutrition). */
+/* Классы страницы /tools/plan. Токены документа (:root, html, body) живут в
+   соседнем plan-page.css — так же разделено у /tools/shoes и /tools/dress.
+   Состояния (выбранная опция, поля ввода, фокус, плашки-примечания) взяты
+   1:1 из /tools/shoes: .optionActive → --accent-ink + белый текст,
+   .demoNotice → белая карточка с рамкой и акцентной полосой слева,
+   .searchInput:focus → рамка --accent-ink + мягкое свечение. */
 
 .page {
   min-height: 100vh;
-  background: #09090b; /* zinc-950 */
-  color: #ffffff;
+  background: var(--bg);
+  color: var(--ink);
   padding: 24px;
-  font-family: var(--font-manrope), system-ui, -apple-system, sans-serif;
+  font-family: var(--font-onest), system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   box-sizing: border-box;
 }
@@ -17,6 +21,14 @@
   box-sizing: border-box;
 }
 
+.page a:focus-visible,
+.page button:focus-visible,
+.page input:focus-visible {
+  outline: 3px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .inner {
   max-width: 28rem; /* 448px */
   margin: 0 auto;
@@ -25,38 +37,37 @@
 
 .brand {
   font-size: 12px;
-  color: #71717a; /* zinc-500 */
+  color: var(--ink-2);
   margin-bottom: 4px;
 }
 
 .title {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
-  font-size: 36px;
+  font-family: var(--font-onest), system-ui, sans-serif;
+  font-size: 34px;
   line-height: 1.08;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: -0.025em;
   margin: 0 0 28px;
 }
 
 .accent {
-  color: #facc15; /* yellow-400 */
+  color: var(--accent-ink);
 }
 
 .subtitle {
-  color: #a1a1aa; /* zinc-400 */
+  color: var(--ink-2);
   font-size: 14px;
   margin: 0 0 32px;
 }
 
-/* ----- Section heading ----- */
+/* ----- Section heading (лейбл-«эйбрау», как .eyebrow у /club и /camp) ----- */
 .sectionHead {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-family: var(--font-jetbrains), monospace;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #facc15;
+  color: var(--accent-ink);
   margin: 0 0 12px;
 }
 
@@ -75,19 +86,20 @@
 .toggleBtn {
   font-family: inherit;
   font-size: 14px;
-  border: 0;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 12px 16px;
-  background: #18181b; /* zinc-900 */
-  color: #d4d4d8; /* zinc-300 */
+  background: var(--surface);
+  color: var(--ink);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: border-color 0.16s ease, background 0.16s ease;
 }
 
 .toggleBtnActive {
-  background: #facc15;
-  color: #000000;
-  font-weight: 700;
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+  color: #ffffff;
+  font-weight: 600;
 }
 
 /* ----- Week template ----- */
@@ -101,52 +113,52 @@
   align-items: baseline;
   gap: 10px;
   padding: 12px 14px;
-  background: #18181b;
-  border: 1px solid #27272a; /* zinc-800 */
-  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
 .weekDay {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
   font-weight: 700;
   font-size: 14px;
-  color: #facc15;
+  color: var(--accent-ink);
   min-width: 28px;
 }
 
 .weekType {
   font-weight: 600;
   font-size: 14px;
-  color: #ffffff;
+  color: var(--ink);
 }
 
 .weekDuration {
   margin-left: auto;
   font-size: 13px;
-  color: #a1a1aa;
+  color: var(--ink-2);
   white-space: nowrap;
 }
 
 .note {
   margin: 14px 0 0;
   padding: 12px 14px;
-  background: #18181b;
-  border: 1px solid #27272a;
-  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
   font-size: 13px;
   line-height: 1.55;
-  color: #d4d4d8;
+  color: var(--ink);
 }
 
 .noteAccent {
-  color: #facc15;
+  color: var(--accent-ink);
   font-weight: 700;
 }
 
 /* ----- Pace input ----- */
 .fieldLabel {
   font-size: 14px;
-  color: #a1a1aa;
+  color: var(--ink-2);
   margin-bottom: 8px;
 }
 
@@ -159,38 +171,40 @@
 
 .timeInput {
   width: 72px;
-  font-family: inherit;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
   font-size: 20px;
   font-weight: 700;
   text-align: center;
   padding: 10px 8px;
-  border-radius: 8px;
-  border: 1px solid #3f3f46; /* zinc-700 */
-  background: #18181b;
-  color: #ffffff;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--ink);
 }
 
 .timeInput:focus {
   outline: none;
-  border-color: #facc15;
+  border-color: var(--accent-ink);
+  box-shadow: 0 0 0 3px rgba(181, 55, 7, 0.15);
 }
 
 .timeColon {
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
   font-size: 20px;
   font-weight: 700;
-  color: #a1a1aa;
+  color: var(--ink-2);
 }
 
 .timeUnit {
   font-size: 13px;
-  color: #71717a;
+  color: var(--ink-2);
 }
 
 .disclaimer {
   margin: 0 0 24px;
   font-size: 13px;
   line-height: 1.55;
-  color: #a1a1aa;
+  color: var(--ink-2);
 }
 
 /* ----- Workout cards ----- */
@@ -201,9 +215,9 @@
 
 .card {
   padding: 16px;
-  background: #18181b;
-  border: 1px solid #27272a;
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
 .cardHead {
@@ -215,18 +229,17 @@
 }
 
 .cardTitle {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
   font-size: 16px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.01em;
+  color: var(--ink);
 }
 
 .cardPace {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
   font-size: 18px;
   font-weight: 700;
-  color: #facc15;
+  color: var(--accent-ink);
   white-space: nowrap;
 }
 
@@ -238,12 +251,12 @@
 
 .cardMetaRow {
   font-size: 13px;
-  color: #d4d4d8;
+  color: var(--ink);
   line-height: 1.5;
 }
 
 .cardMetaLabel {
-  color: #71717a;
+  color: var(--ink-2);
   font-weight: 600;
 }
 
@@ -251,30 +264,32 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.55;
-  color: #a1a1aa;
+  color: var(--ink-2);
 }
 
 /* ----- Important / disclaimers block ----- */
 .important {
   margin-top: 20px;
-  background: #18181b;
-  border: 1px solid #27272a;
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
   padding: 16px;
 }
 
 .importantLabel {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
+  font-family: var(--font-jetbrains), monospace;
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #facc15;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
   margin-bottom: 8px;
 }
 
 .importantText {
   font-size: 13px;
-  color: #d4d4d8;
+  color: var(--ink-2);
   line-height: 1.6;
   margin: 0;
 }
@@ -282,41 +297,47 @@
 /* ----- CTA ----- */
 .cta {
   margin-top: 16px;
-  background: linear-gradient(to bottom right, rgba(250, 204, 21, 0.15), #18181b);
-  border: 1px solid rgba(250, 204, 21, 0.4);
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
   padding: 20px;
 }
 
 .ctaTitle {
-  font-family: var(--font-oswald), var(--font-manrope), sans-serif;
   font-size: 20px;
   font-weight: 700;
   line-height: 1.2;
+  color: var(--ink);
   margin-bottom: 8px;
 }
 
 .ctaText {
   font-size: 14px;
-  color: #d4d4d8;
+  color: var(--ink-2);
   line-height: 1.6;
   margin: 0 0 16px;
 }
 
 .ctaButton {
   display: inline-block;
-  background: #facc15;
-  color: #000000;
-  font-weight: 700;
+  background: var(--accent-ink);
+  color: #ffffff;
+  font-weight: 600;
   padding: 12px 24px;
-  border-radius: 8px;
+  border-radius: 999px;
   font-size: 14px;
   text-decoration: none;
+  transition: transform 0.15s ease;
+}
+
+.ctaButton:active {
+  transform: translateY(1px);
 }
 
 .footer {
   text-align: center;
   font-size: 12px;
-  color: #52525b; /* zinc-600 */
+  color: var(--ink-2);
   margin-top: 32px;
 }

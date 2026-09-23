@@ -1,22 +1,23 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
-import { Manrope, Oswald } from "next/font/google";
+import { JetBrains_Mono, Onest } from "next/font/google";
 import SiteHeader from "@/components/SiteHeader";
 
+import "./plan-page.css";
 import styles from "./plan.module.css";
 import ThreeRunsTool from "./ThreeRunsTool";
 
-const oswald = Oswald({
+const onest = Onest({
   subsets: ["latin", "cyrillic"],
-  weight: ["500", "600", "700"],
-  variable: "--font-oswald",
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-onest",
   display: "swap",
 });
 
-const manrope = Manrope({
+const jetbrains = JetBrains_Mono({
   subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-manrope",
+  weight: ["500", "700"],
+  variable: "--font-jetbrains",
   display: "swap",
 });
 
@@ -29,8 +30,8 @@ export const metadata: Metadata = publicPageMetadata({
 
 export default function PlanToolPage() {
   return (
-    <div className={`${oswald.variable} ${manrope.variable} ${styles.page}`}>
-      <SiteHeader theme="dark" />
+    <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
+      <SiteHeader />
       <ThreeRunsTool />
     </div>
   );

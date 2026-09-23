@@ -74,7 +74,7 @@ const CARDS: Card[] = [
 export default function ToolsShowcasePage() {
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
-      <SiteHeader theme="cream" />
+      <SiteHeader />
       <div className={styles.wrap}>
         <h1 className={styles.title}>Калькуляторы</h1>
         <p className={styles.lede}>

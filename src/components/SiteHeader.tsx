@@ -2,15 +2,9 @@ import Link from "next/link";
 
 import styles from "./SiteHeader.module.css";
 
-type SiteHeaderProps = {
-  /** cream — хаб, /club-footer, /tools/*; dark — /tools/plan и /tools/nutrition
-   *  (свой брендинг zinc-950 + yellow-400, без общих токенов). */
-  theme?: "cream" | "dark";
-};
-
-export default function SiteHeader({ theme = "cream" }: SiteHeaderProps) {
+export default function SiteHeader() {
   return (
-    <header className={`${styles.header} ${theme === "dark" ? styles.dark : styles.cream}`}>
+    <header className={styles.header}>
       <Link href="/" className={styles.brand}>
         igorp.run
       </Link>

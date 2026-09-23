@@ -1,10 +1,10 @@
 /* Общая шапка сайта (бренд + «Калькуляторы»): хаб и все /tools/*.
-   Цвета захардкожены на месте, не через var(--...) — страница /tools/plan и
-   /tools/nutrition не объявляют CSS-переменных вообще (своя тёмная палитра
-   zinc-950/yellow-400 прямо в правилах), так что шапка должна работать без
-   унаследованных токенов. Значения — те же самые, что уже приняты в проекте,
-   не новые: кремовые из hub.css/club.css/camp.css/shoes-page.css, тёмные —
-   из plan.module.css/nutrition.module.css. */
+   Раньше была ещё тёмная тема для /tools/plan и /tools/nutrition (свои
+   zinc-950/yellow-400 без CSS-переменных) — с переводом обеих страниц на
+   общий кремовый набор токенов тёмная тема стала не нужна нигде и удалена
+   (наряд «все калькуляторы в едином кремовом стиле», 2026-09-23). Теперь
+   шапка всегда кремовая и берёт цвета через var(--...): каждая страница,
+   где она стоит, объявляет общий набор токенов у себя в :root. */
 
 /* Селектор с тегом (header.header), не просто .header: у хаба (_hub/hub.css)
    есть глобальный сброс .start-root *{margin:0;padding:0} с той же
@@ -28,26 +28,16 @@ header.header {
   border-radius: 6px;
 }
 
-.cream .brand {
-  color: #857f73; /* --muted */
-}
-.cream .navLink {
-  color: #b53707; /* --accent-ink */
-}
-.cream .brand:focus-visible,
-.cream .navLink:focus-visible {
-  outline: 3px solid #b53707;
-  outline-offset: 2px;
+.brand {
+  color: var(--ink-2);
 }
 
-.dark .brand {
-  color: #71717a; /* zinc-500 */
+.navLink {
+  color: var(--accent-ink);
 }
-.dark .navLink {
-  color: #facc15; /* yellow-400 */
-}
-.dark .brand:focus-visible,
-.dark .navLink:focus-visible {
-  outline: 3px solid #facc15;
+
+.brand:focus-visible,
+.navLink:focus-visible {
+  outline: 3px solid var(--accent-ink);
   outline-offset: 2px;
 }

@@ -36,7 +36,7 @@ export default function ShoesToolPage() {
   // а цены физически не попадают в объект, который уходит на клиент.
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
-      <SiteHeader theme="cream" />
+      <SiteHeader />
       <ShoePicker catalog={clientCatalog} />
     </div>
   );

@@ -45,7 +45,7 @@ export default async function StartPage() {
 
   return (
     <div className={`start-root ${onest.variable} ${jetbrains.variable}`}>
-      <SiteHeader theme="cream" />
+      <SiteHeader />
       <main>
         <div className="wrap">
           <div className="prof">

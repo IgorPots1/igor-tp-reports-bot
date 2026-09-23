@@ -40,7 +40,7 @@ export const viewport: Viewport = {
 export default function DressToolPage() {
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
-      <SiteHeader theme="cream" />
+      <SiteHeader />
       <DressCalculator />
     </div>
   );
