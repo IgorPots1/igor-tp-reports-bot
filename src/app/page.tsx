@@ -4,6 +4,7 @@ import { Onest, JetBrains_Mono } from "next/font/google";
 import { Send, Users, Zap } from "lucide-react";
 import { formatFlowStartDate, seatsWord } from "@/lib/flow";
 import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
+import SiteHeader from "@/components/SiteHeader";
 import "./_hub/hub.css";
 
 // КОРЕНЬ САЙТА — страница-хаб (раньше жила по /start). Голый igorp.run отдаёт
@@ -44,6 +45,7 @@ export default async function StartPage() {
 
   return (
     <div className={`start-root ${onest.variable} ${jetbrains.variable}`}>
+      <SiteHeader theme="cream" />
       <main>
         <div className="wrap">
           <div className="prof">

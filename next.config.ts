@@ -19,6 +19,29 @@ const LEGACY_REDIRECTS = [
   { source: "/intensive", destination: "/camp" },
 ];
 
+// Старые Vercel-домены проекта. igorp.run, igorp-run.vercel.app и
+// igor-tp-reports-bot.vercel.app — один и тот же Vercel-проект с тремя
+// привязанными доменами, поэтому старые домены продолжают отвечать сами по
+// себе, просто не на каноническом адресе. Кнопки в двух активных
+// автоматизациях ChatPlace ("Калькулятор темпа", "Калькулятор питания")
+// зашиты именно на igor-tp-reports-bot.vercel.app.
+//
+// Редирект — ТОЛЬКО для путей /tools/*, ТОЛЬКО по условию host, не для всего
+// домена: на старых доменах может быть завязан внешний вебхук или callback
+// (Telegram, TrainingPeaks OAuth), который редирект не пройдёт — такой запрос
+// получил бы ошибку вместо ответа. Домен целиком не трогаем.
+const LEGACY_HOSTS = ["igor-tp-reports-bot.vercel.app", "igorp-run.vercel.app"];
+const TOOL_PATHS = ["/tools/plan", "/tools/nutrition", "/tools/shoes", "/tools/dress"];
+
+const LEGACY_HOST_REDIRECTS = LEGACY_HOSTS.flatMap((host) =>
+  TOOL_PATHS.map((path) => ({
+    source: path,
+    has: [{ type: "host" as const, value: host }],
+    destination: `https://igorp.run${path}`,
+    permanent: true,
+  })),
+);
+
 // Локальная админка (com.igor.coachos.localadmin) собирается отдельно от Vercel
 // в свою папку — .next-admin, а не .next, — чтобы `next build` там не сталкивался
 // с параллельно работающим `next dev`/`next start` в той же WorkingDirectory.
@@ -30,7 +53,10 @@ const nextConfig: NextConfig = {
   // в destination нет своей строки запроса. На этих метках держится вся
   // статистика по источникам, поэтому проверяется живым запросом, а не на веру.
   async redirects() {
-    return LEGACY_REDIRECTS.map((rule) => ({ ...rule, permanent: true }));
+    return [
+      ...LEGACY_REDIRECTS.map((rule) => ({ ...rule, permanent: true })),
+      ...LEGACY_HOST_REDIRECTS,
+    ];
   },
   experimental: {
     serverActions: {

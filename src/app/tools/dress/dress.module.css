@@ -35,9 +35,9 @@
 .page a:focus-visible,
 .page button:focus-visible,
 .page input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 4px;
+  outline: 3px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 .wrap {
@@ -156,7 +156,7 @@
 
 .shiftValue {
   font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 26px;
   font-variant-numeric: tabular-nums;
 }
@@ -185,7 +185,7 @@
   font-weight: 600;
   font-size: 15px;
   color: var(--ink);
-  background: var(--chip);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 9px 16px;
@@ -193,9 +193,9 @@
 }
 
 .seg button[aria-pressed="true"] {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border-color: var(--accent);
+  background: var(--accent-ink);
+  color: #ffffff;
+  border-color: var(--accent-ink);
 }
 
 .feelRow {
@@ -273,9 +273,10 @@
 .note {
   margin: 30px 0 0;
   padding: 16px 18px;
+  border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
-  background: var(--chip);
-  border-radius: 0 8px 8px 0;
+  background: var(--surface);
+  border-radius: var(--radius);
 }
 
 .note p {

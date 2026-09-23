@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
 import { Manrope, Oswald } from "next/font/google";
+import SiteHeader from "@/components/SiteHeader";
 
 import styles from "./nutrition.module.css";
 import NutritionCalculator from "./NutritionCalculator";
@@ -29,6 +30,7 @@ export const metadata: Metadata = publicPageMetadata({
 export default function NutritionToolPage() {
   return (
     <div className={`${oswald.variable} ${manrope.variable} ${styles.page}`}>
+      <SiteHeader theme="dark" />
       <NutritionCalculator />
     </div>
   );

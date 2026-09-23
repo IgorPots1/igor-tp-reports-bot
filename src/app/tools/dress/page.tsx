@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Onest } from "next/font/google";
 
 import { publicPageMetadata } from "@/lib/site";
+import SiteHeader from "@/components/SiteHeader";
 
 import DressCalculator from "./DressCalculator";
 import "./dress-page.css";
@@ -39,6 +40,7 @@ export const viewport: Viewport = {
 export default function DressToolPage() {
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
+      <SiteHeader theme="cream" />
       <DressCalculator />
     </div>
   );

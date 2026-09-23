@@ -1,0 +1,53 @@
+/* Общая шапка сайта (бренд + «Калькуляторы»): хаб и все /tools/*.
+   Цвета захардкожены на месте, не через var(--...) — страница /tools/plan и
+   /tools/nutrition не объявляют CSS-переменных вообще (своя тёмная палитра
+   zinc-950/yellow-400 прямо в правилах), так что шапка должна работать без
+   унаследованных токенов. Значения — те же самые, что уже приняты в проекте,
+   не новые: кремовые из hub.css/club.css/camp.css/shoes-page.css, тёмные —
+   из plan.module.css/nutrition.module.css. */
+
+/* Селектор с тегом (header.header), не просто .header: у хаба (_hub/hub.css)
+   есть глобальный сброс .start-root *{margin:0;padding:0} с той же
+   специфичностью класса — без тега он побеждал по порядку подключения
+   стилей, и отступы шапки на хабе схлопывались до нуля. */
+header.header {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px 22px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand,
+.navLink {
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  border-radius: 6px;
+}
+
+.cream .brand {
+  color: #857f73; /* --muted */
+}
+.cream .navLink {
+  color: #b53707; /* --accent-ink */
+}
+.cream .brand:focus-visible,
+.cream .navLink:focus-visible {
+  outline: 3px solid #b53707;
+  outline-offset: 2px;
+}
+
+.dark .brand {
+  color: #71717a; /* zinc-500 */
+}
+.dark .navLink {
+  color: #facc15; /* yellow-400 */
+}
+.dark .brand:focus-visible,
+.dark .navLink:focus-visible {
+  outline: 3px solid #facc15;
+  outline-offset: 2px;
+}

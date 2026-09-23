@@ -838,7 +838,7 @@ export default async function IntensivePage() {
           <div>© 2026 · Игорь Поцелуев · Беговой интенсив</div>
           <div>
             <a href="https://t.me/IgorPotseluev">Telegram</a> ·{" "}
-            <a href="#">Instagram</a>
+            <a href="#">Instagram</a> · <a href="/tools">Калькуляторы</a>
           </div>
         </div>
       </footer>

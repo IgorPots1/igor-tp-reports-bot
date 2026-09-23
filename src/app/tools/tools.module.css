@@ -1,0 +1,128 @@
+/* Классы страницы /tools. Токены документа (:root, html, body) живут в
+   соседнем tools-page.css — так же разделено у /tools/shoes и /tools/dress.
+   Карточки — тот же паттерн, что у .card в _hub/hub.css (иконка-плашка,
+   заголовок, строка описания, шеврон), переписанный под CSS-модуль. */
+
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-onest), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  box-sizing: border-box;
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page *,
+  .page *::before,
+  .page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.page a:focus-visible {
+  outline: 3px solid var(--accent-ink);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px 22px 48px;
+}
+
+.title {
+  font-family: var(--font-onest), system-ui, sans-serif;
+  font-weight: 800;
+  font-size: clamp(32px, 7vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  margin: 24px 0 10px;
+}
+
+.lede {
+  color: var(--muted);
+  margin: 0 0 30px;
+  max-width: 42ch;
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.16s ease, border-color 0.16s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--line-2);
+}
+
+.ic {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: #fdede5;
+  color: var(--accent);
+}
+
+.txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.t {
+  display: block;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.external {
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.s {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.ar {
+  color: var(--muted);
+  font-size: 19px;
+  flex: 0 0 auto;
+}
