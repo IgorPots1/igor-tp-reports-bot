@@ -83,7 +83,7 @@
   font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
   font-weight: 700;
   letter-spacing: -0.04em;
-  font-size: clamp(88px, 26vw, 132px);
+  font-size: clamp(72px, 22vw, 108px);
   line-height: 0.9;
   font-variant-numeric: tabular-nums;
 }
