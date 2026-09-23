@@ -9,14 +9,23 @@
  */
 
 import { stepByIndex } from "@/features/methodology/beginner";
-// STRICT, а не обычный sendTelegramMessage: тот глотает ошибку и логирует её,
-// то есть тренер увидел бы «отправлено» при несостоявшейся доставке.
-import {
-  sendTelegramMessageStrict,
-  sendTelegramWebAppButton,
-} from "@/features/telegram/telegram-client";
+// СТРОГАЯ ОТПРАВКА, а не обычный sendTelegramMessage: тот глотает ошибку и
+// логирует её, то есть тренер увидел бы «отправлено» при несостоявшейся
+// доставке. sendTelegramWebAppButton бьёт наружу так же строго.
+import { sendTelegramWebAppButton } from "@/features/telegram/telegram-client";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { SITE_URL } from "@/lib/site";
+
+/**
+ * Куда ведёт кнопка из любого сообщения ученице.
+ *
+ * ОДНО МЕСТО НА ОБА ПУТИ: «План готов» и ответ тренера открывают один и тот же
+ * экран. Две копии адреса разъехались бы молча — и половина сообщений вела бы
+ * не туда.
+ */
+function coachAppUrl(): string {
+  return `${SITE_URL.replace(/\/+$/, "")}/m/run`;
+}
 
 import type { ActivityRow } from "./repository";
 import type { Checkin, CoachMessageContext, PlanSession, ProgressionState } from "./types";
@@ -154,7 +163,7 @@ export async function notifyPlanPublished(input: {
       await sendTelegramWebAppButton({
         chatId: input.chatId,
         text,
-        buttons: [{ label: "Открыть план", webAppUrl: `${SITE_URL.replace(/\/+$/, "")}/m/run` }],
+        buttons: [{ label: "Открыть план", webAppUrl: coachAppUrl() }],
       });
       result = { kind: "sent", chatId: input.chatId };
     } catch (error) {
@@ -224,7 +233,22 @@ export async function deliverCoachMessage(input: {
   }
 
   try {
-    await sendTelegramMessageStrict(input.chatId, input.body);
+    /**
+     * С КНОПКОЙ ВХОДА, КАК У «ПЛАН ГОТОВ» [23.09.2026].
+     *
+     * До этой правки ответ тренера уходил голым текстом: ни кнопки, ни
+     * упоминания приложения. Живой случай 23.09 — ученица получила от бота
+     * 1308 символов с тремя вопросами про боль и не имела ни одного способа
+     * попасть туда, где на них отвечают, кроме как искать приложение самой.
+     *
+     * Кнопка та же самая, что у notifyPlanPublished, и ведёт в то же место:
+     * два входа в одно приложение с разных сообщений сбивали бы с толку.
+     */
+    await sendTelegramWebAppButton({
+      chatId: input.chatId,
+      text: input.body,
+      buttons: [{ label: "Открыть приложение", webAppUrl: coachAppUrl() }],
+    });
     return { kind: "sent", chatId: input.chatId };
   } catch (error) {
     return {
