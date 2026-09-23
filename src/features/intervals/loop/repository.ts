@@ -8,6 +8,8 @@
 
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
+import type { CheckinChange, CheckinEdit, CheckinSnapshot } from "./checkin-edit";
+
 import { isPrefillableField, type Prefill, type PrefillableField } from "./prefill";
 import type {
   Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState, SessionNote, SessionSegment, SessionStep,
@@ -349,6 +351,85 @@ export async function saveCheckin(
     .single();
   if (error) throw new Error(`intervals_checkins upsert: ${describeSupabaseError(error)}`);
   return toCheckin(data as unknown as Record<string, unknown>);
+}
+
+/**
+ * Чек-ин того же дня, если он уже есть.
+ *
+ * Нужен ДО записи: строка перезаписывается upsert-ом, и прежние ответы после
+ * него взять уже неоткуда (см. intervals_checkin_edits).
+ */
+export async function getCheckinByDate(
+  sourceId: string,
+  sessionDate: string,
+  client?: Client
+): Promise<Checkin | null> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_checkins")
+    .select("*")
+    .eq("source_id", sourceId)
+    .eq("session_date", sessionDate)
+    .maybeSingle();
+  if (error) throw new Error(`intervals_checkins by date: ${describeSupabaseError(error)}`);
+  return data ? toCheckin(data as unknown as Record<string, unknown>) : null;
+}
+
+/** Правка чек-ина ученицей: только вставка, строки здесь не обновляются. */
+export async function saveCheckinEdit(
+  input: {
+    checkinId: string;
+    changed: CheckinChange[];
+    before: CheckinSnapshot;
+    after: CheckinSnapshot;
+  },
+  client?: Client
+): Promise<void> {
+  if (input.changed.length === 0) return;
+  const supabase = client ?? createSupabaseServerClient();
+  const { error } = await supabase.from("intervals_checkin_edits").insert({
+    checkin_id: input.checkinId,
+    changed: input.changed,
+    effort_rpe_before: input.before.effortRpe,
+    effort_label_before: input.before.effortLabel,
+    effort_rpe_after: input.after.effortRpe,
+    effort_label_after: input.after.effortLabel,
+    pain_before: input.before.pain,
+    pain_after: input.after.pain,
+    comment_before: input.before.commentText,
+    comment_after: input.after.commentText,
+  });
+  if (error) throw new Error(`intervals_checkin_edits insert: ${describeSupabaseError(error)}`);
+}
+
+export async function listCheckinEdits(
+  checkinIds: string[],
+  client?: Client
+): Promise<Map<string, CheckinEdit[]>> {
+  const byCheckin = new Map<string, CheckinEdit[]>();
+  if (checkinIds.length === 0) return byCheckin;
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_checkin_edits")
+    .select("checkin_id, edited_at, changed, effort_label_before, effort_label_after, pain_before, pain_after")
+    .in("checkin_id", checkinIds)
+    .order("edited_at", { ascending: true });
+  if (error) throw new Error(`intervals_checkin_edits: ${describeSupabaseError(error)}`);
+  for (const raw of data ?? []) {
+    const row = raw as unknown as Record<string, unknown>;
+    const key = String(row.checkin_id);
+    const list = byCheckin.get(key) ?? [];
+    list.push({
+      editedAt: String(row.edited_at),
+      changed: (Array.isArray(row.changed) ? row.changed : []) as CheckinChange[],
+      effortLabelBefore: (row.effort_label_before as string | null) ?? null,
+      effortLabelAfter: (row.effort_label_after as string | null) ?? null,
+      painBefore: (row.pain_before as boolean | null) ?? null,
+      painAfter: (row.pain_after as boolean | null) ?? null,
+    });
+    byCheckin.set(key, list);
+  }
+  return byCheckin;
 }
 
 export async function moveSession(

@@ -14,6 +14,7 @@ import { reportedWeekStart } from "./weekly-report";
 import {
   getCheckinForSession,
   getOnboardingAnswers,
+  getCheckinByDate,
   getProgression,
   getPublishedCycle,
   getSessionById,
@@ -24,10 +25,12 @@ import {
   listVisibleCoachMessages,
   moveSession,
   saveCheckin,
+  saveCheckinEdit,
   saveProgression,
   getWeeklyReport,
   listPlanWeeks,
 } from "./repository";
+import { diffCheckin, type CheckinSnapshot } from "./checkin-edit";
 import { buildStudentView, formatRuDay, type CoachReplyView, type StudentView } from "./student-view";
 import type { Checkin } from "./types";
 
@@ -173,7 +176,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
   const supabase = createSupabaseServerClient();
   const { data: checkinRows, error } = await supabase
     .from("intervals_checkins")
-    .select("id, plan_session_id, session_date, effort_label, effort_rpe, pain")
+    .select("id, plan_session_id, session_date, effort_label, effort_rpe, pain, comment_text")
     .eq("source_id", sourceId)
     .gte("session_date", shiftIso(todayIso, -7));
   if (error) throw new Error(`intervals_checkins: ${describeSupabaseError(error)}`);
@@ -195,7 +198,8 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
       painNote: null,
       painResolvedAt: null,
       painResolvedBy: null,
-      commentText: null,
+      // Комментарий нужен форме правки: она открывается заполненной.
+      commentText: (row.comment_text as string | null) ?? null,
       voiceFileId: null,
       stepBefore: null,
       stepAfter: null,
@@ -331,8 +335,9 @@ export async function submitCheckin(input: {
   }
 
   let sessionDate = input.sessionDate;
-  if (input.planSessionId) {
-    const session = await getSessionById(input.planSessionId);
+  let planSessionId = input.planSessionId;
+  if (planSessionId) {
+    const session = await getSessionById(planSessionId);
     if (!session) {
       return { ok: false, code: "unknown_session", messageRu: "Тренировка не найдена." };
     }
@@ -343,12 +348,52 @@ export async function submitCheckin(input: {
       return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из вашего плана." };
     }
     sessionDate = session.sessionDate;
+  } else {
+    /**
+     * ЗАПИСЬ БЕЗ СЕССИИ САМА НАХОДИТ СВОЙ ПЛАНОВЫЙ ДЕНЬ [23.09.2026].
+     *
+     * Раньше пробежка, записанная кнопкой «Записать тренировку», уходила с
+     * planSessionId = null ВСЕГДА — даже когда человек ставил вчерашнюю дату, в
+     * которой плановая тренировка была. Плановый день оставался неотмеченным
+     * навсегда: закрыть его было нечем, а у тренера он вечно висел пропуском.
+     *
+     * Привязываем ТОЛЬКО при полной однозначности: ровно одна сессия в этот
+     * день у опубликованного цикла. Двух в день у этого сегмента не бывает, но
+     * если появятся — гадать не станем, запись останется вне плана. Закрыть
+     * наугад не ту тренировку хуже, чем не закрыть никакой.
+     */
+    const cycle = await getPublishedCycle(input.sourceId);
+    if (cycle) {
+      const sameDay = await listSessionsInRange(cycle.id, sessionDate, sessionDate);
+      if (sameDay.length === 1) {
+        planSessionId = sameDay[0].id;
+      }
+    }
   }
 
-  const [progression, answers] = await Promise.all([
+  const [progression, answers, existing] = await Promise.all([
     getProgression(input.sourceId),
     getOnboardingAnswers(input.sourceId),
+    // Прежний ответ за этот день — ОБЯЗАТЕЛЬНО ДО записи: saveCheckin делает
+    // upsert по ключу (источник, день), и после него «что было» взять неоткуда.
+    getCheckinByDate(input.sourceId, sessionDate),
   ]);
+
+  const after: CheckinSnapshot = {
+    effortRpe: effort.rpe,
+    effortLabel: effort.labelRu,
+    pain: painOption.pain,
+    commentText: input.commentText,
+  };
+  const before: CheckinSnapshot | null = existing
+    ? {
+        effortRpe: existing.effortRpe,
+        effortLabel: existing.effortLabel,
+        pain: existing.pain,
+        commentText: existing.commentText,
+      }
+    : null;
+  const changed = before ? diffCheckin(before, after) : [];
 
   // Тренировка того же дня, если она уже приехала. Отсутствие — норма, а не сбой.
   const activities = await listActivitiesInRange(input.sourceId, sessionDate, sessionDate);
@@ -365,7 +410,7 @@ export async function submitCheckin(input: {
   if (progression === null) {
     const checkin = await saveCheckin({
       sourceId: input.sourceId,
-      planSessionId: input.planSessionId,
+      planSessionId,
       activityId,
       sessionDate,
       effortRpe: effort.rpe,
@@ -379,6 +424,9 @@ export async function submitCheckin(input: {
       progressionAction: null,
       progressionReason: null,
     });
+    if (before && changed.length > 0) {
+      await saveCheckinEdit({ checkinId: checkin.id, changed, before, after });
+    }
     return {
       ok: true,
       replyRu: simpleCheckinReplyRu(painOption.pain),
@@ -390,6 +438,20 @@ export async function submitCheckin(input: {
     };
   }
 
+  /**
+   * ПРАВКА НЕ ДВИГАЕТ СТУПЕНЬ ВТОРОЙ РАЗ [23.09.2026].
+   *
+   * Ступень уже сдвинулась на первом ответе. Пересчитать её от нового значит
+   * применить к прогрессии ДВА решения об одной тренировке: applyCheckinToProgression
+   * считает от ТЕКУЩЕГО состояния, а не от того, что было до первого ответа, и
+   * «Тяжело, поправленное на Нормально» подняло бы человека на ступень вверх от
+   * уже опущенной. Откатить первое решение нечем: за ним могли пройти другие
+   * чек-ины.
+   *
+   * Поэтому правка меняет ОТВЕТ, но не лестницу, и тренер видит расхождение на
+   * карточке отдельной строкой «было → стало». Решение про ступень после правки
+   * принимает он, как и с болью.
+   */
   const applied = applyCheckinToProgression({
     state: progression,
     sourceId: input.sourceId,
@@ -401,7 +463,7 @@ export async function submitCheckin(input: {
 
   const checkin = await saveCheckin({
     sourceId: input.sourceId,
-    planSessionId: input.planSessionId,
+    planSessionId,
     activityId,
     sessionDate,
     effortRpe: effort.rpe,
@@ -410,17 +472,42 @@ export async function submitCheckin(input: {
     painNote: null,
     commentText: input.commentText,
     voiceFileId: input.voiceFileId,
-    stepBefore: applied.stepBefore,
-    stepAfter: applied.decision.nextStep,
-    progressionAction: applied.decision.action,
-    progressionReason: applied.decision.reason,
+    // У правки ступень остаётся той, что записал первый ответ: заново её никто
+    // не решал, и подменять запись расчётом, который не применялся, нельзя.
+    stepBefore: existing ? existing.stepBefore : applied.stepBefore,
+    stepAfter: existing ? existing.stepAfter : applied.decision.nextStep,
+    progressionAction: existing ? existing.progressionAction : applied.decision.action,
+    progressionReason: existing ? existing.progressionReason : applied.decision.reason,
   });
 
-  await saveProgression({
-    ...applied.next,
-    methodologyId: applied.next.methodologyId || BEGINNER_METHODOLOGY_ID,
-    methodologyVersion: applied.next.methodologyVersion || BEGINNER_METHODOLOGY_VERSION,
-  });
+  if (before && changed.length > 0) {
+    await saveCheckinEdit({ checkinId: checkin.id, changed, before, after });
+  }
+
+  if (!existing) {
+    await saveProgression({
+      ...applied.next,
+      methodologyId: applied.next.methodologyId || BEGINNER_METHODOLOGY_ID,
+      methodologyVersion: applied.next.methodologyVersion || BEGINNER_METHODOLOGY_VERSION,
+    });
+  }
+
+  /**
+   * ОТВЕТ ЧЕЛОВЕКУ ТОЖЕ ПРО ТО, ЧТО РЕАЛЬНО ПРОИЗОШЛО. Сказать «идём на ступень
+   * три» после правки, которая ступень не двигала, — обещание, которое экран
+   * тут же не выполнит: ступень там прежняя.
+   */
+  if (existing) {
+    return {
+      ok: true,
+      replyRu: "Ответ поправил. Тренер увидит, что изменилось.",
+      stepBefore: existing.stepBefore,
+      stepAfter: existing.stepAfter,
+      action: existing.progressionAction,
+      reason: existing.progressionReason,
+      checkinId: checkin.id,
+    };
+  }
 
   return {
     ok: true,

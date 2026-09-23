@@ -8,6 +8,8 @@
 
 import { BEGINNER_LADDER, stepByIndex } from "@/features/methodology/beginner";
 
+import { isSessionOpen } from "./checkin-edit";
+
 import { EFFORT_OPTIONS, PAIN_OPTIONS, SIMPLE_EFFORT_OPTIONS } from "./effort-scale";
 import { allowedMoveTargets } from "./move";
 import type { Checkin, PlanSession, ProgressionState, SessionNote, SessionSegment, SessionStep } from "./types";
@@ -46,6 +48,20 @@ export type StudentSessionCard = {
   /** Уже отмечена? Тогда вместо кнопок — что она ответила. */
   checkedIn: boolean;
   checkinLabel: string | null;
+  /**
+   * Прежние ответы, чтобы форму правки открыть ЗАПОЛНЕННОЙ [23.09.2026].
+   *
+   * Пустая форма при правке — это не правка, а второй ответ с нуля: человек,
+   * который хотел поменять одну цифру, вынужден вспомнить и повторить всё
+   * остальное, и ошибётся уже в нём.
+   *
+   * Усилие отдаём как RPE, а не как код: код принадлежит шкале, а шкала у
+   * человека меняется вместе с прогрессией. Экран сопоставит его со своими
+   * вариантами сам.
+   */
+  checkinEffortRpe: number | null;
+  checkinPain: boolean | null;
+  checkinComment: string | null;
   /** Дни, на которые эту тренировку разрешено перенести. */
   moveTargets: Array<{ date: string; label: string }>;
   movedFrom: string | null;
@@ -107,6 +123,13 @@ export type StudentView =
   | {
       state: "ready";
       today: StudentSessionCard | null;
+      /**
+       * Тренировки из ближайшего прошлого, по которым ответа ещё нет.
+       *
+       * ДО 23.09.2026 ИХ НЕ БЫЛО ВООБЩЕ: экран показывал только сегодня и
+       * вперёд, вчерашняя неотмеченная исчезала, и закрыть её было нечем.
+       */
+      overdue: StudentSessionCard[];
       upcoming: StudentSessionCard[];
       ladder: StudentLadderView | null;
       /** Незапланированная пробежка: отметиться можно и без неё в плане. */
@@ -203,6 +226,9 @@ function toCard(
         ? `${checkin.effortLabel ?? "отмечено"} · что-то беспокоило`
         : checkin.effortLabel ?? "отмечено"
       : null,
+    checkinEffortRpe: checkin?.effortRpe ?? null,
+    checkinPain: checkin ? checkin.pain : null,
+    checkinComment: checkin?.commentText ?? null,
     moveTargets: moveTargets.map((date) => ({
       date,
       label: `${DAY_RU_SHORT[(new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7]}, ${formatRuDay(date)}`,
@@ -263,6 +289,27 @@ export function buildStudentView(input: {
     (session) => session.sessionDate > input.todayIso && session.sessionDate <= horizonEnd
   );
 
+  /**
+   * НЕОТМЕЧЕННЫЕ ИЗ БЛИЖАЙШЕГО ПРОШЛОГО [23.09.2026].
+   *
+   * Выборки были строгие: сегодня и вперёд. Всё вчерашнее исчезало с экрана
+   * совсем — и отмеченное, и нет. Человек, пробежавший вчера и не успевший
+   * нажать кнопку, не мог закрыть этот день ничем: плановая тренировка
+   * оставалась пропуском навсегда, а у тренера висела в сигналах.
+   *
+   * ПОКАЗЫВАЕМ ТОЛЬКО НЕОТМЕЧЕННЫЕ. Вчерашняя, по которой ответ уже есть,
+   * ничего от человека не ждёт, и место на маленьком экране занимать не должна.
+   *
+   * Окно то же, что у правки (OPEN_PAST_DAYS): карточка, которую видно, но
+   * нельзя тронуть, читалась бы как поломка.
+   */
+  const overdue = sorted.filter(
+    (session) =>
+      session.sessionDate < input.todayIso &&
+      isSessionOpen({ sessionDate: session.sessionDate, todayIso: input.todayIso }) &&
+      !input.checkinsBySessionId.has(session.id)
+  );
+
   const cardContext = {
     todayIso: input.todayIso,
     unavailableWeekdays: input.unavailableWeekdays,
@@ -299,6 +346,7 @@ export function buildStudentView(input: {
   return {
     state: "ready",
     today: todaySession ? toCard(todaySession, input.checkinsBySessionId.get(todaySession.id) ?? null, cardContext) : null,
+    overdue: overdue.map((session) => toCard(session, null, cardContext)),
     upcoming: upcoming.map((session) =>
       toCard(session, input.checkinsBySessionId.get(session.id) ?? null, cardContext)
     ),

@@ -15,6 +15,7 @@ import {
   getProgression,
   getPublishedCycle,
   listActivitiesInRange,
+  listCheckinEdits,
   listCheckins,
   listCoachMessages,
   listPlanWeeks,
@@ -26,6 +27,7 @@ import {
 } from "./repository";
 import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
 import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
+import type { CheckinEdit } from "./checkin-edit";
 import { buildWeekSignal, type WeekSignal } from "./week-signal";
 import { getSourceConnection } from "../repository";
 import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState } from "./types";
@@ -483,6 +485,14 @@ export type CoachStudentView = {
   sessions: PlanSession[];
   checkins: Checkin[];
   activities: ActivityRow[];
+  /**
+   * Правки ученицей своих ответов, по id чек-ина.
+   *
+   * ТРЕНЕР ОБЯЗАН ВИДЕТЬ, ЧТО ОТВЕТ МЕНЯЛСЯ [23.09.2026]. Сама строка чек-ина
+   * перезаписывается, и без этой истории «болело» превратилось бы в «не болело»
+   * бесследно — а это разговор, а не опечатка.
+   */
+  checkinEdits: Map<string, CheckinEdit[]>;
   messages: CoachMessage[];
   /** Чек-ины, на которые тренер ещё не ответил ни одним текстом. */
   unansweredCheckinIds: Set<string>;
@@ -516,6 +526,7 @@ export async function loadCoachStudentView(
       connectionHealth: { state: "not_connected" },
       weeklyReports: [],
       planWeeks: [],
+      checkinEdits: new Map(),
       weekSignal: { painFlags: [], volume: null, weekly: null },
     };
   }
@@ -547,6 +558,7 @@ export async function loadCoachStudentView(
       listWeeklyReports(sourceId, 12),
     ]);
 
+  const checkinEdits = await listCheckinEdits(checkins.map((checkin) => checkin.id));
   const sessions = latestCycle ? await listSessionsInRange(latestCycle.id, from, to) : [];
   const planWeeks = latestCycle ? await listPlanWeeks(latestCycle.id) : [];
 
@@ -586,6 +598,7 @@ export async function loadCoachStudentView(
     sessions,
     checkins,
     activities,
+    checkinEdits,
     messages,
     unansweredCheckinIds,
     connectionHealth,

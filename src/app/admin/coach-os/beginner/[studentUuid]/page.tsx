@@ -5,6 +5,7 @@ import FormActionButton from "@/app/admin/FormActionButton";
 import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
 import { isCoachSendEnabled } from "@/features/intervals/loop/coach-message";
 import { dataLevelLabelRu } from "@/features/intervals/data-quality";
+import { describeEditRu, editNeedsCoachEye } from "@/features/intervals/loop/checkin-edit";
 import {
   activityNumbersRu,
   activityPaceSecPerKm,
@@ -532,6 +533,27 @@ export default async function BeginnerStudentPage({
                 {checkin.commentText ? (
                   <p style={{ margin: "0 0 4px", whiteSpace: "pre-wrap" }}>«{checkin.commentText}»</p>
                 ) : null}
+                {/* ОТВЕТ МЕНЯЛСЯ — ЭТО ВИДНО [23.09.2026]. Строка чек-ина
+                    перезаписывается при правке, и без этой истории «болело»
+                    стало бы «не болело» бесследно. Правки про боль и усилие
+                    показываем заметно, правку одного комментария — тихо:
+                    заметность стоит дорого и тратится на то, что её стоит. */}
+                {(view.checkinEdits.get(checkin.id) ?? []).map((edit, index) => {
+                  const loud = editNeedsCoachEye(edit.changed);
+                  return (
+                    <p
+                      key={`${checkin.id}-edit-${index}`}
+                      style={{
+                        margin: "0 0 4px",
+                        fontSize: 13,
+                        color: loud ? "#a3330a" : "#777",
+                        fontWeight: loud ? 600 : 400,
+                      }}
+                    >
+                      {`она поправила ответ ${edit.editedAt.slice(0, 16).replace("T", " ")} · ${describeEditRu(edit)}`}
+                    </p>
+                  );
+                })}
                 {/* ЦИФРЫ РЯДОМ С ОТМЕТКОЙ [23.09.2026]. Раньше здесь были только
                     минуты и километры, и то в строчку с типом и уровнем данных.
                     Для человека без часов это половина отчёта: темп и пульс он

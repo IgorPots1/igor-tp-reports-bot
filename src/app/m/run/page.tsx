@@ -104,6 +104,9 @@ type SessionCard = {
   notes: SessionNote[] | null;
   checkedIn: boolean;
   checkinLabel: string | null;
+  checkinEffortRpe: number | null;
+  checkinPain: boolean | null;
+  checkinComment: string | null;
   moveTargets: Array<{ date: string; label: string }>;
   movedFrom: string | null;
 };
@@ -137,6 +140,7 @@ type View =
   | {
       state: "ready";
       today: SessionCard | null;
+      overdue: SessionCard[];
       upcoming: SessionCard[];
       ladder: LadderView | null;
       canLogUnplanned: boolean;
@@ -1618,6 +1622,34 @@ function PlanScreen(props: {
         )
       )}
 
+      {/* НЕ ОТМЕЧЕНО — ПЕРЕД СЕГОДНЯШНИМ [23.09.2026]. Это единственное на
+          экране, что ждёт действия и может пропасть: вчерашняя тренировка
+          закроется навсегда, когда выйдет из окна. Сегодняшнюю человек и так
+          не пропустит, он ради неё открыл приложение. */}
+      {view.overdue.length > 0 ? (
+        <>
+          <h2 style={{ fontSize: 18, margin: "22px 0 4px" }}>Не отмечено</h2>
+          <p style={{ margin: "0 0 10px", color: MUTED, fontSize: 13.5, lineHeight: 1.5 }}>
+            Эти тренировки уже прошли, а ответа по ним нет. Если бегали, отметьтесь: так я увижу,
+            как оно далось. Если не бегали, ничего не делайте, тренировка просто закроется.
+          </p>
+          {view.overdue.map((card) => (
+            <SessionBlock
+              key={card.sessionId}
+              card={card}
+              initData={props.initData}
+              effortOptions={view.effortOptions}
+              effortQuestionRu={view.effortQuestionRu}
+              painOptions={view.painOptions}
+              onChanged={props.onChanged}
+              isManualEntry={props.isManualEntry}
+              isToday={false}
+              isOpen
+            />
+          ))}
+        </>
+      ) : null}
+
       <h2 style={{ fontSize: 18, margin: "22px 0 10px" }}>Сегодня</h2>
       {view.today ? (
         <SessionBlock
@@ -1629,6 +1661,7 @@ function PlanScreen(props: {
           onChanged={props.onChanged}
           isManualEntry={props.isManualEntry}
           isToday
+          isOpen
         />
       ) : (
         // ТИХАЯ СТРОКА, НЕ КАРТОЧКА [решение Игоря, 17.09.2026]. Раньше здесь
@@ -1666,6 +1699,8 @@ function PlanScreen(props: {
               onChanged={props.onChanged}
               isManualEntry={props.isManualEntry}
               isToday={false}
+              // Будущая тренировка закрыта: отметиться о том, чего не было, нельзя.
+              isOpen={false}
             />
           ))}
         </>
@@ -1897,6 +1932,11 @@ function SessionBlock(props: {
   onChanged: (note: string) => void;
   isManualEntry: boolean;
   isToday: boolean;
+  /**
+   * Тренировку ещё можно отметить или поправить: сегодняшняя или из ближайшего
+   * прошлого. Будущая закрыта — отметиться о том, чего не было, нельзя.
+   */
+  isOpen: boolean;
 }) {
   const { card } = props;
   const [openCheckin, setOpenCheckin] = useState(false);
@@ -1982,12 +2022,23 @@ function SessionBlock(props: {
       )}
 
       {card.checkedIn ? (
-        <p style={{ margin: "12px 0 0", color: GREEN, fontWeight: 600, fontSize: 14 }}>
-          ✓ отмечено: {card.checkinLabel}
-        </p>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <p style={{ margin: 0, color: GREEN, fontWeight: 600, fontSize: 14 }}>
+            ✓ отмечено: {card.checkinLabel}
+          </p>
+          {/* ПОПРАВИТЬ МОЖНО, ПОКА ТРЕНИРОВКА ОТКРЫТА [23.09.2026]. Раньше
+              форма не открывалась второй раз вообще: ошиблась в цифре или
+              передумала про боль — и всё, ответ навсегда неверный. Решение
+              тренера: верные данные важнее неизменяемой отметки. */}
+          {props.isOpen ? (
+            <button type="button" onClick={() => setOpenCheckin((v) => !v)} style={secondaryButtonStyle}>
+              {openCheckin ? "Свернуть" : "Поправить ответ"}
+            </button>
+          ) : null}
+        </div>
       ) : (
         <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
-          {props.isToday ? (
+          {props.isOpen ? (
             <button type="button" onClick={() => setOpenCheckin((v) => !v)} style={secondaryButtonStyle}>
               {openCheckin ? "Свернуть" : "Как прошло?"}
             </button>
@@ -2000,7 +2051,7 @@ function SessionBlock(props: {
         </div>
       )}
 
-      {openCheckin && !card.checkedIn ? (
+      {openCheckin ? (
         <CheckinForm
           initData={props.initData}
           sessionId={card.sessionId}
@@ -2010,6 +2061,10 @@ function SessionBlock(props: {
           onChanged={props.onChanged}
           manualEntry={props.isManualEntry}
           defaultDate={card.date}
+          editing={card.checkedIn}
+          prefillEffortRpe={card.checkinEffortRpe}
+          prefillPain={card.checkinPain}
+          prefillComment={card.checkinComment}
         />
       ) : null}
 
@@ -2079,10 +2134,30 @@ function CheckinForm(props: {
   manualEntry?: boolean;
   /** Дата тренировки по умолчанию. Пусто — сервер возьмёт «сегодня». */
   defaultDate?: string;
+  /** Правка уже отправленного ответа, а не первый ответ. Меняет только слова. */
+  editing?: boolean;
+  /**
+   * Прежние ответы. Форма правки открывается ЗАПОЛНЕННОЙ: пустая — это не
+   * правка, а второй ответ с нуля, в котором человек ошибётся заново.
+   */
+  prefillEffortRpe?: number | null;
+  prefillPain?: boolean | null;
+  prefillComment?: string | null;
 }) {
-  const [effort, setEffort] = useState<string | null>(null);
-  const [pain, setPain] = useState<string | null>(null);
-  const [comment, setComment] = useState("");
+  // Усилие приходит как RPE: код принадлежит шкале, а шкала у человека может
+  // смениться вместе с прогрессией. Сопоставляем со своими вариантами здесь.
+  const prefilledEffort =
+    props.prefillEffortRpe === null || props.prefillEffortRpe === undefined
+      ? null
+      : (props.effortOptions.find((option) => option.rpe === props.prefillEffortRpe)?.code ?? null);
+  const prefilledPain =
+    props.prefillPain === null || props.prefillPain === undefined
+      ? null
+      : (props.painOptions.find((option) => option.pain === props.prefillPain)?.code ?? null);
+
+  const [effort, setEffort] = useState<string | null>(prefilledEffort);
+  const [pain, setPain] = useState<string | null>(prefilledPain);
+  const [comment, setComment] = useState(props.prefillComment ?? "");
   const [date, setDate] = useState(props.defaultDate ?? "");
   const [durationMinutes, setDurationMinutes] = useState("");
   const [distanceKm, setDistanceKm] = useState("");
