@@ -86,7 +86,6 @@ export default function DressCalculator() {
 
   return (
     <div className={styles.wrap}>
-      <p className={styles.brand}>igorp.run</p>
       <h1 className={styles.title}>
         Что надеть
         <br />

@@ -387,7 +387,6 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
         <header className={styles.header}>
           <div className={styles.headerInner}>
             <div className={styles.headerTop}>
-              <span className={styles.brand}>igorp.run</span>
               <span className={styles.progressStep}>подбор кроссовок</span>
             </div>
           </div>

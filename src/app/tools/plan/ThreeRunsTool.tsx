@@ -80,7 +80,6 @@ export default function ThreeRunsTool() {
 
   return (
     <div className={styles.inner}>
-      <div className={styles.brand}>igorp.run</div>
       <h1 className={styles.title}>
         Шаблон беговой недели и{" "}
         <span className={styles.accent}>твой темп под разные тренировки</span>

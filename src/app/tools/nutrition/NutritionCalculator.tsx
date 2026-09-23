@@ -61,7 +61,6 @@ export default function NutritionCalculator() {
 
   return (
     <div className={styles.inner}>
-      <div className={styles.brand}>igorp.run</div>
       <h1 className={styles.title}>
         ПИТАНИЕ <span className={styles.accent}>ПОД ТРЕНИРОВКУ</span>
       </h1>
