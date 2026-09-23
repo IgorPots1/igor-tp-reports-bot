@@ -122,6 +122,15 @@ export type Checkin = {
   effortLabel: string | null;
   pain: boolean;
   painNote: string | null;
+  /**
+   * Когда тренер сказал, что с болью разобрался. null — не разобрался.
+   *
+   * ОТВЕТ ТРЕНЕРА СЮДА НЕ ПИШЕТ [23.09.2026]. Раньше сигнал боли гас от любого
+   * написанного текста: система объявляла вопрос закрытым потому, что тренер
+   * что-то написал, — хотя написал он как раз вопрос и ждал ответа.
+   */
+  painResolvedAt: string | null;
+  painResolvedBy: string | null;
   commentText: string | null;
   voiceFileId: string | null;
   stepBefore: number | null;

@@ -23,6 +23,7 @@ import {
   deleteStudentAction,
   publishPlanAction,
   releaseWeekAction,
+  resolvePainAction,
   sendCoachMessageAction,
   takeWeekIntoWorkAction,
 } from "../actions";
@@ -134,26 +135,57 @@ export default async function BeginnerStudentPage({
           ПОСЛЕ разговора. Полоса по RPE ведёт к объёму следующей недели и про
           боль ничего не знает. Склеить их в один блок значит снова смешать
           «поговори» и «посчитай». */}
-      {view.weekSignal.painFlags.slice(0, 3).map((flag) => (
-        <div key={flag.checkinId} style={{ ...box, background: "#FDE8E0", border: "1px solid #E5480E" }}>
-          <h2 style={{ marginTop: 0, color: "#a3330a" }}>Была отмечена боль — сначала разговор, не формула</h2>
-          <p style={{ margin: 0 }}>
-            {flag.sessionDate}
-            {flag.effortLabel ? `, «${flag.effortLabel}»` : null}
-            {flag.painNote ? (
-              <>
-                {". Её слова: "}
-                <em>«{flag.painNote}»</em>
-              </>
-            ) : ". Что именно беспокоило, она не написала."}
-          </p>
-          <p style={{ margin: "10px 0 0", color: "#555" }}>
-            Ответ по этому чек-ину ещё не написан. Что делать с объёмом следующей недели — решать
-            после разговора, этот блок числа не предлагает. Форма ответа ниже, в «Чек-инах»: как
-            только ответите, блок пропадёт.
-          </p>
-        </div>
-      ))}
+      {view.weekSignal.painFlags.slice(0, 3).map((flag) => {
+        const answered = flag.state === "answered_waiting";
+        return (
+          <div
+            key={flag.checkinId}
+            style={{
+              ...box,
+              // Ждём её — сигнал остаётся, но перестаёт кричать: тревожный
+              // красный на неделю вперёд читается как «тут всегда красное»
+              // и перестаёт работать. Жёлтый значит «висит на мне».
+              background: answered ? "#FBF3E4" : "#FDE8E0",
+              border: answered ? "1px solid #C89B3C" : "1px solid #E5480E",
+            }}
+          >
+            <h2 style={{ marginTop: 0, color: answered ? "#7a5a12" : "#a3330a" }}>
+              {answered
+                ? "Была отмечена боль — ответил, жду её"
+                : "Была отмечена боль — сначала разговор, не формула"}
+            </h2>
+            <p style={{ margin: 0 }}>
+              {flag.sessionDate}
+              {flag.effortLabel ? `, «${flag.effortLabel}»` : null}
+              {flag.painNote ? (
+                <>
+                  {". Её слова: "}
+                  <em>«{flag.painNote}»</em>
+                </>
+              ) : ". Что именно беспокоило, она не написала."}
+            </p>
+            <p style={{ margin: "10px 0 0", color: "#555" }}>
+              {answered
+                ? "Ответ отправлен, её ответа пока нет. Вопрос остаётся открытым: написанный текст закрывает его не больше, чем заданный вопрос отвечает сам на себя."
+                : "Ответ по этому чек-ину ещё не написан. Форма ответа ниже, в «Чек-инах»."}
+              {" Что делать с объёмом следующей недели — решать после разговора, этот блок числа не предлагает."}
+            </p>
+            {/* ГАСИТ ТОЛЬКО ТРЕНЕР ИЛИ СЛЕДУЮЩИЙ ЧЕК-ИН БЕЗ БОЛИ. Кнопка —
+                единственный ручной путь, и она говорит про разговор, а не про
+                строку в базе. */}
+            <form action={resolvePainAction} style={{ marginTop: 12 }}>
+              <input type="hidden" name="studentUuid" value={studentUuid} />
+              <input type="hidden" name="checkinId" value={flag.checkinId} />
+              <FormActionButton
+                confirmMessage="Снять сигнал? Он больше не появится по этому чек-ину. Если боль повторится, она придёт со следующим отчётом."
+                pendingText="Снимаю…"
+              >
+                Разобрался, снять сигнал
+              </FormActionButton>
+            </form>
+          </div>
+        );
+      })}
 
       {/* ЧТО СКАЗАЛ САМ ЧЕЛОВЕК — ОТДЕЛЬНО ОТ ТОГО, ЧТО ПОСЧИТАНО ПО ОТМЕТКАМ.
           Полоса объёма считается из RPE тренировок, недельная форма — это его

@@ -78,6 +78,8 @@ function toCheckin(row: Record<string, unknown>): Checkin {
     effortLabel: (row.effort_label as string | null) ?? null,
     pain: row.pain === true,
     painNote: (row.pain_note as string | null) ?? null,
+    painResolvedAt: (row.pain_resolved_at as string | null) ?? null,
+    painResolvedBy: (row.pain_resolved_by as string | null) ?? null,
     commentText: (row.comment_text as string | null) ?? null,
     voiceFileId: (row.voice_file_id as string | null) ?? null,
     stepBefore: row.step_before === null || row.step_before === undefined ? null : Number(row.step_before),
@@ -278,6 +280,26 @@ export async function listCheckins(
     .limit(limit);
   if (error) throw new Error(`intervals_checkins: ${describeSupabaseError(error)}`);
   return (data ?? []).map((row) => toCheckin(row as unknown as Record<string, unknown>));
+}
+
+/**
+ * Тренер говорит, что с болью разобрался.
+ *
+ * ЕДИНСТВЕННЫЙ ПУТЬ, КОТОРЫЙ ГАСИТ СИГНАЛ РУКОЙ. Отправка ответа его НЕ
+ * трогает намеренно: написанный вопрос не является ответом на самого себя.
+ *
+ * ПОВТОРНОЕ НАЖАТИЕ НЕ ДВИГАЕТ ДАТУ — тот же приём, что у
+ * markCoachMessageVisibleToStudent: «когда разобрались» должно остаться
+ * моментом первого решения, а не последнего клика.
+ */
+export async function markPainResolved(checkinId: string, by: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("intervals_checkins")
+    .update({ pain_resolved_at: new Date().toISOString(), pain_resolved_by: by })
+    .eq("id", checkinId)
+    .is("pain_resolved_at", null);
+  if (error) throw new Error(`intervals_checkins pain resolved: ${describeSupabaseError(error)}`);
 }
 
 export async function saveCheckin(

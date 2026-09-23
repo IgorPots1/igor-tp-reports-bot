@@ -15,6 +15,7 @@ import {
   listCheckins,
   markCoachMessageDelivered,
   markCoachMessageVisibleToStudent,
+  markPainResolved,
   publishCycle,
   saveCoachMessage,
   setPlanWeekStatus,
@@ -72,6 +73,27 @@ export async function publishPlanAction(formData: FormData): Promise<void> {
  * карточки. Раньше это было одним событием, и при выключенном killswitch-е
  * ответ не доходил до человека вообще нигде.
  */
+/**
+ * «Разобрался» — единственный ручной путь, который гасит сигнал боли.
+ *
+ * ПОЧЕМУ ОТПРАВКА ОТВЕТА ЭТОГО НЕ ДЕЛАЕТ. Написанный вопрос не отвечает сам на
+ * себя. До 23.09.2026 сигнал гас от любого текста по чек-ину, и вышло ровно то,
+ * чего опасались: тренер отправил три вопроса про пятку, сигнал исчез, а
+ * ответа не было ещё трое суток и напомнить о нём стало нечему.
+ *
+ * Второй путь — не кнопка, а факт: следующий чек-ин БЕЗ боли снимает сигнал сам
+ * (см. week-signal.ts). В базе при этом ничего не помечается: человек ничего не
+ * решал, просто пробежал и не пожаловался.
+ */
+export async function resolvePainAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const checkinId = String(formData.get("checkinId") ?? "");
+  if (!studentUuid || !checkinId) return;
+
+  await markPainResolved(checkinId, "coach:admin");
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
 export async function sendCoachMessageAction(formData: FormData): Promise<void> {
   const studentUuid = String(formData.get("studentUuid") ?? "");
   const sourceId = String(formData.get("sourceId") ?? "");

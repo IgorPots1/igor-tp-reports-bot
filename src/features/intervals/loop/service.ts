@@ -193,6 +193,8 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
       effortLabel: (row.effort_label as string | null) ?? null,
       pain: row.pain === true,
       painNote: null,
+      painResolvedAt: null,
+      painResolvedBy: null,
       commentText: null,
       voiceFileId: null,
       stepBefore: null,

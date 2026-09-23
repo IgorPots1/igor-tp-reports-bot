@@ -14,6 +14,18 @@
  *    нагрузку принимается ПОСЛЕ него и тренером, а не формулой. Поэтому здесь
  *    боль не участвует в расчёте полосы вообще и живёт отдельным списком.
  *
+ *    КОГДА ЭТОТ СИГНАЛ ГАСНЕТ [23.09.2026]. Не от ответа тренера. Раньше было
+ *    именно так, и получалось, что система считает вопрос закрытым потому, что
+ *    тренер что-то написал. Живой случай: 23.09 у ученицы заныла пятка, тренер
+ *    отправил ей три вопроса — и сигнал пропал ровно в тот момент, когда
+ *    ожидание ответа только началось.
+ *
+ *    Теперь ответ меняет ВИД сигнала («ответил, жду её»), а гасят его два
+ *    события: тренер нажал «разобрался» (решение человека, лежит в базе) или
+ *    пришёл следующий чек-ин БЕЗ боли (факт от ученицы, считается на лету).
+ *    Следующий чек-ин С болью не гасит ничего: боль дважды подряд — это ровно
+ *    то, что нельзя потерять.
+ *
  * 2. ОБЪЁМ — по худшему RPE ЗАВЕРШЁННОЙ недели. Не текущей: пока неделя идёт,
  *    оценка неполная, а решать надо про следующую.
  *
@@ -34,13 +46,27 @@ export type CheckinForSignal = {
   effortLabel: string | null;
   pain: boolean;
   painNote: string | null;
+  /** Когда тренер нажал «разобрался». null — не нажимал. */
+  painResolvedAt?: string | null;
 };
+
+/**
+ * Состояние разговора про боль.
+ *
+ * `waiting_answer` — тренер ещё ничего не написал по этому чек-ину.
+ * `answered_waiting` — написал и ждёт ответа человека. Вопрос НЕ закрыт.
+ *
+ * Третьего состояния нет намеренно: «разобрались» — это не вид флага, а его
+ * отсутствие в списке.
+ */
+export type PainFlagState = "waiting_answer" | "answered_waiting";
 
 export type PainFlag = {
   checkinId: string;
   sessionDate: string;
   effortLabel: string | null;
   painNote: string | null;
+  state: PainFlagState;
 };
 
 export type VolumeBand = "calm" | "hold" | "cut";
@@ -145,14 +171,39 @@ export function buildWeekSignal(input: {
   /** Формы за последние недели. Берётся та, что за завершённую неделю. */
   weeklyReports?: WeeklyReportForSignal[];
 }): WeekSignal {
+  /**
+   * Дата последнего чек-ина БЕЗ боли. Всё, что с болью и раньше неё, человек
+   * уже опроверг своим же следующим отчётом — держать такой сигнал значит
+   * спорить с фактом.
+   *
+   * Сравнение по session_date, а не по времени записи: «какого числа была
+   * тренировка» — это единица, в которой тренер и ученица думают об отчётах.
+   */
+  const lastPainFreeDate = input.checkins
+    .filter((checkin) => !checkin.pain)
+    .reduce<string | null>(
+      (latest, checkin) => (latest === null || checkin.sessionDate > latest ? checkin.sessionDate : latest),
+      null
+    );
+
   const painFlags: PainFlag[] = input.checkins
-    .filter((checkin) => checkin.pain && input.unansweredCheckinIds.has(checkin.id))
+    .filter((checkin) => {
+      if (!checkin.pain) return false;
+      // Тренер сказал, что разобрался: решение человека, сильнее всего прочего.
+      if (checkin.painResolvedAt) return false;
+      // Следующий отчёт пришёл без боли.
+      if (lastPainFreeDate !== null && lastPainFreeDate > checkin.sessionDate) return false;
+      return true;
+    })
     .sort((a, b) => (a.sessionDate < b.sessionDate ? 1 : -1))
     .map((checkin) => ({
       checkinId: checkin.id,
       sessionDate: checkin.sessionDate,
       effortLabel: checkin.effortLabel,
       painNote: checkin.painNote,
+      state: input.unansweredCheckinIds.has(checkin.id)
+        ? ("waiting_answer" as const)
+        : ("answered_waiting" as const),
     }));
 
   const week = lastCompletedWeek(input.todayIso);

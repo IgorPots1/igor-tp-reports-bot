@@ -92,7 +92,12 @@ const otherWeeks = buildWeekSignal({
 });
 assert.equal(otherWeeks.volume, null, "ни позапрошлая неделя, ни текущая в расчёт не идут");
 
-// ── Боль: отдельно, без чисел, и только неотвеченная ─────────────────────────
+// ── Боль: отдельно, без чисел ────────────────────────────────────────────────
+//
+// ГЛАВНОЕ, ЧТО СТЕРЕЖЁТ ЭТОТ КУСОК [23.09.2026]: ОТВЕТ НЕ ЗАКРЫВАЕТ ВОПРОС.
+// Раньше сигнал гас от любого написанного текста, и 23.09 это сработало против
+// тренера: он отправил ученице три вопроса про пятку, сигнал пропал, а ответа
+// не было ещё трое суток.
 const withPain = buildWeekSignal({
   checkins: [
     checkin({ id: "hurt", sessionDate: "2026-09-10", pain: true, painNote: "тянуло колено", effortRpe: 3 }),
@@ -101,23 +106,77 @@ const withPain = buildWeekSignal({
   unansweredCheckinIds: new Set(["hurt"]),
   todayIso: TODAY,
 });
-assert.equal(withPain.painFlags.length, 1, "отвеченный чек-ин с болью больше не висит");
-assert.equal(withPain.painFlags[0].checkinId, "hurt");
-assert.equal(withPain.painFlags[0].painNote, "тянуло колено");
+assert.equal(withPain.painFlags.length, 2, "ответ тренера НЕ гасит сигнал: оба чек-ина на месте");
+assert.equal(withPain.painFlags[0].checkinId, "answered", "новее — выше");
+assert.equal(withPain.painFlags[0].state, "answered_waiting", "по нему написано, ждём её");
+assert.equal(withPain.painFlags[1].checkinId, "hurt");
+assert.equal(withPain.painFlags[1].state, "waiting_answer", "по нему не написано ничего");
+assert.equal(withPain.painFlags[1].painNote, "тянуло колено");
 assert.equal(
   withPain.volume?.band,
   "calm",
   "боль НЕ утяжеляет полосу объёма: она ведёт к разговору, а не к множителю"
 );
 
-// Боль вне завершённой недели всё равно поднимается: неотвеченная боль не
-// перестаёт быть неотвеченной от того, что неделя кончилась.
+// Гасит рука тренера.
+const resolved = buildWeekSignal({
+  checkins: [
+    checkin({
+      id: "hurt",
+      sessionDate: "2026-09-10",
+      pain: true,
+      effortRpe: 3,
+      painResolvedAt: "2026-09-12T10:00:00Z",
+    }),
+  ],
+  unansweredCheckinIds: new Set(["hurt"]),
+  todayIso: TODAY,
+});
+assert.equal(resolved.painFlags.length, 0, "«разобрался» гасит даже неотвеченный чек-ин");
+
+// Гасит следующий чек-ин БЕЗ боли: человек сам опроверг тревогу своим отчётом.
+const painThenFine = buildWeekSignal({
+  checkins: [
+    checkin({ id: "hurt", sessionDate: "2026-09-10", pain: true, effortRpe: 3 }),
+    checkin({ id: "fine", sessionDate: "2026-09-12", pain: false, effortRpe: 3 }),
+  ],
+  unansweredCheckinIds: new Set(["hurt", "fine"]),
+  todayIso: TODAY,
+});
+assert.equal(painThenFine.painFlags.length, 0, "следующий отчёт без боли снимает сигнал");
+
+// А вот чек-ин без боли ДО больного ничего не снимает: порядок важен.
+const fineThenPain = buildWeekSignal({
+  checkins: [
+    checkin({ id: "fine", sessionDate: "2026-09-08", pain: false, effortRpe: 3 }),
+    checkin({ id: "hurt", sessionDate: "2026-09-10", pain: true, effortRpe: 3 }),
+  ],
+  unansweredCheckinIds: new Set(["hurt", "fine"]),
+  todayIso: TODAY,
+});
+assert.equal(fineThenPain.painFlags.length, 1, "прошлая спокойная тренировка не отменяет сегодняшнюю боль");
+
+// Боль дважды подряд — не теряется НИ ОДНА. Это ровно тот случай, ради
+// которого сигнал и живёт дольше одного ответа.
+const painTwice = buildWeekSignal({
+  checkins: [
+    checkin({ id: "first", sessionDate: "2026-09-10", pain: true, effortRpe: 3 }),
+    checkin({ id: "second", sessionDate: "2026-09-12", pain: true, effortRpe: 3 }),
+  ],
+  unansweredCheckinIds: new Set(),
+  todayIso: TODAY,
+});
+assert.equal(painTwice.painFlags.length, 2, "второй больной чек-ин не гасит первый");
+assert.equal(painTwice.painFlags[0].state, "answered_waiting");
+
+// Боль вне завершённой недели всё равно поднимается: открытая боль не
+// перестаёт быть открытой от того, что неделя кончилась.
 const oldPain = buildWeekSignal({
   checkins: [checkin({ id: "old", sessionDate: "2026-08-20", pain: true, effortRpe: 3 })],
   unansweredCheckinIds: new Set(["old"]),
   todayIso: TODAY,
 });
-assert.equal(oldPain.painFlags.length, 1, "старая неотвеченная боль не теряется");
+assert.equal(oldPain.painFlags.length, 1, "старая открытая боль не теряется");
 assert.equal(oldPain.volume, null);
 
 // ── Молчание — не сигнал ─────────────────────────────────────────────────────
