@@ -160,10 +160,10 @@ export function calcDress(state: DressState): DressResult {
   const outfit = outfitFor(eff, rain, snow, state.t);
 
   const parts: string[] = [];
-  if (state.wind === -2) parts.push("умеренный ветер отнимает 2 градуса");
-  if (state.wind === -5) parts.push("сильный ветер отнимает 5 градусов");
-  if (rain) parts.push("дождь отнимает ещё 3");
-  if (snow) parts.push("снег отнимает 1");
+  if (state.wind === -2) parts.push("учтён умеренный ветер");
+  if (state.wind === -5) parts.push("учтён сильный ветер");
+  if (rain) parts.push("учтён дождь");
+  if (snow) parts.push("учтён снег");
   if (state.run === 3) parts.push("на интервалах тело греет сильнее");
   if (state.run === -1) parts.push("на длительной под конец остываешь");
   if (state.feel < 0) parts.push("поправка на то, что тебе обычно холодно");
