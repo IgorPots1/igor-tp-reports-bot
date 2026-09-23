@@ -5,6 +5,12 @@ import FormActionButton from "@/app/admin/FormActionButton";
 import { todayIsoInCoachTimezone } from "@/features/intervals/loop/clock";
 import { isCoachSendEnabled } from "@/features/intervals/loop/coach-message";
 import { dataLevelLabelRu } from "@/features/intervals/data-quality";
+import {
+  activityNumbersRu,
+  activityPaceSecPerKm,
+  paceLabelRu,
+} from "@/features/intervals/loop/activity-numbers";
+import { MANUAL_ATHLETE_PREFIX } from "@/features/intervals/manual-entry";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
 import { IntervalsAnketaCard } from "@/features/intervals/loop/anketa-card";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
@@ -50,6 +56,9 @@ export default async function BeginnerStudentPage({
   const view = await loadCoachStudentView(student, today);
   const sendEnabled = isCoachSendEnabled();
   const deletion = await previewStudentDeletion(studentUuid);
+  /* Ручной источник узнаётся по синтетическому external_athlete_id — он уже
+     лежит в строке ученика, лишнего запроса за auth_method не нужно. */
+  const isManualSource = student.externalAthleteId?.startsWith(MANUAL_ATHLETE_PREFIX) === true;
 
   const draftCycle =
     view.latestCycle && view.latestCycle.status === "draft" ? view.latestCycle : null;
@@ -458,26 +467,46 @@ export default async function BeginnerStudentPage({
                 <p style={{ margin: "0 0 4px" }}>
                   <strong>{checkin.sessionDate}</strong> · {checkin.effortLabel ?? "—"} (RPE{" "}
                   {checkin.effortRpe ?? "—"})
-                  {checkin.pain ? <span style={{ color: "#c00" }}> · БОЛЬ — прогрессия заблокирована</span> : null}
+                  {checkin.pain ? (
+                    <span style={{ color: "#c00" }}>
+                      {" · БОЛЬ"}
+                      {view.progression ? " — прогрессия заблокирована" : " — напишите ей"}
+                    </span>
+                  ) : null}
                   {checkin.planSessionId ? "" : " · вне плана"}
                 </p>
-                <p style={{ margin: "0 0 4px", color: "#555", fontSize: 13 }}>
-                  ступень {checkin.stepBefore} → {checkin.stepAfter} · {checkin.progressionAction} ·{" "}
-                  {checkin.progressionReason}
-                </p>
+                {/* СТРОКА СТУПЕНИ — ТОЛЬКО ТЕМ, КТО НА ЛЕСТНИЦЕ [23.09.2026].
+                    У человека вне лестницы все четыре поля пустые, и строка
+                    рисовалась как «ступень → · ·» — мусор ровно там, где тренер
+                    ищет её слова. Та же правка, что уже сделана в блоке анкеты. */}
+                {checkin.stepBefore !== null || checkin.progressionAction !== null ? (
+                  <p style={{ margin: "0 0 4px", color: "#555", fontSize: 13 }}>
+                    ступень {checkin.stepBefore} → {checkin.stepAfter} · {checkin.progressionAction} ·{" "}
+                    {checkin.progressionReason}
+                  </p>
+                ) : null}
                 {checkin.commentText ? (
                   <p style={{ margin: "0 0 4px", whiteSpace: "pre-wrap" }}>«{checkin.commentText}»</p>
+                ) : null}
+                {/* ЦИФРЫ РЯДОМ С ОТМЕТКОЙ [23.09.2026]. Раньше здесь были только
+                    минуты и километры, и то в строчку с типом и уровнем данных.
+                    Для человека без часов это половина отчёта: темп и пульс он
+                    вводил, а тренер их не видел. Теперь цифры идут первыми и
+                    крупно — читать их тренер будет чаще, чем всё остальное. */}
+                {activity ? (
+                  <p style={{ margin: "0 0 2px", fontSize: 15 }}>
+                    <strong>{activityNumbersRu(activity)}</strong>
+                  </p>
                 ) : null}
                 <p style={{ margin: "0 0 8px", color: "#555", fontSize: 13 }}>
                   {/* «из Intervals» верно только для того, что реально оттуда приехало.
                       Ручная запись — не привезённая, а введённая, и подпись обязана
                       это различать: тренер читает этот экран каждый день. */}
-                  {activity?.dataLevel === "manual" ? "тренировка (введена вручную)" : "тренировка из Intervals"}:{" "}
                   {activity
-                    ? `${activity.activityType ?? "—"}, ${Math.round((activity.movingTimeS ?? 0) / 60)} мин, ${
-                        activity.distanceM ? (activity.distanceM / 1000).toFixed(2) : "—"
-                      } км, данные: ${dataLevelLabelRu(activity.dataLevel)}`
-                    : "не приехала"}
+                    ? `${activity.activityType ?? "—"} · ${
+                        activity.dataLevel === "manual" ? "введена вручную" : "приехала из Intervals"
+                      } · данные: ${dataLevelLabelRu(activity.dataLevel)}`
+                    : "тренировки в базе нет: отметка есть, цифр она не оставила"}
                 </p>
 
                 {answered ? (
@@ -522,7 +551,15 @@ export default async function BeginnerStudentPage({
       <div style={box}>
         <h2 style={{ marginTop: 0 }}>Тренировки</h2>
         {view.activities.length === 0 ? (
-          <p style={{ margin: 0, color: "#555" }}>За окно ±3 недели ничего не приехало.</p>
+          /* «НИЧЕГО НЕ ПРИЕХАЛО» — НЕПРАВДА ДЛЯ РУЧНОГО ВВОДА [23.09.2026].
+             У человека без часов ничего и не приезжает: он вводит сам. Пустой
+             список у него означает «не вводила», а прежняя подпись читалась
+             как «синк сломался» — и тренер шёл чинить то, чего нет. */
+          <p style={{ margin: 0, color: "#555" }}>
+            {isManualSource
+              ? "За окно ±3 недели она не ввела ни одной тренировки."
+              : "За окно ±3 недели ничего не приехало."}
+          </p>
         ) : (
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
@@ -531,23 +568,30 @@ export default async function BeginnerStudentPage({
                 <th style={cell}>Тип</th>
                 <th style={cell}>Время</th>
                 <th style={cell}>Дистанция</th>
+                <th style={cell}>Темп</th>
+                <th style={cell}>Пульс</th>
                 <th style={cell}>Источник</th>
                 <th style={cell}>Данные</th>
               </tr>
             </thead>
             <tbody>
-              {view.activities.map((activity) => (
-                <tr key={activity.activityId} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                  <td style={cell}>{activity.startDateLocal?.slice(0, 10) ?? "—"}</td>
-                  <td style={cell}>{activity.activityType ?? "—"}</td>
-                  <td style={cell}>{Math.round((activity.movingTimeS ?? 0) / 60)} мин</td>
-                  <td style={cell}>
-                    {activity.distanceM ? `${(activity.distanceM / 1000).toFixed(2)} км` : "—"}
-                  </td>
-                  <td style={cell}>{activity.dataLevel === "manual" ? "вручную" : "Intervals"}</td>
-                  <td style={cell}>{dataLevelLabelRu(activity.dataLevel)}</td>
-                </tr>
-              ))}
+              {view.activities.map((activity) => {
+                const pace = activityPaceSecPerKm(activity);
+                return (
+                  <tr key={activity.activityId} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                    <td style={cell}>{activity.startDateLocal?.slice(0, 10) ?? "—"}</td>
+                    <td style={cell}>{activity.activityType ?? "—"}</td>
+                    <td style={cell}>{Math.round((activity.movingTimeS ?? 0) / 60)} мин</td>
+                    <td style={cell}>
+                      {activity.distanceM ? `${(activity.distanceM / 1000).toFixed(2)} км` : "—"}
+                    </td>
+                    <td style={cell}>{pace === null ? "—" : `${paceLabelRu(pace)} /км`}</td>
+                    <td style={cell}>{activity.averageHeartrate ?? "—"}</td>
+                    <td style={cell}>{activity.dataLevel === "manual" ? "вручную" : "Intervals"}</td>
+                    <td style={cell}>{dataLevelLabelRu(activity.dataLevel)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

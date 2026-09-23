@@ -392,6 +392,15 @@ export type ActivityRow = {
   movingTimeS: number | null;
   distanceM: number | null;
   averageHeartrate: number | null;
+  /**
+   * Средняя скорость, м/с — ИСТОЧНИК ТЕМПА [23.09.2026].
+   *
+   * Колонка была в базе с самого начала, но в этот select не входила, поэтому
+   * темп не доезжал до карточки НИ У КОГО: ни у привезённых тренировок, ни у
+   * ручных. Для сегмента без часов это была потеря половины отчёта — человек
+   * вводит время, дистанцию, темп и пульс, а тренер видел только первые два.
+   */
+  averageSpeedMps: number | null;
   dataLevel: string;
   activityType: string | null;
 };
@@ -406,8 +415,7 @@ export async function listActivitiesInRange(
   const { data, error } = await supabase
     .from("intervals_activities")
     .select(
-      "activity_id, name, start_date, start_date_local, moving_time_s, distance_m, " +
-        "average_heartrate, data_level, activity_type"
+      "activity_id, name, start_date, start_date_local, moving_time_s, distance_m, average_heartrate, average_speed_mps, data_level, activity_type"
     )
     .eq("source_id", sourceId)
     // Границы по МЕСТНОМУ времени старта: «какого числа была пробежка» — это
@@ -431,6 +439,10 @@ export async function listActivitiesInRange(
         row.average_heartrate === null || row.average_heartrate === undefined
           ? null
           : Number(row.average_heartrate),
+      averageSpeedMps:
+        row.average_speed_mps === null || row.average_speed_mps === undefined
+          ? null
+          : Number(row.average_speed_mps),
       dataLevel: String(row.data_level ?? "none"),
       activityType: (row.activity_type as string | null) ?? null,
     };
