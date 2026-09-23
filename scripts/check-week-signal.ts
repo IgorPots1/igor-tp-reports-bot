@@ -112,6 +112,30 @@ assert.equal(withPain.painFlags[0].state, "answered_waiting", "по нему н�
 assert.equal(withPain.painFlags[1].checkinId, "hurt");
 assert.equal(withPain.painFlags[1].state, "waiting_answer", "по нему не написано ничего");
 assert.equal(withPain.painFlags[1].painNote, "тянуло колено");
+
+// ЕЁ СЛОВА НЕ ТЕРЯЮТСЯ ИЗ-ЗА ПУСТОГО ПОЛЯ. Живой случай: галочку боли она
+// поставила, поле «что беспокоило» пропустила, а про пятку написала в общем
+// комментарии — и блок утверждал, что она ничего не написала.
+const painInComment = buildWeekSignal({
+  checkins: [
+    checkin({
+      id: "heel",
+      sessionDate: "2026-09-10",
+      pain: true,
+      painNote: null,
+      commentText: "После бега вечером правая пятка немного ныла.",
+      effortRpe: 3,
+    }),
+  ],
+  unansweredCheckinIds: new Set(["heel"]),
+  todayIso: TODAY,
+});
+assert.equal(painInComment.painFlags[0].painNote, null);
+assert.equal(
+  painInComment.painFlags[0].commentText,
+  "После бега вечером правая пятка немного ныла.",
+  "комментарий доезжает до сигнала как запасной источник её слов"
+);
 assert.equal(
   withPain.volume?.band,
   "calm",

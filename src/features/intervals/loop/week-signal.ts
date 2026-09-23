@@ -46,6 +46,17 @@ export type CheckinForSignal = {
   effortLabel: string | null;
   pain: boolean;
   painNote: string | null;
+  /**
+   * Общий комментарий к тренировке.
+   *
+   * ЗАЧЕМ ОН СИГНАЛУ БОЛИ [23.09.2026]. Поле «что именно беспокоило» люди
+   * пропускают, а пишут всё в комментарий: Валентина отметила боль галочкой,
+   * поле оставила пустым и написала «после бега вечером правая пятка немного
+   * ныла» в общем тексте. Сигнал при этом утверждал, что она ничего не
+   * написала, — прямая неправда, и ровно про тот единственный факт, ради
+   * которого блок существует.
+   */
+  commentText?: string | null;
   /** Когда тренер нажал «разобрался». null — не нажимал. */
   painResolvedAt?: string | null;
 };
@@ -66,6 +77,8 @@ export type PainFlag = {
   sessionDate: string;
   effortLabel: string | null;
   painNote: string | null;
+  /** Комментарий к той же тренировке — запасной источник её слов. */
+  commentText: string | null;
   state: PainFlagState;
 };
 
@@ -201,6 +214,7 @@ export function buildWeekSignal(input: {
       sessionDate: checkin.sessionDate,
       effortLabel: checkin.effortLabel,
       painNote: checkin.painNote,
+      commentText: checkin.commentText ?? null,
       state: input.unansweredCheckinIds.has(checkin.id)
         ? ("waiting_answer" as const)
         : ("answered_waiting" as const),
