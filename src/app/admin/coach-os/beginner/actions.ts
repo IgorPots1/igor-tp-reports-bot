@@ -6,11 +6,14 @@ import { todayIsoInCoachTimezone, todayIsoInZone } from "@/features/intervals/lo
 import {
   buildCoachMessageContext,
   deliverCoachMessage,
-  notifyPlanPublished,
+  notifyWeekReleased,
 } from "@/features/intervals/loop/coach-message";
+import { weekNoticeOf } from "@/features/intervals/loop/week-notice";
 import {
+  countSessionsInWeek,
   getProgression,
   getSessionById,
+  listPlanWeeks,
   listActivitiesInRange,
   listCheckins,
   markCoachMessageDelivered,
@@ -48,31 +51,20 @@ export async function publishPlanAction(formData: FormData): Promise<void> {
     telegram_delivery_enabled?: boolean;
     timezone?: string | null;
   } | null;
-  const notice = await notifyPlanPublished({
+  // Первая публикация цикла — всегда «план готов»: до неё плана у человека не
+  // было вовсе, сравнивать не с чем.
+  const notice = await notifyWeekReleased({
     sourceId,
     chatId: row?.telegram_chat_id ?? null,
     telegramDeliveryEnabled: row?.telegram_delivery_enabled === true,
     todayIso: todayIsoInZone(row?.timezone ?? null),
+    notice: weekNoticeOf({ wasReleased: false, sessionsBefore: null, sessionsAfter: 0 }),
   });
   console.info("[intervals.publish] уведомление о плане", { studentUuid, result: notice.kind });
 
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
 }
 
-/**
- * Отдать текст ученице.
- *
- * Порядок намеренно такой: СНАЧАЛА сохранить текст вместе со снимком контекста,
- * ПОТОМ отдать его ученице, и только ПОТОМ пытаться уведомить в телеграм.
- * Обратный порядок терял бы корпус при каждом сбое доставки — а сбой доставки
- * как раз тот случай, когда текст особенно жалко.
- *
- * ДВА РАЗНЫХ СОБЫТИЯ [14.09.2026]. Нажатие кнопки означает «ответ готов, отдаю»:
- * текст становится виден ученице в приложении всегда. Уведомление в телеграм —
- * отдельно, и оно по-прежнему под killswitch-ем и под флагом доставки у
- * карточки. Раньше это было одним событием, и при выключенном killswitch-е
- * ответ не доходил до человека вообще нигде.
- */
 /**
  * «Разобрался» — единственный ручной путь, который гасит сигнал боли.
  *
@@ -94,6 +86,20 @@ export async function resolvePainAction(formData: FormData): Promise<void> {
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
 }
 
+/**
+ * Отдать текст ученице.
+ *
+ * Порядок намеренно такой: СНАЧАЛА сохранить текст вместе со снимком контекста,
+ * ПОТОМ отдать его ученице, и только ПОТОМ пытаться уведомить в телеграм.
+ * Обратный порядок терял бы корпус при каждом сбое доставки — а сбой доставки
+ * как раз тот случай, когда текст особенно жалко.
+ *
+ * ДВА РАЗНЫХ СОБЫТИЯ [14.09.2026]. Нажатие кнопки означает «ответ готов, отдаю»:
+ * текст становится виден ученице в приложении всегда. Уведомление в телеграм —
+ * отдельно, и оно по-прежнему под killswitch-ем и под флагом доставки у
+ * карточки. Раньше это было одним событием, и при выключенном killswitch-е
+ * ответ не доходил до человека вообще нигде.
+ */
 export async function sendCoachMessageAction(formData: FormData): Promise<void> {
   const studentUuid = String(formData.get("studentUuid") ?? "");
   const sourceId = String(formData.get("sourceId") ?? "");
@@ -204,7 +210,20 @@ export async function releaseWeekAction(formData: FormData): Promise<void> {
   const weekStart = String(formData.get("weekStart") ?? "");
   if (!studentUuid || !cycleId || !sourceId || !weekStart) return;
 
-  const saved = await setPlanWeekStatus({ cycleId, weekStart, status: "released" });
+  /**
+   * СОСТОЯНИЕ ДО НАЖАТИЯ ЧИТАЕТСЯ ПЕРВЫМ — иначе сказать, что изменилось,
+   * будет уже не из чего: отдача перезапишет и статус, и счётчик.
+   */
+  const weeksBefore = await listPlanWeeks(cycleId);
+  const weekBefore = weeksBefore.find((week) => week.weekStart === weekStart) ?? null;
+  const sessionsAfter = await countSessionsInWeek(cycleId, weekStart);
+
+  const saved = await setPlanWeekStatus({
+    cycleId,
+    weekStart,
+    status: "released",
+    sessionCount: sessionsAfter,
+  });
   if (!saved.ok) {
     console.error("[intervals.week] неделя не отдана", { studentUuid, weekStart, error: saved.message });
     return;
@@ -221,11 +240,16 @@ export async function releaseWeekAction(formData: FormData): Promise<void> {
     telegram_delivery_enabled?: boolean;
     timezone?: string | null;
   } | null;
-  const notice = await notifyPlanPublished({
+  const notice = await notifyWeekReleased({
     sourceId,
     chatId: row?.telegram_chat_id ?? null,
     telegramDeliveryEnabled: row?.telegram_delivery_enabled === true,
     todayIso: todayIsoInZone(row?.timezone ?? null),
+    notice: weekNoticeOf({
+      wasReleased: weekBefore?.status === "released",
+      sessionsBefore: weekBefore?.releasedSessionCount ?? null,
+      sessionsAfter,
+    }),
   });
   console.info("[intervals.week] неделя отдана", { studentUuid, weekStart, result: notice.kind });
 

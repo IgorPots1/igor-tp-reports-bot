@@ -996,6 +996,14 @@ export type PlanWeek = {
   weekStart: string;
   status: PlanWeekStatus;
   releasedAt: string | null;
+  /**
+   * Сколько тренировок было в неделе на момент последней отдачи. null — неделю
+   * отдавали до появления колонки, сравнивать не с чем.
+   *
+   * Нужно ровно для одного: честно отличить «добавил тренировку» от «поправил
+   * неделю» (см. week-notice.ts). По статусу этого не видно.
+   */
+  releasedSessionCount: number | null;
 };
 
 function toPlanWeek(row: Record<string, unknown>): PlanWeek {
@@ -1005,6 +1013,10 @@ function toPlanWeek(row: Record<string, unknown>): PlanWeek {
     weekStart: String(row.week_start),
     status: raw === "released" || raw === "editing" ? raw : "generated",
     releasedAt: (row.released_at as string | null) ?? null,
+    releasedSessionCount:
+      row.released_session_count === null || row.released_session_count === undefined
+        ? null
+        : Number(row.released_session_count),
   };
 }
 
@@ -1012,11 +1024,37 @@ export async function listPlanWeeks(cycleId: string, client?: Client): Promise<P
   const supabase = client ?? createSupabaseServerClient();
   const { data, error } = await supabase
     .from("intervals_plan_weeks")
-    .select("cycle_id, week_start, status, released_at")
+    .select("cycle_id, week_start, status, released_at, released_session_count")
     .eq("cycle_id", cycleId)
     .order("week_start", { ascending: true });
   if (error) throw new Error(`intervals_plan_weeks: ${describeSupabaseError(error)}`);
   return (data ?? []).map((row) => toPlanWeek(row as unknown as Record<string, unknown>));
+}
+
+/**
+ * Сколько тренировок в неделе прямо сейчас.
+ *
+ * Считаем ЗАГОЛОВКИ, а не сумму минут: «добавил тренировку» — про появившийся
+ * в плане день, а не про выросший объём.
+ *
+ * ОБЫЧНЫЙ select, а не head+count: на несуществующей таблице head+count
+ * возвращает count: null БЕЗ ошибки и читается как «ноль» (см. протокол
+ * миграций в CLAUDE.md). Здесь ноль означал бы «ничего не добавлено», то есть
+ * тихо неверный текст ученице.
+ */
+export async function countSessionsInWeek(
+  cycleId: string,
+  weekStart: string,
+  client?: Client
+): Promise<number> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_plan_sessions")
+    .select("id")
+    .eq("cycle_id", cycleId)
+    .eq("week_start", weekStart);
+  if (error) throw new Error(`intervals_plan_sessions count: ${describeSupabaseError(error)}`);
+  return (data ?? []).length;
 }
 
 /**
@@ -1044,18 +1082,54 @@ export async function createGeneratedWeeks(
 }
 
 export async function setPlanWeekStatus(
-  input: { cycleId: string; weekStart: string; status: PlanWeekStatus },
+  input: {
+    cycleId: string;
+    weekStart: string;
+    status: PlanWeekStatus;
+    /**
+     * Сколько тренировок в неделе прямо сейчас. Пишется ТОЛЬКО при отдаче:
+     * снимок «что человек увидел» в момент, когда он это увидел. Следующая
+     * отдача сравнит с ним и скажет правду про «добавил» (см. week-notice.ts).
+     */
+    sessionCount?: number;
+  },
   client?: Client
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const supabase = client ?? createSupabaseServerClient();
+
+  /**
+   * ДАТА ПЕРВОЙ ОТДАЧИ НЕ ПЕРЕПИСЫВАЕТСЯ [починено 23.09.2026].
+   *
+   * Так было написано в комментарии с самого начала, но код ставил
+   * released_at при КАЖДОЙ отдаче, и повторное «отдать» после правки
+   * выглядело новой публикацией. Поймано на живых данных: неделя Валентины
+   * 21.09 была отдана 21-го, а после дописанной пятницы её released_at
+   * переехал на 23-е, и «когда человек впервые увидел эту неделю» пропало.
+   *
+   * Читаем прежнюю строку и сохраняем дату, если она уже есть.
+   */
+  const previous =
+    input.status === "released"
+      ? ((
+          await supabase
+            .from("intervals_plan_weeks")
+            .select("released_at")
+            .eq("cycle_id", input.cycleId)
+            .eq("week_start", input.weekStart)
+            .maybeSingle()
+        ).data as { released_at?: string | null } | null)
+      : null;
+  const releasedAt = previous?.released_at ?? new Date().toISOString();
+
   const { error } = await supabase.from("intervals_plan_weeks").upsert(
     {
       cycle_id: input.cycleId,
       week_start: input.weekStart,
       status: input.status,
-      // Дата проставляется ОДИН раз, при первой отдаче: повторное «отдать»
-      // после правки не должно выглядеть как новая публикация.
-      ...(input.status === "released" ? { released_at: new Date().toISOString() } : {}),
+      ...(input.status === "released" ? { released_at: releasedAt } : {}),
+      ...(input.status === "released" && input.sessionCount !== undefined
+        ? { released_session_count: input.sessionCount }
+        : {}),
       updated_at: new Date().toISOString(),
     },
     { onConflict: "cycle_id,week_start" }

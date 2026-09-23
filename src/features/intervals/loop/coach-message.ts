@@ -16,6 +16,10 @@ import { sendTelegramWebAppButton } from "@/features/telegram/telegram-client";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { SITE_URL } from "@/lib/site";
 
+import type { ActivityRow } from "./repository";
+import type { Checkin, CoachMessageContext, PlanSession, ProgressionState } from "./types";
+import type { WeekNotice } from "./week-notice";
+
 /**
  * Куда ведёт кнопка из любого сообщения ученице.
  *
@@ -26,9 +30,6 @@ import { SITE_URL } from "@/lib/site";
 function coachAppUrl(): string {
   return `${SITE_URL.replace(/\/+$/, "")}/m/run`;
 }
-
-import type { ActivityRow } from "./repository";
-import type { Checkin, CoachMessageContext, PlanSession, ProgressionState } from "./types";
 
 /**
  * Killswitch доставки, ровно как у разборов (FEEDBACK_SEND_ENABLED).
@@ -104,45 +105,44 @@ export function buildCoachMessageContext(input: {
 }
 
 /**
- * «План готов» — единственное сообщение, которое бот шлёт по действию тренера,
- * а не по расписанию.
+ * Сообщение ученице об отданной неделе — единственное, что бот шлёт по
+ * действию тренера, а не по расписанию.
  *
- * ЗАЧЕМ. Тренер нажимает «Показать ученице», и с этой секунды план у неё есть.
+ * ЗАЧЕМ. Тренер нажимает «Отдать ученице», и с этой секунды неделя у неё есть.
  * Узнать об этом она могла только сама открыв приложение, то есть случайно;
  * человек, который ждёт план второй день, каждый день заходит и видит «ещё
  * готовится» — а он уже готов.
  *
+ * ТЕКСТ ВЫБИРАЕТ week-notice.ts, А НЕ ЭТА ФУНКЦИЯ: выбор — чистое правило про
+ * «новая неделя или правка», и его надо уметь проверять без базы и телеграма.
+ * Здесь остаётся доставка.
+ *
+ * ВИД ДЕРЖИТ ДЕДУП. Ключ (источник, вид, дата) гасит повтор в тот же день;
+ * поэтому у «план готов» и «добавил тренировку» виды РАЗНЫЕ — иначе, отдав
+ * новую неделю и дописав день одним днём, человек получил бы только первое.
+ *
  * ПРАВИЛА ТЕ ЖЕ, ЧТО У ОТВЕТА ТРЕНЕРА: killswitch и флаг доставки у карточки.
- * Плюс след в таблице напоминаний, чтобы повторное нажатие не слало второе
- * сообщение: уникальный ключ (источник, вид, дата) это и стережёт.
  */
-export async function notifyPlanPublished(input: {
+export async function notifyWeekReleased(input: {
   sourceId: string;
   chatId: string | null;
   telegramDeliveryEnabled: boolean;
   todayIso: string;
+  notice: WeekNotice;
 }): Promise<CoachSendResult> {
   const supabase = createSupabaseServerClient();
+  const { kind: noticeKind, textRu: text } = input.notice;
 
   const { data: already } = await supabase
     .from("intervals_reminders")
     .select("id")
     .eq("source_id", input.sourceId)
-    .eq("kind", "plan_published")
+    .eq("kind", noticeKind)
     .eq("local_date", input.todayIso)
     .limit(1);
   if ((already ?? []).length > 0) {
-    return { kind: "prepared", reason: "сегодня уже уведомляли о плане" };
+    return { kind: "prepared", reason: "сегодня уже уведомляли этим видом" };
   }
-
-  // БЕЗ ПРИВЯЗКИ К «СЕГОДНЯ» [решение Игоря, 17.09.2026]: план мог начаться не
-  // сегодняшним днём, и «тренировка на сегодня» в тексте — обещание, которое
-  // экран может тут же не выполнить (отдых сегодня — это тоже часть плана, не
-  // ошибка, см. restNoteRu в student-view.ts).
-  const text =
-    "План готов. Откройте приложение: там ваши тренировки на неделю и кнопка " +
-    "отметиться после пробежки.\n\n" +
-    "Если что-то в плане не подходит по дням, тренировку можно перенести прямо там.";
 
   let result: CoachSendResult;
   if (!input.chatId) {
@@ -163,7 +163,14 @@ export async function notifyPlanPublished(input: {
       await sendTelegramWebAppButton({
         chatId: input.chatId,
         text,
-        buttons: [{ label: "Открыть план", webAppUrl: coachAppUrl() }],
+        buttons: [
+          {
+            // Подпись под текст: «план готов» ведёт к плану, «добавил
+            // тренировку» — туда же, но обещать «план» второй раз незачем.
+            label: noticeKind === "plan_published" ? "Открыть план" : "Открыть приложение",
+            webAppUrl: coachAppUrl(),
+          },
+        ],
       });
       result = { kind: "sent", chatId: input.chatId };
     } catch (error) {
@@ -178,7 +185,7 @@ export async function notifyPlanPublished(input: {
   // След пишем всегда: тренер должен видеть, уведомили её или нет, а не гадать.
   await supabase.from("intervals_reminders").insert({
     source_id: input.sourceId,
-    kind: "plan_published",
+    kind: noticeKind,
     local_date: input.todayIso,
     status: result.kind === "sent" ? "sent" : result.kind === "prepared" ? "skipped" : "failed",
     detail: result.kind === "sent" ? null : result.kind === "prepared" ? result.reason : result.messageRu,
@@ -241,7 +248,7 @@ export async function deliverCoachMessage(input: {
      * 1308 символов с тремя вопросами про боль и не имела ни одного способа
      * попасть туда, где на них отвечают, кроме как искать приложение самой.
      *
-     * Кнопка та же самая, что у notifyPlanPublished, и ведёт в то же место:
+     * Кнопка та же самая, что у notifyWeekReleased, и ведёт в то же место:
      * два входа в одно приложение с разных сообщений сбивали бы с толку.
      */
     await sendTelegramWebAppButton({
