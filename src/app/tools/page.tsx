@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono, Onest } from "next/font/google";
-import { Footprints, Gauge, HeartPulse, Thermometer, Utensils } from "lucide-react";
+import { Footprints, Gauge, HeartPulse, Thermometer, TrendingDown, Utensils } from "lucide-react";
 
 import { publicPageMetadata } from "@/lib/site";
 import SiteHeader from "@/components/SiteHeader";
@@ -43,6 +43,12 @@ const CARDS: Card[] = [
     icon: Gauge,
     title: "Три пробежки",
     text: "Темпы для лёгкого бега, темповой работы и интервалов по твоему результату на 5 или 10 км.",
+  },
+  {
+    href: "/tools/raskladka",
+    icon: TrendingDown,
+    title: "Раскладка Московского марафона",
+    text: "Целевое время на 10 км или 42,2 км превращается в темп по полосам с поправкой на рельеф.",
   },
   {
     href: "/tools/dress",

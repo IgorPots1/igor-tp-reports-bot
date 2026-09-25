@@ -1,0 +1,30 @@
+/* Дизайн-система igorp.run — та же, что у хаба, /club, /camp и остальных
+   калькуляторов. Токены скопированы из dress-page.css один в один, своей
+   палитры страница не заводит. Добавлен только --hill: жёлтый для подъёмов
+   на профиле трассы, зелёный --green при этом означает спуск. */
+
+:root {
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --ink: #191712;
+  --ink-2: #4d483f;
+  --muted: #857f73;
+  --line: #e7e1d5;
+  --line-2: #d8d0c0;
+  --accent: #e5480e;
+  --accent-ink: #b53707;
+  --accent-bg: #fdede6;
+  --accent-line: #f2c3ae;
+  --cream: #fbf8f2;
+  --green: #2e7d45;
+  --green-bg: #eaf3ec;
+  --hill: #c9a227;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(25, 23, 18, 0.04), 0 8px 28px -12px rgba(25, 23, 18, 0.18);
+}
+
+html,
+body {
+  background: var(--bg);
+  min-height: 100dvh;
+}
