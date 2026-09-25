@@ -33,6 +33,8 @@ import {
 } from "@/features/intervals/loop/schedule";
 import {
   paceTextRu,
+  describeDurationRu,
+  durationAlternativeRu,
   parseDistanceKm,
   parseDurationMinutes,
   parseHeartrate,
@@ -2360,10 +2362,20 @@ function CheckinForm(props: {
                 значение с запятой браузер отдаёт ПУСТОЙ строкой: человек пишет
                 «6,5», поле молча оказывается пустым, и никто не понимает почему.
                 Разбирает ввод manual-entry-parse, а не браузер. */}
+            {/* ПОДСКАЗКА НАЗЫВАЕТ РАЗДЕЛИТЕЛЬ ПЕРВЫМ [23.09.2026]. Соседнее поле
+                темпа учит, что цифры подряд это запись через двоеточие («812» =
+                8:12). Человек переносит приём сюда, где он значит обратное, и
+                час шесть превращается в сто шесть минут. Так и вышло. */}
             <FormField
               label="Сколько длилась *"
-              hint="минуты числом: 40. Час пять — 1:05 или 65"
+              hint="час шесть — 1:06. Просто минуты тоже можно: 40"
               error={fieldErrors.duration}
+              confirm={(() => {
+                const parsed = parseDurationMinutes(durationMinutes);
+                if (fieldErrors.duration || !parsed.ok || parsed.value === null) return null;
+                const alt = durationAlternativeRu(durationMinutes);
+                return `понял как ${describeDurationRu(parsed.value)}${alt ? `. ${alt}` : ""}`;
+              })()}
             >
               <input
                 type="text"
@@ -2378,6 +2390,11 @@ function CheckinForm(props: {
               label="Дистанция, км — если знаете"
               hint="можно с запятой: 6,5"
               error={fieldErrors.distance}
+              confirm={(() => {
+                const parsed = parseDistanceKm(distanceKm);
+                if (fieldErrors.distance || !parsed.ok || parsed.value === null) return null;
+                return `понял как ${parsed.value} км`;
+              })()}
             >
               <input
                 type="text"

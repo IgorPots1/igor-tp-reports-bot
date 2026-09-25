@@ -11,6 +11,8 @@
 import assert from "node:assert/strict";
 
 import {
+  describeDurationRu,
+  durationAlternativeRu,
   durationTextRu,
   paceTextRu,
   parseDistanceKm,
@@ -100,3 +102,36 @@ if (!paceError.ok) {
 }
 
 console.log("check:manual-entry-parse — все проверки пройдены");
+
+// ── ПРЕДПРОСМОТР: «понял как …» ──────────────────────────────────────────────
+//
+// ЖИВОЙ СЛУЧАЙ 23.09.2026. Ученица пробежала час шесть и написала «106».
+// Разбор честно понял сто шесть минут, и это всплыло только через два дня.
+// Правило осталось прежним (см. комментарий в parseDurationMinutes), но теперь
+// форма показывает, КАК поняла, и называет второе прочтение.
+
+assert.equal(describeDurationRu(106), "1 ч 46 мин", "вот что она увидела бы у поля");
+assert.equal(describeDurationRu(66), "1 ч 6 мин");
+assert.equal(describeDurationRu(40), "40 мин", "меньше часа — без часов");
+assert.equal(describeDurationRu(120), "2 ч", "ровные часы — без «0 мин»");
+assert.equal(describeDurationRu(60), "1 ч");
+
+assert.equal(
+  durationAlternativeRu("106"),
+  "Если это 1 час 6 мин, напишите 1:06",
+  "у трёхзначного называем второе прочтение"
+);
+assert.equal(durationAlternativeRu("245"), "Если это 2 часа 45 мин, напишите 2:45");
+assert.equal(durationAlternativeRu("66"), null, "у двузначного двусмысленности нет");
+assert.equal(durationAlternativeRu("160"), null, "«час шестьдесят» не бывает");
+assert.equal(durationAlternativeRu("1:06"), null, "разделитель уже всё сказал");
+assert.equal(durationAlternativeRu("40"), null);
+
+// ПРОБЕЛ МЕЖДУ ЦИФРАМИ — РАЗДЕЛИТЕЛЬ. Трёхзначное число с пробелом посередине
+// не пишет никто.
+assert.deepEqual(parseDurationMinutes("1 06"), { ok: true, value: 66 });
+assert.deepEqual(parseDurationMinutes("1 30"), { ok: true, value: 90 });
+assert.deepEqual(parseDurationMinutes("40 мин"), { ok: true, value: 40 }, "суффикс не сломался");
+assert.deepEqual(parseDurationMinutes("106"), { ok: true, value: 106 }, "правило голого числа НЕ менялось");
+
+console.log("check:manual-entry-parse — предпросмотр проверен");
