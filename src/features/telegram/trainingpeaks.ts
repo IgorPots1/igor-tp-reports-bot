@@ -8,6 +8,7 @@ import {
   isEligibleForCoachSourceDateConfirmation,
   validateDryRunLogReadiness,
 } from "@/features/trainingpeaks/move-source-policy";
+import { noticeInboundFromStudent } from "@/features/intervals/loop/inbound-notify";
 import { formatTrainingPeaksExecuteBlockedMessage, formatTrainingPeaksExecuteQueuedMessage } from "@/features/trainingpeaks/action-execute-telegram-copy";
 import {
   buildWriteActionBlockedMessage,
@@ -6752,6 +6753,21 @@ export async function handleTrainingPeaksTelegramBusinessMessage(
             observationIdPrefix: observation.id.slice(0, 8),
             studentIdPrefix: observation.studentId?.slice(0, 8) ?? null,
             errorClass: signalError instanceof Error ? signalError.name : "UnknownError",
+          });
+        }
+
+        /**
+         * СКАЗАТЬ ТРЕНЕРУ, ЧТО УЧЕНИЦА INTERVALS НАПИСАЛА [25.09.2026].
+         *
+         * 23.09 ответ про боль в пятке лёг ровно сюда — с привязкой к карточке
+         * и меткой pain_or_health — и пролежал два дня: сказать о нём было
+         * некому. Вызов флаг-гейтованный, сам держит дедуп и тихие часы и
+         * НИКОГДА не бросает: разбор входящего важнее уведомления о нём.
+         */
+        if (observation.studentId) {
+          await noticeInboundFromStudent({
+            studentId: observation.studentId,
+            preview: observation.textPreview,
           });
         }
 

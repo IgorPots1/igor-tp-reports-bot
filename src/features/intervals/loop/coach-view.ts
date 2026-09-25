@@ -16,6 +16,7 @@ import {
   getPublishedCycle,
   listActivitiesInRange,
   listCheckinEdits,
+  listTelegramLines,
   listCheckins,
   listCoachMessages,
   listPlanWeeks,
@@ -28,6 +29,7 @@ import {
 import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
 import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
 import type { CheckinEdit } from "./checkin-edit";
+import type { TelegramLine } from "./repository";
 import { buildWeekSignal, type WeekSignal } from "./week-signal";
 import { getSourceConnection } from "../repository";
 import type { Checkin, CoachMessage, PlanCycle, PlanSession, ProgressionState } from "./types";
@@ -493,6 +495,13 @@ export type CoachStudentView = {
    * бесследно — а это разговор, а не опечатка.
    */
   checkinEdits: Map<string, CheckinEdit[]>;
+  /**
+   * Переписка в телеграме, свежая снизу.
+   *
+   * ЗДЕСЬ, А НЕ ТОЛЬКО В ТЕЛЕФОНЕ: человек отвечает тренеру в личку, а тренер
+   * смотрит карточку. 23.09 ответ про боль пролежал так два дня.
+   */
+  telegramLines: TelegramLine[];
   messages: CoachMessage[];
   /** Чек-ины, на которые тренер ещё не ответил ни одним текстом. */
   unansweredCheckinIds: Set<string>;
@@ -527,6 +536,7 @@ export async function loadCoachStudentView(
       weeklyReports: [],
       planWeeks: [],
       checkinEdits: new Map(),
+      telegramLines: [],
       weekSignal: { painFlags: [], volume: null, weekly: null },
     };
   }
@@ -559,6 +569,11 @@ export async function loadCoachStudentView(
     ]);
 
   const checkinEdits = await listCheckinEdits(checkins.map((checkin) => checkin.id));
+  const telegramLines = await listTelegramLines({
+    studentUuid: student.studentUuid,
+    chatId: student.telegramChatId,
+    limit: 30,
+  });
   const sessions = latestCycle ? await listSessionsInRange(latestCycle.id, from, to) : [];
   const planWeeks = latestCycle ? await listPlanWeeks(latestCycle.id) : [];
 
@@ -599,6 +614,7 @@ export async function loadCoachStudentView(
     checkins,
     activities,
     checkinEdits,
+    telegramLines,
     messages,
     unansweredCheckinIds,
     connectionHealth,

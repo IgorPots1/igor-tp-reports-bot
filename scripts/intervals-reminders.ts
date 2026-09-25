@@ -24,6 +24,7 @@ import {
 } from "@/features/intervals/loop/reminders";
 import { reportedWeekStart } from "@/features/intervals/loop/weekly-report";
 import { getPublishedCycle, listSessionsInRange } from "@/features/intervals/loop/repository";
+import { flushPendingInboundNotices } from "@/features/intervals/loop/inbound-notify";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
 
@@ -240,6 +241,21 @@ async function main(): Promise<void> {
     }
 
     console.log(`  · ${who}: ${decision.kind} → ${status}${detail ? ` (${detail})` : ""}`);
+  }
+
+  /**
+   * ОТЛОЖЕННОЕ НОЧЬЮ — ТРЕНЕРУ, УТРОМ [25.09.2026].
+   *
+   * Это единственное здесь, что идёт ТРЕНЕРУ, а не ученику, и живёт под своим
+   * флагом (INTERVALS_INBOUND_NOTICE_ENABLED). Раннер просто оказался тем, кто
+   * и так ходит каждые полчаса: заводить второе расписание ради одного вызова
+   * незачем.
+   *
+   * В --dry-run не трогаем: он ничего не отправляет и ничего не пишет.
+   */
+  if (!DRY_RUN) {
+    const flushed = await flushPendingInboundNotices();
+    if (flushed > 0) console.log(`Отложенных уведомлений тренеру отдано: ${flushed}`);
   }
 
   console.log("Готово.");

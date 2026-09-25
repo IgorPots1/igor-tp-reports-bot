@@ -432,6 +432,59 @@ export async function listCheckinEdits(
   return byCheckin;
 }
 
+/**
+ * Переписка с учеником в телеграме, как её записал наблюдатель контекста.
+ *
+ * ЗАЧЕМ ЭТО В КОНТУРЕ INTERVALS [25.09.2026]. Человек отвечает тренеру там, где
+ * ему удобно, а не там, где тренер смотрит. 23.09 ответ про боль в пятке ушёл в
+ * личку, лёг в базу наблюдений и пролежал два дня: в карточке Intervals
+ * переписки не было видно вообще.
+ *
+ * ИЩЕМ И ПО УЧЕНИКУ, И ПО ЧАТУ. У ранних сообщений student_id пустой: человек
+ * писал до того, как его карточку связали. Они дозаполняются задним числом по
+ * chat_id, но полагаться на это нельзя — иначе начало разговора пропадёт.
+ *
+ * ТОЛЬКО ЧТЕНИЕ. Эта таблица принадлежит контуру TrainingPeaks, здесь мы её
+ * гость и ничего в ней не меняем.
+ */
+export type TelegramLine = {
+  at: string;
+  direction: "inbound" | "outbound";
+  senderRole: string | null;
+  text: string | null;
+  labels: string[];
+};
+
+export async function listTelegramLines(
+  input: { studentUuid: string | null; chatId: string | null; limit?: number },
+  client?: Client
+): Promise<TelegramLine[]> {
+  if (!input.studentUuid && !input.chatId) return [];
+  const supabase = client ?? createSupabaseServerClient();
+  const filters: string[] = [];
+  if (input.studentUuid) filters.push(`student_id.eq.${input.studentUuid}`);
+  if (input.chatId) filters.push(`chat_id.eq.${input.chatId}`);
+  const { data, error } = await supabase
+    .from("trainingpeaks_telegram_context_observations")
+    .select("observed_at, direction, sender_role, text_preview, labels")
+    .or(filters.join(","))
+    .order("observed_at", { ascending: false })
+    .limit(input.limit ?? 30);
+  if (error) throw new Error(`telegram observations: ${describeSupabaseError(error)}`);
+  return (data ?? [])
+    .map((raw) => {
+      const row = raw as unknown as Record<string, unknown>;
+      return {
+        at: String(row.observed_at),
+        direction: row.direction === "outbound" ? ("outbound" as const) : ("inbound" as const),
+        senderRole: (row.sender_role as string | null) ?? null,
+        text: (row.text_preview as string | null) ?? null,
+        labels: Array.isArray(row.labels) ? (row.labels as string[]) : [],
+      };
+    })
+    .reverse();
+}
+
 export async function moveSession(
   input: {
     sessionId: string;

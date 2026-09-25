@@ -663,6 +663,45 @@ export default async function BeginnerStudentPage({
         )}
       </div>
 
+      {/* ── Переписка в телеграме ──
+          ОНА ОТВЕЧАЕТ НЕ ТУДА, КУДА ВЫ СМОТРИТЕ [25.09.2026]. 23.09 ответ про
+          боль в пятке ушёл в личку, лёг в базу наблюдений и пролежал два дня:
+          здесь его было не видно, а сказать о нём было некому.
+          Блок только читает: сама переписка живёт в телеграме, отвечать надо
+          там же. Текст хранится обрезанным до 500 символов — это не копия
+          чата, а напоминание, что разговор идёт. */}
+      {view.telegramLines.length > 0 ? (
+        <div style={box}>
+          <h2 style={{ marginTop: 0 }}>Переписка в телеграме</h2>
+          <p style={{ margin: "0 0 12px", color: "#555", fontSize: 13 }}>
+            Последние {view.telegramLines.length}. Свежие внизу. Отвечать — в телеграме, здесь только видно.
+          </p>
+          {view.telegramLines.map((line, index) => {
+            const mine = line.direction === "outbound";
+            const health = line.labels.includes("pain_or_health");
+            return (
+              <div
+                key={`${line.at}-${index}`}
+                style={{
+                  borderLeft: `3px solid ${mine ? "#ccc" : health ? "#E5480E" : "#2E7D45"}`,
+                  padding: "2px 0 2px 10px",
+                  margin: "0 0 10px",
+                }}
+              >
+                <p style={{ margin: "0 0 2px", color: "#777", fontSize: 12 }}>
+                  {line.at.slice(0, 16).replace("T", " ")} ·{" "}
+                  {mine ? "вы" : "она"}
+                  {health && !mine ? <span style={{ color: "#a3330a" }}> · про здоровье</span> : null}
+                </p>
+                <p style={{ margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                  {line.text ?? "(без текста: голосовое или вложение)"}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
       {/* ── Что уже написано ── */}
       <div style={box}>
         <h2 style={{ marginTop: 0 }}>Написанное ученице</h2>
