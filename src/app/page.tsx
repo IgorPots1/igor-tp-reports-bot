@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
-import { Onest, JetBrains_Mono } from "next/font/google";
 import { Send, Users, Zap } from "lucide-react";
 import { formatFlowStartDate, seatsWord } from "@/lib/flow";
 import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
 import SiteHeader from "@/components/SiteHeader";
 import "./_hub/hub.css";
+import { jetbrains, onest } from "@/lib/fonts";
 
 // КОРЕНЬ САЙТА — страница-хаб (раньше жила по /start). Голый igorp.run отдаёт
 // её сам, со своим содержимым и статусом 200: редирект на этом месте означал бы
@@ -17,17 +17,6 @@ import "./_hub/hub.css";
 
 // Счётчик мест живой — считается по заявкам на каждый показ страницы.
 export const dynamic = "force-dynamic";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-onest",
-  display: "swap",
-});
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/",

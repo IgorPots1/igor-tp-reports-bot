@@ -379,6 +379,7 @@
     "check:inbound-notice": "npx tsx scripts/check-inbound-notice.ts",
     "check:checkin-edit": "npx tsx scripts/check-checkin-edit.ts",
     "check:raskladka": "npx tsx scripts/check-raskladka.ts",
+    "check:fonts-selfhosted": "npx tsx scripts/check-fonts-selfhosted.ts",
     "check:checkin-draft": "npx tsx scripts/check-checkin-draft.ts",
     "check:released-work-floor": "npx tsx scripts/check-released-work-floor.ts",
     "check:week-notice": "npx tsx scripts/check-week-notice.ts",

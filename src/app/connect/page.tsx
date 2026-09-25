@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import type { CSSProperties } from "react";
-import { Onest, JetBrains_Mono } from "next/font/google";
 
 import { publicPageMetadata } from "@/lib/site";
 
 import { CONNECT_PAGE } from "@/features/intervals/connect-content";
 import { renderMarkdown } from "./markdown";
+import { jetbrains, onest } from "@/lib/fonts";
 
 // СТРАНИЦА ПРО ФОРМАТ РАБОТЫ, А НЕ ПРО ПОДКЛЮЧЕНИЕ [решение Игоря, 15.09.2026].
 //
@@ -16,17 +16,6 @@ import { renderMarkdown } from "./markdown";
 // что делать, когда пошло не так.
 //
 // Текст — в features/intervals/connect-content.ts. Здесь только разметка.
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-onest",
-  display: "swap",
-});
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/connect",

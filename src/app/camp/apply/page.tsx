@@ -1,19 +1,8 @@
 import type { Metadata } from "next";
-import { Onest, JetBrains_Mono } from "next/font/google";
 
 import ApplyForm from "./ApplyForm";
 import "./apply.css";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-onest",
-  display: "swap",
-});
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
+import { jetbrains, onest } from "@/lib/fonts";
 
 export const metadata: Metadata = {
   title: "Анкета участника · Беговой интенсив",

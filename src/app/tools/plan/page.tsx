@@ -1,25 +1,11 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
-import { JetBrains_Mono, Onest } from "next/font/google";
 import SiteHeader from "@/components/SiteHeader";
 
 import "./plan-page.css";
 import styles from "./plan.module.css";
 import ThreeRunsTool from "./ThreeRunsTool";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-onest",
-  display: "swap",
-});
-
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  weight: ["500", "700"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
+import { jetbrains, onest } from "@/lib/fonts";
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/tools/plan",

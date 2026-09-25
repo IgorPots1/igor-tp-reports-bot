@@ -1,22 +1,11 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
-import { Onest, JetBrains_Mono } from "next/font/google";
 import Image from "next/image";
 import LeadForm from "./LeadForm";
 import Carousel from "./Carousel";
 import { CLUB } from "@/lib/club";
 import "./club.css";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-onest",
-  display: "swap",
-});
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
+import { jetbrains, onest } from "@/lib/fonts";
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/club",

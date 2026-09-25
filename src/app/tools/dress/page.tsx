@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono, Onest } from "next/font/google";
 
 import { publicPageMetadata } from "@/lib/site";
 import SiteHeader from "@/components/SiteHeader";
@@ -7,20 +6,7 @@ import SiteHeader from "@/components/SiteHeader";
 import DressCalculator from "./DressCalculator";
 import "./dress-page.css";
 import styles from "./dress.module.css";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-onest",
-  display: "swap",
-});
-
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  weight: ["500", "700"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
+import { jetbrains, onest } from "@/lib/fonts";
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/tools/dress",

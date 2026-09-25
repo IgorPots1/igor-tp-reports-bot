@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
 import type { CSSProperties, ReactNode } from "react";
-import { Onest, JetBrains_Mono } from "next/font/google";
+import { jetbrains, onest } from "@/lib/fonts";
 
 // Единственное место, где задан адрес для писем про данные. Тот же адрес идёт
 // в заявку на OAuth-приложение Intervals.icu — менять здесь, а не по тексту.
@@ -10,17 +10,6 @@ const CONTACT_EMAIL = "potseluevigoralexeevich@gmail.com";
 // Дата правится руками при каждом изменении текста. Автоподстановка new Date()
 // врала бы: «обновлено» менялось бы от пересборки, а не от правки политики.
 const UPDATED_AT = "26 августа 2026";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-onest",
-  display: "swap",
-});
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/privacy",

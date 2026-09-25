@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
-import { Onest, JetBrains_Mono } from "next/font/google";
 import Image from "next/image";
 import fs from "fs";
 import path from "path";
@@ -8,21 +7,11 @@ import Carousel from "../club/Carousel";
 import { formatFlowStartDate, pastFlowsCount, seatsWord } from "@/lib/flow";
 import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
 import "./camp.css";
+import { jetbrains, onest } from "@/lib/fonts";
 
 // Число мест живое — считается по заявкам на каждый показ страницы.
 // Без этого Next отдавал бы статику, и счётчик замерз бы на времени сборки.
 export const dynamic = "force-dynamic";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-onest",
-  display: "swap",
-});
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/camp",

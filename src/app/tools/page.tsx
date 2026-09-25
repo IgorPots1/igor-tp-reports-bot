@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Onest } from "next/font/google";
 import { Footprints, Gauge, HeartPulse, Thermometer, TrendingDown, Utensils } from "lucide-react";
 
 import { publicPageMetadata } from "@/lib/site";
@@ -7,20 +6,7 @@ import SiteHeader from "@/components/SiteHeader";
 
 import "./tools-page.css";
 import styles from "./tools.module.css";
-
-const onest = Onest({
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-onest",
-  display: "swap",
-});
-
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin", "cyrillic"],
-  weight: ["400", "500"],
-  variable: "--font-jetbrains",
-  display: "swap",
-});
+import { jetbrains, onest } from "@/lib/fonts";
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/tools",
