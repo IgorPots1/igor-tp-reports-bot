@@ -242,27 +242,43 @@ const EXACT_EPS = 0.005;
 /** Насколько далеко от идеального темпа полосы решателю разрешено искать. */
 const WINDOW = 20;
 
-/* Допустимый промах по цели: четверть секунды на километр.
+/** Предел разгона: финиш быстрее рабочего темпа не больше чем на столько. */
+const MAX_KICK = 15;
+
+/** Самая медленная рабочая полоса: всё между спуском и финишем. */
+function workingPace(paces: number[]): number {
+  const middle = paces.slice(1, paces.length - 1);
+  return middle.length ? Math.max(...middle) : paces[0];
+}
+
+/** На сколько секунд финишная полоса быстрее рабочего темпа. */
+function kickSize(paces: number[], finish: Finish): number {
+  return finish === "kick" ? workingPace(paces) - paces[paces.length - 1] : 0;
+}
+
+/* Допустимый промах по цели: треть секунды на километр.
  *
  * НА ДЕСЯТКЕ ЭТО «ТОЛЬКО ТОЧНО». Полосы там 3, 5 и 2 км, темпы кратны пяти
  * секундам, значит сумма кратна пяти, и любая цель в целых минутах берётся
  * ровно. Допуск 3 с при решётке шагом 5 с не открывает ни одного неточного
  * варианта, зато не приходится писать «для десятки ноль» отдельным условием.
  *
- * НА МАРАФОНЕ ЭТО ОДИННАДЦАТЬ СЕКУНД, и они нужны. Последняя полоса 10,2 км, и
+ * НА МАРАФОНЕ ЭТО ЧЕТЫРНАДЦАТЬ СЕКУНД, и они нужны. Последняя полоса 10,2 км, и
  * суммы 5a + 15b + 12c + 10,2d при темпах кратных пяти ложатся редкой решёткой:
  * для 3:30:00 «С разгоном» единственная точная раскладка в окне это
  * 5:15 / 5:20 / 4:45 / 4:35, то есть сорок секунд размаха и вторая половина на
  * 11 % тяжелее первой. Требовать точность здесь значит требовать вредный совет.
- * Одиннадцать секунд на 42,2 км это 0,07 % дистанции и четверть секунды на
- * километр — тоньше, чем живой человек отработает по часам.
+ * Четырнадцать секунд на 42,2 км это 0,09 % дистанции и треть секунды на
+ * километр — тоньше, чем живой человек отработает по часам. Запас именно такой,
+ * а не уже, из-за предела разгона: на 3:45:00 «С разгоном» весь выбор это либо
+ * 3:44:47 с разгоном 15, либо 3:45:03 с разгоном 10, и второе опаздывает.
  *
  * ОПОЗДАНИЕ СЧИТАЕТСЯ ВДВОЕ. Промах в обе стороны одинаков по модулю, но не по
  * смыслу: цель на часах это обещание успеть. Прийти на шесть секунд раньше
  * лучше, чем на четыре позже, и допуск устроен так, чтобы решатель выбирал
  * именно так. */
 function missAllowance(totalKm: number): number {
-  return Math.max(1, Math.round(totalKm / 4));
+  return Math.max(1, Math.round(totalKm / 3));
 }
 const LATE_WEIGHT = 2;
 
@@ -290,7 +306,13 @@ function shapeAllowed(paces: number[], finish: Finish): boolean {
   for (let q = 2; q < last; q += 1) if (paces[q] > paces[q - 1]) return false;
   if (finish === "kick") {
     // Разгон — это разгон: финишная полоса быстрее предыдущей, иначе кнопка врёт.
-    return paces[last] <= paces[last - 1] - 5;
+    if (paces[last] > paces[last - 1] - 5) return false;
+    // Но разгон МЯГКИЙ. Отсчёт идёт от самой медленной рабочей полосы, а не от
+    // соседней: на марафоне между холмистой серединой и финишем стоит ровная
+    // часть, и сравнение только с ней прятало настоящий размах. На 3:45:00
+    // выходило 5:30 в середине против 5:10 на финише — двадцать секунд, которые
+    // по соседним полосам читались как пять.
+    return workingPace(paces) - paces[last] <= MAX_KICK;
   }
   // Ровный финиш: та же цифра до конца, плюс-минус один шаг решётки. Пять секунд
   // на последней полосе это не разгон, а округление; запрещать их значит на
@@ -325,9 +347,25 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
   });
 
   const allowance = missAllowance(c.total);
-  let best:
-    | { effMiss: number; score: number; paces: number[]; total: number; diff: number }
-    | null = null;
+
+  type Cand = {
+    effMiss: number;
+    kick: number;
+    score: number;
+    paces: number[];
+    total: number;
+    diff: number;
+  };
+
+  /* Два победителя сразу: лучший среди НЕ ОПАЗДЫВАЮЩИХ и лучший вообще.
+   *
+   * Опоздание раньше было тяжёлым слагаемым в допуске, и этого хватало, пока
+   * над ним не появился более старший ключ. Стоило мягкости разгона встать
+   * выше — опоздание тут же пролезло: марафон 3:45:00 «С разгоном» начал
+   * финишировать в 3:45:03. Цель на часах это обещание успеть, поэтому берём
+   * опаздывающий вариант только если не опаздывающих нет вовсе. */
+  let best: Cand | null = null;
+  let bestNotLate: Cand | null = null;
   const idx = options.map(() => 0);
 
   for (;;) {
@@ -346,17 +384,23 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
       // ровный финиш тем лучше, чем ровнее
       if (finish === "even" && paces[last] !== paces[last - 1]) cost += 10;
 
-      // ТОЧНОСТЬ ПЕРВЫМ ДЕЛОМ, но с допуском: промах в пределах допуска считается
-      // нулевым, и между такими вариантами решает форма. Промах сверх допуска не
-      // разменивается ни на что.
+      // ПОРЯДОК ОТБОРА, ровно в этом старшинстве:
+      //   1. точность по цели (с допуском, см. missAllowance);
+      //   2. мягкость разгона — из допустимых берём вариант с наименьшим;
+      //   3. всё остальное ценой: близость к идеалу, быстрый спуск, запас к цели.
+      // Быстрый спуск остаётся предпочтением, но уступает мягкому финишу: если
+      // одно мешает другому, спуск сравнивается с рабочим темпом.
       const weighted = diff < 0 ? miss * LATE_WEIGHT : miss;
       const effMiss = Math.max(0, weighted - allowance);
-      const score = cost + miss * 1.5;
-      const better =
-        !best ||
-        effMiss < best.effMiss - EXACT_EPS ||
-        (effMiss <= best.effMiss + EXACT_EPS && score < best.score);
-      if (better) best = { effMiss, score, paces: [...paces], total, diff };
+      const kick = kickSize(paces, finish);
+      const score = cost + miss * 1.5 + (paces[0] >= paces[1] ? 12 : 0);
+      const cand: Cand = { effMiss, kick, score, paces: [...paces], total, diff };
+      const beats = (b: Cand | null) =>
+        !b ||
+        effMiss < b.effMiss - EXACT_EPS ||
+        (effMiss <= b.effMiss + EXACT_EPS && (kick < b.kick || (kick === b.kick && score < b.score)));
+      if (beats(best)) best = cand;
+      if (diff >= -EXACT_EPS && beats(bestNotLate)) bestNotLate = cand;
     }
 
     let pos = options.length - 1;
@@ -369,7 +413,7 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
     if (pos < 0) break;
   }
 
-  const chosen = best as { effMiss: number; score: number; paces: number[]; total: number; diff: number };
+  const chosen = (bestNotLate ?? best) as Cand;
 
   let cum = 0;
   segs.forEach((s) => {

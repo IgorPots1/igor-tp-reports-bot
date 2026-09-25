@@ -44,7 +44,7 @@ function check(course: Course, label: string, target: number, finish: Finish) {
   // это означает «только точно» и проверяется как точное равенство. На марафоне
   // последняя полоса 10,2 км, точное попадание там достижимо не для каждой цели,
   // и требовать его значит требовать кривую форму (см. missAllowance в логике).
-  const allowance = Math.max(1, Math.round(course.total / 4));
+  const allowance = Math.max(1, Math.round(course.total / 3));
   const sumSegs = plan.segs.reduce((a, s) => a + s.pace * s.len, 0);
   assert.ok(
     Math.abs(sumSegs - plan.total) < 0.01,
@@ -175,6 +175,16 @@ function check(course: Course, label: string, target: number, finish: Finish) {
       plan.bandPaces[n - 1] <= plan.bandPaces[n - 2] - 5,
       `${what}: «С разгоном», а финишная полоса не быстрее предыдущей`,
     );
+    // РАЗГОН МЯГКИЙ: не больше 15 с против САМОЙ МЕДЛЕННОЙ рабочей полосы.
+    // Считать по соседней нельзя — на марафоне между холмистой серединой и
+    // финишем стоит ровная часть, и настоящий размах за ней прячется.
+    const work = Math.max(...plan.bandPaces.slice(1, n - 1));
+    const kick = work - plan.bandPaces[n - 1];
+    assert.ok(
+      kick <= 15,
+      `${what}: разгон ${kick} с против рабочего темпа, предел 15`,
+    );
+    assert.ok(kick >= 5, `${what}: разгон ${kick} с, это не разгон`);
   } else {
     // «Ровный» — та же цифра до конца, плюс-минус один шаг решётки.
     assert.ok(
@@ -243,6 +253,25 @@ function check(course: Course, label: string, target: number, finish: Finish) {
     "эталон: контрольные точки разошлись",
   );
   assert.equal(formatTime(p.total), "50:00", "эталон: финиш");
+}
+
+// ── Мягкий разгон: контрольные значения тренера ──────────────────────────────
+// Заморожены 25.09.2026. Разгон считается от самой медленной рабочей полосы и
+// не превышает 15 с; среди допустимых выбирается наименьший.
+{
+  const c = COURSES["10"];
+  const expected: Record<string, string[]> = {
+    "38:00": ["3:50", "3:50", "3:40"],
+    "48:00": ["4:50", "4:50", "4:40"],
+    "50:00": ["4:55", "5:05", "4:55"],
+    "52:00": ["5:15", "5:15", "5:00"],
+    "57:00": ["5:45", "5:45", "5:30"],
+    "1:03:00": ["6:20", "6:20", "6:10"],
+  };
+  Object.entries(expected).forEach(([time, paces]) => {
+    const p = buildPlan(c, parseTime(time) as number, "kick");
+    assert.deepEqual(p.bandPaces.map(formatPace), paces, `мягкий разгон, 10 км ${time}`);
+  });
 }
 
 // ── Кривой ввод не должен доходить до расчёта ────────────────────────────────
