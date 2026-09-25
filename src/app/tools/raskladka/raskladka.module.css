@@ -62,17 +62,38 @@
   max-width: 62ch;
 }
 
+/* Профиль занимает всю ширину, а не левую колонку на 330 px: на марафоне это
+   разница между 7 и 24 пикселями на километр. Раскладка по областям, а не по
+   порядку в DOM, поэтому на широком экране профиль сверху, а на телефоне идёт
+   между вводом и результатом, как читается наряд. */
 .grid {
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr);
+  grid-template-areas:
+    "prof prof"
+    "input results";
   gap: 30px;
   margin-top: 26px;
   align-items: start;
 }
 
+.colInput {
+  grid-area: input;
+  min-width: 0;
+}
+
+.colRes {
+  grid-area: results;
+  min-width: 0;
+}
+
 @media (max-width: 860px) {
   .grid {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "input"
+      "prof"
+      "results";
     gap: 22px;
   }
 }
@@ -171,6 +192,14 @@
   color: var(--accent);
 }
 
+/* Нажатая кнопка подсвечена: значение по умолчанию совпадает с одной из них,
+   и это должно быть видно глазом, а не выясняться сравнением цифр. */
+.chips button[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+}
+
 .chips button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -195,11 +224,28 @@
 }
 
 .prof {
-  margin-top: 18px;
+  grid-area: prof;
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 16px 14px 10px;
+  padding: 14px 12px 12px;
+}
+
+.profH {
+  margin: 0 0 10px;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Контейнер, у которого компонент мерит ширину. Ничего лишнего: любой padding
+   здесь ушёл бы в расхождение между измеренной шириной и шириной svg. */
+.profBox {
+  width: 100%;
+  min-width: 0;
 }
 
 .profSvg {
@@ -213,20 +259,89 @@
 .legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin: 8px 0 0;
-  padding-inline: 4px;
+  gap: 10px 14px;
+  margin: 10px 0 0;
+  padding-inline: 2px;
   font-family: var(--font-jetbrains), ui-monospace, monospace;
-  font-size: 10.5px;
-  color: var(--muted);
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
 }
 
 .legend i {
   display: inline-block;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 2px;
-  margin-right: 5px;
+  margin-right: 6px;
+  flex: none;
+}
+
+.legend .dotFood {
+  border-radius: 50%;
+}
+
+.stList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 9px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.stList p {
+  margin: 0;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.stList b {
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+.starts {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.startsH {
+  margin: 0 0 6px;
+  font-family: var(--font-jetbrains), ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.starts p + p {
+  margin-top: 7px;
+}
+
+.starts p:not(.startsH) {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+.starts b {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
 }
 
 .goal {
@@ -394,7 +509,10 @@
 }
 
 .tblwrap {
+  max-width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);

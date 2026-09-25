@@ -10,6 +10,14 @@
  *   42,2 км — профиль снят с трека организатора (racewall), 190 м на старте,
  *            холмистая середина до двадцатого километра, дальше ровно.
  *
+ * Старты и пункты питания сверены 25.09.2026 с официальным расписанием
+ * (moscowmarathon10km.runc.run, moscowmarathon.runc.run/raspisanie и /trassa).
+ * 09:00 у обеих дистанций — элитный кластер с Воробьёвской набережной, это НЕ
+ * наш старт. Массовый бегун стартует волнами с улицы Косыгина: на десятке
+ * кластер А в 09:05, дальше до 10:20; на марафоне кластер А в 09:04, дальше до
+ * 09:59. Часы считают личное время от своей волны, поэтому раскладка привязана
+ * к первой массовой волне, а не к 09:00.
+ *
  * Поправка на уклон — полином Минетти для энергостоимости бега. Чистая формула
  * переоценивает выигрыш на спуске, потому что не знает про торможение и
  * эксцентрику, поэтому спуск приглушён до DOWN, подъём до UP. На уклоне 2,5 %
@@ -29,13 +37,27 @@ export type BandDef = {
   text: string;
 };
 
-export type Station = { km: number; label: string };
+/** kind различает пункты на профиле: питание рисуется кружком, вода штрихом. */
+export type Station = { km: number; label: string; kind: "food" | "water" };
+
+export type Start = {
+  /** День забега, как в официальном расписании. */
+  date: string;
+  /** Элитный кластер: другое место и другое время, к массовому старту не относится. */
+  elite: string;
+  /** Уже в нужном падеже: подставляется после предлога «с». */
+  eliteWhere: string;
+  /** Первая массовая волна, кластер А. От неё и считается раскладка. */
+  first: string;
+  /** Последняя волна по расписанию. */
+  last: string;
+};
 
 export type Course = {
   id: CourseId;
   name: string;
   total: number;
-  startTime: string;
+  start: Start;
   where: string;
   hint: string;
   elev: number[];
@@ -46,6 +68,7 @@ export type Course = {
   stations: Station[];
   marks: Station[];
   presets: string[];
+  defaultTarget: string;
 };
 
 export const COURSES: Record<CourseId, Course> = {
@@ -53,28 +76,41 @@ export const COURSES: Record<CourseId, Course> = {
     id: "10",
     name: "10 км",
     total: 10,
-    startTime: "09:05",
+    start: {
+      date: "26 сентября",
+      elite: "09:00",
+      eliteWhere: "Воробьёвской набережной",
+      first: "09:05",
+      last: "10:20",
+    },
     where: "старт ул. Косыгина у МГУ, финиш «Лужники»",
     hint:
       "Первые три километра идут вниз, дальше ровно до финиша. Примерно в середине короткий заезд на Бородинский мост. Единственный пункт на 4,7 км.",
     elev: [190, 177, 152, 126, 123, 123, 129, 121, 122, 124, 125],
     bands: [
-      { from: 0, to: 3, title: "спуск с Косыгина", text: "Придёт сам. Быстрее не бежать." },
+      { from: 0, to: 3, title: "спуск с Косыгина", text: "Придёт без усилий. Быстрее не бежать." },
       { from: 3, to: 8, title: "рабочий", text: "Ровно, без рывков. На мосту темп просядет." },
-      { from: 8, to: 10, title: "финиш", text: "Всё, что осталось." },
+      { from: 8, to: 10, title: "финиш", text: "Всё, что есть." },
     ],
     shapeEven: [1.014, 1.0, 0.996],
     shapeKick: [1.009, 1.0, 0.94],
     checks: [3, 5, 8],
-    stations: [{ km: 4.7, label: "вода и губки" }],
-    marks: [{ km: 4.5, label: "Бородинский мост" }],
-    presets: ["38:00", "40:00", "44:00", "48:00", "52:00", "57:00", "1:03:00"],
+    stations: [{ km: 4.7, label: "вода и губки", kind: "water" }],
+    marks: [{ km: 4.5, label: "Бородинский мост", kind: "water" }],
+    presets: ["38:00", "40:00", "44:00", "48:00", "50:00", "52:00", "57:00", "1:03:00"],
+    defaultTarget: "50:00",
   },
   "42": {
     id: "42",
     name: "42,2 км",
     total: 42.2,
-    startTime: "09:04",
+    start: {
+      date: "27 сентября",
+      elite: "09:00",
+      eliteWhere: "Воробьёвской набережной",
+      first: "09:04",
+      last: "09:59",
+    },
     where: "старт ул. Косыгина у МГУ, финиш «Лужники»",
     hint:
       "Спуск до четвёртого километра, затем холмистая середина до двадцатого, дальше ровно. Гели на трассе только на 19,8 и 35,4 км.",
@@ -93,20 +129,21 @@ export const COURSES: Record<CourseId, Course> = {
     shapeKick: [1.018, 1.0, 0.996, 0.972],
     checks: [10, 21.1, 30, 35],
     stations: [
-      { km: 4.9, label: "вода" },
-      { km: 8.3, label: "питание" },
-      { km: 14.6, label: "вода" },
-      { km: 16.3, label: "вода" },
-      { km: 19.8, label: "питание + гели" },
-      { km: 23.8, label: "изотоник" },
-      { km: 29.6, label: "питание" },
-      { km: 33, label: "газвода" },
-      { km: 35.4, label: "питание + гели" },
-      { km: 37.2, label: "вода" },
-      { km: 38.7, label: "питание" },
+      { km: 4.9, label: "вода", kind: "water" },
+      { km: 8.3, label: "питание", kind: "food" },
+      { km: 14.6, label: "вода", kind: "water" },
+      { km: 16.3, label: "вода", kind: "water" },
+      { km: 19.8, label: "питание и гели", kind: "food" },
+      { km: 23.8, label: "изотоник", kind: "water" },
+      { km: 29.6, label: "питание", kind: "food" },
+      { km: 33, label: "газвода", kind: "water" },
+      { km: 35.4, label: "питание и гели", kind: "food" },
+      { km: 37.2, label: "вода", kind: "water" },
+      { km: 38.7, label: "питание и газвода", kind: "food" },
     ],
     marks: [],
     presets: ["3:00:00", "3:15:00", "3:30:00", "3:45:00", "4:00:00", "4:30:00", "5:00:00"],
+    defaultTarget: "4:00:00",
   },
 };
 
@@ -145,6 +182,11 @@ export function formatTime(sec: number): string {
 export function formatPace(sec: number): string {
   const t = Math.round(sec);
   return `${Math.floor(t / 60)}:${t % 60 < 10 ? "0" : ""}${t % 60}`;
+}
+
+/** Десятичный разделитель на странице всюду запятая, точка не пролезает. */
+export function formatDec(x: number, digits = 1): string {
+  return x.toFixed(digits).replace(".", ",");
 }
 
 export function formatKm(x: number): string {
@@ -194,6 +236,69 @@ function bandIndex(c: Course, km: number): number {
   return c.bands.length - 1;
 }
 
+/** Промах по цели меньше сотой секунды — это ошибка double, а не промах. */
+const EXACT_EPS = 0.005;
+
+/** Насколько далеко от идеального темпа полосы решателю разрешено искать. */
+const WINDOW = 20;
+
+/* Допустимый промах по цели: четверть секунды на километр.
+ *
+ * НА ДЕСЯТКЕ ЭТО «ТОЛЬКО ТОЧНО». Полосы там 3, 5 и 2 км, темпы кратны пяти
+ * секундам, значит сумма кратна пяти, и любая цель в целых минутах берётся
+ * ровно. Допуск 3 с при решётке шагом 5 с не открывает ни одного неточного
+ * варианта, зато не приходится писать «для десятки ноль» отдельным условием.
+ *
+ * НА МАРАФОНЕ ЭТО ОДИННАДЦАТЬ СЕКУНД, и они нужны. Последняя полоса 10,2 км, и
+ * суммы 5a + 15b + 12c + 10,2d при темпах кратных пяти ложатся редкой решёткой:
+ * для 3:30:00 «С разгоном» единственная точная раскладка в окне это
+ * 5:15 / 5:20 / 4:45 / 4:35, то есть сорок секунд размаха и вторая половина на
+ * 11 % тяжелее первой. Требовать точность здесь значит требовать вредный совет.
+ * Одиннадцать секунд на 42,2 км это 0,07 % дистанции и четверть секунды на
+ * километр — тоньше, чем живой человек отработает по часам.
+ *
+ * ОПОЗДАНИЕ СЧИТАЕТСЯ ВДВОЕ. Промах в обе стороны одинаков по модулю, но не по
+ * смыслу: цель на часах это обещание успеть. Прийти на шесть секунд раньше
+ * лучше, чем на четыре позже, и допуск устроен так, чтобы решатель выбирал
+ * именно так. */
+function missAllowance(totalKm: number): number {
+  return Math.max(1, Math.round(totalKm / 4));
+}
+const LATE_WEIGHT = 2;
+
+/* Форма раскладки — ЖЁСТКИЕ условия, а не слагаемые цены.
+ *
+ * Сначала было наоборот: промах по цели и кривизна формы складывались в одну
+ * цену, и решатель их разменивал. Получалось два разных вранья. Когда форма
+ * весила больше, 50:00 «Ровный» выдавал 49:55, а 3:15:00 не добирал двадцать
+ * секунд — сверка по часам врала к финишу на целую минуту. Когда точность
+ * весила больше, сходилось время, но рассыпался смысл: на марафоне 3:15:00
+ * ровная часть шла 4:45 против 4:35 на холмистой середине, то есть бегуну
+ * предлагали замедлиться там, где стало легче, а кнопки «Ровный» и «С разгоном»
+ * начали давать одинаковый ответ.
+ *
+ * Поэтому условия ниже не обсуждаются: раскладка, которая их нарушает, не
+ * рассматривается вообще. Точность выбирается уже внутри допустимого, форма
+ * дотягивается мягкой ценой. */
+function shapeAllowed(paces: number[], finish: Finish): boolean {
+  const last = paces.length - 1;
+  // Спуск не медленнее рабочей полосы, но и не уносит больше 15 с.
+  if (paces[0] > paces[1]) return false;
+  if (paces[0] < paces[1] - 15) return false;
+  // После спуска темп не ползёт вверх от полосы к полосе: там, где стало легче,
+  // не может стать медленнее.
+  for (let q = 2; q < last; q += 1) if (paces[q] > paces[q - 1]) return false;
+  if (finish === "kick") {
+    // Разгон — это разгон: финишная полоса быстрее предыдущей, иначе кнопка врёт.
+    return paces[last] <= paces[last - 1] - 5;
+  }
+  // Ровный финиш: та же цифра до конца, плюс-минус один шаг решётки. Пять секунд
+  // на последней полосе это не разгон, а округление; запрещать их значит на
+  // ровном месте терять точное попадание в цель (на десятке 44:00 иначе не
+  // складывается совсем).
+  return Math.abs(paces[last] - paces[last - 1]) <= 5;
+}
+
 /** Раскладка под целевое время. Темп каждой полосы кратен пяти секундам. */
 export function buildPlan(c: Course, target: number, finish: Finish): Plan {
   const shape = finish === "even" ? c.shapeEven : c.shapeKick;
@@ -207,54 +312,64 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
   );
   const base = target / segs.reduce((a, s) => a + s.factor * s.len, 0);
 
-  let best: { cost: number; paces: number[]; total: number; diff: number } | null = null;
+  // Идеальный темп полосы: то, что вышло бы без округления до пяти секунд.
+  const ideal = c.bands.map((_, bi) => {
+    const ss = segs.filter((s) => s.band === bi);
+    return ss.reduce((a, s) => a + base * s.factor * s.len, 0) / bandKm[bi];
+  });
+  const options = ideal.map((v) => {
+    const c0 = Math.round(v / 5) * 5;
+    const out: number[] = [];
+    for (let d = -WINDOW; d <= WINDOW; d += 5) if (c0 + d >= 100) out.push(c0 + d);
+    return out;
+  });
 
-  for (let k = -60; k <= 60; k += 1) {
-    const p0 = base * (1 + k * 0.0007);
-    const ideal = c.bands.map((_, bi) => {
-      const ss = segs.filter((s) => s.band === bi);
-      return ss.reduce((a, s) => a + p0 * s.factor * s.len, 0) / bandKm[bi];
-    });
-    const options = ideal.map((v) => {
-      const c0 = Math.round(v / 5) * 5;
-      return [c0 - 5, c0, c0 + 5];
-    });
+  const allowance = missAllowance(c.total);
+  let best:
+    | { effMiss: number; score: number; paces: number[]; total: number; diff: number }
+    | null = null;
+  const idx = options.map(() => 0);
 
-    const idx = options.map(() => 0);
-    for (;;) {
-      const paces = options.map((o, i) => o[idx[i]]);
+  for (;;) {
+    const paces = options.map((o, i) => o[idx[i]]);
+    if (shapeAllowed(paces, finish)) {
       const total = paces.reduce((a, v, bi) => a + v * bandKm[bi], 0);
       const diff = target - total;
+      const miss = Math.abs(diff);
       const last = paces.length - 1;
 
-      let cost = diff >= 0 ? diff : -diff * 5;
+      let cost = 0;
       for (let i = 0; i < paces.length; i += 1) cost += Math.abs(paces[i] - ideal[i]) * 1.6;
-      // спуск не должен уносить больше 15 с против рабочего темпа
-      if (paces[0] < paces[1] - 15) cost += 60;
-      if (paces[0] > paces[1]) cost += 35;
-      // после спуска темп не ползёт вверх от полосы к полосе
-      for (let q = 2; q < last; q += 1) if (paces[q] > paces[q - 1]) cost += 18;
-      if (finish === "kick") {
-        if (paces[last] > paces[last - 1]) cost += 70;
-        if (paces[last] > paces[last - 1] - 5) cost += 20;
-      } else if (Math.abs(paces[last] - paces[last - 1]) > 5) {
-        cost += 45;
-      }
+      // ПРИЙТИ РАНЬШЕ ЦЕЛИ, А НЕ ПОЗЖЕ. Промах в обе стороны одинаков по модулю,
+      // но не по смыслу: цель на часах это обещание успеть, а не «примерно там».
+      if (diff < 0) cost += 25;
+      // ровный финиш тем лучше, чем ровнее
+      if (finish === "even" && paces[last] !== paces[last - 1]) cost += 10;
 
-      if (!best || cost < best.cost) best = { cost, paces: [...paces], total, diff };
-
-      let pos = options.length - 1;
-      while (pos >= 0) {
-        idx[pos] += 1;
-        if (idx[pos] < options[pos].length) break;
-        idx[pos] = 0;
-        pos -= 1;
-      }
-      if (pos < 0) break;
+      // ТОЧНОСТЬ ПЕРВЫМ ДЕЛОМ, но с допуском: промах в пределах допуска считается
+      // нулевым, и между такими вариантами решает форма. Промах сверх допуска не
+      // разменивается ни на что.
+      const weighted = diff < 0 ? miss * LATE_WEIGHT : miss;
+      const effMiss = Math.max(0, weighted - allowance);
+      const score = cost + miss * 1.5;
+      const better =
+        !best ||
+        effMiss < best.effMiss - EXACT_EPS ||
+        (effMiss <= best.effMiss + EXACT_EPS && score < best.score);
+      if (better) best = { effMiss, score, paces: [...paces], total, diff };
     }
+
+    let pos = options.length - 1;
+    while (pos >= 0) {
+      idx[pos] += 1;
+      if (idx[pos] < options[pos].length) break;
+      idx[pos] = 0;
+      pos -= 1;
+    }
+    if (pos < 0) break;
   }
 
-  const chosen = best as { cost: number; paces: number[]; total: number; diff: number };
+  const chosen = best as { effMiss: number; score: number; paces: number[]; total: number; diff: number };
 
   let cum = 0;
   segs.forEach((s) => {
@@ -285,7 +400,6 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
     return { km: d, time: t };
   });
 
-  const n = chosen.paces.length;
   return {
     segs,
     bandPaces: chosen.paces,
@@ -294,7 +408,10 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
     diff: chosen.diff,
     shift,
     checks,
-    kick: chosen.paces[n - 1] < chosen.paces[n - 2],
+    // Стрелка разгона следует за РЕЖИМОМ, а не за сравнением двух чисел. Иначе
+    // «Ровный», где последняя полоса округлилась на пять секунд вниз, показывал
+    // бы стрелку разгона, которого никто не планировал.
+    kick: finish === "kick",
   };
 }
 
@@ -322,7 +439,11 @@ export function effortVerdict(c: Course, shift: number): { ok: boolean; text: st
 }
 
 export function planAsText(c: Course, plan: Plan): string {
-  const lines = [`${c.name} · цель ${formatTime(plan.total)} · старт ${c.startTime}`];
+  const lines = [
+    // «финиш», а не «цель»: на марафоне план может прийти на несколько секунд
+    // раньше введённой цели, и называть его целью значит тихо подменить число.
+    `${c.name} · финиш ${formatTime(plan.total)} · ${c.start.date}, волна ${c.start.first}`,
+  ];
   c.bands.forEach((b, i) => {
     lines.push(
       `${formatPace(plan.bandPaces[i])}  км ${formatKm(b.from === 0 ? 1 : b.from)}-${formatKm(b.to)}  ${b.title}`,

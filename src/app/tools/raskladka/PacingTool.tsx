@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   COURSES,
   buildPlan,
   effortVerdict,
+  formatDec,
   formatKm,
   formatPace,
   formatTime,
@@ -19,78 +20,206 @@ import styles from "./raskladka.module.css";
 
 const STORAGE_KEY = "igorp-pacing-calc-v1";
 
+/* Профиль рисуется в РЕАЛЬНЫХ пикселях, а не в растянутом viewBox.
+ * Раньше viewBox был 640x150 при любой ширине: на телефоне блок сжимался до
+ * ~315 px, и вместе с картинкой сжимался шрифт — подписи 9 px превращались в
+ * 4,4 px, то есть в серую кашу. Теперь ширину мерим у контейнера и кладём её в
+ * viewBox один к одному, поэтому fontSize="11" это одиннадцать настоящих
+ * пикселей и на телефоне, и на мониторе. */
+function useBoxWidth(fallback: number) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [w, setW] = useState(fallback);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const apply = () => setW(Math.max(260, Math.round(el.clientWidth)));
+    apply();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", apply);
+      return () => window.removeEventListener("resize", apply);
+    }
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return { ref, w };
+}
+
 function Profile({ course }: { course: Course }) {
-  const W = 640;
-  const H = 150;
-  const PT = 18;
-  const PB = 26;
-  const PAD = 4;
+  const { ref, w } = useBoxWidth(620);
+  const W = w;
+  const H = w < 520 ? 250 : 230;
+  const PT = 24;
+  const PB = 38;
+  const PL = 38;
+  const PR = 12;
+
   const lo = Math.min(...course.elev);
   const hi = Math.max(...course.elev);
   const span = Math.max(hi - lo, 20);
   const n = course.elev.length - 1;
-  const x = (d: number) => PAD + (d / course.total) * (W - PAD * 2);
-  const y = (e: number) => PT + (1 - (e - lo) / span) * (H - PT - PB);
+  const y0 = H - PB;
+  const x = (d: number) => PL + (d / course.total) * (W - PL - PR);
+  const y = (e: number) => PT + (1 - (e - lo) / span) * (y0 - PT);
   const at = (i: number) => (i >= n ? course.total : Math.min(i, course.total));
 
-  const line = course.elev.map((e, i) => `${i === 0 ? "M" : "L"}${x(at(i)).toFixed(1)} ${y(e).toFixed(1)}`).join(" ");
-  const step = course.total > 20 ? 10 : 2;
+  const line = course.elev
+    .map((e, i) => `${i === 0 ? "M" : "L"}${x(at(i)).toFixed(1)} ${y(e).toFixed(1)}`)
+    .join(" ");
+
+  // Шаг сетки по километрам: на узком экране реже, чтобы числа не сливались.
+  const step = course.total > 20 ? (W < 520 ? 10 : 5) : W < 360 ? 2 : 1;
   const ticks: number[] = [];
-  for (let d = 0; d <= course.total + 0.01; d += step) ticks.push(d);
+  for (let d = 0; d <= course.total + 0.01; d += step) ticks.push(Math.round(d * 10) / 10);
+
+  const rows = [hi, Math.round((hi + lo) / 2), lo];
 
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className={styles.profSvg}
-      role="img"
-      aria-label={`Профиль трассы ${course.name}: старт около ${course.elev[0]} метров, финиш около ${course.elev[n]} метров`}
-    >
-      {course.elev.slice(0, -1).map((e, i) => {
-        const g = (course.elev[i + 1] - e) / ((at(i + 1) - at(i)) * 1000);
-        const fill = g < -0.004 ? "var(--green)" : g > 0.004 ? "var(--hill)" : "var(--line)";
-        return (
-          <path
-            key={i}
-            d={`M${x(at(i)).toFixed(1)} ${y(e).toFixed(1)} L${x(at(i + 1)).toFixed(1)} ${y(course.elev[i + 1]).toFixed(1)} L${x(at(i + 1)).toFixed(1)} ${H - PB} L${x(at(i)).toFixed(1)} ${H - PB} Z`}
-            fill={fill}
-            opacity="0.32"
-          />
-        );
-      })}
-      <path d={line} fill="none" stroke="var(--ink)" strokeWidth="1.7" strokeLinejoin="round" />
-      {course.stations.map((s) => (
-        <line
-          key={s.km}
-          x1={x(s.km).toFixed(1)}
-          y1={H - PB}
-          x2={x(s.km).toFixed(1)}
-          y2={H - PB + 6}
-          stroke="var(--accent)"
-          strokeWidth="1.6"
-        />
-      ))}
-      {ticks.map((d) => (
-        <text
-          key={d}
-          x={x(d).toFixed(1)}
-          y={H - 4}
-          fill="var(--muted)"
-          fontSize="9"
-          textAnchor={d === 0 ? "start" : d >= course.total - 0.01 ? "end" : "middle"}
-        >
-          {formatKm(d)}
+    <div ref={ref} className={styles.profBox}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width={W}
+        height={H}
+        className={styles.profSvg}
+        role="img"
+        aria-label={`Профиль трассы ${course.name}: старт около ${course.elev[0]} метров, самая высокая точка ${hi} метров, самая низкая ${lo} метров, финиш около ${course.elev[n]} метров`}
+      >
+        {rows.map((e) => (
+          <g key={e}>
+            <line
+              x1={PL}
+              y1={y(e).toFixed(1)}
+              x2={W - PR}
+              y2={y(e).toFixed(1)}
+              stroke="var(--line)"
+              strokeWidth="1"
+              strokeDasharray={e === lo ? undefined : "3 4"}
+            />
+            <text
+              x={PL - 7}
+              y={(y(e) + 4).toFixed(1)}
+              fill="var(--muted)"
+              fontSize="11"
+              textAnchor="end"
+            >
+              {e}
+            </text>
+          </g>
+        ))}
+        <text x={PL - 7} y={PT - 10} fill="var(--muted)" fontSize="10.5" textAnchor="end">
+          м
         </text>
-      ))}
-      <text x={PAD} y="12" fill="var(--muted)" fontSize="9.5">{`${hi} м`}</text>
-      <text x={W - PAD} y="12" fill="var(--muted)" fontSize="9.5" textAnchor="end">{`${lo} м`}</text>
-    </svg>
+
+        {course.elev.slice(0, -1).map((e, i) => {
+          const g = (course.elev[i + 1] - e) / ((at(i + 1) - at(i)) * 1000);
+          const fill = g < -0.004 ? "var(--green)" : g > 0.004 ? "var(--hill)" : "var(--line-2)";
+          return (
+            <path
+              key={i}
+              d={`M${x(at(i)).toFixed(1)} ${y(e).toFixed(1)} L${x(at(i + 1)).toFixed(1)} ${y(course.elev[i + 1]).toFixed(1)} L${x(at(i + 1)).toFixed(1)} ${y0} L${x(at(i)).toFixed(1)} ${y0} Z`}
+              fill={fill}
+              opacity="0.42"
+            />
+          );
+        })}
+        <path d={line} fill="none" stroke="var(--ink)" strokeWidth="2" strokeLinejoin="round" />
+
+        {course.marks.map((m) => (
+          <g key={`mark-${m.km}`}>
+            <line
+              x1={x(m.km).toFixed(1)}
+              y1={PT}
+              x2={x(m.km).toFixed(1)}
+              y2={y0}
+              stroke="var(--ink-2)"
+              strokeWidth="1"
+              strokeDasharray="2 3"
+            />
+            <text
+              x={(x(m.km) + 5).toFixed(1)}
+              y={PT + 10}
+              fill="var(--ink-2)"
+              fontSize="10.5"
+            >
+              {m.label}
+            </text>
+          </g>
+        ))}
+
+        <line x1={PL} y1={y0} x2={W - PR} y2={y0} stroke="var(--line-2)" strokeWidth="1" />
+
+        {course.stations.map((s) => (
+          <g key={`st-${s.km}`}>
+            <line
+              x1={x(s.km).toFixed(1)}
+              y1={y0}
+              x2={x(s.km).toFixed(1)}
+              y2={y0 + 7}
+              stroke={s.kind === "food" ? "var(--accent)" : "var(--water)"}
+              strokeWidth="1.6"
+            />
+            {s.kind === "food" ? (
+              <circle
+                cx={x(s.km).toFixed(1)}
+                cy={y0 + 11}
+                r="4"
+                fill="var(--accent)"
+              />
+            ) : (
+              <rect
+                x={(x(s.km) - 3).toFixed(1)}
+                y={y0 + 8}
+                width="6"
+                height="6"
+                rx="1"
+                fill="var(--water)"
+              />
+            )}
+          </g>
+        ))}
+
+        {ticks.map((d) => (
+          <text
+            key={d}
+            x={x(d).toFixed(1)}
+            y={H - 6}
+            fill="var(--muted)"
+            fontSize="11"
+            textAnchor={d === 0 ? "start" : d >= course.total - 0.01 ? "end" : "middle"}
+          >
+            {formatKm(d)}
+          </text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function StationList({ course }: { course: Course }) {
+  const food = course.stations.filter((s) => s.kind === "food");
+  const water = course.stations.filter((s) => s.kind !== "food");
+  return (
+    <div className={styles.stList}>
+      {food.length ? (
+        <p>
+          <b>Питание</b> {food.map((s) => formatKm(s.km)).join(" · ")} км
+        </p>
+      ) : null}
+      {water.length ? (
+        <p>
+          <b>Вода</b> {water.map((s) => formatKm(s.km)).join(" · ")} км
+        </p>
+      ) : null}
+    </div>
   );
 }
 
 export default function PacingTool() {
   const [courseId, setCourseId] = useState<CourseId>("10");
   const [finish, setFinish] = useState<Finish>("kick");
-  const [target, setTarget] = useState("50:00");
+  const [target, setTarget] = useState(COURSES["10"].defaultTarget);
   const [showText, setShowText] = useState(false);
   const [said, setSaid] = useState("");
 
@@ -156,7 +285,7 @@ export default function PacingTool() {
 
   function pickCourse(id: CourseId) {
     setCourseId(id);
-    setTarget(COURSES[id].presets[3]);
+    setTarget(COURSES[id].defaultTarget);
   }
 
   return (
@@ -169,7 +298,7 @@ export default function PacingTool() {
       </p>
 
       <div className={styles.grid}>
-        <div>
+        <div className={styles.colInput}>
           <div className={styles.panel}>
             <div className={styles.field}>
               <p className={styles.lbl}>Дистанция</p>
@@ -202,7 +331,12 @@ export default function PacingTool() {
               />
               <div className={styles.chips}>
                 {course.presets.map((p) => (
-                  <button key={p} type="button" onClick={() => setTarget(p)}>
+                  <button
+                    key={p}
+                    type="button"
+                    aria-pressed={p === target}
+                    onClick={() => setTarget(p)}
+                  >
                     {p}
                   </button>
                 ))}
@@ -221,34 +355,53 @@ export default function PacingTool() {
               </div>
               <p className={styles.noteS}>
                 {finish === "kick"
-                  ? "Последняя часть быстрее рабочего темпа. Так бегут, когда готов."
-                  : "Один темп до конца, без ускорения. Так бегут после болезни, на первом старте или когда форма под вопросом."}
+                  ? "Последняя часть быстрее рабочего темпа. Вариант для тех, у кого к концу остаются силы."
+                  : "Один темп от старта до финиша, без ускорения в конце. Самый простой план: держишь одну цифру и не думаешь о раскладке."}
               </p>
             </div>
 
             <p className={styles.hint}>{course.hint}</p>
-          </div>
 
-          <div className={styles.prof}>
-            <Profile course={course} />
-            <p className={styles.legend}>
-              <span>
-                <i style={{ background: "var(--green)" }} />
-                спуск
-              </span>
-              <span>
-                <i style={{ background: "var(--hill)" }} />
-                подъём
-              </span>
-              <span>
-                <i style={{ background: "var(--accent)" }} />
-                пункт питания
-              </span>
-            </p>
+            <div className={styles.starts}>
+              <p className={styles.startsH}>Старт {course.start.date}</p>
+              <p>
+                <b>{course.start.first}</b> первая массовая волна, кластер А, улица Косыгина. Дальше
+                кластеры уходят с интервалами до <b>{course.start.last}</b>. Раскладка считается от
+                своей волны: часы включаются на стартовой арке, а не в {course.start.elite}.
+              </p>
+              <p>
+                <b>{course.start.elite}</b> уходит элитный кластер, и уходит с другого места, с{" "}
+                {course.start.eliteWhere}. К массовому старту это время не относится.
+              </p>
+            </div>
           </div>
         </div>
 
-        <div>
+        <div className={styles.prof}>
+          <p className={styles.profH}>Профиль трассы · {course.name}</p>
+          <Profile course={course} />
+          <p className={styles.legend}>
+            <span>
+              <i style={{ background: "var(--green)" }} />
+              спуск
+            </span>
+            <span>
+              <i style={{ background: "var(--hill)" }} />
+              подъём
+            </span>
+            <span>
+              <i className={styles.dotFood} style={{ background: "var(--accent)" }} />
+              пункт питания
+            </span>
+            <span>
+              <i style={{ background: "var(--water)" }} />
+              вода
+            </span>
+          </p>
+          <StationList course={course} />
+        </div>
+
+        <div className={styles.colRes}>
           <div className={styles.goal}>
             <div>
               <p className={styles.goalLab}>Финиш по плану</p>
@@ -258,11 +411,11 @@ export default function PacingTool() {
               {plan ? (
                 <>
                   Средний темп <b>{formatPace(plan.total / course.total)}</b> на километр.{" "}
-                  {plan.diff > 0
-                    ? `Запас к цели ${Math.round(plan.diff)} с.`
-                    : plan.diff < 0
-                      ? `Быстрее цели на ${Math.round(-plan.diff)} с.`
-                      : "Ровно в цель."}
+                  {Math.abs(plan.diff) < 0.5
+                    ? "Ровно в цель."
+                    : plan.diff > 0
+                      ? `Запас к цели ${Math.round(plan.diff)} с.`
+                      : `Быстрее цели на ${Math.round(-plan.diff)} с.`}
                 </>
               ) : (
                 <>
@@ -316,7 +469,7 @@ export default function PacingTool() {
                   <p className={v.ok ? `${styles.verdict} ${styles.verdictOk}` : `${styles.verdict} ${styles.verdictWarn}`}>
                     <b>Эквивалент ровного бега:</b> вторая половина идёт на{" "}
                     <b>
-                      {Math.abs(plan.shift).toFixed(1)} % {plan.shift < 0 ? "тяжелее" : "легче"}
+                      {formatDec(Math.abs(plan.shift))} % {plan.shift < 0 ? "тяжелее" : "легче"}
                     </b>{" "}
                     первой. {v.text}
                   </p>
@@ -338,7 +491,9 @@ export default function PacingTool() {
                   </thead>
                   <tbody>
                     {plan.segs.map((s) => {
-                      const g = s.grade * 100;
+                      const raw = s.grade * 100;
+                      // -0,0 % бессмысленно на экране: это ноль, а не спуск
+                      const g = Math.abs(raw) < 0.05 ? 0 : raw;
                       const cls = g < -0.4 ? styles.rowDown : g > 0.4 ? styles.rowUp : undefined;
                       const extra = stationAt.get(Math.ceil(s.to - 0.0001));
                       return (
@@ -350,7 +505,7 @@ export default function PacingTool() {
                           <td>{Math.round(s.elevTo)} м</td>
                           <td>
                             {g > 0 ? "+" : ""}
-                            {g.toFixed(1)} %
+                            {formatDec(g)} %
                           </td>
                           <td>{formatPace(s.pace)}</td>
                           <td>{formatPace(s.flatPace)}</td>
@@ -380,8 +535,9 @@ export default function PacingTool() {
           ) : null}
 
           <p className={styles.foot}>
-            Трасса {course.where}, старт {course.startTime}. Профиль приблизительный: снят с трека по
-            спутниковой модели высот, мосты в такой модели не видны. Это план, а не обещание.
+            Трасса: {course.where}. Старт {course.start.date}, первая массовая волна{" "}
+            {course.start.first}. Профиль приблизительный: снят с трека по спутниковой модели высот,
+            мосты в такой модели не видны.
           </p>
         </div>
       </div>
