@@ -944,7 +944,7 @@ export default function LandingPage() {
           <div>© 2026 · Игорь Поцелуев · Беговой клуб</div>
           <div>
             <a href="#">Instagram</a> · <a href="#">Telegram</a> ·{" "}
-            <a href="/tools">Калькуляторы</a>
+            <a href="/tools">Бесплатно</a>
           </div>
         </div>
       </footer>

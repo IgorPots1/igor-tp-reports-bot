@@ -17,6 +17,7 @@ import {
   type Finish,
 } from "./pacing-logic";
 import styles from "./raskladka.module.css";
+import ConsultNotice from "@/components/ConsultNotice";
 
 const STORAGE_KEY = "igorp-pacing-calc-v1";
 
@@ -531,6 +532,8 @@ export default function PacingTool() {
                 {said ? <span className={styles.said}>{said}</span> : null}
               </div>
               {showText ? <pre className={styles.out}>{text}</pre> : null}
+
+              <ConsultNotice />
             </>
           ) : null}
 

@@ -10,7 +10,7 @@ export default function SiteHeader() {
       </Link>
       <nav aria-label="Основная навигация">
         <a href="/tools" className={styles.navLink}>
-          Калькуляторы
+          Бесплатно
         </a>
       </nav>
     </header>

@@ -10,9 +10,9 @@ import { jetbrains, onest } from "@/lib/fonts";
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/tools",
-  title: "Калькуляторы | igorp.run",
+  title: "Посчитай свой бег | igorp.run",
   description:
-    "Бесплатные инструменты для бега: темп, погода на пробежку, питание вокруг тренировки, подбор кроссовок.",
+    "Темп, раскладка, питание, одежда и кроссовки. Бесплатно, за минуту.",
 });
 
 type Card = {
@@ -68,9 +68,9 @@ export default function ToolsShowcasePage() {
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
       <SiteHeader />
       <div className={styles.wrap}>
-        <h1 className={styles.title}>Калькуляторы</h1>
+        <h1 className={styles.title}>Посчитай свой бег</h1>
         <p className={styles.lede}>
-          Бесплатные инструменты, которыми я пользуюсь сам и которые даю ученикам.
+          Темп, раскладка, питание, одежда и кроссовки. Бесплатно, за минуту.
         </p>
 
         <div className={styles.list}>

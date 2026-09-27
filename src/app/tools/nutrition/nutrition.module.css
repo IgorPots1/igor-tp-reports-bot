@@ -232,45 +232,6 @@
 }
 
 /* ----- CTA ----- */
-.cta {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius);
-  padding: 20px;
-}
-
-.ctaTitle {
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--ink);
-  margin-bottom: 8px;
-}
-
-.ctaText {
-  font-size: 14px;
-  color: var(--ink-2);
-  line-height: 1.6;
-  margin: 0 0 16px;
-}
-
-.ctaButton {
-  display: inline-block;
-  background: var(--accent-ink);
-  color: #ffffff;
-  font-weight: 600;
-  padding: 12px 24px;
-  border-radius: 999px;
-  font-size: 14px;
-  text-decoration: none;
-  transition: transform 0.15s ease;
-}
-
-.ctaButton:active {
-  transform: translateY(1px);
-}
-
 .footer {
   text-align: center;
   font-size: 12px;

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import styles from "./plan.module.css";
 import { buildWorkoutCards, type RaceDistance } from "./vdot";
+import ConsultNotice from "@/components/ConsultNotice";
 
 type WeekDay = { day: string; type: string; duration: string };
 
@@ -228,25 +229,10 @@ export default function ThreeRunsTool() {
         </div>
       </section>
 
-      {/* CTA */}
-      <div className={styles.cta}>
-        <div className={styles.ctaTitle}>
-          Хочешь знать, какие тренировки нужны именно тебе?
-        </div>
-        <p className={styles.ctaText}>
-          Это базовый каркас. Реальный прогресс дают правильный объём,
-          прогрессия нагрузки и восстановление, подобранные под твой уровень и
-          цель. Разберём твою подготовку на бесплатной консультации.
-        </p>
-        <a
-          href="https://t.me/IgorPotseluev"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.ctaButton}
-        >
-          Записаться на консультацию →
-        </a>
-      </div>
+      {/* Предложение консультации — только когда раскладка посчиталась.
+          При нереалистичном вводе cards равен null, результата на экране нет,
+          и звать на разбор несуществующих цифр незачем. */}
+      {cards ? <ConsultNotice /> : null}
 
       <div className={styles.footer}>igorp.run</div>
     </div>

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import styles from "./nutrition.module.css";
+import ConsultNotice from "@/components/ConsultNotice";
 import {
   calcNutrition,
   type NutritionBlock,
@@ -140,22 +141,7 @@ export default function NutritionCalculator() {
         </p>
       </div>
 
-      <div className={styles.cta}>
-        <div className={styles.ctaTitle}>Хочешь бежать быстрее и без травм?</div>
-        <p className={styles.ctaText}>
-          Питание это только часть. Результат даёт система: тренировки,
-          восстановление, темп, прогрессия. Давай разберём твою подготовку под
-          конкретную цель.
-        </p>
-        <a
-          href="https://t.me/IgorPotseluev"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={styles.ctaButton}
-        >
-          Написать мне в Telegram →
-        </a>
-      </div>
+      <ConsultNotice />
 
       <div className={styles.footer}>igorp.run · питание под тренировку</div>
     </div>

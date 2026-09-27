@@ -11,6 +11,7 @@ import {
   type ZoneItem,
 } from "./dress-logic";
 import styles from "./dress.module.css";
+import ConsultNotice from "@/components/ConsultNotice";
 
 const STORAGE_KEY = "igorp-dress-calc-v1";
 
@@ -219,6 +220,8 @@ export default function DressCalculator() {
           футболке, кому-то в ней холодно. Подстрой нижний ползунок под себя.
         </p>
       </div>
+
+      <ConsultNotice />
 
       <footer className={styles.footer}>igorp.run</footer>
     </div>

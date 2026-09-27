@@ -1,0 +1,54 @@
+/* Блок консультации под результатом инструмента.
+ *
+ * Форма взята у .demoNotice из подбора кроссовок: белая карточка, рамка и
+ * акцентная полоса слева. Своей палитры блок не заводит — все токены
+ * (--surface, --line, --accent, --ink, --radius) приходят от страницы
+ * инструмента, поэтому он одинаково сидит и на светлом /tools/dress, и на
+ * /tools/shoes, и на /tools/raskladka. */
+
+.notice {
+  border: 1px solid var(--line, #e7e1d5);
+  border-left: 3px solid var(--accent, #e5480e);
+  background: var(--surface, #ffffff);
+  border-radius: var(--radius, 14px);
+  padding: 16px 18px;
+  margin-top: 26px;
+  color: var(--ink, #191712);
+}
+
+.title {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.text {
+  margin: 7px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2, #4d483f);
+}
+
+.button {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 11px 20px;
+  border-radius: 10px;
+  background: var(--accent, #e5480e);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.button:hover {
+  filter: brightness(0.94);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--ink, #191712);
+  outline-offset: 2px;
+}

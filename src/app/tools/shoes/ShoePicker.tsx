@@ -15,6 +15,7 @@ import type {
 } from "@/features/shoes/types";
 
 import styles from "./shoes.module.css";
+import ConsultNotice from "@/components/ConsultNotice";
 
 /**
  * Опросник и выдача подборщика.
@@ -436,21 +437,7 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
           </section>
         ))}
 
-        <div className={styles.cta}>
-          <div className={styles.ctaTitle}>Разбор ротации в боте</div>
-          <p className={styles.ctaText}>
-            В боте — почему именно эта ротация, как распределить по ней
-            тренировки и когда пары пора менять.
-          </p>
-          <a
-            href="https://t.me/IgorPotseluev"
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.ctaButton}
-          >
-            Получить разбор →
-          </a>
-        </div>
+        <ConsultNotice />
 
         <button
           type="button"
