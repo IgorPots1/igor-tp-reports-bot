@@ -725,6 +725,13 @@ export type CycleWeekTarget = {
    */
   minQualityWorkMin?: number | null;
   /**
+   * Ступень лестницы коротких форматов на эту неделю (код пресета).
+   * null — лестница молчит, выбор идёт по минутам цели, как раньше.
+   */
+  preferQualityPreset?: string | null;
+  /** Что лестница решила, словами — уйдёт в заметки недели. */
+  ladderNoteRu?: string | null;
+  /**
    * Есть ли у атлета БУДУЩИЙ целевой старт (из trainingpeaks_race_events через черновик цикла).
    * У кого старт есть — длительная режется ПОСЛЕДНЕЙ: при понижении недели она уменьшается
    * пропорционально, а не обнуляется [решение Игоря 12.08].
@@ -1090,6 +1097,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         // и целиться каждой сессией в недельное число значило бы удвоить работу.
         targetWorkMinutes: cycle ? Math.round(cycle.qualityMin / Math.max(1, counts.quality)) : null,
         minWorkMinutes: cycle?.minQualityWorkMin ?? null,
+        preferPresetCode: cycle?.preferQualityPreset ?? null,
         // доля работы считается от недели ЦИКЛА, а не от исторического факта
         cycleWeeklyMin: cycle ? weekly : null,
         sessionsThisWeek: Math.max(1, counts.quality), slotType,
@@ -1175,6 +1183,19 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
    * в плане недели, а не найти случайно в coach_review одной тренировки —
    * именно шаг назад он и просил не допускать молча.
    */
+  /**
+   * РЕШЕНИЕ ЛЕСТНИЦЫ — В ЗАМЕТКИ НЕДЕЛИ [27.09.2026].
+   *
+   * Тренер просил: шаг вперёд по умолчанию, повтор только по причине, и причина
+   * написана. Пишем её здесь, а не в пометке тренировки: это решение про
+   * НЕДЕЛЮ, и читать его надо там, где видно роль недели.
+   *
+   * Пишем и когда шагнули: «7 x 4 → 8 x 4» отвечает на вопрос «а двигается ли
+   * вообще» одной строкой, не заставляя сверять две недели глазами.
+   */
+  const ladderNote = cycle?.ladderNoteRu ?? null;
+  if (ladderNote) notes.push(ladderNote);
+
   const floorWanted = cycle?.minQualityWorkMin ?? null;
   if (floorWanted != null && floorWanted > 0) {
     for (const d of plan.decs) {

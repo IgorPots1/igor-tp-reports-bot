@@ -37,6 +37,15 @@ import {
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
 import type { BeginnerWeekInput } from "./lib/beginner-week.ts";
 import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
+import { decideLadderStep, rungByCode, rungByWorkMinutes } from "./lib/interval-ladder.ts";
+import { releasedWorkFloor, sessionWorkMinutes } from "@/features/intervals/loop/released-work-volume";
+import { buildWeekSignal } from "@/features/intervals/loop/week-signal";
+import {
+  getPublishedCycle,
+  listCheckins,
+  listPlanWeeks,
+  listSessionsInRange,
+} from "@/features/intervals/loop/repository";
 import { forecast } from "./lib/training-cycle.ts";
 import { placeDiagnosticTest } from "./lib/intervals-diagnostic-test.ts";
 import { parseTargetFromDescription, workBand } from "./lib/intervals-session-target.ts";
@@ -422,6 +431,58 @@ async function main(): Promise<void> {
   const catalog = await loadCatalog(supabase);
   const prefs = preferencesFromAnswers(answers);
 
+  /**
+   * ОТКУДА ШАГАТЬ И НЕ НАДО ЛИ ПОСТОЯТЬ [27.09.2026].
+   *
+   * Пол «не ниже последней отданной недели» не давал ходить назад, но и вперёд
+   * не вёл: на 30.09 встало ровно то же 7 × 4, что тренер дал рукой на 23.09.
+   * Человек повторял ту же работу вторую неделю. Пол отвечает на «не хуже, чем
+   * было», лестница — на «а куда дальше».
+   *
+   * Ступень узнаём двумя путями. По коду пресета — если прошлую неделю собирала
+   * машина. По минутам работы — если её написал тренер рукой: там preset_code
+   * равен coach_hand_authored, и другого способа понять, где человек стоит, нет.
+   * Для Валентины основной путь именно второй.
+   *
+   * Причина постоять берётся из УЖЕ СЧИТАЕМОГО: боль и полоса RPE приходят из
+   * того же buildWeekSignal, который показывает их тренеру на карточке. Второго
+   * места, где это решается, быть не должно.
+   */
+  const publishedCycle = await getPublishedCycle(source.id as string);
+  const planWeeks = publishedCycle ? await listPlanWeeks(publishedCycle.id) : [];
+  const releasedWeekStarts = new Set(
+    planWeeks.filter((w) => w.status === "released").map((w) => w.weekStart)
+  );
+  const pastSessions = publishedCycle
+    ? await listSessionsInRange(publishedCycle.id, "2000-01-01", firstWeekStart)
+    : [];
+  const floor = releasedWorkFloor({ sessions: pastSessions, releasedWeekStarts });
+  const floorPresetCode = floor
+    ? (pastSessions
+        .filter((session) => session.weekStart === floor.weekStart)
+        .map((session) => ({ code: session.presetCode, work: sessionWorkMinutes(session) }))
+        .filter((x) => x.work > 0)
+        .sort((a, b) => b.work - a.work)[0]?.code ?? null)
+    : null;
+
+  const pastCheckins = await listCheckins(source.id as string, 40);
+  const signal = buildWeekSignal({
+    checkins: pastCheckins,
+    unansweredCheckinIds: new Set<string>(),
+    todayIso: today,
+  });
+  const hasPain = signal.painFlags.length > 0;
+  const rpeBand = signal.volume?.band ?? null;
+  let rung = rungByCode(floorPresetCode) ?? rungByWorkMinutes(floor?.workMinutes ?? null);
+  let firstQualityWeek = true;
+
+  console.log(
+    `ПОЛ: ${floor ? `${floor.workMinutes} мин работы (неделя ${floor.weekStart}, отдана)` : "отданных недель нет"}` +
+      ` · формат ${floorPresetCode ?? "рукой"}` +
+      ` · ступень ${rung === null ? "НЕ ОПРЕДЕЛИЛАСЬ" : rung}` +
+      ` · боль ${hasPain ? "ЕСТЬ" : "нет"} · полоса RPE ${rpeBand ?? "нет"}`
+  );
+
   const built: { week: Week; target: CycleWeekTarget }[] = [];
   for (const [index, forecastWeek] of weeks.entries()) {
     const target: CycleWeekTarget = {
@@ -435,6 +496,24 @@ async function main(): Promise<void> {
       hasTargetRace: Boolean(draft.targetDate),
       intent: draft.intent,
     };
+    /**
+     * ПРИЧИНА ДЕЙСТВУЕТ ОДИН РАЗ, НА ПЕРВОЙ КАЧЕСТВЕННОЙ НЕДЕЛЕ. Боль и тяжёлая
+     * полоса — факты про ПРОШЛУЮ неделю. Применять их к пятой неделе вперёд
+     * значило бы утверждать, что человек будет болеть весь цикл.
+     */
+    const isDeload = String(forecastWeek.role).includes("разгруз");
+    const step = decideLadderStep({
+      fromRung: rung,
+      isDeload,
+      hasPain: firstQualityWeek && hasPain,
+      rpeBand: firstQualityWeek ? rpeBand : "calm",
+    });
+    target.preferQualityPreset = step.code;
+    target.ladderNoteRu = step.noteRu;
+    target.minQualityWorkMin = floor?.workMinutes ?? null;
+    if (step.toRung !== null) rung = step.toRung;
+    if (!isDeload) firstQualityWeek = false;
+
     const week = buildWeek(anchors, envelope, catalog, forecastWeek.weekStart, false, null, target, prefs);
     built.push({ week, target });
   }

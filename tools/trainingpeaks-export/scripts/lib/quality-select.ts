@@ -58,6 +58,18 @@ export type QualityContext = {
    */
   minWorkMinutes?: number | null;
   /**
+   * КОД ФОРМАТА, КОТОРЫЙ ПРОСИТ ЛЕСТНИЦА [27.09.2026].
+   *
+   * Цель по минутам отвечает на «сколько работы», лестница — на «какую именно».
+   * Без неё пол не давал шагнуть назад, но и вперёд не вёл: на неделе вставало
+   * ровно то же 7 × 4, что человек делал в прошлую.
+   *
+   * Просьба, а не приказ: формат должен сначала пройти гейты, бюджет недели и
+   * долю работы, как все остальные. Не прошёл — выбор идёт прежним путём, и об
+   * этом говорится вслух, а не молча.
+   */
+  preferPresetCode?: string | null;
+  /**
    * НЕДЕЛЬНЫЙ ОБЪЁМ ЭТОЙ НЕДЕЛИ ПО ЦИКЛУ, мин. Задан — потолок доли работы считается ОТ НЕГО.
    * Без цикла null, и знаменателем остаётся исторический rolling4wWeeklyMin.
    */
@@ -245,7 +257,20 @@ export function selectQualityFromCatalog(
   }
 
   let chosen: QualityPreset; let reason: string;
-  if (ctx.targetWorkMinutes != null && ctx.targetWorkMinutes > 0) {
+  const wanted = ctx.preferPresetCode
+    ? (pool.find((p) => p.presetCode === ctx.preferPresetCode) ?? null)
+    : null;
+  if (ctx.preferPresetCode && !wanted) {
+    // Лестница попросила ступень, а она не прошла гейты или не влезла в бюджет.
+    // Молча подменить — значит выдать другую работу за просимую.
+    warnings.push(
+      `лестница просила ${ctx.preferPresetCode}, но этот формат не прошёл отбор — взят подбор по минутам`
+    );
+  }
+  if (wanted) {
+    chosen = wanted;
+    reason = `ступень лестницы ${wanted.presetCode} (${wanted.totalWorkMinutes} мин работы)`;
+  } else if (ctx.targetWorkMinutes != null && ctx.targetWorkMinutes > 0) {
     const t = ctx.targetWorkMinutes;
     chosen = pool.reduce((best, p) => Math.abs(p.totalWorkMinutes - t) < Math.abs(best.totalWorkMinutes - t) ? p : best);
     reason = `цель цикла ${t} мин работы — взят ближайший формат (${chosen.totalWorkMinutes} мин)`;
