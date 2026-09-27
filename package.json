@@ -400,6 +400,7 @@
     "intervals:set-threshold": "npx tsx scripts/intervals-set-threshold.ts",
     "intervals:set-easy-pace": "npx tsx scripts/intervals-set-easy-pace.ts",
     "intervals:send-weekly-form": "npx tsx scripts/intervals-send-weekly-form.ts",
+    "intervals:set-cycle-base": "npx tsx tools/trainingpeaks-export/scripts/intervals-set-cycle-base.ts",
     "intervals:set-reported-volume": "npx tsx scripts/intervals-set-reported-volume.ts",
     "intervals:best-efforts": "npx tsx scripts/intervals-best-efforts.ts",
     "intervals:test": "npx tsx scripts/intervals-diagnostic-test.ts",
