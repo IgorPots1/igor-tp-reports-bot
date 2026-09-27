@@ -43,7 +43,7 @@ import {
 import { placeDiagnosticTest } from "./lib/intervals-diagnostic-test.ts";
 import { nextMonday, parseTargetFromDescription, workBand } from "./lib/intervals-session-target.ts";
 import { decideLadderStep, rungByCode, rungByWorkMinutes } from "./lib/interval-ladder.ts";
-import { startingPointFromAnswers } from "@/features/intervals/onboarding/starting-point";
+import { runSurfacesIncludeTreadmill, startingPointFromAnswers } from "@/features/intervals/onboarding/starting-point";
 import { releasedWorkFloor, sessionWorkMinutes } from "@/features/intervals/loop/released-work-volume";
 import { buildWeekSignal } from "@/features/intervals/loop/week-signal";
 import {
@@ -223,10 +223,26 @@ async function main(): Promise<void> {
         answersForStart!,
         storedEasyPaceSec !== null ? { manualEasyPaceSec: storedEasyPaceSec } : {}
       ) as never);
+  /**
+   * ДОРОЖКА СТАВИТСЯ ОТДЕЛЬНОЙ СТРОКОЙ, КАК В БОЕВОМ ПУТИ [27.09.2026].
+   *
+   * startingPointFromAnswers сама этот признак не выводит: онбординг ставит его
+   * следующей строкой (intervals-onboarding-plan.ts:328). Без него
+   * runsOnTreadmill = false, и тогда не срабатывает сужение формата до отрезков:
+   * скелет выдаёт слот «темповый», в пуле не остаётся ни одного формата с шагом,
+   * и лестница не находит НИ ОДНОЙ своей ступени. На неделе 28.09 из-за этого
+   * вставал непрерывный «Темповый бег 30 минут» — та самая подмена, которую
+   * тренер отверг 22.09. Один пропущенный признак, а выглядит как отказ лестницы.
+   */
+  (startPoint as unknown as { runsOnTreadmill: boolean }).runsOnTreadmill = hasHistory
+    ? (start as { runsOnTreadmill?: boolean }).runsOnTreadmill === true
+    : runSurfacesIncludeTreadmill(answersForStart!.runSurfaces);
+
   if (!hasHistory) {
     console.log(
       `Стартовой точки в цикле нет (истории не было) — берём её из анкеты.` +
-        ` Якорь лёгкого из базы: ${storedEasyPaceSec === null ? "НЕТ" : paceText(storedEasyPaceSec)}`
+        ` Якорь лёгкого из базы: ${storedEasyPaceSec === null ? "НЕТ" : paceText(storedEasyPaceSec)}` +
+        ` · дорожка: ${(startPoint as unknown as { runsOnTreadmill: boolean }).runsOnTreadmill ? "да" : "нет"}`
     );
   }
 
