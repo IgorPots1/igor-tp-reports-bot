@@ -70,6 +70,12 @@ export type QualityContext = {
    */
   preferPresetCode?: string | null;
   /**
+   * Тот же запрос списком, от желаемой ступени вниз. Берётся ПЕРВЫЙ, прошедший
+   * отбор: если 8 × 4 не влез в бюджет недели, надо спуститься на 7 × 4, а не
+   * уходить в непрерывный темповый — это была бы другая работа, а не меньшая.
+   */
+  preferPresetCodes?: string[] | null;
+  /**
    * НЕДЕЛЬНЫЙ ОБЪЁМ ЭТОЙ НЕДЕЛИ ПО ЦИКЛУ, мин. Задан — потолок доли работы считается ОТ НЕГО.
    * Без цикла null, и знаменателем остаётся исторический rolling4wWeeklyMin.
    */
@@ -257,14 +263,26 @@ export function selectQualityFromCatalog(
   }
 
   let chosen: QualityPreset; let reason: string;
-  const wanted = ctx.preferPresetCode
-    ? (pool.find((p) => p.presetCode === ctx.preferPresetCode) ?? null)
-    : null;
-  if (ctx.preferPresetCode && !wanted) {
+  const ladderCodes = ctx.preferPresetCodes?.length
+    ? ctx.preferPresetCodes
+    : ctx.preferPresetCode
+      ? [ctx.preferPresetCode]
+      : [];
+  let wanted: QualityPreset | null = null;
+  for (const code of ladderCodes) {
+    const hit = pool.find((p) => p.presetCode === code) ?? null;
+    if (hit) { wanted = hit; break; }
+  }
+  if (ladderCodes.length > 0 && wanted && wanted.presetCode !== ladderCodes[0]) {
+    warnings.push(
+      `лестница просила ${ladderCodes[0]}, он не влез в бюджет недели — спустились на ${wanted.presetCode}`
+    );
+  }
+  if (ladderCodes.length > 0 && !wanted) {
     // Лестница попросила ступень, а она не прошла гейты или не влезла в бюджет.
     // Молча подменить — значит выдать другую работу за просимую.
     warnings.push(
-      `лестница просила ${ctx.preferPresetCode}, но этот формат не прошёл отбор — взят подбор по минутам`
+      `лестница просила ${ladderCodes.join(" / ")}, ни один не прошёл отбор — взят подбор по минутам`
     );
   }
   if (wanted) {

@@ -42,6 +42,16 @@ import {
 } from "./lib/intervals-plan-adapter.ts";
 import { placeDiagnosticTest } from "./lib/intervals-diagnostic-test.ts";
 import { nextMonday, parseTargetFromDescription, workBand } from "./lib/intervals-session-target.ts";
+import { decideLadderStep, rungByCode, rungByWorkMinutes } from "./lib/interval-ladder.ts";
+import { startingPointFromAnswers } from "@/features/intervals/onboarding/starting-point";
+import { releasedWorkFloor, sessionWorkMinutes } from "@/features/intervals/loop/released-work-volume";
+import { buildWeekSignal } from "@/features/intervals/loop/week-signal";
+import {
+  getOnboardingAnswers,
+  listCheckins,
+  listPlanWeeks,
+  listSessionsInRange,
+} from "@/features/intervals/loop/repository";
 
 const COMMIT = process.argv.includes("--commit");
 
@@ -95,7 +105,7 @@ async function main(): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { data: sourceRow, error: sourceError } = await supabase
     .from("student_data_sources")
-    .select("id, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at, diagnostic_test_declined_at")
+    .select("id, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at, diagnostic_test_declined_at, easy_pace_sec_per_km")
     .eq("provider", "intervals")
     .eq("external_athlete_id", athleteId)
     .maybeSingle();
@@ -121,11 +131,21 @@ async function main(): Promise<void> {
   console.log(
     `Порог: ${stored ? `${paceText(stored.paceSecPerKm)}/км · ${stored.source} · ${stored.setAt.slice(0, 10)}` : "нет"}`
   );
+  /**
+   * БЕЗ ПОРОГА ПЕРЕСБОРКА ТЕПЕРЬ ИМЕЕТ СМЫСЛ [27.09.2026].
+   *
+   * Заслон стоял с обоснованием «новый план вышел бы таким же, как старый»: без
+   * порога числа брать неоткуда. Обоснование перестало быть верным, когда
+   * появились пол от последней отданной недели и шаг по лестнице коротких
+   * форматов: у ученицы без порога план меняется именно ими, и запрет пересборки
+   * стал запретом прогрессии. Ученица без порога — не исключение, а весь
+   * сегмент без часов.
+   *
+   * Заслон не снят, а переписан в предупреждение: темпов в плане не появится, и
+   * это надо сказать вслух.
+   */
   if (!stored) {
-    fail(
-      "Перегенерировать нечего: порога нет, и новый план вышел бы таким же, как старый.\n" +
-        "Порог ставится тестом (npm run intervals:test) или руками (npm run intervals:set-threshold)."
-    );
+    console.log("Порога нет: темпов не будет, работа пойдёт по усилию. Ставится тестом или руками.");
   }
 
   // ── Цикл, который сейчас у человека ──
@@ -171,8 +191,47 @@ async function main(): Promise<void> {
   const start = cycle.start_point as Record<string, unknown>;
   const draft = cycle.draft as Record<string, unknown>;
   const weekForecast = cycle.week_forecast as Array<Record<string, unknown>>;
-  const anchors = buildAnchors(start as never, stored);
-  const envelope = buildEnvelope(start as never);
+  /**
+   * СТАРТОВАЯ ТОЧКА ИЗ АНКЕТЫ, КОГДА В ЦИКЛЕ ЕЁ НЕТ [27.09.2026].
+   *
+   * У сегмента без часов start_point в цикле пустой: истории в Intervals нет, и
+   * измерять было нечего. Скрипт падал на `start.weekly.map` — то есть боевой
+   * путь пересборки для всего этого сегмента не работал вовсе, и каждая правка
+   * делалась разовым скриптом мимо базы.
+   *
+   * Берём анкету — тот же источник, из которого её план и собрали изначально.
+   */
+  const answersForStart = await getOnboardingAnswers(String(source.id));
+  const hasHistory = Array.isArray((start as { weekly?: unknown[] }).weekly);
+  if (!hasHistory && !answersForStart) {
+    fail("В цикле нет стартовой точки, а анкеты тоже нет — собирать не из чего.");
+  }
+  /**
+   * ЯКОРЬ ЛЁГКОГО ИЗ БАЗЫ — ОБЯЗАТЕЛЬНО [18.09.2026, повторено здесь 27.09].
+   *
+   * Без него весь цикл уходит в отказ no_easy_anchor_and_no_fallback: у
+   * Валентины так отказались все 36 сессий. Число живёт в student_data_sources
+   * рядом с порогом; стартовая точка из анкеты сама его не знает.
+   */
+  const storedEasyPaceSec =
+    source.easy_pace_sec_per_km === null || source.easy_pace_sec_per_km === undefined
+      ? null
+      : Number(source.easy_pace_sec_per_km);
+  const startPoint = hasHistory
+    ? (start as never)
+    : (startingPointFromAnswers(
+        answersForStart!,
+        storedEasyPaceSec !== null ? { manualEasyPaceSec: storedEasyPaceSec } : {}
+      ) as never);
+  if (!hasHistory) {
+    console.log(
+      `Стартовой точки в цикле нет (истории не было) — берём её из анкеты.` +
+        ` Якорь лёгкого из базы: ${storedEasyPaceSec === null ? "НЕТ" : paceText(storedEasyPaceSec)}`
+    );
+  }
+
+  const anchors = buildAnchors(startPoint, stored);
+  const envelope = buildEnvelope(startPoint);
   const catalog = await loadCatalog(supabase);
 
   const today = new Date().toISOString().slice(0, 10);
@@ -181,6 +240,49 @@ async function main(): Promise<void> {
   console.log(
     `Якорь лёгкого: ${anchors.easy ? `${paceText(anchors.easy.fastSec)}–${paceText(anchors.easy.slowSec)}` : "нет"} · ` +
       `порог в якоре: ${anchors.threshold ? `${paceText(anchors.threshold.paceSec)} (${anchors.threshold.confidence})` : "нет"}`
+  );
+
+  /**
+   * ОТКУДА ШАГАТЬ И НЕ НАДО ЛИ ПОСТОЯТЬ [27.09.2026].
+   *
+   * Пол «не ниже последней отданной недели» не давал ходить назад, но и вперёд
+   * не вёл. Пол отвечает на «не хуже, чем было», лестница — на «а куда дальше».
+   *
+   * Ступень узнаём двумя путями: по коду пресета у машинной недели и по минутам
+   * работы у рукописной, где preset_code равен coach_hand_authored. Для сегмента
+   * без часов второй путь основной.
+   *
+   * Причина постоять берётся из УЖЕ СЧИТАЕМОГО: боль и полоса RPE приходят из
+   * того же buildWeekSignal, который показывает их тренеру на карточке.
+   */
+  const planWeeks = await listPlanWeeks(String(cycle.id));
+  const releasedWeekStarts = new Set(
+    planWeeks.filter((w) => w.status === "released").map((w) => w.weekStart)
+  );
+  const pastSessions = await listSessionsInRange(String(cycle.id), "2000-01-01", cutoff);
+  const floor = releasedWorkFloor({ sessions: pastSessions, releasedWeekStarts });
+  const floorPresetCode = floor
+    ? (pastSessions
+        .filter((session) => session.weekStart === floor.weekStart)
+        .map((session) => ({ code: session.presetCode, work: sessionWorkMinutes(session) }))
+        .filter((x) => x.work > 0)
+        .sort((a, b) => b.work - a.work)[0]?.code ?? null)
+    : null;
+  const pastCheckins = await listCheckins(String(source.id), 40);
+  const signal = buildWeekSignal({
+    checkins: pastCheckins,
+    unansweredCheckinIds: new Set<string>(),
+    todayIso: today,
+  });
+  const hasPain = signal.painFlags.length > 0;
+  const rpeBand = signal.volume?.band ?? null;
+  let rung = rungByCode(floorPresetCode) ?? rungByWorkMinutes(floor?.workMinutes ?? null);
+  let firstQualityWeek = true;
+  console.log(
+    `ПОЛ: ${floor ? `${floor.workMinutes} мин работы (неделя ${floor.weekStart}, отдана)` : "отданных недель нет"}` +
+      ` · формат ${floorPresetCode ?? "рукой"}` +
+      ` · ступень ${rung === null ? "НЕ ОПРЕДЕЛИЛАСЬ" : rung}` +
+      ` · боль ${hasPain ? "ЕСТЬ" : "нет"} · полоса RPE ${rpeBand ?? "нет"}`
   );
 
   const rebuilt: Array<{ week: Week; target: CycleWeekTarget }> = [];
@@ -204,7 +306,45 @@ async function main(): Promise<void> {
       hasTargetRace: Boolean(draft.targetDate),
       intent: draft.intent as CycleWeekTarget["intent"],
     };
-    rebuilt.push({ week: buildWeek(anchors, envelope, catalog, weekStart, false, null, target, prefs), target });
+    /**
+     * ПРИЧИНА ДЕЙСТВУЕТ ОДИН РАЗ, НА ПЕРВОЙ КАЧЕСТВЕННОЙ НЕДЕЛЕ. Боль и тяжёлая
+     * полоса — факты про ПРОШЛУЮ неделю; применять их к пятой неделе вперёд
+     * значило бы утверждать, что человек будет болеть весь цикл.
+     */
+    const isDeload = String(forecastWeek.role).includes("разгруз");
+    const step = decideLadderStep({
+      fromRung: rung,
+      isDeload,
+      hasPain: firstQualityWeek && hasPain,
+      rpeBand: firstQualityWeek ? rpeBand : "calm",
+    });
+    target.preferQualityPreset = step.code;
+    target.preferQualityPresets = step.codesPreferred;
+    target.ladderNoteRu = step.noteRu;
+    target.minQualityWorkMin = floor?.workMinutes ?? null;
+    if (!isDeload) firstQualityWeek = false;
+
+    const week = buildWeek(anchors, envelope, catalog, weekStart, false, null, target, prefs);
+
+    /**
+     * СТУПЕНЬ ДВИГАЕТСЯ ПО ФАКТУ ЗАПИСАННОГО, А НЕ ПО ЗАДУМАННОМУ [27.09.2026].
+     *
+     * Сначала было `rung = step.toRung` сразу после решения, и вышел тихий
+     * пропуск: 8 × 4 не влез в бюджет недели 3, но ступень всё равно съехала на
+     * пятую, и неделя 4 запросила уже 6 × 5. Человек не сделал 8 × 4 никогда, а
+     * план считал, что сделал.
+     *
+     * Теперь ступень берётся из того формата, который РЕАЛЬНО встал в неделю.
+     */
+    const plannedCode =
+      week.sessions
+        .map((session) => (session as unknown as { presetCode?: string | null }).presetCode ?? null)
+        .map((code) => ({ code, rung: rungByCode(code) }))
+        .filter((x) => x.rung !== null)
+        .sort((a, b) => (b.rung ?? 0) - (a.rung ?? 0))[0] ?? null;
+    if (plannedCode?.rung !== null && plannedCode?.rung !== undefined) rung = plannedCode.rung;
+
+    rebuilt.push({ week, target });
   }
 
   if (rebuilt.length === 0) {

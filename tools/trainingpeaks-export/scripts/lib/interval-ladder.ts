@@ -84,6 +84,20 @@ export type LadderHoldReason = "deload" | "pain" | "hard_week";
 export type LadderStep = {
   /** Код пресета, который надо предпочесть. null — лестница не применяется. */
   code: string | null;
+  /**
+   * Та же ступень и все, что НИЖЕ неё, по порядку предпочтения.
+   *
+   * ЗАЧЕМ СПИСОК, А НЕ ОДИН КОД [27.09.2026]. Просимая ступень может не влезть в
+   * бюджет недели: 8 × 4 весит 73 минуты сессии, а неделя на 165 столько не
+   * даёт. Раньше в этом случае выбор уходил из лестницы вовсе и брал ближайший
+   * по минутам формат — им оказался НЕПРЕРЫВНЫЙ темповый, то есть другая работа,
+   * а не меньшая доза той же.
+   *
+   * Правильный отход — на ступень ниже, а не в другое семейство. Человек
+   * остаётся на лестнице, и пол от последней отданной недели всё равно не даст
+   * опуститься слишком низко.
+   */
+  codesPreferred: string[];
   /** Ступень, с которой шагнули (для заметки). */
   fromRung: number | null;
   /** Ступень, на которую встали. */
@@ -94,7 +108,12 @@ export type LadderStep = {
   noteRu: string | null;
 };
 
-const NO_STEP: LadderStep = { code: null, fromRung: null, toRung: null, heldBy: null, noteRu: null };
+const NO_STEP: LadderStep = { code: null, codesPreferred: [], fromRung: null, toRung: null, heldBy: null, noteRu: null };
+
+/** Ступень и все ниже неё, от просимой к самой лёгкой. */
+function preferredFrom(rung: number): string[] {
+  return WALK_INTERVAL_LADDER.slice(0, rung + 1).map((r) => r.code).reverse();
+}
 
 /**
  * Куда вести эту неделю.
@@ -116,6 +135,7 @@ export function decideLadderStep(input: {
 
   const stay = (heldBy: LadderHoldReason, why: string): LadderStep => ({
     code: WALK_INTERVAL_LADDER[from].code,
+    codesPreferred: preferredFrom(from),
     fromRung: from,
     toRung: from,
     heldBy,
@@ -131,6 +151,7 @@ export function decideLadderStep(input: {
   if (next >= WALK_INTERVAL_LADDER.length) {
     return {
       code: WALK_INTERVAL_LADDER[from].code,
+      codesPreferred: preferredFrom(from),
       fromRung: from,
       toRung: from,
       heldBy: null,
@@ -142,6 +163,7 @@ export function decideLadderStep(input: {
 
   return {
     code: WALK_INTERVAL_LADDER[next].code,
+    codesPreferred: preferredFrom(next),
     fromRung: from,
     toRung: next,
     heldBy: null,

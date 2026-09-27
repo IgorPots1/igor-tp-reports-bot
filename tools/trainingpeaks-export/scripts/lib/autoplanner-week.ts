@@ -729,6 +729,8 @@ export type CycleWeekTarget = {
    * null — лестница молчит, выбор идёт по минутам цели, как раньше.
    */
   preferQualityPreset?: string | null;
+  /** Та же ступень и все ниже, по порядку предпочтения. */
+  preferQualityPresets?: string[] | null;
   /** Что лестница решила, словами — уйдёт в заметки недели. */
   ladderNoteRu?: string | null;
   /**
@@ -1098,6 +1100,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         targetWorkMinutes: cycle ? Math.round(cycle.qualityMin / Math.max(1, counts.quality)) : null,
         minWorkMinutes: cycle?.minQualityWorkMin ?? null,
         preferPresetCode: cycle?.preferQualityPreset ?? null,
+        preferPresetCodes: cycle?.preferQualityPresets ?? null,
         // доля работы считается от недели ЦИКЛА, а не от исторического факта
         cycleWeeklyMin: cycle ? weekly : null,
         sessionsThisWeek: Math.max(1, counts.quality), slotType,

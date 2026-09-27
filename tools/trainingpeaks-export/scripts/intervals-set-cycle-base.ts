@@ -158,20 +158,47 @@ async function main(): Promise<void> {
    * Считаем долю ОТ ТОЙ ЖЕ базы, которую назвал тренер: 28 из 185 + 28 это 13%.
    * Не выдуманное число и не константа: та же работа, выраженная в процентах.
    */
-  const ownSharePct = Math.round((100 * qualityBase) / (built.draft.baseAerobicMin + qualityBase));
+  /**
+   * АЭРОБНАЯ БАЗА ТОЖЕ МОЖЕТ БЫТЬ НАЗВАНА РУКОЙ [27.09.2026].
+   *
+   * Анкета берёт её из self_reported_weekly_minutes. У Валентины там 185 —
+   * число, которое тренер поставил сам, глядя на её рукописные карточки. Оно
+   * описывает, что человек МОЖЕТ, а цикл считает от него то, что человек БУДЕТ
+   * делать, и добавляет работу сверху: выходило 240 мин на неделю при фактически
+   * отбеганных 112.
+   *
+   * «Со слов» и «по факту» — два разных числа, и цикл должен считать от второго.
+   */
+  const aerobicArg = arg("aerobic-base");
+  let baseAerobicMin = built.draft.baseAerobicMin;
+  if (aerobicArg) {
+    const value = Number(aerobicArg);
+    if (!Number.isFinite(value) || value < 30 || value > 800) {
+      fail(`Аэробная база ${aerobicArg} вне разумного (30–800 мин/нед). Похоже на опечатку.`);
+    }
+    baseAerobicMin = value;
+  }
+
+  const ownSharePct = Math.round((100 * qualityBase) / (baseAerobicMin + qualityBase));
 
   const draft = {
     ...built.draft,
     intent,
+    baseAerobicMin,
     baseQualityMin: qualityBase,
     peakCapQualityMin: Math.round(qualityBase * 1.5),
     historicMaxQualityMin: qualityBase,
     ownSharePct,
   };
+  if (built.draft.baseAerobicMin !== baseAerobicMin) {
+    console.log(
+      `  ✋ аэробная база задана рукой: анкета дала ${built.draft.baseAerobicMin} (со слов), тренер назвал ${baseAerobicMin} (по факту)`
+    );
+  }
   if (built.draft.ownSharePct !== ownSharePct) {
     console.log(
       `  ✋ доля работы выведена из базы: анкета дала ${built.draft.ownSharePct}%, стало ${ownSharePct}%` +
-        ` (${qualityBase} из ${built.draft.baseAerobicMin + qualityBase} мин)`
+        ` (${qualityBase} из ${baseAerobicMin + qualityBase} мин)`
     );
   }
   if (intent !== built.draft.intent) {
