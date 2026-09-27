@@ -35,7 +35,7 @@ export default function LandingPage() {
           <div>
             <span className="eyebrow">Система сопровождения бегунов</span>
             <h1 style={{ marginTop: "16px" }}>
-              Понятный план и <span className="hl">тренер рядом</span> — на
+              Понятный план и <span className="hl">тренер рядом</span>, на
               пути к вашей цели
             </h1>
             <p className="hero-sub">
