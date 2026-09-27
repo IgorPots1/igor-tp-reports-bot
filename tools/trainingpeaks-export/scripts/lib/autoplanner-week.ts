@@ -524,14 +524,28 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
  */
 export function zone2Segment(a: AthleteAnchors, minutes: number, label: string, eb: { fast: number; slow: number }): Segment {
   if (a.runsOnTreadmill) {
-    return { minutes, label, fastSec: null, slowSec: null, noPaceText: `по ощущению, на улице ориентир между ${fp(eb.fast)} и ${fp(eb.slow)}` };
+    /**
+     * НА ДОРОЖКЕ ЧИСЕЛ НЕТ ВООБЩЕ [27.09.2026].
+     *
+     * Раньше здесь стояла оговорка «по ощущению, на улице ориентир между X и Y».
+     * Задумана она была мягко: числа на всякий случай, если человек выйдет на
+     * улицу. Вышло иначе. Ученица бегает в зале и держит около 9:14, а в плане
+     * на каждом шаге стояло 7:07–7:37 — то есть число, которого она не
+     * выполняет, семь раз за одну тренировку. Это читается упрёком, а не
+     * ориентиром.
+     *
+     * Дорожки не калиброваны, и одна и та же цифра на панели у двух лент значит
+     * разное: темп там не значит ничего в принципе. Поэтому числа уходят, а
+     * остаётся описание того, что человек может проверить на себе.
+     */
+    return { minutes, label, fastSec: null, slowSec: null, noPaceText: "скорость подобрать самой: спокойно, дыхание ровное, говорить можно предложениями" };
   }
   return { minutes, label, fastSec: eb.fast, slowSec: eb.slow };
 }
 
 function canonicalWarmup(a: AthleteAnchors, eb: { fast: number; slow: number }): Segment[] {
   const C = CANONICAL_WARMUP;
-  const segs: Segment[] = [zone2Segment(a, C.easyIn, "Разминка, спокойно", eb)];
+  const segs: Segment[] = [zone2Segment(a, C.easyIn, "Разминка", eb)];
   const faster = resolvePace(a, "steady_tempo", "maintenance", null);
   const tempo = resolvePace({ ...a, quality: null }, "controlled_threshold", "maintenance", null);
   const t = tempo.ok ? (tempo as Resolved) : null;
@@ -610,7 +624,7 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     // Простая разминка (L0–L1) по методологии из РЕАЛЬНЫХ описаний: 86% качественных — 10 минут,
     // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно». Ускорения внутри разминки
     // встречаются лишь в 15% — в простой разминке НЕ ставим.
-    : [zone2Segment(a, warmMin, "Разминка, спокойно", eb)];
+    : [zone2Segment(a, warmMin, "Разминка", eb)];
   for (let i = 0; i < p.reps; i++) {
     segs.push(w
       ? { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS }
@@ -623,7 +637,12 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
       segs.push(zone2Segment(a, p.recoveryMinutes, p.recoveryType === "walk" ? "Шагом" : "Трусца", eb));
     }
   }
-  segs.push(zone2Segment(a, p.cooldownMinutes, "Заминка, свободно", eb));
+    /**
+   * ПОДПИСИ БЕЗ ВНУТРЕННИХ СЛОВ [27.09.2026]. «Спокойно» и «свободно» — наши
+   * ярлыки интенсивности, а не русский язык: человек не знает, что значит
+   * «заминка, свободно», и догадываться на бегу не должен.
+   */
+  segs.push(zone2Segment(a, p.cooldownMinutes, "Заминка, шагом или очень медленно", eb));
   const total = segs.reduce((s, x) => s + x.minutes, 0);
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);
