@@ -669,7 +669,18 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     // семейства int_walk восстановление идёт ШАГОМ, и называть его трусцой —
     // прямая неправда в тексте, который человек читает на бегу.
     if (i < p.reps - 1) {
-      segs.push(zone2Segment(a, p.recoveryMinutes, p.recoveryType === "walk" ? "Шагом" : "Трусца", eb));
+      /**
+       * ШАГУ — ТЕКСТ ПРО ШАГ [28.09.2026]. zone2Segment описывает БЕГ по
+       * ощущению («подобрать скорость, говорить предложениями»), и на сегменте
+       * восстановления шагом это читалось нелепо: человек идёт, а его просят
+       * подобрать темп и следить за речью. Рукой тренер пишет здесь другое.
+       */
+      segs.push(
+        p.recoveryType === "walk"
+          ? { minutes: p.recoveryMinutes, label: "Шагом", fastSec: null, slowSec: null,
+              noPaceText: "Просто идти. С дорожки не сходить." }
+          : zone2Segment(a, p.recoveryMinutes, "Трусца", eb)
+      );
     }
   }
     /**
