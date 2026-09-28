@@ -1265,8 +1265,30 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
    * Пишем и когда шагнули: «7 x 4 → 8 x 4» отвечает на вопрос «а двигается ли
    * вообще» одной строкой, не заставляя сверять две недели глазами.
    */
-  const ladderNote = cycle?.ladderNoteRu ?? null;
-  if (ladderNote) notes.push(ladderNote);
+  /**
+   * ЗАМЕТКА ГОВОРИТ О ТОМ, ЧТО ВСТАЛО, А НЕ О ТОМ, ЧТО ПРОСИЛИ [28.09.2026].
+   *
+   * Решение лестницы считается ДО отбора, и заметка бралась из него дословно.
+   * Когда просимая ступень не влезала в неделю, отбор честно спускался на
+   * ступень ниже, а в заметке оставалось «Ступень: 6 × 5 → 8 × 4» — то есть
+   * тренер читал про шаг, которого не было. Хуже обычной ошибки: заметка
+   * существует ровно для того, чтобы отвечать на вопрос «двигается ли».
+   */
+  const ladderWanted = cycle?.preferQualityPreset ?? null;
+  if (ladderWanted) {
+    const chosenQuality = plan.decs.find((d) => d.selected);
+    const chosenCode = chosenQuality?.selected ? chosenQuality.preset.presetCode : null;
+    if (chosenCode && chosenCode === ladderWanted) {
+      if (cycle?.ladderNoteRu) notes.push(cycle.ladderNoteRu);
+    } else if (chosenCode) {
+      notes.push(
+        `Ступень осталась на «${chosenQuality!.selected ? chosenQuality!.preset.displayNameRu : chosenCode}»: ` +
+          `следующая не помещается в бюджет недели. Шагнём, когда подрастёт объём.`
+      );
+    }
+  } else if (cycle?.ladderNoteRu) {
+    notes.push(cycle.ladderNoteRu);
+  }
 
   const floorWanted = cycle?.minQualityWorkMin ?? null;
   if (floorWanted != null && floorWanted > 0) {
