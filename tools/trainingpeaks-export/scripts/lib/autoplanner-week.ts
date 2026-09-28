@@ -9,6 +9,7 @@
 import { ranges, parseSegments } from "./tp-recompute.ts";
 import { resolvePace, type AthleteAnchors, type IntensityIntent, type Resolved, type Tier } from "./pace-resolver.ts";
 import { LOW_COMPLIANCE_RATIO, LOW_COMPLIANCE_WEEKS, NOT_RUNNING_RATIO, NOT_RUNNING_WEEKS, type Envelope } from "./autoplanner-context.ts";
+import { treadmillAerobicParts, treadmillCooldown, treadmillWarmupParts } from "./treadmill-shape.ts";
 import { CANONICAL_WARMUP, WARMUP_CANON_MINUTES, needsCanonicalWarmup, withScaledWarmup, type Catalog, type QualityPreset } from "./autoplanner-catalog.ts";
 import { selectQualityFromCatalog, qualityCapFromHistory, QUALITY_CAP_THRESHOLDS, type QualityDecision } from "./quality-select.ts";
 import { LONG_DAY_FALLBACK, confidentLongDay, qualityCountWanted } from "./practice-signals.ts";
@@ -477,11 +478,25 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
    * У непрокалиброванной дорожки это число не значит ничего: на панели своя
    * шкала, и «7:07–7:37» там читается как требование, которое не выполнить.
    */
-  const segs: Segment[] = [
-    byFeel
-      ? { minutes, label: title, fastSec: null, slowSec: null }
-      : zone2Segment(a, minutes, title, { fast: band.fast, slow: band.slow }),
-  ];
+  /**
+   * У ЛЁГКОЙ И ДЛИТЕЛЬНОЙ НА ДОРОЖКЕ ТОЖЕ ЕСТЬ НАЧАЛО И КОНЕЦ [28.09.2026].
+   *
+   * Генератор отдавал их ОДНИМ сегментом на все 55 минут. Тренер и там пишет
+   * ходьбу в начале и шаг в конце, а человеку на дорожке это нужнее всего:
+   * «просто беги 55 минут» не говорит, с чего начать.
+   */
+  const treadmillLabel = role === "long" ? "Длительный ровный бег" : "Ровный лёгкий бег";
+  const treadmillText =
+    role === "long"
+      ? "Скорость подобрать самой, чуть спокойнее обычной лёгкой. Задача не быстрее, а ровно до конца."
+      : "Скорость подобрать самой: разговорный темп, когда можете говорить предложениями и не задыхаетесь.";
+  const segs: Segment[] = a.runsOnTreadmill
+    ? shapeToSegments(treadmillAerobicParts({ minutes, label: treadmillLabel, text: treadmillText }))
+    : [
+        byFeel
+          ? { minutes, label: title, fastSec: null, slowSec: null }
+          : zone2Segment(a, minutes, title, { fast: band.fast, slow: band.slow }),
+      ];
   if (role === "easy_strides") segs.push({ minutes: 2, label: "Ускорения в конце, 4–6 коротких по пятнадцать секунд, свободно", fastSec: null, slowSec: null });
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);
@@ -522,6 +537,11 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
  * в defer (round_trip_mismatch). Парсер общий и трогать его нельзя, поэтому число
  * остаётся, но связка слов — та, которую он не ловит ни одним из трёх правил.
  */
+/** Форма тренировки на дорожке — чистые функции, см. treadmill-shape.ts. */
+function shapeToSegments(parts: Array<{ minutes: number; label: string; text: string }>): Segment[] {
+  return parts.map((p) => ({ minutes: p.minutes, label: p.label, fastSec: null, slowSec: null, noPaceText: p.text }));
+}
+
 export function zone2Segment(a: AthleteAnchors, minutes: number, label: string, eb: { fast: number; slow: number }): Segment {
   if (a.runsOnTreadmill) {
     /**
@@ -619,7 +639,22 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
   const warmMin = p.warmupMinutes || WARMUP_CANON_MINUTES;
   // Каноническая разминка НЕ сворачивается ради экономии минут — протокол задан уровнем
   // пресета, это решение тренера. Не помещается в неделю — отбор берёт пресет поменьше.
-  const segs: Segment[] = needsCanonicalWarmup(p.athleteLevelMin)
+  /**
+   * РАЗМИНКА ПО ШАГАМ ДЛЯ ДОРОЖКИ [28.09.2026].
+   *
+   * Было «Разминка, спокойно, 21 минута» одним куском. Тренер ту же 21 минуту
+   * пишет рукой иначе: ходьба, лёгкий бег, ускорения, спокойный бег — и для
+   * новичка это понятнее, он видит, ЧТО делать, а не сколько терпеть. Неделю
+   * 28.09 пришлось править руками; структура переехала в код, чтобы первая
+   * перегенерация её не откатила.
+   *
+   * Гейт — runsOnTreadmill, он ставится только на стартовой точке сегмента без
+   * часов. Ростер TrainingPeaks этого флага не видит, и его разминка не
+   * меняется ни на бит.
+   */
+  const segs: Segment[] = a.runsOnTreadmill
+    ? shapeToSegments(treadmillWarmupParts(warmMin))
+    : needsCanonicalWarmup(p.athleteLevelMin)
     ? canonicalWarmup(a, eb)
     // Простая разминка (L0–L1) по методологии из РЕАЛЬНЫХ описаний: 86% качественных — 10 минут,
     // формулировка «Разминка — 10 минут @ темп (Zone 2), спокойно». Ускорения внутри разминки
@@ -642,7 +677,11 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
    * ярлыки интенсивности, а не русский язык: человек не знает, что значит
    * «заминка, свободно», и догадываться на бегу не должен.
    */
-  segs.push(zone2Segment(a, p.cooldownMinutes, "Заминка, шагом или очень медленно", eb));
+  segs.push(
+    a.runsOnTreadmill
+      ? shapeToSegments([treadmillCooldown(p.cooldownMinutes)])[0]
+      : zone2Segment(a, p.cooldownMinutes, "Заминка: спокойный бег или шаг", eb)
+  );
   const total = segs.reduce((s, x) => s + x.minutes, 0);
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);

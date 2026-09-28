@@ -376,6 +376,7 @@
     "check:manual-entry-parse": "npx tsx scripts/check-manual-entry-parse.ts",
     "check:activity-numbers": "npx tsx scripts/check-activity-numbers.ts",
     "check:lexicon-committed": "npx tsx scripts/check-lexicon-committed.ts",
+    "check:treadmill-shape": "npx tsx scripts/check-treadmill-shape.ts",
     "check:interval-ladder": "npx tsx scripts/check-interval-ladder.ts",
     "check:inbound-notice": "npx tsx scripts/check-inbound-notice.ts",
     "check:checkin-edit": "npx tsx scripts/check-checkin-edit.ts",

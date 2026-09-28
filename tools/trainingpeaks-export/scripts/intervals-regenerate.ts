@@ -358,7 +358,20 @@ async function main(): Promise<void> {
         .map((code) => ({ code, rung: rungByCode(code) }))
         .filter((x) => x.rung !== null)
         .sort((a, b) => (b.rung ?? 0) - (a.rung ?? 0))[0] ?? null;
-    if (plannedCode?.rung !== null && plannedCode?.rung !== undefined) rung = plannedCode.rung;
+    /**
+     * РАЗГРУЗКА НЕ ДВИГАЕТ СТУПЕНЬ НИ В ЗАПРОСЕ, НИ В УЧЁТЕ [28.09.2026].
+     *
+     * Запрос я сразу сделал правильным, а учёт — нет, и вышло хуже, чем было.
+     * На разгрузке неделя маленькая, формат честно падает по бюджету до 5 × 3,
+     * ступень шла ЗА ФАКТОМ и съезжала на вторую. После каждой разгрузки
+     * лестница начиналась почти с нуля: 7 × 4, потом 5 × 3, потом снова вверх.
+     *
+     * Разгрузка существует, чтобы дать переварить уже сделанное. Ступень стоит
+     * там, куда её поставила последняя неделя РОСТА.
+     */
+    if (!isDeload && plannedCode?.rung !== null && plannedCode?.rung !== undefined) {
+      rung = plannedCode.rung;
+    }
 
     rebuilt.push({ week, target });
   }

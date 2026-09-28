@@ -181,12 +181,36 @@ export function presetSessionMinutes(p: QualityPreset): number {
  */
 export const SCALED_WARMUP_MIN = 5;
 export const SCALED_COOLDOWN_MIN = 3;
+/** Потолки обвязки — числа из рукописной карточки тренера, выше них пропорция бы выдумывала. */
+export const WARMUP_CAP_MIN = 21;
+export const COOLDOWN_CAP_MIN = 5;
 
 export function withScaledWarmup(p: QualityPreset): QualityPreset {
   const block = p.reps * p.workMinutes + Math.max(0, p.reps - 1) * p.recoveryMinutes;
   if (block <= 0) return p;
-  const warm = Math.max(SCALED_WARMUP_MIN, Math.round((block * 13) / 23));
-  const cool = Math.max(SCALED_COOLDOWN_MIN, Math.round((block * 3) / 23));
+  /**
+   * ПРОПОРЦИЯ НЕ ЭКСТРАПОЛИРУЕТСЯ ВЫШЕ ТОГО, ЧТО ЕСТЬ В КАРТОЧКЕ [28.09.2026].
+   *
+   * Пропорция 13/23 и 3/23 выведена из ОДНОЙ рукописной карточки тренера:
+   * разминка 21 и заминка 5 при блоке 38.5. Это единственное измерение, и выше
+   * него пропорция уже не описывает практику, а продолжает прямую: на блоке
+   * 42.5 она даёт разминку 24 и заминку 6, которых тренер не писал никогда.
+   *
+   * Цена экстраполяции не косметическая. Сессия 8 x 4 выходила 72.5 минуты и не
+   * влезала в бюджет недели (67), то есть лишние 3.5 минуты обвязки стоили
+   * человеку целой ступени прогрессии.
+   *
+   * Потолок — его собственные числа. Ниже потолка пропорция работает как
+   * работала, и короткие форматы не меняются ни на минуту.
+   */
+  const warm = Math.min(
+    WARMUP_CAP_MIN,
+    Math.max(SCALED_WARMUP_MIN, Math.round((block * 13) / 23))
+  );
+  const cool = Math.min(
+    COOLDOWN_CAP_MIN,
+    Math.max(SCALED_COOLDOWN_MIN, Math.round((block * 3) / 23))
+  );
   // athleteLevelMin обнуляется намеренно: каноническая разминка привязана к
   // уровню и живёт отдельной веткой в presetSessionMinutes. Без обнуления
   // пропорция посчиталась бы, а в бюджет ушла бы всё та же константа.

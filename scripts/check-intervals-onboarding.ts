@@ -250,15 +250,31 @@ assert.ok(
   );
   const anchorsTreadmill = { ...anchorsReported, runsOnTreadmill: true };
   const eb = { fast: 427, slow: 457 }; // 7:07–7:37 /км
-  const treadmillSeg = zone2Segment(anchorsTreadmill, 15, "Разминка, спокойно", eb);
+  const treadmillSeg = zone2Segment(anchorsTreadmill, 15, "Разминка", eb);
   assert.equal(treadmillSeg.fastSec, null, "на дорожке сегмент разминки без числовой цели");
-  assert.ok(treadmillSeg.noPaceText?.includes("между"), "оговорка сформулирована через «между X и Y»");
+  /**
+   * ПРАВИЛО УСИЛИЛОСЬ [28.09.2026]: ЧИСЕЛ ТЕМПА НЕТ ВООБЩЕ.
+   *
+   * Раньше здесь проверялась ФОРМУЛИРОВКА оговорки «на улице ориентир между X и
+   * Y»: числа оставались, менялась связка слов, чтобы round-trip не читал их как
+   * диапазон. Ученица бегает в зале и держит около 9:14 — число 7:07 стояло у
+   * неё на каждом шаге тренировки и читалось упрёком, а не ориентиром. Решение
+   * тренера 27.09: на дорожке темпа нет ни на одном шаге.
+   *
+   * Проверяем теперь СИЛЬНЕЕ: в тексте нет ни одного M:SS. Это ловит и возврат
+   * прежней формулировки, и любую новую попытку протащить число.
+   */
+  assert.ok(
+    !/\d{1,2}:\d{2}/u.test(treadmillSeg.noPaceText ?? ""),
+    `на дорожке в тексте не должно быть темпа, а там «${treadmillSeg.noPaceText}»`
+  );
+  assert.ok((treadmillSeg.noPaceText ?? "").length > 0, "вместо числа должно остаться описание по ощущению");
   const treadmillDesc = renderDescription([treadmillSeg]);
   const treadmillRt = verifyRoundTrip(treadmillDesc, [treadmillSeg]);
   assert.equal(treadmillRt.parsedRanges, 0, "оговорка не должна давать канонический диапазон темпа");
-  assert.equal(treadmillRt.ok, true, "round-trip не должен спотыкаться о слова «на улице ориентир»");
+  assert.equal(treadmillRt.ok, true, "round-trip не должен спотыкаться о текст без чисел");
 
-  const nonTreadmillSeg = zone2Segment(anchorsReported, 15, "Разминка, спокойно", eb);
+  const nonTreadmillSeg = zone2Segment(anchorsReported, 15, "Разминка", eb);
   assert.equal(nonTreadmillSeg.fastSec, eb.fast, "без флага дорожки сегмент остаётся с числовой целью, как раньше");
 
   // ── Расстановка дней при нулевой истории — не подряд [пойман живым прогоном
