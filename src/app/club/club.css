@@ -178,6 +178,10 @@ nav.top .btn{padding:9px 17px;font-size:14px}
 .why ul{list-style:none;display:grid;gap:9px;margin-top:6px}
 .why li{position:relative;padding-left:20px;color:var(--ink-2);font-size:15px;line-height:1.45}
 .why li::before{content:"";position:absolute;left:2px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+/* Пометка внизу карточки: что идёт внутри сопровождения, а что оговаривается
+   отдельно. margin-top:auto прижимает её к низу карточки — иначе в трёх
+   карточках разной высоты строка вставала бы на разных уровнях. */
+.why-extra{margin-top:auto;padding-top:14px;border-top:1px solid var(--line);font-size:13.5px;line-height:1.5;color:var(--muted)}
 
 /* needs summary */
 .needs{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}

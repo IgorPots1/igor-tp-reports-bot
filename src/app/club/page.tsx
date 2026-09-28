@@ -633,6 +633,10 @@ export default function LandingPage() {
                 <li>Питание перед стартами и на длительных</li>
                 <li>Рекомендации под вашу нагрузку и цели</li>
               </ul>
+              <p className="why-extra">
+                Это рекомендации внутри сопровождения. Подробный разбор дневника
+                питания в стоимость клуба не входит, это отдельная работа.
+              </p>
             </div>
             <div className="why">
               <div className="ic">&#9683;</div>
@@ -761,7 +765,7 @@ export default function LandingPage() {
               </div>
               <p className="price-note">
                 Одна цена за всё сопровождение. Никаких пакетов на полгода
-                и доплат за разборы.
+                и доплат за разборы тренировок.
               </p>
               <ul className="price-list">
                 <li>
