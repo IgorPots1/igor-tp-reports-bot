@@ -24,25 +24,27 @@ const R = (code: string) => rungByCode(code)!;
 assert.equal(WALK_INTERVAL_LADDER.length, 7);
 assert.equal(R("int_walk_3x3"), 0);
 assert.equal(R("int_walk_7x4"), 4);
-assert.equal(R("int_walk_8x4"), 5);
-assert.equal(R("int_walk_6x5"), 6, "6x5 стоит ПОСЛЕ 8x4, хотя работы в нём меньше");
+assert.equal(R("int_walk_6x5"), 5, "6x5 стоит ПЕРЕД 8x4: длина отрезка — новое умение, число — нет");
+assert.equal(R("int_walk_8x4"), 6);
 assert.equal(rungByCode("thr_5x4"), null, "чужой формат — не наша лестница");
 assert.equal(rungByCode(null), null);
 
 /**
- * ПОРЯДОК НЕ СОВПАДАЕТ С СОРТИРОВКОЙ ПО МИНУТАМ, И ЭТО НАМЕРЕННО. Если однажды
- * лестницу начнут строить сортировкой, этот тест упадёт первым.
+ * ПОРЯДОК ПРИБИТ СПИСКОМ, А НЕ ВЫВЕДЕН. Сейчас он случайно совпал с
+ * возрастанием минут работы, и на это совпадение полагаться нельзя: «тяжелее»
+ * и «больше по сумме» не одно и то же. Любая перестановка обязана упереться в
+ * этот тест, чтобы её приняли глазами, а не молча отсортировали.
  */
-const byMinutes = [...WALK_INTERVAL_LADDER].sort((a, b) => a.workMinutes - b.workMinutes);
-assert.notDeepEqual(
-  byMinutes.map((r) => r.code),
+assert.deepEqual(
   WALK_INTERVAL_LADDER.map((r) => r.code),
-  "лестница задана списком, а не сортировкой по объёму работы"
+  ["int_walk_3x3", "int_walk_4x3", "int_walk_5x3", "int_walk_6x4", "int_walk_7x4", "int_walk_6x5", "int_walk_8x4"],
+  "порядок ступеней — решение тренера, менять только вместе с этим тестом"
 );
 
 // ── Ступень по минутам: так узнаётся рукописная неделя ───────────────────────
 assert.equal(rungByWorkMinutes(28), 4, "28 минут работы — это 7 x 4, как у тренера рукой");
-assert.equal(rungByWorkMinutes(32), 5);
+assert.equal(rungByWorkMinutes(30), 5, "30 минут — это 6 x 5");
+assert.equal(rungByWorkMinutes(32), 6, "32 минуты — это 8 x 4, последняя ступень");
 assert.equal(rungByWorkMinutes(9), 0);
 assert.equal(rungByWorkMinutes(27), null, "почти совпало — значит не совпало, лестница молчит");
 assert.equal(rungByWorkMinutes(0), null);
@@ -50,14 +52,14 @@ assert.equal(rungByWorkMinutes(null), null);
 
 // ── Шаг вперёд по умолчанию ──────────────────────────────────────────────────
 const forward = decideLadderStep({ fromRung: R("int_walk_7x4"), isDeload: false, hasPain: false, rpeBand: "calm" });
-assert.equal(forward.code, "int_walk_8x4", "после 7x4 идёт 8x4");
+assert.equal(forward.code, "int_walk_6x5", "после 7x4 идёт 6x5, а не 8x4");
 assert.equal(forward.heldBy, null);
-assert.equal(forward.noteRu, "Ступень: 7 x 4 мин → 8 x 4 мин.");
+assert.equal(forward.noteRu, "Ступень: 7 x 4 мин → 6 x 5 мин.");
 
 // Спокойная полоса и «держим» шагу не мешают: повтор нужен только на тяжёлой.
 assert.equal(
   decideLadderStep({ fromRung: R("int_walk_7x4"), isDeload: false, hasPain: false, rpeBand: "hold" }).code,
-  "int_walk_8x4",
+  "int_walk_6x5",
   "полоса «держим» про ОБЪЁМ недели, а не про ступень"
 );
 
@@ -85,8 +87,8 @@ for (const held of [deload, pain, hard, both]) {
 }
 
 // ── Верх лестницы ────────────────────────────────────────────────────────────
-const top = decideLadderStep({ fromRung: R("int_walk_6x5"), isDeload: false, hasPain: false, rpeBand: "calm" });
-assert.equal(top.code, "int_walk_6x5", "с последней ступени шагать некуда");
+const top = decideLadderStep({ fromRung: R("int_walk_8x4"), isDeload: false, hasPain: false, rpeBand: "calm" });
+assert.equal(top.code, "int_walk_8x4", "с последней ступени шагать некуда");
 assert.equal(top.heldBy, null, "это не повтор по причине, это конец лестницы");
 assert.ok(top.noteRu?.startsWith("✋"), "конец лестницы — повод позвать тренера, а не тихий плато");
 
