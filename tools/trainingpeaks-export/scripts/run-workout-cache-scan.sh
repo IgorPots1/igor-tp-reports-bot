@@ -5,6 +5,11 @@
 #   PAST_DAYS=60 FUTURE_DAYS=14 ./run-workout-cache-scan.sh          # глубокий бэкфилл
 set -euo pipefail
 
+# Не спать С ПЕРВОЙ СЕКУНДЫ прогона, а не только пока идёт npm (2026-10-02). Мак будится по
+# расписанию (pmset schedule wake, см. schedule-scan-wakes.sh), а сон на батарее — через 1 минуту
+# простоя: без этого он засыпал бы ещё в прологе, пока ждёт Wi-Fi. -w $$ — держим, пока жива обёртка.
+caffeinate -i -w $$ &
+
 RUNNER_TIMEOUT_SECONDS=3600
 source "$(dirname "$0")/lib/runner-prelude.sh"
 
@@ -21,12 +26,30 @@ echo "[$(date '+%F %T')] tp-workouts-cache-scan --all-active --from=${FROM} --to
 # Capture the scan's exit code (no more `exec`, so the heartbeat runs after) and record a SUCCESS
 # heartbeat only when it actually succeeded — the pipeline monitor uses this to spot silent stalls.
 set +e
-# caffeinate -i: не давать маку уйти в idle-sleep ПОКА скан идёт (защита от засыпания посреди
-# прогона на батарее). Спанье МЕЖДУ прогонами лечит `sudo pmset -c sleep 0` (на AC), не это.
-caffeinate -i npm run tp-workouts-cache-scan -- --all-active --from="${FROM}" --to="${TO}"
+# Итог прогона по видам сбоев пишет сам скан (SCAN_OUTCOME_FILE): exit 0 у --all-active бывает и
+# тогда, когда часть учеников упала. Heartbeat: sent — упавших нет; partial — прогон дошёл до конца,
+# но были 403 / fetch failed (раздельно в note); failed — сам прогон упал.
+OUTCOME_FILE="$(mktemp -t tp-scan-outcome)"
+SCAN_OUTCOME_FILE="$OUTCOME_FILE" npm run tp-workouts-cache-scan -- --all-active --from="${FROM}" --to="${TO}"
 CODE=$?
 set -e
-npm --prefix "$TOOLS" run --silent tp-heartbeat -- --job=workout_cache_scan --status="$([ "$CODE" -eq 0 ] && echo sent || echo failed)" || true
+HB_STATUS=failed
+HB_NOTE=""
+if [ "$CODE" -eq 0 ]; then
+  HB_STATUS=sent
+  OUTCOME="$(cat "$OUTCOME_FILE" 2>/dev/null || true)"
+  if [ -n "$OUTCOME" ]; then
+    ACCESS_LOST="$(printf '%s' "$OUTCOME" | sed -nE 's/.*"accessLost":([0-9]+).*/\1/p')"
+    FETCH_FAILED="$(printf '%s' "$OUTCOME" | sed -nE 's/.*"fetchFailed":([0-9]+).*/\1/p')"
+    OTHER_FAILED="$(printf '%s' "$OUTCOME" | sed -nE 's/.*"otherFailed":([0-9]+).*/\1/p')"
+    HB_NOTE="access_lost_403=${ACCESS_LOST:-0} fetch_failed=${FETCH_FAILED:-0} other_failed=${OTHER_FAILED:-0}"
+    if [ "${ACCESS_LOST:-0}" -gt 0 ] || [ "${FETCH_FAILED:-0}" -gt 0 ] || [ "${OTHER_FAILED:-0}" -gt 0 ]; then
+      HB_STATUS=partial
+    fi
+  fi
+fi
+rm -f "$OUTCOME_FILE"
+npm --prefix "$TOOLS" run --silent tp-heartbeat -- --job=workout_cache_scan --status="$HB_STATUS" --note="$HB_NOTE" || true
 
 # Пересчёт материализованных клубных рекордов по затронутым ученикам (инкрементально).
 # За флагом (ВЫКЛ по умолчанию): включить в rollout ПОСЛЕ применения миграции

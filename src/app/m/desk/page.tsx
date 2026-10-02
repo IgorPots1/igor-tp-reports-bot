@@ -40,7 +40,7 @@ type Dismiss =
   | null;
 type PlanCard = Card & { dismiss: Dismiss };
 type ErrorCard = { name: string | null; studentId: string | null; dismiss?: Dismiss; summary: string };
-type NameRow = WithChat;
+type NameRow = WithChat & { detail?: string | null };
 type TodayView = {
   scanAlert: string | null;
   check: HealthCard[];
@@ -50,6 +50,8 @@ type TodayView = {
   pain: Card[];
   noContact: NameRow[];
   missed: NameRow[];
+  offPlan?: NameRow[];
+  tpAccessLost?: NameRow[];
   counts: {
     check: number;
     freshCheck: number;
@@ -192,6 +194,9 @@ const S = {
   errName: { fontSize: 14.5, fontWeight: 700, color: C.ink } as const,
   errSummary: { margin: "3px 0 0", fontSize: 13.5, fontWeight: 500, color: C.warn, lineHeight: 1.4 } as const,
   chipsWrap: { padding: "2px 4px 10px", display: "flex" as const, flexWrap: "wrap" as const, gap: 7 } as const,
+  detailList: { padding: "2px 4px 10px", display: "flex" as const, flexDirection: "column" as const, gap: 8 } as const,
+  detailItem: { display: "flex" as const, flexDirection: "column" as const, alignItems: "flex-start" as const, gap: 3 } as const,
+  detailText: { fontSize: 12, color: C.sub, paddingLeft: 11, lineHeight: 1.35 } as const,
   chip: { padding: "6px 11px", borderRadius: 999, background: C.pill, color: C.sub, fontSize: 13, fontWeight: 600 } as const,
   empty: { padding: "8px 6px 14px", color: C.faint, fontSize: 13.5, fontWeight: 600 } as const,
   bigEmpty: { padding: "28px 18px", textAlign: "center" as const, color: C.faint, fontSize: 14, fontWeight: 600 } as const,
@@ -307,7 +312,7 @@ export default function CoachDeskPage() {
   const [closing, setClosing] = useState<Set<string>>(new Set());
   const [dismissing, setDismissing] = useState<Set<string>>(new Set());
   // Collapsible sections closed by default: the long tails (no-contact, no-completion).
-  const [closedSections, setClosedSections] = useState<Set<string>>(new Set(["noContact", "missed"]));
+  const [closedSections, setClosedSections] = useState<Set<string>>(new Set(["noContact", "missed", "offPlan", "tpAccessLost"]));
   // Starts tab (lazy-loaded on first open).
   const [startsStatus, setStartsStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [startsView, setStartsView] = useState<StartsView | null>(null);
@@ -1186,13 +1191,30 @@ export default function CoachDeskPage() {
             onToggle={() => toggleSection("noContact")}
           />
 
-          {/* 🏃 Нет выполнения — collapsible tail, from nightly workout_cache. */}
+          {/* 🏃 Нет выполнения — collapsible tail, from workout_cache (вчера, по Белграду). */}
           <CollapsibleNames
             title="🏃 Нет выполнения"
             rows={view.missed}
             open={!closedSections.has("missed")}
             onToggle={() => toggleSection("missed")}
-            note="обновляется после ночного скана"
+            note="за вчера; под именем — когда данные ученика обновлялись"
+          />
+
+          {/* 🔁 Вне плана / частично — план не склеен с фактом, но тренировка была. Не пропуск. */}
+          <CollapsibleNames
+            title="🔁 Вне плана / частично"
+            rows={view.offPlan ?? []}
+            open={!closedSections.has("offPlan")}
+            onToggle={() => toggleSection("offPlan")}
+          />
+
+          {/* 🔒 Нет доступа к TP — последний скан 403, пропуски по ним не считаются. */}
+          <CollapsibleNames
+            title="🔒 Нет доступа к TP"
+            rows={view.tpAccessLost ?? []}
+            open={!closedSections.has("tpAccessLost")}
+            onToggle={() => toggleSection("tpAccessLost")}
+            note="TP отвечает 403: ученик закрыл доступ или вышел из группы"
           />
         </>
       ) : null}
@@ -1341,6 +1363,22 @@ function CollapsibleNames(props: {
           {props.note ? <p style={S.softNote}>{props.note}</p> : null}
           {props.rows.length === 0 ? (
             <p style={S.empty}>Пусто.</p>
+          ) : props.rows.some((r) => r.detail) ? (
+            // С подробностью — списком: имя (тап → чат) и строка под ним.
+            <div style={S.detailList}>
+              {props.rows.map((r, i) => (
+                <div key={`${r.name}-${i}`} style={S.detailItem}>
+                  {r.telegramUsername ? (
+                    <button type="button" style={S.chipTap} onClick={() => openStudentChat(r.telegramUsername)}>
+                      {r.name} 💬
+                    </button>
+                  ) : (
+                    <span style={{ ...S.chip, ...S.dim }}>{r.name}</span>
+                  )}
+                  {r.detail ? <span style={S.detailText}>{r.detail}</span> : null}
+                </div>
+              ))}
+            </div>
           ) : (
             <div style={S.chipsWrap}>
               {props.rows.map((r, i) =>

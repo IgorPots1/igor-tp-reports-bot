@@ -13,6 +13,8 @@ export const MORNING_DIGEST_SECTION_TITLES = {
   pain: "🦵 Травмы / дискомфорт",
   noContact: "📭 Нет контакта",
   missed: "🏃 Нет тренировки / выполнения",
+  offPlan: "🔁 Вне плана / частично",
+  accessLost: "🔒 Нет доступа к TP",
 } as const;
 
 /** Per-section visible item caps before an overflow line; long digests split across Telegram messages. */
@@ -22,6 +24,8 @@ export const ATTENTION_DIGEST_SECTION_LIMITS = {
   pain: 20,
   noContact: 30,
   missed: 25,
+  offPlan: 25,
+  accessLost: 25,
 } as const;
 
 type MorningDigestSectionKey = keyof typeof MORNING_DIGEST_SECTION_TITLES;
@@ -31,6 +35,8 @@ const CROSS_SECTION_DEDUPE_PRIORITY: MorningDigestSectionKey[] = [
   "checkToday",
   "plan",
   "missed",
+  "offPlan",
+  "accessLost",
   "noContact",
 ];
 
@@ -285,6 +291,9 @@ function buildMorningDigestSectionSignals(
     pain: snapshot.painDiscomfort,
     noContact: snapshot.noContact5Days,
     missed: snapshot.missedWorkouts,
+    // Те же списки, что на десктопе (coach-desk-today.ts): логика одна — getTrainingPeaksAttentionSnapshot.
+    offPlan: snapshot.offPlanWorkouts ?? [],
+    accessLost: snapshot.tpAccessLost ?? [],
   });
 }
 
@@ -322,7 +331,19 @@ function buildAttentionDigestBlocks(
     htmlSafe: options?.htmlSafe,
   });
 
-  return [[title], checkToday, planConstraints, pain, noContact, missed].filter((block) => block.length > 1);
+  const offPlan = buildAttentionSection(MORNING_DIGEST_SECTION_TITLES.offPlan, sections.offPlan, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.offPlan,
+    htmlSafe: options?.htmlSafe,
+  });
+
+  const accessLost = buildAttentionSection(MORNING_DIGEST_SECTION_TITLES.accessLost, sections.accessLost, {
+    maxItems: ATTENTION_DIGEST_SECTION_LIMITS.accessLost,
+    htmlSafe: options?.htmlSafe,
+  });
+
+  return [[title], checkToday, planConstraints, pain, noContact, missed, offPlan, accessLost].filter(
+    (block) => block.length > 1
+  );
 }
 
 function applyAttentionDigestContinuationHeaders(title: string, chunks: string[]): string[] {

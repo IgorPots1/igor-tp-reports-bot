@@ -104,6 +104,24 @@ function buildRepresentativeSnapshot(): TrainingPeaksAttentionSnapshot {
         signalKind: "missed_workout",
       },
     ],
+    offPlanWorkouts: [
+      {
+        level: "today",
+        studentName: "Athlete Padel",
+        studentId: "student-padel",
+        reason: "вчера вне плана: Padel Racket (план: «Бег по пульсу»)",
+        signalKind: "off_plan_workout",
+      },
+    ],
+    tpAccessLost: [
+      {
+        level: "today",
+        studentName: "Athlete Locked",
+        studentId: "student-locked",
+        reason: "нет доступа к TP (403), последние данные 28.09 — пропуски не считаются",
+        signalKind: "tp_access_lost",
+      },
+    ],
     noContact5Days: [
       {
         level: "fyi",

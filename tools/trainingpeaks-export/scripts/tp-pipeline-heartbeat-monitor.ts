@@ -104,7 +104,9 @@ async function main(): Promise<void> {
       .from("trainingpeaks_cron_run_logs")
       .select("started_at")
       .eq("job_name", f.job)
-      .eq("status", "sent")
+      // partial = прогон дошёл до конца, часть учеников упала (403 у ученика есть почти всегда).
+      // Для «жив ли поток» это успех; иначе монитор тревожил бы на каждом прогоне.
+      .in("status", ["sent", "partial"])
       .order("started_at", { ascending: false })
       .limit(1);
     const last = (data as Array<{ started_at: string }> | null)?.[0]?.started_at ?? null;

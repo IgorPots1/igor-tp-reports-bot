@@ -2,6 +2,7 @@ import type {
   TrainingPeaksAttentionSignal,
   TrainingPeaksAttentionSnapshot,
 } from "@/features/trainingpeaks/service";
+import { formatDataFreshness } from "@/features/trainingpeaks/yesterday-execution";
 import type { HealthSignalMemoryDoubt } from "@/features/trainingpeaks/health-signal-memory-reconcile";
 
 // Coach-desk "Today" view model — a FULL mirror of the bot morning digest (same 5 sections, same order),
@@ -34,7 +35,8 @@ export type CoachDeskPlanCard = CoachDeskCard & { dismiss: CoachDeskDismiss };
 // action carries a "Снять" (DB-only reject), so it needs the same dismiss handle as plan cards.
 export type CoachDeskErrorCard = { name: string | null; studentId: string | null; dismiss: CoachDeskDismiss; summary: string };
 
-export type CoachDeskNameRow = WithChat;
+// detail — короткая строка под именем: «обновлено 3 ч назад», «вне плана: Padel Racket …».
+export type CoachDeskNameRow = WithChat & { detail?: string | null };
 
 export type CoachDeskTodayView = {
   scanAlert: string | null;
@@ -44,7 +46,9 @@ export type CoachDeskTodayView = {
   plan: CoachDeskPlanCard[]; // 📅 availability / constraints / move candidates & requests
   pain: CoachDeskCard[]; // 🦵 injuries — admin-closable (manual only)
   noContact: CoachDeskNameRow[]; // 📭 silent 5+ days
-  missed: CoachDeskNameRow[]; // 🏃 no completion recorded (from workout_cache — nightly)
+  missed: CoachDeskNameRow[]; // 🏃 no completion recorded (from workout_cache)
+  offPlan: CoachDeskNameRow[]; // 🔁 planned run not done, something else done the same day
+  tpAccessLost: CoachDeskNameRow[]; // 🔒 last scan 403 — no TP access, misses not counted
   counts: {
     check: number;
     freshCheck: number;
@@ -54,6 +58,8 @@ export type CoachDeskTodayView = {
     pain: number;
     noContact: number;
     missed: number;
+    offPlan: number;
+    tpAccessLost: number;
   };
 };
 
@@ -151,7 +157,8 @@ function planDismiss(signal: TrainingPeaksAttentionSignal): CoachDeskDismiss {
 
 export function buildCoachDeskTodayView(
   snapshot: TrainingPeaksAttentionSnapshot,
-  usernameByStudentId?: ReadonlyMap<string, string | null>
+  usernameByStudentId?: ReadonlyMap<string, string | null>,
+  now: Date = new Date()
 ): CoachDeskTodayView {
   const username = (studentId: string | null): string | null =>
     (studentId ? usernameByStudentId?.get(studentId) ?? null : null);
@@ -279,7 +286,17 @@ export function buildCoachDeskTodayView(
     telegramUsername: username(signal.studentId ?? null),
   });
   const noContact = snapshot.noContact5Days.map(toRow);
-  const missed = snapshot.missedWorkouts.map(toRow);
+  // Строки из кэша тренировок несут свежесть данных ученика — тренер видит, насколько им верить.
+  const freshness = (signal: TrainingPeaksAttentionSignal): string => formatDataFreshness(signal.dataAsOf, now);
+  const missed = snapshot.missedWorkouts.map((signal) => ({ ...toRow(signal), detail: freshness(signal) }));
+  const offPlan = (snapshot.offPlanWorkouts ?? []).map((signal) => ({
+    ...toRow(signal),
+    detail: `${signal.reason.replace(/^вчера\s+/u, "")} · ${freshness(signal)}`,
+  }));
+  const tpAccessLost = (snapshot.tpAccessLost ?? []).map((signal) => ({
+    ...toRow(signal),
+    detail: signal.reason.replace(/^нет доступа к TP \(403\),?\s*/u, "").replace(/^—\s*/u, ""),
+  }));
 
   return {
     scanAlert,
@@ -290,6 +307,8 @@ export function buildCoachDeskTodayView(
     pain,
     noContact,
     missed,
+    offPlan,
+    tpAccessLost,
     counts: {
       check: check.length,
       freshCheck: freshCheck.length,
@@ -299,6 +318,8 @@ export function buildCoachDeskTodayView(
       pain: pain.length,
       noContact: noContact.length,
       missed: missed.length,
+      offPlan: offPlan.length,
+      tpAccessLost: tpAccessLost.length,
     },
   };
 }

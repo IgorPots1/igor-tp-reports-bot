@@ -4,7 +4,10 @@
 // only when the underlying scan actually succeeded, so a flow that fails every time never looks
 // alive. Never throws: a heartbeat write must not change the caller's exit code.
 //
-// Usage: tsx tp-heartbeat.ts --job=<name> --status=sent|failed [--note="..."]
+// status=partial (2026-10-02): прогон дошёл до конца, но часть учеников упала (403 / fetch failed —
+// разбивка в note). Монитор считает его живым, но это НЕ «всё прошло».
+//
+// Usage: tsx tp-heartbeat.ts --job=<name> --status=sent|partial|failed [--note="..."]
 
 import { loadLocalEnv } from "./lib/local-env.ts";
 loadLocalEnv();
@@ -20,7 +23,8 @@ function arg(name: string): string | undefined {
 
 async function main(): Promise<void> {
   const job = arg("job");
-  const status = arg("status") === "failed" ? "failed" : "sent";
+  const rawStatus = arg("status");
+  const status = rawStatus === "failed" ? "failed" : rawStatus === "partial" ? "partial" : "sent";
   if (!job) {
     console.error("[tp-heartbeat] --job=<name> required");
     return;

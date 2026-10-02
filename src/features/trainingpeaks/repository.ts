@@ -2154,6 +2154,90 @@ export async function reconcileTrainingPeaksWorkoutCachePlannedRows(input: {
   return typeof data === "number" ? data : 0;
 }
 
+// --- эпизоды 403 «нет доступа к TP» (наряд 2026-10-02) ---------------------------------------
+// Одна строка на ученика = текущий эпизод. Уведомление тренеру — один раз на эпизод.
+
+export type TrainingPeaksTpAccessLostPending = {
+  studentId: string;
+  studentName: string | null;
+  firstSeenAt: string;
+};
+
+type TpAccessLostNoticeDbRow = {
+  student_id: string;
+  student_name: string | null;
+  first_seen_at: string;
+  notified_at: string | null;
+  restored_at: string | null;
+};
+
+/**
+ * Сверяет эпизоды с итогом прогона скана: 403 открывает эпизод (или продлевает открытый),
+ * ok закрывает открытый. Возвращает открытые эпизоды, о которых тренер ещё не уведомлён.
+ */
+export async function syncTrainingPeaksTpAccessLostNotices(input: {
+  lost: Array<{ studentId: string; studentName: string | null }>;
+  okStudentIds: string[];
+  seenAt: string;
+}): Promise<TrainingPeaksTpAccessLostPending[]> {
+  const supabase = createSupabaseServerClient();
+  const table = "trainingpeaks_tp_access_lost_notices";
+
+  for (const ids of chunkIds(input.okStudentIds, 100)) {
+    const { error } = await withSupabaseNetworkRetry(() => supabase
+      .from(table)
+      .update({ restored_at: input.seenAt, updated_at: input.seenAt })
+      .in("student_id", ids)
+      .is("restored_at", null));
+    if (error) throw new Error(`Failed to close TP access-lost episodes: ${error.message}`);
+  }
+
+  if (input.lost.length === 0) return [];
+
+  const lostIds = input.lost.map((item) => item.studentId);
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
+    .from(table)
+    .select("student_id, student_name, first_seen_at, notified_at, restored_at")
+    .in("student_id", lostIds));
+  if (error) throw new Error(`Failed to read TP access-lost episodes: ${error.message}`);
+  const existing = new Map(
+    ((data as TpAccessLostNoticeDbRow[] | null) ?? []).map((row) => [row.student_id, row])
+  );
+
+  const rows = input.lost.map((item) => {
+    const open = existing.get(item.studentId);
+    const isOpen = open && open.restored_at === null;
+    return {
+      student_id: item.studentId,
+      student_name: item.studentName,
+      first_seen_at: isOpen ? open.first_seen_at : input.seenAt,
+      last_seen_at: input.seenAt,
+      notified_at: isOpen ? open.notified_at : null,
+      restored_at: null,
+      updated_at: input.seenAt,
+    };
+  });
+  const { error: upsertError } = await withSupabaseNetworkRetry(() => supabase
+    .from(table)
+    .upsert(rows, { onConflict: "student_id" }));
+  if (upsertError) throw new Error(`Failed to upsert TP access-lost episodes: ${upsertError.message}`);
+
+  return rows
+    .filter((row) => row.notified_at === null)
+    .map((row) => ({ studentId: row.student_id, studentName: row.student_name, firstSeenAt: row.first_seen_at }));
+}
+
+export async function markTrainingPeaksTpAccessLostNotified(studentIds: string[], at: string): Promise<void> {
+  if (studentIds.length === 0) return;
+  const supabase = createSupabaseServerClient();
+  const { error } = await withSupabaseNetworkRetry(() => supabase
+    .from("trainingpeaks_tp_access_lost_notices")
+    .update({ notified_at: at, updated_at: at })
+    .in("student_id", studentIds)
+    .is("restored_at", null));
+  if (error) throw new Error(`Failed to mark TP access-lost episodes notified: ${error.message}`);
+}
+
 export async function upsertTrainingPeaksWorkoutCacheScanStatuses(
   rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[]
 ): Promise<void> {
@@ -2380,23 +2464,52 @@ export async function listTrainingPeaksWorkoutCacheScanStatusesCoveringDate(
   date: string
 ): Promise<TrainingPeaksWorkoutCacheScanStatus[]> {
   const supabase = createSupabaseServerClient();
+  // Paginated (2026-10-02). Every scan window of the last ~10 days covers a given date, so this
+  // is ~14 rows per student (1862 rows for 133 students on 01.10). The old unpaged read capped at
+  // 1000, sorted by name: everyone after "Margarita" had NO status, was skipped as "no scan" and
+  // never reached the missed-workout list. `id` is the stable tiebreaker.
+  const data = await fetchAllRows<TrainingPeaksWorkoutCacheScanStatusDbRow>(
+    (from, to) =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_workout_cache_scan_status")
+          .select("*")
+          .lte("scan_from", date)
+          .gte("scan_to", date)
+          .order("student_name", { ascending: true })
+          .order("scanned_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to)
+      ) as Promise<{
+        data: TrainingPeaksWorkoutCacheScanStatusDbRow[] | null;
+        error: { message: string } | null;
+      }>,
+    { label: `workout-cache-scan-status covering ${date}` }
+  );
+
+  return (data ?? []).map(mapTrainingPeaksWorkoutCacheScanStatusRow);
+}
+
+/**
+ * Latest ok scan of one student, across all windows. Used only for the few students the desk shows
+ * without a fresh scan (lost TP access): their last ok can be older than any window covering
+ * yesterday.
+ */
+export async function getLatestOkTrainingPeaksWorkoutCacheScanAt(studentId: string): Promise<string | null> {
+  const supabase = createSupabaseServerClient();
   const { data, error } = await withSupabaseNetworkRetry(() => supabase
     .from("trainingpeaks_workout_cache_scan_status")
-    .select("*")
-    .lte("scan_from", date)
-    .gte("scan_to", date)
-    .order("student_name", { ascending: true })
-    .order("scanned_at", { ascending: false }));
+    .select("scanned_at")
+    .eq("student_id", studentId)
+    .eq("status", "ok")
+    .order("scanned_at", { ascending: false })
+    .limit(1)
+    .maybeSingle());
 
   if (error) {
-    throw new Error(
-      `Failed to list TrainingPeaks workout cache scan statuses covering ${date}: ${error.message}`
-    );
+    throw new Error(`Failed to load latest ok scan for student ${studentId}: ${error.message}`);
   }
-
-  return ((data as TrainingPeaksWorkoutCacheScanStatusDbRow[]) ?? []).map(
-    mapTrainingPeaksWorkoutCacheScanStatusRow
-  );
+  return (data as { scanned_at: string } | null)?.scanned_at ?? null;
 }
 
 export async function getLatestTrainingPeaksWorkoutCacheScanStatusForStudentCoveringDate(
@@ -6748,6 +6861,8 @@ export type TrainingPeaksCronRunLogSource = "vercel_cron" | "manual" | "unknown"
 export type TrainingPeaksCronRunLogStatus =
   | "started"
   | "sent"
+  // Прогон дошёл до конца, но часть учеников упала (403 / fetch failed). Миграция 20261021000001.
+  | "partial"
   | "failed"
   | "unauthorized"
   | "skipped";

@@ -206,6 +206,7 @@
     "check-signal-recovery-bridge": "npx tsx scripts/check-signal-recovery-bridge.ts",
     "check-signal-recovery-by-workout": "npx tsx scripts/check-signal-recovery-by-workout.ts",
     "check-coach-desk-today": "npx tsx scripts/check-coach-desk-today.ts",
+    "check:yesterday-execution": "npx tsx scripts/check-yesterday-execution.ts",
     "check-signal-zombie-cleanup": "npx tsx scripts/check-signal-zombie-cleanup.ts",
     "check-desk-fresh-illness": "npx tsx scripts/check-desk-fresh-illness.ts",
     "check-coach-desk-starts": "npx tsx scripts/check-coach-desk-starts.ts",

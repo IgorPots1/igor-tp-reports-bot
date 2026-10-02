@@ -68,6 +68,7 @@ import {
   listTrainingPeaksWorkoutCacheForDateRange,
   listTrainingPeaksWorkoutCacheForStudentDateRange,
   listTrainingPeaksWorkoutCacheScanStatusesCoveringDate,
+  getLatestOkTrainingPeaksWorkoutCacheScanAt,
   listTrainingPeaksStudentsEligibleForHealthMetrics,
   listTrainingPeaksHealthMetricsForStudentsDateRange,
   listTrainingPeaksOperationalSignals,
@@ -188,6 +189,13 @@ import {
 // only supabase, no trainingpeaks, so no cycle). Used to skip club pometki in the
 // missed-workout signal so they don't create false attention/digest entries.
 import { isClubMarkerTitle } from "@/features/club/cache-guard";
+import {
+  classifyScanFailure,
+  describePlannedRunOutcome,
+  isUnplannedCompletedWorkout,
+  resolvePlannedRunOutcomes,
+  type ExecutionWorkoutRow,
+} from "@/features/trainingpeaks/yesterday-execution";
 import {
   parseMoveWorkoutWithAiFallback,
   selectMoveSourceWorkoutWithAi,
@@ -746,6 +754,9 @@ export type TrainingPeaksAttentionSignal = {
   // Решение A / Шаг 1: memory doubt on a health follow-up, threaded structurally so the desk can render
   // a badge without parsing reason (reason keeps the appended line for the bot digest).
   memoryDoubt?: HealthSignalMemoryDoubt | null;
+  // Последний ok-скан кэша TP этого ученика (ISO) — по нему десктоп пишет «обновлено N ч назад».
+  // Ставится только у сигналов, построенных из кэша тренировок.
+  dataAsOf?: string | null;
 };
 
 export type TrainingPeaksAttentionSnapshot = {
@@ -756,6 +767,12 @@ export type TrainingPeaksAttentionSnapshot = {
   checkTodaySignals: TrainingPeaksAttentionSignal[];
   painDiscomfort: TrainingPeaksAttentionSignal[];
   missedWorkouts: TrainingPeaksAttentionSignal[];
+  // Вчера плановая беговая не выполнена, но в тот же день есть незапланированная выполненная:
+  // «вне плана: <вид>» или «выполнено частично». Не пропуск. Необязательное — старые фикстуры.
+  offPlanWorkouts?: TrainingPeaksAttentionSignal[];
+  // Последний скан ученика упал с 403: у тренера нет доступа к его календарю в TP. Пропуски по
+  // такому ученику не считаются, пока не вернётся ok-скан (без 48-часового выпадения).
+  tpAccessLost?: TrainingPeaksAttentionSignal[];
   noContact5Days: TrainingPeaksAttentionSignal[];
   followUpToday: TrainingPeaksAttentionSignal[];
   followUpOverflowCount: number;
@@ -4877,6 +4894,7 @@ type YesterdayScanStatusSignalSource = {
   studentId: string;
   status: "ok" | "failed" | "skipped";
   scannedAt: string;
+  errorMessage?: string | null;
 };
 
 type YesterdayScanActiveStudentSource = {
@@ -4891,6 +4909,11 @@ type YesterdayScanAttentionSummary = {
   shouldShowMissingScanAlert: boolean;
   latestStatusByStudentId: Map<string, YesterdayScanStatusSignalSource>;
   latestOkStatusByStudentId: Map<string, YesterdayScanStatusSignalSource>;
+  // Последний статус ученика — failed с 403. Таких нет в actionableFailed*: «перелогинься» им не
+  // поможет, они идут отдельным статусом «нет доступа к TP».
+  accessLostStudentIds: Set<string>;
+  // Все actionable-сбои — сетевые (fetch failed): перелогин не поможет, советовать его не надо.
+  actionableFetchFailedOnly: boolean;
 };
 
 function getBelgradeHour(now = new Date()): number | null {
@@ -4965,10 +4988,17 @@ export function summarizeYesterdayScanAttention(input: {
   }
 
   const actionableFailedNames: string[] = [];
+  const accessLostStudentIds = new Set<string>();
+  let actionableHasNonFetchFailure = false;
   let missingScanCount = 0;
   for (const student of input.activeStudents) {
     if (!hasAnyStatusByStudentId.has(student.id)) {
       missingScanCount += 1;
+      continue;
+    }
+    const latestStatus = latestStatusByStudentId.get(student.id);
+    if (latestStatus?.status === "failed" && classifyScanFailure(latestStatus.errorMessage) === "access_lost") {
+      accessLostStudentIds.add(student.id);
       continue;
     }
     const latestFailedMs = latestFailedMsByStudentId.get(student.id);
@@ -4982,6 +5012,9 @@ export function summarizeYesterdayScanAttention(input: {
     const name = activeStudentsById.get(student.id);
     if (name) {
       actionableFailedNames.push(name);
+      if (classifyScanFailure(latestStatus?.errorMessage) !== "fetch_failed") {
+        actionableHasNonFetchFailure = true;
+      }
     }
   }
 
@@ -4994,6 +5027,8 @@ export function summarizeYesterdayScanAttention(input: {
     shouldShowMissingScanAlert: shouldShowMissingYesterdayScanAlert(now),
     latestStatusByStudentId,
     latestOkStatusByStudentId,
+    accessLostStudentIds,
+    actionableFetchFailedOnly: actionableFailedNames.length > 0 && !actionableHasNonFetchFailure,
   };
 }
 
@@ -5075,6 +5110,85 @@ function shiftBelgradeIsoDate(isoDate: string, days: number): string {
   }
   const shifted = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days, 12, 0, 0));
   return getBelgradeIsoDate(shifted);
+}
+
+/**
+ * Вчерашний день одного ученика по строкам кэша: сколько плановых беговых реально пропущено и что
+ * сделано вместо (вне плана / частично). Чистая — её же гоняют check-yesterday-execution и
+ * verify-desk-missed-statuses на живых строках. Пропуском считается только беговая плановая, как и
+ * раньше; клубные пометки пропускаются.
+ */
+export function evaluateYesterdayRunExecution(studentRows: TrainingPeaksWorkoutCacheRow[]): {
+  missedRunningPlannedCount: number;
+  offPlanLines: string[];
+} {
+  const missedPlannedRuns: ExecutionWorkoutRow[] = [];
+  const unplannedCompleted: ExecutionWorkoutRow[] = [];
+  for (const row of studentRows) {
+    // Phase A (club): a club marker workout (day_off/preference/note pometka created in
+    // TP by Phase 11, type Other=100) is planned+not-completed and a running-keyword
+    // title ("интервальная"/"длительная") would misclassify as a run → false
+    // "missed_workout" signal in the coach desk + morning digest. Skip club markers.
+    if (isClubMarkerTitle(row.title)) {
+      continue;
+    }
+    const executionRow = toExecutionWorkoutRow(row);
+    if (isUnplannedCompletedWorkout(executionRow)) {
+      unplannedCompleted.push(executionRow);
+      continue;
+    }
+    if (!row.isPlanned || row.isCompleted) {
+      continue;
+    }
+
+    const classification = classifyTrainingPeaksWorkoutActivity({
+      title: row.title,
+      sportOrTypeCode: row.sportOrTypeCode,
+      workoutTypeValueId: row.workoutTypeValueId,
+      workoutSubTypeId: row.workoutSubTypeId,
+      sourceSnapshot: row.sourceSnapshot,
+    });
+
+    if (classification.isRunning) {
+      missedPlannedRuns.push(executionRow);
+    }
+  }
+
+  // План и факт одного дня, которые TP не склеил: тот же вид >= 70% — выполнено, меньше —
+  // частично, другой вид — вне плана. Пропуск — только когда в этот день не сделано ничего.
+  const outcomes = resolvePlannedRunOutcomes({ missedPlannedRuns, unplannedCompleted });
+  return {
+    missedRunningPlannedCount: outcomes.filter((outcome) => outcome.kind === "missed").length,
+    offPlanLines: outcomes
+      .map((outcome) => describePlannedRunOutcome(outcome))
+      .filter((line): line is string => Boolean(line)),
+  };
+}
+
+function toCacheNumber(value: number | string | null): number | null {
+  if (value === null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toExecutionWorkoutRow(row: TrainingPeaksWorkoutCacheRow): ExecutionWorkoutRow {
+  return {
+    title: row.title,
+    workoutTypeValueId: row.workoutTypeValueId,
+    isPlanned: row.isPlanned,
+    isCompleted: row.isCompleted,
+    plannedTimeRaw: toCacheNumber(row.plannedTimeRaw),
+    completedTimeRaw: toCacheNumber(row.completedTimeRaw),
+    plannedDistanceRaw: toCacheNumber(row.plannedDistanceRaw),
+    completedDistanceRaw: toCacheNumber(row.completedDistanceRaw),
+    orderOnDay: toCacheNumber(row.orderOnDay),
+  };
+}
+
+/** ISO-время → «28.09» по Белграду. */
+function formatBelgradeShortDate(iso: string): string {
+  const date = getBelgradeIsoDate(new Date(iso));
+  return `${date.slice(8, 10)}.${date.slice(5, 7)}`;
 }
 
 function getYesterdayBelgradeIsoDate(now = new Date()): string {
@@ -5887,6 +6001,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
   const checkTodaySignals: TrainingPeaksAttentionSignal[] = [];
   const painDiscomfort: TrainingPeaksAttentionSignal[] = [];
   const missedWorkouts: TrainingPeaksAttentionSignal[] = [];
+  const offPlanWorkouts: TrainingPeaksAttentionSignal[] = [];
+  const tpAccessLost: TrainingPeaksAttentionSignal[] = [];
   const planExtras: TrainingPeaksAttentionSignal[] = [];
 
   for (const action of actions) {
@@ -5983,6 +6099,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
       studentId: status.studentId,
       status: status.status,
       scannedAt: status.scannedAt,
+      errorMessage: status.errorMessage,
     })),
   });
 
@@ -6006,13 +6123,27 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     pushUniqueAttentionSignal(checkTodaySignals, {
       level: "today",
       studentName: null,
-      reason: `⚠️ Скан TP за вчера не прошёл (${failedCount} ${studentNoun}${namesSuffix}) — данные о тренировках могут быть неполными. Перелогинься: npm run tp-login (в tools/trainingpeaks-export)`,
+      // 403 сюда не попадают (они в tpAccessLost). Сетевой сбой перелогином не лечится, поэтому
+      // совет «перелогинься» — только когда среди сбоев есть не-сетевые.
+      reason: yesterdayScanSummary.actionableFetchFailedOnly
+        ? `⚠️ Скан TP за вчера не прошёл (${failedCount} ${studentNoun}${namesSuffix}) — сбой сети, данные о тренировках могут быть неполными. Следующий прогон обычно проходит сам.`
+        : `⚠️ Скан TP за вчера не прошёл (${failedCount} ${studentNoun}${namesSuffix}) — данные о тренировках могут быть неполными. Перелогинься: npm run tp-login (в tools/trainingpeaks-export)`,
       signalKind: "scan_failed",
     });
   }
 
+  const accessLostStudents: Array<{ id: string; studentName: string | null }> = [];
+
   for (const student of activeStudents) {
     const studentName = student.studentName?.trim() || null;
+
+    // 403: доступа к календарю нет — пропуски по старому кэшу не считаем, показываем статус, пока
+    // не вернётся ok-скан. Без 48-часового выпадения (решение тренера 02.10).
+    if (yesterdayScanSummary.accessLostStudentIds.has(student.id)) {
+      accessLostStudents.push({ id: student.id, studentName });
+      continue;
+    }
+
     const scanStatus = yesterdayScanSummary.latestStatusByStudentId.get(student.id);
     const fallbackOkStatus = yesterdayScanSummary.latestOkStatusByStudentId.get(student.id);
 
@@ -6028,39 +6159,27 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     } else {
       continue;
     }
+    const dataAsOf = (usedFallback ? fallbackOkStatus?.scannedAt : scanStatus?.scannedAt) ?? null;
 
     const studentRows = rowsByStudentId.get(student.id) ?? [];
     if (studentRows.length === 0) {
       continue;
     }
 
-    let missedRunningPlannedCount = 0;
-    for (const row of studentRows) {
-      if (!row.isPlanned || row.isCompleted) {
-        continue;
-      }
-      // Phase A (club): a club marker workout (day_off/preference/note pometka created in
-      // TP by Phase 11, type Other=100) is planned+not-completed and a running-keyword
-      // title ("интервальная"/"длительная") would misclassify as a run → false
-      // "missed_workout" signal in the coach desk + morning digest. Skip club markers.
-      if (isClubMarkerTitle(row.title)) {
-        continue;
-      }
-
-      const classification = classifyTrainingPeaksWorkoutActivity({
-        title: row.title,
-        sportOrTypeCode: row.sportOrTypeCode,
-        workoutTypeValueId: row.workoutTypeValueId,
-        workoutSubTypeId: row.workoutSubTypeId,
-        sourceSnapshot: row.sourceSnapshot,
-      });
-
-      if (classification.isRunning) {
-        missedRunningPlannedCount += 1;
-      }
-    }
+    const { missedRunningPlannedCount, offPlanLines } = evaluateYesterdayRunExecution(studentRows);
 
     const staleSuffix = usedFallback ? " (по данным предыдущего скана)" : "";
+
+    if (offPlanLines.length > 0) {
+      pushUniqueAttentionSignal(offPlanWorkouts, {
+        level: "today",
+        studentName,
+        reason: `вчера ${offPlanLines.join("; ")}${staleSuffix}`,
+        studentId: student.id,
+        signalKind: "off_plan_workout",
+        dataAsOf,
+      });
+    }
 
     if (missedRunningPlannedCount === 1) {
       pushUniqueAttentionSignal(missedWorkouts, {
@@ -6069,6 +6188,7 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         reason: `вчера была беговая тренировка, выполнения не найдено${staleSuffix}`,
         studentId: student.id,
         signalKind: "missed_workout",
+        dataAsOf,
       });
       continue;
     }
@@ -6080,9 +6200,34 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
         reason: `${formatMissedRunningWorkoutReason(missedRunningPlannedCount)}${staleSuffix}`,
         studentId: student.id,
         signalKind: "missed_workout",
+        dataAsOf,
       });
     }
   }
+
+  // Последний ok-скан для «нет доступа к TP»: он старше любого окна, покрывающего вчера, поэтому
+  // читается отдельно — по одному запросу на ученика, их единицы (12 на 02.10).
+  const accessLostLastOk = await safeAttentionSource(
+    "tp_access_lost_last_ok",
+    () =>
+      Promise.all(
+        accessLostStudents.map((student) => getLatestOkTrainingPeaksWorkoutCacheScanAt(student.id))
+      ),
+    accessLostStudents.map(() => null as string | null)
+  );
+  accessLostStudents.forEach((student, index) => {
+    const lastOk = accessLostLastOk[index] ?? null;
+    pushUniqueAttentionSignal(tpAccessLost, {
+      level: "today",
+      studentName: student.studentName,
+      reason: lastOk
+        ? `нет доступа к TP (403), последние данные ${formatBelgradeShortDate(lastOk)} — пропуски не считаются`
+        : "нет доступа к TP (403) — пропуски не считаются",
+      studentId: student.id,
+      signalKind: "tp_access_lost",
+      dataAsOf: lastOk,
+    });
+  });
 
   if (yesterdayScanSummary.shouldShowMissingScanAlert && yesterdayScanSummary.missingScanCount > 0) {
     const missingCount = yesterdayScanSummary.missingScanCount;
@@ -6345,6 +6490,8 @@ export async function getTrainingPeaksAttentionSnapshot(): Promise<TrainingPeaks
     checkTodaySignals,
     painDiscomfort,
     missedWorkouts,
+    offPlanWorkouts,
+    tpAccessLost,
     noContact5Days,
     followUpToday,
     followUpOverflowCount,

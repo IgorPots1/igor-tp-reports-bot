@@ -1,5 +1,5 @@
 import process from "node:process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import type {
@@ -18,6 +18,7 @@ import {
   normalizeTrainingPeaksWorkoutItems,
   type TrainingPeaksWorkoutRaw,
 } from "./lib/trainingpeaks-workout-normalization.ts";
+import { classifyScanFailure } from "../../../src/features/trainingpeaks/yesterday-execution.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
@@ -77,6 +78,79 @@ async function sendSessionDeadAlert(): Promise<void> {
 }
 
 
+// «Нет доступа к TP»: одно уведомление на эпизод 403, не на каждый прогон (наряд 2026-10-02).
+// Эпизоды ведутся всегда; ОТПРАВКА — только при TP_ACCESS_LOST_NOTIFY=1. Пока флаг выключен,
+// неуведомлённые эпизоды копятся и уйдут ОДНИМ сообщением в первом прогоне после включения.
+// Никогда не роняет скан.
+async function syncAccessLostNotices(input: {
+  summaries: Array<{ studentId: string | null; studentName: string; status: string; reason?: string }>;
+  seenAt: string;
+  repoCompat: RepositoryCompat;
+}): Promise<void> {
+  const sync =
+    input.repoCompat.syncTrainingPeaksTpAccessLostNotices ??
+    input.repoCompat.default?.syncTrainingPeaksTpAccessLostNotices;
+  const markNotified =
+    input.repoCompat.markTrainingPeaksTpAccessLostNotified ??
+    input.repoCompat.default?.markTrainingPeaksTpAccessLostNotified;
+  if (!sync || !markNotified) {
+    console.error("[tp-workouts-cache-scan] access-lost helpers unavailable — episodes not tracked.");
+    return;
+  }
+  try {
+    const lost = input.summaries
+      .filter((item) => item.studentId && item.status === "failed" && classifyScanFailure(item.reason) === "access_lost")
+      .map((item) => ({ studentId: item.studentId as string, studentName: item.studentName }));
+    const okStudentIds = input.summaries
+      .filter((item) => item.studentId && item.status === "ok")
+      .map((item) => item.studentId as string);
+    const pending = await sync({ lost, okStudentIds, seenAt: input.seenAt });
+    console.log(`access_lost_episodes: open=${lost.length}, not_notified=${pending.length}`);
+    if (pending.length === 0 || process.env.TP_ACCESS_LOST_NOTIFY?.trim() !== "1") return;
+
+    const names = pending
+      .map((item) => item.studentName?.trim() || item.studentId)
+      .sort((a, b) => a.localeCompare(b, "ru-RU"));
+    const message =
+      `🔒 Нет доступа к TP (403): ${names.join(", ")}.\n` +
+      "Скан не видит их календарь, пропуски по ним не считаются. Проверь, не закрыл ли ученик доступ тренеру в TP.";
+    const sent = await sendCoachAlert(message);
+    if (sent) {
+      await markNotified(
+        pending.map((item) => item.studentId),
+        new Date().toISOString(),
+      );
+    }
+  } catch (error) {
+    console.error(`[tp-workouts-cache-scan] access-lost episodes sync failed: ${toCompactErrorMessage(error)}`);
+  }
+}
+
+/** true — ушло хотя бы в один чат тренера. */
+async function sendCoachAlert(message: string): Promise<boolean> {
+  const chatIds = getCoachAlertChatIds();
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (chatIds.length === 0 || !token) {
+    console.error("[tp-workouts-cache-scan] coach alert skipped: TELEGRAM_COACH_CHAT_IDS / TELEGRAM_BOT_TOKEN not set.");
+    return false;
+  }
+  let delivered = false;
+  for (const chatId of chatIds) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: message }),
+      });
+      if (res.ok) delivered = true;
+      else console.error(`[tp-workouts-cache-scan] coach alert to ${chatId} failed: HTTP ${res.status}`);
+    } catch (error) {
+      console.error(`[tp-workouts-cache-scan] coach alert to ${chatId} failed:`, error);
+    }
+  }
+  return delivered;
+}
+
 type CliArgs = {
   from: string;
   to: string;
@@ -123,6 +197,8 @@ type RepositoryCompat = {
     rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[],
   ) => Promise<void>;
   reconcileTrainingPeaksWorkoutCachePlannedRows?: ReconcilePlannedRowsFn;
+  syncTrainingPeaksTpAccessLostNotices?: typeof trainingPeaksRepository.syncTrainingPeaksTpAccessLostNotices;
+  markTrainingPeaksTpAccessLostNotified?: typeof trainingPeaksRepository.markTrainingPeaksTpAccessLostNotified;
   default?: {
     listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
     upsertTrainingPeaksWorkoutCacheRows?: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
@@ -130,6 +206,8 @@ type RepositoryCompat = {
       rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[],
     ) => Promise<void>;
     reconcileTrainingPeaksWorkoutCachePlannedRows?: ReconcilePlannedRowsFn;
+    syncTrainingPeaksTpAccessLostNotices?: typeof trainingPeaksRepository.syncTrainingPeaksTpAccessLostNotices;
+    markTrainingPeaksTpAccessLostNotified?: typeof trainingPeaksRepository.markTrainingPeaksTpAccessLostNotified;
   };
 };
 
@@ -866,6 +944,33 @@ async function main(): Promise<void> {
       console.log(
         `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, reconciled_deleted=${item.reconciledDeleted}, warnings=${item.warnings}, status=${item.status}${shortReason}`,
       );
+    }
+
+    // Итог прогона для обёртки (heartbeat sent / partial). 403 и сетевой сбой — раздельно.
+    const failedKinds = summaries
+      .filter((item) => item.status === "failed")
+      .map((item) => classifyScanFailure(item.reason));
+    const outcome = {
+      ok: successCount,
+      accessLost: failedKinds.filter((kind) => kind === "access_lost").length,
+      fetchFailed: failedKinds.filter((kind) => kind === "fetch_failed").length,
+      otherFailed: failedKinds.filter((kind) => kind === "other").length,
+      skipped: skippedCount,
+    };
+    console.log(
+      `failed_by_kind: access_lost(403)=${outcome.accessLost}, fetch_failed=${outcome.fetchFailed}, other=${outcome.otherFailed}`,
+    );
+    const outcomeFile = process.env.SCAN_OUTCOME_FILE?.trim();
+    if (outcomeFile) {
+      try {
+        writeFileSync(outcomeFile, JSON.stringify(outcome));
+      } catch (error) {
+        console.error(`[tp-workouts-cache-scan] Failed to write SCAN_OUTCOME_FILE: ${toCompactErrorMessage(error)}`);
+      }
+    }
+
+    if (args.allActive) {
+      await syncAccessLostNotices({ summaries, seenAt: scannedAt, repoCompat });
     }
 
     if (!args.allActive && failedCount > 0) {

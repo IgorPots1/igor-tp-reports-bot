@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchDaemon (системный, от root): продлевает разовые побудки Мака под скан кэша TP.
+  Ставится в /Library/LaunchDaemons, скрипт — копией в /usr/local/libexec (root-owned),
+  см. tools/trainingpeaks-export/scripts/schedule-scan-wakes.sh. Наряд 2026-10-02.
+  Запуск при загрузке и каждый час на :15 — пока Мак не спит; побудки ставятся на 3 дня вперёд,
+  так что пропуск суток ничего не рвёт.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.scan-wakes</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/usr/local/libexec/igor-schedule-scan-wakes.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/var/log/igor-scan-wakes.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/igor-scan-wakes.log</string>
+</dict>
+</plist>
