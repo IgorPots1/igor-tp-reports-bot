@@ -51,19 +51,6 @@ export default async function StartPage() {
           </div>
 
           <div className="links">
-            <a className="card" href="/club">
-              <span className="ic club">
-                <Users size={22} strokeWidth={2} aria-hidden="true" />
-              </span>
-              <span className="txt">
-                <span className="t">Беговой клуб</span>{" "}
-                <span className="s">
-                  Личный план и тренер рядом каждый день
-                </span>
-              </span>
-              <span className="ar">&rsaquo;</span>
-            </a>
-
             <a className="card primary" href="/camp">
               <span className="badge">Идёт набор</span>
               <span className="ic int">
@@ -83,6 +70,19 @@ export default async function StartPage() {
                       {seatsLeft} {seatsWord(seatsLeft)}
                     </>
                   )}
+                </span>
+              </span>
+              <span className="ar">&rsaquo;</span>
+            </a>
+
+            <a className="card" href="/club">
+              <span className="ic club">
+                <Users size={22} strokeWidth={2} aria-hidden="true" />
+              </span>
+              <span className="txt">
+                <span className="t">Беговой клуб</span>{" "}
+                <span className="s">
+                  Личный план и тренер рядом каждый день
                 </span>
               </span>
               <span className="ar">&rsaquo;</span>

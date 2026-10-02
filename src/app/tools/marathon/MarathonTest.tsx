@@ -408,7 +408,7 @@ export default function MarathonTest() {
         {shared ? "Ссылка скопирована" : "Поделиться результатом"}
       </button>
 
-      <ConsultNotice />
+      <ConsultNotice prefill="Здравствуйте! Хочу на бесплатную консультацию по подготовке к марафону" />
       <p className={styles.planLink}>
         Темпы для тренировок: <a href="/tools/plan">igorp.run/tools/plan</a>
       </p>

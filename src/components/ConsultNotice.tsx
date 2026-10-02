@@ -14,23 +14,36 @@ import styles from "./ConsultNotice.module.css";
  * не с лендинга клуба или интенсива. Поэтому заготовка ровно про консультацию:
  * у карточки «Написать мне» на хабе зашито «Хочу записаться на беговой
  * интенсив», и здесь она врала бы человеку, который нажал «Записаться» под
- * словом «консультация». Текст закодирован для URL, менять его нужно вместе с
- * заголовком блока. */
+ * словом «консультация».
+ *
+ * Инструмент может уточнить заготовку своим prefill: /tools/marathon называет
+ * подготовку к марафону, и по первому же сообщению видно, откуда человек
+ * пришёл. Без параметра берётся общая, которая не называет ни одного
+ * инструмента. Кодирование для URL делает сам consultLink, вручную его писать
+ * не надо. */
 
-export const CONSULT_LINK =
-  "https://t.me/IgorPotseluev?text=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%21%20%D0%A5%D0%BE%D1%87%D1%83%20%D0%BD%D0%B0%20%D0%B1%D0%B5%D1%81%D0%BF%D0%BB%D0%B0%D1%82%D0%BD%D1%83%D1%8E%20%D0%BA%D0%BE%D0%BD%D1%81%D1%83%D0%BB%D1%8C%D1%82%D0%B0%D1%86%D0%B8%D1%8E%20%D0%BF%D0%BE%20%D0%B1%D0%B5%D0%B3%D1%83";
+const CONSULT_TG = "https://t.me/IgorPotseluev";
+
+/** Заготовка по умолчанию: годится любому инструменту, не называет ни одного. */
+export const CONSULT_PREFILL = "Здравствуйте! Хочу на бесплатную консультацию по бегу";
 export const CONSULT_TITLE = "Хочешь не просто цифры, а план под себя?";
 export const CONSULT_TEXT =
   "Бесплатная консультация: разберём твой бег, цель и что мешает прогрессу.";
 export const CONSULT_BUTTON = "Записаться";
 
-export default function ConsultNotice() {
+export function consultLink(prefill: string = CONSULT_PREFILL): string {
+  return `${CONSULT_TG}?text=${encodeURIComponent(prefill)}`;
+}
+
+export const CONSULT_LINK = consultLink();
+
+export default function ConsultNotice({ prefill }: { prefill?: string }) {
   return (
     <aside className={styles.notice}>
       <p className={styles.title}>{CONSULT_TITLE}</p>
       <p className={styles.text}>{CONSULT_TEXT}</p>
       <a
-        href={CONSULT_LINK}
+        href={consultLink(prefill)}
         target="_blank"
         rel="noopener noreferrer"
         className={styles.button}
