@@ -1,0 +1,453 @@
+/* Классы страницы /tools/marathon. Токены документа (:root, html, body) живут
+   в соседнем marathon-page.css — так же разделено у /tools/dress и /tools/raskladka. */
+
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-onest), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 17px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+.wrap {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 26px 16px 56px;
+}
+
+.mono {
+  font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── старт ────────────────────────────────────────────────────────────────── */
+
+.h1 {
+  font-weight: 800;
+  font-size: clamp(32px, 8.5vw, 50px);
+  line-height: 1.03;
+  letter-spacing: -0.03em;
+  margin: 0 0 14px;
+  text-wrap: balance;
+}
+
+.lede {
+  color: var(--ink-2);
+  margin: 0 0 28px;
+  max-width: 46ch;
+}
+
+.facts {
+  display: flex;
+  gap: 22px;
+  margin: 34px 0 0;
+  color: var(--ink-2);
+  font-size: 15px;
+  flex-wrap: wrap;
+}
+
+.facts b {
+  color: var(--ink);
+}
+
+/* ── кнопки ───────────────────────────────────────────────────────────────── */
+
+.btn {
+  appearance: none;
+  background: var(--accent-ink);
+  color: #ffffff;
+  border: 0;
+  border-radius: 14px;
+  padding: 16px 22px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.btn:hover {
+  filter: brightness(1.06);
+}
+
+.btn:focus-visible,
+.opt:focus-visible,
+.link:focus-visible,
+.share:focus-visible,
+.input:focus-visible,
+.select:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.link {
+  appearance: none;
+  background: none;
+  border: 0;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 16px;
+  padding: 8px 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* ── вопрос ───────────────────────────────────────────────────────────────── */
+
+.progress {
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 4px 0 10px;
+}
+
+.progress i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress i {
+    transition: none;
+  }
+}
+
+.step {
+  color: var(--ink-2);
+  font-size: 14px;
+  margin: 0 0 18px;
+}
+
+.q {
+  font-weight: 800;
+  font-size: clamp(25px, 6.2vw, 34px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+  text-wrap: balance;
+}
+
+.hint {
+  color: var(--ink-2);
+  margin: 0 0 22px;
+  font-size: 15px;
+}
+
+.opts {
+  display: grid;
+  gap: 10px;
+}
+
+.opt {
+  appearance: none;
+  text-align: left;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.opt:hover {
+  border-color: var(--ink-2);
+}
+
+.opt[aria-pressed="true"] {
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+  color: #ffffff;
+}
+
+.nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+/* ── ввод результата ──────────────────────────────────────────────────────── */
+
+.resinput {
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.resrow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 420px) {
+  .resrow {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lbl {
+  font-weight: 600;
+  font-size: 15px;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.select,
+.input {
+  width: 100%;
+  font: inherit;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.err {
+  color: var(--accent-ink);
+  font-size: 14px;
+  min-height: 20px;
+  margin: 0;
+}
+
+/* ── результат ────────────────────────────────────────────────────────────── */
+
+.verdict {
+  font-weight: 800;
+  font-size: clamp(28px, 7.5vw, 44px);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+
+.vOk {
+  color: var(--green);
+}
+
+.vMid {
+  color: var(--warn);
+}
+
+.vNo {
+  color: var(--accent-ink);
+}
+
+.vsub {
+  color: var(--ink-2);
+  margin: 0 0 30px;
+}
+
+.when {
+  margin: 0 0 34px;
+}
+
+.h2 {
+  font-size: 20px;
+  font-weight: 800;
+  margin: 0 0 6px;
+  letter-spacing: -0.01em;
+}
+
+.date {
+  font-size: clamp(30px, 8.5vw, 46px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  margin: 2px 0 16px;
+  color: var(--ink);
+}
+
+.bar {
+  display: flex;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.barBase {
+  background: var(--line-2);
+}
+
+.barPrep {
+  background: var(--accent);
+}
+
+.legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.key {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+
+.phases {
+  margin: 12px 0 0;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.phases b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.warnbox {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-left: 4px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 12px 12px 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.sec {
+  margin: 0 0 34px;
+}
+
+.checks {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.checks li {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 14px;
+  color: #ffffff;
+  margin-top: 1px;
+}
+
+.mY {
+  background: var(--green);
+}
+
+.mN {
+  background: var(--accent-ink);
+}
+
+.mW {
+  background: var(--warn);
+}
+
+.checks b {
+  display: block;
+}
+
+.checks span {
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.forecast {
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.forecastT {
+  font-size: clamp(28px, 7.5vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  margin: 4px 0 6px;
+}
+
+.forecast p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.next {
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 0 14px 14px 0;
+  padding: 16px 18px;
+}
+
+.next p {
+  margin: 0;
+}
+
+.share {
+  appearance: none;
+  background: none;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  border-radius: 14px;
+  padding: 14px 20px;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 26px;
+  cursor: pointer;
+}
+
+/* Ссылка на темпы: отдельной строкой под блоком консультации, как в наряде. */
+.planLink {
+  margin: 14px 0 0;
+  font-size: 15px;
+  color: var(--ink-2);
+}
+
+.planLink a {
+  color: var(--accent-ink);
+}
+
+.foot {
+  margin: 38px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
