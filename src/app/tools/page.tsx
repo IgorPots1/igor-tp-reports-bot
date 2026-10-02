@@ -1,5 +1,13 @@
 import type { Metadata } from "next";
-import { Footprints, Gauge, HeartPulse, Thermometer, TrendingDown, Utensils } from "lucide-react";
+import {
+  CalendarCheck,
+  Footprints,
+  Gauge,
+  HeartPulse,
+  Thermometer,
+  TrendingDown,
+  Utensils,
+} from "lucide-react";
 
 import { publicPageMetadata } from "@/lib/site";
 import SiteHeader from "@/components/SiteHeader";
@@ -24,6 +32,13 @@ type Card = {
 };
 
 const CARDS: Card[] = [
+  {
+    href: "/tools/marathon",
+    icon: CalendarCheck,
+    title: "Пора готовиться к марафону?",
+    text:
+      "7 вопросов: узнаешь, с какого месяца тебе реально стартовать марафон и на какое время рассчитывать.",
+  },
   {
     href: "/tools/plan",
     icon: Gauge,

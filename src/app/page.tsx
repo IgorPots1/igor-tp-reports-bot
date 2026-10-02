@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
-import { Send, Users, Zap } from "lucide-react";
+import { Calculator, Send, Users, Zap } from "lucide-react";
 import { formatFlowStartDate, seatsWord } from "@/lib/flow";
 import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
 import SiteHeader from "@/components/SiteHeader";
@@ -51,6 +51,19 @@ export default async function StartPage() {
           </div>
 
           <div className="links">
+            <a className="card" href="/club">
+              <span className="ic club">
+                <Users size={22} strokeWidth={2} aria-hidden="true" />
+              </span>
+              <span className="txt">
+                <span className="t">Беговой клуб</span>{" "}
+                <span className="s">
+                  Личный план и тренер рядом каждый день
+                </span>
+              </span>
+              <span className="ar">&rsaquo;</span>
+            </a>
+
             <a className="card primary" href="/camp">
               <span className="badge">Идёт набор</span>
               <span className="ic int">
@@ -75,14 +88,15 @@ export default async function StartPage() {
               <span className="ar">&rsaquo;</span>
             </a>
 
-            <a className="card" href="/club">
-              <span className="ic club">
-                <Users size={22} strokeWidth={2} aria-hidden="true" />
+            <a className="card" href="/tools">
+              <span className="ic free">
+                <Calculator size={22} strokeWidth={2} aria-hidden="true" />
               </span>
               <span className="txt">
-                <span className="t">Беговой клуб</span>{" "}
+                <span className="t">Бесплатные материалы</span>{" "}
                 <span className="s">
-                  Личный план и тренер рядом каждый день
+                  Калькуляторы темпа, раскладки, питания, одежды и тест
+                  готовности к марафону
                 </span>
               </span>
               <span className="ar">&rsaquo;</span>

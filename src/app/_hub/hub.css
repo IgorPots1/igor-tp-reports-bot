@@ -30,6 +30,9 @@
 .start-root .ic.club{background:var(--green-bg);color:var(--green)}
 .start-root .ic.int{background:#FDEDE5;color:var(--accent)}
 .start-root .ic.tg{background:#E4F2FA;color:#229ED9}
+/* Бесплатные материалы — нейтральная плашка: три продуктовые строки уже заняли
+   зелёный, оранжевый и синий, и четвёртый цвет спорил бы с ними за внимание. */
+.start-root .ic.free{background:var(--cream,#FBF8F2);color:var(--ink-2);border:1px solid var(--line)}
 .start-root .card .txt{flex:1;min-width:0}
 .start-root .card .t{font-weight:700;font-size:17px;letter-spacing:-.01em}
 .start-root .card .s{margin-top:3px;color:var(--ink-2);font-size:14px;line-height:1.35}
