@@ -50,9 +50,19 @@ async function main() {
   const sinceIso = new Date(`${from}T00:00:00Z`).toISOString();
   for (let i = 0; i < studentIds.length; i += 150) {
     const part = studentIds.slice(i, i + 150);
-    const { data } = await sb.from("trainingpeaks_telegram_context_observations")
-      .select("student_id, observed_at, labels, text_preview").in("student_id", part).gte("observed_at", sinceIso).limit(8000);
-    const obsRows = (data as Array<{ student_id: string; observed_at: string; labels: unknown; text_preview: string | null }>) ?? [];
+    // По страницам (2026-10-03): .limit(8000) PostgREST молча режет до 1000, а за 3 дня наблюдений
+    // 1154 на всех. Хвост за срезом читался как «ученик ничего не писал» → ложные «глянь вручную».
+    type ObsRow = { student_id: string; observed_at: string; labels: unknown; text_preview: string | null };
+    const obsRows: ObsRow[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await sb.from("trainingpeaks_telegram_context_observations")
+        .select("student_id, observed_at, labels, text_preview").in("student_id", part).gte("observed_at", sinceIso)
+        .order("observed_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + 999);
+      if (error) { console.error(`[safety-net] observations read failed: ${error.message}`); break; }
+      const page = (data as ObsRow[] | null) ?? [];
+      obsRows.push(...page);
+      if (page.length < 1000) break;
+    }
     for (const o of obsRows) {
       const labels = Array.isArray(o.labels) ? o.labels.map(String) : [];
       const date = o.observed_at.slice(0, 10);

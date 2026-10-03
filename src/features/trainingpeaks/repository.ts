@@ -2441,23 +2441,29 @@ export async function listTrainingPeaksWorkoutCacheScanStatusesForRange(input: {
   to: string;
 }): Promise<TrainingPeaksWorkoutCacheScanStatus[]> {
   const supabase = createSupabaseServerClient();
-  const { data, error } = await withSupabaseNetworkRetry(() => supabase
-    .from("trainingpeaks_workout_cache_scan_status")
-    .select("*")
-    .eq("scan_from", input.from)
-    .eq("scan_to", input.to)
-    .order("student_name", { ascending: true })
-    .order("scanned_at", { ascending: false }));
-
-  if (error) {
-    throw new Error(
-      `Failed to list TrainingPeaks workout cache scan statuses for range ${input.from}..${input.to}: ${error.message}`
-    );
-  }
-
-  return ((data as TrainingPeaksWorkoutCacheScanStatusDbRow[]) ?? []).map(
-    mapTrainingPeaksWorkoutCacheScanStatusRow
+  // Paginated (2026-10-03). One exact window is one row per student by the upsert key (~150 today),
+  // far from the 1000 cap — paged anyway so it cannot silently truncate as the roster grows, the
+  // way the covering-date read did.
+  const data = await fetchAllRows<TrainingPeaksWorkoutCacheScanStatusDbRow>(
+    (from, to) =>
+      withSupabaseNetworkRetry(() =>
+        supabase
+          .from("trainingpeaks_workout_cache_scan_status")
+          .select("*")
+          .eq("scan_from", input.from)
+          .eq("scan_to", input.to)
+          .order("student_name", { ascending: true })
+          .order("scanned_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to)
+      ) as Promise<{
+        data: TrainingPeaksWorkoutCacheScanStatusDbRow[] | null;
+        error: { message: string } | null;
+      }>,
+    { label: `workout-cache-scan-status range ${input.from}..${input.to}` }
   );
+
+  return (data ?? []).map(mapTrainingPeaksWorkoutCacheScanStatusRow);
 }
 
 export async function listTrainingPeaksWorkoutCacheScanStatusesCoveringDate(
@@ -9197,30 +9203,41 @@ export async function listTrainingPeaksStudentMemoryItemsForStudents(
   const asOfDate = normalizeTrainingPeaksMemoryReferenceDate(options.asOfDate);
   const activeOnly = options.activeOnly ?? true;
 
-  let query = supabase
-    .from("trainingpeaks_student_memory_items")
-    .select("*")
-    .in("student_id", normalizedStudentIds)
-    .order("memory_type", { ascending: true })
-    .order("last_seen_at", { ascending: false })
-    .limit(safeLimit);
+  // Paginated (2026-10-03). The default limit (2000) was never reachable: PostgREST caps a single
+  // read at 1000, and on 03.10 there were 1139 active items across the roster — memories past the
+  // cut (by memory_type order) silently missed the students they belong to. safeLimit is kept as
+  // the overall cap, now actually honoured.
+  const pageSize = Math.min(safeLimit, SUPABASE_MAX_ROWS);
+  const rows: TrainingPeaksStudentMemoryItemRow[] = [];
+  for (let offset = 0; offset < safeLimit; offset += pageSize) {
+    let query = supabase
+      .from("trainingpeaks_student_memory_items")
+      .select("*")
+      .in("student_id", normalizedStudentIds)
+      .order("memory_type", { ascending: true })
+      .order("last_seen_at", { ascending: false })
+      .order("id", { ascending: true });
 
-  if (activeOnly) {
-    query = query.eq("is_active", true);
-  }
-  if (!options.includeExpired) {
-    query = query.or(`valid_until.is.null,valid_until.gte.${asOfDate}`);
-  }
-  if (options.memoryTypes && options.memoryTypes.length > 0) {
-    query = query.in("memory_type", [...options.memoryTypes]);
+    if (activeOnly) {
+      query = query.eq("is_active", true);
+    }
+    if (!options.includeExpired) {
+      query = query.or(`valid_until.is.null,valid_until.gte.${asOfDate}`);
+    }
+    if (options.memoryTypes && options.memoryTypes.length > 0) {
+      query = query.in("memory_type", [...options.memoryTypes]);
+    }
+
+    const { data, error } = await query.range(offset, Math.min(offset + pageSize, safeLimit) - 1);
+    if (error) {
+      throw new Error(`Failed to list TrainingPeaks student memory items for students: ${error.message}`);
+    }
+    const page = (data as TrainingPeaksStudentMemoryItemRow[]) ?? [];
+    rows.push(...page);
+    if (page.length < Math.min(pageSize, safeLimit - offset)) break;
   }
 
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(`Failed to list TrainingPeaks student memory items for students: ${error.message}`);
-  }
-
-  return ((data as TrainingPeaksStudentMemoryItemRow[]) ?? []).map(mapTrainingPeaksStudentMemoryItemRow);
+  return rows.map(mapTrainingPeaksStudentMemoryItemRow);
 }
 
 export async function deactivateTrainingPeaksStudentMemoryItem(

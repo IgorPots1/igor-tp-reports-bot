@@ -12,6 +12,7 @@ import { formatTrainingPeaksAttentionSnapshotMessage } from "@/features/training
 import {
   classifyScanFailure,
   describePlannedRunOutcome,
+  evaluateScanRunHealth,
   formatDataFreshness,
   isUnplannedCompletedWorkout,
   resolvePlannedRunOutcomes,
@@ -205,8 +206,33 @@ function checkDeskDigestParity(): void {
   assert(!missedBlock.includes("Pamparaite"), "замена не в разделе пропусков дайджеста");
 }
 
+function checkScanRunHealth(): void {
+  const run = (ok: number, accessLost: number, fetchFailed = 0) => ({
+    ok,
+    accessLost,
+    fetchFailed,
+    otherFailed: 0,
+    skipped: 2,
+  });
+  // Обычный прогон 02.10: 119 ok, 12 стабильных 403 — partial, не тревога.
+  assert(evaluateScanRunHealth({ current: run(119, 12), previousAccessLost: 12 }).verdict === "partial", "12 стабильных 403");
+  assert(evaluateScanRunHealth({ current: run(131, 0), previousAccessLost: 0 }).verdict === "ok", "без сбоев — ok");
+  // Протухшая сессия: 403 у всех.
+  const dead = evaluateScanRunHealth({ current: run(0, 131), previousAccessLost: 12 });
+  assert(dead.verdict === "alarm" && dead.reasons.length === 2, `сессия: ${JSON.stringify(dead)}`);
+  // Скачок 403: +3 ещё нет, +4 уже тревога (при здоровой доле ok).
+  assert(evaluateScanRunHealth({ current: run(116, 15), previousAccessLost: 12 }).verdict === "partial", "+3 — не тревога");
+  assert(evaluateScanRunHealth({ current: run(115, 16), previousAccessLost: 12 }).verdict === "alarm", "+4 — тревога");
+  // Первый прогон с новым кодом: прошлого числа нет — правило скачка молчит, доля ok работает.
+  assert(evaluateScanRunHealth({ current: run(119, 12), previousAccessLost: null }).verdict === "partial", "нет прошлого");
+  // Ровно 80% — ещё не тревога; сетевые сбои тоже в знаменателе.
+  assert(evaluateScanRunHealth({ current: run(80, 0, 20), previousAccessLost: 0 }).verdict === "partial", "80% ровно");
+  assert(evaluateScanRunHealth({ current: run(79, 0, 21), previousAccessLost: 0 }).verdict === "alarm", "79% — тревога");
+}
+
 function main(): void {
   checkPairing();
+  checkScanRunHealth();
   checkScanFailureKinds();
   checkFreshness();
   checkDeskDigestParity();

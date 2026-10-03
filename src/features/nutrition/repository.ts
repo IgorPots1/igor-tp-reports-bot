@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { assertNotPreviewEnvironment } from "@/lib/environment-guard";
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { fetchAllRows } from "@/features/supabase/paginate";
 import type {
   TrainingPeaksStudent,
   TrainingPeaksStudentMemoryItem,
@@ -2023,15 +2024,27 @@ async function getDailyMacroCountsByStudent(studentIds: string[]): Promise<Map<s
     return new Map();
   }
   const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("nutrition_daily_macros")
-    .select("student_id")
-    .in("student_id", studentIds);
-  if (error) {
-    throw new Error(`Failed to load nutrition daily macro counts: ${error.message}`);
-  }
+  // Paginated (2026-10-03): 1350 rows on 03.10 — the unpaged read capped at 1000 and the per-student
+  // day counts on the nutrition dashboard silently came out short.
+  const data = await fetchAllRows<{ student_id: string; id: string }>(
+    (from, to) =>
+      supabase
+        .from("nutrition_daily_macros")
+        .select("student_id, id")
+        .in("student_id", studentIds)
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as Promise<{
+        data: Array<{ student_id: string; id: string }> | null;
+        error: { message: string } | null;
+      }>,
+    { label: "nutrition-daily-macro-counts" }
+  ).catch((error: unknown) => {
+    throw new Error(
+      `Failed to load nutrition daily macro counts: ${error instanceof Error ? error.message : String(error)}`
+    );
+  });
   const map = new Map<string, number>();
-  for (const row of ((data as Array<{ student_id: string }>) ?? [])) {
+  for (const row of data) {
     map.set(row.student_id, (map.get(row.student_id) ?? 0) + 1);
   }
   return map;

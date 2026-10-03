@@ -7,7 +7,10 @@
 // status=partial (2026-10-02): прогон дошёл до конца, но часть учеников упала (403 / fetch failed —
 // разбивка в note). Монитор считает его живым, но это НЕ «всё прошло».
 //
-// Usage: tsx tp-heartbeat.ts --job=<name> --status=sent|partial|failed [--note="..."]
+// --counts='<json object>' — структурные счётчики прогона (скан кэша кладёт сюда accessLost,
+// fetchFailed, verdict…): следующий прогон сравнивает с ними число 403.
+//
+// Usage: tsx tp-heartbeat.ts --job=<name> --status=sent|partial|failed [--note="..."] [--counts='{...}']
 
 import { loadLocalEnv } from "./lib/local-env.ts";
 loadLocalEnv();
@@ -19,6 +22,17 @@ function arg(name: string): string | undefined {
   const prefix = `--${name}=`;
   const found = process.argv.find((a) => a.startsWith(prefix));
   return found ? found.slice(prefix.length) : undefined;
+}
+
+function parseCounts(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    console.error("[tp-heartbeat] --counts не JSON-объект, пишу без него");
+    return {};
+  }
 }
 
 async function main(): Promise<void> {
@@ -37,7 +51,7 @@ async function main(): Promise<void> {
       source: "manual",
       status,
       requestPath: "launchd:heartbeat",
-      counts: { heartbeat: true, note: arg("note") ?? null },
+      counts: { ...parseCounts(arg("counts")), heartbeat: true, note: arg("note") ?? null },
     });
     console.log(`[tp-heartbeat] ${job} = ${status}`);
   } catch (error) {

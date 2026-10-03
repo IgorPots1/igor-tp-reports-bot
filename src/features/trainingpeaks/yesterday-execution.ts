@@ -166,3 +166,43 @@ export function formatDataFreshness(lastOkScanAt: string | null | undefined, now
   if (hours < 48) return `обновлено ${hours} ч назад`;
   return `обновлено ${Math.floor(hours / 24)} дн назад`;
 }
+
+// --- здоровье прогона скана (heartbeat) ---------------------------------------------------------
+//
+// partial — «прогон дошёл до конца, часть учеников упала» — НЕ безусловно живой (решение тренера
+// 02.10). Протухни сессия посреди прогона — все 133 получат 403, и partial это бы скрыл. Тревога:
+//  - ok меньше 80% сканируемых (без skipped — у них нет TP id, их не сканируют вообще);
+//  - число 403 выросло больше чем на 3 к предыдущему прогону.
+// Стабильные 12 × 403 тревоги не вызывают: их доля ~9%, и от прогона к прогону число не растёт.
+
+export const SCAN_RUN_MIN_OK_SHARE = 0.8;
+export const SCAN_RUN_MAX_ACCESS_LOST_JUMP = 3;
+
+export type ScanRunOutcomeCounts = {
+  ok: number;
+  accessLost: number;
+  fetchFailed: number;
+  otherFailed: number;
+  skipped: number;
+};
+
+export type ScanRunVerdict = { verdict: "ok" | "partial" | "alarm"; reasons: string[] };
+
+export function evaluateScanRunHealth(input: {
+  current: ScanRunOutcomeCounts;
+  /** accessLost прошлого прогона; null — неизвестно (первый прогон с новым кодом), правило скачка молчит. */
+  previousAccessLost: number | null;
+}): ScanRunVerdict {
+  const { current } = input;
+  const failed = current.accessLost + current.fetchFailed + current.otherFailed;
+  const scanned = current.ok + failed;
+  const reasons: string[] = [];
+  if (scanned > 0 && current.ok < SCAN_RUN_MIN_OK_SHARE * scanned) {
+    reasons.push(`ok ${current.ok} из ${scanned} (меньше ${Math.round(SCAN_RUN_MIN_OK_SHARE * 100)}%)`);
+  }
+  if (input.previousAccessLost !== null && current.accessLost - input.previousAccessLost > SCAN_RUN_MAX_ACCESS_LOST_JUMP) {
+    reasons.push(`403 стало ${current.accessLost}, было ${input.previousAccessLost}`);
+  }
+  if (reasons.length > 0) return { verdict: "alarm", reasons };
+  return { verdict: failed > 0 ? "partial" : "ok", reasons };
+}

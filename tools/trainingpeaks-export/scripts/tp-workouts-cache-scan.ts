@@ -18,7 +18,10 @@ import {
   normalizeTrainingPeaksWorkoutItems,
   type TrainingPeaksWorkoutRaw,
 } from "./lib/trainingpeaks-workout-normalization.ts";
-import { classifyScanFailure } from "../../../src/features/trainingpeaks/yesterday-execution.ts";
+import {
+  classifyScanFailure,
+  evaluateScanRunHealth,
+} from "../../../src/features/trainingpeaks/yesterday-execution.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 const APP_HOST = "https://app.trainingpeaks.com";
@@ -126,6 +129,27 @@ async function syncAccessLostNotices(input: {
   }
 }
 
+/** Счётчики прошлого прогона из counts последнего heartbeat. null — нет или старый формат. */
+async function readPreviousScanRun(
+  repoCompat: RepositoryCompat,
+): Promise<{ accessLost: number | null; verdict: string | null } | null> {
+  const getLatest =
+    repoCompat.getLatestTrainingPeaksCronRunLog ?? repoCompat.default?.getLatestTrainingPeaksCronRunLog;
+  if (!getLatest) return null;
+  try {
+    const log = await getLatest({ jobName: "workout_cache_scan" });
+    const counts = (log?.counts ?? null) as Record<string, unknown> | null;
+    if (!counts) return null;
+    return {
+      accessLost: typeof counts.accessLost === "number" ? counts.accessLost : null,
+      verdict: typeof counts.verdict === "string" ? counts.verdict : null,
+    };
+  } catch (error) {
+    console.error(`[tp-workouts-cache-scan] previous run read failed: ${toCompactErrorMessage(error)}`);
+    return null;
+  }
+}
+
 /** true — ушло хотя бы в один чат тренера. */
 async function sendCoachAlert(message: string): Promise<boolean> {
   const chatIds = getCoachAlertChatIds();
@@ -199,6 +223,7 @@ type RepositoryCompat = {
   reconcileTrainingPeaksWorkoutCachePlannedRows?: ReconcilePlannedRowsFn;
   syncTrainingPeaksTpAccessLostNotices?: typeof trainingPeaksRepository.syncTrainingPeaksTpAccessLostNotices;
   markTrainingPeaksTpAccessLostNotified?: typeof trainingPeaksRepository.markTrainingPeaksTpAccessLostNotified;
+  getLatestTrainingPeaksCronRunLog?: typeof trainingPeaksRepository.getLatestTrainingPeaksCronRunLog;
   default?: {
     listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
     upsertTrainingPeaksWorkoutCacheRows?: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
@@ -208,6 +233,7 @@ type RepositoryCompat = {
     reconcileTrainingPeaksWorkoutCachePlannedRows?: ReconcilePlannedRowsFn;
     syncTrainingPeaksTpAccessLostNotices?: typeof trainingPeaksRepository.syncTrainingPeaksTpAccessLostNotices;
     markTrainingPeaksTpAccessLostNotified?: typeof trainingPeaksRepository.markTrainingPeaksTpAccessLostNotified;
+    getLatestTrainingPeaksCronRunLog?: typeof trainingPeaksRepository.getLatestTrainingPeaksCronRunLog;
   };
 };
 
@@ -960,10 +986,26 @@ async function main(): Promise<void> {
     console.log(
       `failed_by_kind: access_lost(403)=${outcome.accessLost}, fetch_failed=${outcome.fetchFailed}, other=${outcome.otherFailed}`,
     );
+    // Вердикт прогона: partial не безусловно живой. Тревога — при обвале доли ok или скачке 403
+    // к прошлому прогону (его счётчики лежат в counts последнего heartbeat этого потока).
+    const previousRun = args.allActive ? await readPreviousScanRun(repoCompat) : null;
+    const health = evaluateScanRunHealth({
+      current: outcome,
+      previousAccessLost: previousRun?.accessLost ?? null,
+    });
+    console.log(`run_health: ${health.verdict}${health.reasons.length ? ` (${health.reasons.join("; ")})` : ""}`);
+    if (health.verdict === "alarm" && previousRun?.verdict !== "alarm") {
+      // Только при ПЕРЕХОДЕ в тревогу, не каждые 30 минут. Операционный алерт тренеру, как
+      // session-dead выше, — флагу TP_ACCESS_LOST_NOTIFY не подчиняется.
+      await sendCoachAlert(
+        `⚠️ Скан кэша TP: тревога — ${health.reasons.join("; ")}. ` +
+          "Похоже на протухшую сессию или массовую потерю доступа: npm run tp-login (в tools/trainingpeaks-export) и проверь доступ в TP.",
+      );
+    }
     const outcomeFile = process.env.SCAN_OUTCOME_FILE?.trim();
     if (outcomeFile) {
       try {
-        writeFileSync(outcomeFile, JSON.stringify(outcome));
+        writeFileSync(outcomeFile, JSON.stringify({ ...outcome, verdict: health.verdict, reasons: health.reasons }));
       } catch (error) {
         console.error(`[tp-workouts-cache-scan] Failed to write SCAN_OUTCOME_FILE: ${toCompactErrorMessage(error)}`);
       }

@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { fetchAllRows } from "@/features/supabase/paginate";
 import type {
   BillingClient,
   BillingCurrency,
@@ -888,23 +889,35 @@ export async function listBillingImportedPayments(options?: {
   status?: BillingImportedPaymentStatus;
 }): Promise<BillingImportedPayment[]> {
   const supabase = createSupabaseServerClient();
-  let query = supabase
-    .from("billing_imported_payments")
-    .select("*")
-    .order("payment_date", { ascending: false })
-    .order("created_at", { ascending: false });
+  // Paginated (2026-10-03). Read-only change, same filter and order: 689 rows on 03.10 and +351 in
+  // September alone, so the unpaged read (capped at 1000) was about to drop the oldest payments from
+  // the admin list without a word. Matching/allocation logic is untouched.
+  const data = await fetchAllRows<BillingImportedPaymentRow>(
+    (from, to) => {
+      let query = supabase
+        .from("billing_imported_payments")
+        .select("*")
+        .order("payment_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true });
 
-  if (options?.status) {
-    query = query.eq("status", options.status);
-  }
+      if (options?.status) {
+        query = query.eq("status", options.status);
+      }
 
-  const { data, error } = await query;
+      return query.range(from, to) as unknown as Promise<{
+        data: BillingImportedPaymentRow[] | null;
+        error: { message: string } | null;
+      }>;
+    },
+    { label: "billing-imported-payments" }
+  ).catch((error: unknown) => {
+    throw new Error(
+      `Failed to list imported billing payments: ${error instanceof Error ? error.message : String(error)}`
+    );
+  });
 
-  if (error) {
-    throw new Error(`Failed to list imported billing payments: ${error.message}`);
-  }
-
-  return ((data as BillingImportedPaymentRow[]) ?? []).map(mapBillingImportedPaymentRow);
+  return data.map(mapBillingImportedPaymentRow);
 }
 
 export async function getBillingImportedPaymentById(id: string): Promise<BillingImportedPayment | null> {
