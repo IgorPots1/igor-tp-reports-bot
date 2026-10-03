@@ -18,7 +18,7 @@ import {
 } from "./pacing-logic";
 import styles from "./raskladka.module.css";
 import ConsultNotice from "@/components/ConsultNotice";
-import TimeFields, { joinTime, splitTime } from "@/components/TimeFields";
+import TimeFields, { joinTime, splitTime, type TimeParts } from "@/components/TimeFields";
 
 const STORAGE_KEY = "igorp-pacing-calc-v1";
 
@@ -221,7 +221,15 @@ function StationList({ course }: { course: Course }) {
 export default function PacingTool() {
   const [courseId, setCourseId] = useState<CourseId>("10");
   const [finish, setFinish] = useState<Finish>("kick");
-  const [target, setTarget] = useState(COURSES["10"].defaultTarget);
+  /* ТРИ ЧАСТИ ХРАНЯТСЯ КАК ЕСТЬ, строка целевого времени из них выводится.
+   *
+   * Наоборот было нельзя: пока поля читались из splitTime(target), любая
+   * нормализация внутри joinTime возвращалась в поля и дралась с набором.
+   * Пустые минуты превращались в «0», занимали знак, и набранные «4» и «5»
+   * давали 04 вместо 45. Теперь в полях ровно то, что человек напечатал, а
+   * строка нужна только расчёту, пресетам и localStorage. */
+  const [parts, setParts] = useState<TimeParts>(splitTime(COURSES["10"].defaultTarget));
+  const target = joinTime(parts);
   const [showText, setShowText] = useState(false);
   const [said, setSaid] = useState("");
 
@@ -232,7 +240,7 @@ export default function PacingTool() {
       const saved = JSON.parse(raw) as { courseId?: CourseId; finish?: Finish; target?: string };
       if (saved.courseId && COURSES[saved.courseId]) setCourseId(saved.courseId);
       if (saved.finish === "even" || saved.finish === "kick") setFinish(saved.finish);
-      if (typeof saved.target === "string") setTarget(saved.target);
+      if (typeof saved.target === "string") setParts(splitTime(saved.target));
     } catch {
       /* приватное окно или заблокированные данные сайта — просто стартуем с умолчаний */
     }
@@ -287,7 +295,7 @@ export default function PacingTool() {
 
   function pickCourse(id: CourseId) {
     setCourseId(id);
-    setTarget(COURSES[id].defaultTarget);
+    setParts(splitTime(COURSES[id].defaultTarget));
   }
 
   return (
@@ -327,8 +335,8 @@ export default function PacingTool() {
               <TimeFields
                 idPrefix="pacing-target"
                 label="Целевое время"
-                value={splitTime(target)}
-                onChange={(next) => setTarget(joinTime(next))}
+                value={parts}
+                onChange={setParts}
               />
               <div className={styles.chips}>
                 {course.presets.map((p) => (
@@ -336,7 +344,7 @@ export default function PacingTool() {
                     key={p}
                     type="button"
                     aria-pressed={p === target}
-                    onClick={() => setTarget(p)}
+                    onClick={() => setParts(splitTime(p))}
                   >
                     {p}
                   </button>

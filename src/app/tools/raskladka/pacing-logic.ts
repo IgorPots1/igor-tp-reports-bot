@@ -352,7 +352,12 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
     const c0 = Math.round(v / 5) * 5;
     const out: number[] = [];
     for (let d = -WINDOW; d <= WINDOW; d += 5) if (c0 + d >= 100) out.push(c0 + d);
-    return out;
+    /* Пол в 100 с на километр мог съесть окно целиком: на 42,2 км за 15 минут
+       идеал выходит 21 с, всё окно ниже пола, и список оставался ПУСТЫМ. Дальше
+       o[idx[i]] давал undefined и раскладка разваливалась молча. Такая цель
+       бессмысленна, но страница её пропускает (её проверка это 15 минут и
+       7 часов на любой дистанции), а значит решатель обязан что-то ответить. */
+    return out.length ? out : [100];
   });
 
   const allowance = missAllowance(c.total);
@@ -375,11 +380,26 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
    * опаздывающий вариант только если не опаздывающих нет вовсе. */
   let best: Cand | null = null;
   let bestNotLate: Cand | null = null;
+  /* ЗАПАСНОЙ ВАРИАНТ БЕЗ УСЛОВИЙ ФОРМЫ.
+   *
+   * shapeAllowed это жёсткий фильтр, и на крайних целях он не оставляет ни
+   * одного варианта: на десятке 3:50:00 «С разгоном» идеальная форма просит
+   * разгон под девяносто секунд при пределе в пятнадцать, на марафоне 20:00
+   * все полосы упираются в нижнюю границу темпа. Раньше в этих случаях best
+   * оставался null, и строкой ниже страница падала на chosen.paces — белый
+   * экран вместо раскладки. Ловилось это ровно тогда, когда человек на
+   * десятке набирал часы раньше минут, то есть у всех, кто вводит марафонское
+   * время.
+   *
+   * Запасной вариант НЕ участвует в обычном выборе: он берётся, только когда
+   * допустимых по форме нет вовсе, и все тридцать рабочих прогонов его не
+   * видят. */
+  let bestFree: Cand | null = null;
   const idx = options.map(() => 0);
 
   for (;;) {
     const paces = options.map((o, i) => o[idx[i]]);
-    if (shapeAllowed(paces, finish)) {
+    {
       const total = paces.reduce((a, v, bi) => a + v * bandKm[bi], 0);
       const diff = target - total;
       const miss = Math.abs(diff);
@@ -408,8 +428,11 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
         !b ||
         effMiss < b.effMiss - EXACT_EPS ||
         (effMiss <= b.effMiss + EXACT_EPS && (kick < b.kick || (kick === b.kick && score < b.score)));
-      if (beats(best)) best = cand;
-      if (diff >= -EXACT_EPS && beats(bestNotLate)) bestNotLate = cand;
+      if (beats(bestFree)) bestFree = cand;
+      if (shapeAllowed(paces, finish)) {
+        if (beats(best)) best = cand;
+        if (diff >= -EXACT_EPS && beats(bestNotLate)) bestNotLate = cand;
+      }
     }
 
     let pos = options.length - 1;
@@ -422,7 +445,7 @@ export function buildPlan(c: Course, target: number, finish: Finish): Plan {
     if (pos < 0) break;
   }
 
-  const chosen = (bestNotLate ?? best) as Cand;
+  const chosen = (bestNotLate ?? best ?? bestFree) as Cand;
 
   let cum = 0;
   segs.forEach((s) => {

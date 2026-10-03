@@ -278,6 +278,32 @@ function check(course: Course, label: string, target: number, finish: Finish) {
   });
 }
 
+// ── Решатель не падает НИ НА ОДНОЙ допустимой цели ──────────────────────────
+// Страница считает всё, что прошло её же проверку: от 15 минут до 7 часов. При
+// крайних целях жёсткие условия формы не оставляли ни одного варианта, best
+// оставался null, и страница падала на chosen.paces — белый экран. Ловилось
+// это у всех, кто на десятке набирал часы раньше минут, то есть вводил
+// марафонское время. Теперь есть запасной вариант без условий формы.
+(["10", "42"] as const).forEach((id) => {
+  const c = COURSES[id];
+  for (let sec = 15 * 60; sec <= 7 * 3600; sec += 137) {
+    (["even", "kick"] as Finish[]).forEach((fin) => {
+      const p = buildPlan(c, sec, fin);
+      assert.ok(p.bandPaces.length === c.bands.length, `${c.name} ${sec} с ${fin}: решатель не дал раскладку`);
+      p.bandPaces.forEach((v) => assert.ok(Number.isFinite(v) && v > 0, `${c.name} ${sec} с ${fin}: темп ${v}`));
+      assert.ok(Number.isFinite(p.total) && p.total > 0, `${c.name} ${sec} с ${fin}: итог ${p.total}`);
+      p.segs.forEach((g) => assert.ok(Number.isFinite(g.cum) && g.cum > 0, `${c.name} ${sec} с ${fin}: накопленное время`));
+    });
+  }
+});
+// Именно те цели, на которых падало.
+[["10", 3 * 3600 + 50 * 60], ["42", 20 * 60]].forEach(([id, sec]) => {
+  (["even", "kick"] as Finish[]).forEach((fin) => {
+    const p = buildPlan(COURSES[id as "10" | "42"], sec as number, fin);
+    assert.ok(p.bandPaces.every((v) => v > 0), `${id} ${sec} с ${fin}: прежде падало здесь`);
+  });
+});
+
 // ── Кривой ввод не должен доходить до расчёта ────────────────────────────────
 assert.equal(parseTime(""), null, "пустая строка");
 assert.equal(parseTime("абв"), null, "буквы");
