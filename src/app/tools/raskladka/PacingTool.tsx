@@ -18,6 +18,7 @@ import {
 } from "./pacing-logic";
 import styles from "./raskladka.module.css";
 import ConsultNotice from "@/components/ConsultNotice";
+import TimeFields, { joinTime, splitTime } from "@/components/TimeFields";
 
 const STORAGE_KEY = "igorp-pacing-calc-v1";
 
@@ -318,17 +319,16 @@ export default function PacingTool() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.lbl} htmlFor="pacing-target">
-                Целевое время
-              </label>
-              <input
-                id="pacing-target"
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                className={styles.input}
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
+              <p className={styles.lbl}>Целевое время</p>
+              {/* Три поля вместо одного текстового: на айфоне цифровая
+                  клавиатура без двоеточия, и «4:00:00» было не набрать.
+                  Источник истины остаётся прежним — строка target, от неё
+                  живут и кнопки-пресеты, и localStorage, и parseTime. */}
+              <TimeFields
+                idPrefix="pacing-target"
+                label="Целевое время"
+                value={splitTime(target)}
+                onChange={(next) => setTarget(joinTime(next))}
               />
               <div className={styles.chips}>
                 {course.presets.map((p) => (

@@ -29,6 +29,7 @@ import {
   type Course,
   type Finish,
 } from "@/app/tools/raskladka/pacing-logic";
+import { joinTime, splitTime } from "@/components/time-parts";
 
 const SHOW_TABLE = process.argv.includes("--table");
 const rows: string[] = [];
@@ -300,6 +301,29 @@ assert.deepEqual(
   "марафон: гели только на 19,8 и 35,4 км",
 );
 assert.deepEqual(COURSES["10"].stations.map((s) => s.km), [4.7], "десятка: единственный пункт на 4,7 км");
+
+// ── Три поля времени не ломают кнопки-пресеты ────────────────────────────────
+// Ввод разбит на часы/минуты/секунды (на айфоне цифровая клавиатура без
+// двоеточия). Источник истины остался прежней строкой target, поэтому каждый
+// пресет обязан пережить разбор и сборку без изменений — иначе нажатие кнопки
+// молча меняло бы цель.
+(["10", "42"] as const).forEach((id) => {
+  COURSES[id].presets.forEach((preset) => {
+    assert.equal(joinTime(splitTime(preset)), preset, `пресет ${preset} не пережил три поля`);
+    assert.equal(parseTime(joinTime(splitTime(preset))), parseTime(preset), `пресет ${preset}: время уехало`);
+  });
+  const d = COURSES[id].defaultTarget;
+  assert.equal(joinTime(splitTime(d)), d, `умолчание ${d} не пережило три поля`);
+});
+assert.equal(joinTime({ h: "", m: "", s: "" }), "", "пустые поля дают пустую строку, а не 0:00");
+assert.equal(parseTime(joinTime({ h: "", m: "", s: "" })), null, "пусто не превращается в ноль секунд");
+// НАБОР ПО ЦИФРАМ НЕ ИСКАЖАЕТСЯ. Поля читаются из splitTime(target), а пишут
+// обратно joinTime, поэтому любая добивка нулями дралась бы с набором: пока
+// минуты дополнялись до двух знаков, «3» и «4» давали 3:04:00 вместо 3:45:00.
+assert.equal(joinTime({ h: "3", m: "4", s: "00" }), "3:4:00", "минуты в одну цифру остаются одной цифрой");
+assert.equal(splitTime(joinTime({ h: "3", m: "4", s: "00" })).m, "4", "и переживают обратный разбор");
+assert.equal(joinTime({ h: "", m: "5", s: "0" }), "5:0", "ничего не добивается и без часов");
+assert.equal(parseTime("3:45:00"), 3 * 3600 + 45 * 60, "набранное целиком время");
 
 // ── Расписание волн ─────────────────────────────────────────────────────────
 assert.equal(COURSES["10"].start.first, "09:05", "десятка: первая массовая волна");

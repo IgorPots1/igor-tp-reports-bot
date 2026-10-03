@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import ConsultNotice from "@/components/ConsultNotice";
+import TimeFields, { EMPTY_TIME, joinTime, type TimeParts } from "@/components/TimeFields";
 
 import {
   buildPlan,
@@ -104,7 +105,7 @@ export default function MarathonTest() {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<Answers>({});
   const [dist, setDist] = useState("10");
-  const [time, setTime] = useState("");
+  const [time, setTime] = useState<TimeParts>(EMPTY_TIME);
   const [err, setErr] = useState("");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [shared, setShared] = useState(false);
@@ -126,7 +127,7 @@ export default function MarathonTest() {
   }
 
   function finish() {
-    const raw = time.trim();
+    const raw = joinTime(time);
     const next: Answers = { ...answers, resTime: null, resDist: null };
     if (raw) {
       const t = parseTime(raw);
@@ -162,7 +163,7 @@ export default function MarathonTest() {
     setAnswers({});
     setPlan(null);
     setStep(0);
-    setTime("");
+    setTime(EMPTY_TIME);
     setDist("10");
     setErr("");
     setShared(false);
@@ -270,19 +271,13 @@ export default function MarathonTest() {
                 </select>
               </div>
               <div>
-                <label className={styles.lbl} htmlFor="marathon-time">
-                  Время
-                </label>
-                <input
-                  id="marathon-time"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  className={styles.input}
-                  placeholder="52:30 или 1:55:00"
+                <p className={styles.lbl}>Время</p>
+                <TimeFields
+                  idPrefix="marathon-time"
+                  label="Время результата"
                   value={time}
-                  onChange={(e) => {
-                    setTime(e.target.value);
+                  onChange={(next) => {
+                    setTime(next);
                     setErr("");
                   }}
                 />
