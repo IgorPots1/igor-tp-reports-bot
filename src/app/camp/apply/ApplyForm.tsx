@@ -8,6 +8,40 @@ const DONE_STEP = 6;
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
+/**
+ * Vercel режет тело запроса к функции на 4.5 МБ и отвечает 413 НЕ-JSON'ом —
+ * три фото с телефона туда не влезают, и анкета не доходила до сервера вовсе.
+ * Поэтому картинки ужимаются в браузере, а итог проверяется до отправки.
+ */
+const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+const MAX_IMAGE_SIDE = 1800;
+const JPEG_QUALITY = 0.8;
+
+/** Пережимает картинку в JPEG. Не вышло (формат не декодируется) — отдаёт исходник. */
+async function shrinkImage(file: File): Promise<File> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+    const width = Math.round(bitmap.width * scale);
+    const height = Math.round(bitmap.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY)
+    );
+    if (!blob || blob.size >= file.size) return file;
+    const name = file.name.replace(/\.[^.]+$/u, "") + ".jpg";
+    return new File([blob], name, { type: "image/jpeg", lastModified: file.lastModified });
+  } catch {
+    return file;
+  }
+}
+
 /** Дни недели кодами: в базе available_days text[] = ['mon','tue',...]. */
 const DAYS: { code: string; label: string }[] = [
   { code: "mon", label: "Пн" },
@@ -253,13 +287,25 @@ export default function ApplyForm() {
         payload.append(key, value);
       }
     }
-    for (const item of files) payload.append("screenshots", item.file);
+    const prepared = await Promise.all(files.map((item) => shrinkImage(item.file)));
+    const totalBytes = prepared.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > MAX_REQUEST_BYTES) {
+      setSendError("Скриншоты слишком тяжёлые. Убери один-два и отправь ещё раз.");
+      setSending(false);
+      return;
+    }
+    for (const file of prepared) payload.append("screenshots", file);
 
     try {
       const response = await fetch("/api/intensive/apply", {
         method: "POST",
         body: payload,
       });
+      if (response.status === 413) {
+        setSendError("Скриншоты слишком тяжёлые. Убери один-два и отправь ещё раз.");
+        setSending(false);
+        return;
+      }
       const result = (await response.json()) as { ok?: boolean; error?: string };
       if (!response.ok || result.ok !== true) {
         setSendError(result.error ?? "Не получилось отправить анкету. Попробуй ещё раз.");
