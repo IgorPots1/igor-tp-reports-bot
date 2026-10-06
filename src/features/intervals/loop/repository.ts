@@ -658,6 +658,17 @@ export async function listActivitiesInRange(
     .gte("start_date_local", `${fromIso}T00:00:00`)
     .lte("start_date_local", `${toIso}T23:59:59`)
     .order("start_date_local", { ascending: false })
+    /**
+     * ВТОРОЙ КЛЮЧ СОРТИРОВКИ ОБЯЗАТЕЛЕН [06.10.2026]. Все ручные записи одного
+     * дня стоят на 12:00, то есть по первому ключу они РАВНЫ, и порядок между
+     * ними Postgres не обещает никакого. А первая строка этой выдачи — та,
+     * которую submitCheckin привязывает к отметке. Отсюда и выходило, что
+     * человек исправил время, а отметка продолжала показывать прежнее: выбор
+     * был не «старое», а «какое попало».
+     *
+     * Свежайшая правка идёт первой: из двух версий одного дня верна поздняя.
+     */
+    .order("updated_at", { ascending: false })
     .limit(200);
   if (error) throw new Error(`intervals_activities: ${describeSupabaseError(error)}`);
   return (data ?? []).map((raw) => {

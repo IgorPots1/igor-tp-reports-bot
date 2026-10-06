@@ -2368,15 +2368,26 @@ function CheckinForm(props: {
         <div style={{ marginBottom: 16 }}>
           <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Тренировка</p>
           <div style={{ display: "grid", gap: 8 }}>
-            <FormField label="Дата">
-              <input
-                type="date"
-                value={date}
-                max={new Date().toISOString().slice(0, 10)}
-                onChange={(e) => setDate(e.target.value)}
-                style={inputStyle}
-              />
-            </FormField>
+            {/* ДЕНЬ ПОД ПЛАНОВОЙ ТРЕНИРОВКОЙ НЕ СПРАШИВАЕМ [06.10.2026]. Он
+                известен: это день той самой тренировки, под которой открыта
+                форма, и сервер берёт именно его. Поле ввода здесь было
+                ловушкой: его значение (своё или подставленное из черновика)
+                уходило в строку активности, а отметка уходила на день сессии,
+                и исправленная цифра оказывалась в дне, в который никто не
+                смотрит. Бегал в другой день — это перенос, отдельная кнопка.
+                Без сессии («Записать тренировку») поле нужно: там день знает
+                только человек. */}
+            {props.sessionId === null ? (
+              <FormField label="Дата">
+                <input
+                  type="date"
+                  value={date}
+                  max={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setDate(e.target.value)}
+                  style={inputStyle}
+                />
+              </FormField>
+            ) : null}
             {/* type="text", А НЕ "number" — ВЕЗДЕ [19.09.2026]. У type="number"
                 значение с запятой браузер отдаёт ПУСТОЙ строкой: человек пишет
                 «6,5», поле молча оказывается пустым, и никто не понимает почему.

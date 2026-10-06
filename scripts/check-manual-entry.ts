@@ -229,6 +229,161 @@ async function main(): Promise<void> {
     expect(Math.abs(Number(r.average_speed_mps) - 1000 / 330) < 0.001, `темп сохранён для отображения: ${r.average_speed_mps}`);
   }
 
+  /* ──────────────────────────────────────────────────────────────────────────
+   * ПРАВКА ЦИФРЫ [наряд Игоря, 06.10.2026].
+   *
+   * ЧТО БЫЛО У ЖИВОЙ УЧЕНИЦЫ. Она отправила отчёт, увидела 104 минуты вместо
+   * 64 (час шесть прочиталось как сто шесть) и исправила. Трижды. В базе
+   * осталось четыре строки активности за одну тренировку, а отметка всё так же
+   * показывала первые 104 минуты. Две причины: ручной ввод ВСТАВЛЯЛ новую
+   * строку вместо правки своей, и день активности брался из поля формы, а день
+   * отметки — у плановой сессии, то есть правка уезжала в чужой день.
+   * ────────────────────────────────────────────────────────────────────────── */
+  step("ПРАВКА ЗАМЕНЯЕТ ЦИФРУ, А НЕ ДОБАВЛЯЕТ ВТОРУЮ ТРЕНИРОВКУ");
+  const fixed = await submitManualEntry({
+    sourceId,
+    date: "2026-09-10", // тот же день, что у первой записи
+    durationMinutes: 64, // было 40
+    distanceKm: 7.06,
+    averageHeartrate: 150,
+    averagePaceSecPerKm: null,
+    planSessionId: null,
+    effortCode: "easy",
+    painCode: "no_pain",
+    commentText: "исправила время",
+  });
+  expect(fixed.ok, `правка прошла${fixed.ok ? "" : `: ${(fixed as { messageRu: string }).messageRu}`}`);
+  if (fixed.ok && entry1.ok) {
+    expect(
+      fixed.activityId === entry1.activityId,
+      `правка легла в ТУ ЖЕ строку, а не в новую: ${fixed.activityId === entry1.activityId ? "да" : `${entry1.activityId} → ${fixed.activityId}`}`
+    );
+    const { data: dayRows } = await supabase
+      .from("intervals_activities")
+      .select("activity_id, moving_time_s, distance_m, average_heartrate")
+      .eq("source_id", sourceId)
+      .gte("start_date_local", "2026-09-10T00:00:00")
+      .lte("start_date_local", "2026-09-10T23:59:59");
+    const rows = (dayRows ?? []) as Array<Record<string, unknown>>;
+    expect(rows.length === 1, `за день осталась ОДНА тренировка, а не две: ${rows.length}`);
+    expect(Number(rows[0]?.moving_time_s) === 64 * 60, `время переписано на новое: ${rows[0]?.moving_time_s}`);
+    expect(Number(rows[0]?.distance_m) === 7060, `дистанция переписана: ${rows[0]?.distance_m}`);
+    expect(Number(rows[0]?.average_heartrate) === 150, `пульс переписан: ${rows[0]?.average_heartrate}`);
+
+    // САМОЕ ГЛАВНОЕ: отметка показывает исправленное, а не первое.
+    const { data: checkinRow } = await supabase
+      .from("intervals_checkins")
+      .select("id, activity_id, session_date, comment_text")
+      .eq("source_id", sourceId)
+      .eq("session_date", "2026-09-10")
+      .single();
+    const c = checkinRow as Record<string, unknown>;
+    expect(
+      c.activity_id === fixed.activityId,
+      `отметка указывает на исправленную тренировку: ${c.activity_id}`
+    );
+    expect(c.comment_text === "исправила время", "и текст отчёта обновился, а не удвоился");
+    const { count: checkinCount } = await supabase
+      .from("intervals_checkins")
+      .select("id", { count: "exact", head: true })
+      .eq("source_id", sourceId)
+      .eq("session_date", "2026-09-10");
+    expect(checkinCount === 1, `отметка за день одна: ${checkinCount}`);
+  }
+
+  step("ДЕНЬ ПЛАНОВОЙ СЕССИИ СИЛЬНЕЕ ДАТЫ ИЗ ФОРМЫ");
+  /* Минимальный опубликованный цикл с одной сессией: без него подмену дня не
+     проверить, а именно она увела правки живой ученицы в соседний день. */
+  const { data: cycleRow, error: cycleError } = await supabase
+    .from("intervals_plan_cycles")
+    .insert({
+      source_id: sourceId,
+      intent: "maintenance",
+      first_week_start: "2026-09-14",
+      length_weeks: 1,
+      days: 3,
+      base_aerobic_min: 120,
+      base_quality_min: 0,
+      start_point_source: "questionnaire",
+      data_level: "pace_only",
+      start_point: {},
+      draft: {},
+      week_forecast: [],
+      status: "published",
+      published_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  expect(cycleError === null, `цикл-песочница создан${cycleError ? `: ${cycleError.message}` : ""}`);
+  const cycleId = (cycleRow as { id: string } | null)?.id ?? null;
+  let planSessionId: string | null = null;
+  if (cycleId) {
+    const { data: sessionRow, error: sessionError } = await supabase
+      .from("intervals_plan_sessions")
+      .insert({
+        cycle_id: cycleId,
+        week_index: 1,
+        week_start: "2026-09-14",
+        session_date: "2026-09-16",
+        day_idx: 2,
+        role: "easy",
+        title: "Лёгкий бег",
+        minutes: 40,
+      })
+      .select("id")
+      .single();
+    expect(sessionError === null, `сессия-песочница создана${sessionError ? `: ${sessionError.message}` : ""}`);
+    planSessionId = (sessionRow as { id: string } | null)?.id ?? null;
+  }
+
+  if (planSessionId) {
+    const wrongDay = await submitManualEntry({
+      sourceId,
+      date: "2026-09-15", // человек оставил в поле НЕ тот день
+      durationMinutes: 38,
+      distanceKm: null,
+      averageHeartrate: null,
+      averagePaceSecPerKm: null,
+      planSessionId, // а форма открыта под сессией 16-го
+      effortCode: "easy",
+      painCode: "no_pain",
+      commentText: null,
+    });
+    expect(wrongDay.ok, `запись под плановой сессией прошла${wrongDay.ok ? "" : `: ${(wrongDay as { messageRu: string }).messageRu}`}`);
+    if (wrongDay.ok) {
+      const { data: onSessionDay } = await supabase
+        .from("intervals_activities")
+        .select("activity_id, start_date_local")
+        .eq("source_id", sourceId)
+        .gte("start_date_local", "2026-09-16T00:00:00")
+        .lte("start_date_local", "2026-09-16T23:59:59");
+      expect(
+        (onSessionDay ?? []).length === 1,
+        `тренировка легла в день СЕССИИ (16-го): ${(onSessionDay ?? []).length}`
+      );
+      const { data: onFormDay } = await supabase
+        .from("intervals_activities")
+        .select("activity_id")
+        .eq("source_id", sourceId)
+        .gte("start_date_local", "2026-09-15T00:00:00")
+        .lte("start_date_local", "2026-09-15T23:59:59");
+      expect(
+        (onFormDay ?? []).length === 0,
+        `и НЕ легла в день из формы (15-го): ${(onFormDay ?? []).length}`
+      );
+      const { data: ch } = await supabase
+        .from("intervals_checkins")
+        .select("activity_id, session_date")
+        .eq("source_id", sourceId)
+        .eq("session_date", "2026-09-16")
+        .single();
+      expect(
+        (ch as Record<string, unknown>)?.activity_id === wrongDay.activityId,
+        "отметка и тренировка оказались в одном дне и ссылаются друг на друга"
+      );
+    }
+  }
+
   step("ВАЛИДАЦИЯ: ОПЕЧАТКА НЕ ПРОХОДИТ КАК ФАКТ");
   const badPace = await submitManualEntry({
     sourceId, date: "2026-09-14", durationMinutes: 30, distanceKm: null,

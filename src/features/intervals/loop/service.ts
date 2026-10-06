@@ -319,6 +319,74 @@ export type SubmitCheckinResult =
  * её к ответу; если нет — ответ полноценен и без неё. Человек может пробежать
  * и не записать, и наказывать его за это молчанием системы нельзя.
  */
+/**
+ * КАКОЙ ДЕНЬ ЗАКРЫВАЕТ ЭТА ОТМЕТКА. Одно решение, один владелец.
+ *
+ * ПОЧЕМУ ЭТО ОТДЕЛЬНАЯ ФУНКЦИЯ, А НЕ ПЯТЬ СТРОК ВНУТРИ submitCheckin
+ * [наряд Игоря, 06.10.2026]. Решение принималось здесь, а ручной ввод
+ * (submitManualEntry) писал СТРОКУ АКТИВНОСТИ по дате из формы — то есть у
+ * одной отправки было два мнения о том, когда человек бегал.
+ *
+ * Чем это кончилось у живой ученицы: форма открыта под сессией 30 сентября, в
+ * поле даты стояло 29-е. Чек-ин ушёл на 30-е (день берётся у сессии),
+ * активность на 29-е (день берётся из формы). Дальше submitCheckin искал
+ * тренировку СВОЕГО дня, исправленной не находил и оставлял ссылку на первую,
+ * со старыми 104 минутами. Человек исправил цифру трижды, и каждый раз правка
+ * уезжала в день, в который никто не смотрит.
+ *
+ * Поэтому день определяется ДО любой записи и ровно один раз, а оба писателя
+ * берут готовый ответ. Сверять две копии правила было бы нечем: они расходятся
+ * молча и видны только по странным числам через неделю.
+ */
+export type CheckinDayResolution =
+  | { ok: true; sessionDate: string; planSessionId: string | null }
+  | { ok: false; code: "unknown_session" | "wrong_owner"; messageRu: string };
+
+export async function resolveCheckinDay(input: {
+  sourceId: string;
+  planSessionId: string | null;
+  sessionDate: string;
+}): Promise<CheckinDayResolution> {
+  if (input.planSessionId) {
+    const session = await getSessionById(input.planSessionId);
+    if (!session) {
+      return { ok: false, code: "unknown_session", messageRu: "Тренировка не найдена." };
+    }
+    // Чужую сессию отметить нельзя: id в запросе приходит от клиента, и
+    // проверять принадлежность обязан сервер.
+    const cycle = await getPublishedCycle(input.sourceId);
+    if (!cycle || cycle.id !== session.cycleId) {
+      return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из вашего плана." };
+    }
+    // ДЕНЬ СЕССИИ СИЛЬНЕЕ ДАТЫ ИЗ ФОРМЫ. Отметка привязана к плановой
+    // тренировке конкретного дня; если человек реально бегал в другой, для
+    // этого есть перенос, а не поле даты внутри отчёта.
+    return { ok: true, sessionDate: session.sessionDate, planSessionId: session.id };
+  }
+
+  /**
+   * ЗАПИСЬ БЕЗ СЕССИИ САМА НАХОДИТ СВОЙ ПЛАНОВЫЙ ДЕНЬ [23.09.2026].
+   *
+   * Раньше пробежка, записанная кнопкой «Записать тренировку», уходила с
+   * planSessionId = null ВСЕГДА — даже когда человек ставил вчерашнюю дату, в
+   * которой плановая тренировка была. Плановый день оставался неотмеченным
+   * навсегда: закрыть его было нечем, а у тренера он вечно висел пропуском.
+   *
+   * Привязываем ТОЛЬКО при полной однозначности: ровно одна сессия в этот
+   * день у опубликованного цикла. Двух в день у этого сегмента не бывает, но
+   * если появятся — гадать не станем, запись останется вне плана. Закрыть
+   * наугад не ту тренировку хуже, чем не закрыть никакой.
+   */
+  const cycle = await getPublishedCycle(input.sourceId);
+  if (cycle) {
+    const sameDay = await listSessionsInRange(cycle.id, input.sessionDate, input.sessionDate);
+    if (sameDay.length === 1) {
+      return { ok: true, sessionDate: input.sessionDate, planSessionId: sameDay[0].id };
+    }
+  }
+  return { ok: true, sessionDate: input.sessionDate, planSessionId: null };
+}
+
 export async function submitCheckin(input: {
   sourceId: string;
   /** null — пробежка вне плана. */
@@ -338,42 +406,10 @@ export async function submitCheckin(input: {
     return { ok: false, code: "bad_pain", messageRu: "Неизвестный вариант ответа про самочувствие." };
   }
 
-  let sessionDate = input.sessionDate;
-  let planSessionId = input.planSessionId;
-  if (planSessionId) {
-    const session = await getSessionById(planSessionId);
-    if (!session) {
-      return { ok: false, code: "unknown_session", messageRu: "Тренировка не найдена." };
-    }
-    // Чужую сессию отметить нельзя: id в запросе приходит от клиента, и
-    // проверять принадлежность обязан сервер.
-    const cycle = await getPublishedCycle(input.sourceId);
-    if (!cycle || cycle.id !== session.cycleId) {
-      return { ok: false, code: "wrong_owner", messageRu: "Эта тренировка не из вашего плана." };
-    }
-    sessionDate = session.sessionDate;
-  } else {
-    /**
-     * ЗАПИСЬ БЕЗ СЕССИИ САМА НАХОДИТ СВОЙ ПЛАНОВЫЙ ДЕНЬ [23.09.2026].
-     *
-     * Раньше пробежка, записанная кнопкой «Записать тренировку», уходила с
-     * planSessionId = null ВСЕГДА — даже когда человек ставил вчерашнюю дату, в
-     * которой плановая тренировка была. Плановый день оставался неотмеченным
-     * навсегда: закрыть его было нечем, а у тренера он вечно висел пропуском.
-     *
-     * Привязываем ТОЛЬКО при полной однозначности: ровно одна сессия в этот
-     * день у опубликованного цикла. Двух в день у этого сегмента не бывает, но
-     * если появятся — гадать не станем, запись останется вне плана. Закрыть
-     * наугад не ту тренировку хуже, чем не закрыть никакой.
-     */
-    const cycle = await getPublishedCycle(input.sourceId);
-    if (cycle) {
-      const sameDay = await listSessionsInRange(cycle.id, sessionDate, sessionDate);
-      if (sameDay.length === 1) {
-        planSessionId = sameDay[0].id;
-      }
-    }
-  }
+  const day = await resolveCheckinDay(input);
+  if (!day.ok) return { ok: false, code: day.code, messageRu: day.messageRu };
+  const sessionDate = day.sessionDate;
+  const planSessionId = day.planSessionId;
 
   const [progression, answers, existing] = await Promise.all([
     getProgression(input.sourceId),

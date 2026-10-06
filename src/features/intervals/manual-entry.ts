@@ -25,7 +25,16 @@
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
 import { PENDING_ATHLETE_PREFIX } from "./repository";
-import { submitCheckin, type SubmitCheckinResult } from "./loop/service";
+import { resolveCheckinDay, submitCheckin, type SubmitCheckinResult } from "./loop/service";
+
+/**
+ * Префикс activity_id у строк, которые завёл ручной ввод.
+ *
+ * ПО НЕМУ И ТОЛЬКО ПО НЕМУ ручной ввод узнаёт СВОИ строки, когда переписывает
+ * отчёт за день. Привезённая из Intervals тренировка под него не попадает
+ * никогда, поэтому перезаписать настоящие числа словами человека нельзя.
+ */
+export const MANUAL_ACTIVITY_PREFIX = "manual-";
 
 /** Префикс синтетического external_athlete_id ручного источника. */
 export const MANUAL_ATHLETE_PREFIX = "manual-";
@@ -239,6 +248,17 @@ function validate(input: ManualEntryInput): string | null {
  * уже находит привезённые из Intervals активности. Второй код пути для
  * прогрессии заводить не нужно: он один на всех.
  *
+ * ДЕНЬ СПРАШИВАЕТСЯ У resolveCheckinDay, А НЕ БЕРЁТСЯ ИЗ ФОРМЫ
+ * [наряд Игоря, 06.10.2026]. Раньше активность писалась по input.date, а
+ * чек-ин уходил на день плановой сессии: одна отправка, два разных дня, и
+ * исправленная цифра уезжала в день, в который никто не смотрит. Разбор — в
+ * шапке resolveCheckinDay.
+ *
+ * ПОВТОРНАЯ ОТПРАВКА ЗА ТОТ ЖЕ ДЕНЬ ПРАВИТ СТРОКУ, А НЕ ДОБАВЛЯЕТ ВТОРУЮ. Так
+ * же, как чек-ин: у него ключ (источник, день), и у ручной активности теперь
+ * то же правило. Иначе человек исправляет время, а в базе лежат обе версии, и
+ * какая из них достанется расчётам, решает порядок строк в выдаче.
+ *
  * ЕСЛИ CHECKIN НЕ ПРОШЁЛ (плохой effort/pain код, чужая сессия) — активность
  * ОСТАЁТСЯ. Это осознанный выбор: тренировка объективно была, отменять факт
  * из-за ошибки в соседнем поле формы неправильно. Отметиться можно будет
@@ -270,19 +290,35 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
         ? 1000 / input.averagePaceSecPerKm
         : null;
 
-  const activityId = `manual-${crypto.randomUUID()}`;
+  /**
+   * ДЕНЬ РЕШАЕТСЯ ДО ЗАПИСИ И ОДИН РАЗ. Под плановой сессией он её, а не тот,
+   * что остался в поле формы или подставился из черновика.
+   */
+  const day = await resolveCheckinDay({
+    sourceId: input.sourceId,
+    planSessionId: input.planSessionId,
+    sessionDate: input.date,
+  });
+  if (!day.ok) return { ok: false, code: day.code, messageRu: day.messageRu };
+  const activityDate = day.sessionDate;
+  if (activityDate !== input.date) {
+    // Расхождение не прячем: оно значит, что человек правил дату под плановой
+    // тренировкой, и тренеру может понадобиться перенос.
+    console.info("[intervals.manual-entry] дата из формы разошлась с днём сессии", {
+      sourceId: input.sourceId,
+      fromForm: input.date,
+      sessionDay: activityDate,
+    });
+  }
+
   // Времени суток человек не называет, только дату и продолжительность.
   // Полдень — нейтральный якорь: день недели и попадание в окно считаются по
   // ДАТЕ, а не по часам, так что выдумывать точное время незачем.
-  const startDateLocal = `${input.date}T12:00:00`;
-
-  const { error: insertError } = await supabase.from("intervals_activities").insert({
-    source_id: input.sourceId,
-    student_id: (sourceRow as { student_id: string }).student_id,
-    activity_id: activityId,
+  const startDateLocal = `${activityDate}T12:00:00`;
+  const payload = {
     name: "Ручной ввод",
     activity_type: "Run",
-    start_date: `${input.date}T12:00:00Z`,
+    start_date: `${activityDate}T12:00:00Z`,
     start_date_local: startDateLocal,
     moving_time_s: movingTimeS,
     elapsed_time_s: movingTimeS,
@@ -294,13 +330,52 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
     has_pace: false,
     hr_coverage_pct: null,
     raw: null,
-  });
-  if (insertError) return { ok: false, code: "db_error", messageRu: describeSupabaseError(insertError) };
+  };
+
+  /**
+   * СВОЯ ПРЕЖНЯЯ ЗАПИСЬ ЗА ЭТОТ ДЕНЬ — ТОЛЬКО РУЧНАЯ.
+   *
+   * Привезённую из Intervals тренировку ручной ввод не трогает НИКОГДА, даже
+   * если она в тот же день: там есть ряды и настоящие числа, а здесь слова
+   * человека. Отбор по префиксу activity_id, который мы сами и ставим.
+   */
+  const { data: mineRows, error: mineError } = await supabase
+    .from("intervals_activities")
+    .select("activity_id, moving_time_s, distance_m, average_heartrate, average_speed_mps, start_date_local")
+    .eq("source_id", input.sourceId)
+    .like("activity_id", `${MANUAL_ACTIVITY_PREFIX}%`)
+    .gte("start_date_local", `${activityDate}T00:00:00`)
+    .lte("start_date_local", `${activityDate}T23:59:59`)
+    .order("created_at", { ascending: true });
+  if (mineError) return { ok: false, code: "db_error", messageRu: describeSupabaseError(mineError) };
+
+  const previous = (mineRows ?? [])[0] as
+    | { activity_id: string; moving_time_s: number | null; distance_m: number | null; average_heartrate: number | null; average_speed_mps: number | null }
+    | undefined;
+  const activityId = previous?.activity_id ?? `${MANUAL_ACTIVITY_PREFIX}${crypto.randomUUID()}`;
+  const isRewrite = previous !== undefined;
+
+  if (isRewrite) {
+    const { error: updateError } = await supabase
+      .from("intervals_activities")
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq("source_id", input.sourceId)
+      .eq("activity_id", activityId);
+    if (updateError) return { ok: false, code: "db_error", messageRu: describeSupabaseError(updateError) };
+  } else {
+    const { error: insertError } = await supabase.from("intervals_activities").insert({
+      source_id: input.sourceId,
+      student_id: (sourceRow as { student_id: string }).student_id,
+      activity_id: activityId,
+      ...payload,
+    });
+    if (insertError) return { ok: false, code: "db_error", messageRu: describeSupabaseError(insertError) };
+  }
 
   const checkin = await submitCheckin({
     sourceId: input.sourceId,
-    planSessionId: input.planSessionId,
-    sessionDate: input.date,
+    planSessionId: day.planSessionId,
+    sessionDate: activityDate,
     effortCode: input.effortCode,
     painCode: input.painCode,
     commentText: input.commentText,
@@ -324,11 +399,28 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
      * сирота всё-таки осталась, и это должно быть видно, а не выясняться через
      * неделю по странным числам.
      */
-    const { error: rollbackError } = await supabase
-      .from("intervals_activities")
-      .delete()
-      .eq("source_id", input.sourceId)
-      .eq("activity_id", activityId);
+    /**
+     * ПРАВКУ ОТКАТЫВАЕМ ЗНАЧЕНИЯМИ, А НЕ УДАЛЕНИЕМ [06.10.2026]. Строка жила до
+     * нашей отправки, и снести её из-за того, что упал чек-ин, значит потерять
+     * чужой, уже принятый отчёт. Удаляем только то, что сами и создали.
+     */
+    const { error: rollbackError } = isRewrite
+      ? await supabase
+          .from("intervals_activities")
+          .update({
+            moving_time_s: previous.moving_time_s,
+            distance_m: previous.distance_m,
+            average_heartrate: previous.average_heartrate,
+            average_speed_mps: previous.average_speed_mps,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("source_id", input.sourceId)
+          .eq("activity_id", activityId)
+      : await supabase
+          .from("intervals_activities")
+          .delete()
+          .eq("source_id", input.sourceId)
+          .eq("activity_id", activityId);
     if (rollbackError) {
       console.error("[intervals.manual-entry] откат активности не прошёл", {
         activityId,
