@@ -7,7 +7,9 @@ import { pathToFileURL } from "node:url";
 
 import { createClient } from "@supabase/supabase-js";
 
+import { sendCoachTelegramMessage } from "./lib/coach-telegram-notify.ts";
 import { reportsRoot, toolRoot } from "./lib/paths.ts";
+import { planRaceEventReconcile, type ReconcileDbRow, type ReconcileSkip } from "./lib/race-events-reconcile.ts";
 
 type TrainingPeaksJobStatus = "queued" | "running" | "completed" | "failed";
 // Both scan directions run through this same runner + persist. The forward weekly
@@ -542,6 +544,7 @@ async function runRaceScanJob(job: TrainingPeaksJobRow): Promise<{
   outputDir: string | null;
   summaryText: string;
   racesJsonPath: string | null;
+  reconcile: RaceReconcileResult | null;
 }> {
   if (!ISO_DATE_PATTERN.test(job.week_from) || !ISO_DATE_PATTERN.test(job.week_to)) {
     throw new Error(`Invalid date range in job ${job.id}: ${job.week_from}..${job.week_to}`);
@@ -579,17 +582,154 @@ async function runRaceScanJob(job: TrainingPeaksJobRow): Promise<{
   // Наряд 3 (A): bridge scanned races into the DB so nutrition (serverless) can
   // read them. Best-effort — never fail the scan/Telegram flow if the table is
   // missing (migration not applied yet) or a student can't be resolved.
+  let persisted = false;
   try {
     await persistScannedRaceEvents(rows);
+    persisted = true;
   } catch (error) {
     console.warn(`Race events persist skipped: ${toShortErrorMessage(error)}`);
   }
+  // Reconcile vanished starts — forward weekly scan only (the backward backfill reads a
+  // 400-day past window, where a delete would rewrite race history), only after a successful
+  // persist, and only when the scan recorded who actually answered.
+  let reconcile: RaceReconcileResult | null = null;
+  const athletes = readScannedAthletes(racesJson);
+  if (job.job_type === "race_scan_events" && persisted && athletes) {
+    try {
+      reconcile = await reconcileScannedRaceEvents({ rows, athletes, from: job.week_from, to: job.week_to });
+    } catch (error) {
+      console.warn(`Race events reconcile skipped: ${toShortErrorMessage(error)}`);
+    }
+  }
+  const summaryText = [buildRaceSummaryText(job.week_from, job.week_to, rows), formatReconcileSummary(reconcile)]
+    .filter(Boolean)
+    .join("\n\n");
   return {
     rowsCount: rows.length,
     outputDir,
     racesJsonPath,
-    summaryText: buildRaceSummaryText(job.week_from, job.week_to, rows),
+    summaryText,
+    reconcile,
   };
+}
+
+type ScannedAthlete = {
+  athlete_id: number;
+  student_name: string;
+  answered: boolean;
+  rows_count: number;
+};
+
+/** Per-athlete outcomes from races.json; null for an older file without them (no reconcile). */
+export function readScannedAthletes(resultJson: unknown): ScannedAthlete[] | null {
+  if (!resultJson || typeof resultJson !== "object") return null;
+  const list = (resultJson as { scannedAthletes?: unknown }).scannedAthletes;
+  if (!Array.isArray(list)) return null;
+  return list
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .filter((item) => typeof item.athlete_id === "number")
+    .map((item) => ({
+      athlete_id: item.athlete_id as number,
+      student_name: readStringValue(item.student_name) ?? "",
+      answered: item.answered === true,
+      rows_count: typeof item.rows_count === "number" ? item.rows_count : 0,
+    }));
+}
+
+export type RaceReconcileResult = {
+  deleted: Array<{ studentName: string | null; eventDate: string; title: string | null }>;
+  skipped: ReconcileSkip[];
+};
+
+/**
+ * Delete scanned starts that TP no longer has (moved or deleted there), under the guards in
+ * lib/race-events-reconcile.ts. Deletes by id, source='scan' only; manual marks are never touched.
+ */
+export async function reconcileScannedRaceEvents(input: {
+  rows: RaceRow[];
+  athletes: ScannedAthlete[];
+  from: string;
+  to: string;
+}): Promise<RaceReconcileResult> {
+  const supabase = getSupabase();
+  const { data: students, error: studentsError } = await supabase
+    .from("trainingpeaks_students")
+    .select("id,student_id,student_name,trainingpeaks_athlete_url");
+  if (studentsError) {
+    throw new Error(`Failed to load students for race reconcile: ${studentsError.message}`);
+  }
+  const resolver = buildRaceStudentResolver((students ?? []) as StudentRecord[]);
+  const nameById = new Map(((students ?? []) as StudentRecord[]).map((student) => [student.id, student.student_name]));
+
+  const scannedEvents: Array<{ studentId: string; eventDate: string }> = [];
+  for (const row of input.rows) {
+    const eventDate = readStringValue(row.event_date);
+    const match = resolver.resolve(row);
+    if (eventDate && match) scannedEvents.push({ studentId: match.student.id, eventDate });
+  }
+  const athletes = input.athletes.flatMap((athlete) => {
+    const match = resolver.resolve({ athlete_id: athlete.athlete_id, student_name: athlete.student_name } as RaceRow);
+    return match
+      ? [{ studentId: match.student.id, studentName: athlete.student_name, answered: athlete.answered, rowsCount: athlete.rows_count }]
+      : [];
+  });
+
+  const { data: dbRows, error: dbError } = await supabase
+    .from("trainingpeaks_race_events")
+    .select("id,student_id,event_date,title,source")
+    .eq("source", "scan")
+    .gte("event_date", input.from)
+    .lte("event_date", input.to)
+    .order("id", { ascending: true })
+    .range(0, 4999);
+  if (dbError) {
+    throw new Error(`Failed to load race events for reconcile: ${dbError.message}`);
+  }
+  const plan = planRaceEventReconcile({
+    dbRows: ((dbRows ?? []) as Array<{ id: string; student_id: string; event_date: string; title: string | null; source: string }>).map(
+      (row): ReconcileDbRow => ({
+        id: row.id,
+        studentId: row.student_id,
+        studentName: nameById.get(row.student_id) ?? null,
+        eventDate: row.event_date,
+        title: row.title,
+        source: row.source,
+      })
+    ),
+    scannedEvents,
+    athletes,
+    from: input.from,
+    to: input.to,
+  });
+
+  if (plan.toDelete.length > 0) {
+    const { error: deleteError } = await supabase
+      .from("trainingpeaks_race_events")
+      .delete()
+      .in("id", plan.toDelete.map((row) => row.id))
+      .eq("source", "scan");
+    if (deleteError) {
+      throw new Error(`Race events reconcile delete failed: ${deleteError.message}`);
+    }
+  }
+  const deleted = plan.toDelete.map((row) => ({ studentName: row.studentName, eventDate: row.eventDate, title: row.title }));
+  for (const row of deleted) {
+    console.log(`[tp-races] removed vanished start ${row.eventDate} «${row.title ?? "?"}» (${row.studentName ?? "?"})`);
+  }
+  for (const skip of plan.skipped) {
+    console.log(`[tp-races] kept ${skip.rowsKept} unconfirmed start(s) of ${skip.studentName ?? skip.studentId}: ${skip.reason}`);
+  }
+  console.log(`[tp-races] reconcile: removed ${deleted.length}, kept unconfirmed for ${plan.skipped.length} student(s).`);
+  return { deleted, skipped: plan.skipped };
+}
+
+function formatReconcileSummary(result: RaceReconcileResult | null): string {
+  if (!result || result.deleted.length === 0) return "";
+  const lines = [`Убраны старты, которых в TP больше нет: ${result.deleted.length}`];
+  for (const row of result.deleted) {
+    lines.push(`• ${formatShortDate(row.eventDate)} — ${row.title ?? "?"} (${row.studentName ?? "?"})`);
+  }
+  return lines.join("\n");
 }
 
 /** Parse a leading numeric distance ("21.1 км" / "21,1" / "10K") to km. */
@@ -690,6 +830,8 @@ async function main(): Promise<void> {
       output_dir: run.outputDir,
       races_json_path: run.racesJsonPath,
       telegram_messages_sent: telegramParts,
+      reconcile_deleted: run.reconcile?.deleted ?? null,
+      reconcile_skipped: run.reconcile?.skipped ?? null,
       completed_at: new Date().toISOString(),
       request_mode: "GET",
       note: "Race scan executed on local Mac via tp-scan-events (GET-only).",
@@ -714,6 +856,18 @@ async function main(): Promise<void> {
             `Период: ${formatShortDate(job.week_from)} — ${formatShortDate(job.week_to)}`,
             "",
             "Не удалось выполнить сканирование. Попробуй позже.",
+          ].join("\n")
+        );
+      } else {
+        // A scheduled job has no requester. Without this the failure went to nobody: the
+        // weekly scans of 01.10 and 05.10 died on a missing browser, and the only signal was
+        // the daily monitor's second-failure line a week later. Tell the coach on the FIRST.
+        await sendCoachTelegramMessage(
+          [
+            "⚠️ Скан стартов TP упал",
+            `Задание ${job.job_type}, период ${formatShortDate(job.week_from)} — ${formatShortDate(job.week_to)}`,
+            `Причина: ${shortErrorMessage.slice(0, 300)}`,
+            "Новые и перенесённые старты не попадут в базу до удачного прогона.",
           ].join("\n")
         );
       }

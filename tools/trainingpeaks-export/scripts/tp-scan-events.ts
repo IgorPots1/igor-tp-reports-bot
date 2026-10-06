@@ -3,13 +3,17 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-import { chromium } from "playwright";
 
 import type { TrainingPeaksStudent } from "../../../src/features/trainingpeaks/repository.ts";
 import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/repository.ts";
-import { profileDir, reportsRoot, toolRoot } from "./lib/paths.ts";
+import { reportsRoot, toolRoot } from "./lib/paths.ts";
 import type { StudentConfig } from "./lib/students.ts";
-import { captureSessionAuth, redactUnknown } from "./lib/trainingpeaks-api-move.ts";
+import { redactUnknown } from "./lib/trainingpeaks-api-move.ts";
+import {
+  getTpApiJsonRaw,
+  TpApiAuthError,
+  TpApiHttpError,
+} from "../../../src/features/trainingpeaks/tp-api-client.ts";
 
 const SCAN_ROOT = path.join(reportsRoot, "races-scan");
 const APP_HOST = "https://app.trainingpeaks.com";
@@ -48,6 +52,16 @@ type RaceRow = {
   description: string | null;
   confidence: number;
   notes: string;
+};
+
+/** One selected athlete's outcome, written to races.json for the runner's reconcile. */
+export type ScannedAthleteOutcome = {
+  athlete_id: number;
+  student_name: string;
+  http_status: number | null;
+  /** HTTP 200 with a JSON array body — the only state in which absence means anything. */
+  answered: boolean;
+  rows_count: number;
 };
 
 type ScanLogEntry = {
@@ -821,18 +835,19 @@ function studentMatchesFilter(student: StudentConfig, args: CliArgs, athleteId: 
   return { ok: true, reason: "selected" };
 }
 
-function isTransientStatus(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500;
+// The API client has no request timeout of its own; one hung athlete must not stall the run.
+// It does not abort the fetch — only stops waiting for it, and the athlete counts as not answered.
+function withAthleteTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`request timed out after ${ATHLETE_REQUEST_TIMEOUT_MS}ms`)), ATHLETE_REQUEST_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function isTimeoutError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /timed out|timeout/i.test(message);
-}
-
-function isNetworkError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /network|econn|socket|connect|fetch failed|dns|getaddrinfo|enotfound|eai_again/i.test(message);
 }
 
 function computePercentile(values: number[], percentile: number): number {
@@ -993,18 +1008,14 @@ async function main(): Promise<void> {
   const racesMdPath = path.join(outputDir, "races.md");
   const scanLogPath = path.join(outputDir, "scan-log.json");
   const eventsApiDebugPath = path.join(outputDir, "events-api-debug.json");
-  await mkdir(profileDir, { recursive: true });
   await mkdir(outputDir, { recursive: true });
-
-  const playwrightLaunchStartedAtMs = Date.now();
-  const context = await chromium.launchPersistentContext(profileDir, {
-    headless: !args.headed,
-    viewport: null,
-  });
-  const playwrightLaunchMs = Date.now() - playwrightLaunchStartedAtMs;
 
   const races: RaceRow[] = [];
   const eventsApiDebug: AthleteApiDebug[] = [];
+  // Per-athlete outcome for the runner's reconcile of vanished events: an athlete counts as
+  // answered only on HTTP 200 with a JSON array body. 403 / timeout / non-array body = no
+  // evidence, and nothing of that athlete may be deleted on the strength of this run.
+  const scannedAthletes: ScannedAthleteOutcome[] = [];
   const selectedLogByKey = new Map<string, ScanLogEntry>();
   for (const log of logs) {
     if (log.selected && log.athlete_id !== null) {
@@ -1014,166 +1025,125 @@ async function main(): Promise<void> {
   let requestsTotalMs = 0;
   let parseTotalMs = 0;
   const requestDurationsMs: number[] = [];
-  let authCaptureMs = 0;
-  let authRefreshedGlobally = false;
-  let authRefreshInFlight: Promise<void> | null = null;
-  let authorizationHeader: string | null = null;
-  try {
-    const page = context.pages()[0] ?? (await context.newPage());
-    if (limitedStudents.length > 0) {
-      const authCaptureStartedAtMs = Date.now();
-      const auth = await captureSessionAuth({
-        context,
-        page,
-        athleteId: limitedStudents[0]!.athleteId,
-      });
-      authorizationHeader = auth.authorizationHeader;
-      authCaptureMs = Date.now() - authCaptureStartedAtMs;
-    }
+  // Auth lives in the shared API client now (session-snapshot cookie → bearer, one forced
+  // refresh on 401/403, backoff on 408/429/5xx). The scan used to launch Chromium only to
+  // capture a token: on 02.10 another worktree's `playwright install` garbage-collected the
+  // build this runner needed, and every weekly scan died until someone noticed. No browser,
+  // no such failure.
+  const playwrightLaunchMs = 0;
+  const authCaptureMs = 0;
+  let sessionDeadError: Error | null = null;
 
-    const refreshAuthOnceGlobal = async (athleteId: number): Promise<void> => {
-      if (authRefreshedGlobally) return;
-      if (authRefreshInFlight) {
-        await authRefreshInFlight;
-        return;
-      }
-      authRefreshInFlight = (async () => {
-        const refreshed = await captureSessionAuth({ context, page, athleteId });
-        authorizationHeader = refreshed.authorizationHeader;
-        authRefreshedGlobally = true;
-      })();
+  await runWithConcurrency(limitedStudents, args.concurrency, async (item) => {
+    const student = item.student;
+    const athleteId = item.athleteId;
+    const logEntry = selectedLogByKey.get(`${student.student_id}:${athleteId}`);
+    if (!logEntry || sessionDeadError) return;
+
+    const requestUrl = buildEventsUrl(athleteId, args.from, args.to);
+    const apiPath = requestUrl.slice(TP_API_HOST.length);
+    logEntry.request_url = requestUrl;
+    logEntry.request_started_at = new Date().toISOString();
+    const athleteTotalStartedAtMs = Date.now();
+
+    try {
+      const requestStartedAtMs = Date.now();
+      let status: number;
+      let body: unknown;
       try {
-        await authRefreshInFlight;
-      } finally {
-        authRefreshInFlight = null;
-      }
-    };
-
-    await runWithConcurrency(limitedStudents, args.concurrency, async (item) => {
-      const student = item.student;
-      const athleteId = item.athleteId;
-      const logEntry = selectedLogByKey.get(`${student.student_id}:${athleteId}`);
-      if (!logEntry) return;
-
-      const requestUrl = buildEventsUrl(athleteId, args.from, args.to);
-      logEntry.request_url = requestUrl;
-      logEntry.request_started_at = new Date().toISOString();
-      const athleteTotalStartedAtMs = Date.now();
-
-      try {
-        let finalParsedPayload: unknown = null;
-        let finalStatus: number | null = null;
-        let finalOk: boolean | null = null;
-        let attempts = 0;
-        let retryReason: string | null = null;
-        let timedOut = false;
-        let authRefreshedBeforeRetry = false;
-        let requestMsAccumulated = 0;
-        let parseMs = 0;
-
-        while (attempts < 2) {
-          attempts += 1;
-          const requestAttemptStartedAtMs = Date.now();
-          try {
-            const response = await page.request.fetch(requestUrl, {
-              method: "GET",
-              headers: {
-                accept: "application/json, text/javascript, */*; q=0.01",
-                ...(authorizationHeader ? { authorization: authorizationHeader } : {}),
-              },
-              failOnStatusCode: false,
-              timeout: ATHLETE_REQUEST_TIMEOUT_MS,
-            });
-            requestMsAccumulated += Date.now() - requestAttemptStartedAtMs;
-            finalStatus = response.status();
-            finalOk = response.ok();
-
-            if ((finalStatus === 401 || finalStatus === 403) && attempts === 1) {
-              retryReason = `http_${finalStatus}_auth_refresh`;
-              await refreshAuthOnceGlobal(athleteId);
-              authRefreshedBeforeRetry = true;
-              continue;
-            }
-            if (isTransientStatus(finalStatus) && attempts === 1) {
-              retryReason = `http_${finalStatus}`;
-              continue;
-            }
-
-            const parseResponseStartedAtMs = Date.now();
-            try {
-              finalParsedPayload = await response.json();
-            } catch {
-              finalParsedPayload = await response.text();
-            }
-            parseMs += Date.now() - parseResponseStartedAtMs;
-            break;
-          } catch (error) {
-            requestMsAccumulated += Date.now() - requestAttemptStartedAtMs;
-            timedOut = timedOut || isTimeoutError(error);
-            const retryableError = timedOut || isNetworkError(error);
-            if (attempts === 1 && retryableError) {
-              retryReason = timedOut ? "timeout" : "network_error";
-              continue;
-            }
-            throw error;
-          }
-        }
-
-        const redacted = redactUnknown(finalParsedPayload);
-        const shape = summarizeResponseShape(redacted);
-        const parseScannerStartedAtMs = Date.now();
-        const parsedResult = parseRacesFromPayload({
-          payload: redacted,
-          student,
-          athleteId,
-          from: args.from,
-          to: args.to,
-        });
-        parseMs += Date.now() - parseScannerStartedAtMs;
-        const hasEventLikeKeys =
-          shape.nested_keys_summary.some((key) => /event|sport|distance|goal|race|name/i.test(key)) ||
-          parsedResult.debug.raw_items_found > 0;
-        eventsApiDebug.push({
-          student_id: student.student_id,
-          student_name: student.name ?? student.student_id,
-          athlete_id: athleteId,
-          endpoint_url_pattern: EVENTS_ENDPOINT_TEMPLATE,
-          request_url: requestUrl,
-          http_status: finalStatus,
-          response_shape: shape,
-          parser_debug: parsedResult.debug,
-          contains_event_like_data: hasEventLikeKeys,
-        });
-        logEntry.request_status = finalStatus;
-        logEntry.http_status = finalStatus;
-        logEntry.request_ok = finalOk;
-        logEntry.extracted_count = parsedResult.rows.length;
-        logEntry.request_ms = requestMsAccumulated;
-        logEntry.parse_ms = parseMs;
-        logEntry.attempts = attempts;
-        logEntry.timed_out = timedOut;
-        logEntry.retry_reason = retryReason;
-        logEntry.auth_refreshed_before_retry = authRefreshedBeforeRetry;
-        logEntry.request_finished_at = new Date().toISOString();
-        logEntry.total_ms = Date.now() - athleteTotalStartedAtMs;
-        requestsTotalMs += requestMsAccumulated;
-        parseTotalMs += parseMs;
-        requestDurationsMs.push(requestMsAccumulated);
-        races.push(...parsedResult.rows);
+        ({ status, body } = await withAthleteTimeout(getTpApiJsonRaw("tpapi", apiPath)));
       } catch (error) {
-        logEntry.error = (error as Error).message;
-        logEntry.request_finished_at = new Date().toISOString();
-        logEntry.total_ms = Date.now() - athleteTotalStartedAtMs;
+        if (error instanceof TpApiAuthError) {
+          sessionDeadError = error;
+          throw error;
+        }
+        if (error instanceof TpApiHttpError) {
+          status = error.status;
+          body = error.body;
+        } else {
+          throw error;
+        }
       }
-      // Throttle: space out requests so a large backward scan does not burst TP into
-      // TLS socket disconnects (observed 62/113 failures at concurrency 3, 400-day window).
-      // Default 0 → forward weekly scan behaves exactly as before.
-      if (args.delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, args.delayMs));
+      const requestMs = Date.now() - requestStartedAtMs;
+      const answered = status === 200 && Array.isArray(body);
+
+      const redacted = redactUnknown(answered ? body : null);
+      const shape = summarizeResponseShape(redacted);
+      const parseScannerStartedAtMs = Date.now();
+      const parsedResult = parseRacesFromPayload({
+        payload: redacted,
+        student,
+        athleteId,
+        from: args.from,
+        to: args.to,
+      });
+      const parseMs = Date.now() - parseScannerStartedAtMs;
+      const hasEventLikeKeys =
+        shape.nested_keys_summary.some((key) => /event|sport|distance|goal|race|name/i.test(key)) ||
+        parsedResult.debug.raw_items_found > 0;
+      eventsApiDebug.push({
+        student_id: student.student_id,
+        student_name: student.name ?? student.student_id,
+        athlete_id: athleteId,
+        endpoint_url_pattern: EVENTS_ENDPOINT_TEMPLATE,
+        request_url: requestUrl,
+        http_status: status,
+        response_shape: shape,
+        parser_debug: parsedResult.debug,
+        contains_event_like_data: hasEventLikeKeys,
+      });
+      logEntry.request_status = status;
+      logEntry.http_status = status;
+      logEntry.request_ok = status >= 200 && status < 300;
+      logEntry.extracted_count = parsedResult.rows.length;
+      logEntry.request_ms = requestMs;
+      logEntry.parse_ms = parseMs;
+      logEntry.attempts = 1;
+      logEntry.timed_out = false;
+      logEntry.retry_reason = null;
+      logEntry.auth_refreshed_before_retry = false;
+      logEntry.request_finished_at = new Date().toISOString();
+      logEntry.total_ms = Date.now() - athleteTotalStartedAtMs;
+      requestsTotalMs += requestMs;
+      parseTotalMs += parseMs;
+      requestDurationsMs.push(requestMs);
+      scannedAthletes.push({
+        athlete_id: athleteId,
+        student_name: student.name ?? student.student_id,
+        http_status: status,
+        answered,
+        rows_count: parsedResult.rows.length,
+      });
+      if (answered) {
+        races.push(...parsedResult.rows);
       }
-    });
-  } finally {
-    await context.close().catch(() => {});
+    } catch (error) {
+      logEntry.error = (error as Error).message;
+      logEntry.timed_out = isTimeoutError(error);
+      logEntry.request_finished_at = new Date().toISOString();
+      logEntry.total_ms = Date.now() - athleteTotalStartedAtMs;
+      scannedAthletes.push({
+        athlete_id: athleteId,
+        student_name: student.name ?? student.student_id,
+        http_status: null,
+        answered: false,
+        rows_count: 0,
+      });
+    }
+    // Throttle: space out requests so a large backward scan does not burst TP into
+    // TLS socket disconnects (observed 62/113 failures at concurrency 3, 400-day window).
+    // Default 0 → forward weekly scan behaves exactly as before.
+    if (args.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, args.delayMs));
+    }
+  });
+
+  if (sessionDeadError) {
+    // A dead session-snapshot cookie is not one athlete's problem: fail the whole run so the
+    // job lands as failed and the coach is told, instead of 130 «empty» athletes.
+    throw new Error(
+      `TrainingPeaks session dead: ${(sessionDeadError as Error).message} (run tp-refresh-session-snapshot / tp-login).`,
+    );
   }
 
   const artifactsWriteStartedAtMs = Date.now();
@@ -1187,6 +1157,7 @@ async function main(): Promise<void> {
         requestMethod: "GET",
         totalRows: races.length,
         rows: races,
+        scannedAthletes,
       },
       null,
       2,

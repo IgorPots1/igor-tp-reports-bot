@@ -21,6 +21,7 @@
     "test:tp-api-client": "node --experimental-strip-types --test src/features/trainingpeaks/tp-api-client.test.ts",
     "test:tp-write-action-types": "node --experimental-strip-types --test src/features/trainingpeaks/tp-write-action-types.test.ts",
     "test:athlete-roster-import": "node --experimental-strip-types --test src/features/trainingpeaks/athlete-roster-import.test.ts",
+    "test:race-events-reconcile": "node --experimental-strip-types --test tools/trainingpeaks-export/scripts/lib/race-events-reconcile.test.ts",
     "test:tp-workout-normalization": "node --experimental-strip-types --test tools/trainingpeaks-export/scripts/lib/trainingpeaks-workout-normalization.test.ts",
     "test:voice-transcription-split": "node --experimental-strip-types --test src/features/voice-transcription/telegram-message-split.test.ts",
     "test:voice-transcription-webhook": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --test src/features/voice-transcription/webhook.test.ts",

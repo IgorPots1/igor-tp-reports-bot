@@ -134,6 +134,17 @@ assert.match(page, /addNutritionRaceEventAction/, "card wires the add action");
 const runner = readFileSync(join(root, "tools/trainingpeaks-export/scripts/tp-races-requests-once.ts"), "utf8");
 assert.match(runner, /persistScannedRaceEvents/, "scanner runner persists races to the table");
 assert.match(runner, /source: "scan"/, "scanner writes source=scan");
+// Reconcile of vanished starts: forward weekly scan only, guarded planner, never manual rows.
+assert.match(runner, /planRaceEventReconcile/, "runner reconciles vanished starts through the guarded planner");
+assert.match(runner, /job\.job_type === "race_scan_events" && persisted && athletes/, "reconcile only after a successful forward-scan persist");
+assert.match(runner, /\.delete\(\)\s*\.in\("id"[\s\S]{0,120}\.eq\("source", "scan"\)/, "reconcile deletes by id and source=scan only");
+// A scheduled job has no requester chat: its failure must still reach the coach.
+assert.match(runner, /sendCoachTelegramMessage\(/, "scheduled race-scan failure is sent to the coach");
+// The events scan rides the shared API client, not a browser (02.10: a missing Chromium build killed it).
+const eventsScan = readFileSync(join(root, "tools/trainingpeaks-export/scripts/tp-scan-events.ts"), "utf8");
+assert.doesNotMatch(eventsScan, /from "playwright"/, "tp-scan-events does not launch a browser");
+assert.match(eventsScan, /getTpApiJsonRaw\("tpapi"/, "tp-scan-events reads events through the API client");
+assert.match(eventsScan, /scannedAthletes/, "tp-scan-events records who answered, for the reconcile guards");
 
 const packageJson = readFileSync(join(root, "package.json"), "utf8");
 assert.match(packageJson, /check:nutrition-race-events/, "package.json registers this check");
