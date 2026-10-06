@@ -108,7 +108,7 @@ assert.equal(paused.state, "ready");
 if (paused.state === "ready") {
   // 4 октября — ТОТ САМЫЙ ДЕНЬ, за который ушёл укор. Он обязан исчезнуть.
   assert.deepEqual(
-    paused.overdue.map((card) => card.dateIso),
+    paused.overdue.map((card) => card.date),
     [],
     "дни внутри паузы в «не отмечено» не попадают"
   );
@@ -138,7 +138,7 @@ const pausedNow = buildStudentView({
   pauses: [open],
 });
 if (pausedNow.state === "ready") {
-  assert.deepEqual(pausedNow.overdue.map((card) => card.dateIso), [], "на паузе укоров нет");
+  assert.deepEqual(pausedNow.overdue.map((card) => card.date), [], "на паузе укоров нет");
   assert.equal(
     pausedNow.weeklyFormWeekStart,
     null,
