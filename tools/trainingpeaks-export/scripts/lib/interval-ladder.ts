@@ -88,7 +88,37 @@ export function rungByWorkMinutes(workMinutes: number | null): number | null {
   return index < 0 ? null : index;
 }
 
-export type LadderHoldReason = "deload" | "pain" | "hard_week";
+export type LadderHoldReason = "deload" | "pain" | "hard_week" | "break";
+
+/**
+ * ПЕРЕРЫВ: СКОЛЬКО ПРОПУЩЕННЫХ ПОДРЯД ДЕРЖАТ СТУПЕНЬ, СКОЛЬКО ОТКАТЫВАЮТ
+ * [пороги утверждены Игорем 06.10.2026].
+ *
+ * ЕДИНИЦА — ПРОПУЩЕННАЯ ПЛАНОВАЯ ТРЕНИРОВКА, А НЕ ДЕНЬ. У живой ученицы
+ * настоящие промежутки между пробежками 3, 3 и 4 дня: порог «четыре дня без
+ * бега» срабатывал бы на её ОБЫЧНОМ ритме и держал ступень всегда. У того, кто
+ * бегает шесть раз в неделю, те же четыре дня — настоящий провал. День не
+ * нормирован на человека, плановая тренировка нормирована. Измеряет
+ * missedPlannedStreak (src/features/intervals/loop/training-gaps.ts).
+ *
+ *   0–1  ничего. Одна невышедшая тренировка — это жизнь, план и так с запасом.
+ *   2–3  держим ступень. У неё это 5–10 дней без бега. Переносимость к нагрузке
+ *        падает раньше выносливости, а ступень как раз про переносимость.
+ *   4–6  откат на одну. Около двух недель; вернуть тот же формат значило бы
+ *        отдать человеку неделю, которую он не заработал.
+ *   7+   откат на одну, а объём к этому моменту режет сама система: это уже три
+ *        недели, то есть NOT_RUNNING_WEEKS ростера.
+ *
+ * ДЛИНА РЕШАЕТ, ПРИЧИНА НЕТ. Пауза по болезни и пропажа без объяснений для
+ * ступени одинаковы: форма не спрашивает, почему её не поддерживали. Причина
+ * меняет другое — тон на экране ученицы и признак болезни, который роняет тир.
+ *
+ * ДЕЙСТВУЕТ ОДИН РАЗ, на первой качественной неделе после перерыва, ровно как
+ * боль: иначе одна болезнь заморозила бы ступень на весь цикл (это обеспечивает
+ * вызывающий — см. firstQualityWeek в intervals-regenerate.ts).
+ */
+export const BREAK_HOLD_FROM_MISSED = 2;
+export const BREAK_STEP_BACK_FROM_MISSED = 4;
 
 export type LadderStep = {
   /** Код пресета, который надо предпочесть. null — лестница не применяется. */
@@ -138,6 +168,13 @@ export function decideLadderStep(input: {
   hasPain: boolean;
   /** Полоса RPE прошлой недели: "cut" — далась тяжело. */
   rpeBand: "calm" | "hold" | "cut" | null;
+  /**
+   * Пропущено плановых тренировок ПОДРЯД перед этой неделей. Пороги и
+   * обоснование — у BREAK_HOLD_FROM_MISSED выше. Не передали — считаем, что
+   * перерыва не было: это прежнее поведение, и ломать им вызовы, которые о
+   * перерыве не знают, нельзя.
+   */
+  missedStreak?: number;
 }): LadderStep {
   const from = input.fromRung;
   if (from === null || from < 0 || from >= WALK_INTERVAL_LADDER.length) return NO_STEP;
@@ -151,8 +188,39 @@ export function decideLadderStep(input: {
     noteRu: `Ступень оставлена на ${WALK_INTERVAL_LADDER[from].labelRu}: ${why}.`,
   });
 
+  const missed = input.missedStreak ?? 0;
+
+  /**
+   * ОТКАТ ПРОВЕРЯЕТСЯ ПЕРВЫМ, ДО ВСЕХ ПРИЧИН ПОСТОЯТЬ.
+   *
+   * «Держим» и «откатываем» — не две силы одного знака, которые можно
+   * сравнивать по старшинству: откат СИЛЬНЕЕ любого удержания, потому что
+   * удержание оставляет человека там, где он больше не стоит. Разгрузочная
+   * неделя исключение и проверяется раньше: на ней формат и так падает по
+   * бюджету, и откатывать ступень вторым разом значило бы вычесть перерыв
+   * дважды.
+   */
+  if (!input.isDeload && missed >= BREAK_STEP_BACK_FROM_MISSED) {
+    const back = Math.max(0, from - 1);
+    return {
+      code: WALK_INTERVAL_LADDER[back].code,
+      codesPreferred: preferredFrom(back),
+      fromRung: from,
+      toRung: back,
+      heldBy: "break",
+      noteRu:
+        back === from
+          ? `Ступень ${WALK_INTERVAL_LADDER[from].labelRu} — ниже лестницы нет, а пропущено подряд ${missed}. Нужен взгляд тренера.`
+          : `Ступень назад: ${WALK_INTERVAL_LADDER[from].labelRu} → ${WALK_INTERVAL_LADDER[back].labelRu}. ` +
+            `Пропущено плановых подряд ${missed}, это около двух недель без бега.`,
+    };
+  }
+
   // Порядок проверок — от самого сильного основания к самому слабому.
   if (input.isDeload) return stay("deload", "разгрузочная неделя ступень не двигает");
+  if (missed >= BREAK_HOLD_FROM_MISSED) {
+    return stay("break", `пропущено плановых подряд ${missed}, возвращаемся на том же формате`);
+  }
   if (input.hasPain) return stay("pain", "в чек-инах была отмечена боль, сначала разговор");
   if (input.rpeBand === "cut") return stay("hard_week", "прошлая неделя далась тяжело по отметкам");
 

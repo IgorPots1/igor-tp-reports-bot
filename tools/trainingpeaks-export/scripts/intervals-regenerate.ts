@@ -322,7 +322,10 @@ async function main(): Promise<void> {
       `  выполнение ${compliance.complianceRatio === null ? "нечем считать" : `${Math.round(compliance.complianceRatio * 100)}%`}` +
         ` · недель «не бегает» подряд: ${compliance.notRunningWeeks}` +
         ` · медиана факта ${actualWeekly ?? "нет"} мин/нед` +
-        ` (в анкете ${startPoint.rolling4wWeeklyMinutes} — ${actualWeekly !== null && actualWeekly !== startPoint.rolling4wWeeklyMinutes ? "берём факт" : "совпало"})`
+        ` против ${startPoint.rolling4wWeeklyMinutes} в анкете` +
+        // ФОРМУ НЕДЕЛИ СТРОИМ ПО АНКЕТЕ, а измерение показываем рядом: подмена
+        // пробовалась и сделала план хуже (см. ComplianceFacts.actualWeeklyMin).
+        ` (форма недели считается по анкете, факт здесь для глаз)`
     );
   }
 
@@ -445,6 +448,10 @@ async function main(): Promise<void> {
       isDeload,
       hasPain: firstQualityWeek && hasPain,
       rpeBand: firstQualityWeek ? rpeBand : "calm",
+      // Перерыв — такой же факт про ПРОШЛУЮ неделю, как боль и полоса RPE, и
+      // живёт по тому же правилу: действует один раз, на первой качественной
+      // неделе. Иначе одна болезнь заморозила бы ступень на весь цикл.
+      missedStreak: firstQualityWeek ? missedStreak : 0,
     });
     target.preferQualityPreset = step.code;
     target.preferQualityPresets = step.codesPreferred;

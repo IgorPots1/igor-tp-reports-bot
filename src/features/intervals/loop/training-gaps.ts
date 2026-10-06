@@ -148,6 +148,80 @@ export function weekCompliance(weeks: WeekFact[]): {
 }
 
 /**
+ * Разрыв между планом и фактом — одним объектом для карточки тренера.
+ *
+ * ПОЧЕМУ ЭТО ПОСТОЯННЫЙ БЛОК, А НЕ СИГНАЛ ПО СЛУЧАЮ [наряд Игоря, 06.10.2026].
+ * Разрыв у живой ученицы оказался двукратным (медиана факта 64 мин/нед против
+ * плана 174–189), и тренер узнал об этом СЛУЧАЙНО, по ходу разбора другого
+ * вопроса. Решение про объём принимается каждую неделю, и число, которое его
+ * определяет, не должно всплывать в удачном разговоре.
+ *
+ * ПОКАЗЫВАЕМ ТОЛЬКО ОТДАННЫЕ НЕДЕЛИ — те, которые человек видел. Неделя,
+ * которую ему не показывали, не могла быть им не выполнена.
+ */
+export type PlanVsFact = {
+  weeks: Array<WeekFact & { ratio: number | null }>;
+  /** Медиана фактического объёма. null — считать нечего. */
+  medianActualMin: number | null;
+  /** Медиана планового объёма: с чем сравнивать медиану факта. */
+  medianPlannedMin: number | null;
+  /** Во сколько раз план больше факта. null — одно из чисел неизвестно. */
+  gapRatio: number | null;
+  complianceRatio: number | null;
+  notRunningWeeks: number;
+  headlineRu: string;
+};
+
+export function planVsFact(weeks: WeekFact[]): PlanVsFact {
+  const planned = [...weeks]
+    .filter((week) => week.plannedMin > 0)
+    .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+  const compliance = weekCompliance(planned);
+  const medianActual = actualWeeklyMedian(planned);
+  const medianPlanned = median(planned.map((week) => week.plannedMin));
+  const gapRatio =
+    medianActual !== null && medianPlanned !== null && medianActual > 0
+      ? medianPlanned / medianActual
+      : null;
+
+  /**
+   * ЗАГОЛОВОК НАЗЫВАЕТ ЧИСЛО, А НЕ ОЦЕНКУ. «Выполняет треть» тренер скажет
+   * сам; наша работа — положить перед ним доли, а не вердикт.
+   */
+  const headlineRu =
+    planned.length === 0
+      ? "Отданных недель пока нет: сравнивать не с чем"
+      : compliance.complianceRatio === null
+        ? "План есть, выполнение посчитать нечем"
+        : `Выполнено ${Math.round(compliance.complianceRatio * 100)}% плана` +
+          (gapRatio !== null && gapRatio >= 1.3
+            ? `, план просит в ${gapRatio.toFixed(1)} раза больше, чем человек бегает`
+            : "");
+
+  return {
+    weeks: planned.map((week) => ({
+      ...week,
+      ratio: week.plannedMin > 0 ? week.actualMin / week.plannedMin : null,
+    })),
+    medianActualMin: medianActual,
+    medianPlannedMin: medianPlanned,
+    gapRatio,
+    complianceRatio: compliance.complianceRatio,
+    notRunningWeeks: compliance.notRunningWeeks,
+    headlineRu,
+  };
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]
+    : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+/**
  * Средний недельный объём ПО ФАКТУ за последние недели.
  *
  * ЭТО НЕ ТО ЖЕ, ЧТО ЧИСЛО ИЗ АНКЕТЫ. У Валентины в анкете стояло 185 мин/нед

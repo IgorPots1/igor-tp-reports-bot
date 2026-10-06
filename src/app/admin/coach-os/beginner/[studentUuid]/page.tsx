@@ -115,6 +115,67 @@ export default async function BeginnerStudentPage({
         </div>
       ) : null}
 
+      {/* ── План против факта ── ПОСТОЯННЫЙ БЛОК [наряд Игоря, 06.10.2026].
+          Разрыв у первой же ученицы оказался двукратным (медиана факта 64
+          мин/нед против плана 174–189), и тренер узнал об этом СЛУЧАЙНО, по
+          ходу разбора другого вопроса. Решение про объём принимается каждую
+          неделю, и число, которое его определяет, не должно всплывать в
+          удачном разговоре. Поэтому блок стоит всегда, а не по сигналу. */}
+      {view.planVsFact.weeks.length > 0 ? (
+        <div
+          style={{
+            ...box,
+            background: (view.planVsFact.gapRatio ?? 1) >= 1.5 ? "#FBF3E4" : "#fff",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>План против факта</h2>
+          <p style={{ margin: "0 0 10px" }}>{view.planVsFact.headlineRu}.</p>
+          <table style={{ borderCollapse: "collapse", fontVariantNumeric: "tabular-nums" }}>
+            <thead>
+              <tr style={{ textAlign: "left", color: "#555" }}>
+                <th style={cell}>неделя</th>
+                <th style={cell}>план</th>
+                <th style={cell}>факт</th>
+                <th style={cell}>пробежек</th>
+                <th style={cell}>доля</th>
+              </tr>
+            </thead>
+            <tbody>
+              {view.planVsFact.weeks.map((week) => (
+                <tr key={week.weekStart} style={{ borderTop: "1px solid #eee" }}>
+                  <td style={cell}>{formatRuDay(week.weekStart)}</td>
+                  <td style={cell}>{week.plannedMin}</td>
+                  <td style={cell}>
+                    <strong>{week.actualMin}</strong>
+                  </td>
+                  <td style={cell}>{week.runs}</td>
+                  <td style={{ ...cell, color: (week.ratio ?? 1) < 0.5 ? "#a3330a" : "#555" }}>
+                    {week.ratio === null ? "—" : `${Math.round(week.ratio * 100)}%`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ margin: "10px 0 0" }}>
+            Медиана: факт <strong>{view.planVsFact.medianActualMin ?? "—"}</strong> против плана{" "}
+            <strong>{view.planVsFact.medianPlannedMin ?? "—"}</strong> мин/нед
+            {view.planVsFact.gapRatio !== null
+              ? ` · разрыв ${view.planVsFact.gapRatio.toFixed(1)}x`
+              : ""}
+            {view.planVsFact.notRunningWeeks > 0
+              ? ` · недель ниже 40% подряд: ${view.planVsFact.notRunningWeeks}`
+              : ""}
+          </p>
+          <p style={{ margin: "8px 0 0", color: "#555" }}>
+            {/* Считаем ТОЛЬКО по отданным и завершённым неделям: неделю, которой
+                человек не видел, нельзя записать ему в невыполнение, а у текущей
+                недобор — это ещё не наступившие дни, а не факт. */}
+            Только отданные и завершённые недели. Текущая не считается: её недобор это
+            ещё не наступившие дни.
+          </p>
+        </div>
+      ) : null}
+
       {/* ── Пауза ── СРАЗУ ПОСЛЕ СВЯЗИ, ДО ВСЕГО ОСТАЛЬНОГО [06.10.2026].
           Пока человек на паузе, остальные блоки карточки читаются неверно:
           пропуски — не пропуски, молчание — не молчание. Сигналы ниже и так

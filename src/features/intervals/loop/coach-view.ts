@@ -31,6 +31,7 @@ import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
 import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
 import type { CheckinEdit } from "./checkin-edit";
 import type { Pause } from "./pause";
+import { planVsFact, type PlanVsFact, type WeekFact } from "./training-gaps";
 import type { TelegramLine } from "./repository";
 import { buildWeekSignal, type WeekSignal } from "./week-signal";
 import { getSourceConnection } from "../repository";
@@ -517,6 +518,11 @@ export type CoachStudentView = {
   planWeeks: PlanWeek[];
   /** Отрезки паузы, свежий первым. Открытый — тот, у которого нет конца. */
   pauses: Pause[];
+  /**
+   * План против факта по отданным неделям. ПОСТОЯННЫЙ блок карточки: решение
+   * про объём принимается каждую неделю, и разрыв не должен всплывать случайно.
+   */
+  planVsFact: PlanVsFact;
 };
 
 export async function loadCoachStudentView(
@@ -543,6 +549,7 @@ export async function loadCoachStudentView(
       telegramLines: [],
       weekSignal: { painFlags: [], volume: null, weekly: null, emptyWeek: null },
       pauses: [],
+      planVsFact: planVsFact([]),
     };
   }
 
@@ -583,6 +590,38 @@ export async function loadCoachStudentView(
   });
   const sessions = latestCycle ? await listSessionsInRange(latestCycle.id, from, to) : [];
   const planWeeks = latestCycle ? await listPlanWeeks(latestCycle.id) : [];
+
+  /**
+   * ПЛАН ПРОТИВ ФАКТА — ТОЛЬКО ПО ОТДАННЫМ НЕДЕЛЯМ И ТОЛЬКО ПО ЗАВЕРШЁННЫМ.
+   *
+   * Отданные: неделю, которой человек не видел, нельзя записать ему в
+   * невыполнение. Завершённые: у текущей недели недобор — это не факт, а ещё
+   * не наступившие дни, и показывать её как провал значит врать каждую среду.
+   */
+  const releasedWeekStarts = new Set(
+    planWeeks.filter((week) => week.status === "released").map((week) => week.weekStart)
+  );
+  const weekFacts: WeekFact[] = [...releasedWeekStarts]
+    .sort()
+    .filter((weekStart) => shift(weekStart, 6) < todayIso)
+    .map((weekStart) => {
+      const weekEnd = shift(weekStart, 6);
+      const runsOfWeek = activities.filter((activity) => {
+        const date = activity.startDateLocal?.slice(0, 10) ?? "";
+        return date >= weekStart && date <= weekEnd;
+      });
+      return {
+        weekStart,
+        plannedMin: sessions
+          .filter((session) => session.weekStart === weekStart)
+          .reduce((sum, session) => sum + session.minutes, 0),
+        actualMin: runsOfWeek.reduce(
+          (sum, activity) => sum + Math.round((activity.movingTimeS ?? 0) / 60),
+          0
+        ),
+        runs: runsOfWeek.length,
+      };
+    });
 
   const connection = await getSourceConnection(student.studentUuid);
   const connectionHealth = assessConnectionHealth({
@@ -628,6 +667,7 @@ export async function loadCoachStudentView(
     weeklyReports,
     planWeeks,
     pauses,
+    planVsFact: planVsFact(weekFacts),
     /**
      * ПУСТАЯ НЕДЕЛЯ ВИДНА ТОЛЬКО ТОМУ, КТО ПЕРЕДАЛ ПЛАН [06.10.2026]. Сигнал
      * сам в базу не ходит; без плановых дней он не может отличить «человек не

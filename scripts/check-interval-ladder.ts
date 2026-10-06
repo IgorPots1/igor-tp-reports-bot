@@ -97,4 +97,54 @@ const unknown = decideLadderStep({ fromRung: null, isDeload: false, hasPain: fal
 assert.equal(unknown.code, null, "не знаем, где человек стоит — не двигаем");
 assert.equal(unknown.noteRu, null, "и не пишем заметок про то, чего не решали");
 
+/* ── ПЕРЕРЫВ [пороги утверждены Игорем 06.10.2026] ──────────────────────────
+ *
+ * ЧТО СТЕРЕЖЁТ ПЕРВОЕ УТВЕРЖДЕНИЕ. Правило чуть не сделали в ДНЯХ, а настоящие
+ * промежутки между пробежками у живой ученицы 3, 3 и 4 дня: порог «четыре дня»
+ * срабатывал бы на её обычном ритме. Единица — пропущенная ПЛАНОВАЯ, и ноль
+ * пропусков обязан шагать вперёд, сколько бы дней между пробежками ни прошло.
+ */
+const from5 = R("int_walk_6x5");
+const noBreak = decideLadderStep({ fromRung: from5, isDeload: false, hasPain: false, rpeBand: "calm", missedStreak: 0 });
+assert.equal(noBreak.toRung, from5 + 1, "без пропусков шаг вперёд, как и раньше");
+
+const oneMissed = decideLadderStep({ fromRung: from5, isDeload: false, hasPain: false, rpeBand: "calm", missedStreak: 1 });
+assert.equal(oneMissed.toRung, from5 + 1, "одна невышедшая тренировка ступень не трогает: план и так с запасом");
+assert.equal(oneMissed.heldBy, null, "и причиной постоять не считается");
+
+for (const missed of [2, 3]) {
+  const held = decideLadderStep({ fromRung: from5, isDeload: false, hasPain: false, rpeBand: "calm", missedStreak: missed });
+  assert.equal(held.toRung, from5, `пропущено ${missed} — ступень держим`);
+  assert.equal(held.heldBy, "break", "и причина названа перерывом, а не болью или тяжестью");
+  assert.ok(held.noteRu?.includes(String(missed)), "в заметке стоит само число пропусков");
+}
+
+for (const missed of [4, 6, 9]) {
+  const back = decideLadderStep({ fromRung: from5, isDeload: false, hasPain: false, rpeBand: "calm", missedStreak: missed });
+  assert.equal(back.toRung, from5 - 1, `пропущено ${missed} — ступень назад`);
+  assert.equal(back.heldBy, "break", "откат помечен перерывом");
+  assert.ok(back.codesPreferred.includes(WALK_INTERVAL_LADDER[from5 - 1].code), "и формат просим именно нижний");
+}
+
+/* ОТКАТ СИЛЬНЕЕ ЛЮБОГО УДЕРЖАНИЯ. Боль и тяжёлая неделя оставляют человека
+ * там, где он стоял; перерыв говорит, что он там больше не стоит. */
+const breakWithPain = decideLadderStep({ fromRung: from5, isDeload: false, hasPain: true, rpeBand: "cut", missedStreak: 5 });
+assert.equal(breakWithPain.toRung, from5 - 1, "перерыв откатывает даже вместе с болью и тяжёлой неделей");
+
+/* НО РАЗГРУЗКА ИСКЛЮЧЕНИЕ: на ней формат и так падает по бюджету, и откат
+ * вычел бы перерыв дважды. */
+const breakOnDeload = decideLadderStep({ fromRung: from5, isDeload: true, hasPain: false, rpeBand: "calm", missedStreak: 6 });
+assert.equal(breakOnDeload.toRung, from5, "на разгрузке перерыв ступень не откатывает");
+assert.equal(breakOnDeload.heldBy, "deload", "и держит её именно разгрузка");
+
+/* С НИЖНЕЙ СТУПЕНИ ОТКАТЫВАТЬ НЕКУДА — зовём тренера, а не уходим в минус. */
+const bottom = decideLadderStep({ fromRung: 0, isDeload: false, hasPain: false, rpeBand: "calm", missedStreak: 8 });
+assert.equal(bottom.toRung, 0, "ниже первой ступени лестницы нет");
+assert.ok(bottom.noteRu?.includes("взгляд тренера"), "и об этом сказано прямо");
+
+/* НЕ ПЕРЕДАЛИ ПЕРЕРЫВ — ПОВЕДЕНИЕ ПРЕЖНЕЕ. Вызовы, которые о нём не знают,
+ * ломаться не должны. */
+const silent = decideLadderStep({ fromRung: from5, isDeload: false, hasPain: false, rpeBand: "calm" });
+assert.equal(silent.toRung, from5 + 1, "без поля missedStreak всё как было: шаг вперёд");
+
 console.log("check:interval-ladder — все проверки пройдены");

@@ -20,6 +20,7 @@ import {
   actualWeeklyMedian,
   daysSinceLastRun,
   missedPlannedStreak,
+  planVsFact,
   weekCompliance,
   type WeekFact,
 } from "@/features/intervals/loop/training-gaps";
@@ -224,5 +225,47 @@ for (const signal of [empty, paused, partly]) {
   const text = `${signal.emptyWeek?.headlineRu ?? ""} ${signal.emptyWeek?.adviceRu ?? ""}`;
   assert.ok(!/—|–/u.test(text), `тире в тексте: ${text}`);
 }
+
+/* ── ПЛАН ПРОТИВ ФАКТА: ПОСТОЯННЫЙ БЛОК КАРТОЧКИ ────────────────────────────
+ * Разрыв у живой ученицы был двукратным, и тренер узнал о нём случайно. Блок
+ * обязан считать те же числа, что лежат в базе, и не выдавать оценку за факт. */
+const pf = planVsFact(herWeeks);
+assert.equal(pf.weeks.length, 3, "в блок идут все отданные недели");
+assert.equal(pf.medianActualMin, 64, "медиана факта 64 мин/нед");
+assert.equal(pf.medianPlannedMin, 121, "медиана плана 121 мин/нед");
+assert.ok(pf.gapRatio !== null && Math.abs(pf.gapRatio - 121 / 64) < 1e-9, `разрыв ${pf.gapRatio}`);
+assert.ok(/Выполнено 67% плана/u.test(pf.headlineRu), `заголовок называет долю: ${pf.headlineRu}`);
+assert.equal(pf.notRunningWeeks, 1, "и недели ниже 40% подряд");
+// Доля считается по каждой неделе, а не только итогом.
+assert.ok(pf.weeks[2].ratio !== null && Math.abs(pf.weeks[2].ratio - 64 / 189) < 1e-9, "доля недели 28.09");
+// Заголовок НАЗЫВАЕТ ЧИСЛО, А НЕ ОЦЕНКУ: «выполняет треть» скажет тренер.
+assert.ok(!/мало|плохо|не справляется|треть/u.test(pf.headlineRu), "в заголовке нет вердикта");
+assert.ok(!/—|–/u.test(pf.headlineRu), "и нет тире");
+
+// Отданных недель нет — блок молчит, а не показывает нули.
+const nothing = planVsFact([]);
+assert.equal(nothing.weeks.length, 0, "пустой список недель");
+assert.equal(nothing.gapRatio, null, "разрыв не выдумывается");
+assert.ok(/Отданных недель пока нет/u.test(nothing.headlineRu), "и сказано прямо");
+
+// Неделя без плана в блок не попадает: её человеку не назначали.
+const withUnplannedWeek = planVsFact([
+  { weekStart: "2026-09-07", plannedMin: 0, actualMin: 40, runs: 1 },
+  ...herWeeks,
+]);
+assert.equal(withUnplannedWeek.weeks.length, 3, "неделя без плана в сравнение не идёт");
+
+// Человек бегает БОЛЬШЕ плана — разрыв не рисуется задним числом.
+const overachiever = planVsFact([
+  { weekStart: "2026-09-14", plannedMin: 100, actualMin: 140, runs: 3 },
+]);
+assert.ok(
+  overachiever.gapRatio !== null && overachiever.gapRatio < 1,
+  "перевыполнение даёт разрыв меньше единицы, а не прячется"
+);
+assert.ok(
+  !/просит в/u.test(overachiever.headlineRu),
+  "и фраза про «план просит больше» при перевыполнении не появляется"
+);
 
 console.log("check:training-gaps — все проверки пройдены");
