@@ -53,7 +53,42 @@ export type SessionStep = {
  * title: null — ТОЛЬКО для заметок к неделе целиком (PlanCycle.weekNotes):
  * баннер без заголовка наверху экрана. У заметок к тренировке title всегда есть.
  */
-export type SessionNote = { title: string | null; body: string };
+/**
+ * КОМУ ЗАМЕТКА. Новое поле [наряд Игоря, 06.10.2026].
+ *
+ * "student" — то, что человек читает в приложении: человеческими словами, без
+ * внутренних терминов и без чисел темпа.
+ * "coach"   — ПОЧЕМУ так решено: ступень, бюджет недели, снятые гейты. Ученице
+ *             это не показывается никогда.
+ *
+ * ОТСУТСТВИЕ ПОЛЯ ЗНАЧИТ "student", и это не ленивый дефолт, а факт: все
+ * заметки, написанные до этой правки, писались человеком для ученицы и лежат
+ * без признака. Поставь дефолтом "coach" — и она разом перестала бы видеть
+ * собственные заметки тренера.
+ *
+ * ГЛАВНАЯ ОПАСНОСТЬ ЭТОГО ПОЛЯ — УТЕЧКА В ОБРАТНУЮ СТОРОНУ: заметка сборщика,
+ * записанная без признака, уйдёт ученице как своя. Поэтому всё, что генератор
+ * пишет сам, помечается "coach" ЯВНО, а `npm run check:week-notes` следит, что
+ * в student-поток не попадают внутренние слова.
+ */
+export type NoteAudience = "student" | "coach";
+
+export type SessionNote = {
+  title: string | null;
+  body: string;
+  /** Кому. Пусто — ученице (см. разбор выше). */
+  audience?: NoteAudience;
+};
+
+/** Заметки для ученицы: всё без признака плюс явно её. */
+export function studentNotes(notes: SessionNote[] | null | undefined): SessionNote[] {
+  return (notes ?? []).filter((note) => (note.audience ?? "student") === "student");
+}
+
+/** Заметки только для тренера. */
+export function coachNotes(notes: SessionNote[] | null | undefined): SessionNote[] {
+  return (notes ?? []).filter((note) => note.audience === "coach");
+}
 
 export type PlanSession = {
   id: string;

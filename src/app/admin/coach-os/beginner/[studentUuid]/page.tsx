@@ -12,6 +12,7 @@ import {
   paceLabelRu,
 } from "@/features/intervals/loop/activity-numbers";
 import { MANUAL_ATHLETE_PREFIX } from "@/features/intervals/manual-entry";
+import { coachNotes, studentNotes } from "@/features/intervals/loop/types";
 import { openPause, pauseLabelRu } from "@/features/intervals/loop/pause";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
 import { IntervalsAnketaCard } from "@/features/intervals/loop/anketa-card";
@@ -502,6 +503,28 @@ export default async function BeginnerStudentPage({
                             </form>
                           ) : null}
                         </>
+                      ) : null}
+                      {/* ── Заметки недели ── ДВА АДРЕСАТА РАЗДЕЛЕНЫ ВИЗУАЛЬНО
+                          [наряд Игоря, 06.10.2026]. Тренеру нужно видеть и то,
+                          что читает ученица, и ПРИЧИНУ решения — но не спутать
+                          одно с другим. Поэтому строки подписаны: «ей видно» и
+                          «только вам». Фильтр идёт через studentNotes/coachNotes,
+                          а не руками по полю: ручной фильтр однажды забудут. */}
+                      {(week.notes?.length ?? 0) > 0 ? (
+                        <div style={{ flexBasis: "100%", marginTop: 6 }}>
+                          {studentNotes(week.notes).map((note, i) => (
+                            <p key={`s${i}`} style={{ margin: "4px 0", fontSize: 13 }}>
+                              <span style={{ color: "#2E7D45", fontWeight: 600 }}>ей видно: </span>
+                              {note.body}
+                            </p>
+                          ))}
+                          {coachNotes(week.notes).map((note, i) => (
+                            <p key={`c${i}`} style={{ margin: "4px 0", fontSize: 13, color: "#555" }}>
+                              <span style={{ color: "#7A93AE", fontWeight: 600 }}>только вам: </span>
+                              {note.body}
+                            </p>
+                          ))}
+                        </div>
                       ) : null}
                     </div>
                   );

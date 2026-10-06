@@ -143,11 +143,30 @@ export type LadderStep = {
   toRung: number | null;
   /** Почему НЕ шагнули. null — шагнули. */
   heldBy: LadderHoldReason | null;
-  /** Словами, для заметки недели. null — говорить нечего. */
+  /**
+   * Словами ДЛЯ ТРЕНЕРА: ступень, причина, бюджет недели. null — говорить нечего.
+   *
+   * ЭТО НЕ ТЕКСТ ДЛЯ УЧЕНИЦЫ. «Ступень оставлена на 6 x 5: пропущено плановых
+   * подряд 2» — служебный разбор: он называет внутреннюю лестницу, которой у
+   * человека в голове нет, и считает его пропуски вслух.
+   */
   noteRu: string | null;
+  /**
+   * То же решение словами ДЛЯ УЧЕНИЦЫ [наряд Игоря, 06.10.2026]. null — ей
+   * говорить нечего (ступень не двигалась и причины нет).
+   *
+   * ДВА ТЕКСТА, А НЕ ОДИН, ПОТОМУ ЧТО ЭТО ДВА РАЗНЫХ СООБЩЕНИЯ. Тренеру нужно
+   * «почему машина так решила», человеку — «что это значит для меня». Один
+   * текст на обоих читается либо как канцелярит для неё, либо как недосказанность
+   * для него. Ни слова про ступени, пропуски и бюджет: про формат и про смысл.
+   */
+  studentNoteRu: string | null;
 };
 
-const NO_STEP: LadderStep = { code: null, codesPreferred: [], fromRung: null, toRung: null, heldBy: null, noteRu: null };
+const NO_STEP: LadderStep = {
+  code: null, codesPreferred: [], fromRung: null, toRung: null, heldBy: null,
+  noteRu: null, studentNoteRu: null,
+};
 
 /** Ступень и все ниже неё, от просимой к самой лёгкой. */
 function preferredFrom(rung: number): string[] {
@@ -179,6 +198,18 @@ export function decideLadderStep(input: {
   const from = input.fromRung;
   if (from === null || from < 0 || from >= WALK_INTERVAL_LADDER.length) return NO_STEP;
 
+  /**
+   * ЧТО СКАЗАТЬ УЧЕНИЦЕ, КОГДА ФОРМАТ НЕ МЕНЯЕТСЯ. Текст зависит от причины, но
+   * ни одна формулировка не называет ни ступень, ни число пропусков: повтор
+   * должен читаться как решение тренера, а не как отчёт о её промахах.
+   */
+  const studentWordsForHold: Record<LadderHoldReason, string> = {
+    deload: "На этой неделе объём меньше обычного, это запланированная передышка. Формат отрезков тот же.",
+    pain: "Формат оставляю тот же, пока не разберёмся с тем, что вас беспокоило. Прибавлять сейчас незачем.",
+    hard_week: "Прошлая неделя далась непросто, поэтому формат тот же. Закрепляем.",
+    break: "Формат тот же, что в прошлый раз: после перерыва закрепляем то, что уже получалось, а не прибавляем.",
+  };
+
   const stay = (heldBy: LadderHoldReason, why: string): LadderStep => ({
     code: WALK_INTERVAL_LADDER[from].code,
     codesPreferred: preferredFrom(from),
@@ -186,6 +217,7 @@ export function decideLadderStep(input: {
     toRung: from,
     heldBy,
     noteRu: `Ступень оставлена на ${WALK_INTERVAL_LADDER[from].labelRu}: ${why}.`,
+    studentNoteRu: studentWordsForHold[heldBy],
   });
 
   const missed = input.missedStreak ?? 0;
@@ -213,6 +245,16 @@ export function decideLadderStep(input: {
           ? `Ступень ${WALK_INTERVAL_LADDER[from].labelRu} — ниже лестницы нет, а пропущено подряд ${missed}. Нужен взгляд тренера.`
           : `Ступень назад: ${WALK_INTERVAL_LADDER[from].labelRu} → ${WALK_INTERVAL_LADDER[back].labelRu}. ` +
             `Пропущено плановых подряд ${missed}, это около двух недель без бега.`,
+      /**
+       * ОТКАТ ОБЪЯСНЯЕТСЯ ЕЙ КАК ВОЗВРАЩЕНИЕ, А НЕ КАК НАКАЗАНИЕ. Человек после
+       * двух недель без бега и сам знает, что отвык; услышать «берём отрезки
+       * короче, чтобы вернуться спокойно» — это помощь, а «вы пропустили шесть
+       * тренировок» — счёт, который он не просил.
+       */
+      studentNoteRu:
+        back === from
+          ? "Возвращаемся спокойно, на самом коротком формате. Если и он покажется тяжёлым, напишите мне."
+          : "После перерыва берём отрезки короче, чем были: так возвращаться спокойнее. Прибавим, когда втянетесь.",
     };
   }
 
@@ -235,6 +277,9 @@ export function decideLadderStep(input: {
       noteRu:
         `✋ ${WALK_INTERVAL_LADDER[from].labelRu} — последняя ступень лестницы коротких форматов. ` +
         `Дальше вести некуда: нужен следующий формат работы, а его выбирает тренер.`,
+      // Ей про «конец лестницы» говорить нечего: это наша внутренняя граница,
+      // а не событие её недели. Формат тот же — значит и сообщения нет.
+      studentNoteRu: null,
     };
   }
 
@@ -245,5 +290,8 @@ export function decideLadderStep(input: {
     toRung: next,
     heldBy: null,
     noteRu: `Ступень: ${WALK_INTERVAL_LADDER[from].labelRu} → ${WALK_INTERVAL_LADDER[next].labelRu}.`,
+    studentNoteRu:
+      `Отрезки на этой неделе длиннее или их больше, чем в прошлый раз: ` +
+      `${WALK_INTERVAL_LADDER[next].labelRu}. Скорость та же, прибавка только в работе.`,
   };
 }

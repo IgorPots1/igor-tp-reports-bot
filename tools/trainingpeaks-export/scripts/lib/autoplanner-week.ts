@@ -802,6 +802,8 @@ export type CycleWeekTarget = {
   preferQualityPresets?: string[] | null;
   /** Что лестница решила, словами — уйдёт в заметки недели. */
   ladderNoteRu?: string | null;
+  /** То же решение словами для ученицы. См. LadderStep.studentNoteRu. */
+  ladderStudentNoteRu?: string | null;
   /**
    * Есть ли у атлета БУДУЩИЙ целевой старт (из trainingpeaks_race_events через черновик цикла).
    * У кого старт есть — длительная режется ПОСЛЕДНЕЙ: при понижении недели она уменьшается

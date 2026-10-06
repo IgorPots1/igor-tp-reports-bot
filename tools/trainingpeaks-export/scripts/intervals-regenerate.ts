@@ -456,6 +456,7 @@ async function main(): Promise<void> {
     target.preferQualityPreset = step.code;
     target.preferQualityPresets = step.codesPreferred;
     target.ladderNoteRu = step.noteRu;
+    target.ladderStudentNoteRu = step.studentNoteRu;
     target.minQualityWorkMin = floor?.workMinutes ?? null;
     if (!isDeload) firstQualityWeek = false;
 
@@ -705,6 +706,41 @@ async function main(): Promise<void> {
       .filter((row) => String((row as Record<string, unknown>).status) === "released")
       .map((row) => String((row as Record<string, unknown>).week_start))
   );
+  /**
+   * ЗАМЕТКИ НЕДЕЛИ ТЕПЕРЬ ПИШУТСЯ [наряд Игоря, 06.10.2026].
+   *
+   * buildWeek считал их всегда — ступень, перерыв, снятые гейты, срезанные
+   * полы, — а скрипт не писал НИКУДА: причина решения жила одной строкой в
+   * stdout и исчезала с окном терминала. Через неделю на вопрос «почему здесь
+   * тот же формат» ответить было нечем.
+   *
+   * ДВА АДРЕСАТА РАЗДЕЛЕНЫ ЯВНО. Всё, что сборщик говорит о себе, помечается
+   * audience: "coach" — это служебный разбор, и ученице он не показывается
+   * никогда. Ей идёт отдельный человеческий текст от решения лестницы
+   * (studentNoteRu): про формат и смысл, без ступеней, пропусков и бюджета.
+   *
+   * ПОМЕТКА СТАВИТСЯ ЯВНО, А НЕ ПОЛАГАЕТСЯ НА ДЕФОЛТ. Отсутствие признака
+   * читается как "student" (так лежат все заметки, написанные человеком до
+   * этой правки), поэтому забытый audience у служебной заметки означал бы
+   * утечку разбора ученице.
+   */
+  const notesByWeek = new Map<string, Array<{ title: string | null; body: string; audience: "student" | "coach" }>>();
+  for (const { week, target } of rebuilt) {
+    const notes: Array<{ title: string | null; body: string; audience: "student" | "coach" }> = [];
+    for (const line of week.notes) {
+      notes.push({ title: "Разбор сборки", body: line, audience: "coach" });
+    }
+    if (target.ladderNoteRu) {
+      notes.push({ title: "Ступень", body: target.ladderNoteRu, audience: "coach" });
+    }
+    if (target.ladderStudentNoteRu) {
+      // ЕЙ — БЕЗ ЗАГОЛОВКА: баннером наверху экрана, как остальные недельные
+      // заметки для ученицы (см. SessionNote.title в types.ts).
+      notes.push({ title: null, body: target.ladderStudentNoteRu, audience: "student" });
+    }
+    if (notes.length > 0) notesByWeek.set(week.weekStart, notes);
+  }
+
   const { error: weeksError } = await supabase.from("intervals_plan_weeks").upsert(
     [...carriedWeeks, ...freshWeeks].map((weekStart) => ({
       cycle_id: newCycleId,
@@ -712,13 +748,19 @@ async function main(): Promise<void> {
       // Перенесённая неделя сохраняет released: прошлое человек уже видел, и
       // прятать его перегенерацией нельзя. Пересобранная — черновик.
       status: carriedWeeks.includes(weekStart) && releasedBefore.has(weekStart) ? "released" : "generated",
+      // У перенесённой недели своих заметок в этом прогоне нет: её не собирали.
+      notes: notesByWeek.get(weekStart) ?? null,
     })),
     { onConflict: "cycle_id,week_start" }
   );
   if (weeksError) fail(`недели черновика не заведены: ${weeksError.message}`);
 
+  const noteCount = [...notesByWeek.values()].reduce((sum, list) => sum + list.length, 0);
+  const studentCount = [...notesByWeek.values()]
+    .reduce((sum, list) => sum + list.filter((n) => n.audience === "student").length, 0);
   console.log("");
   console.log(`Записано: черновик ${newCycleId.slice(0, 8)}, тренировок ${carried.length + fresh.length}.`);
+  console.log(`Заметок недели: ${noteCount} (ученице ${studentCount}, тренеру ${noteCount - studentCount}).`);
   console.log("Ученица его НЕ видит. Откройте карточку и нажмите «Показать ученице», когда согласитесь.");
 }
 

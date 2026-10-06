@@ -33,7 +33,7 @@ import {
 } from "./repository";
 import { diffCheckin, type CheckinSnapshot } from "./checkin-edit";
 import { buildStudentView, formatRuDay, type CoachReplyView, type StudentView } from "./student-view";
-import type { Checkin } from "./types";
+import { studentNotes, type Checkin } from "./types";
 
 const DAY_MS = 86_400_000;
 
@@ -75,6 +75,13 @@ function summariseAnswersRu(
     lines.push(`Бегаете: ${answers.runSurfaces.join(", ")}`);
   }
   return lines;
+}
+
+/** Понедельник недели, в которую попадает день. */
+function mondayOf(iso: string): string {
+  const date = new Date(`${iso}T00:00:00Z`);
+  const weekday = (date.getUTCDay() + 6) % 7; // 0 = понедельник
+  return new Date(date.getTime() - weekday * 86_400_000).toISOString().slice(0, 10);
 }
 
 function shiftIso(iso: string, days: number): string {
@@ -174,6 +181,20 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
   const releasedWeeks = new Set(
     weeks.filter((week) => week.status === "released").map((week) => week.weekStart)
   );
+
+  /**
+   * ЗАМЕТКА ЕЁ НЕДЕЛИ — ТОЛЬКО ЕЁ И ТОЛЬКО ОТДАННОЙ [06.10.2026].
+   *
+   * Берём неделю, в которой человек находится сегодня. Два отбора обязательны:
+   * по адресату (служебный разбор сборки ученице не показывается никогда) и по
+   * released — заметка неотданной недели рассказала бы о плане, которого она
+   * ещё не видела.
+   */
+  const thisWeekStart = mondayOf(todayIso);
+  const thisWeek = weeks.find(
+    (week) => week.weekStart === thisWeekStart && week.status === "released"
+  );
+  const weekOwnNotes = studentNotes(thisWeek?.notes);
   const sessions = allSessions.filter((session) => releasedWeeks.has(session.weekStart));
 
   const supabase = createSupabaseServerClient();
@@ -244,7 +265,9 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     unavailableWeekdays: answers?.unavailableWeekdays ?? [],
     hasUnplannedCheckinToday: hasUnplannedToday,
     coachReplies,
-    weekNotes: cycle.weekNotes,
+    // Цикл-уровневые заметки тренера плюс заметка именно этой недели. Порядок:
+    // своя неделя первой — она про то, что человек делает сейчас.
+    weekNotes: [...weekOwnNotes, ...studentNotes(cycle.weekNotes)],
     weeklyFormWeekStart,
     pauses,
   });

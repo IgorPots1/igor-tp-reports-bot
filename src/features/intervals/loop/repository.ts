@@ -1227,6 +1227,13 @@ export type PlanWeek = {
    * неделю» (см. week-notice.ts). По статусу этого не видно.
    */
   releasedSessionCount: number | null;
+  /**
+   * Заметки к этой неделе. Внутри каждой — признак адресата: ученице или
+   * тренеру (SessionNote.audience). Фильтровать через studentNotes / coachNotes,
+   * а не руками: ручной фильтр однажды забудут, и служебный разбор уйдёт
+   * человеку.
+   */
+  notes: SessionNote[] | null;
 };
 
 function toPlanWeek(row: Record<string, unknown>): PlanWeek {
@@ -1240,6 +1247,7 @@ function toPlanWeek(row: Record<string, unknown>): PlanWeek {
       row.released_session_count === null || row.released_session_count === undefined
         ? null
         : Number(row.released_session_count),
+    notes: Array.isArray(row.notes) ? (row.notes as SessionNote[]) : null,
   };
 }
 
@@ -1247,7 +1255,7 @@ export async function listPlanWeeks(cycleId: string, client?: Client): Promise<P
   const supabase = client ?? createSupabaseServerClient();
   const { data, error } = await supabase
     .from("intervals_plan_weeks")
-    .select("cycle_id, week_start, status, released_at, released_session_count")
+    .select("cycle_id, week_start, status, released_at, released_session_count, notes")
     .eq("cycle_id", cycleId)
     .order("week_start", { ascending: true });
   if (error) throw new Error(`intervals_plan_weeks: ${describeSupabaseError(error)}`);
