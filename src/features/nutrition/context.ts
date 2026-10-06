@@ -42,7 +42,11 @@ const TP_CACHE_STALE_MS = 48 * 60 * 60 * 1000;
 
 export type NutritionMealSection = "breakfast" | "lunch" | "dinner" | "snack";
 
-export type NutritionFoodItemSource = "fatsecret_pdf_ru_detailed" | "manual" | "unknown";
+export type NutritionFoodItemSource =
+  | "fatsecret_pdf_ru_detailed"
+  | "diary_pdf_ru_daily_report"
+  | "manual"
+  | "unknown";
 
 export type NutritionFoodItem = {
   name: string;
@@ -80,6 +84,7 @@ const NUTRITION_MEAL_SECTIONS = new Set<NutritionMealSection>([
 
 const NUTRITION_FOOD_ITEM_SOURCES = new Set<NutritionFoodItemSource>([
   "fatsecret_pdf_ru_detailed",
+  "diary_pdf_ru_daily_report",
   "manual",
   "unknown",
 ]);

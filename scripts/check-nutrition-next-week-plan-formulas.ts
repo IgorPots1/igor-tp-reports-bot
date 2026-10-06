@@ -570,4 +570,27 @@ const shortRaceDay = shortRacePlan.days.find((day) => day.date === "2026-06-28")
 assert.notEqual(shortRaceDay?.flags.carb_loading, true, "10K race → no carb-loading (loading=null)");
 assert.equal(shortRaceDay?.carbs_g, 330, "10K race keeps intense base carbs (6 г/кг × 55)");
 
+// Любой training_type из days обязан иметь ключ в day_type_targets И day_type_ideal_targets:
+// иначе читатель словаря по типу дня получает undefined (гоночный день ронял план).
+for (const [label, checkedPlan] of [
+  ["short race", shortRacePlan],
+  ["base", plan],
+  ["no tp context", noTpContext],
+  ["sick week", sickWeekPlan],
+] as const) {
+  for (const day of checkedPlan.days) {
+    assert.ok(
+      day.training_type in checkedPlan.day_type_targets,
+      `${label}: day_type_targets has no key for ${day.training_type} (${day.date})`
+    );
+    assert.ok(
+      day.training_type in checkedPlan.day_type_ideal_targets,
+      `${label}: day_type_ideal_targets has no key for ${day.training_type} (${day.date})`
+    );
+  }
+}
+assert.deepEqual(shortRacePlan.day_type_targets.race, shortRaceDay?.practical_target, "race key = the race day's own practical target");
+assert.deepEqual(shortRacePlan.day_type_ideal_targets.race, shortRaceDay?.ideal_target, "race ideal key = the race day's own ideal target");
+assert.equal("race" in plan.day_type_targets, false, "no race key in a week without a race");
+
 console.log("PASS check-nutrition-next-week-plan-formulas");

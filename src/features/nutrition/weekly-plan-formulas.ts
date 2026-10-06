@@ -135,6 +135,9 @@ export type NutritionNextWeekPlan = {
     long_endurance?: NutritionDayTypeTarget | null;
     strength: NutritionDayTypeTarget | null;
     cross_training?: NutritionDayTypeTarget | null;
+    /** Есть, только когда в days есть такой день: каждый training_type из days обязан иметь ключ. */
+    race?: NutritionDayTypeTarget | null;
+    unknown?: NutritionDayTypeTarget | null;
   };
   day_type_ideal_targets: {
     rest: NutritionDayTypeTarget | null;
@@ -145,6 +148,9 @@ export type NutritionNextWeekPlan = {
     long_endurance?: NutritionDayTypeTarget | null;
     strength: NutritionDayTypeTarget | null;
     cross_training?: NutritionDayTypeTarget | null;
+    /** Есть, только когда в days есть такой день: каждый training_type из days обязан иметь ключ. */
+    race?: NutritionDayTypeTarget | null;
+    unknown?: NutritionDayTypeTarget | null;
   };
   summary: {
     has_training_context: boolean;
@@ -1895,6 +1901,21 @@ export function buildNutritionNextWeekPlan(params: {
     crossTrainingWorkouts.length > 0 &&
     crossTrainingWorkouts.every((workout) => isLightIntermittentCrossTrainingTitle(workout.title ?? ""));
 
+  // race и unknown не имеют формулы «на тип дня»: цель гонки зависит от дистанции
+  // (computeRaceDayTarget), у unknown цели нет намеренно. Но любой training_type из days
+  // обязан иметь ключ в обоих словарях — иначе читатель словаря по типу дня получает
+  // undefined. race берёт цель своего же дня (первого гоночного), unknown — честный null.
+  const firstRaceDay = days.find((day) => day.training_type === "race");
+  const hasUnknownDay = days.some((day) => day.training_type === "unknown");
+  const planOnlyDayTypeTargets = {
+    ...(firstRaceDay ? { race: firstRaceDay.practical_target } : {}),
+    ...(hasUnknownDay ? { unknown: null } : {}),
+  };
+  const planOnlyDayTypeIdealTargets = {
+    ...(firstRaceDay ? { race: firstRaceDay.ideal_target } : {}),
+    ...(hasUnknownDay ? { unknown: null } : {}),
+  };
+
   return {
     formula_version: "nutrition_next_week_plan_v1",
     bodyweight_kg: params.bodyweightKg ?? null,
@@ -1954,6 +1975,7 @@ export function buildNutritionNextWeekPlan(params: {
         previousWeekTargets.byDayType.cross_training ?? previousWeekTargets.overall,
         planDayExerciseKcal("cross_training", null, null)
       ),
+      ...planOnlyDayTypeTargets,
     },
     day_type_ideal_targets: {
       rest: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "rest" }),
@@ -1964,6 +1986,7 @@ export function buildNutritionNextWeekPlan(params: {
       long_endurance: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "long_endurance" }),
       strength: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "strength" }),
       cross_training: calculateNutritionDayTypeTarget({ bodyweightKg: params.bodyweightKg, dayType: "cross_training", isLightCross: weekCrossTrainingIsLight }),
+      ...planOnlyDayTypeIdealTargets,
     },
     summary: {
       has_training_context: hasTrainingContext,

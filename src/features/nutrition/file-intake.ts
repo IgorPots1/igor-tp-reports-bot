@@ -780,6 +780,181 @@ function parseFatSecretPdfLines(text: string): FatSecretPdfDayCandidate[] {
   return [...tabularCandidates, ...candidates];
 }
 
+/**
+ * Second diary layout (не FatSecret): «Отчет за 28 сентября 2026» на каждый день,
+ * блоки «Данные» → «Дневник питания» → «Итого» → «Активность / Выпито воды / Замеры / Сон».
+ * Колонки позиции: Время приема | Порция | Калории | Белки | Жиры | Углеводы —
+ * порядок Б-Ж-У, не как у FatSecret (Ж-У-Б). Перепутать = правдоподобные, но неверные числа.
+ *
+ * Извлекатель pdfjs склеивает колонки одним пробелом, поэтому строка позиции разбирается
+ * от якорей: первое HH:MM отделяет название, последние четыре числа — ккал/Б/Ж/У, между
+ * ними порция («80 г», «1 порция», «1 45 г»). Перенос длинного названия на вторую строку
+ * (без времени и чисел) отбрасывается — имя остаётся обрезанным, суммы дня от этого не зависят.
+ *
+ * Время приёма в этом формате НЕ равно времени еды (весь завтрак бывает проставлен 20:20),
+ * поэтому оно не сохраняется вовсе — делать по нему выводы о тайминге нельзя (D77).
+ *
+ * У блоков «Активность» и «Выпито воды» есть свои «Итого» и «Суточная норма», а в
+ * «Активности» — строки со временем. Поэтому позиции и итог дня берутся только между
+ * «Дневник питания» и ПЕРВОЙ строкой «Итого» после него; всё дальше до следующего дня — мимо.
+ */
+const DAILY_REPORT_DAY_HEADER_RE = /^отч[её]т за (\d{1,2}) ([а-яё]+) (\d{4})$/i;
+const DAILY_REPORT_TABLE_HEADER_RE = /^время приема порция калории белки\s*\(г\) жиры\s*\(г\) углеводы\s*\(г\)$/i;
+const DAILY_REPORT_DIARY_START_RE = /^дневник питания$/i;
+const DAILY_REPORT_DIARY_END_RE = /^(активность|выпито воды|замеры|сон)$/i;
+const DAILY_REPORT_NUMBER = String.raw`\d+(?:,\d+)?`;
+const DAILY_REPORT_ITEM_RE = new RegExp(
+  String.raw`^(.+?) (\d{1,2}:\d{2}) (.+) (${DAILY_REPORT_NUMBER}) (${DAILY_REPORT_NUMBER}) (${DAILY_REPORT_NUMBER}) (${DAILY_REPORT_NUMBER})$`
+);
+const DAILY_REPORT_TOTAL_RE = new RegExp(
+  String.raw`^Итого (${DAILY_REPORT_NUMBER}) (${DAILY_REPORT_NUMBER}) (${DAILY_REPORT_NUMBER}) (${DAILY_REPORT_NUMBER})$`
+);
+const DAILY_REPORT_WEIGHT_RE = new RegExp(String.raw`^Текущий вес (${DAILY_REPORT_NUMBER})$`);
+
+const DAILY_REPORT_MEAL_SECTIONS: Record<string, NutritionMealSection> = {
+  "завтрак": "breakfast",
+  "второй завтрак": "breakfast",
+  "перекус": "snack",
+  "второй перекус": "snack",
+  "полдник": "snack",
+  "обед": "lunch",
+  "ужин": "dinner",
+  "поздний ужин": "dinner",
+};
+
+export type DailyReportDiaryDay = {
+  day: string;
+  kcal: number;
+  proteinG: number;
+  fatG: number;
+  carbsG: number;
+  currentWeightKg: number | null;
+  items: NutritionFoodItem[];
+};
+
+function parseDailyReportDayHeader(line: string): string | null {
+  const match = DAILY_REPORT_DAY_HEADER_RE.exec(line);
+  if (!match) {
+    return null;
+  }
+  const month = RU_MONTHS_GENITIVE[match[2].toLocaleLowerCase("ru")];
+  if (!month) {
+    return null;
+  }
+  return isoFromDateParts(Number(match[3]), month, Number(match[1]));
+}
+
+/** null — текст не этого формата (решает вызывающий: идти в fatsecret-овский разбор). */
+export function parseRussianDailyReportDiaryPdf(text: string): {
+  days: DailyReportDiaryDay[];
+  warnings: string[];
+} | null {
+  // Пробелы схлопываются, чтобы одинаково читать и pdfjs-склейку, и layout-раскладку.
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const looksLikeFormat =
+    lines.some((line) => parseDailyReportDayHeader(line) !== null) &&
+    lines.some((line) => DAILY_REPORT_TABLE_HEADER_RE.test(line));
+  if (!looksLikeFormat) {
+    return null;
+  }
+
+  const days: DailyReportDiaryDay[] = [];
+  const warnings: string[] = [];
+  let day: string | null = null;
+  let phase: "header" | "diary" | "after_total" = "header";
+  let weight: number | null = null;
+  let section: NutritionMealSection | null = null;
+  let items: NutritionFoodItem[] = [];
+
+  const closeDayWithoutTotal = () => {
+    if (day && phase !== "after_total") {
+      warnings.push(`missing_daily_total_for_date:${day}`);
+    }
+  };
+
+  for (const line of lines) {
+    const headerDay = parseDailyReportDayHeader(line);
+    if (headerDay) {
+      closeDayWithoutTotal();
+      day = headerDay;
+      phase = "header";
+      weight = null;
+      section = null;
+      items = [];
+      continue;
+    }
+    if (!day || phase === "after_total") {
+      continue;
+    }
+    if (phase === "header") {
+      const weightMatch = DAILY_REPORT_WEIGHT_RE.exec(line);
+      if (weightMatch) {
+        weight = parseNumberCell(weightMatch[1]);
+      } else if (DAILY_REPORT_DIARY_START_RE.test(line)) {
+        phase = "diary";
+      }
+      continue;
+    }
+
+    const totalMatch = DAILY_REPORT_TOTAL_RE.exec(line);
+    if (totalMatch) {
+      const [kcal, proteinG, fatG, carbsG] = totalMatch.slice(1, 5).map((token) => parseNumberCell(token));
+      if (kcal === null || proteinG === null || fatG === null || carbsG === null) {
+        warnings.push(`missing_daily_total_for_date:${day}`);
+      } else {
+        days.push({ day, kcal, proteinG, fatG, carbsG, currentWeightKg: weight, items });
+      }
+      phase = "after_total";
+      continue;
+    }
+    if (DAILY_REPORT_DIARY_END_RE.test(line)) {
+      // Дневник кончился без «Итого» — итог «Активности»/«Воды» за итог дня не брать.
+      warnings.push(`missing_daily_total_for_date:${day}`);
+      phase = "after_total";
+      continue;
+    }
+    const mealSection = DAILY_REPORT_MEAL_SECTIONS[line.toLocaleLowerCase("ru")];
+    if (mealSection) {
+      section = mealSection;
+      continue;
+    }
+    const itemMatch = DAILY_REPORT_ITEM_RE.exec(line);
+    if (!itemMatch) {
+      // Шапка таблицы и вторая строка перенесённого названия.
+      continue;
+    }
+    const name = tidyParsedFoodName(itemMatch[1]);
+    if (name.length < 2 || !/[a-zа-яё]/i.test(name)) {
+      continue;
+    }
+    const [kcal, proteinG, fatG, carbsG] = itemMatch.slice(4, 8).map((token) => parseNumberCell(token));
+    items.push({ name, section, kcal, fatG, carbsG, proteinG, source: "diary_pdf_ru_daily_report" });
+  }
+  closeDayWithoutTotal();
+
+  if (days.length > 0) {
+    warnings.push("diary_ru_daily_report_parsed");
+  }
+  return { days, warnings };
+}
+
+function convertDailyReportDiaryDays(days: DailyReportDiaryDay[]): FatSecretPdfDayCandidate[] {
+  return days.map((day) => ({
+    day: day.day,
+    kcal: day.kcal,
+    proteinG: day.proteinG,
+    fatG: day.fatG,
+    carbsG: day.carbsG,
+    confidence: 0.94,
+    notes: "diary_ru_daily_report_daily_total",
+    source: "daily_total",
+    ...(day.items.length > 0 ? { items: day.items } : {}),
+  }));
+}
+
 export function extractNutritionRowsFromFatSecretPdfText(input: {
   text: string;
   sourceFileName?: string;
@@ -816,6 +991,20 @@ export function extractNutritionRowsFromFatSecretPdfText(input: {
     dateMatches: (input.text.match(/(20\d{2}-\d{1,2}-\d{1,2}|\d{1,2}[./]\d{1,2}(?:[./](?:20)?\d{2})?)/g) ?? []).length,
     parsedRows: 0,
   };
+  const dailyReportParsed = parseRussianDailyReportDiaryPdf(input.text);
+  if (dailyReportParsed && dailyReportParsed.days.length > 0) {
+    const converted = convertFatSecretPdfCandidates(
+      convertDailyReportDiaryDays(dailyReportParsed.days),
+      input.sourceFileName ?? "pdf_text"
+    );
+    diagnostics.parsedRows = converted.extractedRows.length;
+    diagnostics.dateMatches = dailyReportParsed.days.length;
+    const warnings = [...converted.warnings, ...dailyReportParsed.warnings];
+    const coverage = computeNutritionParsedDateCoverageFromRows(converted.extractedRows, {
+      source: "pdf_rows",
+    });
+    return { ...converted, ...coverage, warnings, diagnostics };
+  }
   if (ruDetailedParsed.candidates.length > 0) {
     const converted = convertFatSecretPdfCandidates(ruDetailedParsed.candidates, input.sourceFileName ?? "pdf_text");
     diagnostics.parsedRows = converted.extractedRows.length;
