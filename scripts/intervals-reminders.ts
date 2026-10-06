@@ -23,7 +23,8 @@ import {
   type ReminderKind,
 } from "@/features/intervals/loop/reminders";
 import { reportedWeekStart } from "@/features/intervals/loop/weekly-report";
-import { getPublishedCycle, listSessionsInRange } from "@/features/intervals/loop/repository";
+import { getPublishedCycle, listPauses, listSessionsInRange } from "@/features/intervals/loop/repository";
+import { pauseCovering, pauseLabelRu } from "@/features/intervals/loop/pause";
 import { flushPendingInboundNotices } from "@/features/intervals/loop/inbound-notify";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
@@ -108,6 +109,41 @@ async function main(): Promise<void> {
   for (const student of students) {
     const today = todayIsoInZone(student.timezone);
     const hour = localHourInZone(student.timezone);
+
+    /**
+     * ПАУЗА — ПЕРВЫЙ ЗАСЛОН, ДО ВСЕХ РАСЧЁТОВ [наряд Игоря, 06.10.2026].
+     *
+     * ПОЧЕМУ В САМОМ НАЧАЛЕ, А НЕ УСЛОВИЕМ В decideReminder. Пауза не «ещё
+     * одна причина промолчать» в одном ряду с окнами по часам и уже
+     * отправленным: она отменяет весь обход целиком. Поставь её внутрь решателя
+     * — и каждый НОВЫЙ вид напоминания придётся вручную учить про паузу, а
+     * забытый проговорится. Здесь забыть нельзя: до решателя дело не доходит.
+     *
+     * Поводом стал живой случай: 1 октября Валентина попросила приостановить
+     * бот, тренер согласился, и 4-го ей ушли и недельная форма, и укор за
+     * пропуск. Механизма просто не было.
+     */
+    const pauses = await listPauses(student.sourceId);
+    const pauseToday = pauseCovering(today, pauses);
+    if (pauseToday) {
+      const label = pauseLabelRu(pauseToday, today);
+      console.log(`  · ${student.studentName} (${today}): молчим — на паузе. ${label}`);
+      if (!DRY_RUN) {
+        const { error: pauseTraceError } = await supabase.from("intervals_reminders").insert({
+          source_id: student.sourceId,
+          kind: "paused" satisfies ReminderKind,
+          local_date: today,
+          status: "skipped",
+          detail: label,
+          chat_id: null,
+          telegram_message_id: null,
+        });
+        if (pauseTraceError && !pauseTraceError.message.includes("duplicate key")) {
+          console.log(`  ⚠ ${student.studentName}: след паузы не записан — ${pauseTraceError.message}`);
+        }
+      }
+      continue;
+    }
 
     const cycle = await getPublishedCycle(student.sourceId);
     // Окно на неделю назад нужно для одного: посчитать серию пропусков. Без неё

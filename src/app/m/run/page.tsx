@@ -153,6 +153,7 @@ type View =
       restNoteRu: string | null;
       weekNotes: SessionNote[];
       weeklyFormWeekStart: string | null;
+      pauseNoteRu?: string | null;
     };
 
 const BG = "#F6F4EF";
@@ -1581,6 +1582,24 @@ function PlanScreen(props: {
           weekStart={view.weeklyFormWeekStart}
           onChanged={props.onChanged}
         />
+      ) : null}
+
+      {/* ПАУЗА — ВЫШЕ ПЛАНА И ВЫШЕ ЛЕСТНИЦЫ [06.10.2026]. Человеку на паузе
+          нужно одно: понять, что от него сейчас ничего не ждут. Тон спокойный
+          и без требований: пауза ставится там, где и без нас тяжело. */}
+      {view.pauseNoteRu ? (
+        <div
+          style={{
+            background: "#EEF1F5",
+            border: "1px solid #C7D0DA",
+            borderRadius: 12,
+            padding: "14px 16px",
+            marginBottom: 14,
+            lineHeight: 1.5,
+          }}
+        >
+          {view.pauseNoteRu}
+        </div>
       ) : null}
 
       {view.ladder ? <LadderBlock ladder={view.ladder} /> : null}

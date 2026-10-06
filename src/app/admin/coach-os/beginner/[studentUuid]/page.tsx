@@ -12,6 +12,7 @@ import {
   paceLabelRu,
 } from "@/features/intervals/loop/activity-numbers";
 import { MANUAL_ATHLETE_PREFIX } from "@/features/intervals/manual-entry";
+import { openPause, pauseLabelRu } from "@/features/intervals/loop/pause";
 import { listIntervalsStudents, loadCoachStudentView } from "@/features/intervals/loop/coach-view";
 import { IntervalsAnketaCard } from "@/features/intervals/loop/anketa-card";
 import { BEGINNER_LADDER } from "@/features/methodology/beginner";
@@ -22,7 +23,9 @@ import { previewStudentDeletion } from "@/features/intervals/delete-student";
 
 import {
   deleteStudentAction,
+  pauseStudentAction,
   publishPlanAction,
+  resumeStudentAction,
   releaseWeekAction,
   resolvePainAction,
   sendCoachMessageAction,
@@ -64,6 +67,9 @@ export default async function BeginnerStudentPage({
 
   const draftCycle =
     view.latestCycle && view.latestCycle.status === "draft" ? view.latestCycle : null;
+
+  const activePause = openPause(view.pauses);
+  const pastPauses = view.pauses.filter((pause) => pause.endedOn !== null).slice(0, 3);
 
   return (
     <section>
@@ -107,6 +113,60 @@ export default async function BeginnerStudentPage({
           <h2 style={{ marginTop: 0 }}>Часы не подключены</h2>
           <p style={{ margin: 0 }}>Плана не будет, пока не подключит: данных нет.</p>
         </div>
+      ) : null}
+
+      {/* ── Пауза ── СРАЗУ ПОСЛЕ СВЯЗИ, ДО ВСЕГО ОСТАЛЬНОГО [06.10.2026].
+          Пока человек на паузе, остальные блоки карточки читаются неверно:
+          пропуски — не пропуски, молчание — не молчание. Сигналы ниже и так
+          остаются на месте, но тренер должен увидеть ПРИЧИНУ прежде них. */}
+      {student.sourceId ? (
+        activePause ? (
+          <div style={{ ...box, background: "#EEF2F7", border: "1px solid #7A93AE" }}>
+            <h2 style={{ marginTop: 0 }}>На паузе</h2>
+            <p style={{ margin: 0 }}>{pauseLabelRu(activePause, today)}</p>
+            <p style={{ margin: "8px 0 0", color: "#555" }}>
+              Напоминания молчат, укора за пропущенные дни нет, недельная форма не просится.
+              Тренировки на месте, цикл не сдвинут: отметиться она может в любой день.
+            </p>
+            <form action={resumeStudentAction} style={{ marginTop: 12 }}>
+              <input type="hidden" name="studentUuid" value={studentUuid} />
+              <input type="hidden" name="sourceId" value={student.sourceId} />
+              <FormActionButton pendingText="Снимаю…">Снять паузу</FormActionButton>
+            </form>
+          </div>
+        ) : (
+          <div style={box}>
+            <h2 style={{ marginTop: 0 }}>Пауза</h2>
+            <p style={{ margin: "0 0 10px", color: "#555" }}>
+              Болезнь, отъезд, передышка. Напоминания замолчат, укоров за пропуски не будет.
+            </p>
+            <form action={pauseStudentAction} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input type="hidden" name="studentUuid" value={studentUuid} />
+              <input type="hidden" name="sourceId" value={student.sourceId} />
+              {/* Причина и день начала необязательны: кнопка работает одним
+                  нажатием. День нужен тогда, когда болезнь заметили не в
+                  первый её день и укор за те дни надо снять тоже. */}
+              <input
+                type="text"
+                name="reason"
+                placeholder="причина, необязательно"
+                style={{ padding: "6px 8px", minWidth: 220 }}
+              />
+              <input type="date" name="startedOn" style={{ padding: "6px 8px" }} />
+              <FormActionButton
+                confirmMessage="Поставить на паузу? Напоминания замолчат, укоров за пропуски не будет, пока вы её не снимете."
+                pendingText="Ставлю…"
+              >
+                Поставить на паузу
+              </FormActionButton>
+            </form>
+            {pastPauses.length > 0 ? (
+              <p style={{ margin: "10px 0 0", color: "#555" }}>
+                Было: {pastPauses.map((pause) => pauseLabelRu(pause, today)).join(" · ")}
+              </p>
+            ) : null}
+          </div>
+        )
       ) : null}
 
       {/* ── Ступень ── ТОЛЬКО ДЛЯ ТЕХ, КТО НА ЛЕСТНИЦЕ [20.09.2026].

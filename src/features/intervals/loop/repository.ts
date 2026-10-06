@@ -9,6 +9,7 @@
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
 
 import type { CheckinChange, CheckinEdit, CheckinSnapshot } from "./checkin-edit";
+import type { Pause } from "./pause";
 
 import { isPrefillableField, type Prefill, type PrefillableField } from "./prefill";
 import type {
@@ -483,6 +484,83 @@ export async function listTelegramLines(
       };
     })
     .reverse();
+}
+
+/* ── Пауза ученика ────────────────────────────────────────────────────────── */
+
+/**
+ * Паузы ученика, свежая первой. Правила про границы — в pause.ts.
+ */
+export async function listPauses(sourceId: string, client?: Client): Promise<Pause[]> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_pauses")
+    .select("id, started_on, ended_on, reason")
+    .eq("source_id", sourceId)
+    .order("started_on", { ascending: false });
+  if (error) throw new Error(`intervals_pauses: ${describeSupabaseError(error)}`);
+  return (data ?? []).map((raw) => {
+    const row = raw as unknown as Record<string, unknown>;
+    return {
+      id: String(row.id),
+      startedOn: String(row.started_on),
+      endedOn: (row.ended_on as string | null) ?? null,
+      reason: String(row.reason),
+    };
+  });
+}
+
+/**
+ * Поставить на паузу.
+ *
+ * ВТОРАЯ ОТКРЫТАЯ ПАУЗА НЕВОЗМОЖНА — это держит частичный уникальный индекс в
+ * базе. Повторное нажатие на уже поставленного вернёт отказ с понятным текстом,
+ * а не создаст загадку «какую из двух снимать».
+ */
+export async function startPause(
+  input: { sourceId: string; startedOn: string; reason: string; by: string },
+  client?: Client
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { error } = await supabase.from("intervals_pauses").insert({
+    source_id: input.sourceId,
+    started_on: input.startedOn,
+    reason: input.reason,
+    created_by: input.by,
+  });
+  if (error) {
+    const message = describeSupabaseError(error);
+    return {
+      ok: false,
+      message: /duplicate key/iu.test(message)
+        ? "Этот ученик уже на паузе. Сначала снимите её."
+        : message,
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Снять паузу: в открытую строку кладётся день возврата.
+ *
+ * СТРОКА ОСТАЁТСЯ ИСТОРИЕЙ, А НЕ УДАЛЯЕТСЯ. Неделя, в которую человек болел, не
+ * должна читаться как неделя, в которую он забросил, — а узнать это задним
+ * числом можно только по сохранённому отрезку.
+ */
+export async function endPause(
+  input: { sourceId: string; endedOn: string },
+  client?: Client
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const supabase = client ?? createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("intervals_pauses")
+    .update({ ended_on: input.endedOn, updated_at: new Date().toISOString() })
+    .eq("source_id", input.sourceId)
+    .is("ended_on", null)
+    .select("id");
+  if (error) return { ok: false, message: describeSupabaseError(error) };
+  if ((data ?? []).length === 0) return { ok: false, message: "Открытой паузы нет — снимать нечего." };
+  return { ok: true };
 }
 
 export async function moveSession(

@@ -19,6 +19,7 @@ import {
   listTelegramLines,
   listCheckins,
   listCoachMessages,
+  listPauses,
   listPlanWeeks,
   listSessionsInRange,
   listWeeklyReports,
@@ -29,6 +30,7 @@ import {
 import { DIAGNOSTIC_TEST_PRESET } from "../diagnostic-test";
 import { assessConnectionHealth, type ConnectionHealth } from "./connection-health";
 import type { CheckinEdit } from "./checkin-edit";
+import type { Pause } from "./pause";
 import type { TelegramLine } from "./repository";
 import { buildWeekSignal, type WeekSignal } from "./week-signal";
 import { getSourceConnection } from "../repository";
@@ -513,6 +515,8 @@ export type CoachStudentView = {
   weeklyReports: WeeklyReport[];
   /** Состояние недель последнего цикла: что ученица видит, а что нет. */
   planWeeks: PlanWeek[];
+  /** Отрезки паузы, свежий первым. Открытый — тот, у которого нет конца. */
+  pauses: Pause[];
 };
 
 export async function loadCoachStudentView(
@@ -538,6 +542,7 @@ export async function loadCoachStudentView(
       checkinEdits: new Map(),
       telegramLines: [],
       weekSignal: { painFlags: [], volume: null, weekly: null },
+      pauses: [],
     };
   }
 
@@ -567,6 +572,8 @@ export async function loadCoachStudentView(
       listCoachMessages(sourceId, 40),
       listWeeklyReports(sourceId, 12),
     ]);
+
+  const pauses = await listPauses(sourceId);
 
   const checkinEdits = await listCheckinEdits(checkins.map((checkin) => checkin.id));
   const telegramLines = await listTelegramLines({
@@ -620,6 +627,7 @@ export async function loadCoachStudentView(
     connectionHealth,
     weeklyReports,
     planWeeks,
+    pauses,
     weekSignal: buildWeekSignal({ checkins, unansweredCheckinIds, todayIso, weeklyReports }),
   };
 }

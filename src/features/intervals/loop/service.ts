@@ -28,6 +28,7 @@ import {
   saveCheckinEdit,
   saveProgression,
   getWeeklyReport,
+  listPauses,
   listPlanWeeks,
 } from "./repository";
 import { diffCheckin, type CheckinSnapshot } from "./checkin-edit";
@@ -134,10 +135,11 @@ async function loadCoachReplies(sourceId: string): Promise<CoachReplyView[]> {
 
 export async function loadStudentView(sourceId: string, todayIso: string): Promise<StudentView> {
   const cycle = await getPublishedCycle(sourceId);
-  const [progression, answers, coachReplies] = await Promise.all([
+  const [progression, answers, coachReplies, pauses] = await Promise.all([
     getProgression(sourceId),
     getOnboardingAnswers(sourceId),
     loadCoachReplies(sourceId),
+    listPauses(sourceId),
   ]);
 
   if (!cycle) {
@@ -150,6 +152,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
       hasUnplannedCheckinToday: false,
       answersSummary: summariseAnswersRu(answers),
       coachReplies,
+      pauses,
     });
   }
 
@@ -243,6 +246,7 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     coachReplies,
     weekNotes: cycle.weekNotes,
     weeklyFormWeekStart,
+    pauses,
   });
 }
 

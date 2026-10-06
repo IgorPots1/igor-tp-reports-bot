@@ -18,10 +18,12 @@ import {
   listCheckins,
   markCoachMessageDelivered,
   markCoachMessageVisibleToStudent,
+  endPause,
   markPainResolved,
   publishCycle,
   saveCoachMessage,
   setPlanWeekStatus,
+  startPause,
 } from "@/features/intervals/loop/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { deleteIntervalsStudentCompletely } from "@/features/intervals/delete-student";
@@ -253,6 +255,87 @@ export async function releaseWeekAction(formData: FormData): Promise<void> {
   });
   console.info("[intervals.week] неделя отдана", { studentUuid, weekStart, result: notice.kind });
 
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+/**
+ * Поставить человека на паузу.
+ *
+ * ЧТО ПАУЗА ДЕЛАЕТ: напоминания молчат, укора за пропущенные дни нет,
+ * недельная форма не просится. ЧЕГО НЕ ДЕЛАЕТ: не удаляет тренировки, не
+ * сдвигает цикл и не мешает человеку отметиться, если он всё-таки побежал.
+ * Пауза — про то, что СИСТЕМА перестаёт требовать, а не про то, что человека
+ * отключили.
+ *
+ * ПРИЧИНА НЕОБЯЗАТЕЛЬНА ДЛЯ НАЖАТИЯ, НО ОБЯЗАТЕЛЬНА В БАЗЕ. Тренер жмёт одну
+ * кнопку; пустое поле превращается в «перерыв». Колонка not null потому, что
+ * через месяц «почему он на паузе» без причины не восстановить, а догадка в
+ * этом месте стоит дорого: болезнь и пропажа требуют разного.
+ *
+ * ДЕНЬ НАЧАЛА — СЕГОДНЯШНИЙ У УЧЕНИКА, не у тренера: границы паузы сверяются с
+ * днями его тренировок.
+ */
+export async function pauseStudentAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  if (!studentUuid || !sourceId) return;
+
+  const reason = String(formData.get("reason") ?? "").trim() || "перерыв";
+  const startedOn = String(formData.get("startedOn") ?? "").trim();
+
+  const supabase = createSupabaseServerClient();
+  const { data: studentRow } = await supabase
+    .from("trainingpeaks_students")
+    .select("timezone")
+    .eq("id", studentUuid)
+    .maybeSingle();
+  const todayIso = todayIsoInZone((studentRow as { timezone?: string | null } | null)?.timezone ?? null);
+
+  const result = await startPause({
+    sourceId,
+    // Задним числом — только если тренер прямо указал день: болезнь обычно
+    // замечают не в первый её день, и укор за те дни надо снять тоже.
+    startedOn: /^\d{4}-\d{2}-\d{2}$/u.test(startedOn) ? startedOn : todayIso,
+    reason,
+    by: "coach:admin",
+  });
+  if (!result.ok) {
+    console.error("[intervals.pause] пауза не поставлена", { studentUuid, error: result.message });
+    return;
+  }
+  console.info("[intervals.pause] пауза поставлена", { studentUuid, reason });
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+/**
+ * Снять паузу: тот же вид кнопки, обратное действие.
+ *
+ * СТРОКА НЕ УДАЛЯЕТСЯ, В НЕЁ КЛАДЁТСЯ ДЕНЬ ВОЗВРАТА. Неделя, в которую человек
+ * болел, иначе задним числом прочиталась бы как неделя, в которую он забросил.
+ */
+export async function resumeStudentAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  if (!studentUuid || !sourceId) return;
+
+  const supabase = createSupabaseServerClient();
+  const { data: studentRow } = await supabase
+    .from("trainingpeaks_students")
+    .select("timezone")
+    .eq("id", studentUuid)
+    .maybeSingle();
+  const endedOnRaw = String(formData.get("endedOn") ?? "").trim();
+  const todayIso = todayIsoInZone((studentRow as { timezone?: string | null } | null)?.timezone ?? null);
+
+  const result = await endPause({
+    sourceId,
+    endedOn: /^\d{4}-\d{2}-\d{2}$/u.test(endedOnRaw) ? endedOnRaw : todayIso,
+  });
+  if (!result.ok) {
+    console.error("[intervals.pause] пауза не снята", { studentUuid, error: result.message });
+    return;
+  }
+  console.info("[intervals.pause] пауза снята", { studentUuid });
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
 }
 

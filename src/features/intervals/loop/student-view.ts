@@ -12,6 +12,7 @@ import { isSessionOpen } from "./checkin-edit";
 
 import { EFFORT_OPTIONS, PAIN_OPTIONS, SIMPLE_EFFORT_OPTIONS } from "./effort-scale";
 import { allowedMoveTargets } from "./move";
+import { isPausedOn, openPause, type Pause } from "./pause";
 import type { Checkin, PlanSession, ProgressionState, SessionNote, SessionSegment, SessionStep } from "./types";
 
 const DAY_RU_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
@@ -148,6 +149,13 @@ export type StudentView =
        * Внутри — неделя, про которую спрашиваем, чтобы экран мог её назвать.
        */
       weeklyFormWeekStart: string | null;
+      /**
+       * Человек на паузе: болезнь, отъезд, передышка. null — обычный режим.
+       *
+       * ТЕКСТ СПОКОЙНЫЙ И БЕЗ ТРЕБОВАНИЙ. Пауза ставится там, где человеку и
+       * без нас тяжело, и экран в эти дни не должен ничего просить.
+       */
+      pauseNoteRu: string | null;
     };
 
 /**
@@ -255,6 +263,8 @@ export function buildStudentView(input: {
   weekNotes?: SessionNote[] | null;
   /** Неделя, за которую ждём форму. null — форму не показываем. */
   weeklyFormWeekStart?: string | null;
+  /** Отрезки паузы. Пустой список — обычный режим. */
+  pauses?: Pause[];
 }): StudentView {
   if (input.sessions === null) {
     const messageRu =
@@ -303,12 +313,27 @@ export function buildStudentView(input: {
    * Окно то же, что у правки (OPEN_PAST_DAYS): карточка, которую видно, но
    * нельзя тронуть, читалась бы как поломка.
    */
+  /**
+   * ДНИ ПАУЗЫ ИЗ УКОРА ВЫЧТЕНЫ [наряд Игоря, 06.10.2026].
+   *
+   * ПРОПУСК ПО БОЛЕЗНИ НЕ ПРОПУСК. Валентина болела с 1 по 5 октября, и 4-го
+   * увидела «не отмечено» за тренировку, которую не могла сделать и о которой
+   * предупредила заранее. Укор за то, в чём человек не виноват, обходится
+   * дороже любого пропущенного дня.
+   *
+   * ФИЛЬТР ПО ДНЮ ТРЕНИРОВКИ, А НЕ ПО «СЕЙЧАС НА ПАУЗЕ». Пауза уже снята, а
+   * дни внутри неё остаются невиноватыми навсегда; иначе укор вернулся бы
+   * ровно в день возвращения, когда он больнее всего.
+   */
+  const pauses = input.pauses ?? [];
   const overdue = sorted.filter(
     (session) =>
       session.sessionDate < input.todayIso &&
       isSessionOpen({ sessionDate: session.sessionDate, todayIso: input.todayIso }) &&
-      !input.checkinsBySessionId.has(session.id)
+      !input.checkinsBySessionId.has(session.id) &&
+      !isPausedOn(session.sessionDate, pauses)
   );
+  const activePause = openPause(pauses);
 
   const cardContext = {
     todayIso: input.todayIso,
@@ -365,6 +390,12 @@ export function buildStudentView(input: {
     painOptions: PAIN_OPTIONS,
     restNoteRu: restNote,
     weekNotes: input.weekNotes ?? [],
-    weeklyFormWeekStart: input.weeklyFormWeekStart ?? null,
+    // НЕДЕЛЬНАЯ ФОРМА НА ПАУЗЕ НЕ ПОКАЗЫВАЕТСЯ: «расскажите, как прошла
+    // неделя» человеку, который неделю болел, — вопрос не по адресу.
+    weeklyFormWeekStart: activePause ? null : input.weeklyFormWeekStart ?? null,
+    pauseNoteRu: activePause
+      ? "Вы на паузе, тренер её поставил. План ждёт, напоминаний не будет. " +
+        "Когда будете готовы вернуться, напишите тренеру."
+      : null,
   };
 }
