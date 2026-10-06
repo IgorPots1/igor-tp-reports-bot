@@ -725,18 +725,26 @@ async function main(): Promise<void> {
    * утечку разбора ученице.
    */
   const notesByWeek = new Map<string, Array<{ title: string | null; body: string; audience: "student" | "coach" }>>();
-  for (const { week, target } of rebuilt) {
+  for (const { week } of rebuilt) {
     const notes: Array<{ title: string | null; body: string; audience: "student" | "coach" }> = [];
+    /**
+     * ОБА СПИСКА БЕРУТСЯ У СБОРЩИКА, И НИ ОДИН НЕ СОБИРАЕТСЯ ЗДЕСЬ
+     * [правка 06.10.2026, в тот же день].
+     *
+     * Первая версия добавляла ladderNoteRu и ladderStudentNoteRu из target —
+     * то есть ПРОСИМОЕ решение. Вышли сразу два дефекта: тренерская заметка
+     * задублировалась (sборщик уже кладёт её сам), а ученице на 12.10 ушло
+     * «формат отрезков тот же» при фактически записанных 6 x 4 вместо 6 x 5.
+     * Та же ошибка, что ловили 27.09: снаружи видно просимое, факт знает
+     * только сборщик.
+     */
     for (const line of week.notes) {
       notes.push({ title: "Разбор сборки", body: line, audience: "coach" });
     }
-    if (target.ladderNoteRu) {
-      notes.push({ title: "Ступень", body: target.ladderNoteRu, audience: "coach" });
-    }
-    if (target.ladderStudentNoteRu) {
+    for (const line of week.studentNotes) {
       // ЕЙ — БЕЗ ЗАГОЛОВКА: баннером наверху экрана, как остальные недельные
       // заметки для ученицы (см. SessionNote.title в types.ts).
-      notes.push({ title: null, body: target.ladderStudentNoteRu, audience: "student" });
+      notes.push({ title: null, body: line, audience: "student" });
     }
     if (notes.length > 0) notesByWeek.set(week.weekStart, notes);
   }

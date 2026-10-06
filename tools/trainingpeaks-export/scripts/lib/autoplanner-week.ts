@@ -713,7 +713,23 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
 
 export type Week = {
   athleteId: number; tier: string; weekStart: string; days: number[]; sessions: Session[];
-  notes: string[]; qualityDecision: string;
+  notes: string[];
+  /**
+   * Заметки ДЛЯ УЧЕНИЦЫ, отдельным списком [наряд Игоря, 06.10.2026].
+   *
+   * ПОЧЕМУ НЕ ВМЕСТЕ С notes. notes — служебный разбор сборки: ступени,
+   * бюджеты, снятые гейты. Ей это не показывается никогда, и смешивать два
+   * потока в одном массиве значит однажды показать.
+   *
+   * ПОЧЕМУ СПИСОК ЗАПОЛНЯЕТСЯ ЗДЕСЬ, А НЕ У ВЫЗЫВАЮЩЕГО. Вызывающий знает
+   * ПРОСИМОЕ решение лестницы, а не записанное. Разница не теоретическая:
+   * 12.10.2026 просили «держать 6 x 5», отбор честно спустился на 6 x 4 по
+   * бюджету, и собранная снаружи заметка сказала ученице «формат отрезков тот
+   * же» — про формат, которого в её неделе нет. Текст для человека обязан
+   * следовать ФАКТУ, и факт известен только здесь.
+   */
+  studentNotes: string[];
+  qualityDecision: string;
   /** null — неделя выдана. Иначе причина отказа. */
   refused: string | null;
   /** род отказа: не влезает в потолок или истории не хватает на конверт */
@@ -1022,8 +1038,12 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     notes.push(`качественных ${qualityWant}: столько было в прошлой плановой неделе`
       + `${env.hasTempoPractice ? ", вторая — темповый (есть в практике)" : ""}`);
   }
+  // Отказ ученице не объясняется ничем: недели у неё просто не будет, а
+  // «не помещается в потолок» — разговор тренера с собой.
+  const studentNotes: string[] = [];
   const refuse = (detail: string, kind: Week["refusedKind"]): Week => ({
     athleteId: a.athleteId, tier: a.tier, weekStart, days: [], sessions: [], notes,
+    studentNotes: [],
     qualityDecision: "не выдана", refused: detail, refusedKind: kind, weeklyCap: weekly, plannedMinutes: 0,
   });
 
@@ -1282,14 +1302,26 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     const chosenCode = chosenQuality?.selected ? chosenQuality.preset.presetCode : null;
     if (chosenCode && chosenCode === ladderWanted) {
       if (cycle?.ladderNoteRu) notes.push(cycle.ladderNoteRu);
+      // ЗАПИСАЛИ РОВНО ТО, ЧТО ПРОСИЛИ — значит текст для ученицы правдив.
+      if (cycle?.ladderStudentNoteRu) studentNotes.push(cycle.ladderStudentNoteRu);
     } else if (chosenCode) {
       notes.push(
         `Ступень осталась на «${chosenQuality!.selected ? chosenQuality!.preset.displayNameRu : chosenCode}»: ` +
           `следующая не помещается в бюджет недели. Шагнём, когда подрастёт объём.`
       );
+      /**
+       * А ВОТ ЗДЕСЬ ЕЙ НЕ ГОВОРИМ НИЧЕГО, и это не забывчивость.
+       *
+       * Записан формат НЕ ТОТ, что просила лестница, поэтому заготовленный
+       * текст («формат тот же», «отрезки длиннее») про её неделю соврал бы.
+       * Сказать правду машина тут не может: «отрезки короче, потому что
+       * длительная не влезла» — это разговор тренера с собой, а не объяснение
+       * человеку. Молчание честнее, а тренер видит расхождение в своей заметке.
+       */
     }
   } else if (cycle?.ladderNoteRu) {
     notes.push(cycle.ladderNoteRu);
+    if (cycle?.ladderStudentNoteRu) studentNotes.push(cycle.ladderStudentNoteRu);
   }
 
   const floorWanted = cycle?.minQualityWorkMin ?? null;
@@ -1614,7 +1646,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
       easyIdx++;
     }
   }
-  return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, refused: null, refusedKind: null,
+  return { athleteId: a.athleteId, tier: a.tier, weekStart, days, sessions, notes, studentNotes, refused: null, refusedKind: null,
     weeklyCap: weekly, plannedMinutes: sessions.reduce((s, x) => s + (x.deferred ? 0 : x.minutes), 0),
     qualityDecision: decs.some((d) => d.selected)
       ? decs.filter((d) => d.selected).map((d) => `${(d as Extract<QualityDecision, { selected: true }>).preset.presetCode}: ${d.reason}`).join(" + ")

@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 
 import { coachNotes, studentNotes, type SessionNote } from "@/features/intervals/loop/types";
 import { decideLadderStep, WALK_INTERVAL_LADDER } from "../tools/trainingpeaks-export/scripts/lib/interval-ladder.ts";
+import type { Week } from "../tools/trainingpeaks-export/scripts/lib/autoplanner-week.ts";
 
 /* ── ОТБОР ПО АДРЕСАТУ ───────────────────────────────────────────────────── */
 
@@ -103,5 +104,28 @@ assert.equal(top.studentNoteRu, null, "а ученице — нечего, и м
 const unknown = decideLadderStep({ fromRung: null, isDeload: false, hasPain: false, rpeBand: "calm" });
 assert.equal(unknown.noteRu, null, "не знаем, где человек стоит — не пишем тренеру");
 assert.equal(unknown.studentNoteRu, null, "и ученице тоже");
+
+/* ── ТЕКСТ ДЛЯ УЧЕНИЦЫ СЛЕДУЕТ ФАКТУ, А НЕ ПРОСЬБЕ ──────────────────────────
+ *
+ * ЧТО СЛУЧИЛОСЬ 06.10.2026, через час после первой версии этой правки. Заметки
+ * собирались снаружи сборщика, из ПРОСИМОГО решения лестницы. На неделе 12.10
+ * просили держать 6 x 5, отбор честно спустился на 6 x 4 по бюджету, и ученице
+ * ушло «формат отрезков тот же» — про формат, которого в её неделе нет. Ровно
+ * та ошибка, которую ловили 27.09 на тренерской заметке; повторилась на
+ * студенческой, потому что собиралась в том же неверном месте.
+ *
+ * Поле Week.studentNotes существует именно для этого: его заполняет сборщик,
+ * которому известен ЗАПИСАННЫЙ формат. Проверка стережёт, что поле есть и что
+ * оно пусто, когда записали не то, что просили.
+ */
+/* Проверяем контракт типа: у недели есть ОТДЕЛЬНЫЙ список для ученицы. Если
+ * кто-то сольёт его обратно в notes, падёт компиляция этой строки. */
+const shape: Pick<Week, "notes" | "studentNotes"> = { notes: [], studentNotes: [] };
+assert.deepEqual(shape.studentNotes, [], "у недели есть свой список заметок для ученицы");
+assert.notEqual(
+  Object.is(shape.notes, shape.studentNotes),
+  true,
+  "и это ДРУГОЙ список, а не тот же самый под вторым именем"
+);
 
 console.log("check:week-notes — все проверки пройдены");
