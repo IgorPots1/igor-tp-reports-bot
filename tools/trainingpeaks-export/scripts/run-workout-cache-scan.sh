@@ -45,7 +45,8 @@ if [ "$CODE" -eq 0 ] && [ -n "$OUTCOME" ]; then
   ACCESS_LOST="$(printf '%s' "$OUTCOME" | sed -nE 's/.*"accessLost":([0-9]+).*/\1/p')"
   FETCH_FAILED="$(printf '%s' "$OUTCOME" | sed -nE 's/.*"fetchFailed":([0-9]+).*/\1/p')"
   OTHER_FAILED="$(printf '%s' "$OUTCOME" | sed -nE 's/.*"otherFailed":([0-9]+).*/\1/p')"
-  HB_NOTE="access_lost_403=${ACCESS_LOST:-0} fetch_failed=${FETCH_FAILED:-0} other_failed=${OTHER_FAILED:-0}"
+  INCOMPLETE_DAYS="$(printf '%s' "$OUTCOME" | sed -nE 's/.*"incompleteDays":([0-9]+).*/\1/p')"
+  HB_NOTE="access_lost_403=${ACCESS_LOST:-0} fetch_failed=${FETCH_FAILED:-0} other_failed=${OTHER_FAILED:-0} incomplete_days=${INCOMPLETE_DAYS:-0}"
   case "$VERDICT" in
     ok) HB_STATUS=sent ;;
     partial) HB_STATUS=partial ;;

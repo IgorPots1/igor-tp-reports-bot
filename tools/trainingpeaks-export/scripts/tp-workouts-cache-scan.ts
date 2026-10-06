@@ -15,6 +15,8 @@ import { getTpApiJsonRaw, TpApiAuthError, TpApiHttpError } from "../../../src/fe
 import { toolRoot } from "./lib/paths.ts";
 import type { ApiJsonResponse } from "./lib/trainingpeaks-api-move.ts";
 import {
+  findOrderOnDayGaps,
+  formatOrderOnDayGapWarning,
   normalizeTrainingPeaksWorkoutItems,
   type TrainingPeaksWorkoutRaw,
 } from "./lib/trainingpeaks-workout-normalization.ts";
@@ -205,6 +207,8 @@ type StudentSummary = {
   reason?: string;
   rawItemsReturned?: number;
   reconciledDeleted: number;
+  /** Days with a hole in orderOnDay — possibly incomplete (see findOrderOnDayGaps). */
+  incompleteDays?: string[];
 };
 
 type ReconcilePlannedRowsFn = (input: {
@@ -706,6 +710,13 @@ async function scanOneStudent(input: {
   });
   const filteredItems = normalizedItems.filter((item) => item.workoutDate >= from && item.workoutDate <= to);
 
+  // A hole in a day's orderOnDay (#2 present, #1 absent) = a calendar object the feed did not
+  // return. Status stays ok — the fetch did succeed — but the day is marked on every one of its
+  // rows and counted separately, so the plan reader and the run summary see it, instead of the
+  // old silence (Elena 06.10: the coach's strength never arrived, the scan said ok).
+  const orderGaps = findOrderOnDayGaps(filteredItems);
+  const gapWarningByDate = new Map(orderGaps.map((gap) => [gap.date, formatOrderOnDayGapWarning(gap)]));
+
   const rawByWorkoutId = new Map<number, TrainingPeaksWorkoutRaw>();
   for (const rawItem of rawItems) {
     const workoutId = readPositiveInt(rawItem.workoutId);
@@ -739,7 +750,9 @@ async function scanOneStudent(input: {
       source_updated_at: parseOptionalIsoDateTime(item.lastModifiedDate),
       order_on_day: item.orderOnDay,
       scanned_at: scannedAt,
-      normalization_warnings: item.normalizationWarnings,
+      normalization_warnings: gapWarningByDate.has(item.workoutDate)
+        ? [...item.normalizationWarnings, gapWarningByDate.get(item.workoutDate)!]
+        : item.normalizationWarnings,
       source_snapshot: rawItem ? buildCompactSourceSnapshot(rawItem) : {},
     };
   });
@@ -775,6 +788,7 @@ async function scanOneStudent(input: {
     warnings,
     rawItemsReturned: result.body.length,
     reconciledDeleted,
+    incompleteDays: orderGaps.map((gap) => gap.date),
   };
 }
 
@@ -967,10 +981,17 @@ async function main(): Promise<void> {
     console.log("per_student:");
     for (const item of summaries.sort((a, b) => a.studentName.localeCompare(b.studentName))) {
       const shortReason = item.reason ? ` (${item.reason})` : "";
+      const incomplete = item.incompleteDays?.length ? `, incomplete_days=${item.incompleteDays.join(",")}` : "";
       console.log(
-        `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, reconciled_deleted=${item.reconciledDeleted}, warnings=${item.warnings}, status=${item.status}${shortReason}`,
+        `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, reconciled_deleted=${item.reconciledDeleted}, warnings=${item.warnings}, status=${item.status}${incomplete}${shortReason}`,
       );
     }
+    // Отдельно от warnings: тот у каждой строки уже содержит «completed is non-boolean» и
+    // поэтому ничего не сообщает. Здесь — только дни с дырой в нумерации TP.
+    const incompleteDays = summaries.flatMap((item) =>
+      (item.incompleteDays ?? []).map((date) => `${item.studentName} ${date}`),
+    );
+    console.log(`incomplete_days_total: ${incompleteDays.length}`);
 
     // Итог прогона для обёртки (heartbeat sent / partial). 403 и сетевой сбой — раздельно.
     const failedKinds = summaries
@@ -982,6 +1003,10 @@ async function main(): Promise<void> {
       fetchFailed: failedKinds.filter((kind) => kind === "fetch_failed").length,
       otherFailed: failedKinds.filter((kind) => kind === "other").length,
       skipped: skippedCount,
+      incompleteDays: incompleteDays.length,
+      // Сигнал «посмотри», не тревога: вердикт прогона от него не зависит (~7 таких дней в неделю
+      // по всему ростеру на 3338 днях с нумерацией, авг–окт 2026; часть — переносы без перенумерации).
+      incompleteDayList: incompleteDays.slice(0, 40),
     };
     console.log(
       `failed_by_kind: access_lost(403)=${outcome.accessLost}, fetch_failed=${outcome.fetchFailed}, other=${outcome.otherFailed}`,

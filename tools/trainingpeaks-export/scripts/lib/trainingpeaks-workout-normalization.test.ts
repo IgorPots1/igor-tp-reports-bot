@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { normalizeTrainingPeaksWorkoutItem, type TrainingPeaksWorkoutRaw } from "./trainingpeaks-workout-normalization.ts";
+import {
+  findOrderOnDayGaps,
+  formatOrderOnDayGapWarning,
+  normalizeTrainingPeaksWorkoutItem,
+  ORDER_ON_DAY_GAP_WARNING_PREFIX,
+  type TrainingPeaksWorkoutRaw,
+} from "./trainingpeaks-workout-normalization.ts";
 
 function normalize(raw: TrainingPeaksWorkoutRaw) {
   const result = normalizeTrainingPeaksWorkoutItem({ athleteId: 5475792, raw });
@@ -80,5 +86,57 @@ describe("normalizeTrainingPeaksWorkoutItem — the rule stays scoped to strengt
     });
     assert.equal(row.isPlanned, true);
     assert.equal(row.isCompleted, true);
+  });
+});
+
+describe("findOrderOnDayGaps — a day the /workouts feed returned only partly", () => {
+  test("Elena 2026-10-06: the feed holds orderOnDay=2 only → the day is flagged, #1 missing", () => {
+    // Live feed for athlete 5914646, 2026-09-26..2026-10-16 (read 2026-10-06): the coach's
+    // structured strength (#1) is not in it; the run «Легкий бег» sits at #2.
+    const gaps = findOrderOnDayGaps([
+      { workoutDate: "2026-10-04", orderOnDay: null },
+      { workoutDate: "2026-10-06", orderOnDay: 2 },
+      { workoutDate: "2026-10-08", orderOnDay: 1 },
+    ]);
+    assert.deepEqual(gaps, [{ date: "2026-10-06", presentOrders: [2], missingOrders: [1] }]);
+  });
+
+  test("contiguous numbering is not a gap", () => {
+    assert.deepEqual(
+      findOrderOnDayGaps([
+        { workoutDate: "2026-10-06", orderOnDay: 1 },
+        { workoutDate: "2026-10-06", orderOnDay: 2 },
+      ]),
+      [],
+    );
+  });
+
+  test("a hole in the middle counts, and days come back sorted", () => {
+    assert.deepEqual(
+      findOrderOnDayGaps([
+        { workoutDate: "2026-09-10", orderOnDay: 3 },
+        { workoutDate: "2026-09-08", orderOnDay: 3 },
+        { workoutDate: "2026-09-08", orderOnDay: 1 },
+      ]),
+      [
+        { date: "2026-09-08", presentOrders: [1, 3], missingOrders: [2] },
+        { date: "2026-09-10", presentOrders: [3], missingOrders: [1, 2] },
+      ],
+    );
+  });
+
+  test("items without orderOnDay (device completions) say nothing about the numbering", () => {
+    assert.deepEqual(
+      findOrderOnDayGaps([
+        { workoutDate: "2026-09-26", orderOnDay: null },
+        { workoutDate: "2026-09-26", orderOnDay: null },
+      ]),
+      [],
+    );
+  });
+
+  test("the warning carries a stable prefix and the missing/present numbers", () => {
+    const warning = formatOrderOnDayGapWarning({ date: "2026-10-06", presentOrders: [2], missingOrders: [1] });
+    assert.ok(warning.startsWith(`${ORDER_ON_DAY_GAP_WARNING_PREFIX}: missing=1 present=2 `));
   });
 });

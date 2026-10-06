@@ -182,3 +182,58 @@ export function normalizeTrainingPeaksWorkoutItems(input: {
   }
   return output;
 }
+
+export const ORDER_ON_DAY_GAP_WARNING_PREFIX = "order_on_day_gap";
+
+export type OrderOnDayGap = {
+  date: string;
+  presentOrders: number[];
+  missingOrders: number[];
+};
+
+/**
+ * Days whose orderOnDay numbering has a hole: the feed holds #2 but not #1, or #1 and #3
+ * but not #2. TP numbers EVERY calendar object of a day, including ones the
+ * /workouts/{from}/{to} feed never returns — a structured strength built in TP's strength
+ * builder lives on api.peakswaresb.com and is absent from the feed (Elena 2026-10-06: the
+ * feed held only «Легкий бег» with orderOnDay=2). A hole therefore means «this day may be
+ * incomplete», NOT «an object was lost»: a workout moved or deleted in TP can leave the
+ * same hole without renumbering. It is a signal to look, never a verdict.
+ * Items without orderOnDay (device-recorded completions) say nothing about the numbering
+ * and are ignored.
+ */
+export function findOrderOnDayGaps(
+  items: ReadonlyArray<{ workoutDate: string; orderOnDay: number | null }>,
+): OrderOnDayGap[] {
+  const ordersByDate = new Map<string, Set<number>>();
+  for (const item of items) {
+    if (item.orderOnDay === null || !Number.isInteger(item.orderOnDay) || item.orderOnDay < 1) {
+      continue;
+    }
+    const orders = ordersByDate.get(item.workoutDate) ?? new Set<number>();
+    orders.add(item.orderOnDay);
+    ordersByDate.set(item.workoutDate, orders);
+  }
+  const gaps: OrderOnDayGap[] = [];
+  for (const [date, orders] of ordersByDate) {
+    const max = Math.max(...orders);
+    const missingOrders: number[] = [];
+    for (let order = 1; order < max; order += 1) {
+      if (!orders.has(order)) {
+        missingOrders.push(order);
+      }
+    }
+    if (missingOrders.length > 0) {
+      gaps.push({ date, presentOrders: [...orders].sort((a, b) => a - b), missingOrders });
+    }
+  }
+  return gaps.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function formatOrderOnDayGapWarning(gap: OrderOnDayGap): string {
+  return (
+    `${ORDER_ON_DAY_GAP_WARNING_PREFIX}: missing=${gap.missingOrders.join(",")} present=${gap.presentOrders.join(",")} ` +
+    "(day may be incomplete: a TP calendar object is absent from the /workouts feed — e.g. a structured strength, " +
+    "or a workout moved/deleted without renumbering)"
+  );
+}
