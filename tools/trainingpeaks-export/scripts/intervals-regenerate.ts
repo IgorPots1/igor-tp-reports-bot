@@ -262,6 +262,11 @@ async function main(): Promise<void> {
 
   const anchors = buildAnchors(startPoint, stored);
 
+  // День объявлен ЗДЕСЬ, а не ниже: от него считаются факты про выполнение,
+  // которые идут в конверт, а конверт собирается раньше вывода про недели.
+  const today = new Date().toISOString().slice(0, 10);
+  const cutoff = nextMonday(today);
+
   /**
    * ФАКТЫ ПРО ВЫПОЛНЕНИЕ — ИЗ БАЗЫ, А НЕ НУЛЯМИ [наряд Игоря, 06.10.2026].
    *
@@ -321,8 +326,6 @@ async function main(): Promise<void> {
     );
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const cutoff = nextMonday(today);
   console.log(`Сегодня ${today}. Пересобираем недели, начиная с ${cutoff}; всё, что раньше, переносим как есть.`);
   console.log(
     `Якорь лёгкого: ${anchors.easy ? `${paceText(anchors.easy.fastSec)}–${paceText(anchors.easy.slowSec)}` : "нет"} · ` +

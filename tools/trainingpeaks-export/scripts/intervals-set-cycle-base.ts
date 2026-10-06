@@ -230,12 +230,30 @@ async function main(): Promise<void> {
     return;
   }
 
+  /**
+   * КОЛОНКИ ПИШУТСЯ ВМЕСТЕ С ЧЕРНОВИКОМ [правка 06.10.2026].
+   *
+   * Раньше здесь обновлялись только `draft` и `week_forecast`, а колонки
+   * base_aerobic_min / base_quality_min оставались прежними. Решения генератор
+   * берёт из ЧЕРНОВИКА, так что план выходил правильный, — и расхождение жило
+   * молча. Увидел его человек: у Валентины в черновике стояло 120, а в колонке
+   * 185, и при разборе «почему лёгкая короткая» колонка сбивала с толку
+   * (сначала и меня: я посчитал её неделю урезанной относительно 185).
+   *
+   * Колонка — то, что читают глазами и чем объясняют план. Держать в ней
+   * устаревшее число дороже, чем лишняя строка в update.
+   */
   const { error } = await supabase
     .from("intervals_plan_cycles")
-    .update({ draft, week_forecast: weeks })
+    .update({
+      draft,
+      week_forecast: weeks,
+      base_aerobic_min: draft.baseAerobicMin,
+      base_quality_min: draft.baseQualityMin,
+    })
     .eq("id", String(cycle.id));
   if (error) fail(`не записали: ${error.message}`);
-  console.log("\nЗаписано: черновик и прогноз недель. Сессии НЕ тронуты — их пересобирает intervals:regenerate.");
+  console.log("\nЗаписано: черновик, прогноз недель и колонки базы. Сессии НЕ тронуты — их пересобирает intervals:regenerate.");
 }
 
 main().catch((error) => {
