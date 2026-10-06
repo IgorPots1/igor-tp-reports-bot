@@ -541,7 +541,7 @@ export async function loadCoachStudentView(
       planWeeks: [],
       checkinEdits: new Map(),
       telegramLines: [],
-      weekSignal: { painFlags: [], volume: null, weekly: null },
+      weekSignal: { painFlags: [], volume: null, weekly: null, emptyWeek: null },
       pauses: [],
     };
   }
@@ -628,7 +628,22 @@ export async function loadCoachStudentView(
     weeklyReports,
     planWeeks,
     pauses,
-    weekSignal: buildWeekSignal({ checkins, unansweredCheckinIds, todayIso, weeklyReports }),
+    /**
+     * ПУСТАЯ НЕДЕЛЯ ВИДНА ТОЛЬКО ТОМУ, КТО ПЕРЕДАЛ ПЛАН [06.10.2026]. Сигнал
+     * сам в базу не ходит; без плановых дней он не может отличить «человек не
+     * вышел» от «недели ему не назначали» и честно молчит.
+     */
+    weekSignal: buildWeekSignal({
+      checkins,
+      unansweredCheckinIds,
+      todayIso,
+      weeklyReports,
+      plannedDates: sessions.map((session) => session.sessionDate),
+      runDates: activities
+        .map((activity) => activity.startDateLocal?.slice(0, 10) ?? "")
+        .filter((date) => date.length > 0),
+      pauses,
+    }),
   };
 }
 

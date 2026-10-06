@@ -260,6 +260,29 @@ export default async function BeginnerStudentPage({
         );
       })}
 
+      {/* ── Неделя не состоялась ── ВЫШЕ ПОЛОСЫ ОБЪЁМА [06.10.2026].
+          До этой правки неделя без отметок давала volume: null и выглядела на
+          карточке ровно как неделя, которую человеку не назначали: пусто. Хотя
+          это два разных факта, и второй требует разговора, а не правки объёма.
+          Тон зависит от причины: неделя внутри паузы не упрёк. */}
+      {view.weekSignal.emptyWeek ? (
+        <div
+          style={{
+            ...box,
+            background: view.weekSignal.emptyWeek.fullyPaused ? "#EEF2F7" : "#FBF3E4",
+            border: view.weekSignal.emptyWeek.fullyPaused ? "1px solid #7A93AE" : "1px solid #e0e0e0",
+          }}
+        >
+          <h2 style={{ marginTop: 0 }}>{view.weekSignal.emptyWeek.headlineRu}</h2>
+          <p style={{ margin: 0 }}>
+            Неделя {formatRuDay(view.weekSignal.emptyWeek.weekStart)} по{" "}
+            {formatRuDay(view.weekSignal.emptyWeek.weekEnd)}: в плане стояло{" "}
+            {view.weekSignal.emptyWeek.plannedSessions}, выполнено ноль.
+          </p>
+          <p style={{ margin: "8px 0 0", color: "#555" }}>{view.weekSignal.emptyWeek.adviceRu}</p>
+        </div>
+      ) : null}
+
       {/* ЧТО СКАЗАЛ САМ ЧЕЛОВЕК — ОТДЕЛЬНО ОТ ТОГО, ЧТО ПОСЧИТАНО ПО ОТМЕТКАМ.
           Полоса объёма считается из RPE тренировок, недельная форма — это его
           собственные слова про график и усталость. Склеить их в одну строку

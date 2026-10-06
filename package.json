@@ -380,6 +380,7 @@
     "check:lexicon-committed": "npx tsx scripts/check-lexicon-committed.ts",
     "check:treadmill-shape": "npx tsx scripts/check-treadmill-shape.ts",
     "check:interval-ladder": "npx tsx scripts/check-interval-ladder.ts",
+    "check:training-gaps": "npx tsx scripts/check-training-gaps.ts",
     "check:pause": "npx tsx scripts/check-pause.ts",
     "check:inbound-notice": "npx tsx scripts/check-inbound-notice.ts",
     "check:checkin-edit": "npx tsx scripts/check-checkin-edit.ts",

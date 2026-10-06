@@ -48,12 +48,26 @@ import { releasedWorkFloor, sessionWorkMinutes } from "@/features/intervals/loop
 import { buildWeekSignal } from "@/features/intervals/loop/week-signal";
 import {
   getOnboardingAnswers,
+  listActivitiesInRange,
   listCheckins,
+  listPauses,
   listPlanWeeks,
   listSessionsInRange,
 } from "@/features/intervals/loop/repository";
+import { pauseCovering, pauseLabelRu } from "@/features/intervals/loop/pause";
+import {
+  actualWeeklyMedian,
+  missedPlannedStreak,
+  weekCompliance,
+  type WeekFact,
+} from "@/features/intervals/loop/training-gaps";
 
 const COMMIT = process.argv.includes("--commit");
+
+/** День плюс-минус столько суток, ГГГГ-ММ-ДД. */
+function shiftIso(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
 
 function arg(name: string): string | null {
   const prefix = `--${name}=`;
@@ -247,8 +261,65 @@ async function main(): Promise<void> {
   }
 
   const anchors = buildAnchors(startPoint, stored);
-  const envelope = buildEnvelope(startPoint);
+
+  /**
+   * ФАКТЫ ПРО ВЫПОЛНЕНИЕ — ИЗ БАЗЫ, А НЕ НУЛЯМИ [наряд Игоря, 06.10.2026].
+   *
+   * Адаптер отдавал конверту `notRunningWeeks: 0`, `complianceRatio: null` и
+   * прочие нули с объяснением «плановых величин нет вообще». С 20.09.2026 это
+   * неправда: у сегмента есть отданные недели. Пока нули стояли, путь «человек
+   * фактически не тренируется» не мог сработать ни разу, и перерыв в беге был
+   * генератору невидим.
+   *
+   * ПЛАН БЕРЁМ ТОЛЬКО ПО ОТДАННЫМ НЕДЕЛЯМ. Неделя, которую человек не видел,
+   * не могла быть им не выполнена: считать её провалом значит обвинить
+   * человека в том, чего ему не показывали.
+   */
+  const allCycleSessions = await listSessionsInRange(String(cycle.id), "2000-01-01", "2100-01-01");
+  const releasedStarts = new Set(
+    (await listPlanWeeks(String(cycle.id))).filter((w) => w.status === "released").map((w) => w.weekStart)
+  );
+  const activitiesForFacts = await listActivitiesInRange(String(source.id), "2000-01-01", today);
+  const runDates = activitiesForFacts
+    .map((activity) => activity.startDateLocal?.slice(0, 10) ?? "")
+    .filter((date) => date.length > 0);
+  const weekFacts: WeekFact[] = [...releasedStarts].sort().map((weekStart) => {
+    const weekEnd = shiftIso(weekStart, 6);
+    const sessionsOfWeek = allCycleSessions.filter((session) => session.weekStart === weekStart);
+    const runsOfWeek = activitiesForFacts.filter((activity) => {
+      const date = activity.startDateLocal?.slice(0, 10) ?? "";
+      return date >= weekStart && date <= weekEnd;
+    });
+    return {
+      weekStart,
+      plannedMin: sessionsOfWeek.reduce((sum, session) => sum + session.minutes, 0),
+      actualMin: runsOfWeek.reduce((sum, activity) => sum + Math.round((activity.movingTimeS ?? 0) / 60), 0),
+      runs: runsOfWeek.length,
+    };
+  });
+  // ТОЛЬКО ЗАВЕРШЁННЫЕ НЕДЕЛИ: текущая ещё идёт, и её недобор не факт, а время.
+  const completedFacts = weekFacts.filter((week) => shiftIso(week.weekStart, 6) < today);
+  const compliance = weekCompliance(completedFacts);
+  const actualWeekly = actualWeeklyMedian(completedFacts);
+  const envelope = buildEnvelope(startPoint, {
+    ...compliance,
+    lowComplianceWeeks: 0, // пометка тренеру, объём не режет; считаем отдельно, когда понадобится
+    actualWeeklyMin: actualWeekly,
+  });
   const catalog = await loadCatalog(supabase);
+
+  if (completedFacts.length > 0) {
+    console.log(
+      `ФАКТ ПРОТИВ ПЛАНА по отданным неделям: ` +
+        completedFacts.map((w) => `${w.weekStart.slice(5)} ${w.actualMin}/${w.plannedMin}`).join(" · ")
+    );
+    console.log(
+      `  выполнение ${compliance.complianceRatio === null ? "нечем считать" : `${Math.round(compliance.complianceRatio * 100)}%`}` +
+        ` · недель «не бегает» подряд: ${compliance.notRunningWeeks}` +
+        ` · медиана факта ${actualWeekly ?? "нет"} мин/нед` +
+        ` (в анкете ${startPoint.rolling4wWeeklyMinutes} — ${actualWeekly !== null && actualWeekly !== startPoint.rolling4wWeeklyMinutes ? "берём факт" : "совпало"})`
+    );
+  }
 
   const today = new Date().toISOString().slice(0, 10);
   const cutoff = nextMonday(today);
@@ -289,9 +360,47 @@ async function main(): Promise<void> {
     checkins: pastCheckins,
     unansweredCheckinIds: new Set<string>(),
     todayIso: today,
+    // Плановые дни и пробежки — чтобы пустая завершённая неделя была видна
+    // пустой, а не как «данных нет» (week-signal.ts, emptyWeek).
+    plannedDates: allCycleSessions
+      .filter((session) => releasedStarts.has(session.weekStart))
+      .map((session) => session.sessionDate),
+    runDates,
   });
+  if (signal.emptyWeek) {
+    console.log(`ПУСТАЯ НЕДЕЛЯ: ${signal.emptyWeek.headlineRu} (${signal.emptyWeek.weekStart}, в плане было ${signal.emptyWeek.plannedSessions})`);
+  }
   const hasPain = signal.painFlags.length > 0;
   const rpeBand = signal.volume?.band ?? null;
+
+  /**
+   * ПАУЗЫ И ПЕРЕРЫВ — ТЕПЕРЬ ГЕНЕРАТОРУ ВИДНЫ [наряд Игоря, 06.10.2026].
+   *
+   * Таблицу intervals_pauses читали только напоминания, её экран и карточка
+   * тренера. Генератор о паузе не знал ничего, поэтому четыре дня болезни были
+   * для него неотличимы от четырёх дней тренировок.
+   *
+   * ИЗМЕРЯЕМ ПРОПУСКИ В ПЛАНОВЫХ ТРЕНИРОВКАХ, А НЕ В ДНЯХ: у Валентины
+   * настоящие промежутки между пробежками 3, 3 и 4 дня, и порог «четыре дня»
+   * сработал бы на её обычном ритме. Разбор — в шапке missedPlannedStreak.
+   */
+  const pauses = await listPauses(String(source.id));
+  const missedStreak = missedPlannedStreak({
+    plannedDates: allCycleSessions
+      .filter((session) => releasedStarts.has(session.weekStart))
+      .map((session) => session.sessionDate),
+    runDates,
+    checkinDates: pastCheckins.map((checkin) => checkin.sessionDate),
+    asOfIso: today,
+  });
+  const pauseNow = pauseCovering(today, pauses);
+  const recentPause = pauses.find(
+    (pause) => (pause.endedOn ?? today) >= shiftIso(today, -14)
+  ) ?? null;
+  console.log(
+    `ПЕРЕРЫВ: пропущено плановых подряд ${missedStreak}` +
+      ` · пауза ${pauseNow ? "ОТКРЫТА" : recentPause ? `была (${pauseLabelRu(recentPause, today)})` : "нет"}`
+  );
   let rung = rungByCode(floorPresetCode) ?? rungByWorkMinutes(floor?.workMinutes ?? null);
   let firstQualityWeek = true;
   console.log(
@@ -340,7 +449,21 @@ async function main(): Promise<void> {
     target.minQualityWorkMin = floor?.workMinutes ?? null;
     if (!isDeload) firstQualityWeek = false;
 
-    const week = buildWeek(anchors, envelope, catalog, weekStart, false, null, target, prefs);
+    /**
+     * БОЛЕЗНЬ БОЛЬШЕ НЕ ЗАХАРДКОЖЕНА ЛОЖЬЮ [наряд Игоря, 06.10.2026].
+     *
+     * Здесь стояло `false` для всего сегмента. Механика при этом была готова и
+     * работала в ростере: hasActiveIllness ронял тир до T1, срезал неделю по
+     * факту и обнулял масштаб полов. У сегмента без часов она просто никогда не
+     * включалась.
+     *
+     * ПРИЗНАК СТАВИТСЯ ПО ДНЮ ЭТОЙ НЕДЕЛИ, а не «болел ли человек когда-нибудь»:
+     * собираем мы и будущие недели, и объявлять их все больными значит заморозить
+     * план навсегда. Открытая пауза закрывает все будущие даты и потому режет
+     * только то, что собирается, пока она открыта.
+     */
+    const weekUnderPause = pauseCovering(weekStart, pauses) !== null;
+    const week = buildWeek(anchors, envelope, catalog, weekStart, weekUnderPause, null, target, prefs);
 
     /**
      * СТУПЕНЬ ДВИГАЕТСЯ ПО ФАКТУ ЗАПИСАННОГО, А НЕ ПО ЗАДУМАННОМУ [27.09.2026].

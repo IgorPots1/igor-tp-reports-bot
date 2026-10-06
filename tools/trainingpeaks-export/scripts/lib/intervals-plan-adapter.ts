@@ -203,12 +203,51 @@ export function buildAnchors(start: StartingPointInput, stored: StoredThreshold 
   };
 }
 
-export function buildEnvelope(start: StartingPointInput): Envelope {
+/**
+ * ФАКТЫ ПРО ВЫПОЛНЕНИЕ, КОТОРЫХ СТАРТОВАЯ ТОЧКА НЕ ЗНАЕТ [06.10.2026].
+ *
+ * Считаются вызывающим (у него есть база) модулем
+ * src/features/intervals/loop/training-gaps.ts. Здесь только приём: конверт не
+ * должен ходить в базу, иначе он перестанет быть чистым и его нельзя будет
+ * собрать в проверке.
+ *
+ * Не передали — поля остаются нулями, как было. Это ЧЕСТНЫЙ ноль только там,
+ * где плана действительно нет (первая сборка по анкете); для человека с
+ * отданными неделями ноль — ложь, и именно ею система жила до этой правки.
+ */
+export type ComplianceFacts = {
+  rolling4wPlannedMin: number;
+  lastWeekPlannedMinutes: number;
+  typicalPlannedWeekMin: number;
+  complianceRatio: number | null;
+  lowComplianceWeeks: number;
+  notRunningWeeks: number;
+  /**
+   * Средний недельный объём ПО ФАКТУ. Перекрывает анкетное число, когда оно
+   * есть: анкета это обещание, а здесь измерение. У Валентины анкета говорила
+   * 185 мин/нед, факт давал 71 — и от анкетного числа считались тир и личные
+   * пол, цель и потолок лёгкой, то есть ошибка расходилась по всей форме недели.
+   */
+  actualWeeklyMin?: number | null;
+};
+
+export function buildEnvelope(start: StartingPointInput, facts?: ComplianceFacts): Envelope {
   const weeklyMinutes = start.weekly.map((point) => point.minutes);
   const lastWeek = weeklyMinutes.length ? weeklyMinutes[weeklyMinutes.length - 1] : 0;
 
   return {
-    rolling4wWeeklyMin: start.rolling4wWeeklyMinutes,
+    /**
+     * ИЗМЕРЕНИЕ СИЛЬНЕЕ АНКЕТЫ. Анкетное число — обещание человека (а у
+     * Валентины и вовсе число тренера, поставленное по рукописным карточкам);
+     * факт по отданным неделям — измерение. Пока фактов нет, остаётся анкета.
+     *
+     * Отсюда растёт ТИР (tierOf порогом 120 мин/нед) и личные пол, цель и
+     * потолок лёгкой, так что одно это поле задаёт форму каждой недели.
+     */
+    rolling4wWeeklyMin:
+      facts?.actualWeeklyMin !== null && facts?.actualWeeklyMin !== undefined
+        ? facts.actualWeeklyMin
+        : start.rolling4wWeeklyMinutes,
     rolling4wFrequency: start.runsPerWeek,
     // Качественных сессий не измеряем: в Intervals нет ни заголовков тренера, ни
     // разметки, по которой их можно отличить. Ноль здесь — «не знаем», и он же
@@ -221,14 +260,25 @@ export function buildEnvelope(start: StartingPointInput): Envelope {
 
     lastWeekMinutes: lastWeek,
 
-    // ПЛАНОВЫХ ВЕЛИЧИН НЕТ ВООБЩЕ: человеку никто не назначал недели, значит и
-    // выполнения не существует. Нули и null — это факт, а не заглушка.
-    rolling4wPlannedMin: 0,
-    lastWeekPlannedMinutes: 0,
-    typicalPlannedWeekMin: 0,
-    complianceRatio: null,
-    lowComplianceWeeks: 0,
-    notRunningWeeks: 0,
+    /**
+     * ПЛАНОВЫЕ ВЕЛИЧИНЫ: НОЛЬ ТОЛЬКО ПОКА ПЛАНА НЕТ [правка 06.10.2026].
+     *
+     * Прежний комментарий здесь гласил «человеку никто не назначал недели,
+     * значит и выполнения не существует; нули и null — это факт, а не
+     * заглушка». Он был верен до 20.09.2026, когда у этого сегмента появились
+     * ОТДАННЫЕ недели. После — перестал, но остался в коде, и генератор три
+     * недели слышал нули там, где план и выполнение уже существовали.
+     *
+     * Это и есть ответ на «почему перерыв не влиял ни на что»: путь «человек
+     * фактически не тренируется» (NOT_RUNNING_WEEKS) питается именно этими
+     * полями и потому не мог сработать НИКОГДА.
+     */
+    rolling4wPlannedMin: facts?.rolling4wPlannedMin ?? 0,
+    lastWeekPlannedMinutes: facts?.lastWeekPlannedMinutes ?? 0,
+    typicalPlannedWeekMin: facts?.typicalPlannedWeekMin ?? 0,
+    complianceRatio: facts?.complianceRatio ?? null,
+    lowComplianceWeeks: facts?.lowComplianceWeeks ?? 0,
+    notRunningWeeks: facts?.notRunningWeeks ?? 0,
 
     typicalEasyMinutes: start.typicalRunMinutes,
     lastQualityWorkMinutes: null,

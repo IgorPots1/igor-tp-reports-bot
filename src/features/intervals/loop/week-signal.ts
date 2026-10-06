@@ -39,6 +39,8 @@
  * решение принимает человек — как и с гейтом качества, снятым циклом.
  */
 
+import { daysInclusive, isPausedOn, type Pause } from "./pause";
+
 export type CheckinForSignal = {
   id: string;
   sessionDate: string;
@@ -113,11 +115,42 @@ export type WeeklyVoice = {
   needsTalk: boolean;
 };
 
+/**
+ * Неделя, которая БЫЛА В ПЛАНЕ И НЕ СОСТОЯЛАСЬ.
+ *
+ * ПОЧЕМУ ОТДЕЛЬНО ОТ volume, А НЕ ЕЩЁ ОДНОЙ ПОЛОСОЙ В НЁМ. Полоса объёма
+ * отвечает на «как далось» и считается от RPE: у пустой недели RPE нет вообще,
+ * и любая полоса была бы выдумкой. До 06.10.2026 такая неделя давала
+ * `volume: null`, то есть читалась как «данных нет» — ровно как неделя, которую
+ * человеку не назначали. Разница между «не назначали» и «назначили, и человек
+ * не вышел» — главное, что тренер должен увидеть, а система её стирала.
+ *
+ * Поймано на Валентине: она болела 1–5 октября, пропустила две тренировки, и в
+ * сигнале недели не осталось ни следа.
+ */
+export type EmptyWeekSignal = {
+  weekStart: string;
+  weekEnd: string;
+  /** Сколько тренировок стояло в плане этой недели. */
+  plannedSessions: number;
+  /** Сколько дней недели закрыто паузой. Полностью закрытая не упрёк. */
+  pausedDays: number;
+  /** Неделя целиком внутри паузы: человека остановил тренер, а не он сам пропал. */
+  fullyPaused: boolean;
+  headlineRu: string;
+  adviceRu: string;
+};
+
 export type WeekSignal = {
   /** Неотвеченные чек-ины с болью. Ведут к разговору, не к числу. */
   painFlags: PainFlag[];
   /** Итог завершённой недели. null — чек-инов за неё не было, говорить нечего. */
   volume: WeekVolumeSignal | null;
+  /**
+   * Неделя была в плане и не состоялась. null — либо состоялась, либо её не
+   * назначали. Отличать эти два случая и есть смысл поля.
+   */
+  emptyWeek: EmptyWeekSignal | null;
   /** Что человек сам сказал про неделю. null — форму не заполнил. */
   weekly: WeeklyVoice | null;
 };
@@ -183,6 +216,16 @@ export function buildWeekSignal(input: {
   todayIso: string;
   /** Формы за последние недели. Берётся та, что за завершённую неделю. */
   weeklyReports?: WeeklyReportForSignal[];
+  /**
+   * Плановые дни завершённой недели. Без них пустую неделю не отличить от
+   * неназначенной, и признак молча не ставится — это честнее, чем ставить его
+   * наугад: вызов, который их не передал, получит emptyWeek = null.
+   */
+  plannedDates?: string[];
+  /** Дни, в которые человек реально бегал. */
+  runDates?: string[];
+  /** Паузы: неделя внутри паузы пустая по договорённости, а не по пропаже. */
+  pauses?: Pause[];
 }): WeekSignal {
   /**
    * Дата последнего чек-ина БЕЗ боли. Всё, что с болью и раньше неё, человек
@@ -232,8 +275,61 @@ export function buildWeekSignal(input: {
     (input.weeklyReports ?? []).find((report) => report.weekStart === week.start) ?? null
   );
 
+  /**
+   * ПУСТАЯ НЕДЕЛЯ СЧИТАЕТСЯ ДО ВЫХОДА ПО inWeek, А НЕ ПОСЛЕ: признак нужен
+   * ровно в той ветке, где раньше молча возвращался null.
+   *
+   * ПРИЗНАК НЕ СТАВИТСЯ НАУГАД. Вызов, который не передал плановые дни, не
+   * может отличить пустую неделю от неназначенной — и получит null, а не
+   * догадку. Лучше промолчать, чем сообщить тренеру пропуск, которого не было.
+   */
+  const plannedInWeek = (input.plannedDates ?? []).filter(
+    (date) => date >= week.start && date <= week.end
+  );
+  const runsInWeek = (input.runDates ?? []).filter(
+    (date) => date >= week.start && date <= week.end
+  );
+  const pauses = input.pauses ?? [];
+  const weekLength = daysInclusive(week.start, week.end);
+  const pausedDays = Array.from({ length: weekLength }, (_, i) =>
+    new Date(Date.parse(`${week.start}T00:00:00Z`) + i * DAY_MS).toISOString().slice(0, 10)
+  ).filter((date) => isPausedOn(date, pauses)).length;
+
+  let emptyWeek: EmptyWeekSignal | null = null;
+  if (
+    input.plannedDates !== undefined &&
+    plannedInWeek.length > 0 &&
+    runsInWeek.length === 0 &&
+    inWeek.length === 0
+  ) {
+    const fullyPaused = pausedDays >= weekLength;
+    /**
+     * ТОН ЗАВИСИТ ОТ ПРИЧИНЫ, А ФАКТ НЕТ. Пустая неделя внутри паузы это
+     * договорённость, а не пропажа, и упрёка в ней быть не должно. Но для
+     * прогрессии она ровно так же пуста: дни без бега остаются днями без бега,
+     * чем бы они ни были вызваны.
+     */
+    emptyWeek = {
+      weekStart: week.start,
+      weekEnd: week.end,
+      plannedSessions: plannedInWeek.length,
+      pausedDays,
+      fullyPaused,
+      headlineRu: fullyPaused
+        ? "Неделя на паузе: тренировок не было"
+        : pausedDays > 0
+          ? `Неделя не состоялась, на паузе дней: ${pausedDays}`
+          : "Неделя не состоялась: ни одной пробежки",
+      adviceRu: fullyPaused
+        ? "Объём обсуждать не с чего. Возвращать с того формата, на котором остановились."
+        : pausedDays > 0
+          ? "Часть недели закрыта паузой. Остальное стоит спросить: не вышло или не захотелось."
+          : "Сначала разговор, а не правка объёма: план из нуля не растят и не режут.",
+    };
+  }
+
   if (inWeek.length === 0) {
-    return { painFlags, volume: null, weekly };
+    return { painFlags, volume: null, weekly, emptyWeek };
   }
 
   // Худший, а не средний: одна по-настоящему тяжёлая тренировка — это факт про
@@ -280,6 +376,8 @@ export function buildWeekSignal(input: {
   return {
     painFlags,
     weekly,
+    // Неделя состоялась: пустой её назвать уже нельзя.
+    emptyWeek: null,
     volume: {
       weekStart: week.start,
       weekEnd: week.end,
