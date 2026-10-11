@@ -367,6 +367,9 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
           parts: plannedParts(segments),
           workSpeedKmh: speed,
           recoverySpeedKmh: recovery,
+          // ФАКТ, А НЕ ПЛАН: человек мог отбежать меньше, и дистанция обязана
+          // соответствовать тому времени, которое лежит в той же строке.
+          actualMinutes: input.durationMinutes,
         })
       : speed !== null
         ? deriveSteady({ minutes: input.durationMinutes, speedKmh: speed })

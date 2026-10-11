@@ -124,8 +124,11 @@ for (const label of ["Ходьба", "Лёгкий бег", "Перед рабо
   assert.equal(one[0].isWork, false, `«${label}» это не работа`);
 }
 
-const intervals = deriveIntervals({ parts, workSpeedKmh: 7, recoverySpeedKmh: 4.5 });
-const expectedKm = 7 * (30 / 60) + 4.5 * (34 / 60);
+const plannedTotal = parts.reduce((s, p) => s + p.minutes, 0);
+const intervals = deriveIntervals({
+  parts, workSpeedKmh: 7, recoverySpeedKmh: 4.5, actualMinutes: plannedTotal,
+});
+const expectedKm = 7 * (30 / 60) + 4.5 * ((plannedTotal - 30) / 60);
 assert.ok(
   intervals.distanceM !== null && Math.abs(intervals.distanceM - Math.round(expectedKm * 1000)) < 1,
   `30 мин по 7 и 34 мин по 4,5 = ${Math.round(expectedKm * 1000)} м, вышло ${intervals.distanceM}`
@@ -139,9 +142,37 @@ assert.ok(
  * 5,57 / 8,57 / 6,10 / 5,20» оказались смесью двух колонок панели. Проверка
  * фиксирует, что расчёту хватает двух. */
 assert.equal(
-  deriveIntervals({ parts, workSpeedKmh: 7, recoverySpeedKmh: 4.5 }).distanceM,
-  deriveIntervals({ parts, workSpeedKmh: 7, recoverySpeedKmh: 4.5 }).distanceM,
+  deriveIntervals({ parts, workSpeedKmh: 7, recoverySpeedKmh: 4.5, actualMinutes: 60 }).distanceM,
+  deriveIntervals({ parts, workSpeedKmh: 7, recoverySpeedKmh: 4.5, actualMinutes: 60 }).distanceM,
   "расчёт детерминирован"
+);
+
+/* ── ДИСТАНЦИЯ И ВРЕМЯ В ОДНОЙ СТРОКЕ НЕ ПРОТИВОРЕЧАТ ДРУГ ДРУГУ ───────────
+ *
+ * Дефект первой версии, поймала проверка тренера «должно выйти около 6 км».
+ * Длительности брались из плана как есть: план 63,5 минуты, человек отбежал
+ * 56 — и дистанция считалась за 63,5, тогда как в той же строке базы лежало
+ * время 56. Два числа об одной тренировке противоречили друг другу.
+ */
+const short = deriveIntervals({ parts, workSpeedKmh: 8.2, recoverySpeedKmh: 5.2, actualMinutes: 56 });
+assert.ok(short.distanceM !== null, "короче плана тоже считается");
+const impliedKmh = (short.distanceM! / 1000) / (56 / 60);
+assert.ok(
+  Math.abs(impliedKmh - (short.averageSpeedMps! * 3.6)) < 0.05,
+  `дистанция, делённая на ФАКТИЧЕСКОЕ время, даёт ту же среднюю: ${impliedKmh.toFixed(2)} против ${(short.averageSpeedMps! * 3.6).toFixed(2)}`
+);
+const full = deriveIntervals({ parts, workSpeedKmh: 8.2, recoverySpeedKmh: 5.2, actualMinutes: plannedTotal });
+assert.ok(
+  short.distanceM! < full.distanceM!,
+  "отбежал меньше плана — дистанция меньше, а не равна плановой"
+);
+assert.ok(
+  /план был .* отбегано .* пропорционально/u.test(short.howRu),
+  `в следе сказано, что доли шагов взяты пропорционально: ${short.howRu}`
+);
+assert.ok(
+  !/пропорционально/u.test(full.howRu),
+  "а когда отбегано ровно по плану, лишней оговорки в следе нет"
 );
 
 // Выведенная дистанция ВСЕГДА правдоподобнее её прикидки: на той же сессии

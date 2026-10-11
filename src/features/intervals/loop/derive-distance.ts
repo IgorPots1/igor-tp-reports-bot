@@ -75,21 +75,50 @@ export function deriveIntervals(input: {
   parts: PlannedPart[];
   workSpeedKmh: number;
   recoverySpeedKmh: number;
+  /**
+   * Сколько человек НА САМОМ ДЕЛЕ пробежал, минут. План — это замысел, а
+   * считать надо по факту.
+   */
+  actualMinutes: number;
 }): DerivedDistance {
-  const total = input.parts.reduce((sum, part) => sum + part.minutes, 0);
-  if (!(total > 0) || !(input.workSpeedKmh > 0) || !(input.recoverySpeedKmh > 0)) {
+  const planned = input.parts.reduce((sum, part) => sum + part.minutes, 0);
+  if (
+    !(planned > 0) || !(input.actualMinutes > 0) ||
+    !(input.workSpeedKmh > 0) || !(input.recoverySpeedKmh > 0)
+  ) {
     return { distanceM: null, averageSpeedMps: null, howRu: "не из чего считать" };
   }
-  const workMin = input.parts.filter((p) => p.isWork).reduce((s, p) => s + p.minutes, 0);
-  const restMin = total - workMin;
+
+  /**
+   * ДЛИТЕЛЬНОСТИ ИЗ ПЛАНА МАСШТАБИРУЮТСЯ НА ФАКТИЧЕСКОЕ ВРЕМЯ
+   * [правка 11.10.2026, поймана проверкой Игоря «должно выйти около 6 км»].
+   *
+   * Первая версия брала длительности из плана как есть. У живой тренировки план
+   * был 63,5 минуты, а человек отбежал 56 — и дистанция получалась за 63,5
+   * минуты, тогда как в той же строке базы лежало время 56. Два числа об одной
+   * тренировке противоречили друг другу: 7003 м за 3360 с дают 7,5 км/ч, а
+   * расчёт утверждал 6,6. Ровно тот класс ошибки, ради которого введённое и
+   * выведенное вообще разделили.
+   *
+   * Пропорция — единственное, что можно сделать, не спрашивая человека ещё раз:
+   * мы не знаем, что именно он срезал, разминку или последний отрезок. Это
+   * допущение, и оно записано в след.
+   */
+  const scale = input.actualMinutes / planned;
+  const workMin = input.parts.filter((p) => p.isWork).reduce((s, p) => s + p.minutes, 0) * scale;
+  const restMin = input.actualMinutes - workMin;
   const km = input.workSpeedKmh * (workMin / 60) + input.recoverySpeedKmh * (restMin / 60);
+  const r1 = (n: number): string => (Math.round(n * 10) / 10).toString();
   return {
     distanceM: Math.round(km * 1000),
-    averageSpeedMps: (km * 1000) / (total * 60),
+    averageSpeedMps: (km * 1000) / (input.actualMinutes * 60),
     howRu:
-      `работа ${workMin} мин по ${input.workSpeedKmh} км/ч, ` +
-      `остальное ${restMin} мин по ${input.recoverySpeedKmh} км/ч ` +
-      `(разминка и заминка посчитаны по скорости восстановления, это занижает)`,
+      `работа ${r1(workMin)} мин по ${input.workSpeedKmh} км/ч, ` +
+      `остальное ${r1(restMin)} мин по ${input.recoverySpeedKmh} км/ч` +
+      (Math.abs(scale - 1) > 0.01
+        ? `; план был ${r1(planned)} мин, отбегано ${r1(input.actualMinutes)} — доли шагов взяты пропорционально`
+        : "") +
+      ` (разминка и заминка посчитаны по скорости восстановления, это занижает)`,
   };
 }
 
