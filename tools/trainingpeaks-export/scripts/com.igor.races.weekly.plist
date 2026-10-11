@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Еженедельное обновление ручных стартов /races — понедельник 09:10 по местному времени
+     (Белград), после ночного сбора edge-функции race-calendar-sync.
+     Агент (claude -p) сверяет и ищет старты, шлюз scripts/races-manual.ts пишет в базу
+     только строки race_events с source = 'manual'. Ничего не коммитит и не деплоит.
+     Итог недели: ~/ops-log/igor-tp-reports-bot/<дата>-races-weekly.md,
+     реестр источников: ~/ops-log/races/sources.json, рабочие файлы: ~/races-weekly-work/<дата>/.
+     НЕ ставится автоматически. Ставит Игорь:
+       cp .../com.igor.races.weekly.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.races.weekly.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.races.weekly</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-races-weekly.sh"</string>
+  </array>
+
+  <!-- Понедельник 09:10. Если ноут спал — launchd докрутит при пробуждении.
+       RunAtLoad НЕ ставим: иначе агент запускался бы на каждый вход. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>1</integer>
+    <key>Hour</key><integer>9</integer>
+    <key>Minute</key><integer>10</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/races-weekly.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/races-weekly.launchd.err.log</string>
+</dict>
+</plist>
