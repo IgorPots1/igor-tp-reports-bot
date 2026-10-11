@@ -66,7 +66,15 @@ const MONTHS_OF = [
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ];
 
-const WEEK_MS = 7 * 864e5;
+/* Сдвиг календарными днями от местной полуночи, а не миллисекундами. Сутки не
+   всегда 24 часа: весной сдвиг 24 ч × N уводил момент на час назад, и у
+   открывшего тест между 00:00 и 01:00 «База до X» показывала день раньше.
+   Тем же способом считает календарь до марафона. */
+function addWeeksFromMidnight(d: Date, weeks: number): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() + weeks * 7);
+  return x;
+}
 
 export function parseTime(raw: string): number | null {
   const s = (raw || "").trim().replace(/[.,]/g, ":");
@@ -191,8 +199,8 @@ export function buildPlan(a: Answers, today: Date = new Date()): Plan {
   const base = weeks.length ? Math.max(...weeks) : 0;
   const prep = PREP_WEEKS;
   const total = base + prep;
-  const date = stop ? null : new Date(today.getTime() + total * WEEK_MS);
-  const baseEnd = stop || base === 0 ? null : new Date(today.getTime() + base * WEEK_MS);
+  const date = stop ? null : addWeeksFromMidnight(today, total);
+  const baseEnd = stop || base === 0 ? null : addWeeksFromMidnight(today, base);
 
   let verdict: string;
   let verdictClass: VerdictClass;

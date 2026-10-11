@@ -33,7 +33,7 @@ export type Phase = {
   id: PhaseId;
   name: string;
   from: Date;
-  /** Конец не включительно: это же начало следующего этапа. */
+  /** Конец не включительно: это же начало следующего этапа. В подписи на день раньше. */
   to: Date;
   text: string;
 };
@@ -254,7 +254,10 @@ export function buildCalendar(input: CalendarInput, todayRaw: Date): CalendarRes
   const timeline: TimelineItem[] = nonEmpty.map((p) => ({
     kind: p.id,
     date: p.from,
-    when: `с ${dayMonth(p.from)} по ${dayMonth(p.to)}`,
+    // Расчёт держит конец не включительно (это начало следующего этапа), а
+    // подпись показывает последний день самого этапа, чтобы соседние этапы не
+    // делили одну дату: «с 11 октября по 31 октября», следующий «с 1 ноября».
+    when: `с ${dayMonth(p.from)} по ${dayMonth(addDays(p.to, -1))}`,
     name: p.name,
     text: p.text,
     current: p === cur,

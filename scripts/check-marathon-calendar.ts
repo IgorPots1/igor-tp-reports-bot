@@ -55,6 +55,25 @@ function phase(r: Ok, id: string) {
   return r.phases.find((p) => p.id === id && p.to > p.from);
 }
 
+/** Подпись этапа в таймлайне, как её видит человек. */
+function label(r: Ok, id: string): string | undefined {
+  return r.timeline.find((t) => t.kind === id)?.when;
+}
+
+/* Подписи этапов показывают последний день этапа, а не начало следующего:
+   было «с 11 октября по 1 ноября» и следующий «с 1 ноября», одна дата на два
+   этапа. Отменено тренером 11.10.2026. Держим: конец каждой подписи ровно на
+   день раньше начала следующего этапа, совпадений дат нет ни в одной паре. */
+function noSharedDates(r: Ok, label: string) {
+  const ph = r.timeline.filter((t) => ["rec", "off", "dev", "mp", "taper"].includes(t.kind));
+  const real = r.phases.filter((p) => p.to > p.from);
+  assert.equal(ph.length, real.length, `${label}: подписей столько же, сколько этапов`);
+  for (let i = 0; i < real.length; i++) {
+    assert.equal(ph[i].when, `с ${dayMonth(real[i].from)} по ${dayMonth(addDays(real[i].to, -1))}`, `${label}: подпись ${ph[i].when}`);
+    if (i > 0) assert.equal(addDays(real[i - 1].to, -1) < real[i].from, true, `${label}: этапы ${i - 1} и ${i} делят дату`);
+  }
+}
+
 function noLongDash(r: Ok, label: string) {
   const all = [r.phaseNow, r.weeksText, r.note, r.barLabel, ...r.timeline.flatMap((t) => [t.when, t.name, t.text])];
   for (const s of all) assert.ok(!/[—–]/.test(s), `${label}: длинное тире в «${s}»`);
@@ -69,7 +88,13 @@ function caseChecks() {
     assert.match(r.note, /у тебя 8 недель межсезонья/, "A: 8 недель межсезонья");
     assert.equal(r.weeksLeft, 26, "A: недель до марафона");
     const off = phase(r, "off")!;
-    assert.equal(iso(off.to), "2026-12-06", "A: межсезонье по 6 декабря");
+    assert.equal(iso(off.to), "2026-12-06", "A: расчёт: подготовка с 6 декабря");
+    // Подписи: конец этапа на день раньше начала следующего.
+    assert.equal(label(r, "off"), "с 11 октября по 5 декабря", "A: межсезонье по 5 декабря");
+    assert.equal(label(r, "dev"), "с 6 декабря по 13 февраля", "A: развитие 6 дек-13 фев");
+    assert.equal(label(r, "mp"), "с 14 февраля по 27 марта", "A: МТ 14 фев-27 мар");
+    assert.equal(label(r, "taper"), "с 28 марта по 10 апреля", "A: подводка 28 мар-10 апр");
+    assert.equal(r.timeline.at(-1)!.when, "11 апреля 2027", "A: марафон без изменений");
     const dev = phase(r, "dev")!;
     assert.equal(`${iso(dev.from)}..${iso(dev.to)}`, "2026-12-06..2027-02-14", "A: развитие 6 дек-14 фев");
     const mp = phase(r, "mp")!;
@@ -86,7 +111,8 @@ function caseChecks() {
     for (const t of singles) assert.equal(t.date.getDay(), 0, `A: ${t.name} в воскресенье`);
     const cur = r.timeline.filter((t) => t.current);
     assert.equal(cur.length, 1, "A: метка «сейчас» ровно одна");
-    assert.equal(cur[0].when, "с 11 октября по 6 декабря", "A: «сейчас» на межсезонье");
+    assert.equal(cur[0].when, "с 11 октября по 5 декабря", "A: «сейчас» на межсезонье");
+    noSharedDates(r, "A");
     noLongDash(r, "A");
   }
 
@@ -97,24 +123,27 @@ function caseChecks() {
     assert.equal(r.fits, true, "B: сходится");
     assert.match(r.note, /у тебя 6 недель межсезонья/, "B: 6 недель");
     const rec = phase(r, "rec")!;
-    assert.equal(`${iso(rec.from)}..${iso(rec.to)}`, "2026-10-11..2026-10-25", "B: восстановление 11-25 октября");
+    assert.equal(`${iso(rec.from)}..${iso(rec.to)}`, "2026-10-11..2026-10-25", "B: расчёт: межсезонье с 25 октября");
+    assert.equal(label(r, "rec"), "с 11 октября по 24 октября", "B: восстановление 11-24 октября");
+    assert.equal(label(r, "off"), "с 25 октября по 5 декабря", "B: межсезонье с 25 октября");
     assert.ok(!r.note.includes(NOTE_REC_NO_DATE) && !r.note.includes(NOTE_REC_PAST), "B: без пометок про дату");
+    noSharedDates(r, "B");
     noLongDash(r, "B");
   }
 
   // ── C: как B, но больше 5 стартов ───────────────────────────────────────────
-  // 3 недели за марафон + 1 за число стартов = 4, предел. От 4 октября это
-  // 1 ноября. В таблице наряда стоит «11-31 октября», но прототип, с которого
-  // таблица снята, показывает «с 11 октября по 1 ноября»: конец этапа здесь
-  // не включительно, ровно как «11-25 октября» в случае B (4 октября + 3 недели).
-  // Расхождение передано тренеру, чек держит прототип.
+  // 3 недели за марафон + 1 за число стартов = 4, предел. Расчёт: от 4 октября
+  // это 1 ноября, начало межсезонья. Подпись этапа: «по 31 октября».
   {
     const r = ok(run({ last: "42", lastDate: "2026-10-04", count: "6p" }), "C");
     assert.equal(r.phaseNow, "Восстановление", "C: этап");
     assert.equal(r.fits, true, "C: сходится");
     assert.match(r.note, /у тебя 5 недель межсезонья/, "C: 5 недель");
     const rec = phase(r, "rec")!;
-    assert.equal(`${iso(rec.from)}..${iso(rec.to)}`, "2026-10-11..2026-11-01", "C: восстановление до 1 ноября (4 недели)");
+    assert.equal(`${iso(rec.from)}..${iso(rec.to)}`, "2026-10-11..2026-11-01", "C: расчёт: 4 недели, межсезонье с 1 ноября");
+    assert.equal(label(r, "rec"), "с 11 октября по 31 октября", "C: восстановление 11-31 октября");
+    assert.equal(label(r, "off"), "с 1 ноября по 5 декабря", "C: межсезонье с 1 ноября");
+    noSharedDates(r, "C");
     noLongDash(r, "C");
   }
 
@@ -127,6 +156,7 @@ function caseChecks() {
     assert.match(r.note, /у тебя 8 недель межсезонья/, "D: 8 недель");
     assert.equal(phase(r, "rec"), undefined, "D: этапа восстановления нет");
     assert.ok(!r.timeline.some((t) => t.kind === "rec"), "D: и в таймлайне его нет");
+    noSharedDates(r, "D");
     noLongDash(r, "D");
   }
 
@@ -138,7 +168,9 @@ function caseChecks() {
     assert.match(r.note, /^Времени на базу не хватает/, "E: не хватает базы");
     assert.match(r.note, /не раньше 18 апреля 2027\./, "E: не раньше 18 апреля 2027");
     const rec = phase(r, "rec")!;
-    assert.equal(`${iso(rec.from)}..${iso(rec.to)}`, "2026-10-11..2026-10-18", "E: восстановление 11-18 октября");
+    assert.equal(`${iso(rec.from)}..${iso(rec.to)}`, "2026-10-11..2026-10-18", "E: расчёт: межсезонье с 18 октября");
+    assert.equal(label(r, "rec"), "с 11 октября по 17 октября", "E: восстановление 11-17 октября");
+    noSharedDates(r, "E");
     noLongDash(r, "E");
   }
 
@@ -150,6 +182,8 @@ function caseChecks() {
     assert.match(r.note, /^До марафона меньше 18 недель/, "F: меньше 18 недель");
     assert.match(r.note, /не раньше 14 февраля 2027, а на этом забеге пробежать полумарафон\./, "F: дата и полумарафон");
     assert.equal(phase(r, "off"), undefined, "F: без межсезонья");
+    assert.equal(label(r, "dev"), "с 11 октября по 21 ноября", "F: развитие по 21 ноября");
+    noSharedDates(r, "F");
     noLongDash(r, "F");
   }
 
@@ -161,6 +195,7 @@ function caseChecks() {
     assert.match(r.note, /^Времени на базу не хватает: нужно ещё 8 недель/, "G: не хватает базы");
     assert.match(r.note, /не раньше 11 апреля 2027\./, "G: не раньше 11 апреля 2027");
     assert.match(phase(r, "off")!.text, /Сначала доведи объём хотя бы до 30 км в неделю\.$/, "G: про объём в межсезонье");
+    noSharedDates(r, "G");
     noLongDash(r, "G");
   }
 
@@ -233,6 +268,7 @@ function sundayChecks(tz: string) {
         assert.equal(d.getDay(), 0, `${tz}, сегодня ${iso(today)}, марафон ${iso(sunday)}: ${name} = ${iso(d)} не воскресенье`);
         assert.equal(d.getHours(), 0, `${tz}: ${name} съехал с полуночи`);
       }
+      noSharedDates(r, `${tz} ${iso(sunday)}`);
       for (const t of r.timeline) {
         if (["long25", "long30", "key", "race"].includes(t.kind)) {
           assert.equal(t.date.getDay(), 0, `${tz}: ${t.name} ${t.when} не воскресенье`);

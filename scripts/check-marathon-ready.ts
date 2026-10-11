@@ -97,13 +97,24 @@ const TODAY = new Date("2026-10-02T12:00:00Z");
   const p = buildPlan({ exp: "1to2", km: "20to30", runs: "3", long: "10to15", pain: "no" }, TODAY);
   assert.equal(p.prep, PREP_WEEKS, "подготовка всегда 18 недель");
   assert.equal(p.total, p.base + p.prep, "итог это база плюс подготовка");
-  const expected = new Date(TODAY.getTime() + (3 + 18) * 7 * 864e5);
-  assert.equal(p.date?.toISOString().slice(0, 10), expected.toISOString().slice(0, 10), "дата марафона");
-  assert.equal(
-    p.baseEnd?.toISOString().slice(0, 10),
-    new Date(TODAY.getTime() + 3 * 7 * 864e5).toISOString().slice(0, 10),
-    "конец базы",
-  );
+  // Было: ожидание считалось тем же сдвигом миллисекундами, что и код, и
+  // сравнивалось в UTC, то есть чек повторял ошибку, а не ловил её. Отменено
+  // 11.10.2026: даты теперь календарные, от местной полуночи. Держим СТРОЖЕ:
+  // ровно та календарная дата, ровно полночь, тот же день недели, что сегодня,
+  // в поясах с переходом на летнее время и без, и в самый опасный час, сразу
+  // после полуночи.
+  for (const tz of ["Europe/Belgrade", "America/New_York", "Australia/Sydney", "Europe/Moscow", "UTC"]) {
+    process.env.TZ = tz;
+    for (const today of [new Date(2026, 9, 2, 12), new Date(2026, 9, 2, 0, 30), new Date(2027, 1, 20, 0, 15)]) {
+      const q = buildPlan({ exp: "1to2", km: "20to30", runs: "3", long: "10to15", pain: "no" }, today);
+      const want = (weeks: number) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + weeks * 7);
+      assert.equal(q.date?.getTime(), want(21).getTime(), `${tz}: дата марафона = сегодня + 21 неделя, полночь`);
+      assert.equal(q.baseEnd?.getTime(), want(3).getTime(), `${tz}: конец базы = сегодня + 3 недели, полночь`);
+      assert.equal(q.date?.getDay(), today.getDay(), `${tz}: день недели не съехал`);
+      assert.equal(q.date?.getHours(), 0, `${tz}: дата марафона в полночь`);
+    }
+  }
+  delete process.env.TZ;
 }
 {
   const p = buildPlan({ exp: "2p", km: "45p", runs: "5p", long: "21p", pain: "no" }, TODAY);
