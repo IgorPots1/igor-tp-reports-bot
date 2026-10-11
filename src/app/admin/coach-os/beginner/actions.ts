@@ -20,6 +20,7 @@ import {
   markCoachMessageVisibleToStudent,
   endPause,
   markPainResolved,
+  waiveCheckinAnswer,
   publishCycle,
   saveCoachMessage,
   setPlanWeekStatus,
@@ -85,6 +86,25 @@ export async function resolvePainAction(formData: FormData): Promise<void> {
   if (!studentUuid || !checkinId) return;
 
   await markPainResolved(checkinId, "coach:admin");
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+/**
+ * Закрыть чек-ин без ответа.
+ *
+ * ЭТО НЕ ОТВЕТ И НЕ ОТКАЗ ОТВЕЧАТЬ ЕЙ В ЛИЦО: ученица об этом не узнаёт, её
+ * экран не меняется. Решение про СВОЮ очередь, не про неё.
+ *
+ * Поводом был чек-ин от 20 сентября, провисевший три недели. Решение Игоря
+ * дословно: «отвечать спустя три недели хуже, чем не отвечать».
+ */
+export async function waiveCheckinAnswerAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const checkinId = String(formData.get("checkinId") ?? "");
+  if (!studentUuid || !checkinId) return;
+
+  await waiveCheckinAnswer(checkinId, "coach:admin");
+  console.info("[intervals.checkin] закрыт без ответа", { studentUuid, checkinId });
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
 }
 

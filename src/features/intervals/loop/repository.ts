@@ -83,6 +83,7 @@ function toCheckin(row: Record<string, unknown>): Checkin {
     pain: row.pain === true,
     painNote: (row.pain_note as string | null) ?? null,
     painResolvedAt: (row.pain_resolved_at as string | null) ?? null,
+    answerWaivedAt: (row.answer_waived_at as string | null) ?? null,
     painResolvedBy: (row.pain_resolved_by as string | null) ?? null,
     commentText: (row.comment_text as string | null) ?? null,
     voiceFileId: (row.voice_file_id as string | null) ?? null,
@@ -296,6 +297,29 @@ export async function listCheckins(
  * markCoachMessageVisibleToStudent: «когда разобрались» должно остаться
  * моментом первого решения, а не последнего клика.
  */
+/**
+ * Закрыть чек-ин БЕЗ ответа.
+ *
+ * ЭТО РЕШЕНИЕ ТРЕНЕРА О СВОЕЙ ОЧЕРЕДИ, А НЕ СОБЫТИЕ ДЛЯ УЧЕНИЦЫ. Её экран не
+ * меняется ничем: она не получает ни пустого ответа, ни уведомления, что
+ * отвечать не будут. Поводом был чек-ин, провисевший три недели, — отвечать на
+ * него спустя столько времени хуже, чем не отвечать, но и висеть в очереди он
+ * не должен: очередь со строками, которые никто никогда не закроет, перестаёт
+ * читаться целиком.
+ *
+ * `is(null)` в условии — чтобы повторное нажатие не переписывало дату первого
+ * решения.
+ */
+export async function waiveCheckinAnswer(checkinId: string, by: string): Promise<void> {
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from("intervals_checkins")
+    .update({ answer_waived_at: new Date().toISOString(), answer_waived_by: by })
+    .eq("id", checkinId)
+    .is("answer_waived_at", null);
+  if (error) throw new Error(`intervals_checkins waive: ${describeSupabaseError(error)}`);
+}
+
 export async function markPainResolved(checkinId: string, by: string): Promise<void> {
   const supabase = createSupabaseServerClient();
   const { error } = await supabase

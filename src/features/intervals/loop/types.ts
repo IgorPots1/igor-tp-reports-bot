@@ -176,6 +176,11 @@ export type Checkin = {
    * что-то написал, — хотя написал он как раз вопрос и ждал ответа.
    */
   painResolvedAt: string | null;
+  /**
+   * Тренер закрыл чек-ин без ответа. Ученица об этом не узнаёт — см.
+   * waiveCheckinAnswer. Чек-ин перестаёт числиться в неотвеченных.
+   */
+  answerWaivedAt: string | null;
   painResolvedBy: string | null;
   commentText: string | null;
   voiceFileId: string | null;

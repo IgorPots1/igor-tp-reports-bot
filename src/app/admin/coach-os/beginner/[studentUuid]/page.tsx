@@ -30,6 +30,7 @@ import {
   releaseWeekAction,
   resolvePainAction,
   sendCoachMessageAction,
+  waiveCheckinAnswerAction,
   takeWeekIntoWorkAction,
 } from "../actions";
 
@@ -638,8 +639,27 @@ export default async function BeginnerStudentPage({
                                 </div>
                               </form>
                             ) : (
-                              <div style={{ color: "#2E7D45", marginTop: 4 }}>✓ ответ написан</div>
+                              <div style={{ color: "#2E7D45", marginTop: 4 }}>
+                                {checkin.answerWaivedAt ? "— закрыт без ответа" : "✓ ответ написан"}
+                              </div>
                             )}
+                            {/* ЗАКРЫТЬ БЕЗ ОТВЕТА [наряд Игоря, 11.10.2026].
+                                Ученица об этом не узнаёт: её экран не меняется.
+                                Кнопка про СВОЮ очередь — чек-ин, провисевший
+                                три недели, отвечать на который уже хуже, чем
+                                не отвечать, но и висеть он не должен. */}
+                            {view.unansweredCheckinIds.has(checkin.id) ? (
+                              <form action={waiveCheckinAnswerAction} style={{ marginTop: 4 }}>
+                                <input type="hidden" name="studentUuid" value={studentUuid} />
+                                <input type="hidden" name="checkinId" value={checkin.id} />
+                                <FormActionButton
+                                  confirmMessage="Закрыть этот чек-ин без ответа? Он уйдёт из неотвеченных. Ученица ничего не узнает: ни ответа, ни уведомления она не получит."
+                                  pendingText="Закрываю…"
+                                >
+                                  Закрыть без ответа
+                                </FormActionButton>
+                              </form>
+                            ) : null}
                           </>
                         )}
                       </td>

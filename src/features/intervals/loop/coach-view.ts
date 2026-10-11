@@ -273,7 +273,7 @@ export async function loadStudentsSignals(
       .order("created_at", { ascending: false }),
     supabase
       .from("intervals_checkins")
-      .select("id, source_id, session_date")
+      .select("id, source_id, session_date, answer_waived_at")
       .in("source_id", sourceIds)
       .gte("session_date", from),
     supabase
@@ -309,6 +309,14 @@ export async function loadStudentsSignals(
 
   const answered = new Set(
     (messages.data ?? []).map((raw) => String((raw as Record<string, unknown>).checkin_id))
+  );
+  // Тот же отбор, что и на карточке: закрытый без ответа не считается
+  // неотвеченным и в списке учеников. Иначе счётчик в списке и очередь на
+  // карточке расходятся, и доверия не будет ни одному.
+  const waived = new Set(
+    (checkins.data ?? [])
+      .filter((raw) => (raw as Record<string, unknown>).answer_waived_at !== null)
+      .map((raw) => String((raw as Record<string, unknown>).id))
   );
 
   const checkinsBySource = new Map<string, Array<{ id: string; date: string }>>();
@@ -455,7 +463,7 @@ export async function loadStudentsSignals(
         cycle !== undefined && cycle.status === "published" && pending
           ? { weekStart: pending.weekStart, voiceRu }
           : null,
-      unansweredCheckins: own.filter((item) => !answered.has(item.id)).length,
+      unansweredCheckins: own.filter((item) => !answered.has(item.id) && !waived.has(item.id)).length,
       // Сегодня не считаем: день ещё не кончился.
       missedPlannedDates: [...planned]
         .filter((date) => date < todayIso && !activityDates.has(date) && !checkinDates.has(date))
@@ -668,8 +676,17 @@ export async function loadCoachStudentView(
   const answered = new Set(
     messages.map((message) => message.checkinId).filter((id): id is string => id !== null)
   );
+  /**
+   * ОЧЕРЕДЬ ТРЕНЕРА ЧЕСТНАЯ: закрытый без ответа из неё уходит
+   * [наряд Игоря, 11.10.2026]. Чек-ин от 20 сентября провисел три недели;
+   * отвечать на него тогда было уже хуже, чем не отвечать, но и висеть он не
+   * должен — очередь со строками, которые никто никогда не закроет, перестаёт
+   * читаться целиком.
+   */
   const unansweredCheckinIds = new Set(
-    checkins.filter((checkin) => !answered.has(checkin.id)).map((checkin) => checkin.id)
+    checkins
+      .filter((checkin) => !answered.has(checkin.id) && checkin.answerWaivedAt === null)
+      .map((checkin) => checkin.id)
   );
 
   return {

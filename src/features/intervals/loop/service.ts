@@ -221,6 +221,8 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
       pain: row.pain === true,
       painNote: null,
       painResolvedAt: null,
+      // Этой выборке признак не нужен (она про экран ученицы), но тип один.
+      answerWaivedAt: null,
       painResolvedBy: null,
       // Комментарий нужен форме правки: она открывается заполненной.
       commentText: (row.comment_text as string | null) ?? null,
