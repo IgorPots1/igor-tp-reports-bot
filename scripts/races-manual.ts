@@ -636,8 +636,19 @@ async function cmdSourcesSeed(apply: boolean) {
   }
   const md = path.join(process.cwd(), "docs", "races-missing.md");
   if (existsSync(md)) {
-    for (const m of readFileSync(md, "utf8").matchAll(/https?:\/\/[^\s)|`>]+/g)) {
-      incoming.push({ url: m[0].replace(/[.,;]+$/, ""), note: "из docs/races-missing.md", kind: "calendar" });
+    // Таблица «| сайт (пояснение) | итог |»: в первой колонке голый домен, а не ссылка.
+    for (const line of readFileSync(md, "utf8").split("\n")) {
+      const cells = line.split("|").map((c) => c.trim());
+      if (cells.length < 4 || /^-+$/.test(cells[1]) || /источник/i.test(cells[1])) continue;
+      const m = /^(?:https?:\/\/)?([a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s(),]*)?)/i.exec(cells[1]);
+      if (!m) continue;
+      const verdict = cells[2].toLowerCase();
+      const status: SourceStatus = /закрыт|не существует|не отвечает|не резолв|спам|захвачен/.test(verdict)
+        ? "dead"
+        : /только js|js/.test(verdict)
+          ? "js_only"
+          : "active";
+      incoming.push({ url: `https://${m[1]}`, name: cells[1].replace(/^\S+\s*/, "").replace(/^\(|\)$/g, "") || m[1], note: `из docs/races-missing.md: ${cells[2].slice(0, 120)}`, kind: "calendar", status });
     }
   }
   const merged = mergeSources(readRegistry(), incoming, today);
