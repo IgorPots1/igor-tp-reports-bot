@@ -20,7 +20,7 @@ type Client = ReturnType<typeof createSupabaseServerClient>;
 
 const SESSION_COLUMNS =
   "id, cycle_id, week_index, week_start, session_date, day_idx, role, title, minutes, preset_code, " +
-  "description, segments, steps, notes, target_mode, rpe, deferred, defer_reason, original_session_date, moved_at";
+  "description, segments, steps, notes, target_mode, rpe, deferred, defer_reason, original_session_date, moved_at, moved_by";
 
 const CYCLE_COLUMNS =
   "id, source_id, intent, first_week_start, length_weeks, days, status, published_at, " +
@@ -48,6 +48,7 @@ function toSession(row: Record<string, unknown>): PlanSession {
     deferReason: (row.defer_reason as string | null) ?? null,
     originalSessionDate: (row.original_session_date as string | null) ?? null,
     movedAt: (row.moved_at as string | null) ?? null,
+    movedBy: (row.moved_by as string | null) ?? null,
   };
 }
 

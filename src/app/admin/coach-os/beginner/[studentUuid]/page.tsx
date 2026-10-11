@@ -554,9 +554,29 @@ export default async function BeginnerStudentPage({
                     >
                       <td style={cell}>
                         {session.sessionDate}
+                        {/* ПЕРЕНОС НАЗЫВАЕТ АВТОРА [наряд Игоря, 11.10.2026].
+                            Раньше было только «перенесена с 2026-10-07» — факт
+                            без автора. Перенос, сделанный тренером, он помнит
+                            сам; перенос, сделанный ученицей, это сообщение о её
+                            жизни («не смогла в среду, побежала в четверг»), и
+                            именно его он и не видел. Её переносы выделены
+                            цветом: это то, что требует внимания. */}
                         {session.originalSessionDate ? (
-                          <span style={{ color: "#a60", display: "block", fontSize: 12 }}>
-                            перенесена с {session.originalSessionDate}
+                          <span
+                            style={{
+                              color: session.movedBy?.startsWith("student:") ? "#a3330a" : "#a60",
+                              display: "block",
+                              fontSize: 12,
+                              fontWeight: session.movedBy?.startsWith("student:") ? 600 : 400,
+                            }}
+                          >
+                            {session.movedBy?.startsWith("student:")
+                              ? "перенесла САМА"
+                              : session.movedBy
+                                ? "перенесли вы"
+                                : "перенесена"}{" "}
+                            с {formatRuDay(session.originalSessionDate)}
+                            {session.movedAt ? ` (${formatRuDay(session.movedAt.slice(0, 10))})` : ""}
                           </span>
                         ) : null}
                       </td>
