@@ -1,0 +1,503 @@
+/* Классы страницы /races. Токены документа (:root, html, body) в соседнем
+   races-page.css, как у инструментов. Вёрстка по эталону races-reference.html:
+   одна спокойная колонка, закреплена только строка поиска, месяцы
+   раскрываются, у каждого старта слева «корешок» с датой. */
+
+.page {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-onest), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+/* Общая шапка сайта рассчитана на узкие страницы (560 px). Здесь колонка
+   920 px, и без этого бренд стоял бы посередине, а не над заголовком.
+   Селектор сильнее, чем header.header в SiteHeader.module.css. */
+.page > header:first-child {
+  max-width: 920px;
+  padding-inline: 16px;
+}
+
+.wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+.wrap a {
+  color: inherit;
+}
+
+.wrap :focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── шапка ────────────────────────────────────────────────────────────────── */
+
+.top {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.h1 {
+  font-weight: 800;
+  font-size: clamp(32px, 6vw, 52px);
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.lede {
+  color: var(--ink-2);
+  margin: 0;
+  max-width: 62ch;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 0;
+  font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.stats b {
+  color: var(--ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── поиск и фильтры ──────────────────────────────────────────────────────── */
+
+/* Закреплена только строка поиска: блок чипов на телефоне съел бы половину
+   экрана, а поиск нужен под рукой всё время, пока листаешь месяцы. */
+.search {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+  background: var(--bg);
+  padding: 8px 0;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  font: inherit;
+  font-size: 16px; /* меньше 16 px iOS приближает страницу при фокусе */
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.reset {
+  flex: none;
+  min-height: 48px;
+  font: inherit;
+  font-weight: 600;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.reset:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.lbl {
+  font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.chip {
+  min-height: 44px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+.n {
+  font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.6;
+  margin-left: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.resultLine {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+  min-height: 19px;
+}
+
+.resultLine b {
+  color: var(--ink);
+}
+
+/* ── месяцы ───────────────────────────────────────────────────────────────── */
+
+.months {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.month {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px 18px;
+  user-select: none;
+}
+
+.summary::-webkit-details-marker {
+  display: none;
+}
+
+.month[open] > .summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.mName {
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.mCount {
+  margin-left: auto;
+  font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mCount b {
+  color: var(--accent-ink);
+}
+
+.caret {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg) translateY(-3px);
+  transition: transform 0.15s;
+}
+
+.month[open] .caret {
+  transform: rotate(225deg) translateY(-1px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    transition: none;
+  }
+}
+
+/* ── старт ────────────────────────────────────────────────────────────────── */
+
+.races {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.race {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.race:first-child {
+  border-top: 0;
+}
+
+.stub {
+  text-align: center;
+  padding-top: 2px;
+}
+
+.d {
+  font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.d small {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.w {
+  font-family: var(--font-jetbrains), ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.weekend .w {
+  color: var(--accent-ink);
+}
+
+.body {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.where {
+  font-size: 14px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.where b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--chip);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.type_trail,
+.ok {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+.type_tri {
+  background: var(--accent-bg);
+  color: var(--accent-ink);
+}
+
+.dist {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--warn);
+}
+
+.checked {
+  color: var(--green);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: var(--ink);
+}
+
+.wrap .primary {
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+  color: #ffffff;
+}
+
+.primary:hover {
+  filter: brightness(1.06);
+}
+
+.wrap .quiet {
+  color: var(--ink-2);
+  border-color: transparent;
+  background: transparent;
+  padding: 0 4px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.state {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 32px 18px;
+  text-align: center;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+}
+
+.state p {
+  margin: 0;
+}
+
+/* ── телефон ──────────────────────────────────────────────────────────────── */
+
+@media (max-width: 520px) {
+  /* Ряды чипов листаются свайпом, без переноса: список стартов начинается
+     выше на экране. Отрицательные поля дают ряду уйти под край экрана, а не
+     обрываться на отступе. */
+  .chiprow {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-inline: -16px;
+    padding-inline: 16px;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+
+  .chiprow::-webkit-scrollbar {
+    display: none;
+  }
+
+  .lbl {
+    flex: none;
+  }
+
+  .chip {
+    flex: none;
+  }
+
+  .lede {
+    font-size: 14px;
+  }
+
+  .race {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .d {
+    font-size: 19px;
+  }
+
+  .summary {
+    padding: 12px 14px;
+  }
+}

@@ -1,0 +1,30 @@
+/* Дизайн-система igorp.run, та же, что у хаба и инструментов: токены один в
+   один с /tools/marathon. Тёмной темы на сайте нет намеренно (снята со всех
+   страниц 23.09.2026, см. SiteHeader.module.css), поэтому и здесь её нет.
+   Добавлен только --chip: нейтральная подложка плашек типа и тегов. */
+
+:root {
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --ink: #191712;
+  --ink-2: #4d483f;
+  --muted: #857f73;
+  --line: #e7e1d5;
+  --line-2: #d8d0c0;
+  --accent: #e5480e;
+  --accent-ink: #b53707;
+  --accent-bg: #fdede6;
+  --cream: #fbf8f2;
+  --green: #2e7d45;
+  --green-bg: #eaf3ec;
+  --warn: #9a5b00;
+  --chip: #ede9e0;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(25, 23, 18, 0.04), 0 8px 28px -12px rgba(25, 23, 18, 0.18);
+}
+
+html,
+body {
+  background: var(--bg);
+  min-height: 100dvh;
+}

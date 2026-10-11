@@ -5,6 +5,7 @@ import {
   Footprints,
   Gauge,
   HeartPulse,
+  MapPinned,
   Thermometer,
   TrendingDown,
   Utensils,
@@ -46,6 +47,12 @@ const CARDS: Card[] = [
     title: "Календарь до марафона",
     text:
       "Вводишь дату старта и получаешь все даты: восстановление, межсезонье, старт подготовки, ключевые тренировки, подводка.",
+  },
+  {
+    href: "/races",
+    icon: MapPinned,
+    title: "Старты России",
+    text: "Шоссе, трейлы и триатлоны по месяцам: найди забег в своём городе и сразу ссылку на регистрацию.",
   },
   {
     href: "/tools/plan",

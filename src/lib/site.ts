@@ -48,6 +48,7 @@ export const PUBLIC_PAGES: PublicPage[] = [
   { path: "/club", changeFrequency: "weekly", priority: 0.9 },
   { path: "/camp", changeFrequency: "weekly", priority: 0.9 },
   { path: "/tools", changeFrequency: "monthly", priority: 0.8 },
+  { path: "/races", changeFrequency: "weekly", priority: 0.8 },
   { path: "/tools/marathon", changeFrequency: "monthly", priority: 0.7 },
   { path: "/tools/calendar", changeFrequency: "monthly", priority: 0.7 },
   { path: "/tools/plan", changeFrequency: "monthly", priority: 0.7 },
