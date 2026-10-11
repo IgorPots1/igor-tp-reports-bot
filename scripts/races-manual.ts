@@ -155,6 +155,14 @@ export function isTwin(m: { name: string; date_start: string; city: string | nul
   return sameCity || commonTokens(m.name, x.name) >= 2;
 }
 
+/** Двойник ручного старта среди строк, видимых во view под чужим (не manual:) id. */
+export function findVisibleTwin<T extends { id: string; name: string; date_start: string; city: string | null }>(
+  m: { name: string; date_start: string; city: string | null },
+  visible: T[],
+): T | null {
+  return visible.find((x) => !x.id.startsWith("manual:") && isTwin(m, x)) ?? null;
+}
+
 function dayDiff(a: string, b: string): number {
   return Math.abs((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 864e5);
 }
@@ -442,18 +450,15 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   const sb = db();
   const { data: manual, error } = await sb.from("race_events").select("id,name,date_start,city").eq("source", "manual").eq("status", "active");
   if (error) throw error;
-  // Основной поток это все девять источников робота, не только probeg: три ручные строки
-  // взяты с myrace и reg.place, и их двойник придёт оттуда же. Только активные строки.
-  const { data: probeg, error: e2 } = await sb
-    .from("race_events")
-    .select("id,name,date_start,city")
-    .neq("source", "manual")
-    .eq("status", "active")
-    .gte("date_start", todayBelgrade());
-  if (e2) throw e2;
+  // Двойник ищется во VIEW race_calendar, то есть среди того, что реально видно на
+  // странице, а не в сырых строках race_events. 11.10.2026 пробный прогон снял «ОСЕНЬ
+  // трейл»: двойник myrace:2152 был в race_events, но робот ошибочно склеил его с
+  // «Осенним кроссом» в Североморске (merged_into = probeg:85636), во view его не было,
+  // и старт пропал с сайта совсем. Строка, видимая во view под чужим id, такого не даст.
+  const visible = (await calendarRows(sb)).filter((x) => !x.id.startsWith("manual:") && x.date_start >= todayBelgrade());
   const hits: { id: string; reason: string }[] = [];
   for (const m of manual || []) {
-    const twin = (probeg || []).find((x) => isTwin(m, x));
+    const twin = findVisibleTwin(m, visible);
     if (twin) hits.push({ id: m.id, reason: `появился в основном потоке: ${twin.id} «${twin.name}»` });
   }
   if (!quiet) console.log(JSON.stringify(hits, null, 2));
