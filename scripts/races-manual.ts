@@ -22,7 +22,7 @@
  *   npx tsx scripts/races-manual.ts list                     активные ручные старты с датой от сегодня
  *   npx tsx scripts/races-manual.ts read <url>               текст страницы из настоящего браузера
  *   npx tsx scripts/races-manual.ts dup <proposal.json>      проверка дублей для вставок
- *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся у probeg → removed
+ *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке → removed
  *   npx tsx scripts/races-manual.ts apply <proposal.json> [--apply]   итог недели пишется в ops-log
  *   npx tsx scripts/races-manual.ts sources [all]           реестр источников (active, или все)
  *   npx tsx scripts/races-manual.ts sources-seed [--apply]  стартовое наполнение реестра
@@ -136,6 +136,23 @@ export function nameSimilar(a: string, b: string): boolean {
   let common = 0;
   for (const w of A) if (B.has(w)) common += 1;
   return common / Math.min(A.size, B.size) >= 0.5;
+}
+
+function commonTokens(a: string, b: string): number {
+  const B = tokens(b);
+  let n = 0;
+  for (const w of tokens(a)) if (B.has(w)) n += 1;
+  return n;
+}
+
+/** Ручной старт уже есть в основном потоке: тот же день, похожее имя И (тот же город ИЛИ два общих значимых слова).
+ *  Строже, чем дубль при вставке: здесь ошибка снимает живой старт. На 11.10.2026 одно похожее имя
+ *  без города дало 3 ложных из 4: «Осенний кросс» Запрудня ~ Североморск, «Новогодний дуатлон-кросс»
+ *  Красноярск ~ «Новогодний хоровод» Обнинск, «Рождественский забег» Москва ~ Ростов. */
+export function isTwin(m: { name: string; date_start: string; city: string | null }, x: { name: string; date_start: string; city: string | null }): boolean {
+  if (m.date_start !== x.date_start || !nameSimilar(m.name, x.name)) return false;
+  const sameCity = Boolean(norm(m.city)) && norm(m.city) === norm(x.city);
+  return sameCity || commonTokens(m.name, x.name) >= 2;
 }
 
 function dayDiff(a: string, b: string): number {
@@ -425,15 +442,18 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   const sb = db();
   const { data: manual, error } = await sb.from("race_events").select("id,name,date_start,city").eq("source", "manual").eq("status", "active");
   if (error) throw error;
+  // Основной поток это все девять источников робота, не только probeg: три ручные строки
+  // взяты с myrace и reg.place, и их двойник придёт оттуда же. Только активные строки.
   const { data: probeg, error: e2 } = await sb
     .from("race_events")
     .select("id,name,date_start,city")
-    .eq("source", "probeg")
+    .neq("source", "manual")
+    .eq("status", "active")
     .gte("date_start", todayBelgrade());
   if (e2) throw e2;
   const hits: { id: string; reason: string }[] = [];
   for (const m of manual || []) {
-    const twin = (probeg || []).find((x) => x.date_start === m.date_start && nameSimilar(m.name, x.name));
+    const twin = (probeg || []).find((x) => isTwin(m, x));
     if (twin) hits.push({ id: m.id, reason: `появился в основном потоке: ${twin.id} «${twin.name}»` });
   }
   if (!quiet) console.log(JSON.stringify(hits, null, 2));
