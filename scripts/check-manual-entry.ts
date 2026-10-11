@@ -226,7 +226,19 @@ async function main(): Promise<void> {
       .single();
     const r = row as Record<string, unknown>;
     expect(r.distance_m === null, "дистанция осталась пустой: считать её из темпа значило бы выдумать факт");
-    expect(Math.abs(Number(r.average_speed_mps) - 1000 / 330) < 0.001, `темп сохранён для отображения: ${r.average_speed_mps}`);
+    /**
+     * ПЕРЕПИСАНО [наряд Игоря, 11.10.2026]. Прежде здесь ожидалось, что темп
+     * со слов станет average_speed_mps. Именно этот путь и позволил «4,5» из
+     * поля темпа превратиться в скорость 0,22 м/с: два поля для одной величины
+     * в разных единицах, и человек заполняет одно другим.
+     *
+     * Темп из ввода убран совсем, и новое утверждение сильнее прежнего:
+     * скорость берётся ТОЛЬКО из скорости.
+     */
+    expect(
+      r.average_speed_mps === null,
+      `темп из ввода в скорость НЕ превращается: ${r.average_speed_mps}`
+    );
   }
 
   /* ──────────────────────────────────────────────────────────────────────────
@@ -383,6 +395,59 @@ async function main(): Promise<void> {
       );
     }
   }
+
+  step("СКОРОСТЬ С ПАНЕЛИ: ДИСТАНЦИЮ СЧИТАЕМ МЫ");
+  const bySpeed = await submitManualEntry({
+    sourceId,
+    date: "2026-09-15",
+    durationMinutes: 40,
+    distanceKm: null,
+    averageHeartrate: null,
+    averagePaceSecPerKm: null,
+    speedKmh: 6.3,
+    planSessionId: null,
+    effortCode: "easy",
+    painCode: "no_pain",
+    commentText: null,
+  });
+  expect(bySpeed.ok, `запись по скорости прошла${bySpeed.ok ? "" : `: ${(bySpeed as { messageRu: string }).messageRu}`}`);
+  if (bySpeed.ok) {
+    const { data: row } = await supabase
+      .from("intervals_activities")
+      .select("distance_m, average_speed_mps, entered_speed_kmh, distance_is_derived, derived_note")
+      .eq("activity_id", bySpeed.activityId)
+      .single();
+    const r = row as Record<string, unknown>;
+    expect(Number(r.distance_m) === 4200, `дистанция посчитана: 6,3 км/ч × 40 мин = 4200 м, вышло ${r.distance_m}`);
+    expect(Number(r.entered_speed_kmh) === 6.3, `введённое сохранено как есть: ${r.entered_speed_kmh}`);
+    expect(r.distance_is_derived === true, "и помечено, что дистанцию посчитали мы, а не ввёл человек");
+    expect(
+      typeof r.derived_note === "string" && (r.derived_note as string).includes("6.3"),
+      `в следе записано, КАК считали: ${r.derived_note}`
+    );
+  }
+
+  step("СКОРОСТЬ ВНЕ ДИАПАЗОНА ОТВЕРГАЕТСЯ С ТЕКСТОМ, А НЕ МОЛЧА");
+  const tooFast = await submitManualEntry({
+    sourceId, date: "2026-09-16", durationMinutes: 30, distanceKm: null,
+    averageHeartrate: null, averagePaceSecPerKm: null, speedKmh: 45,
+    planSessionId: null, effortCode: "easy", painCode: "no_pain", commentText: null,
+  });
+  expect(!tooFast.ok, "45 км/ч не проходит");
+  expect(
+    !tooFast.ok && /точно так/u.test(tooFast.messageRu),
+    `отказ несёт переспрос, а не пустоту: ${tooFast.ok ? "" : tooFast.messageRu}`
+  );
+  const swapped = await submitManualEntry({
+    sourceId, date: "2026-09-17", durationMinutes: 30, distanceKm: null,
+    averageHeartrate: null, averagePaceSecPerKm: null, speedKmh: 4.5, recoverySpeedKmh: 7,
+    planSessionId: null, effortCode: "easy", painCode: "no_pain", commentText: null,
+  });
+  expect(!swapped.ok, "восстановление быстрее работы не проходит");
+  expect(
+    !swapped.ok && /перепутаны/u.test(swapped.messageRu),
+    `и названо тем, чем является: ${swapped.ok ? "" : swapped.messageRu}`
+  );
 
   step("ВАЛИДАЦИЯ: ОПЕЧАТКА НЕ ПРОХОДИТ КАК ФАКТ");
   const badPace = await submitManualEntry({

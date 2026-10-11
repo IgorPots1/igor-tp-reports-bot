@@ -63,6 +63,11 @@ export type StudentSessionCard = {
   checkinEffortRpe: number | null;
   checkinPain: boolean | null;
   checkinComment: string | null;
+  /**
+   * Это работа по отрезкам [наряд Игоря, 11.10.2026]. Форма спрашивает две
+   * скорости (отрезки и восстановление) вместо одной.
+   */
+  isIntervalWork: boolean;
   /** Дни, на которые эту тренировку разрешено перенести. */
   moveTargets: Array<{ date: string; label: string }>;
   movedFrom: string | null;
@@ -156,6 +161,15 @@ export type StudentView =
        * без нас тяжело, и экран в эти дни не должен ничего просить.
        */
       pauseNoteRu: string | null;
+      /**
+       * ПОВЕРХНОСТЬ РЕШАЕТ, ЧТО СПРАШИВАТЬ [наряд Игоря, 11.10.2026].
+       *
+       * true — человек бегает в зале или на дорожке: у него перед глазами
+       * скорость в км/ч, а дистанции он не знает и прикидывает её в уме. Тогда
+       * спрашиваем скорость, дистанцию считаем сами.
+       * false — улица с часами: дистанцию показывают часы, она измерена не хуже.
+       */
+      entersSpeed: boolean;
     };
 
 /**
@@ -241,6 +255,7 @@ function toCard(
       date,
       label: `${DAY_RU_SHORT[(new Date(`${date}T00:00:00Z`).getUTCDay() + 6) % 7]}, ${formatRuDay(date)}`,
     })),
+    isIntervalWork: session.role === "quality",
     movedFrom: session.originalSessionDate,
   };
 }
@@ -265,6 +280,8 @@ export function buildStudentView(input: {
   weeklyFormWeekStart?: string | null;
   /** Отрезки паузы. Пустой список — обычный режим. */
   pauses?: Pause[];
+  /** Бегает на дорожке или в зале: спрашиваем скорость, не дистанцию. */
+  entersSpeed?: boolean;
 }): StudentView {
   if (input.sessions === null) {
     const messageRu =
@@ -393,6 +410,7 @@ export function buildStudentView(input: {
     // НЕДЕЛЬНАЯ ФОРМА НА ПАУЗЕ НЕ ПОКАЗЫВАЕТСЯ: «расскажите, как прошла
     // неделя» человеку, который неделю болел, — вопрос не по адресу.
     weeklyFormWeekStart: activePause ? null : input.weeklyFormWeekStart ?? null,
+    entersSpeed: input.entersSpeed === true,
     pauseNoteRu: activePause
       ? "Вы на паузе, тренер её поставил. План ждёт, напоминаний не будет. " +
         "Когда будете готовы вернуться, напишите тренеру."

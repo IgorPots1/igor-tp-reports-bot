@@ -34,6 +34,7 @@ import {
 import { diffCheckin, type CheckinSnapshot } from "./checkin-edit";
 import { buildStudentView, formatRuDay, type CoachReplyView, type StudentView } from "./student-view";
 import { studentNotes, type Checkin } from "./types";
+import { runSurfacesIncludeTreadmill } from "@/features/intervals/onboarding/starting-point";
 
 const DAY_MS = 86_400_000;
 
@@ -272,6 +273,9 @@ export async function loadStudentView(sourceId: string, todayIso: string): Promi
     weekNotes: [...weekOwnNotes, ...studentNotes(cycle.weekNotes)],
     weeklyFormWeekStart,
     pauses,
+    // Поверхность берётся из анкеты — того же источника, по которому генератор
+    // решает не печатать ей уличный темп (runsOnTreadmill).
+    entersSpeed: runSurfacesIncludeTreadmill(answers?.runSurfaces ?? null),
   });
 }
 

@@ -28,6 +28,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     distanceKm?: unknown;
     averageHeartrate?: unknown;
     averagePaceSecPerKm?: unknown;
+    speedKmh?: unknown;
+    recoverySpeedKmh?: unknown;
     effort?: unknown;
     pain?: unknown;
     comment?: unknown;
@@ -70,10 +72,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const distanceKm = num(body.distanceKm);
   const averageHeartrate = num(body.averageHeartrate);
   const averagePaceSecPerKm = num(body.averagePaceSecPerKm);
+  const speedKmh = num(body.speedKmh);
+  const recoverySpeedKmh = num(body.recoverySpeedKmh);
   if (
     (distanceKm !== null && Number.isNaN(distanceKm)) ||
     (averageHeartrate !== null && Number.isNaN(averageHeartrate)) ||
-    (averagePaceSecPerKm !== null && Number.isNaN(averagePaceSecPerKm))
+    (averagePaceSecPerKm !== null && Number.isNaN(averagePaceSecPerKm)) ||
+    (speedKmh !== null && Number.isNaN(speedKmh)) ||
+    (recoverySpeedKmh !== null && Number.isNaN(recoverySpeedKmh))
   ) {
     return jsonResponse(400, { ok: false, error: "Одно из чисел не распозналось." });
   }
@@ -88,6 +94,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     distanceKm,
     averageHeartrate,
     averagePaceSecPerKm,
+    speedKmh,
+    recoverySpeedKmh,
     planSessionId: typeof body.sessionId === "string" && body.sessionId ? body.sessionId : null,
     effortCode: String(body.effort ?? ""),
     painCode: String(body.pain ?? ""),

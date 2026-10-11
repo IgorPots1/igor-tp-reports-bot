@@ -32,13 +32,12 @@ import {
   WEEK_STABILITY_OPTIONS,
 } from "@/features/intervals/loop/schedule";
 import {
-  paceTextRu,
   describeDurationRu,
   durationAlternativeRu,
   parseDistanceKm,
   parseDurationMinutes,
   parseHeartrate,
-  parsePaceSecPerKm,
+  parseSpeedKmh,
 } from "@/features/intervals/loop/manual-entry-parse";
 import { clearDraft, readDraft, writeDraft } from "@/features/intervals/loop/checkin-draft";
 import {
@@ -111,6 +110,7 @@ type SessionCard = {
   checkinComment: string | null;
   moveTargets: Array<{ date: string; label: string }>;
   movedFrom: string | null;
+  isIntervalWork: boolean;
 };
 
 type LadderView = {
@@ -154,6 +154,8 @@ type View =
       weekNotes: SessionNote[];
       weeklyFormWeekStart: string | null;
       pauseNoteRu?: string | null;
+      /** Бегает в зале: форма спрашивает скорость с панели, а не дистанцию. */
+      entersSpeed: boolean;
     };
 
 const BG = "#F6F4EF";
@@ -1664,6 +1666,7 @@ function PlanScreen(props: {
               painOptions={view.painOptions}
               onChanged={props.onChanged}
               isManualEntry={props.isManualEntry}
+              entersSpeed={view.entersSpeed}
               isToday={false}
               isOpen
             />
@@ -1681,6 +1684,7 @@ function PlanScreen(props: {
           painOptions={view.painOptions}
           onChanged={props.onChanged}
           isManualEntry={props.isManualEntry}
+              entersSpeed={view.entersSpeed}
           isToday
           isOpen
         />
@@ -1703,6 +1707,7 @@ function PlanScreen(props: {
           painOptions={view.painOptions}
           onChanged={props.onChanged}
           isManualEntry={props.isManualEntry}
+              entersSpeed={view.entersSpeed}
         />
       ) : null}
 
@@ -1719,6 +1724,7 @@ function PlanScreen(props: {
               painOptions={view.painOptions}
               onChanged={props.onChanged}
               isManualEntry={props.isManualEntry}
+              entersSpeed={view.entersSpeed}
               isToday={false}
               // Будущая тренировка закрыта: отметиться о том, чего не было, нельзя.
               isOpen={false}
@@ -1952,6 +1958,7 @@ function SessionBlock(props: {
   painOptions: PainOption[];
   onChanged: (note: string) => void;
   isManualEntry: boolean;
+  entersSpeed: boolean;
   isToday: boolean;
   /**
    * Тренировку ещё можно отметить или поправить: сегодняшняя или из ближайшего
@@ -2081,6 +2088,8 @@ function SessionBlock(props: {
           painOptions={props.painOptions}
           onChanged={props.onChanged}
           manualEntry={props.isManualEntry}
+          entersSpeed={props.entersSpeed}
+          isIntervalWork={card.isIntervalWork}
           defaultDate={card.date}
           editing={card.checkedIn}
           prefillEffortRpe={card.checkinEffortRpe}
@@ -2108,6 +2117,7 @@ function UnplannedCheckin(props: {
   painOptions: PainOption[];
   onChanged: (note: string) => void;
   isManualEntry: boolean;
+  entersSpeed: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -2132,6 +2142,7 @@ function UnplannedCheckin(props: {
           <CheckinForm
             initData={props.initData}
             sessionId={null}
+            entersSpeed={props.entersSpeed}
             effortOptions={props.effortOptions}
             effortQuestionRu={props.effortQuestionRu}
             painOptions={props.painOptions}
@@ -2157,6 +2168,10 @@ function CheckinForm(props: {
   defaultDate?: string;
   /** Правка уже отправленного ответа, а не первый ответ. Меняет только слова. */
   editing?: boolean;
+  /** Бегает в зале: спрашиваем скорость с панели, а не дистанцию. */
+  entersSpeed?: boolean;
+  /** Работа по отрезкам: две скорости вместо одной. */
+  isIntervalWork?: boolean;
   /**
    * Прежние ответы. Форма правки открывается ЗАПОЛНЕННОЙ: пустая — это не
    * правка, а второй ответ с нуля, в котором человек ошибётся заново.
@@ -2183,7 +2198,9 @@ function CheckinForm(props: {
   const [durationMinutes, setDurationMinutes] = useState("");
   const [distanceKm, setDistanceKm] = useState("");
   const [averageHeartrate, setAverageHeartrate] = useState("");
-  const [averagePace, setAveragePace] = useState(""); // "5:30"
+  /* Темп из формы убран [наряд Игоря, 11.10.2026] — спрашиваем скорость. */
+  const [speedKmh, setSpeedKmh] = useState("");
+  const [recoverySpeedKmh, setRecoverySpeedKmh] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   /**
@@ -2220,7 +2237,8 @@ function CheckinForm(props: {
     setDurationMinutes(saved.durationMinutes);
     setDistanceKm(saved.distanceKm);
     setAverageHeartrate(saved.averageHeartrate);
-    setAveragePace(saved.averagePace);
+    setSpeedKmh(saved.speedKmh ?? "");
+    setRecoverySpeedKmh(saved.recoverySpeedKmh ?? "");
     setRestored(true);
   }, [props.sessionId]);
 
@@ -2231,17 +2249,18 @@ function CheckinForm(props: {
     if (!draftLoaded.current) return;
     writeDraft(props.sessionId, {
       effort, pain, comment, date,
-      durationMinutes, distanceKm, averageHeartrate, averagePace,
+      durationMinutes, distanceKm, averageHeartrate, averagePace: "", speedKmh, recoverySpeedKmh,
       savedAt: Date.now(),
     });
-  }, [props.sessionId, effort, pain, comment, date, durationMinutes, distanceKm, averageHeartrate, averagePace]);
+  }, [props.sessionId, effort, pain, comment, date, durationMinutes, distanceKm, averageHeartrate, speedKmh, recoverySpeedKmh]);
 
   const submit = async () => {
     const errors: Record<string, string> = {};
-    let paceSecPerKm: number | null = null;
     let durationValue: number | null = null;
     let distanceValue: number | null = null;
     let heartrateValue: number | null = null;
+    let speedValue: number | null = null;
+    let recoveryValue: number | null = null;
 
     if (props.manualEntry) {
       const duration = parseDurationMinutes(durationMinutes);
@@ -2258,9 +2277,20 @@ function CheckinForm(props: {
       if (!heartrate.ok) errors.heartrate = heartrate.errorRu;
       else heartrateValue = heartrate.value;
 
-      const pace = parsePaceSecPerKm(averagePace);
-      if (!pace.ok) errors.pace = pace.errorRu;
-      else paceSecPerKm = pace.value;
+      /* СКОРОСТЬ ВМЕСТО ТЕМПА. Вне диапазона правдоподобия поле НЕ молчит и
+         не отбрасывает число — parseSpeedKmh возвращает переспрос, и человек
+         видит его тут же, у поля. */
+      const sp = parseSpeedKmh(speedKmh);
+      if (!sp.ok) errors.speed = sp.errorRu;
+      else speedValue = sp.value;
+      const rec = parseSpeedKmh(recoverySpeedKmh);
+      if (!rec.ok) errors.recovery = rec.errorRu;
+      else recoveryValue = rec.value;
+      if (
+        speedValue !== null && recoveryValue !== null && recoveryValue > speedValue
+      ) {
+        errors.recovery = "Восстановление быстрее отрезков — похоже, поля перепутаны.";
+      }
     }
 
     if (!effort) errors.effort = "Выберите, как далась тренировка.";
@@ -2290,7 +2320,8 @@ function CheckinForm(props: {
         body.durationMinutes = durationValue;
         body.distanceKm = distanceValue;
         body.averageHeartrate = heartrateValue;
-        body.averagePaceSecPerKm = paceSecPerKm;
+        body.speedKmh = speedValue;
+        body.recoverySpeedKmh = recoveryValue;
       }
       const res = await fetch(url, {
         method: "POST",
@@ -2321,7 +2352,8 @@ function CheckinForm(props: {
     setDurationMinutes("");
     setDistanceKm("");
     setAverageHeartrate("");
-    setAveragePace("");
+    setSpeedKmh("");
+    setRecoverySpeedKmh("");
     setFieldErrors({});
     setRestored(false);
   };
@@ -2416,25 +2448,102 @@ function CheckinForm(props: {
                 style={fieldInputStyle(Boolean(fieldErrors.duration))}
               />
             </FormField>
-            <FormField
-              label="Дистанция, км — если знаете"
-              hint="можно с запятой: 6,5"
-              error={fieldErrors.distance}
-              confirm={(() => {
-                const parsed = parseDistanceKm(distanceKm);
-                if (fieldErrors.distance || !parsed.ok || parsed.value === null) return null;
-                return `понял как ${parsed.value} км`;
-              })()}
-            >
-              <input
-                type="text"
-                inputMode="decimal"
-                value={distanceKm}
-                onChange={(e) => setDistanceKm(e.target.value)}
-                placeholder="6,5"
-                style={fieldInputStyle(Boolean(fieldErrors.distance))}
-              />
-            </FormField>
+            {/* ПОВЕРХНОСТЬ РЕШАЕТ, ЧТО СПРАШИВАТЬ [наряд Игоря, 11.10.2026].
+                В зале перед человеком панель со скоростью в км/ч, а дистанции
+                он не знает и прикидывает её в уме — прикидка врёт (8610 м за
+                56 минут). На улице с часами дистанция измерена, её и спрашиваем.
+
+                ПОЛЯ ТЕМПА БОЛЬШЕ НЕТ СОВСЕМ. Два поля для одной величины в
+                разных единицах оказались ловушкой: в темп писали то 9,08
+                (мин/км), то 4,5 (км/ч), глядя в разные колонки панели. */}
+            {props.entersSpeed ? (
+              props.isIntervalWork ? (
+                <>
+                  <FormField
+                    label="Скорость на отрезках с панели, км/ч"
+                    hint="одно число на все отрезки; запятая и точка обе подойдут"
+                    error={fieldErrors.speed}
+                    confirm={(() => {
+                      const parsed = parseSpeedKmh(speedKmh);
+                      if (fieldErrors.speed || !parsed.ok || parsed.value === null) return null;
+                      return `понял как ${parsed.value} км/ч`;
+                    })()}
+                  >
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={speedKmh}
+                      onChange={(e) => setSpeedKmh(e.target.value)}
+                      placeholder="6,5"
+                      style={fieldInputStyle(Boolean(fieldErrors.speed))}
+                    />
+                  </FormField>
+                  <FormField
+                    label="Скорость восстановления между отрезками, км/ч"
+                    hint="шли шагом — поставьте скорость ходьбы, это тоже число с панели"
+                    error={fieldErrors.recovery}
+                    confirm={(() => {
+                      const parsed = parseSpeedKmh(recoverySpeedKmh);
+                      if (fieldErrors.recovery || !parsed.ok || parsed.value === null) return null;
+                      return `понял как ${parsed.value} км/ч`;
+                    })()}
+                  >
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={recoverySpeedKmh}
+                      onChange={(e) => setRecoverySpeedKmh(e.target.value)}
+                      placeholder="4,5"
+                      style={fieldInputStyle(Boolean(fieldErrors.recovery))}
+                    />
+                  </FormField>
+                  {/* Длительности отрезков она не вводит: их написали мы. */}
+                  <p style={{ margin: 0, fontSize: 13, color: "#6b6b60" }}>
+                    Сколько было отрезков и по сколько минут, я знаю из плана. Дистанцию посчитаю сам.
+                  </p>
+                </>
+              ) : (
+                <FormField
+                  label="Скорость с панели, км/ч"
+                  hint="запятая и точка обе подойдут"
+                  error={fieldErrors.speed}
+                  confirm={(() => {
+                    const parsed = parseSpeedKmh(speedKmh);
+                    if (fieldErrors.speed || !parsed.ok || parsed.value === null) return null;
+                    return `понял как ${parsed.value} км/ч`;
+                  })()}
+                >
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={speedKmh}
+                    onChange={(e) => setSpeedKmh(e.target.value)}
+                    placeholder="6,5"
+                    style={fieldInputStyle(Boolean(fieldErrors.speed))}
+                  />
+                </FormField>
+              )
+            ) : (
+              <FormField
+                label="Дистанция, км — если знаете"
+                hint="можно с запятой: 6,5"
+                error={fieldErrors.distance}
+                confirm={(() => {
+                  const parsed = parseDistanceKm(distanceKm);
+                  if (fieldErrors.distance || !parsed.ok || parsed.value === null) return null;
+                  return `понял как ${parsed.value} км`;
+                })()}
+              >
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={distanceKm}
+                  onChange={(e) => setDistanceKm(e.target.value)}
+                  placeholder="6,5"
+                  style={fieldInputStyle(Boolean(fieldErrors.distance))}
+                />
+              </FormField>
+            )}
             <FormField
               label="Средний пульс — если помните"
               error={fieldErrors.heartrate}
@@ -2447,33 +2556,7 @@ function CheckinForm(props: {
                 placeholder="148"
                 style={fieldInputStyle(Boolean(fieldErrors.heartrate))}
               />
-            </FormField>
-            {/* ДВОЕТОЧИЕ НЕ ОБЯЗАТЕЛЬНО, И ЭТО НАПИСАНО У ПОЛЯ. На числовой
-                клавиатуре его просто нет — из-за этого отчёт и не ушёл. */}
-            <FormField
-              label="Средний темп — если знаете и не вписали дистанцию"
-              hint="как удобно: 8:12, 812 или 8,12"
-              error={fieldErrors.pace}
-              confirm={
-                !fieldErrors.pace && parsePaceSecPerKm(averagePace).ok && averagePace.trim()
-                  ? (() => {
-                      const parsed = parsePaceSecPerKm(averagePace);
-                      return parsed.ok && parsed.value !== null
-                        ? `понял как ${paceTextRu(parsed.value)} на километр`
-                        : null;
-                    })()
-                  : null
-              }
-            >
-              <input
-                type="text"
-                inputMode="decimal"
-                value={averagePace}
-                onChange={(e) => setAveragePace(e.target.value)}
-                placeholder="8:12"
-                style={fieldInputStyle(Boolean(fieldErrors.pace))}
-              />
-            </FormField>
+                        </FormField>
           </div>
         </div>
       ) : null}

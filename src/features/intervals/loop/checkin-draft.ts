@@ -30,7 +30,12 @@ export type CheckinDraft = {
   durationMinutes: string;
   distanceKm: string;
   averageHeartrate: string;
+  /** Темп из формы убран 11.10.2026; поле осталось для старых черновиков. */
   averagePace: string;
+  /** Скорость с панели, км/ч (ровный бег или отрезки). */
+  speedKmh?: string;
+  /** Скорость восстановления между отрезками, км/ч. */
+  recoverySpeedKmh?: string;
   /** Когда черновик записан, мс. По нему считается срок жизни. */
   savedAt: number;
 };

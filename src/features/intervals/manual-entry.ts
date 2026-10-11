@@ -26,6 +26,9 @@ import { createSupabaseServerClient, describeSupabaseError } from "@/features/su
 
 import { PENDING_ATHLETE_PREFIX } from "./repository";
 import { resolveCheckinDay, submitCheckin, type SubmitCheckinResult } from "./loop/service";
+import { deriveIntervals, deriveSteady, plannedParts } from "./loop/derive-distance";
+import { SPEED_MAX_KMH, SPEED_MIN_KMH } from "./loop/manual-entry-parse";
+import { getSessionById } from "./loop/repository";
 
 /**
  * Префикс activity_id у строк, которые завёл ручной ввод.
@@ -206,8 +209,20 @@ export type ManualEntryInput = {
   durationMinutes: number;
   distanceKm: number | null;
   averageHeartrate: number | null;
-  /** Средний темп, с/км. Если не задан, а дистанция есть — считаем сами. */
+  /**
+   * ТЕМП БОЛЬШЕ НЕ СПРАШИВАЕТСЯ [наряд Игоря, 11.10.2026], поле осталось для
+   * совместимости с записями, которые его присылали. Новая форма его не
+   * отправляет: два поля для одной величины в разных единицах оказались
+   * ловушкой — ученица писала в темп то 9,08 (мин/км), то 4,5 (км/ч).
+   */
   averagePaceSecPerKm: number | null;
+  /**
+   * Скорость с панели дорожки, км/ч. Для ровного бега — одна на всё время, для
+   * интервальной — скорость РАБОТЫ. Дистанция считается из неё, не спрашивается.
+   */
+  speedKmh?: number | null;
+  /** Скорость восстановления между отрезками, км/ч. Только интервальная. */
+  recoverySpeedKmh?: number | null;
   /** Сессия плана, которую закрывает эта тренировка. null — вне плана. */
   planSessionId: string | null;
   effortCode: string;
@@ -236,6 +251,29 @@ function validate(input: ManualEntryInput): string | null {
     (!Number.isFinite(input.averagePaceSecPerKm) || input.averagePaceSecPerKm < MIN_PACE_SEC_PER_KM || input.averagePaceSecPerKm > MAX_PACE_SEC_PER_KM)
   ) {
     return "Темп не похож на правду.";
+  }
+  /**
+   * СКОРОСТЬ ПРОВЕРЯЕТСЯ НА ПРАВДОПОДОБИЕ И НЕ ОТБРАСЫВАЕТСЯ МОЛЧА.
+   * Пороги — SPEED_MIN_KMH / SPEED_MAX_KMH, те же, что в форме: один и тот же
+   * диапазон не должен жить в двух числах, иначе форма пропустит то, что
+   * сервер отвергнет, и человек увидит отказ без объяснения.
+   */
+  for (const [label, value] of [
+    ["Скорость", input.speedKmh ?? null],
+    ["Скорость восстановления", input.recoverySpeedKmh ?? null],
+  ] as Array<[string, number | null]>) {
+    if (value === null) continue;
+    if (!Number.isFinite(value) || value < SPEED_MIN_KMH || value > SPEED_MAX_KMH) {
+      return `${label} ${value} км/ч — это точно так? Обычно на панели от ${SPEED_MIN_KMH} до ${SPEED_MAX_KMH}.`;
+    }
+  }
+  // Восстановление быстрее работы — почти наверняка перепутанные поля, и
+  // сказать об этом надо сразу, а не считать дистанцию по перевёрнутым числам.
+  if (
+    input.speedKmh != null && input.recoverySpeedKmh != null &&
+    input.recoverySpeedKmh > input.speedKmh
+  ) {
+    return "Восстановление быстрее отрезков — похоже, поля перепутаны. Проверьте, пожалуйста.";
   }
   return null;
 }
@@ -277,18 +315,7 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
   if (sourceError) return { ok: false, code: "db_error", messageRu: describeSupabaseError(sourceError) };
   if (!sourceRow) return { ok: false, code: "no_source", messageRu: "Источник не найден." };
 
-  const distanceM = input.distanceKm !== null ? Math.round(input.distanceKm * 1000) : null;
   const movingTimeS = Math.round(input.durationMinutes * 60);
-  // Темп ВСЕГДА среднее по факту: если дана дистанция, считаем сами и не
-  // полагаемся на то, что человек посчитал в уме верно. Если дистанции нет,
-  // берём темп со слов — он ни во что не попадёт, кроме отображения (см.
-  // комментарий в data-quality.ts про paceSamples: там гейт по дистанции).
-  const averageSpeedMps =
-    distanceM !== null && movingTimeS > 0
-      ? distanceM / movingTimeS
-      : input.averagePaceSecPerKm !== null
-        ? 1000 / input.averagePaceSecPerKm
-        : null;
 
   /**
    * ДЕНЬ РЕШАЕТСЯ ДО ЗАПИСИ И ОДИН РАЗ. Под плановой сессией он её, а не тот,
@@ -315,6 +342,41 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
   // Полдень — нейтральный якорь: день недели и попадание в окно считаются по
   // ДАТЕ, а не по часам, так что выдумывать точное время незачем.
   const startDateLocal = `${activityDate}T12:00:00`;
+
+  /**
+   * ДИСТАНЦИЯ: СЧИТАЕМ ИЗ СКОРОСТИ, ЕСЛИ ОНА ЕСТЬ [наряд Игоря, 11.10.2026].
+   *
+   * Приоритет именно такой: скорость с панели — то, что человек ВИДЕЛ, а
+   * дистанция со слов — то, что он прикинул в уме. Прикидка врёт (8610 м за 56
+   * минут у живой ученицы), и между измерением и прикидкой выбираем измерение.
+   *
+   * Старый путь (дистанция со слов) остаётся для улицы с часами: там дистанцию
+   * показывают часы, и она измерена не хуже скорости.
+   *
+   * ТЕМП ИЗ ВВОДА УБРАН СОВСЕМ. Раньше он подставлялся в average_speed_mps,
+   * когда дистанции нет; это и позволяло «4,5» из поля темпа превратиться в
+   * скорость 0,22 м/с. Теперь скорость берётся только из скорости.
+   */
+  const session = day.planSessionId ? await getSessionById(day.planSessionId) : null;
+  const segments = (session?.segments ?? []) as Array<{ label: string; minutes: number }> | null;
+  const speed = input.speedKmh ?? null;
+  const recovery = input.recoverySpeedKmh ?? null;
+  const derived =
+    speed !== null && recovery !== null && segments !== null && segments.length > 0
+      ? deriveIntervals({
+          parts: plannedParts(segments),
+          workSpeedKmh: speed,
+          recoverySpeedKmh: recovery,
+        })
+      : speed !== null
+        ? deriveSteady({ minutes: input.durationMinutes, speedKmh: speed })
+        : null;
+
+  const distanceM =
+    derived?.distanceM ?? (input.distanceKm !== null ? Math.round(input.distanceKm * 1000) : null);
+  const averageSpeedMps =
+    derived?.averageSpeedMps ?? (distanceM !== null && movingTimeS > 0 ? distanceM / movingTimeS : null);
+
   const payload = {
     name: "Ручной ввод",
     activity_type: "Run",
@@ -330,6 +392,12 @@ export async function submitManualEntry(input: ManualEntryInput): Promise<Manual
     has_pace: false,
     hr_coverage_pct: null,
     raw: null,
+    // ВВЕДЁННОЕ И ВЫВЕДЕННОЕ ЛЕЖАТ РЯДОМ И РАЗЛИЧИМЫ. Через месяц должно быть
+    // видно, что назвал человек, а что посчитали мы.
+    entered_speed_kmh: speed,
+    entered_recovery_speed_kmh: recovery,
+    distance_is_derived: derived?.distanceM != null,
+    derived_note: derived?.howRu ?? null,
   };
 
   /**
