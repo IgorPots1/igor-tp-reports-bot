@@ -432,6 +432,23 @@
   cursor: pointer;
 }
 
+/* Ссылка на календарь подготовки: тихая строка под блоком сроков. При боли её
+   нет: расчёт оборван, и даты подготовки звали бы в травму. */
+.calLink {
+  margin: 12px 0 0;
+  font-size: 15px;
+}
+
+.calLink a {
+  color: var(--accent-ink);
+  text-underline-offset: 3px;
+}
+
+.calLink a:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Ссылка на темпы: отдельной строкой под блоком консультации, как в наряде. */
 .planLink {
   margin: 14px 0 0;

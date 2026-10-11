@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import {
   CalendarCheck,
+  CalendarDays,
   Footprints,
   Gauge,
   HeartPulse,
@@ -38,6 +39,13 @@ const CARDS: Card[] = [
     title: "Пора готовиться к марафону?",
     text:
       "7 вопросов: узнаешь, с какого месяца тебе реально стартовать марафон и на какое время рассчитывать.",
+  },
+  {
+    href: "/tools/calendar",
+    icon: CalendarDays,
+    title: "Календарь до марафона",
+    text:
+      "Вводишь дату старта и получаешь все даты: восстановление, межсезонье, старт подготовки, ключевые тренировки, подводка.",
   },
   {
     href: "/tools/plan",

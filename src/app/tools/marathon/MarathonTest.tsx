@@ -352,6 +352,11 @@ export default function MarathonTest() {
           </p>
         )}
         {plan.raceNote ? <p className={styles.warnbox}>{plan.raceNote}</p> : null}
+        {plan.stop ? null : (
+          <p className={styles.calLink}>
+            <a href="/tools/calendar">Посчитать даты подготовки</a>
+          </p>
+        )}
       </div>
 
       <div className={styles.sec}>
