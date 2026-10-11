@@ -9,7 +9,7 @@ const CONTACT_EMAIL = "potseluevigoralexeevich@gmail.com";
 
 // Дата правится руками при каждом изменении текста. Автоподстановка new Date()
 // врала бы: «обновлено» менялось бы от пересборки, а не от правки политики.
-const UPDATED_AT = "26 августа 2026";
+const UPDATED_AT = "11 октября 2026";
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/privacy",
@@ -282,7 +282,27 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section number="07" title="Cookie и аналитика">
+        <Section number="07" title="Форма «Добавить старт»">
+          <p style={bodyStyle}>
+            На странице календаря стартов (igorp.run/races) можно предложить
+            забег, которого там нет. Через эту форму мы получаем ссылку на старт и
+            то, что вы впишете сами: название, город, дату, контакт для вопросов и
+            отметку «я организатор». Все поля, кроме ссылки, необязательны.
+          </p>
+          <p style={bodyStyle}>
+            Контакт нужен только для того, чтобы уточнить детали старта. Для
+            рассылок и рекламы он не используется. Чтобы ограничить спам, сервер
+            хранит не ваш IP-адрес, а его хэш: по нему нельзя восстановить адрес,
+            но можно сосчитать заявки за час. Заявки лежат в базе проекта. Удалить
+            свою можно, написав на{" "}
+            <a style={linkStyle} href={mailto}>
+              {CONTACT_EMAIL}
+            </a>
+            .
+          </p>
+        </Section>
+
+        <Section number="08" title="Cookie и аналитика">
           <p style={bodyStyle}>
             На публичных страницах проекта нет рекламных трекеров и внешних
             систем аналитики. Служебные cookie используются только там, где нужен
@@ -290,7 +310,7 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section number="08" title="Изменения">
+        <Section number="09" title="Изменения">
           <p style={bodyStyle}>
             Если политика изменится, изменится и дата вверху страницы. Про
             изменения, которые расширяют состав собираемых данных, ученикам
@@ -333,6 +353,13 @@ export default function PrivacyPage() {
               {CONTACT_EMAIL}
             </a>
             ; deletion is completed within 30 days.
+          </p>
+          <p style={bodyStyle}>
+            The &ldquo;Add a race&rdquo; form on igorp.run/races collects the race link and,
+            optionally, its name, city, date, a contact and an &ldquo;I am the
+            organiser&rdquo; flag. The contact is used only to clarify race details.
+            To limit spam the server stores a salted hash of your IP address, not
+            the address itself.
           </p>
         </section>
 

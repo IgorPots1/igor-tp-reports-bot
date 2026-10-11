@@ -376,7 +376,8 @@ function writeRegistry(reg: Source[], file = registryPath()) {
 // ── точки обхода (города и трейловые места) ──────────────────────────────────
 
 export type CityPoint = { name: string; region: string; kind: "city" | "spot"; last_searched: string | null };
-export const CITIES_PER_WEEK = 25;
+/** 35, а не 25 из наряда: точек 208, и при 25 круг шёл бы ~8 недель вместо ~6 (решение Игоря 11.10.2026). */
+export const CITIES_PER_WEEK = 35;
 
 export function citiesPath(): string {
   return process.env.RACES_CITIES_FILE || path.join(os.homedir(), "ops-log", "races", "cities.json");
@@ -386,7 +387,7 @@ export function readCities(file = citiesPath()): CityPoint[] {
   return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as CityPoint[]) : [];
 }
 
-/** Точки недели: никогда не проверенные первыми, дальше самые давние. Круг около 6 недель. */
+/** Точки недели: никогда не проверенные первыми, дальше самые давние. 208 точек по 35: круг около 6 недель. */
 export function dueCities(list: CityPoint[], n = CITIES_PER_WEEK): CityPoint[] {
   return [...list]
     .sort((a, b) => (a.last_searched ?? "").localeCompare(b.last_searched ?? "") || a.name.localeCompare(b.name, "ru"))

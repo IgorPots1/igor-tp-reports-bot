@@ -17,9 +17,11 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   dateText,
+  CITIES_PER_WEEK,
   dueCities,
   dueSources,
   findDuplicate,
@@ -140,6 +142,10 @@ const pts = [
 assert.deepEqual(dueCities(pts, 2).map((c) => c.name), ["Кандалакша", "Москва"]);
 assert.equal(markCities(pts, ["кандалакша", "Москва", "Нет такого"], "2026-10-11"), 2, "регистр не важен, чужое имя не помечается");
 assert.deepEqual(dueCities(pts, 1).map((c) => c.name), ["Казань"], "после отметки следующей идёт самая давняя");
+// Было 25 точек в неделю (наряд), стало 35: при 208 точках 25 давали круг ~8 недель.
+// Держим главное свойство, а не число: полный круг не длиннее 6 недель.
+const seedCount = (JSON.parse(readFileSync("scripts/races-cities.json", "utf8")) as unknown[]).length;
+assert.ok(Math.ceil(seedCount / CITIES_PER_WEEK) <= 6, `круг ${Math.ceil(seedCount / CITIES_PER_WEEK)} недель при ${seedCount} точках и ${CITIES_PER_WEEK} в неделю`);
 
 // Итог недели в ops-log.
 const sum = weeklySummary({
