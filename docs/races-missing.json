@@ -1,0 +1,647 @@
+[
+  {
+    "name": "Кросс «Лисья гора»",
+    "date_start": "2026-10-11",
+    "date_end": "2026-10-11",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "trail",
+    "distances": [
+      "2 км",
+      "4 км",
+      "6 км",
+      "8 км",
+      "эстафета 4x1 км"
+    ],
+    "site_url": "https://foxhillxc.runc.run/",
+    "reg_url": "https://foxhillxc.runc.run/",
+    "source_url": "https://foxhillxc.runc.run/",
+    "note": "Царицыно, организатор «Беговое сообщество»; дистанция зависит от пола и возраста"
+  },
+  {
+    "name": "ОСЕНЬ трейл",
+    "date_start": "2026-10-11",
+    "date_end": "2026-10-11",
+    "city": "Зеленая Поляна",
+    "region": "Республика Башкортостан",
+    "race_type": "trail",
+    "distances": [
+      "12 км",
+      "1,6 км",
+      "0,8 км"
+    ],
+    "site_url": "https://myrace.info/events/2152",
+    "reg_url": null,
+    "source_url": "https://myrace.info/events/2152",
+    "note": "хребет Крыктытау, оз. Банное; регистрация закрыта"
+  },
+  {
+    "name": "Осенний кросс",
+    "date_start": "2026-10-11",
+    "date_end": "2026-10-11",
+    "city": "Запрудня",
+    "region": "Московская область",
+    "race_type": "trail",
+    "distances": [
+      "3 км",
+      "1,5 км",
+      "0,6 км",
+      "0,4 км"
+    ],
+    "site_url": "https://reg.place/events/osenniy-kross",
+    "reg_url": null,
+    "source_url": "https://reg.place/events/osenniy-kross",
+    "note": "Талдомский г.о.; небольшой локальный кросс, регистрация закрыта"
+  },
+  {
+    "name": "SUPER ЗАБЕГ",
+    "date_start": "2026-10-17",
+    "date_end": "2026-10-17",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км",
+      "3 км",
+      "1 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/SUPERZABEG1",
+    "source_url": "https://reg.russiarunning.com/event/SUPERZABEG1",
+    "note": "Перовский сквер; серия CITY RUN, небольшой парковый забег"
+  },
+  {
+    "name": "Городская ультра «Уфимское ожерелье». 3 этап",
+    "date_start": "2026-10-17",
+    "date_end": "2026-10-17",
+    "city": "Уфа",
+    "region": "Республика Башкортостан",
+    "race_type": "road",
+    "distances": [
+      "63 км",
+      "37 км",
+      "9,9 км"
+    ],
+    "site_url": "https://batyrsport.com/",
+    "reg_url": "https://reg.russiarunning.com/event/ufacityultra20263",
+    "source_url": "https://batyrsport.com/",
+    "note": "велопешеходный маршрут вокруг Уфы; дата и на странице регистрации RussiaRunning"
+  },
+  {
+    "name": "Золотарёвка трейл. Финал Сурские трейлы",
+    "date_start": "2026-10-17",
+    "date_end": "2026-10-18",
+    "city": "Золотаревка",
+    "region": "Пензенская область",
+    "race_type": "trail",
+    "distances": [
+      "Т2",
+      "Т6",
+      "Т12",
+      "Т21",
+      "Т32",
+      "Городище 33 (комбо)",
+      "Городище 44 (комбо)"
+    ],
+    "site_url": "https://myrace.info/events/2095",
+    "reg_url": "https://myrace.info/events/2095",
+    "source_url": "https://myrace.info/events/2095",
+    "note": "финал серии «Сурские трейлы»; также байк-дисциплины и кани-кросс"
+  },
+  {
+    "name": "Бегущий Нальчик",
+    "date_start": "2026-10-18",
+    "date_end": "2026-10-18",
+    "city": "Нальчик",
+    "region": "Кабардино-Балкарская Республика",
+    "race_type": "road",
+    "distances": [
+      "10 км",
+      "5 км",
+      "эстафета 5x2 км",
+      "0,45 км (дети)"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/nalchikrunning",
+    "reg_url": "https://reg.russiarunning.com/event/nalchikrunning",
+    "source_url": "https://reg.russiarunning.com/event/nalchikrunning",
+    "note": "организатор ООО «Экстрим Трейл Групп»; официального сайта, кроме страницы регистрации, не найдено"
+  },
+  {
+    "name": "КРАСНОФЛОТСКИЙ ТРЕЙЛ",
+    "date_start": "2026-10-24",
+    "date_end": "2026-10-24",
+    "city": "Архангельск",
+    "region": "Архангельская область",
+    "race_type": "trail",
+    "distances": [
+      "12 км",
+      "6 км",
+      "2 км",
+      "1 км"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/24102026",
+    "reg_url": "https://reg.russiarunning.com/event/24102026",
+    "source_url": "https://reg.russiarunning.com/event/24102026",
+    "note": "бег по острову, грунт"
+  },
+  {
+    "name": "Индор: Кубок Самарской области по акватлону в закрытом помещении",
+    "date_start": "2026-10-25",
+    "date_end": "2026-10-25",
+    "city": "Самара",
+    "region": "Самарская область",
+    "race_type": "tri",
+    "distances": [
+      "400 м плавание + 3 км бег",
+      "200 м + 1 км (юноши, юниоры)"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/IndorKubokSamarskoyoblastipoakvatlonuvzakrytompomeshchenii",
+    "reg_url": "https://reg.russiarunning.com/event/IndorKubokSamarskoyoblastipoakvatlonuvzakrytompomeshchenii",
+    "source_url": "https://reg.russiarunning.com/event/IndorKubokSamarskoyoblastipoakvatlonuvzakrytompomeshchenii",
+    "note": "акватлон; организатор Федерация триатлона Самарской области"
+  },
+  {
+    "name": "РОССИЙСКАЯ ИМПЕРИЯ. ГЛАВА IV",
+    "date_start": "2026-10-25",
+    "date_end": "2026-10-25",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км",
+      "1 км"
+    ],
+    "site_url": "https://vk.com/crosses12months",
+    "reg_url": "https://reg.russiarunning.com/event/RossiyskayaimperiyaGlavaIV",
+    "source_url": "https://reg.russiarunning.com/event/RossiyskayaimperiyaGlavaIV",
+    "note": "Митино; серия забегов «Российская империя» (организатор серии «12 месяцев»)"
+  },
+  {
+    "name": "ХВОСТАТЫЙ ЗАБЕГ ПО САДОВОМУ КОЛЬЦУ 2026",
+    "date_start": "2026-10-25",
+    "date_end": "2026-10-25",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "16 км",
+      "5 км",
+      "1,6 км"
+    ],
+    "site_url": "https://kotodetki.ru/",
+    "reg_url": "https://reg.russiarunning.com/event/KhVOSTATYYZABEGPOSADOVOMUKOLTsU202625102026",
+    "source_url": "https://reg.russiarunning.com/event/KhVOSTATYYZABEGPOSADOVOMUKOLTsU202625102026",
+    "note": "благотворительный забег фонда «Котодетки»; можно идти шагом"
+  },
+  {
+    "name": "«ETHNORUN» в Республике Северная Осетия-Алания",
+    "date_start": "2026-11-01",
+    "date_end": "2026-11-01",
+    "city": "Владикавказ",
+    "region": "Республика Северная Осетия - Алания",
+    "race_type": "road",
+    "distances": [
+      "10 км",
+      "5 км",
+      "1 км",
+      "0,5 км"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/ETHNORUNRSO-ALANIA",
+    "reg_url": "https://reg.russiarunning.com/event/ETHNORUNRSO-ALANIA",
+    "source_url": "https://reg.russiarunning.com/event/ETHNORUNRSO-ALANIA",
+    "note": "этап всероссийской серии ЭтноРан (ВФЛА)"
+  },
+  {
+    "name": "трейл Спортивная осень",
+    "date_start": "2026-11-07",
+    "date_end": "2026-11-07",
+    "city": "Нижний Новгород",
+    "region": "Нижегородская область",
+    "race_type": "trail",
+    "distances": [
+      "10 км",
+      "5 км"
+    ],
+    "site_url": "https://vk.ru/beg.vmeste",
+    "reg_url": "https://reg.russiarunning.com/event/treylSportivnayaosen",
+    "source_url": "https://reg.russiarunning.com/event/treylSportivnayaosen",
+    "note": "лыжная база «Олень», фестиваль «Спортивная осень»"
+  },
+  {
+    "name": "SUPER КИНО СЕРИЯ",
+    "date_start": "2026-11-14",
+    "date_end": "2026-11-14",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км",
+      "3 км",
+      "1 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/SUPERKINOSERIYa3zabeg",
+    "source_url": "https://reg.russiarunning.com/event/SUPERKINOSERIYa3zabeg",
+    "note": "Перовский сквер; серия CITY RUN"
+  },
+  {
+    "name": "Триатлон на Кубок Губернатора Санкт-Петербурга на дистанцию \"суперспринт\" 4 этап",
+    "date_start": "2026-11-21",
+    "date_end": "2026-11-22",
+    "city": "Санкт-Петербург",
+    "region": "Санкт-Петербург",
+    "race_type": "tri",
+    "distances": [
+      "суперспринт (300 м бассейн)",
+      "эстафета"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/st_petersburg_indoor26_stage4",
+    "reg_url": "https://reg.russiarunning.com/event/st_petersburg_indoor26_stage4",
+    "source_url": "https://reg.russiarunning.com/event/st_petersburg_indoor26_stage4",
+    "note": "индор-триатлон, Легкоатлетический манеж; по описанию старт 22 ноября; организатор «Железный человек»"
+  },
+  {
+    "name": "Камский Закал Забег",
+    "date_start": "2026-11-22",
+    "date_end": "2026-11-22",
+    "city": "Набережные Челны",
+    "region": "Республика Татарстан",
+    "race_type": "trail",
+    "distances": [
+      "5 км"
+    ],
+    "site_url": "https://myrace.info/events/2139",
+    "reg_url": "https://myrace.info/events/2139",
+    "source_url": "https://myrace.info/events/2139",
+    "note": "кросс 5 км вместе с этапом закаливания «Поплавки» (стояние в воде); на площадке помечен как SwimRun, но плавательного этапа нет"
+  },
+  {
+    "name": "Триатлон на Кубок Губернатора Санкт-Петербурга на дистанцию \"суперспринт\" 5 этап",
+    "date_start": "2026-12-12",
+    "date_end": "2026-12-13",
+    "city": "Санкт-Петербург",
+    "region": "Санкт-Петербург",
+    "race_type": "tri",
+    "distances": [
+      "суперспринт (300 м бассейн)",
+      "эстафета"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/st_petersburg_indoor26_stage5",
+    "reg_url": "https://reg.russiarunning.com/event/st_petersburg_indoor26_stage5",
+    "source_url": "https://reg.russiarunning.com/event/st_petersburg_indoor26_stage5",
+    "note": "индор-триатлон; по описанию старт 13 декабря"
+  },
+  {
+    "name": "Space Carnival 2026",
+    "date_start": "2026-12-13",
+    "date_end": "2026-12-13",
+    "city": "Королёв",
+    "region": "Московская область",
+    "race_type": "road",
+    "distances": [
+      "10 км",
+      "5 км",
+      "детские 0,4-0,8 км"
+    ],
+    "site_url": "https://spacemarathon.ru",
+    "reg_url": "https://reg.russiarunning.com/event/spacecarnival2026",
+    "source_url": "https://reg.russiarunning.com/event/spacecarnival2026",
+    "note": "организатор ООО «Космический марафон»; костюмированный забег"
+  },
+  {
+    "name": "Чемпионат России по дуатлону - лыжная гонка",
+    "date_start": "2026-12-18",
+    "date_end": "2026-12-20",
+    "city": "Верхошижемье",
+    "region": "Кировская область",
+    "race_type": "tri",
+    "distances": [
+      "дуатлон - лыжная гонка"
+    ],
+    "site_url": "https://rustriathlon.ru/",
+    "reg_url": null,
+    "source_url": "https://rustriathlon.ru/api/calendar/list",
+    "note": "официальный календарь ФТР (ЕКП), спортивные соревнования, не массовый старт; даты по календарю ФТР, вероятно с днём приезда"
+  },
+  {
+    "name": "1 этап Кубка России по триатлону - зимнему",
+    "date_start": "2026-12-19",
+    "date_end": "2026-12-21",
+    "city": "Верхошижемье",
+    "region": "Кировская область",
+    "race_type": "tri",
+    "distances": [
+      "зимний триатлон"
+    ],
+    "site_url": "https://rustriathlon.ru/",
+    "reg_url": null,
+    "source_url": "https://rustriathlon.ru/api/calendar/list",
+    "note": "официальный календарь ФТР (ЕКП); даты по календарю ФТР, вероятно с днём приезда"
+  },
+  {
+    "name": "Чемпионат России по триатлону - зимнему - эстафете (3 чел.)",
+    "date_start": "2026-12-20",
+    "date_end": "2026-12-22",
+    "city": "Верхошижемье",
+    "region": "Кировская область",
+    "race_type": "tri",
+    "distances": [
+      "зимний триатлон, эстафета 3 чел."
+    ],
+    "site_url": "https://rustriathlon.ru/",
+    "reg_url": null,
+    "source_url": "https://rustriathlon.ru/api/calendar/list",
+    "note": "официальный календарь ФТР (ЕКП); даты по календарю ФТР"
+  },
+  {
+    "name": "НОВОГОДНЯЯ КИНО СЕРИЯ _ ИВАН ВАСИЛЬЕВИЧ МЕНЯЕТ ПРОФЕССИЮ",
+    "date_start": "2026-12-31",
+    "date_end": "2026-12-31",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км",
+      "3 км",
+      "1 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/NOVOGODNYaYaKINOSERIYaIVANVASILEVIChMENYaETPROFESSIYu",
+    "source_url": "https://reg.russiarunning.com/event/NOVOGODNYaYaKINOSERIYaIVANVASILEVIChMENYaETPROFESSIYu",
+    "note": "Перовский сквер; серия CITY RUN"
+  },
+  {
+    "name": "НОВОГОДНИЙ ЗАБЕГ",
+    "date_start": "2027-01-03",
+    "date_end": "2027-01-03",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км",
+      "3 км",
+      "1 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/NOVOGODNIYZABEG2027",
+    "source_url": "https://reg.russiarunning.com/event/NOVOGODNIYZABEG2027",
+    "note": "Перовский сквер; серия CITY RUN"
+  },
+  {
+    "name": "РОЖДЕСТВЕНСКИЙ ЗАБЕГ",
+    "date_start": "2027-01-07",
+    "date_end": "2027-01-07",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км",
+      "3 км",
+      "1 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/ROZhDESTVENSKIYZABEG2027",
+    "source_url": "https://reg.russiarunning.com/event/ROZhDESTVENSKIYZABEG2027",
+    "note": "Перовский сквер; серия CITY RUN"
+  },
+  {
+    "name": "ВОСТОЧНЫЙ ГОРОСКОП _ ГОД КОЗЫ",
+    "date_start": "2027-02-06",
+    "date_end": "2027-02-06",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км",
+      "3 км",
+      "1 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/GODKOZY",
+    "source_url": "https://reg.russiarunning.com/event/GODKOZY",
+    "note": "Перовский сквер; серия CITY RUN"
+  },
+  {
+    "name": "КРЮКОВО МАРАФОН (ЗЕЛЕНОГРАД)",
+    "date_start": "2027-04-03",
+    "date_end": "2027-04-03",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/KRYuKOVOMARAFONZELENOGRAD2027",
+    "source_url": "https://reg.russiarunning.com/event/KRYuKOVOMARAFONZELENOGRAD2027",
+    "note": "Зеленоград, парк «Михайловский пруд»; серия CITY RUN «125 районов-марафонов», несмотря на название марафонской дистанции нет"
+  },
+  {
+    "name": "МАТУШКИНО МАРАФОН (ЗЕЛЕНОГРАД)",
+    "date_start": "2027-04-04",
+    "date_end": "2027-04-04",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/MATUShKINOMARAFONZELENOGRAD2027",
+    "source_url": "https://reg.russiarunning.com/event/MATUShKINOMARAFONZELENOGRAD2027",
+    "note": "Зеленоград, парк Ровесник; серия CITY RUN «125 районов-марафонов», несмотря на название марафонской дистанции нет"
+  },
+  {
+    "name": "САВЁЛКИ МАРАФОН (ЗЕЛЕНОГРАД)",
+    "date_start": "2027-04-10",
+    "date_end": "2027-04-10",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/SAVYoLKIMARAFONZELENOGRAD2027",
+    "source_url": "https://reg.russiarunning.com/event/SAVYoLKIMARAFONZELENOGRAD2027",
+    "note": "Зеленоград, Дендропарк и парк 40-летия Победы; серия CITY RUN «125 районов-марафонов», несмотря на название марафонской дистанции нет"
+  },
+  {
+    "name": "СТАРОЕ КРЮКОВО МАРАФОН (ЗЕЛЕНОГРАД)",
+    "date_start": "2027-04-11",
+    "date_end": "2027-04-11",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/STAROEKRYuKOVOMARAFONZELENOGRAD2027",
+    "source_url": "https://reg.russiarunning.com/event/STAROEKRYuKOVOMARAFONZELENOGRAD2027",
+    "note": "Зеленоград, лесопарк у СК «Радуга»; серия CITY RUN «125 районов-марафонов», несмотря на название марафонской дистанции нет"
+  },
+  {
+    "name": "СИЛИНО МАРАФОН (ЗЕЛЕНОГРАД)",
+    "date_start": "2027-04-18",
+    "date_end": "2027-04-18",
+    "city": "Москва",
+    "region": "Москва",
+    "race_type": "road",
+    "distances": [
+      "21,1 км",
+      "10 км",
+      "5 км"
+    ],
+    "site_url": "https://t.me/cityrunrun",
+    "reg_url": "https://reg.russiarunning.com/event/SILINOMARAFONZELENOGRAD2027",
+    "source_url": "https://reg.russiarunning.com/event/SILINOMARAFONZELENOGRAD2027",
+    "note": "Зеленоград, Панфиловский парк; серия CITY RUN «125 районов-марафонов», несмотря на название марафонской дистанции нет"
+  },
+  {
+    "name": "АРГАМАК ТРЕЙЛ 2027",
+    "date_start": "2027-05-30",
+    "date_end": "2027-05-30",
+    "city": "Аргамач-Пальна",
+    "region": "Липецкая область",
+    "race_type": "trail",
+    "distances": [
+      "20 км",
+      "7 км",
+      "3,6 км",
+      "1,5 км (дети)"
+    ],
+    "site_url": "https://vk.com/lipetskmarathon",
+    "reg_url": "https://reg.russiarunning.com/event/argamak2027",
+    "source_url": "https://reg.russiarunning.com/event/argamak2027",
+    "note": "археологический парк Аргамач, Елецкий район"
+  },
+  {
+    "name": "X-WATERS Урал 2027",
+    "date_start": "2027-07-09",
+    "date_end": "2027-07-11",
+    "city": "Миасс",
+    "region": "Челябинская область",
+    "race_type": "tri",
+    "distances": [
+      "акватлон 2,5 + 1 + 2,5 км"
+    ],
+    "site_url": "https://x-waters.com/events/ural/",
+    "reg_url": "https://x-waters.com/events/ural/",
+    "source_url": "https://x-waters.com/events/ural/",
+    "note": "оз. Тургояк; в основном заплыв на открытой воде, в программе есть акватлон (бег-плавание-бег); день акватлона внутри 9-11 июля не уточнён"
+  },
+  {
+    "name": "Триатлон \"МЕДНЫЙ ВСАДНИК\" 113 / 226 / Эстафета 2027",
+    "date_start": "2027-07-15",
+    "date_end": "2027-07-18",
+    "city": "Санкт-Петербург",
+    "region": "Санкт-Петербург",
+    "race_type": "tri",
+    "distances": [
+      "113 км (средняя дистанция)",
+      "226 км (полная дистанция)",
+      "эстафета 113 км"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/Mednyyvsadnik2027",
+    "reg_url": "https://reg.russiarunning.com/event/Mednyyvsadnik2027",
+    "source_url": "https://reg.russiarunning.com/event/Mednyyvsadnik2027",
+    "note": "гонка 17 июля 2027 по описанию; организатор СПб РФСОО «Железный человек»"
+  },
+  {
+    "name": "Игры ЭкстримКрым",
+    "date_start": "2027-07-23",
+    "date_end": "2027-07-25",
+    "city": "Оленевка",
+    "region": "Республика Крым",
+    "race_type": "tri",
+    "distances": [
+      "триатлон спринт",
+      "суперспринт",
+      "акватлон 4,8 км",
+      "дуатлон 19,1 км",
+      "Тарханкут Трейл 10 км",
+      "Тарханкут Трейл 20 км"
+    ],
+    "site_url": "https://crimeatrail.com/extremekrym",
+    "reg_url": "https://reg.russiarunning.com/event/gamexteam26",
+    "source_url": "https://reg.russiarunning.com/event/gamexteam26",
+    "note": "мыс Тарханкут; перенесено с 2026 на 2027 (на сайте организатора), даты 2027 только на странице регистрации; Крым"
+  },
+  {
+    "name": "X-WATERS МСК Руза 2027",
+    "date_start": "2027-08-14",
+    "date_end": "2027-08-14",
+    "city": "Руза",
+    "region": "Московская область",
+    "race_type": "tri",
+    "distances": [
+      "акватлон 2,5 + 1 + 2,5 км"
+    ],
+    "site_url": "https://x-waters.com/events/moscow-ruza/",
+    "reg_url": "https://x-waters.com/events/moscow-ruza/",
+    "source_url": "https://x-waters.com/events/moscow-ruza/",
+    "note": "Рузское водохранилище; в основном заплыв, в программе есть акватлон"
+  },
+  {
+    "name": "100-й Петербургский Марафон. Пушкин - Петербург",
+    "date_start": "2027-09-05",
+    "date_end": "2027-09-05",
+    "city": "Санкт-Петербург",
+    "region": "Санкт-Петербург",
+    "race_type": "road",
+    "distances": [
+      "42,2 км",
+      "30 км",
+      "10 км",
+      "5 км"
+    ],
+    "site_url": "https://pushkin-run.ru/pushkin-spb-2027",
+    "reg_url": "https://reg.russiarunning.com/event/100yPeterburgskiyMarafonPushkinPeterburg",
+    "source_url": "https://pushkin-run.ru/pushkin-spb-2027",
+    "note": "юбилейный 100-й, старт в Пушкине; в рамках Чемпионат Санкт-Петербурга по марафону"
+  },
+  {
+    "name": "Кисловодский марафон KAVKAZ.RUN 2027",
+    "date_start": "2027-10-09",
+    "date_end": "2027-10-10",
+    "city": "Кисловодск",
+    "region": "Ставропольский край",
+    "race_type": "road",
+    "distances": [
+      "42,2 км",
+      "31,7 км",
+      "21,1 км",
+      "10 км",
+      "4,7 км",
+      "2,6 км",
+      "эстафета 4x10 км"
+    ],
+    "site_url": "https://reg.russiarunning.com/event/KislovodskiymarafonKAVKAZRUN2027",
+    "reg_url": "https://reg.russiarunning.com/event/KislovodskiymarafonKAVKAZRUN2027",
+    "source_url": "https://reg.russiarunning.com/event/KislovodskiymarafonKAVKAZRUN2027",
+    "note": "асфальт + кросс по нацпарку"
+  }
+]
