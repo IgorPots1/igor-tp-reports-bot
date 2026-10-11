@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import {
   applyFilters,
   dateStub,
+  displayName,
   distMatch,
   distPills,
   filtersFromSearch,
@@ -54,6 +55,12 @@ const row = (over: Partial<RaceRow>): RaceRow => ({
   checked_note: null,
   ...over,
 });
+
+// Длинные тире в названиях при выводе становятся дефисом, данные не меняются.
+assert.equal(displayName("XIII марафон «Мучкап – Шапкино» – Любо!"), "XIII марафон «Мучкап - Шапкино» - Любо!");
+assert.equal(displayName("Тропа Хийси — Выборг Фаворит"), "Тропа Хийси - Выборг Фаворит");
+assert.equal(displayName("Сочи-Марафон 2026"), "Сочи-Марафон 2026", "обычный дефис не трогаем");
+assert.equal(toRace(row({ name: "Кросс Питер — Осень 2026" })).name, "Кросс Питер - Осень 2026", "в карточке уже дефис");
 
 // Источники.
 assert.equal(toRace(row({ sources: ["probeg"] })).nSources, 1, "один источник: это сам старт");

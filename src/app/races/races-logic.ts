@@ -125,12 +125,18 @@ export function dayMonth(s: string): string {
   return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`;
 }
 
+/** Название для показа: « — » и « – » между словами становятся дефисом.
+ *  В базе названия остаются как у организатора, меняется только вывод. */
+export function displayName(name: string): string {
+  return name.replace(/\s+[—–]\s+/g, " - ");
+}
+
 export function toRace(r: RaceRow): Race {
   const km = (r.dist_km || []).map(Number).filter((x) => Number.isFinite(x));
   const srcs = r.sources || [];
   return {
     id: r.id,
-    name: r.name,
+    name: displayName(r.name),
     ds: r.date_start,
     de: r.date_end || r.date_start,
     city: r.city || "",
