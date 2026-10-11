@@ -60,31 +60,85 @@ function main(): void {
     "текст опирается на факт: мы знаем, что она бегала"
   );
 
-  // Тренировки не было — разговор про человека, а не про отметку.
-  const missed = at({ localHour: 20, hasActivityToday: false });
-  expect(missed.send && missed.kind === "missed_nudge", "пропущенная тренировка получает свой вид напоминания");
+  /* ── ВОПРОС ПРО ПРОПУСК УЕХАЛ НА СЛЕДУЮЩИЙ ПОЛДЕНЬ [наряд Игоря, 11.10.2026]
+   *
+   * ПОЧЕМУ ЭТИ УТВЕРЖДЕНИЯ ПЕРЕПИСАНЫ. Прежде вопрос задавался в тот же вечер,
+   * и проверка это стерегла. Но ученица вводит пробежки на СЛЕДУЮЩЕЕ УТРО:
+   * вечером система не отличает «не бегал» от «бегал и не записал», и посылала
+   * «её не видно» в день, когда она бегала. Сообщение, обвиняющее человека в
+   * том, чего он не делал, дороже любого пропущенного напоминания.
+   *
+   * Теперь проверка держит СИЛЬНЕЕ: вечером про пропуск не говорим ВООБЩЕ. */
+  const eveningMissed = at({ localHour: 20, hasActivityToday: false });
   expect(
-    missed.send && missed.textRu.includes("всё в порядке"),
+    eveningMissed.send === false,
+    "вечером про пропуск НЕ спрашиваем: пробежка могла быть и ещё не записана"
+  );
+
+  // А на следующий полдень — спрашиваем, если вчерашний день так и не закрыт.
+  const nextDay = at({
+    localHour: 13,
+    todaySession: null,
+    yesterdaySession: { title: "Лёгкий бег", minutes: 40 },
+    yesterdayClosed: false,
+  });
+  expect(nextDay.send && nextDay.kind === "missed_nudge", "на следующий полдень вопрос задаётся");
+  expect(
+    nextDay.send && nextDay.textRu.includes("Вчера по плану"),
+    "и текст говорит про ВЧЕРА, а не про сегодня"
+  );
+  expect(
+    nextDay.send && nextDay.textRu.includes("всё в порядке"),
     "спрашиваем, всё ли в порядке, а не требуем отметиться"
   );
   expect(
-    missed.send && !missed.textRu.includes("Отметьтесь"),
+    nextDay.send && !nextDay.textRu.includes("Отметьтесь"),
     "не просим отметиться о том, чего не было"
   );
   expect(
-    missed.send && missed.textRu.includes("догонять не нужно"),
+    nextDay.send && nextDay.textRu.includes("догонять не нужно"),
     "без упрёка: догонять не нужно"
+  );
+  expect(
+    nextDay.send && nextDay.textRu.includes("не успели записать"),
+    "и прямо названа самая частая причина: бегала, но не записала"
+  );
+
+  /* ГЛАВНОЕ УТВЕРЖДЕНИЕ НАРЯДА: записала утром — вопроса не будет вовсе. */
+  expect(
+    at({
+      localHour: 13,
+      todaySession: null,
+      yesterdaySession: { title: "Лёгкий бег", minutes: 40 },
+      yesterdayClosed: true,
+    }).send === false,
+    "вчерашний день закрыт к полудню — молчим, это её обычный способ отмечаться"
+  );
+  expect(
+    at({ localHour: 13, todaySession: null, yesterdaySession: null, yesterdayClosed: false }).send === false,
+    "вчера плана не было — спрашивать не о чем"
+  );
+  // Вне окна полудня вопрос не задаётся: одно правило, одно окно.
+  expect(
+    at({ localHour: 16, todaySession: null, yesterdaySession: { title: "Лёгкий бег", minutes: 40 }, yesterdayClosed: false }).send === false,
+    "после окна полудня уже не спрашиваем: два окна дали бы два сообщения об одном дне"
   );
 
   const noPlanNoRun = at({ localHour: 20, todaySession: null, hasActivityToday: false });
   expect(noPlanNoRun.send === false, "вечером без тренировки и без пробежки молчим");
 
   step("НЕСКОЛЬКО ПРОПУСКОВ ПОДРЯД: БОТ ЗАМОЛКАЕТ");
+  const streakArgs = {
+    localHour: 13,
+    todaySession: null,
+    yesterdaySession: { title: "Лёгкий бег", minutes: 40 },
+    yesterdayClosed: false,
+  };
   expect(
-    at({ localHour: 20, hasActivityToday: false, missedStreak: 1 }).send === true,
+    at({ ...streakArgs, missedStreak: 1 }).send === true,
     "после первого пропуска ещё спрашиваем: бытовая случайность"
   );
-  const longSilence = at({ localHour: 20, hasActivityToday: false, missedStreak: MISSED_STREAK_SILENCE });
+  const longSilence = at({ ...streakArgs, missedStreak: MISSED_STREAK_SILENCE });
   expect(longSilence.send === false, `после ${MISSED_STREAK_SILENCE} пропусков подряд бот молчит`);
   expect(
     longSilence.send === false && longSilence.reason.includes("к тренеру"),
@@ -107,12 +161,18 @@ function main(): void {
     "вечернее уже уходило сегодня — второй раз нет"
   );
   expect(
-    at({ localHour: 20, alreadySentKinds: ["missed_nudge"] }).send === false,
+    at({
+      localHour: 13,
+      todaySession: null,
+      yesterdaySession: { title: "Лёгкий бег", minutes: 40 },
+      yesterdayClosed: false,
+      alreadySentKinds: ["missed_nudge"],
+    }).send === false,
     "вопрос про пропуск тоже задаётся один раз в день"
   );
   // Утреннее ушло, вечернее нет: это РАЗНЫЕ напоминания, и второе имеет право уйти.
   expect(
-    at({ localHour: 20, alreadySentKinds: ["today_session"] }).send === true,
+    at({ localHour: 20, hasActivityToday: true, alreadySentKinds: ["today_session"] }).send === true,
     "утреннее не запирает вечернее: они про разное"
   );
 

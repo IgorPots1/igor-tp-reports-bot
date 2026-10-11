@@ -221,6 +221,21 @@ async function main(): Promise<void> {
       missedStreak,
       alreadySentKinds: (sentRows ?? []).map((row) => (row as { kind: ReminderKind }).kind),
       hasPublishedPlan: cycle !== null,
+      /**
+       * ВЧЕРАШНИЙ ДЕНЬ — для вопроса «её не видно», который с 11.10.2026
+       * задаётся на следующий полдень, а не в тот же вечер. Закрытым считается
+       * день, у которого есть пробежка ИЛИ отметка: человек мог побежать и
+       * записать только слова.
+       */
+      yesterdaySession: (() => {
+        const y = shiftIso(today, -1);
+        const s = sessions.find((session) => session.sessionDate === y);
+        return s ? { title: s.title, minutes: s.minutes } : null;
+      })(),
+      yesterdayClosed: (() => {
+        const y = shiftIso(today, -1);
+        return activityDates.has(y) || checkinDates.has(y);
+      })(),
     });
 
     const who = `${student.studentName} (${today}, ${hour}:00 местного${missedStreak > 0 ? `, пропусков подряд ${missedStreak}` : ""})`;
