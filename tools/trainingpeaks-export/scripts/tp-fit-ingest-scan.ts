@@ -114,6 +114,9 @@ const getTrainingPeaksAthleteObservedMaxHr =
 const replaceTrainingPeaksWorkoutLaps =
   trainingPeaksRepositoryCompat.replaceTrainingPeaksWorkoutLaps ??
   trainingPeaksRepositoryCompat.default?.replaceTrainingPeaksWorkoutLaps;
+const listOpenTrainingPeaksTpAccessLostEpisodes =
+  trainingPeaksRepositoryCompat.listOpenTrainingPeaksTpAccessLostEpisodes ??
+  trainingPeaksRepositoryCompat.default?.listOpenTrainingPeaksTpAccessLostEpisodes;
 const upsertTrainingPeaksWorkoutDerivedMetricsRows =
   trainingPeaksRepositoryCompat.upsertTrainingPeaksWorkoutDerivedMetricsRows ??
   trainingPeaksRepositoryCompat.default?.upsertTrainingPeaksWorkoutDerivedMetricsRows;
@@ -786,6 +789,23 @@ async function main(): Promise<void> {
 
   const scannedAt = new Date().toISOString();
 
+  // Открытый эпизод 403 (нет доступа к календарю в TP, см. trainingpeaks_tp_access_lost_notices) —
+  // пропускаем целиком: экспорт файлов всё равно вернёт 403. Перепроверку раз в сутки делает скан
+  // кэша, он же закрывает эпизод, когда доступ вернётся. Точечный --student сканирует всегда.
+  // Не прочитали эпизоды — сканируем всех, как раньше.
+  let accessLostStudentIds = new Set<string>();
+  if (!args.student && typeof listOpenTrainingPeaksTpAccessLostEpisodes === "function") {
+    try {
+      accessLostStudentIds = new Set(
+        (await listOpenTrainingPeaksTpAccessLostEpisodes()).map((episode) => episode.studentId)
+      );
+    } catch (error) {
+      console.error(
+        `[tp-fit-ingest-scan] access-lost episodes unavailable, scanning everyone: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   const summaries: StudentSummary[] = [];
 
   {
@@ -795,6 +815,19 @@ async function main(): Promise<void> {
           studentName: target.student.studentName,
           status: "skipped",
           reason: "missing valid TrainingPeaks athlete URL/id",
+          workoutsProcessed: 0,
+          fitMatched: 0,
+          detailsOnly: 0,
+          summaryOnly: 0,
+          warnings: 0,
+        });
+        continue;
+      }
+      if (accessLostStudentIds.has(target.student.id)) {
+        summaries.push({
+          studentName: target.student.studentName,
+          status: "skipped",
+          reason: "no TrainingPeaks access (open 403 episode)",
           workoutsProcessed: 0,
           fitMatched: 0,
           detailsOnly: 0,

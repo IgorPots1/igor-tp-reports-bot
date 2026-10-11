@@ -10,6 +10,7 @@
 # export it explicitly, same as run-battery-guard.sh does for pmset/pmset-adjacent tools.
 set -uo pipefail
 RUNNER_TIMEOUT_SECONDS=600
+RUNNER_WAKE_JITTER_MAX_SECONDS=0  # частый лёгкий прогон: без задержки после пробуждения
 source "$(dirname "$0")/lib/runner-prelude.sh"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"

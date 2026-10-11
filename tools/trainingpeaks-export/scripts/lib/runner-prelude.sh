@@ -13,6 +13,9 @@
 #  2. ОЖИДАНИЕ СЕТИ. Мак спит; при пробуждении launchd стартует пропущенное до поднятия Wi-Fi.
 #     Не дождались — выходим 0 (см. wait-for-network.sh про выбор кода).
 #
+#  2б. РАЗВОДКА ПОСЛЕ ПРОБУЖДЕНИЯ (аудит 2026-10-11): старт в первые 2 мин после пробуждения ждёт
+#     случайные 0…RUNNER_WAKE_JITTER_MAX_SECONDS, чтобы пропущенные во сне прогоны не шли пачкой.
+#
 #  3. ТАЙМАУТ ПРОГОНА. 03.08 в 14:20 health-metrics-scan запустился и не закончился: строки
 #     Finished в логе нет, кода выхода нет, хартбита нет — зависший процесс невидим и держит
 #     слот до бесконечности. RUNNER_TIMEOUT_SECONDS (по умолчанию 1800) убивает такой прогон и
@@ -41,6 +44,26 @@ RUNNER_PRELUDE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! "${RUNNER_PRELUDE_DIR}/wait-for-network.sh"; then
   echo "[runner] сеть не поднялась, прогон пропущен"
   exit 0
+fi
+
+# --- 2б. разводка после пробуждения -----------------------------------------------------------
+# Аудит 11.10: при пробуждении launchd докручивает все пропущенные во сне прогоны РАЗОМ (в 11:04:42
+# скан кэша стартовал в ту же секунду, voice-worker через 12 с, fit-ingest через 19 с), и они
+# вместе бьют в базу. Если прогон стартует в первые 2 минуты после пробуждения — ждём случайные
+# 0…RUNNER_WAKE_JITTER_MAX_SECONDS (по умолчанию 300). Обычные прогоны по расписанию не ждут.
+# На время ожидания и прогона держим Мак бодрым (caffeinate -i до выхода этого процесса):
+# техническое пробуждение длится секунды, и без этого Мак уснул бы посреди ожидания.
+# Частые лёгкие раннеры (voice-worker, battery-guard, club-execute-approved) ставят 0 до пролога.
+RUNNER_WAKE_JITTER_MAX_SECONDS="${RUNNER_WAKE_JITTER_MAX_SECONDS:-300}"
+if [ "${RUNNER_WAKE_JITTER_MAX_SECONDS}" -gt 0 ] 2>/dev/null; then
+  RUNNER_WAKE_AT="$(sysctl -n kern.waketime 2>/dev/null | sed -nE 's/.*[{ ]sec = ([0-9]+),.*/\1/p')"
+  RUNNER_NOW="$(date +%s)"
+  if [ -n "${RUNNER_WAKE_AT}" ] && [ $((RUNNER_NOW - RUNNER_WAKE_AT)) -ge 0 ] && [ $((RUNNER_NOW - RUNNER_WAKE_AT)) -lt 120 ]; then
+    RUNNER_WAKE_DELAY=$((RANDOM % (RUNNER_WAKE_JITTER_MAX_SECONDS + 1)))
+    caffeinate -i -w "$$" >/dev/null 2>&1 &
+    echo "[runner] старт через $((RUNNER_NOW - RUNNER_WAKE_AT)) с после пробуждения: задержка ${RUNNER_WAKE_DELAY} с, чтобы не идти пачкой"
+    sleep "${RUNNER_WAKE_DELAY}"
+  fi
 fi
 
 # --- 3. таймаут прогона -----------------------------------------------------------------------

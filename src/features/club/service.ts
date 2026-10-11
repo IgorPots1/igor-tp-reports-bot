@@ -4052,26 +4052,23 @@ export type MaterializeResult = {
  * FIT laps (workout_laps). Both matter: FIT arrives after summary and only the
  * laps table moves, so a cache-only signal would miss best-split trust upgrades.
  * This is the incremental recompute set — decoupled from any scan's internals.
+ *
+ * One RPC (distinct over both tables, index on updated_at) instead of paging every touched
+ * row through PostgREST by OFFSET: that read was a seq scan of 0.6–8.4 s on the shared-CPU
+ * instance and hit the 8 s statement_timeout ~12 times a day (audit 2026-10-11). The result
+ * is at most a few hundred ids, so it fits one response.
  */
 export async function loadStudentsTouchedSince(sinceIso: string): Promise<string[]> {
   const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() =>
+    supabase.rpc("list_students_touched_since", { p_since: sinceIso })
+  );
+  if (error) {
+    throw new Error(`club:touched failed: ${error.message}`);
+  }
   const ids = new Set<string>();
-  for (const table of ["trainingpeaks_workout_cache", "trainingpeaks_workout_laps"] as const) {
-    const rows = await fetchAllRows<{ student_id: string | null }>(
-      (from, to) =>
-        withSupabaseNetworkRetry(() =>
-          supabase
-            .from(table)
-            .select("student_id")
-            .gt("updated_at", sinceIso)
-            .order("student_id", { ascending: true })
-            .range(from, to)
-        ),
-      { label: `club:touched:${table}` }
-    );
-    for (const r of rows) {
-      if (r.student_id) ids.add(r.student_id);
-    }
+  for (const id of (data as string[] | null) ?? []) {
+    if (id) ids.add(id);
   }
   return [...ids];
 }

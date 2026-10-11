@@ -154,6 +154,30 @@ export function classifyScanFailure(errorMessage: string | null | undefined): Sc
   return "other";
 }
 
+// --- пропуск учеников без доступа (аудит 11.10) -------------------------------------------------
+//
+// 15 учеников с открытым эпизодом 403 (trainingpeaks_tp_access_lost_notices, restored_at null)
+// сканировались каждые 30 минут и каждый раз падали: ~2,6 тыс. пустых запросов в неделю в TP и
+// столько же строк ошибок в логе. Теперь скан кэша берёт такого ученика раз в сутки — чтобы
+// увидеть, что доступ вернулся (ok-скан закрывает эпизод), — а в остальных прогонах пропускает.
+// Пропущенный НЕ получает новой строки статуса: последний статус остаётся «failed 403», и дайджест
+// по-прежнему показывает его в «Нет доступа к TP». В счётчике 403 прогона он учитывается как
+// прежде, иначе правило скачка (+3 к прошлому прогону) тревожило бы на каждой суточной перепроверке.
+
+export const TP_ACCESS_LOST_RECHECK_HOURS = 24;
+
+/** true — пропустить в этом прогоне; false — сканировать (эпизода нет или пора перепроверить). */
+export function shouldSkipAccessLostStudent(
+  openEpisodeLastSeenAt: string | null | undefined,
+  now: Date = new Date(),
+  recheckHours: number = TP_ACCESS_LOST_RECHECK_HOURS,
+): boolean {
+  if (!openEpisodeLastSeenAt) return false;
+  const lastSeenMs = new Date(openEpisodeLastSeenAt).getTime();
+  if (!Number.isFinite(lastSeenMs)) return false;
+  return now.getTime() - lastSeenMs < recheckHours * 3_600_000;
+}
+
 // --- свежесть данных ---------------------------------------------------------------------------
 
 /** «обновлено 3 ч назад» по последнему ok-скану ученика. */

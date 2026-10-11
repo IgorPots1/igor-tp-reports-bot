@@ -2238,6 +2238,22 @@ export async function markTrainingPeaksTpAccessLostNotified(studentIds: string[]
   if (error) throw new Error(`Failed to mark TP access-lost episodes notified: ${error.message}`);
 }
 
+/** Открытые эпизоды 403 (restored_at null) — для пропуска в сканах, см. shouldSkipAccessLostStudent. */
+export async function listOpenTrainingPeaksTpAccessLostEpisodes(): Promise<
+  Array<{ studentId: string; lastSeenAt: string }>
+> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await withSupabaseNetworkRetry(() => supabase
+    .from("trainingpeaks_tp_access_lost_notices")
+    .select("student_id, last_seen_at")
+    .is("restored_at", null));
+  if (error) throw new Error(`Failed to read open TP access-lost episodes: ${error.message}`);
+  return ((data as Array<{ student_id: string; last_seen_at: string }> | null) ?? []).map((row) => ({
+    studentId: row.student_id,
+    lastSeenAt: row.last_seen_at,
+  }));
+}
+
 export async function upsertTrainingPeaksWorkoutCacheScanStatuses(
   rows: TrainingPeaksWorkoutCacheScanStatusUpsertRow[]
 ): Promise<void> {

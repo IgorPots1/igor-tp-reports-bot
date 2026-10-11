@@ -10,6 +10,7 @@
 # ВАЖНО: это не мешает маку спать (это `sudo pmset -c sleep 0` на AC) — только предупреждает.
 # Если мак УЖЕ в глубоком сне на батарее, launchd не запустит и сторожа — потому и шлём заранее.
 RUNNER_TIMEOUT_SECONDS=120
+RUNNER_WAKE_JITTER_MAX_SECONDS=0  # частый лёгкий прогон: без задержки после пробуждения
 source "$(dirname "$0")/lib/runner-prelude.sh"
 
 set -uo pipefail

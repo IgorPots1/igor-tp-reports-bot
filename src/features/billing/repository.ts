@@ -770,6 +770,25 @@ export async function createBillingEmailImportRun(
   return mapBillingEmailImportRunRow(data as BillingEmailImportRunRow);
 }
 
+/** started_at последнего успешного apply-прогона импорта из почты; null — такого ещё не было. */
+export async function getLatestSuccessfulBillingEmailImportRunStartedAt(): Promise<string | null> {
+  const supabase = createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("billing_email_import_runs")
+    .select("started_at")
+    .eq("status", "success")
+    .eq("mode", "apply")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to read latest successful billing email import run: ${error.message}`);
+  }
+
+  return (data as { started_at: string } | null)?.started_at ?? null;
+}
+
 export async function updateBillingEmailImportRunById(
   id: string,
   patch: UpdateBillingEmailImportRunRow

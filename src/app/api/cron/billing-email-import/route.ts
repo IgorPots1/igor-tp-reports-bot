@@ -64,7 +64,7 @@ async function handleBillingEmailImport(request: Request) {
   await logAttempt("started", request);
 
   try {
-    const summary = await runBillingEmailImport({ apply: true });
+    const summary = await runBillingEmailImport({ apply: true, incrementalSinceLastSuccess: true });
     await logAttempt("ok", request, { httpStatus: 200, runId: summary.runId ?? null });
     return jsonResponse(200, {
       ok: true,

@@ -5,6 +5,7 @@
 # repeated 30-min runs never duplicate in TP. Install via the launchd plist next to this file.
 set -euo pipefail
 RUNNER_TIMEOUT_SECONDS=600
+RUNNER_WAKE_JITTER_MAX_SECONDS=0  # частый лёгкий прогон: без задержки после пробуждения
 source "$(dirname "$0")/lib/runner-prelude.sh"
 
 cd "$HOME/igor-tp-reports-bot"

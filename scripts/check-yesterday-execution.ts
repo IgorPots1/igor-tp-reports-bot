@@ -16,6 +16,8 @@ import {
   formatDataFreshness,
   isUnplannedCompletedWorkout,
   resolvePlannedRunOutcomes,
+  shouldSkipAccessLostStudent,
+  TP_ACCESS_LOST_RECHECK_HOURS,
   type ExecutionWorkoutRow,
 } from "@/features/trainingpeaks/yesterday-execution";
 
@@ -230,9 +232,38 @@ function checkScanRunHealth(): void {
   assert(evaluateScanRunHealth({ current: run(79, 0, 21), previousAccessLost: 0 }).verdict === "alarm", "79% — тревога");
 }
 
+// Аудит 11.10: ученик с открытым эпизодом 403 сканируется раз в сутки, а не каждые 30 минут.
+function checkAccessLostSkip(): void {
+  const now = new Date("2026-10-11T12:00:00Z");
+  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
+  assert(TP_ACCESS_LOST_RECHECK_HOURS === 24, "перепроверка раз в сутки");
+  // Нет эпизода — сканируем всегда.
+  assert(!shouldSkipAccessLostStudent(null, now), "нет эпизода — сканировать");
+  assert(!shouldSkipAccessLostStudent(undefined, now), "нет эпизода (undefined) — сканировать");
+  // Эпизод открыт, 403 видели полчаса назад — пропуск.
+  assert(shouldSkipAccessLostStudent(hoursAgo(0.5), now), "403 полчаса назад — пропуск");
+  assert(shouldSkipAccessLostStudent(hoursAgo(23.9), now), "403 23,9 ч назад — ещё пропуск");
+  // Прошли сутки — перепроверка (иначе возвращённый доступ никто бы не заметил).
+  assert(!shouldSkipAccessLostStudent(hoursAgo(24), now), "ровно сутки — перепроверить");
+  assert(!shouldSkipAccessLostStudent(hoursAgo(72), now), "трое суток — перепроверить");
+  // Мусор в дате — не прячем ученика, сканируем.
+  assert(!shouldSkipAccessLostStudent("не дата", now), "битая дата — сканировать");
+
+  // Пропущенные учитываются в счётчике 403 прогона (так считает tp-workouts-cache-scan.ts).
+  // Тогда 15 стабильных недоступных дают одно и то же число и в прогоне-пропуске (0 упавших +
+  // 15 пропущенных), и в суточной перепроверке (15 упавших) — правило скачка не срабатывает.
+  const run = (ok: number, accessLost: number) => ({ ok, accessLost, fetchFailed: 0, otherFailed: 0, skipped: 2 });
+  const skipRun = evaluateScanRunHealth({ current: run(100, 0 + 15), previousAccessLost: 15 });
+  const recheckRun = evaluateScanRunHealth({ current: run(100, 15 + 0), previousAccessLost: 15 });
+  assert(skipRun.verdict === "partial" && recheckRun.verdict === "partial", "пропуск и перепроверка — без тревоги");
+  // Без учёта пропущенных перепроверка выглядела бы как скачок 0 → 15 — это ровно та ложная тревога.
+  assert(evaluateScanRunHealth({ current: run(100, 15), previousAccessLost: 0 }).verdict === "alarm", "0 → 15 — тревога");
+}
+
 function main(): void {
   checkPairing();
   checkScanRunHealth();
+  checkAccessLostSkip();
   checkScanFailureKinds();
   checkFreshness();
   checkDeskDigestParity();

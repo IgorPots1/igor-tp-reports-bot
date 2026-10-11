@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- FIT-ingest scan + feedback-enqueue — считает derived_metrics ИЗ скачанного кэша
      и СРАЗУ САМ кладёт новые тренировки в «Новые» (enqueue на маке, ноль кронов Vercel).
-     Идёт СЛЕДОМ за workout-cache-scan (КАЖДЫЕ 30 МИН на :05 и :35, cache-scan на :00/:30 — новому
-     fetch-пути хватает ~26с). Окно последних 5 дней. Кладётся в ~/Library/LaunchAgents/. Ставит Игорь:
+     Идёт СЛЕДОМ за workout-cache-scan (КАЖДЫЕ 30 МИН на :15 и :45, cache-scan на :00/:30). Окно последних 5 дней. Кладётся в ~/Library/LaunchAgents/. Ставит Игорь:
        cp .../com.igor.trainingpeaks.fit-ingest-scan.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.fit-ingest-scan.plist -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -25,13 +24,16 @@
   <key>RunAtLoad</key>
   <true/>
 
-  <!-- КАЖДЫЕ 30 МИН на :05 и :35 — на 5 мин ПОЗЖЕ cache-scan (:00/:30), чтобы тренировки уже были
+  <!-- КАЖДЫЕ 30 МИН на :15 и :45 — на 15 мин ПОЗЖЕ cache-scan (:00/:30), чтобы тренировки уже были
        в кэше, когда считаем из них метрики (массив интервалов; Minute без Hour = каждый час на эту минуту).
-       Пропущенные во сне прогоны launchd докручивает при пробуждении. -->
+       Было :05/:35 — аудит 11.10: cache-scan идёт до ~6 мин, и оба в конце запускают materialize
+       по одним таблицам одновременно; на shared-CPU базы это и давало таймауты. Сдвиг на :15/:45
+       разводит их с запасом. Пропущенные во сне прогоны launchd докручивает при пробуждении
+       (против пачки сразу после пробуждения — задержка в runner-prelude.sh). -->
   <key>StartCalendarInterval</key>
   <array>
-    <dict><key>Minute</key><integer>5</integer></dict>
-    <dict><key>Minute</key><integer>35</integer></dict>
+    <dict><key>Minute</key><integer>15</integer></dict>
+    <dict><key>Minute</key><integer>45</integer></dict>
   </array>
 
   <key>StandardOutPath</key>

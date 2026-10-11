@@ -5,6 +5,7 @@ import {
   createBillingEmailImportAttachment,
   createBillingEmailImportRun,
   getBillingEmailImportAttachmentByMessageUidHash,
+  getLatestSuccessfulBillingEmailImportRunStartedAt,
   updateBillingEmailImportAttachmentById,
   updateBillingEmailImportRunById,
 } from "@/features/billing/repository";
@@ -23,6 +24,8 @@ type BillingEmailImportOptions = {
   fromEmail?: string;
   subjectContains?: string;
   maxMessages?: number;
+  /** Ежедневный крон: смотреть назад только с последнего успешного прогона (см. resolveIncrementalSince). */
+  incrementalSinceLastSuccess?: boolean;
 };
 
 type BillingEmailConfig = {
@@ -161,6 +164,33 @@ function resolveConfig(options: BillingEmailImportOptions): BillingEmailConfig {
 
 function getLookbackSinceDate(lookbackDays: number): Date {
   return new Date(Date.now() - lookbackDays * 86400000);
+}
+
+export const BILLING_EMAIL_INCREMENTAL_MARGIN_DAYS = 2;
+
+/**
+ * Начало окна ежедневного крона: дата последнего успешного прогона минус запас (2 дня).
+ * Раньше крон каждый день заново перебирал всё окно lookbackDays (20–34 письма, 10–16 вложений,
+ * до 215 с на Vercel при лимите 300) — хотя уже разобранное он всё равно пропускает по хэшу
+ * вложения. Окно здесь только СУЖАЕТСЯ: дальше lookbackDays назад не уходим никогда, а нет
+ * успешного прогона — null, работает прежний lookbackDays. Упал прогон — следующий возьмёт от
+ * прошлого успеха, пропуска писем не будет.
+ */
+export function resolveIncrementalSince(input: {
+  lastSuccessStartedAt: string | null;
+  lookbackDays: number;
+  now?: Date;
+  marginDays?: number;
+}): string | null {
+  if (!input.lastSuccessStartedAt) return null;
+  const lastMs = new Date(input.lastSuccessStartedAt).getTime();
+  if (!Number.isFinite(lastMs)) return null;
+  const nowMs = (input.now ?? new Date()).getTime();
+  const marginDays = input.marginDays ?? BILLING_EMAIL_INCREMENTAL_MARGIN_DAYS;
+  const incrementalMs = lastMs - marginDays * 86400000;
+  const lookbackMs = nowMs - input.lookbackDays * 86400000;
+  if (incrementalMs <= lookbackMs) return null;
+  return new Date(incrementalMs).toISOString().slice(0, 10);
 }
 
 function parseIsoDateOnly(value: string, name: "since" | "until"): Date {
@@ -444,6 +474,21 @@ export async function runBillingEmailImport(
   options: BillingEmailImportOptions = {}
 ): Promise<BillingEmailImportSummary> {
   const config = resolveConfig(options);
+  if (options.incrementalSinceLastSuccess && !options.since?.trim()) {
+    try {
+      const since = resolveIncrementalSince({
+        lastSuccessStartedAt: await getLatestSuccessfulBillingEmailImportRunStartedAt(),
+        lookbackDays: config.lookbackDays,
+      });
+      if (since) {
+        config.sinceDate = parseIsoDateOnly(since, "since");
+        config.sinceIso = since;
+      }
+    } catch (error) {
+      // Не прочитали прошлый успех — работаем полным окном lookbackDays, как раньше.
+      console.error(`[billing-email-import] last successful run unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const apply = options.apply === true;
   const mode = apply ? "apply" : "dry_run";
   let runId: string | null = null;

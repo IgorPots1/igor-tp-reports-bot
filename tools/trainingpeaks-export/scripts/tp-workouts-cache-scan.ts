@@ -23,6 +23,8 @@ import {
 import {
   classifyScanFailure,
   evaluateScanRunHealth,
+  shouldSkipAccessLostStudent,
+  TP_ACCESS_LOST_RECHECK_HOURS,
 } from "../../../src/features/trainingpeaks/yesterday-execution.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
@@ -228,6 +230,7 @@ type RepositoryCompat = {
   syncTrainingPeaksTpAccessLostNotices?: typeof trainingPeaksRepository.syncTrainingPeaksTpAccessLostNotices;
   markTrainingPeaksTpAccessLostNotified?: typeof trainingPeaksRepository.markTrainingPeaksTpAccessLostNotified;
   getLatestTrainingPeaksCronRunLog?: typeof trainingPeaksRepository.getLatestTrainingPeaksCronRunLog;
+  listOpenTrainingPeaksTpAccessLostEpisodes?: typeof trainingPeaksRepository.listOpenTrainingPeaksTpAccessLostEpisodes;
   default?: {
     listTrainingPeaksStudents?: () => Promise<TrainingPeaksStudent[]>;
     upsertTrainingPeaksWorkoutCacheRows?: (rows: TrainingPeaksWorkoutCacheUpsertRow[]) => Promise<void>;
@@ -238,6 +241,7 @@ type RepositoryCompat = {
     syncTrainingPeaksTpAccessLostNotices?: typeof trainingPeaksRepository.syncTrainingPeaksTpAccessLostNotices;
     markTrainingPeaksTpAccessLostNotified?: typeof trainingPeaksRepository.markTrainingPeaksTpAccessLostNotified;
     getLatestTrainingPeaksCronRunLog?: typeof trainingPeaksRepository.getLatestTrainingPeaksCronRunLog;
+    listOpenTrainingPeaksTpAccessLostEpisodes?: typeof trainingPeaksRepository.listOpenTrainingPeaksTpAccessLostEpisodes;
   };
 };
 
@@ -849,6 +853,32 @@ async function main(): Promise<void> {
     targets.push(resolveTargetStudent({ args, students }));
   }
 
+  // Открытый эпизод 403 — сканируем раз в TP_ACCESS_LOST_RECHECK_HOURS, иначе пропускаем
+  // (см. shouldSkipAccessLostStudent). Только --all-active: точечный запуск по ученику — всегда
+  // честный скан. Не прочитали эпизоды — сканируем всех, как раньше.
+  const accessLostSkipped: ResolvedTarget[] = [];
+  if (args.allActive) {
+    const listOpenEpisodesFn =
+      repoCompat.listOpenTrainingPeaksTpAccessLostEpisodes ??
+      repoCompat.default?.listOpenTrainingPeaksTpAccessLostEpisodes;
+    try {
+      const episodes = listOpenEpisodesFn ? await listOpenEpisodesFn() : [];
+      const lastSeenByStudentId = new Map(episodes.map((episode) => [episode.studentId, episode.lastSeenAt]));
+      const now = new Date();
+      for (let index = targets.length - 1; index >= 0; index -= 1) {
+        const target = targets[index]!;
+        if (shouldSkipAccessLostStudent(lastSeenByStudentId.get(target.student.id), now)) {
+          accessLostSkipped.push(target);
+          targets.splice(index, 1);
+        }
+      }
+    } catch (error) {
+      console.error(
+        `[tp-workouts-cache-scan] access-lost episodes unavailable, scanning everyone: ${toCompactErrorMessage(error)}`,
+      );
+    }
+  }
+
   const scannedAt = new Date().toISOString();
 
   let writeSucceeded = false;
@@ -878,7 +908,7 @@ async function main(): Promise<void> {
     // of hammering all ~110. Only TpApiAuthError (the cookie itself is dead) counts as
     // session death; a per-athlete 403 on the first student is athlete-specific, so we
     // swallow non-auth probe errors and let the per-student loop handle them.
-    {
+    if (targets.length > 0) {
       const warmupAthleteId = targets[0]!.athleteId;
       try {
         await getTpApiJsonRaw("tpapi", `/fitness/v6/athletes/${warmupAthleteId}/workouts/${args.from}/${args.from}`);
@@ -952,7 +982,8 @@ async function main(): Promise<void> {
     await upsertScanStatusesFn(statusRows);
 
     writeSucceeded = summaries.some((item) => item.status === "ok");
-    const selectedStudents = targets.length + summaries.filter((item) => item.status === "skipped").length;
+    const selectedStudents =
+      targets.length + accessLostSkipped.length + summaries.filter((item) => item.status === "skipped").length;
     const successCount = summaries.filter((item) => item.status === "ok").length;
     const failedCount = summaries.filter((item) => item.status === "failed").length;
     const skippedCount = summaries.filter((item) => item.status === "skipped").length;
@@ -970,6 +1001,9 @@ async function main(): Promise<void> {
     console.log(`scanned_successfully: ${successCount}`);
     console.log(`failed: ${failedCount}`);
     console.log(`skipped: ${skippedCount}`);
+    console.log(
+      `access_lost_skipped: ${accessLostSkipped.length} (open 403 episode, rechecked every ${TP_ACCESS_LOST_RECHECK_HOURS}h)`,
+    );
     console.log(`total_raw_items: ${totalRawItems}`);
     console.log(`total_upserted_rows: ${totalRows}`);
     console.log(`total_planned: ${totalPlanned}`);
@@ -999,7 +1033,9 @@ async function main(): Promise<void> {
       .map((item) => classifyScanFailure(item.reason));
     const outcome = {
       ok: successCount,
-      accessLost: failedKinds.filter((kind) => kind === "access_lost").length,
+      // Пропущенные с открытым эпизодом 403 — тоже 403 (не сканировали, потому что знаем исход).
+      // Без них счётчик скакал бы 0 → 15 на суточной перепроверке и правило скачка тревожило бы.
+      accessLost: failedKinds.filter((kind) => kind === "access_lost").length + accessLostSkipped.length,
       fetchFailed: failedKinds.filter((kind) => kind === "fetch_failed").length,
       otherFailed: failedKinds.filter((kind) => kind === "other").length,
       skipped: skippedCount,
