@@ -601,18 +601,41 @@ export async function loadCoachStudentView(
   const releasedWeekStarts = new Set(
     planWeeks.filter((week) => week.status === "released").map((week) => week.weekStart)
   );
+  /**
+   * ДЛЯ СРАВНЕНИЯ ПЛАНА С ФАКТОМ НУЖНО СВОЁ ОКНО, А НЕ ОКНО КАРТОЧКИ
+   * [дефект найден 11.10.2026, в живом разборе].
+   *
+   * Карточка показывает ±21 день назад, и этого достаточно, чтобы видеть свежие
+   * отметки. Но недели, которые окно режет пополам, попадали в сравнение
+   * ОБРЕЗАННЫМИ: 11 октября неделя 14.09 показалась как «план 63» вместо 121,
+   * потому что тренировка 18.09 в окно уже не влезла.
+   *
+   * ЦЕНА ОШИБКИ НЕ В ОДНОЙ СТРОКЕ ТАБЛИЦЫ. Итоговое «выполнено N%» — число, по
+   * которому тренер решает про объём, — поехало с 67% на 78% не потому, что
+   * человек стал бегать больше, а потому что сдвинулось окно. Показатель,
+   * который меняется от дня просмотра, хуже отсутствующего: он выглядит как
+   * измерение.
+   *
+   * Поэтому недели берутся целиком, от начала первой отданной до сегодня, и
+   * отдельным запросом.
+   */
+  const factsFrom = [...releasedWeekStarts].sort()[0] ?? todayIso;
+  const [factSessions, factActivities] = await Promise.all([
+    latestCycle ? listSessionsInRange(latestCycle.id, factsFrom, todayIso) : Promise.resolve([]),
+    listActivitiesInRange(sourceId, factsFrom, todayIso),
+  ]);
   const weekFacts: WeekFact[] = [...releasedWeekStarts]
     .sort()
     .filter((weekStart) => shift(weekStart, 6) < todayIso)
     .map((weekStart) => {
       const weekEnd = shift(weekStart, 6);
-      const runsOfWeek = activities.filter((activity) => {
+      const runsOfWeek = factActivities.filter((activity) => {
         const date = activity.startDateLocal?.slice(0, 10) ?? "";
         return date >= weekStart && date <= weekEnd;
       });
       return {
         weekStart,
-        plannedMin: sessions
+        plannedMin: factSessions
           .filter((session) => session.weekStart === weekStart)
           .reduce((sum, session) => sum + session.minutes, 0),
         actualMin: runsOfWeek.reduce(

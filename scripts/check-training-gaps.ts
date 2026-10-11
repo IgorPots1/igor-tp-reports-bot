@@ -268,4 +268,39 @@ assert.ok(
   "и фраза про «план просит больше» при перевыполнении не появляется"
 );
 
+/* ── ЧИСЛО НЕ ДОЛЖНО ЗАВИСЕТЬ ОТ ДНЯ ПРОСМОТРА ──────────────────────────────
+ *
+ * Дефект 11.10.2026: недели брались из окна карточки (±21 день), и неделя,
+ * которую окно режет пополам, попадала в сравнение обрезанной. Итоговое
+ * «выполнено N%» поехало с 67 на 78 просто от того, что прошла неделя. Здесь
+ * проверяется само свойство: одни и те же недели дают одно и то же число, а
+ * обрезанная неделя даёт ДРУГОЕ — то есть обрезать нельзя.
+ */
+const fullWeeks: WeekFact[] = [
+  { weekStart: "2026-09-14", plannedMin: 121, actualMin: 62, runs: 1 },
+  { weekStart: "2026-09-21", plannedMin: 112, actualMin: 158, runs: 2 },
+  { weekStart: "2026-09-28", plannedMin: 189, actualMin: 64, runs: 1 },
+];
+const truncated: WeekFact[] = [
+  // та же неделя 14.09, но из окна выпала тренировка 18.09 (58 мин)
+  { weekStart: "2026-09-14", plannedMin: 63, actualMin: 62, runs: 1 },
+  ...fullWeeks.slice(1),
+];
+const full = planVsFact(fullWeeks);
+const cut = planVsFact(truncated);
+assert.notEqual(
+  full.complianceRatio,
+  cut.complianceRatio,
+  "обрезанная неделя даёт ДРУГОЕ выполнение — значит окно сравнения обрезать нельзя"
+);
+assert.ok(
+  full.complianceRatio !== null && Math.abs(full.complianceRatio - 284 / 422) < 1e-9,
+  "на целых неделях выполнение считается от полного плана"
+);
+assert.equal(
+  planVsFact(fullWeeks).complianceRatio,
+  planVsFact([...fullWeeks].reverse()).complianceRatio,
+  "и не зависит от порядка, в котором недели пришли"
+);
+
 console.log("check:training-gaps — все проверки пройдены");
