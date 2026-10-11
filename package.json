@@ -391,6 +391,7 @@
     "check:marathon-calendar": "npx tsx scripts/check-marathon-calendar.ts",
     "check:races": "npx tsx scripts/check-races.ts",
     "check:races-manual": "npx tsx scripts/check-races-manual.ts",
+    "check:og-images": "npx tsx scripts/check-og-images.ts",
     "check:fonts-selfhosted": "npx tsx scripts/check-fonts-selfhosted.ts",
     "check:checkin-draft": "npx tsx scripts/check-checkin-draft.ts",
     "check:released-work-floor": "npx tsx scripts/check-released-work-floor.ts",

@@ -9,8 +9,13 @@ import type { Metadata, MetadataRoute } from "next";
 // Без завершающего слэша: пути ниже всегда начинаются со своего.
 export const SITE_URL = "https://igorp.run";
 
-/** Подпись владельца сайта: og:site_name и запасной заголовок карточки. */
+/** Подпись клуба: og:site_name страниц клуба и запасной заголовок карточки. */
 export const SITE_NAME = "Игорь Поцелуев · Беговой клуб";
+
+/** Нейтральная подпись сайта в превью ссылки (og:site_name). Клубная подпись
+ *  стояла на всех страницах, и ссылка на календарь стартов выглядела как
+ *  реклама клуба. Клуб передаёт свою подпись в publicPageMetadata сам. */
+export const OG_SITE_NAME = "igorp.run";
 
 /** Описание по умолчанию — уходит в карточку страницы, у которой нет своего. */
 export const SITE_DESCRIPTION =
@@ -76,6 +81,12 @@ type PublicPageMetadataInput = {
   path: string;
   title: string;
   description: string;
+  /** og:site_name. По умолчанию нейтральный «igorp.run»; клуб передаёт SITE_NAME. */
+  siteName?: string;
+  /** Клубная картинка превью. Только главная и /club; у остальных страниц свой
+   *  opengraph-image.tsx. Картинка, заданная здесь, в Next ПОБЕЖДАЕТ файловую
+   *  (проверено на сборке 11.10.2026), поэтому вписывать её всем нельзя. */
+  clubImage?: boolean;
 };
 
 /**
@@ -90,8 +101,15 @@ export function publicPageMetadata({
   path,
   title,
   description,
+  siteName = OG_SITE_NAME,
+  clubImage = false,
 }: PublicPageMetadataInput): Metadata {
   const url = siteUrl(path);
+  // Без clubImage картинку даёт opengraph-image.tsx / twitter-image.tsx страницы.
+  const ogImages = clubImage
+    ? { images: [{ url: OG_IMAGE_PATH, width: OG_IMAGE_WIDTH, height: OG_IMAGE_HEIGHT, alt: SITE_NAME }] }
+    : {};
+  const twImages = clubImage ? { images: [OG_IMAGE_PATH] } : {};
 
   return {
     title,
@@ -100,24 +118,17 @@ export function publicPageMetadata({
     openGraph: {
       type: "website",
       locale: "ru_RU",
-      siteName: SITE_NAME,
+      siteName,
       url,
       title,
       description,
-      images: [
-        {
-          url: OG_IMAGE_PATH,
-          width: OG_IMAGE_WIDTH,
-          height: OG_IMAGE_HEIGHT,
-          alt: SITE_NAME,
-        },
-      ],
+      ...ogImages,
     },
     twitter: {
       card: "summary_large_image",
       title,
       description,
-      images: [OG_IMAGE_PATH],
+      ...twImages,
     },
   };
 }

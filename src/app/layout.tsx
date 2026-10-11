@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_PATH,
+  OG_SITE_NAME,
   OG_IMAGE_WIDTH,
   SITE_DESCRIPTION,
   SITE_NAME,
@@ -23,7 +24,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "ru_RU",
-    siteName: SITE_NAME,
+    siteName: OG_SITE_NAME,
     url: SITE_URL,
     title: SITE_NAME,
     description: SITE_DESCRIPTION,

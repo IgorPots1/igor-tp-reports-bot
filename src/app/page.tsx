@@ -23,6 +23,7 @@ export const metadata: Metadata = publicPageMetadata({
   title: "Игорь Поцелуев · Тренер по бегу",
   description:
     "Беговой интенсив, беговой клуб и личная связь с тренером — все ссылки в одном месте.",
+  clubImage: true,
 });
 
 const TG_LINK =

@@ -48,6 +48,13 @@ const LEGACY_HOST_REDIRECTS = LEGACY_HOSTS.flatMap((host) =>
 // Vercel и обычный `npm run dev` эту переменную не задают, distDir остаётся ".next".
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Шрифты превью-картинок (src/lib/og/og-card.tsx) читаются с диска. Трассировка
+  // находит их у opengraph-image, но не проходит сквозь реэкспорт в twitter-image,
+  // и ежечасная перерисовка картинки /races на Vercel упала бы без файла.
+  outputFileTracingIncludes: {
+    "/**/opengraph-image": ["./src/lib/og/fonts/*.ttf"],
+    "/**/twitter-image": ["./src/lib/og/fonts/*.ttf"],
+  },
   serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas"],
   // Хвост запроса (utm_source и прочее) Next переносит на новый адрес сам, пока
   // в destination нет своей строки запроса. На этих метках держится вся

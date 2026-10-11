@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { publicPageMetadata } from "@/lib/site";
+import { SITE_NAME, publicPageMetadata } from "@/lib/site";
 import Image from "next/image";
 import LeadForm from "./LeadForm";
 import Carousel from "./Carousel";
@@ -12,6 +12,8 @@ export const metadata: Metadata = publicPageMetadata({
   title: "Беговой клуб Игоря Поцелуева — система сопровождения бегунов",
   description:
     "Индивидуальный план тренировок, разбор техники, тренер на связи каждый день. От первых 5 км до марафона — системный подход к бегу.",
+  siteName: SITE_NAME,
+  clubImage: true,
 });
 
 export default function LandingPage() {
