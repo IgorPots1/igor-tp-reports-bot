@@ -94,6 +94,18 @@ export type Source = {
   note: string;
 };
 export type Candidate = { url: string; races: number; dated_with_year: boolean; note?: string };
+/** Вердикт агента по заявке с сайта. added требует insert: старт идёт через тот же шлюз. */
+export type SuggestionVerdict = { id: string; status: "added" | "duplicate" | "rejected"; note: string; insert?: RaceInsert };
+export type SuggestionOutcome = { id: string; status: string; note: string; url?: string };
+
+export function validateSuggestionVerdict(v: SuggestionVerdict): string | null {
+  if (!/^[0-9a-f-]{36}$/i.test(v.id || "")) return "id заявки не uuid";
+  if (!["added", "duplicate", "rejected"].includes(v.status)) return `статус ${v.status} не из added|duplicate|rejected`;
+  if (!v.note?.trim()) return "нет причины";
+  if (v.status === "added" && !v.insert) return "added без insert";
+  return null;
+}
+
 export type Proposal = {
   /** Ставит обёртка раннера, если агент не оставил предложения: в итоге это видно явно. */
   agent_failed?: string;
@@ -101,6 +113,12 @@ export type Proposal = {
   sources?: Partial<Source>[];
   candidates?: Candidate[];
   queries?: string[];
+  /** Вердикты по заявкам с сайта (race_suggestions, status = new). */
+  suggestions?: SuggestionVerdict[];
+  /** Точки обхода, по которым агент искал на этой неделе: у них обновится last_searched. */
+  cities_searched?: string[];
+  /** Сколько запросов ушло в ВК (если есть VK_SERVICE_TOKEN). */
+  vk_queries?: string[];
   update?: RaceUpdate[];
   remove?: { id: string; reason: string }[];
   insert?: RaceInsert[];
@@ -355,6 +373,36 @@ function writeRegistry(reg: Source[], file = registryPath()) {
   writeFileSync(file, `${JSON.stringify(reg, null, 2)}\n`);
 }
 
+// ── точки обхода (города и трейловые места) ──────────────────────────────────
+
+export type CityPoint = { name: string; region: string; kind: "city" | "spot"; last_searched: string | null };
+export const CITIES_PER_WEEK = 25;
+
+export function citiesPath(): string {
+  return process.env.RACES_CITIES_FILE || path.join(os.homedir(), "ops-log", "races", "cities.json");
+}
+
+export function readCities(file = citiesPath()): CityPoint[] {
+  return existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as CityPoint[]) : [];
+}
+
+/** Точки недели: никогда не проверенные первыми, дальше самые давние. Круг около 6 недель. */
+export function dueCities(list: CityPoint[], n = CITIES_PER_WEEK): CityPoint[] {
+  return [...list]
+    .sort((a, b) => (a.last_searched ?? "").localeCompare(b.last_searched ?? "") || a.name.localeCompare(b.name, "ru"))
+    .slice(0, n);
+}
+
+export function markCities(list: CityPoint[], names: string[], todayIso: string): number {
+  const want = new Set(names.map((n) => norm(n)));
+  let n = 0;
+  for (const c of list) if (want.has(norm(c.name))) {
+    c.last_searched = todayIso;
+    n += 1;
+  }
+  return n;
+}
+
 // ── база ─────────────────────────────────────────────────────────────────────
 
 /** Пробный прогон из worktree: ключи из .env.local основной папки (RACES_ENV_FILE). Значения не печатаются. */
@@ -484,6 +532,7 @@ async function cmdApply(file: string, apply: boolean) {
   if (updates.length + removes.length > MAX_UPDATES) throw new Error(`правок ${updates.length + removes.length} > ${MAX_UPDATES}: прогон остановлен`);
 
   const out: Outcome[] = [];
+  const suggestionsOut: SuggestionOutcome[] = [];
   const now = new Date().toISOString();
 
   for (const u of updates) {
@@ -520,17 +569,19 @@ async function cmdApply(file: string, apply: boolean) {
   }
 
   const calendar = await calendarRows(sb);
-  for (const r of inserts) {
+  /** Одна вставка с полной проверкой: окно, правила, дубль, занятый id. */
+  async function tryInsert(r: RaceInsert): Promise<{ ok: true; id: string } | { ok: false; id: string; dup: CalendarRow | null; reason: string }> {
     const errs = validateInsert(r, today);
     const dup = errs.length ? null : findDuplicate(r, calendar);
     const id = manualId(r.name, r.date_start);
     if (errs.length || dup) {
-      out.push({ kind: "skipped", id, text: errs.join("; ") || `дубль ${dup!.id} «${dup!.name}»` });
-      continue;
+      const reason = errs.join("; ") || `дубль ${dup!.id} «${dup!.name}»`;
+      out.push({ kind: "skipped", id, text: reason });
+      return { ok: false, id, dup, reason };
     }
     if (await manualRow(sb, id)) {
       out.push({ kind: "skipped", id, text: "такой id уже есть" });
-      continue;
+      return { ok: false, id, dup: null, reason: "такой id уже есть" };
     }
     const end = r.date_end || r.date_start;
     const row = {
@@ -563,6 +614,51 @@ async function cmdApply(file: string, apply: boolean) {
       calendar.push({ id, name: row.name, date_start: row.date_start, date_end: end, city: row.city, race_type: row.race_type });
     }
     out.push({ kind: "added", id, text: `${dateText(r.date_start, end)} ${row.name}, ${row.city}${r.reason ? `: ${r.reason}` : ""}`, link: r.source_url, tri: r.race_type === "tri" });
+    return { ok: true, id };
+  }
+
+  for (const r of inserts) await tryInsert(r);
+
+  // Заявки с сайта (race_suggestions). Меняются только status, note, race_id и только
+  // у заявок в статусе new: разобранную повторно не перепишешь.
+  const sugg = p.suggestions || [];
+  if (sugg.length > MAX_UPDATES) throw new Error(`заявок ${sugg.length} > ${MAX_UPDATES}: прогон остановлен`);
+  for (const sgn of sugg) {
+    const verdict = validateSuggestionVerdict(sgn);
+    if (verdict) {
+      suggestionsOut.push({ id: sgn.id, status: "skipped", note: verdict });
+      continue;
+    }
+    const { data: cur, error: ce } = await sb.from("race_suggestions").select("id,status,url").eq("id", sgn.id).maybeSingle();
+    if (ce) throw ce;
+    if (!cur || cur.status !== "new") {
+      suggestionsOut.push({ id: sgn.id, status: "skipped", note: "нет такой заявки или уже разобрана" });
+      continue;
+    }
+    let status = sgn.status;
+    let note = sgn.note.trim();
+    let raceId: string | null = null;
+    if (sgn.status === "added") {
+      const res = await tryInsert(sgn.insert!);
+      if (res.ok) raceId = res.id;
+      else if (res.dup) {
+        status = "duplicate";
+        note = `уже в календаре: ${res.dup.id} «${res.dup.name}»`;
+        raceId = res.dup.id;
+      } else {
+        status = "rejected";
+        note = `шлюз отклонил: ${res.reason}`;
+      }
+    }
+    if (apply) {
+      const { error: ue } = await sb
+        .from("race_suggestions")
+        .update({ status, note: note.slice(0, 500), race_id: raceId, reviewed_at: now })
+        .eq("id", sgn.id)
+        .eq("status", "new");
+      if (ue) throw ue;
+    }
+    suggestionsOut.push({ id: sgn.id, status, note, url: cur.url });
   }
 
   // Дубли с основным потоком снимаются тем же прогоном и попадают в тот же итог.
@@ -573,7 +669,22 @@ async function cmdApply(file: string, apply: boolean) {
   const merged = mergeSources(reg, p.sources || [], today);
   if (apply) writeRegistry(merged.reg);
 
-  const summary = weeklySummary({ apply, today, proposal: p, out, merged, activeTotal: merged.reg.filter((x) => x.status === "active").length });
+  // Точки обхода: у проверенных на этой неделе обновится last_searched.
+  const cityList = readCities();
+  const citiesMarked = markCities(cityList, p.cities_searched || [], today);
+  if (apply && citiesMarked) writeFileSync(citiesPath(), `${JSON.stringify(cityList, null, 2)}\n`);
+
+  const summary = weeklySummary({
+    apply,
+    today,
+    proposal: p,
+    out,
+    merged,
+    activeTotal: merged.reg.filter((x) => x.status === "active").length,
+    suggestions: suggestionsOut,
+    citiesMarked,
+    citiesTotal: cityList.length,
+  });
   console.log(summary);
   if (apply) {
     const dir = process.env.RACES_OPS_LOG_DIR || path.join(os.homedir(), "ops-log", "igor-tp-reports-bot");
@@ -597,6 +708,9 @@ export function weeklySummary(a: {
   out: Outcome[];
   merged: { added: Source[]; changed: Source[]; rejected: string[] };
   activeTotal: number;
+  suggestions?: SuggestionOutcome[];
+  citiesMarked?: number;
+  citiesTotal?: number;
 }): string {
   const n = (k: Outcome["kind"]) => a.out.filter((o) => o.kind === k).length;
   const tri = a.out.filter((o) => o.kind === "added" && o.tri).length;
@@ -608,6 +722,10 @@ export function weeklySummary(a: {
     `Источники: новых в реестре ${a.merged.added.length}, сменили статус ${a.merged.changed.length}, всего active ${a.activeTotal}; поисковых запросов ${(a.proposal.queries || []).length}`,
   ];
   if (a.proposal.agent_failed) lines.splice(2, 0, `АГЕНТ НЕ ДАЛ ПРЕДЛОЖЕНИЯ: ${a.proposal.agent_failed}. Проверки и поиск этой недели не сделаны, сняты только дубли с основным потоком.`);
+  const sg = a.suggestions || [];
+  const sgn = (st: string) => sg.filter((x) => x.status === st).length;
+  lines.push(`Заявки с сайта: разобрано ${sg.length - sgn("skipped")} (добавлено ${sgn("added")}, дубль ${sgn("duplicate")}, отклонено ${sgn("rejected")})${sgn("skipped") ? `, не принято шлюзом ${sgn("skipped")}` : ""}`);
+  lines.push(`Обход по городам: ${a.citiesMarked ?? 0} точек на этой неделе из ${a.citiesTotal ?? 0}; ВК: ${a.proposal.vk_queries?.length ? `${a.proposal.vk_queries.length} запросов` : "не искали"}`);
   const cands = a.proposal.candidates || [];
   lines.push(cands.length ? "Кандидаты в автосбор:" : "Кандидаты в автосбор: нет");
   for (const c of cands) lines.push(`- ${c.url}: около ${c.races} стартов, даты с годом: ${c.dated_with_year ? "да" : "нет"}${c.note ? `; ${c.note}` : ""}`);
@@ -616,6 +734,7 @@ export function weeklySummary(a: {
   for (const s of a.merged.added) lines.push(`- источник добавлен: ${s.url} (${s.kind}${s.region ? `, ${s.region}` : ""})`);
   for (const s of a.merged.changed) lines.push(`- источник ${s.status}: ${s.url}${s.note ? `: ${s.note}` : ""}`);
   for (const r of a.merged.rejected) lines.push(`- источник отклонён: ${r}`);
+  for (const x of sg) lines.push(`- заявка ${x.status}: ${x.id}${x.url ? ` (${x.url})` : ""}: ${x.note}`);
   if (a.proposal.queries?.length) lines.push(`Запросы: ${a.proposal.queries.join("; ")}`);
   return `${lines.join("\n")}\n`;
 }
@@ -669,6 +788,61 @@ async function cmdSourcesSeed(apply: boolean) {
 /** Корень репозитория: от него читаются .env.local, docs/ и Playwright, откуда бы ни звали. */
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+async function cmdCities(n: number) {
+  console.log(JSON.stringify(dueCities(readCities(), n), null, 2));
+}
+
+/** Стартовое наполнение точек обхода из scripts/races-cities.json; уже известные не трогает. */
+async function cmdCitiesSeed(apply: boolean) {
+  const seed = JSON.parse(readFileSync(path.join(process.cwd(), "scripts", "races-cities.json"), "utf8")) as Omit<CityPoint, "last_searched">[];
+  const list = readCities();
+  const known = new Set(list.map((c) => norm(c.name)));
+  const added = seed.filter((c) => !known.has(norm(c.name))).map((c) => ({ ...c, last_searched: null }));
+  list.push(...added);
+  console.log(`новых точек ${added.length}, всего ${list.length}`);
+  if (apply) {
+    mkdirSync(path.dirname(citiesPath()), { recursive: true });
+    writeFileSync(citiesPath(), `${JSON.stringify(list, null, 2)}\n`);
+    console.log(`записано: ${citiesPath()}`);
+  }
+}
+
+/** Заявки с сайта в статусе new: что агенту разобрать первым делом. */
+async function cmdSuggestions() {
+  const { data, error } = await db()
+    .from("race_suggestions")
+    .select("id,url,name,city,date_text,contact,is_organizer,created_at")
+    .eq("status", "new")
+    .order("created_at");
+  if (error) throw error;
+  console.log(JSON.stringify(data, null, 2));
+}
+
+/** Поиск во ВКонтакте сервисным ключом. Только чтение, только два метода поиска. */
+const VK_METHODS = new Set(["groups.search", "newsfeed.search"]);
+async function cmdVk(method: string, query: string) {
+  loadExtraEnv();
+  loadScriptEnv();
+  const token = process.env.VK_SERVICE_TOKEN?.trim();
+  if (!token) {
+    console.log("VK_SERVICE_TOKEN не задан: поиск во ВКонтакте пропущен");
+    process.exit(3);
+  }
+  if (!VK_METHODS.has(method) || !query?.trim()) throw new Error("vk: groups.search | newsfeed.search <запрос>");
+  const params = new URLSearchParams({ q: query, v: "5.199", access_token: token, count: method === "groups.search" ? "50" : "100" });
+  const res = await fetch(`https://api.vk.com/method/${method}?${params}`);
+  const body = (await res.json()) as { error?: { error_msg: string }; response?: { items?: unknown[] } };
+  if (body.error) throw new Error(`ВК: ${body.error.error_msg}`);
+  // Только то, что нужно для поиска старта: без лишних полей и без ключа в выводе.
+  const items = (body.response?.items || []) as Record<string, unknown>[];
+  const slim = items.map((it) =>
+    method === "groups.search"
+      ? { name: it.name, screen_name: it.screen_name, url: `https://vk.com/${it.screen_name}` }
+      : { date: new Date(Number(it.date) * 1000).toISOString().slice(0, 10), owner_id: it.owner_id, url: `https://vk.com/wall${it.owner_id}_${it.id}`, text: String(it.text || "").slice(0, 600) },
+  );
+  console.log(JSON.stringify(slim, null, 2));
+}
+
 async function main() {
   const [cmd, rawArg] = process.argv.slice(2);
   // Путь к файлу предложения агент даёт от своей рабочей папки: делаем его абсолютным до смены папки.
@@ -682,7 +856,11 @@ async function main() {
   if (cmd === "apply" && arg) return void (await cmdApply(arg, apply));
   if (cmd === "sources") return cmdSources(arg === "all");
   if (cmd === "sources-seed") return cmdSourcesSeed(apply);
-  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply]");
+  if (cmd === "suggestions") return cmdSuggestions();
+  if (cmd === "cities") return cmdCities(Number(rawArg) || CITIES_PER_WEEK);
+  if (cmd === "cities-seed") return cmdCitiesSeed(apply);
+  if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
+  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
 

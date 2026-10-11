@@ -20,16 +20,19 @@ import assert from "node:assert/strict";
 
 import {
   dateText,
+  dueCities,
   dueSources,
   findDuplicate,
   findVisibleTwin,
   inWindow,
   isTwin,
+  markCities,
   isAutoCollected,
   manualId,
   mergeSources,
   nameSimilar,
   validateInsert,
+  validateSuggestionVerdict,
   validateUpdate,
   weeklySummary,
   type CalendarRow,
@@ -120,6 +123,24 @@ assert.equal(m2.reg[0].status, "dead");
 assert.equal(dueSources(m2.reg, "2026-12-01").length, 0, "dead раньше 90 дней не обходим");
 assert.equal(dueSources(m2.reg, "2027-01-17").length, 1, "dead через 90 дней перепроверяем");
 
+// Заявки с сайта: вердикт агента проверяется до записи.
+const uuid = "0b7f2a8e-3c1d-4e5f-9a6b-7c8d9e0f1a2b";
+assert.equal(validateSuggestionVerdict({ id: uuid, status: "rejected", note: "онлайн-забег" }), null);
+assert.ok(validateSuggestionVerdict({ id: uuid, status: "added", note: "есть" }), "added без insert нельзя");
+assert.ok(validateSuggestionVerdict({ id: uuid, status: "rejected", note: " " }), "без причины нельзя");
+assert.ok(validateSuggestionVerdict({ id: "manual:x", status: "rejected", note: "x" }), "id заявки только uuid");
+assert.ok(validateSuggestionVerdict({ id: uuid, status: "new" as never, note: "x" }), "вернуть в new нельзя");
+
+// Точки обхода: никогда не проверенные первыми, дальше самые давние; круг без пропусков.
+const pts = [
+  { name: "Казань", region: "", kind: "city" as const, last_searched: "2026-10-04" },
+  { name: "Кандалакша", region: "", kind: "spot" as const, last_searched: null },
+  { name: "Москва", region: "", kind: "city" as const, last_searched: "2026-09-27" },
+];
+assert.deepEqual(dueCities(pts, 2).map((c) => c.name), ["Кандалакша", "Москва"]);
+assert.equal(markCities(pts, ["кандалакша", "Москва", "Нет такого"], "2026-10-11"), 2, "регистр не важен, чужое имя не помечается");
+assert.deepEqual(dueCities(pts, 1).map((c) => c.name), ["Казань"], "после отметки следующей идёт самая давняя");
+
 // Итог недели в ops-log.
 const sum = weeklySummary({
   apply: true,
@@ -136,5 +157,7 @@ assert.match(sum, /добавлено 1 \(из них триатлонов 1\)/)
 assert.match(sum, /всего active 12/);
 assert.match(sum, /Кандидаты в автосбор:\n- https:\/\/cal\.example\/list: около 40 стартов/);
 assert.ok(!/[—–]/.test(sum), "без длинных тире");
+assert.match(sum, /Заявки с сайта: разобрано 0/);
+assert.match(sum, /ВК: не искали/);
 
 console.log("check:races-manual ok");

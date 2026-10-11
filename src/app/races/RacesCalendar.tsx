@@ -19,6 +19,7 @@ import {
   type Filters,
   type Race,
 } from "./races-logic";
+import SuggestRace from "./SuggestRace";
 import styles from "./races.module.css";
 
 function RaceItem({ r }: { r: Race }) {
@@ -231,6 +232,13 @@ export default function RacesCalendar({ races, failed }: { races: Race[]; failed
         </p>
       </section>
 
+      {/* Над списком, а в пустом результате поиска такая же форма стоит внутри сообщения. */}
+      {races.length && list.length ? (
+        <div className={styles.suggestBar}>
+          <SuggestRace />
+        </div>
+      ) : null}
+
       <div className={styles.months}>
         {failed ? (
           <div className={styles.state}>Не получилось загрузить календарь. Обновите страницу через минуту.</div>
@@ -245,6 +253,7 @@ export default function RacesCalendar({ races, failed }: { races: Race[]; failed
             <button type="button" className={`${styles.btn} ${styles.primary}`} onClick={reset}>
               Сбросить фильтры
             </button>
+            <SuggestRace prefillCity={f.q.trim()} />
           </div>
         ) : (
           months.map((m, i) => {

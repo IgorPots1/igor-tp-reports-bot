@@ -29,11 +29,6 @@ mkdir -p "$WORK" || { echo "нет рабочей папки $WORK"; exit 1; }
 cd "$REPO" || { echo "нет папки $REPO"; exit 1; }
 echo "races weekly: старт, рабочая папка $WORK"
 
-# Округа по кругу: за четыре недели все восемь.
-DISTRICTS=("Центральный и Северо-Западный" "Южный и Северо-Кавказский" "Приволжский и Уральский" "Сибирский и Дальневосточный")
-WEEK=$((10#$(date +%V)))
-WEEK_DISTRICTS="${DISTRICTS[$((WEEK % 4))]} федеральные округа"
-
 # Входы агента: ручные старты и реестр.
 if ! "${GATE[@]}" list > "$WORK/manual.json"; then
   echo "не прочитал ручные старты, прогон остановлен"
@@ -41,13 +36,18 @@ if ! "${GATE[@]}" list > "$WORK/manual.json"; then
   exit 1
 fi
 "${GATE[@]}" sources > "$WORK/sources.json" || echo "[]" > "$WORK/sources.json"
+# Заявки с сайта (разбираются первыми) и точки обхода недели.
+"${GATE[@]}" suggestions > "$WORK/suggestions.json" || echo "[]" > "$WORK/suggestions.json"
+"${GATE[@]}" cities > "$WORK/cities.json" || echo "[]" > "$WORK/cities.json"
+# Поиск во ВКонтакте только при сервисном ключе в .env.local основной папки.
+if grep -q '^VK_SERVICE_TOKEN=.' "$REPO/.env.local" 2>/dev/null; then VK_MODE="есть"; else VK_MODE="нет"; fi
 rm -f "$WORK/proposal.json"
 
-PROMPT="$(sed -e "s|{{TODAY}}|$TODAY|g" -e "s|{{REPO}}|$REPO|g" -e "s|{{DISTRICTS}}|$WEEK_DISTRICTS|g" "$REPO/scripts/races-weekly-prompt.md")"
+PROMPT="$(sed -e "s|{{TODAY}}|$TODAY|g" -e "s|{{REPO}}|$REPO|g" -e "s|{{VK}}|$VK_MODE|g" "$REPO/scripts/races-weekly-prompt.md")"
 
 # Права агента: читать и писать только в своей папке, сеть, и только безопасные режимы шлюза.
 # apply и dedupe с --apply агенту НЕ разрешены: их зовёт эта обёртка после него.
-echo "агент: старт ($WEEK_DISTRICTS)"
+echo "агент: старт (заявок $(python3 -c "import json;print(len(json.load(open('$WORK/suggestions.json'))))"), точек $(python3 -c "import json;print(len(json.load(open('$WORK/cities.json'))))"), ВК: $VK_MODE)"
 ( cd "$WORK" && "$CLAUDE_BIN" -p "$PROMPT" \
     --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
     --no-session-persistence \
@@ -56,6 +56,8 @@ echo "агент: старт ($WEEK_DISTRICTS)"
       "Bash(npx tsx $REPO/scripts/races-manual.ts dup:*)" \
       "Bash(npx tsx $REPO/scripts/races-manual.ts list)" \
       "Bash(npx tsx $REPO/scripts/races-manual.ts sources:*)" \
+      "Bash(npx tsx $REPO/scripts/races-manual.ts suggestions)" \
+      "Bash(npx tsx $REPO/scripts/races-manual.ts vk:*)" \
     > "$WORK/agent.out.log" 2> "$WORK/agent.err.log" )
 AGENT_CODE=$?
 echo "агент: код выхода $AGENT_CODE, лог $WORK/agent.out.log"
