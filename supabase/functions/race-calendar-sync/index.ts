@@ -565,6 +565,74 @@ async function otime(today: Date): Promise<Race[]> {
   return out;
 }
 
+// ---------- source: heroleague.ru (Лига Героев: Забег.РФ, «Дорога жизни»; только бег) ----------
+// Открытый JSON сайта (robots.txt разрешает всё). start_time приходит в UTC без «Z»: дату старта
+// считаем в timezone самой записи, иначе дальневосточные старты съедут на день назад.
+// Гонка Героев, Зима, Urban, MudRun - забеги с препятствиями (OCR): отсеиваем по типу и описанию,
+// и вдобавок оставляем только записи с беговыми дистанциями (у OCR их в форматах нет).
+const HERO_OCR = /гонк[аи] геро|препятств|испытани|ocr|mud|urban|gonka|zima/i;
+// Серии Лиги, которые всегда бег: у них старт берём и без дистанций (Воронеж Забег.РФ регистрирует на RussiaRunning).
+const HERO_RUN = new Set(["zabeg", "doroga"]);
+function heroLocalDate(utc: string, tz: string): string {
+  const d = new Date(/Z|[+-]\d\d:?\d\d$/.test(utc) ? utc : `${utc}Z`);
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "Europe/Moscow" }).format(d); }
+  catch (_) { return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(d); }
+}
+function heroPlace(address: string): { city: string; region: string; location: string } {
+  const segs = clean(address).split(",").map((s) => s.trim()).filter(Boolean);
+  if (!segs.length) return { city: "", region: "", location: "" };
+  if (FEDERAL.includes(segs[0])) return { city: segs[0], region: segs[0], location: segs.join(", ") };
+  if (/(область|край|республика|округ)/i.test(segs[0])) return { city: segs[1] || segs[0], region: segs[0], location: segs.join(", ") };
+  return { city: segs[0], region: "", location: segs.join(", ") };
+}
+async function heroleague(today: Date, horizon: Date): Promise<Race[]> {
+  const headers = { "User-Agent": UA, "Accept-Language": "ru", "Content-Type": "application/json" };
+  const body = JSON.stringify({ city: { id: 0 }, date_from: `${iso(today)}T00:00:00.000Z`, date_to: `${iso(horizon)}T23:59:59.000Z` });
+  let list: any[] = [];
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch("https://heroleague.ru/api/event_city/filtered", { method: "POST", headers, body });
+      if (r.ok) { list = ((await r.json()) as { values?: any[] }).values || []; break; }
+      if (r.status < 500) throw new Error(`heroleague: ${r.status}`);
+    } catch (e) { if (i === 2) throw e; }
+    await sleep(1500 * (i + 1));
+  }
+  const out: Race[] = [];
+  for (const x of list) {
+    const et = x.event_type || {};
+    const ev = x.event || {};
+    const text = `${et.public_id || ""} ${et.title || ""} ${et.description || ""} ${ev.title || ""} ${ev.title_above || ""} ${ev.description || ""}`;
+    if (!x.public_id || !x.start_time || x.public === false || HERO_OCR.test(text)) continue;
+    const date = heroLocalDate(x.start_time, x.timezone);
+    if (date < iso(today) || date > iso(horizon)) continue;
+    const name = clean(ev.title || et.title || "");
+    const { city, region, location } = heroPlace(x.address || "");
+    if (!name || !okRace(name, city)) continue;
+    await sleep(700);
+    let formats: any[] = [];
+    try { formats = ((JSON.parse(await get(`https://heroleague.ru/api/event_format/event/${encodeURIComponent(x.public_id)}`)) as { values?: any[] }).values) || []; }
+    catch (_) { formats = []; }
+    // Дистанция в метрах, а если поле пустое («Дорога жизни») - из названия формата «42,2 км».
+    const meters = [...new Set(formats.filter((f) => f.enabled !== false).flatMap((f) => {
+      const m = (f.distances || []).map((d: { distance?: number }) => Number(d.distance) || 0).filter((v: number) => v > 0);
+      const t = String(f.title || "").match(/(\d+(?:[.,]\d+)?)\s*км/i);
+      return m.length ? m : t ? [Math.round(Number(t[1].replace(",", ".")) * 1000)] : [];
+    }))].sort((a, b) => b - a);
+    if (!meters.length && !HERO_RUN.has(et.public_id)) continue; // без беговой дистанции: OCR или формат без бега
+    const dist_km = meters.map((m) => Math.round(m / 10) / 100);
+    const distances = dist_km.map((k) => `${String(k).replace(".", ",")} км`);
+    const page = x.external_url || (et.public_id === "zabeg" && city ? `https://xn--80acghh.xn--p1ai/${encodeURIComponent(city)}` : (et.project?.link || ev.external_url || "https://heroleague.ru"));
+    const cls = classify(name, distances, `${ev.title_above || ""}`, false);
+    out.push({
+      id: `heroleague:${x.public_id}`, source: "heroleague", source_id: x.public_id, source_url: page, name,
+      date_start: date, date_end: date, date_text: date, city, region, location,
+      distances, dist_km, race_type: cls.race_type, tags: cls.tags,
+      site_url: et.project?.link || null, reg_url: page, vk_url: null,
+    });
+  }
+  return out;
+}
+
 // ---------- duplicate detection across sources ----------
 const STOP = new Set(["забег", "пробег", "трейл", "trail", "марафон", "полумарафон", "кросс", "race", "run", "фестиваль", "бега", "по", "на", "и", "в", "the", "открытый", "чемпионат", "этап", "кубок", "2026", "2027", "г"]);
 const tokCache = new Map<string, Set<string>>();
@@ -679,12 +747,12 @@ async function checkLinks(limit: number) {
 //   ?stage=links               -> check that organiser sites answer
 //   ?stage=expected            -> last year's races without a next edition yet -> race_expected
 // merge order: richer sources first, so a race seen in several places keeps the most detailed row
-const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime"];
+const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime", "heroleague"];
 const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> = {
   probeg: (t, h) => probeg(t, h), marathonec: (t, h) => marathonec(t, h), ironstar: (t, h) => ironstar(t, h),
   orgeo: (t, h) => orgeo(t, h), where2run: (t, h) => where2run(t, h), myrace: (t, h) => myrace(t, h),
   sportsauce: (t, h) => sportsauce(t, h), racetime: (t, h) => racetime(t, h), regplace: (t) => regplace(t),
-  otime: (t) => otime(t),
+  otime: (t) => otime(t), heroleague: (t, h) => heroleague(t, h),
 };
 
 async function scrapeStage(sources: string[], today: Date, horizon: Date, stats: Record<string, unknown>) {
