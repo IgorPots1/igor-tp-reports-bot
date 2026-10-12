@@ -605,7 +605,11 @@ async function heroleague(today: Date, horizon: Date): Promise<Race[]> {
     if (!x.public_id || !x.start_time || x.public === false || HERO_OCR.test(text)) continue;
     const date = heroLocalDate(x.start_time, x.timezone);
     if (date < iso(today) || date > iso(horizon)) continue;
-    const name = clean(ev.title || et.title || "");
+    // «XI Всероссийский полумарафон «Забег.РФ»», а не голое «Забег.РФ»: в голом нет ни одного слова, по
+    // которому склейка узнаёт probeg-строку того же города, и в больших городах старт задвоился бы.
+    const above = clean(ev.title_above || "");
+    const title = clean(ev.title || et.title || "");
+    const name = above && above.length <= 40 && /марафон|забег|пробег/i.test(above) ? `${above} «${title}»` : title;
     const { city, region, location } = heroPlace(x.address || "");
     if (!name || !okRace(name, city)) continue;
     await sleep(700);
