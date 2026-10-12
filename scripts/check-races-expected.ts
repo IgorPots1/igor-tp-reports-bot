@@ -14,6 +14,7 @@ import {
   keyTokens,
   nameKey,
   parsePastProbeg,
+  splitPlace,
   weekDiff,
   weekWindows,
   type PastRace,
@@ -68,5 +69,11 @@ assert.equal(expected[0].last_url, "https://probeg.org/event/2/");
 
 assert.equal(weekWindows("2025-10-01", "2025-10-20").length, 3);
 assert.deepEqual(weekWindows("2025-10-01", "2025-10-20")[2], ["2025-10-15", "2025-10-20"]);
+
+// Место: регион и город раздельно (иначе «Приморский край, Владивосток» не находился по городу).
+assert.deepEqual(splitPlace("Приморский край, Владивосток"), { city: "Владивосток", region: "Приморский край" });
+assert.deepEqual(splitPlace("г. Санкт-Петербург, Пушкин"), { city: "Санкт-Петербург", region: "Санкт-Петербург" });
+assert.deepEqual(splitPlace("Республика Татарстан, Лаишевский район, с. Сокуры"), { city: "Сокуры", region: "Республика Татарстан" });
+assert.deepEqual(splitPlace("Ульяновск"), { city: "Ульяновск", region: null });
 
 console.log("check:races-expected ok");

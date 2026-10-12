@@ -8,6 +8,7 @@ export type PastRace = {
   date: string; // YYYY-MM-DD, первый день
   name: string;
   city: string;
+  region?: string | null;
   distances: string[];
   finishers: number | null;
   vk: string | null;
@@ -35,6 +36,23 @@ const decode = (s: string) =>
   s.replace(/&laquo;/g, "«").replace(/&raquo;/g, "»").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&#39;/g, "'");
 const clean = (s: string) => decode(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 
+const REGION_RE = /(область|край|республика|респ\.|автономн|округ|ао$)/i;
+const FEDERAL = ["Москва", "Санкт-Петербург", "Севастополь"];
+
+/** Ячейка места probeg: «Приморский край, Владивосток», «г. Санкт-Петербург, Пушкин», «Ульяновск». */
+export function splitPlace(raw: string): { city: string; region: string | null } {
+  const segs = raw.split(",").map((x) => x.replace(/^(г\.|город)\s*/i, "").trim()).filter(Boolean);
+  if (!segs.length) return { city: "", region: null };
+  const fed = FEDERAL.find((f) => segs[0] === f);
+  if (fed) return { city: fed, region: fed };
+  if (REGION_RE.test(segs[0])) {
+    const rest = segs.slice(1).filter((x) => !/(район|г\.о\.|городской округ|м\.о\.|муниципальн)/i.test(x));
+    const city = (rest[rest.length - 1] || "").replace(/^(д\.|с\.|п\.|пос\.|пгт|р\.п\.|ст\.|х\.|деревня|село|посёлок|поселок)\s*/i, "").trim();
+    return { city: city || segs[0], region: segs[0] };
+  }
+  return { city: segs[0], region: null };
+}
+
 /** Строки таблицы probeg.org/races для ПРОШЕДШИХ стартов (столбцы: №, дата, название, город, дистанции, финишёры, ссылки). */
 export function parsePastProbeg(html: string): PastRace[] {
   const out: PastRace[] = [];
@@ -52,14 +70,15 @@ export function parsePastProbeg(html: string): PastRace[] {
     const date = `${year}-${month}-${first[1]}`;
     // Только текст ссылки: рядом в той же ячейке probeg пишет оценку («4.8, число оценивших…»).
     const name = clean((tds[2].match(/<a[^>]*>([\s\S]*?)<\/a>/) || ["", tds[2]])[1]);
-    const city = clean(tds[3]);
+    const place = splitPlace(clean(tds[3]));
+    const city = place.city;
     const distances = [...tds[4].matchAll(/<a[^>]*>([^<]+)<\/a>|<span[^>]*>([^<]+)<\/span>/g)].map((x) => clean(x[1] || x[2] || "")).filter(Boolean);
     const tot = clean(tds[5]).match(/всего:\s*(\d+)/);
     const fin = tot ? Number(tot[1]) : Number((clean(tds[5]).match(/^\d+/) || [""])[0]) || null;
     const links = tds[tds.length - 1];
     const vk = (links.match(/href="(https?:\/\/vk\.(?:com|ru)\/[^"]+)"/) || [])[1] || null;
     const site = (links.match(/href="(https?:\/\/[^"]+)"[^>]*>\s*Сайт/) || [])[1] || null;
-    out.push({ sid: ev[1], date, name, city, distances, finishers: fin, vk, site });
+    out.push({ sid: ev[1], date, name, city, region: place.region, distances, finishers: fin, vk, site });
   }
   return out;
 }
@@ -161,7 +180,7 @@ export function buildExpected(past: PastRace[], future: FutureRow[]): { expected
       name: p.name.replace(/\s+[—–]\s+/g, " - "),
       name_key: key,
       city: p.city,
-      region: null,
+      region: p.region ?? null,
       race_type: type,
       distances: p.distances.filter((d) => !/дет/i.test(d)).slice(0, 8),
       last_date: p.date,
