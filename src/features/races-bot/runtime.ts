@@ -8,7 +8,7 @@ import { prepare, type RaceRow } from "@/app/races/races-logic";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotTg, type BotUser } from "./bot";
-import { localParts, raceCode, type BotRace, type ExpectedItem, type GoCode } from "./core";
+import { geoKey, localParts, raceCode, type BotRace, type ExpectedItem, type GeoPoint, type GoCode } from "./core";
 import { toExpected } from "@/app/races/expected";
 import { computeBotStats, type StatEvent, type StatFollow, type StatPeriod, type StatUser } from "./stats";
 import type { Weather } from "./texts";
@@ -95,15 +95,38 @@ export async function loadBotRaces(): Promise<BotRace[]> {
     if (!data || data.length < 1000) break;
   }
   const firstSeen = new Map(rows.map((r) => [r.id, r.first_seen]));
-  const races = prepare(rows, localParts(new Date(), "Europe/Moscow").date).map((r) => ({ ...r, firstSeen: firstSeen.get(r.id) ?? null }));
+  // Координаты городов — из кэша race_geo (scripts/races-geo-fill.ts), без геокодера на лету.
+  // Сбой чтения не ломает бота: «Рядом» вернётся к «тот же регион».
+  const geo = await loadGeo().catch((e) => {
+    console.error(`[races-bot] race_geo: ${e instanceof Error ? e.message : String(e)}`);
+    return new Map<string, GeoPoint>();
+  });
+  const races = prepare(rows, localParts(new Date(), "Europe/Moscow").date).map((r) => ({
+    ...r,
+    firstSeen: firstSeen.get(r.id) ?? null,
+    geo: geo.get(geoKey(r.city, r.region)) ?? null,
+  }));
   racesCache = { at: Date.now(), races };
   return races;
+}
+
+/** race_geo: ключ «город, регион» → точка; только узнанные (lat/lon не null). */
+export async function loadGeo(): Promise<Map<string, GeoPoint>> {
+  const sb = createSupabaseServerClient();
+  const out = new Map<string, GeoPoint>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("race_geo").select("key,lat,lon").not("lat", "is", null).order("key").range(from, from + 999);
+    if (error) throw new Error(error.message);
+    for (const g of (data ?? []) as { key: string; lat: number; lon: number }[]) out.set(g.key, { lat: g.lat, lon: g.lon });
+    if (!data || data.length < 1000) break;
+  }
+  return out;
 }
 
 // ── хранилище ────────────────────────────────────────────────────────────────
 
 const USER_COLS =
-  "tg_id,first_name,username,city,types,distances,digest_on,digest_every_weeks,digest_last_at,paused_until,tz,source,state,consult_offered_at,consult_requested_at,blocked,created_at,star_hint_at";
+  "tg_id,first_name,username,city,types,distances,digest_on,digest_every_weeks,digest_last_at,paused_until,tz,source,state,consult_offered_at,consult_requested_at,blocked,created_at,star_hint_at,geo_lat,geo_lon";
 const FOLLOW_COLS = "tg_id,race_id,race_name,race_date,race_end,race_city,created_at";
 
 function fail(what: string, e: { message: string } | null): void {

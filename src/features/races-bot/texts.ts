@@ -193,6 +193,11 @@ export function nearbyHeader(region: string): Msg {
   return { text: `<b>Рядом</b>, ${esc(region)}:` };
 }
 
+/** «Рядом» по радиусу: ближайшие первыми. fromYou — считали от геолокации, а не от города. */
+export function nearbyRadiusHeader(km: number, fromYou: boolean): Msg {
+  return { text: `<b>Рядом</b>, до ${km} км ${fromYou ? "от тебя" : "от города"}, ближайшие первыми:` };
+}
+
 /** Кнопки под коротким списком: снять фильтры, сменить город, весь календарь. */
 export function shortListActions(filtered: boolean, q?: string, digestOffer = false): Msg {
   const rows: Button[][] = [];
@@ -204,11 +209,13 @@ export function shortListActions(filtered: boolean, q?: string, digestOffer = fa
 }
 
 /** regUrl — ссылка «Регистрация» (через igorp.run/go/, чтобы записать клик); null — кнопки нет. */
-export function card(r: Race, following: boolean, regUrl: string | null = r.reg || r.site || null): Msg {
+/** km — для «Рядом»: расстояние по прямой отдельной строкой (не путать с дистанциями забега). */
+export function card(r: Race, following: boolean, regUrl: string | null = r.reg || r.site || null, km?: number): Msg {
   const row: Button[] = [following ? { text: "✓ Слежу", callback_data: `my` } : { text: "⭐ Следить", callback_data: `f:${raceCode(r.id)}` }];
   const url = regUrl;
   if (url) row.push({ text: "Регистрация", url });
-  return { text: `<b>${shortDate(r)}</b> · ${esc(r.name)}\n${esc(raceMeta(r))}`, reply_markup: { inline_keyboard: [row] } };
+  const away = km === undefined ? "" : `\n📍 ${km} км по прямой`;
+  return { text: `<b>${shortDate(r)}</b> · ${esc(r.name)}\n${esc(raceMeta(r))}${away}`, reply_markup: { inline_keyboard: [row] } };
 }
 
 export function listFooter(more: number, city: string | null, digestOn: boolean, q?: string, nextOffset?: number): Msg {
@@ -279,6 +286,15 @@ export function cityNotFound(text: string, suggestions: string[]): Msg {
       ? `Не нашёл город «${esc(text.slice(0, 60))}». Может быть, один из этих?`
       : `Не нашёл город «${esc(text.slice(0, 60))}» среди городов с забегами. Попробуй написать иначе (например, «Нижний Новгород») или отправь геолокацию.`,
     reply_markup: { inline_keyboard: rows },
+  };
+}
+
+/** Геолокация в месте без своих стартов: ближайшие города со стартами (до 150 км) кнопками. */
+export function nearestCitiesMsg(cities: string[]): Msg {
+  return {
+    text: "Своих стартов там пока нет. Ближайшие города со стартами:",
+    // cityg: — город выбран, но «Рядом» по-прежнему считается от присланной точки.
+    reply_markup: { inline_keyboard: [...cities.map((c) => [{ text: c, callback_data: `cityg:${citySlug(c)}` }]), [calendarButton(CALENDAR_LABEL)]] },
   };
 }
 

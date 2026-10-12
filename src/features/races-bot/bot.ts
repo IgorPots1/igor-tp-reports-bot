@@ -21,6 +21,8 @@ import {
   matchCity,
   matchUser,
   nearbyRaces,
+  nearestCities,
+  NEARBY_KM,
   parseSearch,
   parseStart,
   resolveCity,
@@ -44,6 +46,9 @@ export type BotUser = PlanUser & {
   consult_offered_at: string | null;
   consult_requested_at: string | null;
   star_hint_at?: string | null;
+  /** Точка из геолокации: «Рядом» считается от неё. Сбрасывается при выборе города кнопкой или текстом. */
+  geo_lat?: number | null;
+  geo_lon?: number | null;
 };
 
 export type BotFollow = PlanFollow & { tg_id: number };
@@ -258,10 +263,12 @@ export function createBot(deps: BotDeps) {
       if (races.length) await send(u.tg_id, T.listHeader(where, types, dists));
       for (const r of races) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
       await send(u.tg_id, T.shortListNote(where, races.length, filtered));
-      const near = nearbyRaces(all, city, types, dists);
-      if (near.region && near.races.length) {
-        await send(u.tg_id, T.nearbyHeader(near.region));
-        for (const r of near.races.slice(0, 3)) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
+      // Своя геолокация — радиус от неё; иначе от города (race_geo); координат нет — тот же регион.
+      const mine = own && u.geo_lat != null && u.geo_lon != null ? { lat: u.geo_lat, lon: u.geo_lon } : null;
+      const near = nearbyRaces(all, city, types, dists, mine);
+      if (near.races.length) {
+        await send(u.tg_id, near.radius ? T.nearbyRadiusHeader(NEARBY_KM, !!mine) : T.nearbyHeader(near.region!));
+        for (const r of near.races.slice(0, 3)) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r), near.km.get(r.id)));
       }
       await showExpected(u, await expectedFor((e) => (expectedInCity(e, city) || (!!near.region && expectedInCity(e, near.region))) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, types, dists)));
       await send(u.tg_id, T.shortListActions(filtered && own, city, own && !u.digest_on));
@@ -399,8 +406,9 @@ export function createBot(deps: BotDeps) {
     return greet(u.tg_id);
   }
 
-  async function setCity(u: BotUser, city: string, lead?: string) {
-    u = await store.saveUser({ tg_id: u.tg_id, city, state: null });
+  /** point — геолокация человека (только из onLocation); город кнопкой или текстом её сбрасывает. */
+  async function setCity(u: BotUser, city: string, lead?: string, point?: { lat: number; lon: number }) {
+    u = await store.saveUser({ tg_id: u.tg_id, city, state: null, geo_lat: point?.lat ?? null, geo_lon: point?.lon ?? null });
     await track(u.tg_id, "city_chosen", { meta: { city } });
     await send(u.tg_id, T.prefs(u.types, u.distances, lead));
   }
@@ -448,20 +456,20 @@ export function createBot(deps: BotDeps) {
   }
 
   async function onLocation(u: BotUser, lat: number, lon: number) {
+    const races = await deps.races();
+    const point = { lat, lon };
+    // Ближайшие города со стартами по координатам: подсказки, если сам город не узнан.
+    const nearest = nearestCities(races, point);
     const name = deps.reverseGeocode ? await deps.reverseGeocode(lat, lon) : null;
-    if (!name) {
-      await send(u.tg_id, { text: "Не получилось определить город по геолокации. Напиши его словами.", reply_markup: { remove_keyboard: true } });
-      await store.saveUser({ tg_id: u.tg_id, state: "await_city" });
-      return;
-    }
-    const { city, suggestions } = resolveCity(await deps.races(), name);
+    const { city, suggestions } = name ? resolveCity(races, name) : { city: null, suggestions: [] as string[] };
     if (!city) {
-      await send(u.tg_id, { text: `По геолокации: ${T.esc(name)}.`, reply_markup: { remove_keyboard: true } });
-      await store.saveUser({ tg_id: u.tg_id, state: "await_city" });
-      return send(u.tg_id, T.cityNotFound(name, suggestions));
+      await send(u.tg_id, { text: name ? `По геолокации: ${T.esc(name)}.` : "Не получилось определить город по геолокации.", reply_markup: { remove_keyboard: true } });
+      await store.saveUser({ tg_id: u.tg_id, state: "await_city", geo_lat: lat, geo_lon: lon });
+      if (nearest.length) return send(u.tg_id, T.nearestCitiesMsg(nearest));
+      return send(u.tg_id, name ? T.cityNotFound(name, suggestions) : T.ASK_CITY);
     }
     await send(u.tg_id, { text: `Город: ${T.esc(city)}`, reply_markup: { remove_keyboard: true } });
-    return setCity(u, city);
+    return setCity(u, city, undefined, point);
   }
 
   async function onCallback(u: BotUser, data: string, msg: TgMessage | undefined) {
@@ -469,6 +477,13 @@ export function createBot(deps: BotDeps) {
     const key = i < 0 ? data : data.slice(0, i);
     const arg = i < 0 ? "" : data.slice(i + 1);
     switch (key) {
+      case "cityg": {
+        // Город из ближайших к геолокации: точку сохраняем, «Рядом» — от неё.
+        const city = findCityBySlug(knownCities(await deps.races()), arg);
+        if (!city) return pickCity(u.tg_id);
+        const point = u.geo_lat != null && u.geo_lon != null ? { lat: u.geo_lat, lon: u.geo_lon } : undefined;
+        return setCity(u, city, undefined, point);
+      }
       case "city": {
         const races = await deps.races();
         const city = findCityBySlug([...T.TOP_CITIES, ...knownCities(races), ...knownRegions(races)], arg);

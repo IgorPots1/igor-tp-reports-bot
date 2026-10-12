@@ -8,7 +8,47 @@
 
 import { distMatch, norm, plural, type Race } from "@/app/races/races-logic";
 
-export type BotRace = Race & { firstSeen: string | null };
+export type GeoPoint = { lat: number; lon: number };
+
+/** geo — координаты города старта из race_geo (по «город, регион»); null — город не узнан. */
+export type BotRace = Race & { firstSeen: string | null; geo?: GeoPoint | null };
+
+// ── координаты: «Рядом» в радиусе ────────────────────────────────────────────
+
+/** Радиус «Рядом»: старты в других городах не дальше этого от города (или геолокации) человека. */
+export const NEARBY_KM = 150;
+
+/** Ключ race_geo: «город, регион» в нижнем регистре, ё → е, без лишних пробелов. */
+export function geoKey(city: string | null | undefined, region: string | null | undefined): string {
+  const n = (s: string | null | undefined) => norm(s).replace(/\s+/g, " ").trim();
+  return `${n(city)}, ${n(region)}`;
+}
+
+/** Расстояние по прямой, км (гаверсинус). */
+export function kmBetween(a: GeoPoint, b: GeoPoint): number {
+  const rad = (x: number) => (x * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLon = rad(b.lon - a.lon);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+/** Ближайшие к точке города со стартами (до NEARBY_KM): для геолокации в посёлке без своих стартов. */
+export function nearestCities(races: BotRace[], at: GeoPoint, n = 3): string[] {
+  const best = new Map<string, number>();
+  for (const r of races) {
+    if (!r.geo || !r.city) continue;
+    const d = kmBetween(at, r.geo);
+    if (d <= NEARBY_KM && (best.get(r.city) ?? Infinity) > d) best.set(r.city, d);
+  }
+  return [...best.entries()].sort((a, b) => a[1] - b[1]).slice(0, n).map(([c]) => c);
+}
+
+/** Точка города: координаты любого его старта (у всех стартов города они одни — из race_geo). */
+export function cityPoint(races: BotRace[], city: string): GeoPoint | null {
+  const c = norm(city);
+  return races.find((r) => norm(r.city) === c && r.geo)?.geo ?? null;
+}
 
 // ── коды для deep link ───────────────────────────────────────────────────────
 //
@@ -218,15 +258,42 @@ export function matchUser(r: Race, types: string[], dists: string[]): boolean {
  * стартов), кроме самого города. Координат у стартов нет, поэтому соседние регионы и радиус
  * 200 км пока не считаются.
  */
-export function nearbyRaces(races: BotRace[], city: string, types: string[], dists: string[]): { region: string | null; races: BotRace[] } {
+/**
+ * «Рядом» для короткого списка. Есть координаты (геолокация человека или город из race_geo) —
+ * старты других городов в радиусе NEARBY_KM, ближайшие первыми, km — расстояние. Координат нет —
+ * как раньше: тот же регион (radius: false, km пуст).
+ */
+export function nearbyRaces(
+  races: BotRace[],
+  city: string,
+  types: string[],
+  dists: string[],
+  origin?: GeoPoint | null,
+): { region: string | null; races: BotRace[]; km: Map<string, number>; radius: boolean } {
   const c = norm(city);
   const counts = new Map<string, number>();
   for (const r of races) if (norm(r.city) === c && r.region) counts.set(r.region, (counts.get(r.region) || 0) + 1);
   const region = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? (races.some((r) => norm(r.region) === c) ? city : null);
-  if (!region) return { region: null, races: [] };
+  const from = origin ?? cityPoint(races, city);
+  const km = new Map<string, number>();
+  if (from) {
+    const near: BotRace[] = [];
+    for (const r of races) {
+      if (!r.geo || norm(r.city) === c || !matchUser(r, types, dists)) continue;
+      const d = kmBetween(from, r.geo);
+      if (d > NEARBY_KM) continue;
+      km.set(r.id, Math.round(d));
+      near.push(r);
+    }
+    near.sort((a, b) => km.get(a.id)! - km.get(b.id)! || a.ds.localeCompare(b.ds));
+    return { region, races: near, km, radius: true };
+  }
+  if (!region) return { region: null, races: [], km, radius: false };
   return {
     region,
     races: races.filter((r) => norm(r.region) === norm(region) && norm(r.city) !== c && matchUser(r, types, dists)),
+    km,
+    radius: false,
   };
 }
 

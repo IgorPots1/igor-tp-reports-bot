@@ -34,6 +34,10 @@ import {
   raceCode,
   resolveCity,
   startSource,
+  geoKey,
+  kmBetween,
+  nearbyRaces,
+  nearestCities,
   type BotRace,
 } from "@/features/races-bot/core";
 import { computeBotStats, statsMessage, type StatEvent } from "@/features/races-bot/stats";
@@ -573,6 +577,66 @@ async function main() {
       assert.match(url, new RegExp(`from=${from}`), `метка ${from}: ${where}`);
       assert.match(url, /q=%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0|q=Москва/, `календарь сразу с городом: ${where}`);
     }
+  }
+
+  // ── «Рядом» по координатам (наряд 12.10.2026): радиус 150 км, ближайшие первыми, км ──
+  {
+    const TVER = { lat: 56.859, lon: 35.912 };
+    const at = (r: BotRace, g: { lat: number; lon: number } | null): BotRace => ({ ...r, geo: g });
+    const tver = at(race("probeg:g1", "Тверской забег", "2027-05-09", "Тверь", "road", [10]), TVER);
+    const torzhok = at(race("probeg:g2", "Торжокский полумарафон", "2027-06-01", "Торжок", "road", [21.1]), { lat: 57.041, lon: 34.96 }); // ~60 км
+    const klin = at(race("probeg:g3", "Клинский забег", "2027-05-20", "Клин", "road", [10]), { lat: 56.331, lon: 36.729 }); // ~80 км
+    const rzhev = at(race("probeg:g4", "Ржевский забег", "2027-07-01", "Ржев", "road", [10]), { lat: 56.262, lon: 34.329 }); // ~115 км
+    const spb = at(race("probeg:g5", "Белые ночи", "2027-06-27", "Санкт-Петербург", "road", [42.2]), { lat: 59.939, lon: 30.316 }); // ~480 км
+    const nogeo = at(race("probeg:g6", "Без координат", "2027-06-01", "Неизвестно", "road", [10]), null);
+    const pool = [tver, torzhok, klin, rzhev, spb, nogeo];
+    assert.equal(geoKey("Тверь ", "Тверская  область"), "тверь, тверская область");
+    assert.ok(Math.abs(kmBetween(TVER, { lat: 59.939, lon: 30.316 }) - 480) < 15, "Тверь — Петербург ~480 км");
+    const n = nearbyRaces(pool, "Тверь", [], []);
+    assert.equal(n.radius, true);
+    assert.deepEqual(n.races.map((r) => r.city), ["Торжок", "Клин", "Ржев"], "ближайшие первыми, дальше 150 км и без координат — нет");
+    assert.ok(n.km.get(torzhok.id)! < n.km.get(klin.id)! && n.km.get(rzhev.id)! <= 150);
+    // от геолокации человека: точка у Клина — Клин ближе Торжка
+    const fromKlin = nearbyRaces(pool, "Тверь", [], [], { lat: 56.4, lon: 36.6 });
+    assert.equal(fromKlin.races[0].city, "Клин");
+    // у города нет координат — прежнее «тот же регион»
+    assert.equal(nearbyRaces(RACES, "Казань", [], []).radius, false);
+    // карточка «Рядом»: расстояние отдельной строкой, не в дистанциях
+    assert.match(T.card(torzhok, false, null, 61).text, /\n📍 61 км по прямой$/);
+    assert.match(T.nearbyRadiusHeader(150, true).text, /до 150 км от тебя, ближайшие первыми/);
+    assert.deepEqual(nearestCities(pool, { lat: 56.95, lon: 35.4 }), ["Торжок", "Тверь", "Ржев"].sort((a, b) =>
+      kmBetween({ lat: 56.95, lon: 35.4 }, pool.find((r) => r.city === a)!.geo!) - kmBetween({ lat: 56.95, lon: 35.4 }, pool.find((r) => r.city === b)!.geo!)));
+
+    // бот: короткий список в Твери — «Рядом» по радиусу; геолокация сохраняет точку, город кнопкой её сбрасывает
+    const savedRaces = RACES;
+    RACES = pool;
+    const G = { id: 6301, first_name: "Гео", username: "geo6301" };
+    await bot.handleUpdate(msg(G, "/start"));
+    await bot.handleUpdate(cb(G, "pick"));
+    await bot.handleUpdate(cb(G, "city_other"));
+    await bot.handleUpdate(msg(G, "Тверь"));
+    let c = calls.length;
+    await bot.handleUpdate(cb(G, "show"));
+    const out = calls.slice(c).filter((x) => x.method === "sendMessage").map((x) => String(x.params.text));
+    const hi = out.findIndex((t) => t.includes("<b>Рядом</b>, до 150 км от города"));
+    assert.ok(hi >= 0, "заголовок «Рядом» по радиусу");
+    assert.match(out[hi + 1], /Торжокский[\s\S]*📍 \d+ км по прямой/, "первым ближайший, с км");
+    const GEO = { id: 6302, first_name: "Точка", username: "pt6302" };
+    await bot.handleUpdate(msg(GEO, "/start"));
+    await bot.handleUpdate({ message: { message_id: mid++, chat: { id: GEO.id, type: "private" }, from: GEO, location: { latitude: 56.85, longitude: 35.9 } } } as never);
+    // reverseGeocode в чеке отвечает «Казань» — её нет в pool: ближайшие города кнопками cityg:
+    const near = sent(GEO.id).at(-1)!;
+    assert.match(String(near.params.text), /Ближайшие города со стартами/);
+    assert.equal(buttons(near)[0].text, "Тверь");
+    await bot.handleUpdate(cb(GEO, buttons(near)[0].callback_data!));
+    assert.deepEqual([store.users.get(GEO.id)?.city, store.users.get(GEO.id)?.geo_lat], ["Тверь", 56.85], "город из ближайших — точка остаётся");
+    c = calls.length;
+    await bot.handleUpdate(cb(GEO, "show"));
+    assert.ok(calls.slice(c).some((x) => String(x.params.text).includes("до 150 км от тебя")), "«Рядом» от геолокации");
+    await bot.handleUpdate(cb(GEO, "s:city"));
+    await bot.handleUpdate(cb(GEO, `city:${citySlug("Тверь")}`));
+    assert.equal(store.users.get(GEO.id)?.geo_lat, null, "город кнопкой сбрасывает точку");
+    RACES = savedRaces;
   }
 
   // ── подпись ссылок /go/ ────────────────────────────────────────────────────
