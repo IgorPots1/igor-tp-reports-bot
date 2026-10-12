@@ -652,6 +652,8 @@ const RR_ABROAD = /словени|испани|турци|оаэ|эмират|ч
 const RR_REGION = /(^|\s)(обл|край|респ|АО|Аобл|автономный округ|Автономный округ)(\s|$)|^г (Москва|Санкт-Петербург|Севастополь)$/;
 // детские лиги и старты, OCR, туры с проживанием, тренировки - не старт для календаря
 const RR_SKIP = /рогейн|ориентир|квест|тренировк|спортпакет|спорт-пакет|(^|[\s«"])тур[- ]|экспедици|детск|юниорск|препятстви/i;
+// фан-форматы по мультфильмам и персонажам, пробежки с медалью - не старт для календаря (Игорь 12.10.2026)
+const RR_FUN = /пробежк[аи] с медал|^пробежка\b|пробежка\s*[«"]|мульти[\s_-]*сери|кино[\s_-]*сери|мультфильм|дисней|disney|зверополис|zootopia|джуди\s*хопс|ник\s*уайлд|nik\s*wi?l?de|белоснежк|бэмби|бемби|золушк|холодное сердце|щенячий патруль|смешарик|фиксик|маша и медвед|человек[\s-]паук|супергеро|принцесс/i;
 const RR_KIDS = /\d+\s*[-–]\s*\d+\s*лет|до \d+ лет|дет|ребен|малыш/i;
 function rrRegion(seg: string): string {
   const s = clean(seg);
@@ -721,7 +723,7 @@ async function russiarunning(today: Date, horizon: Date, maxRequests = 300): Pro
     const { city, region, location } = rrPlace(address, placeT);
     if (!region && !city) continue; // страну не определить - не берём
     const name = clean(decode(String(x.title || "")).replace(/\p{Extended_Pictographic}|️|\^/gu, "")).replace(/\s*\/\s*$/, "");
-    if (!name || !okRace(name, `${city} ${placeT}`) || RR_SKIP.test(name) || /online|онлайн/i.test(placeT)) continue;
+    if (!name || !okRace(name, `${city} ${placeT}`) || RR_SKIP.test(name) || RR_FUN.test(name) || /online|онлайн/i.test(placeT)) continue;
     // beginDate/endDate - МЕСТНОЕ время с ложным «Z» (Крымский марафон 00:00Z-23:59Z, Челябинский
     // 00:00Z-23:59Z при timeZoneOffset 5): дату берём как есть, сдвиг на пояс увёл бы её на день.
     const date_start = String(x.beginDate).slice(0, 10), date_end = x.endDate ? String(x.endDate).slice(0, 10) : date_start;
