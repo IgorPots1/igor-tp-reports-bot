@@ -64,12 +64,20 @@ assert.ok(!nameSimilar("Забег", "Пробег"), "без значимых �
 const cal: CalendarRow[] = [
   { id: "probeg:1", name: "Казанский марафон", date_start: "2027-05-02", date_end: null, city: "Казань", race_type: "road" },
   { id: "orgeo:2", name: "Кубок области", date_start: "2027-06-10", date_end: null, city: "Тверь", race_type: "tri" },
+  { id: "probeg:3", name: "Забег «Лужники»", date_start: "2027-07-10", date_end: null, city: "Москва", race_type: "road" },
+  { id: "probeg:4", name: "Белые ночи", date_start: "2027-07-10", date_end: null, city: "Санкт-Петербург", race_type: "road" },
 ];
 const ins = (o: Partial<RaceInsert>) => ({ name: "X", date_start: "2027-05-02", city: "Пермь", race_type: "road", ...o });
 assert.equal(findDuplicate(ins({ name: "Казанский марафон 2027", date_start: "2027-05-04" }), cal)?.id, "probeg:1", "имя, +2 дня");
 assert.equal(findDuplicate(ins({ name: "Казанский марафон", date_start: "2027-05-05" }), cal), null, "3 дня уже не дубль");
 assert.equal(findDuplicate(ins({ name: "Совсем другое", city: "Тверь", race_type: "tri", date_start: "2027-06-11" }), cal)?.id, "orgeo:2", "город и тип");
 assert.equal(findDuplicate(ins({ name: "Совсем другое", city: "Тверь", race_type: "road", date_start: "2027-06-11" }), cal), null, "город тот, тип другой");
+// Было: «тот же город и тип ±2 дня» срабатывало везде, и в Москве разные старты одних выходных
+// склеивались в дубль (ложные отказы шлюза). С 12.10.2026 правило только для небольших городов,
+// как sameRace в edge-функции; в крупных дубль только по названию.
+assert.equal(findDuplicate(ins({ name: "Совсем другое", city: "Москва", race_type: "road", date_start: "2027-07-11" }), cal), null, "Москва: город и тип — не дубль");
+assert.equal(findDuplicate(ins({ name: "Совсем другое", city: "Санкт-Петербург", race_type: "road", date_start: "2027-07-10" }), cal), null, "Петербург: город и тип — не дубль");
+assert.equal(findDuplicate(ins({ name: "Забег Лужники 2027", city: "Москва", race_type: "road", date_start: "2027-07-11" }), cal)?.id, "probeg:3", "Москва: по названию дубль ловится");
 
 // Двойник в основном потоке (снятие ручной строки): строже дубля при вставке.
 // Три ложных совпадения от 11.10.2026 держим как запрет: другой город и одно общее слово.

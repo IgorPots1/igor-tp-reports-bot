@@ -227,14 +227,20 @@ function dayDiff(a: string, b: string): number {
   return Math.abs((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 864e5);
 }
 
-/** Дубль по правилу тренера: дата ±2 дня И (похожее название ИЛИ тот же город и тип).
+// Крупные города: в одни выходные там идёт несколько разных стартов одного типа, поэтому
+// «тот же город и тип» там дублем не считается. Список тот же, что BIG_CITY в sameRace
+// edge-функции race-calendar-sync; дефис допускается и пробелом, потому что norm() его так заменяет.
+export const BIG_CITY = /^(москва|санкт[- ]петербург|екатеринбург|новосибирск|казань|нижний новгород|краснодар|самара|ростов[- ]на[- ]дону|уфа|пермь|челябинск|воронеж|красноярск|сочи)$/i;
+
+/** Дубль по правилу тренера: дата ±2 дня И (похожее название ИЛИ тот же НЕБОЛЬШОЙ город и тип).
  *  Если города и регионы разные, «похожее название» считается только по значимым словам
- *  (meaningfulMatch) — как sameRace в edge-функции race-calendar-sync. */
+ *  (meaningfulMatch) — как sameRace в edge-функции race-calendar-sync. «Тот же город и тип»
+ *  в крупных городах (BIG_CITY) не срабатывает: давало ложные дубли в Москве (12.10.2026). */
 export function findDuplicate(r: Pick<RaceInsert, "name" | "date_start" | "city" | "race_type"> & { region?: string | null }, rows: CalendarRow[]): CalendarRow | null {
   for (const x of rows) {
     if (dayDiff(r.date_start, x.date_start) > 2) continue;
     if (nameSimilar(r.name, x.name) && (!placesDiffer(r, x) || meaningfulMatch(r.name, x.name))) return x;
-    if (norm(r.city) && norm(r.city) === norm(x.city) && r.race_type === x.race_type) return x;
+    if (norm(r.city) && !BIG_CITY.test(norm(r.city)) && norm(r.city) === norm(x.city) && r.race_type === x.race_type) return x;
   }
   return null;
 }
