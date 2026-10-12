@@ -32,6 +32,11 @@ import {
   isAutoCollected,
   manualId,
   mergeSources,
+  slimVkCommunityPosts,
+  VK_METHODS,
+  VK_MIN_INTERVAL_MS,
+  VK_SEARCH_WORDS,
+  vkQueriesForCity,
   nameSimilar,
   validateInsert,
   validateSuggestionVerdict,
@@ -165,5 +170,31 @@ assert.match(sum, /Кандидаты в автосбор:\n- https:\/\/cal\.exa
 assert.ok(!/[—–]/.test(sum), "без длинных тире");
 assert.match(sum, /Заявки с сайта: разобрано 0/);
 assert.match(sum, /ВК: не искали/);
+
+// --- ВК (наряд 12.10): только открытые сообщества, без данных людей, лимит 3 запроса в секунду.
+// groups.search сервисному ключу недоступен (15 Access denied) — его нет в списке методов.
+assert.ok(!VK_METHODS.has("groups.search") && VK_METHODS.has("newsfeed.search") && VK_METHODS.has("wall.get"));
+assert.ok(VK_MIN_INTERVAL_MS >= 334, "не чаще 3 запросов в секунду");
+assert.deepEqual(vkQueriesForCity("Казань", 2027).slice(0, 2), ["трейл Казань 2027", "забег Казань 2027"]);
+assert.equal(VK_SEARCH_WORDS.length, 8);
+assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includes("скайраннинг"));
+{
+  const posts = [
+    { id: 1, owner_id: -100, from_id: -100, date: 1797638400, text: "Трейл 13 марта 2027", signer_id: 555 },
+    { id: 2, owner_id: 777, from_id: 777, date: 1797638400, text: "я бегу трейл" }, // человек
+    { id: 3, owner_id: -200, from_id: -200, date: 1797638400, text: "закрытая группа" },
+    { id: 4, owner_id: -100, from_id: 888, date: 1797638400, text: "пост участника на стене" },
+  ];
+  const groups = [
+    { id: 100, name: "Aurora Trail", screen_name: "auroratrail", is_closed: 0 },
+    { id: 200, name: "Закрытый клуб", screen_name: "closed", is_closed: 1 },
+  ];
+  const feed = slimVkCommunityPosts(posts, groups);
+  assert.deepEqual(feed.map((p) => p.url), ["https://vk.com/wall-100_1", "https://vk.com/wall-100_4"], "люди и закрытые группы отброшены");
+  assert.deepEqual(Object.keys(feed[0]).sort(), ["date", "group", "group_url", "text", "url"], "ни автора, ни подписи");
+  assert.ok(!JSON.stringify(feed).includes("555") && !JSON.stringify(feed).includes("777"));
+  const wall = slimVkCommunityPosts(posts, groups, { fromGroupOnly: true });
+  assert.deepEqual(wall.map((p) => p.url), ["https://vk.com/wall-100_1"], "на стене — только посты самой группы");
+}
 
 console.log("check:races-manual ok");

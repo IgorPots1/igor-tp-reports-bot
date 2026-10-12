@@ -819,8 +819,73 @@ async function cmdSuggestions() {
   console.log(JSON.stringify(data, null, 2));
 }
 
-/** Поиск во ВКонтакте сервисным ключом. Только чтение, только два метода поиска. */
-const VK_METHODS = new Set(["groups.search", "newsfeed.search"]);
+/**
+ * Поиск во ВКонтакте сервисным ключом. Только чтение.
+ *
+ * groups.search с сервисным ключом недоступен (ВК отвечает 15 Access denied, проверено 12.10),
+ * поэтому: newsfeed.search по словам + wall.get по уже найденной группе организатора.
+ * Берём только ОТКРЫТЫЕ СООБЩЕСТВА: посты частных людей (owner_id > 0) отбрасываются до вывода,
+ * закрытые группы тоже. Из поста наружу идут только дата, группа, ссылка и текст объявления —
+ * без автора, подписи, лайков и прочего: сохраняется сам старт и ссылка-подтверждение.
+ */
+export const VK_METHODS = new Set(["newsfeed.search", "wall.get"]);
+/** Лимит ВК для ключа — 3 запроса в секунду; держим не чаще одного в 400 мс. */
+export const VK_MIN_INTERVAL_MS = 400;
+export const VK_SEARCH_WORDS = ["трейл", "забег", "полумарафон", "марафон", "триатлон", "акватлон", "скайраннинг", "ультра"];
+
+/** Запросы недели для одной точки: слово + город + год. */
+export function vkQueriesForCity(city: string, year: number): string[] {
+  return VK_SEARCH_WORDS.map((w) => `${w} ${city} ${year}`);
+}
+
+type VkPost = { id?: unknown; owner_id?: unknown; from_id?: unknown; date?: unknown; text?: unknown };
+type VkGroup = { id?: unknown; name?: unknown; screen_name?: unknown; is_closed?: unknown };
+
+/**
+ * Посты только открытых сообществ, в узком виде. fromGroupOnly — для wall.get: на стене группы
+ * бывают посты участников, берём только посты от имени самой группы.
+ */
+export function slimVkCommunityPosts(posts: VkPost[], groups: VkGroup[], opts: { fromGroupOnly?: boolean } = {}) {
+  const open = new Map<number, VkGroup>();
+  for (const g of groups) if (Number(g.is_closed) === 0) open.set(Number(g.id), g);
+  return posts
+    .filter((p) => Number(p.owner_id) < 0 && open.has(-Number(p.owner_id)))
+    .filter((p) => !opts.fromGroupOnly || Number(p.from_id) === Number(p.owner_id))
+    .map((p) => {
+      const g = open.get(-Number(p.owner_id))!;
+      return {
+        date: new Date(Number(p.date) * 1000).toISOString().slice(0, 10),
+        group: String(g.name ?? ""),
+        group_url: `https://vk.com/${String(g.screen_name ?? `club${g.id}`)}`,
+        url: `https://vk.com/wall${p.owner_id}_${p.id}`,
+        text: String(p.text || "").slice(0, 600),
+      };
+    });
+}
+
+let vkLastCallAt = 0;
+async function vkCall(method: string, params: Record<string, string>, token: string): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const wait = vkLastCallAt + VK_MIN_INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    vkLastCallAt = Date.now();
+    // Ключ в теле POST, не в адресе: не оседает в логах прокси и в истории.
+    const res = await fetch(`https://api.vk.com/method/${method}`, {
+      method: "POST",
+      body: new URLSearchParams({ ...params, v: "5.199", access_token: token }),
+    });
+    const body = (await res.json()) as { error?: { error_code: number; error_msg: string }; response?: Record<string, unknown> };
+    if (body.error?.error_code === 6) {
+      // «Too many requests per second» — подождать и повторить, не падать.
+      await new Promise((r) => setTimeout(r, 1100));
+      continue;
+    }
+    if (body.error) throw new Error(`ВК ${method}: ${body.error.error_code} ${body.error.error_msg}`);
+    return body.response ?? {};
+  }
+  throw new Error(`ВК ${method}: лимит запросов, три попытки`);
+}
+
 async function cmdVk(method: string, query: string) {
   loadExtraEnv();
   loadScriptEnv();
@@ -829,18 +894,36 @@ async function cmdVk(method: string, query: string) {
     console.log("VK_SERVICE_TOKEN не задан: поиск во ВКонтакте пропущен");
     process.exit(3);
   }
-  if (!VK_METHODS.has(method) || !query?.trim()) throw new Error("vk: groups.search | newsfeed.search <запрос>");
-  const params = new URLSearchParams({ q: query, v: "5.199", access_token: token, count: method === "groups.search" ? "50" : "100" });
-  const res = await fetch(`https://api.vk.com/method/${method}?${params}`);
-  const body = (await res.json()) as { error?: { error_msg: string }; response?: { items?: unknown[] } };
-  if (body.error) throw new Error(`ВК: ${body.error.error_msg}`);
-  // Только то, что нужно для поиска старта: без лишних полей и без ключа в выводе.
-  const items = (body.response?.items || []) as Record<string, unknown>[];
-  const slim = items.map((it) =>
-    method === "groups.search"
-      ? { name: it.name, screen_name: it.screen_name, url: `https://vk.com/${it.screen_name}` }
-      : { date: new Date(Number(it.date) * 1000).toISOString().slice(0, 10), owner_id: it.owner_id, url: `https://vk.com/wall${it.owner_id}_${it.id}`, text: String(it.text || "").slice(0, 600) },
-  );
+  if (!VK_METHODS.has(method) || !query?.trim()) {
+    throw new Error("vk: newsfeed.search <запрос> | wall.get <группа: vk.com/имя, имя или club123>");
+  }
+  let posts: VkPost[];
+  let groups: VkGroup[];
+  if (method === "newsfeed.search") {
+    const r = await vkCall("newsfeed.search", { q: query, count: "100" }, token);
+    posts = ((r.items as VkPost[]) || []).filter((p) => Number(p.owner_id) < 0);
+    const ids = [...new Set(posts.map((p) => String(-Number(p.owner_id))))];
+    groups = ids.length ? (((await vkCall("groups.getById", { group_ids: ids.join(",") }, token)).groups as VkGroup[]) || []) : [];
+  } else {
+    const ref = query.trim().replace(/^https?:\/\/(m\.)?vk\.com\//, "").replace(/\/$/, "");
+    try {
+      groups = ((await vkCall("groups.getById", { group_ids: ref.replace(/^(club|public|event)(\d+)$/, "$2") }, token)).groups as VkGroup[]) || [];
+    } catch (error) {
+      // 100 — такой группы нет (или это страница человека): ответ «не найдено», не падение.
+      if (/ВК groups\.getById: 100 /.test(String(error))) {
+        console.log(JSON.stringify({ error: "группа не найдена" }));
+        return;
+      }
+      throw error;
+    }
+    const g = groups[0];
+    if (!g || Number(g.is_closed) !== 0) {
+      console.log(JSON.stringify({ error: "не открытое сообщество — не читаем" }));
+      return;
+    }
+    posts = ((await vkCall("wall.get", { owner_id: `-${g.id}`, count: "30" }, token)).items as VkPost[]) || [];
+  }
+  const slim = slimVkCommunityPosts(posts, groups, { fromGroupOnly: method === "wall.get" });
   console.log(JSON.stringify(slim, null, 2));
 }
 
