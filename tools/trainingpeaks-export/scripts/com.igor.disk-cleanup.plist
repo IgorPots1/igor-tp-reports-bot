@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Автоуборка диска: влитые worktree, кэши сборки в давно не менявшихся worktree, npm cache,
+     логи старше 30 дней; предупреждение в Telegram, если свободно меньше 15 ГБ.
+     Раз в день в 13:00. Если Мак спал — launchd докрутит пропущенный запуск при пробуждении.
+     Итог: ~/ops-log/igor-tp-reports-bot/<дата>-disk-cleanup.md.
+     Ставится:
+       cp .../com.igor.disk-cleanup.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.disk-cleanup.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.disk-cleanup</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-disk-cleanup.sh"</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>13</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/disk-cleanup.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/disk-cleanup.launchd.err.log</string>
+</dict>
+</plist>
