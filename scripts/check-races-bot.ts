@@ -26,12 +26,14 @@ import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotUser
 import {
   START_PARAM_RE,
   citySlug,
+  parseGo,
   inCity,
   parseSearch,
   parseStart,
   raceCode,
   type BotRace,
 } from "@/features/races-bot/core";
+import { computeBotStats, type StatEvent } from "@/features/races-bot/stats";
 import * as T from "@/features/races-bot/texts";
 
 // ── данные ───────────────────────────────────────────────────────────────────
@@ -58,7 +60,8 @@ let RACES: BotRace[] = [HALF, TRAIL, KAZAN, SHORT, ...EXTRA];
 
 // ── хранилище в памяти и запись Telegram ─────────────────────────────────────
 
-function memStore(): BotStore & { users: Map<number, BotUser>; follows: BotFollow[]; sends: { tg_id: number; kind: string; race_id: string | null }[]; config: Map<string, string> } {
+function memStore(): BotStore & { users: Map<number, BotUser>; follows: BotFollow[]; sends: { tg_id: number; kind: string; race_id: string | null }[]; config: Map<string, string>; events: StatEvent[] } {
+  const events: StatEvent[] = [];
   const users = new Map<number, BotUser>();
   const follows: BotFollow[] = [];
   const sends: { tg_id: number; kind: string; race_id: string | null }[] = [];
@@ -69,13 +72,14 @@ function memStore(): BotStore & { users: Map<number, BotUser>; follows: BotFollo
     consult_requested_at: null, blocked: false, created_at: "2026-10-01T00:00:00Z",
   });
   return {
-    users, follows, sends, config,
+    users, follows, sends, config, events,
     async getUser(id) { return users.get(id) ?? null; },
     async saveUser(p) { const u = { ...(users.get(p.tg_id) ?? blank(p.tg_id)), ...p }; users.set(p.tg_id, u); return u; },
     async deleteUser(id) {
       users.delete(id);
       for (let i = follows.length - 1; i >= 0; i--) if (follows[i].tg_id === id) follows.splice(i, 1);
       for (let i = sends.length - 1; i >= 0; i--) if (sends[i].tg_id === id) sends.splice(i, 1);
+      for (let i = events.length - 1; i >= 0; i--) if (events[i].tg_id === id) events.splice(i, 1);
     },
     async listFollows(id) { return follows.filter((f) => f.tg_id === id); },
     async addFollow(id, r) {
@@ -100,7 +104,15 @@ function memStore(): BotStore & { users: Map<number, BotUser>; follows: BotFollo
       for (const s of sends) if (s.race_id) { if (!m.has(s.tg_id)) m.set(s.tg_id, new Set()); m.get(s.tg_id)!.add(`${s.kind}:${s.race_id}`); }
       return m;
     },
-    async stats() { return { users: users.size, usersWeek: users.size, blocked: 0, digest: 0, follows: follows.length, followsWeek: 0, consults: 0, consultsWeek: 0, sources: [] }; },
+    async logEvent(tg, event, opts) {
+      events.push({ tg_id: tg, event, race_id: opts?.raceId ?? null, source: opts?.source ?? null, meta: opts?.meta ?? {}, created_at: NOW.toISOString() });
+    },
+    async loadStats(period, now) {
+      return computeBotStats({
+        users: [...users.values()].map((u) => ({ tg_id: u.tg_id, first_name: u.first_name, username: u.username, city: u.city, source: u.source, created_at: u.created_at, blocked: u.blocked })),
+        events, follows: follows.map((f) => ({ tg_id: f.tg_id, race_id: f.race_id, race_name: f.race_name, race_city: f.race_city, created_at: f.created_at })), now, period,
+      });
+    },
   };
 }
 
@@ -130,6 +142,7 @@ const bot = createBot({
   coachUsername: "IgorPotseluev",
   reverseGeocode: async () => "Казань",
   weather: async () => ({ tMax: 14.4, tMin: 6.2, rainProb: 30, windMax: 4.1 }),
+  goLink: (tg, r, kind) => `https://igorp.run/go/${kind}${raceCode(r.id)}-${tg.toString(36)}-0123456789`,
 });
 
 const USER = { id: 501, first_name: "Анна", username: "anna_runs" };
@@ -169,7 +182,9 @@ async function main() {
   // ── онбординг ─────────────────────────────────────────────────────────────
   reset();
   await bot.handleUpdate(msg(USER, "/start src_ig_story"));
-  assert.equal(store.users.get(501)?.source, "ig_story", "источник из start=src_");
+  // Было «ig_story»: метка без префикса. Теперь источник хранится как в ссылке — src_<метка>, r_*,
+  // c_<город>, — чтобы в /stats метки разных видов не смешивались (наряд статистики 12.10).
+  assert.equal(store.users.get(501)?.source, "src_ig_story", "источник из start=src_ с префиксом");
   const greet = sent(501)[0];
   assert.match(String(greet.params.text), /Где ты бегаешь\?/);
   assert.deepEqual(buttons(greet).map((b) => b.text), ["Москва", "Санкт-Петербург", "Казань", "Екатеринбург", "Отправить геолокацию", "Другой город"]);
@@ -188,7 +203,12 @@ async function main() {
   assert.match(String(shown[0].params.text), /^Ближайшие забеги в Москве: шоссе и трейл, есть полумарафон\. Нажми/);
   const cards = shown.filter((c) => buttons(c).some((b) => b.text === "Следить"));
   assert.ok(cards.length >= 1 && cards.length <= 5, `до 5 карточек, было ${cards.length}`);
-  assert.ok(buttons(cards[0]).some((b) => b.text === "Регистрация" && b.url), "кнопка регистрации — ссылка");
+  // Было: «Регистрация» вела прямо на сайт организатора. Теперь — через igorp.run/go/<код>, чтобы
+  // записать клик (наряд статистики 12.10): ссылка подписана и привязана к этому человеку.
+  const regBtn = buttons(cards[0]).find((b) => b.text === "Регистрация");
+  assert.ok(regBtn?.url?.startsWith("https://igorp.run/go/r"), `«Регистрация» через /go/: ${regBtn?.url}`);
+  const parsedGo = parseGo(regBtn!.url!.split("/go/")[1]);
+  assert.ok(parsedGo && parsedGo.kind === "r" && parsedGo.uid === 501, "в ссылке код старта и tg_id");
   const footer = shown.at(-1)!;
   assert.ok(buttons(footer).some((b) => b.text === "Да, по понедельникам"));
   await bot.handleUpdate(cb(USER, "dg:on"));
@@ -231,7 +251,7 @@ async function main() {
   const toCoach = sent(900)[0];
   assert.ok(toCoach, "тренеру ушло уведомление");
   const notice = String(toCoach.params.text);
-  for (const part of ["Заявка на консультацию", "Анна", "@anna_runs", "Москва", "Полумарафон «Покровское-Стрешнево»", "Источник: ig_story"]) {
+  for (const part of ["Заявка на консультацию", "Анна", "@anna_runs", "Москва", "Полумарафон «Покровское-Стрешнево»", "Источник: src_ig_story"]) {
     assert.ok(notice.includes(part.replace(/«|»/g, (m) => m)), `в заявке есть «${part}»: ${notice}`);
   }
   const reply = sent(501)[0];
@@ -264,11 +284,25 @@ async function main() {
   assert.equal(store.users.get(501)?.paused_until, null, "пауза снимается");
 
   // ── /stats только тренеру ──────────────────────────────────────────────────
+  // Было: одна строка счётчиков «Забеги России: статистика». Теперь один экран с воронкой,
+  // источниками, кликами и заявками и кнопками периода — и всё это видит только тренер.
   reset();
   await bot.handleUpdate(msg(USER, "/stats"));
-  assert.ok(!texts(501)[0].includes("статистика"), "чужому — нет");
+  assert.ok(!texts(501).some((t) => /Воронка|Пользователи:/.test(t)), "чужому — ни одной цифры");
+  await bot.handleUpdate(cb(USER, "st:7"));
+  assert.ok(!calls.some((c) => c.method === "editMessageText"), "чужой клик по периоду — ничего");
   await bot.handleUpdate(msg(COACH, "/stats"));
-  assert.match(texts(900).at(-1)!, /Забеги России: статистика/);
+  const st = texts(900).at(-1)!;
+  assert.match(st, /Забеги России · 30 дней/);
+  assert.match(st, /Старт: 2 \(100%\)/, "старт тренера тоже старт");
+  assert.match(st, /Нажал «Следить»: 1 \(50%\)/);
+  assert.match(st, /Нажал «Записаться»: 1 \(50%\)/);
+  assert.match(st, /src_ig_story: 1 \/ 1 \/ 1/, "источник дошёл до «Следить» и заявки");
+  assert.match(st, /Анна @anna_runs · Москва · Полумарафон/, "заявка в списке");
+  assert.deepEqual(buttons(sent(900).at(-1)!).map((b) => b.text), ["7 дней", "• 30 дней", "Всё время"]);
+  await bot.handleUpdate(cb(COACH, "st:7"));
+  const edited = calls.filter((c) => c.method === "editMessageText").at(-1)!;
+  assert.match(String(edited.params.text), /Забеги России · 7 дней/, "период переключается");
 
   // ── плановые сообщения на тестовых датах ───────────────────────────────────
   // HALF 14.03.2027 сохранён 12.10.2026 (раньше чем за 12 недель).
@@ -343,6 +377,7 @@ async function main() {
   NOW = new Date("2026-10-19T07:30:00Z"); // пн 10:30 МСК
   await bot.runTick();
   assert.ok(texts(501).some((t) => t.startsWith("Новые забеги в Москве за неделю: 1")), "дайджест");
+  await bot.handleUpdate(cb(USER, "dlist"));
   reset();
   NOW = new Date("2026-10-26T07:30:00Z"); // следующий понедельник, новых нет
   await bot.runTick();
@@ -357,10 +392,23 @@ async function main() {
   assert.equal(store.users.get(501)?.blocked, true, "403 — blocked");
   blockedChats.delete(501);
 
+  // ── события для статистики (до /delete: он стирает и их) ───────────────────
+  await bot.handleUpdate(cb(USER, "dg:off"));
+  await bot.click(501, TRAIL, "r");
+  await bot.click(501, TRAIL, "s");
+  const mine = new Set(store.events.filter((e) => e.tg_id === 501).map((e) => e.event));
+  for (const ev of ["start", "city_chosen", "filters_done", "list_shown", "search", "follow", "unfollow", "consult_offer_shown",
+    "consult_click", "digest_sent", "digest_opened_list", "settings_less", "pause", "unsubscribe", "blocked", "click_registration", "click_site"]) {
+    assert.ok(mine.has(ev), `событие ${ev} пишется`);
+  }
+  assert.equal(store.events.find((e) => e.event === "start" && e.tg_id === 501)?.source, "src_ig_story", "старт с источником");
+
   // ── /delete ───────────────────────────────────────────────────────────────
   await bot.handleUpdate(msg(USER, "/delete"));
   await bot.handleUpdate(cb(USER, "del:yes"));
   assert.ok(!store.users.has(501) && !store.follows.some((f) => f.tg_id === 501) && !store.sends.some((s) => s.tg_id === 501), "всё удалено");
+  assert.ok(!store.events.some((e) => e.tg_id === 501), "и события человека");
+  assert.ok(store.events.some((e) => e.event === "delete" && e.tg_id === null), "удаление записано без tg_id");
   assert.match(texts(501).at(-1)!, /все твои данные удалены/);
 
   // ── deep link на город: подписка + онбординг с городом ─────────────────────
@@ -381,9 +429,22 @@ async function main() {
   assert.ok(validateTelegramInitDataWithToken(initData, token), "подписанный initData принят");
   assert.ok(!validateTelegramInitDataWithToken(initData.replace("4242", "4243"), token), "подменённый id — нет");
   assert.ok(!validateTelegramInitDataWithToken(initData, "999:other"), "чужой токен — нет");
+  await bot.miniapp({ id: 4242, first_name: "Мила" }, "list");
+  assert.ok(store.events.some((e) => e.event === "open_calendar" && e.tg_id === 4242), "open_calendar из мини-аппа");
   const follows = await bot.miniapp({ id: 4242, first_name: "Мила" }, "follow", TRAIL.id);
   assert.deepEqual(follows, [TRAIL.id], "звёздочка сохраняет");
   assert.deepEqual(await bot.miniapp({ id: 4242 }, "unfollow", TRAIL.id), [], "и снимает");
+
+  // ── подпись ссылок /go/ ────────────────────────────────────────────────────
+  process.env.RACES_BOT_TOKEN = "123456:TEST-token";
+  const { goLink, goUser } = await import("@/features/races-bot/runtime");
+  const signed = goLink(4242, TRAIL, "s");
+  assert.match(signed, /^https:\/\/igorp\.run\/go\/s[0-9a-z]{11}-[0-9a-z]+-[0-9a-f]{10}$/);
+  const g = parseGo(signed.split("/go/")[1])!;
+  assert.equal(goUser(g), 4242, "подпись верна — клик засчитан этому человеку");
+  assert.equal(goUser({ ...g, uid: 4243 }), null, "чужой id с той же подписью — анонимный клик");
+  assert.deepEqual(parseGo(`r${raceCode(TRAIL.id)}`), { kind: "r", code: raceCode(TRAIL.id), uid: null, sig: null }, "анонимная ссылка");
+  assert.equal(parseGo("x/../evil"), null);
 
   // ── тексты: имя проекта, без раскладок и прогнозов ─────────────────────────
   const allBotText = JSON.stringify(T);

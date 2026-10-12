@@ -130,9 +130,10 @@ export function listHeader(where: string, types: string[], dists: string[]): Msg
   return { text: `Ближайшие забеги ${where}${filtersPhrase(types, dists)}. Нажми <b>«Следить»</b>, и я напомню о главном.` };
 }
 
-export function card(r: Race, following: boolean): Msg {
+/** regUrl — ссылка «Регистрация» (через igorp.run/go/, чтобы записать клик); null — кнопки нет. */
+export function card(r: Race, following: boolean, regUrl: string | null = r.reg || r.site || null): Msg {
   const row: Button[] = [following ? { text: "✓ Слежу", callback_data: `my` } : { text: "Следить", callback_data: `f:${raceCode(r.id)}` }];
-  const url = r.reg || r.site;
+  const url = regUrl;
   if (url) row.push({ text: "Регистрация", url });
   return { text: `<b>${shortDate(r)}</b> · ${esc(r.name)}\n${esc(raceMeta(r))}`, reply_markup: { inline_keyboard: [row] } };
 }
@@ -211,7 +212,7 @@ export const NO_CONSULT: Msg = { text: "Хорошо. Если понадоби�
 
 // ── мои забеги, настройки, удаление ──────────────────────────────────────────
 
-export function myRaces(items: { race: Race; code: string }[], today: string): Msg {
+export function myRaces(items: { race: Race; code: string; site?: string }[], today: string): Msg {
   if (!items.length) {
     return {
       text: "Ты пока не следишь ни за одним забегом. Найди свой и нажми «Следить».",
@@ -225,8 +226,8 @@ export function myRaces(items: { race: Race; code: string }[], today: string): M
   return {
     text: `Твои забеги\n\n${lines.join("\n\n")}`,
     reply_markup: {
-      inline_keyboard: items.map(({ race, code }) => [
-        { text: `Сайт старта · ${race.name.slice(0, 24)}`, url: raceUrl(race) },
+      inline_keyboard: items.map(({ race, code, site }) => [
+        { text: `Сайт старта · ${race.name.slice(0, 24)}`, url: site ?? raceUrl(race) },
         { text: "Убрать старт", callback_data: `u:${code}` },
       ]),
     },
@@ -292,7 +293,7 @@ export function weeks12(r: Race, withConsult: boolean): Msg {
   return { text, reply_markup: withConsult ? { inline_keyboard: [CONSULT_ROW(raceCode(r.id))] } : undefined };
 }
 
-export function week1(r: Race): Msg {
+export function week1(r: Race, siteUrl: string = raceUrl(r)): Msg {
   return {
     text:
       `<b>Через неделю старт: ${esc(r.name)}.</b> Короткий чек-лист:\n` +
@@ -301,13 +302,13 @@ export function week1(r: Race): Msg {
       "· последняя тяжёлая тренировка позади, дальше легко\n" +
       "· побольше сна в последние ночи\n\n" +
       "Погоду на трассе пришлю накануне.",
-    reply_markup: { inline_keyboard: [[{ text: "Сайт старта", url: raceUrl(r) }]] },
+    reply_markup: { inline_keyboard: [[{ text: "Сайт старта", url: siteUrl }]] },
   };
 }
 
 export type Weather = { tMax: number; tMin: number; rainProb: number | null; windMax: number | null };
 
-export function dayBefore(r: Race, w: Weather | null): Msg {
+export function dayBefore(r: Race, w: Weather | null, siteUrl: string = raceUrl(r)): Msg {
   const head = `<b>Завтра старт: ${esc(r.name)}</b>, ${esc(r.city || "")}.`;
   const body = w
     ? `\nПогода на завтра: днём до ${Math.round(w.tMax)}°, ночью ${Math.round(w.tMin)}°` +
@@ -315,7 +316,7 @@ export function dayBefore(r: Race, w: Weather | null): Msg {
       (w.windMax !== null ? `, ветер до ${Math.round(w.windMax)} м/с` : "") +
       ".\nОденься по погоде на старте, а не на разминке. Удачи!"
     : "\nПрогноз погоды получить не удалось: проверь его перед выходом. Удачи!";
-  return { text: head + body, reply_markup: { inline_keyboard: [[{ text: "Сайт старта", url: raceUrl(r) }]] } };
+  return { text: head + body, reply_markup: { inline_keyboard: [[{ text: "Сайт старта", url: siteUrl }]] } };
 }
 
 export function afterFinish(f: PlanFollow): Msg {
@@ -338,33 +339,20 @@ export function cancelled(f: PlanFollow): Msg {
   };
 }
 
-export function digest(city: string, races: BotRace[], following: Set<string>): Msg[] {
-  const head: Msg = { text: `Новые забеги ${inCity(city)} за неделю: ${races.length}.` };
-  const cards = races.slice(0, 5).map((r) => card(r, following.has(r.id)));
+export function digest(
+  city: string,
+  races: BotRace[],
+  following: Set<string>,
+  regUrl: (r: BotRace) => string | null = (r) => r.reg || r.site || null,
+): Msg[] {
+  const head: Msg = {
+    text: `Новые забеги ${inCity(city)} за неделю: ${races.length}.`,
+    reply_markup: { inline_keyboard: [[{ text: `Все забеги ${inCity(city).replace(/^в /, "в ")}`, callback_data: "dlist" }]] },
+  };
+  const cards = races.slice(0, 5).map((r) => card(r, following.has(r.id), regUrl(r)));
   const tail: Msg[] =
     races.length > 5
       ? [{ text: `И ещё ${races.length - 5} в календаре.`, reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь", city)]] } }]
       : [];
   return [head, ...cards, ...tail];
-}
-
-export function stats(s: {
-  users: number;
-  usersWeek: number;
-  blocked: number;
-  digest: number;
-  follows: number;
-  followsWeek: number;
-  consults: number;
-  consultsWeek: number;
-  sources: [string, number][];
-}): string {
-  return [
-    "<b>Забеги России: статистика</b>",
-    `Пользователи: ${s.users} (за неделю +${s.usersWeek}), заблокировали: ${s.blocked}`,
-    `Подписаны на дайджест: ${s.digest}`,
-    `Сохранения: ${s.follows} (за неделю +${s.followsWeek})`,
-    `Заявки на консультацию: ${s.consults} (за неделю ${s.consultsWeek})`,
-    `Источники: ${s.sources.length ? s.sources.map(([k, n]) => `${esc(k)} ${n}`).join(", ") : "нет"}`,
-  ].join("\n");
 }

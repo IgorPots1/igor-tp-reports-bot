@@ -68,6 +68,18 @@ export function parseStart(raw: string | null | undefined): StartParam {
   return { kind: "none" };
 }
 
+// Ссылка igorp.run/go/<код>: r|s + код старта, дальше tg_id в base36 и подпись (её считает runtime.ts
+// HMAC от токена бота, чтобы клик нельзя было приписать чужому id). Без «-uid-подпись» — анонимный клик.
+export const GO_RE = /^([rs])([0-9a-z]{11})(?:-([0-9a-z]{1,14})-([0-9a-f]{10}))?$/;
+
+export type GoCode = { kind: "r" | "s"; code: string; uid: number | null; sig: string | null };
+
+export function parseGo(raw: string): GoCode | null {
+  const m = GO_RE.exec(raw);
+  if (!m) return null;
+  return { kind: m[1] as "r" | "s", code: m[2], uid: m[3] ? parseInt(m[3], 36) : null, sig: m[4] ?? null };
+}
+
 export function findRaceByCode(races: BotRace[], code: string): BotRace | null {
   return races.find((r) => raceCode(r.id) === code) ?? null;
 }

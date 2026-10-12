@@ -26,6 +26,7 @@ import {
   type PlanFollow,
   type PlanUser,
 } from "./core";
+import { statsMessage, type BotStatsReport, type StatPeriod } from "./stats";
 import * as T from "./texts";
 
 export type BotUser = PlanUser & {
@@ -39,7 +40,12 @@ export type BotUser = PlanUser & {
 
 export type BotFollow = PlanFollow & { tg_id: number };
 
-export type BotStats = Parameters<typeof T.stats>[0];
+export type BotEvent =
+  | "start" | "city_chosen" | "filters_done" | "list_shown" | "search" | "follow" | "unfollow" | "open_calendar"
+  | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
+  | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked";
+
+export type EventOpts = { raceId?: string | null; source?: string | null; meta?: Record<string, unknown> };
 
 export interface BotStore {
   getUser(tgId: number): Promise<BotUser | null>;
@@ -57,7 +63,8 @@ export interface BotStore {
   listActiveUsers(): Promise<BotUser[]>;
   listAllFollows(): Promise<BotFollow[]>;
   listSentKeys(): Promise<Map<number, Set<string>>>;
-  stats(now: Date): Promise<BotStats>;
+  logEvent(tgId: number | null, event: BotEvent, opts?: EventOpts): Promise<void>;
+  loadStats(period: StatPeriod, now: Date): Promise<BotStatsReport>;
 }
 
 export class BotBlockedError extends Error {}
@@ -74,6 +81,8 @@ export type BotDeps = {
   coachUsername: string;
   reverseGeocode?: (lat: number, lon: number) => Promise<string | null>;
   weather?: (city: string, dateIso: string) => Promise<T.Weather | null>;
+  /** Ссылка через igorp.run/go/<код>: клик записывается и сразу 302 на сайт или регистрацию. */
+  goLink?: (tgId: number, r: BotRace, kind: "r" | "s") => string;
 };
 
 type TgUser = { id: number; first_name?: string; username?: string };
@@ -94,6 +103,24 @@ export function createBot(deps: BotDeps) {
   const { store, tg } = deps;
   const now = deps.now ?? (() => new Date());
   const coach = deps.coachUsername.replace(/^@/, "").toLowerCase();
+
+  /** Событие для статистики. Сбой записи никогда не мешает ответу человеку. */
+  async function track(tgId: number | null, event: BotEvent, opts?: EventOpts): Promise<void> {
+    try {
+      await store.logEvent(tgId, event, opts);
+    } catch (e) {
+      console.error(`[races-bot] событие ${event}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  function regLink(u: { tg_id: number }, r: BotRace): string | null {
+    if (!(r.reg || r.site)) return null;
+    return deps.goLink ? deps.goLink(u.tg_id, r, "r") : r.reg || r.site;
+  }
+
+  function siteLink(u: { tg_id: number }, r: BotRace): string {
+    return deps.goLink ? deps.goLink(u.tg_id, r, "s") : T.raceUrl(r);
+  }
 
   async function send(chatId: number, msg: T.Msg): Promise<void> {
     await tg.call("sendMessage", {
@@ -137,8 +164,9 @@ export function createBot(deps: BotDeps) {
     if (!races.length) return send(u.tg_id, T.nothingFound(where, u.city));
     const following = await followingSet(u.tg_id);
     await send(u.tg_id, T.listHeader(where, u.types, u.distances));
-    for (const r of races.slice(0, 5)) await send(u.tg_id, T.card(r, following.has(r.id)));
+    for (const r of races.slice(0, 5)) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
     await send(u.tg_id, T.listFooter(races.length - 5, u.city, u.digest_on));
+    await track(u.tg_id, "list_shown", { meta: { city: u.city, n: races.length } });
   }
 
   async function showSearch(u: BotUser, text: string) {
@@ -149,21 +177,25 @@ export function createBot(deps: BotDeps) {
       ? all.filter((r) => inUserCity(r, city) && matchUser(r, s.types, s.dists) && (!s.month || Number(r.ds.slice(5, 7)) === s.month))
       : searchRaces(all, s);
     const where = city ? inCity(city) : `по запросу «${T.esc(text.trim())}»`;
+    await track(u.tg_id, "search", { meta: { q: text.trim().slice(0, 80), n: found.length } });
     if (!found.length) return send(u.tg_id, T.nothingFound(where, s.q || undefined));
     const following = await followingSet(u.tg_id);
     await send(u.tg_id, T.listHeader(where, s.types, s.dists));
-    for (const r of found.slice(0, 5)) await send(u.tg_id, T.card(r, following.has(r.id)));
+    for (const r of found.slice(0, 5)) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
+    await track(u.tg_id, "list_shown", { meta: { search: true, n: found.length } });
     const digestOffer = city && norm(city) === norm(u.city) ? city : null;
     await send(u.tg_id, T.listFooter(found.length - 5, digestOffer, u.digest_on, s.q || undefined));
   }
 
-  async function follow(u: BotUser, r: BotRace) {
+  async function follow(u: BotUser, r: BotRace, via = "bot") {
     await store.addFollow(u.tg_id, r);
+    await track(u.tg_id, "follow", { raceId: r.id, meta: { race_name: r.name, city: r.city, via } });
     const offer = consultAllowed(u.consult_offered_at, now());
     if (offer) {
       await send(u.tg_id, T.saved(r));
       await send(u.tg_id, T.consultOffer(raceCode(r.id)));
       await store.saveUser({ tg_id: u.tg_id, consult_offered_at: now().toISOString() });
+      await track(u.tg_id, "consult_offer_shown", { raceId: r.id, meta: { after: "follow" } });
     } else {
       await send(u.tg_id, { ...T.saved(r), reply_markup: T.NAV });
     }
@@ -176,7 +208,7 @@ export function createBot(deps: BotDeps) {
       .map((f) => byId.get(f.race_id))
       .filter((r): r is BotRace => !!r)
       .sort((a, b) => a.ds.localeCompare(b.ds))
-      .map((race) => ({ race, code: raceCode(race.id) }));
+      .map((race) => ({ race, code: raceCode(race.id), site: siteLink(u, race) }));
     await send(u.tg_id, T.myRaces(items, today(u)));
   }
 
@@ -194,12 +226,16 @@ export function createBot(deps: BotDeps) {
     }
     await send(u.tg_id, T.consultReply(deps.coachUsername.replace(/^@/, ""), raceName ?? names[0] ?? null));
     await store.saveUser({ tg_id: u.tg_id, consult_requested_at: now().toISOString() });
+    await track(u.tg_id, "consult_click", { meta: { race_name: raceName ?? names[0] ?? null } });
   }
 
   async function onStart(u: BotUser, param: string | undefined) {
     const p = parseStart(param);
+    // Источник для статистики: src_<метка> как есть, все ссылки на старты — «r_*», город — c_<город>.
+    const source = p.kind === "src" ? `src_${p.label}` : p.kind === "race" ? "r_*" : p.kind === "city" ? `c_${p.slug}` : null;
+    await track(u.tg_id, "start", { source, meta: { param: param ?? null } });
     if (p.kind === "race") {
-      if (!u.source) u = await store.saveUser({ tg_id: u.tg_id, source: "site_race" });
+      if (!u.source) u = await store.saveUser({ tg_id: u.tg_id, source: "r_*" });
       const r = findRaceByCode(await deps.races(), p.code);
       if (r) return follow(u, r);
       await send(u.tg_id, { text: "Этот забег уже прошёл или убран из календаря." });
@@ -209,7 +245,8 @@ export function createBot(deps: BotDeps) {
       const races = await deps.races();
       const city = findCityBySlug(knownCities(races), p.slug);
       if (city) {
-        u = await store.saveUser({ tg_id: u.tg_id, city, digest_on: true, state: null, source: u.source ?? "site_city" });
+        u = await store.saveUser({ tg_id: u.tg_id, city, digest_on: true, state: null, source: u.source ?? `c_${p.slug}` });
+        await track(u.tg_id, "city_chosen", { meta: { city, via: "deeplink" } });
         return send(
           u.tg_id,
           T.prefs(u.types, u.distances, `Подписал на новые забеги ${inCity(city)}: одно сообщение в неделю, по понедельникам.`),
@@ -217,12 +254,13 @@ export function createBot(deps: BotDeps) {
       }
       return greet(u.tg_id);
     }
-    if (p.kind === "src" && !u.source) await store.saveUser({ tg_id: u.tg_id, source: p.label });
+    if (p.kind === "src" && !u.source) await store.saveUser({ tg_id: u.tg_id, source: `src_${p.label}` });
     return greet(u.tg_id);
   }
 
   async function setCity(u: BotUser, city: string, lead?: string) {
     u = await store.saveUser({ tg_id: u.tg_id, city, state: null });
+    await track(u.tg_id, "city_chosen", { meta: { city } });
     await send(u.tg_id, T.prefs(u.types, u.distances, lead));
   }
 
@@ -244,7 +282,7 @@ export function createBot(deps: BotDeps) {
       if (name === "delete") return send(u.tg_id, T.DELETE_CONFIRM);
       if (name === "stats") {
         const coachChat = await store.getConfig("coach_chat_id");
-        if (coachChat && Number(coachChat) === u.tg_id) return send(u.tg_id, { text: T.stats(await store.stats(now())) });
+        if (coachChat && Number(coachChat) === u.tg_id) return send(u.tg_id, statsMessage(await store.loadStats(30, now())));
         return send(u.tg_id, { text: "Такой команды нет. Напиши город или, например, «трейл Казань»." });
       }
       return send(u.tg_id, { text: "Такой команды нет. Напиши город или, например, «трейл Казань»." });
@@ -300,9 +338,25 @@ export function createBot(deps: BotDeps) {
         return;
       }
       case "show":
+        await track(u.tg_id, "filters_done", { meta: { types: u.types, distances: u.distances } });
         return showCityList(u);
+      case "dlist":
+        await track(u.tg_id, "digest_opened_list");
+        return showCityList(u);
+      case "st": {
+        const coachChat = await store.getConfig("coach_chat_id");
+        if (!coachChat || Number(coachChat) !== u.tg_id) return;
+        const period: StatPeriod = arg === "7" ? 7 : arg === "all" ? "all" : 30;
+        const m = statsMessage(await store.loadStats(period, now()));
+        if (msg) {
+          await tg.call("editMessageText", { chat_id: u.tg_id, message_id: msg.message_id, text: m.text, parse_mode: "HTML", reply_markup: m.reply_markup });
+          return;
+        }
+        return send(u.tg_id, m);
+      }
       case "dg":
         await store.saveUser({ tg_id: u.tg_id, digest_on: arg === "on" });
+        if (arg !== "on") await track(u.tg_id, "unsubscribe", { meta: { from: "digest_offer" } });
         return send(u.tg_id, arg === "on" ? T.DIGEST_ON : T.DIGEST_OFF);
       case "f": {
         const r = findRaceByCode(await deps.races(), arg);
@@ -311,7 +365,10 @@ export function createBot(deps: BotDeps) {
       }
       case "u": {
         const f = (await store.listFollows(u.tg_id)).find((x) => raceCode(x.race_id) === arg);
-        if (f) await store.removeFollow(u.tg_id, f.race_id);
+        if (f) {
+          await store.removeFollow(u.tg_id, f.race_id);
+          await track(u.tg_id, "unfollow", { raceId: f.race_id, meta: { race_name: f.race_name } });
+        }
         return showMy(u);
       }
       case "my":
@@ -323,17 +380,20 @@ export function createBot(deps: BotDeps) {
       case "s": {
         if (arg === "rarer") {
           u = await store.saveUser({ tg_id: u.tg_id, digest_every_weeks: u.digest_every_weeks === 2 ? 1 : 2 });
+          if (u.digest_every_weeks === 2) await track(u.tg_id, "settings_less");
         } else if (arg === "pause") {
           const paused = u.paused_until && Date.parse(u.paused_until) > now().getTime();
           u = await store.saveUser({
             tg_id: u.tg_id,
             paused_until: paused ? null : new Date(now().getTime() + 30 * 864e5).toISOString(),
           });
+          if (!paused) await track(u.tg_id, "pause");
         } else if (arg === "city") {
           return greet(u.tg_id);
         } else if (arg === "unsub") {
           await store.removeAllFollows(u.tg_id);
           await store.saveUser({ tg_id: u.tg_id, digest_on: false });
+          await track(u.tg_id, "unsubscribe", { meta: { from: "settings" } });
           return send(u.tg_id, T.UNSUBSCRIBED);
         }
         return send(u.tg_id, T.settings(u, now()));
@@ -341,6 +401,8 @@ export function createBot(deps: BotDeps) {
       case "del":
         if (arg === "yes") {
           await store.deleteUser(u.tg_id);
+          // Данные человека стёрты целиком, вместе с его событиями: само удаление пишем без tg_id.
+          await track(null, "delete");
           return send(u.tg_id, T.DELETED);
         }
         return send(u.tg_id, T.DELETE_CANCELLED);
@@ -355,6 +417,7 @@ export function createBot(deps: BotDeps) {
     } catch (e) {
       if (e instanceof BotBlockedError) {
         await store.saveUser({ tg_id: tgId, blocked: true }).catch(() => undefined);
+        await track(tgId, "blocked");
         return;
       }
       throw e;
@@ -405,8 +468,9 @@ export function createBot(deps: BotDeps) {
           if (a.kind === "digest") {
             if (!(await store.claimSend(u.tg_id, "digest", null))) continue;
             const following = new Set(mine.map((f) => f.race_id));
-            for (const m of T.digest(u.city!, a.races, following)) await send(u.tg_id, m);
+            for (const m of T.digest(u.city!, a.races, following, (r) => regLink(u, r))) await send(u.tg_id, m);
             await store.saveUser({ tg_id: u.tg_id, digest_last_at: t.toISOString() });
+            await track(u.tg_id, "digest_sent", { meta: { n: a.races.length } });
             counts.sent += 1;
             continue;
           }
@@ -416,12 +480,15 @@ export function createBot(deps: BotDeps) {
             if (a.kind === "w12") {
               const withConsult = consultAllowed(u.consult_offered_at, t);
               await send(u.tg_id, T.weeks12(a.race, withConsult));
-              if (withConsult) await store.saveUser({ tg_id: u.tg_id, consult_offered_at: t.toISOString() });
+              if (withConsult) {
+                await store.saveUser({ tg_id: u.tg_id, consult_offered_at: t.toISOString() });
+                await track(u.tg_id, "consult_offer_shown", { raceId: a.race.id, meta: { after: "w12" } });
+              }
             } else if (a.kind === "d7") {
-              await send(u.tg_id, T.week1(a.race));
+              await send(u.tg_id, T.week1(a.race, siteLink(u, a.race)));
             } else if (a.kind === "d1") {
               const w = deps.weather && a.race.city ? await deps.weather(a.race.city, a.race.ds).catch(() => null) : null;
-              await send(u.tg_id, T.dayBefore(a.race, w));
+              await send(u.tg_id, T.dayBefore(a.race, w, siteLink(u, a.race)));
             } else if (a.kind === "after") {
               await send(u.tg_id, T.afterFinish(a.follow));
               await store.removeFollow(u.tg_id, a.follow.race_id);
@@ -437,6 +504,7 @@ export function createBot(deps: BotDeps) {
         } catch (e) {
           if (e instanceof BotBlockedError) {
             await store.saveUser({ tg_id: u.tg_id, blocked: true });
+            await track(u.tg_id, "blocked");
             counts.blocked += 1;
             break;
           }
@@ -451,16 +519,27 @@ export function createBot(deps: BotDeps) {
   /** Мини-апп внутри Telegram: список сохранённых и звёздочка «Следить / Не следить». */
   async function miniapp(from: TgUser, action: "list" | "follow" | "unfollow", raceId?: string): Promise<string[]> {
     const u = await ensureUser(from);
+    if (action === "list") await track(u.tg_id, "open_calendar");
     if (action !== "list" && raceId) {
       if (action === "follow") {
         const r = (await deps.races()).find((x) => x.id === raceId);
-        if (r) await store.addFollow(u.tg_id, r);
+        if (r) {
+          await store.addFollow(u.tg_id, r);
+          await track(u.tg_id, "follow", { raceId: r.id, meta: { race_name: r.name, city: r.city, via: "miniapp" } });
+        }
       } else {
         await store.removeFollow(u.tg_id, raceId);
+        await track(u.tg_id, "unfollow", { raceId, meta: { via: "miniapp" } });
       }
     }
     return (await store.listFollows(u.tg_id)).map((f) => f.race_id);
   }
 
-  return { handleUpdate, runTick, miniapp };
+  /** Клик по igorp.run/go/<код>: записать и вернуть адрес для 302. */
+  async function click(tgId: number | null, r: BotRace, kind: "r" | "s"): Promise<string> {
+    await track(tgId, kind === "r" ? "click_registration" : "click_site", { raceId: r.id, meta: { race_name: r.name } });
+    return kind === "r" ? r.reg || r.site || T.raceUrl(r) : r.site || T.raceUrl(r);
+  }
+
+  return { handleUpdate, runTick, miniapp, click };
 }

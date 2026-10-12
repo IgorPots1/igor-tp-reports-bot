@@ -7,8 +7,9 @@ import { createHmac } from "node:crypto";
 import { prepare, type RaceRow } from "@/app/races/races-logic";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
-import { BotBlockedError, createBot, type BotFollow, type BotStats, type BotStore, type BotTg, type BotUser } from "./bot";
-import { localParts, type BotRace } from "./core";
+import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotTg, type BotUser } from "./bot";
+import { localParts, raceCode, type BotRace, type GoCode } from "./core";
+import { computeBotStats, type StatEvent, type StatFollow, type StatPeriod, type StatUser } from "./stats";
 import type { Weather } from "./texts";
 
 export function botToken(): string {
@@ -33,6 +34,23 @@ export function webhookSecret(token = botToken()): string {
 /** Ключ почасового тика (pg_cron → /api/races-bot/cron): тоже из токена; копия лежит в race_bot_config. */
 export function cronKey(token = botToken()): string {
   return createHmac("sha256", token).update("races-bot-cron").digest("base64url").slice(0, 48);
+}
+
+/** Подпись ссылки /go/: клик засчитывается тому tg_id, для кого ссылка выдана. */
+function goSig(kind: string, code: string, uid36: string, token = botToken()): string {
+  return createHmac("sha256", token).update(`go:${kind}${code}-${uid36}`).digest("hex").slice(0, 10);
+}
+
+export function goLink(tgId: number, r: BotRace, kind: "r" | "s"): string {
+  const code = raceCode(r.id);
+  const uid36 = Math.abs(tgId).toString(36);
+  return `https://igorp.run/go/${kind}${code}-${uid36}-${goSig(kind, code, uid36)}`;
+}
+
+/** tg_id из ссылки, если подпись верна; иначе клик анонимный (переход всё равно делаем). */
+export function goUser(g: GoCode): number | null {
+  if (g.uid === null || !g.sig) return null;
+  return goSig(g.kind, g.code, g.uid.toString(36)) === g.sig ? g.uid : null;
 }
 
 // ── Bot API ──────────────────────────────────────────────────────────────────
@@ -109,6 +127,7 @@ export const supabaseStore: BotStore = {
   async deleteUser(tgId) {
     const sb = createSupabaseServerClient();
     fail("deleteUser follows", (await sb.from("race_bot_follows").delete().eq("tg_id", tgId)).error);
+    fail("deleteUser events", (await sb.from("race_bot_events").delete().eq("tg_id", tgId)).error);
     fail("deleteUser sends", (await sb.from("race_bot_sends").delete().eq("tg_id", tgId)).error);
     fail("deleteUser", (await sb.from("race_bot_users").delete().eq("tg_id", tgId)).error);
   },
@@ -181,33 +200,36 @@ export const supabaseStore: BotStore = {
     }
     return out;
   },
-  async stats(now) {
-    return computeStats(now);
+  async logEvent(tgId, event, opts) {
+    const { error } = await createSupabaseServerClient()
+      .from("race_bot_events")
+      .insert({ tg_id: tgId, event, race_id: opts?.raceId ?? null, source: opts?.source ?? null, meta: opts?.meta ?? {} });
+    fail("logEvent", error);
+  },
+  async loadStats(period, now) {
+    return loadBotStats(period, now);
   },
 };
 
-export async function computeStats(now: Date): Promise<BotStats> {
+async function selectAll<T>(table: string, cols: string): Promise<T[]> {
   const sb = createSupabaseServerClient();
-  const week = new Date(now.getTime() - 7 * 864e5).toISOString();
-  const { data: users, error } = await sb.from("race_bot_users").select("created_at,source,blocked,digest_on,consult_requested_at");
-  fail("stats users", error);
-  const { data: follows, error: e2 } = await sb.from("race_bot_follows").select("created_at");
-  fail("stats follows", e2);
-  const u = (users as { created_at: string; source: string | null; blocked: boolean; digest_on: boolean; consult_requested_at: string | null }[]) || [];
-  const f = (follows as { created_at: string }[]) || [];
-  const src = new Map<string, number>();
-  for (const x of u) src.set(x.source || "без метки", (src.get(x.source || "без метки") || 0) + 1);
-  return {
-    users: u.length,
-    usersWeek: u.filter((x) => x.created_at >= week).length,
-    blocked: u.filter((x) => x.blocked).length,
-    digest: u.filter((x) => x.digest_on).length,
-    follows: f.length,
-    followsWeek: f.filter((x) => x.created_at >= week).length,
-    consults: u.filter((x) => x.consult_requested_at).length,
-    consultsWeek: u.filter((x) => x.consult_requested_at && x.consult_requested_at >= week).length,
-    sources: [...src.entries()].sort((a, b) => b[1] - a[1]),
-  };
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from(table).select(cols).order("created_at").range(from, from + 999);
+    fail(`stats ${table}`, error);
+    out.push(...((data as unknown as T[]) || []));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
+/** Статистика бота за период: /stats, админка и еженедельная сводка — одним расчётом (stats.ts). */
+export async function loadBotStats(period: StatPeriod, now = new Date()) {
+  const [users, events, follows] = await Promise.all([
+    selectAll<StatUser>("race_bot_users", "tg_id,first_name,username,city,source,created_at,blocked"),
+    selectAll<StatEvent>("race_bot_events", "tg_id,event,race_id,source,meta,created_at"),
+    selectAll<StatFollow>("race_bot_follows", "tg_id,race_id,race_name,race_city,created_at"),
+  ]);
+  return computeBotStats({ users, events, follows, now, period });
 }
 
 // ── погода и геокодер ────────────────────────────────────────────────────────
@@ -253,5 +275,6 @@ export function productionBot() {
     coachUsername: coachUsername(),
     reverseGeocode: nominatimCity,
     weather: openMeteoWeather,
+    goLink,
   });
 }

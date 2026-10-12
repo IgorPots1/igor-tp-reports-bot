@@ -11,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 
-import { computeStats } from "@/features/races-bot/runtime";
+import { loadBotStats } from "@/features/races-bot/runtime";
 
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 
@@ -19,14 +19,17 @@ async function main() {
   loadScriptEnv();
   if (!resolveSupabaseEnv()) throw new Error("нет SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
   const now = new Date();
-  const s = await computeStats(now);
+  const s = await loadBotStats(7, now);
+  const m = await loadBotStats(30, now);
   const stamp = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Belgrade", dateStyle: "short", timeStyle: "short" }).format(now);
+  const funnel = m.funnel.map((f) => `${f.label} ${f.people} (${f.pct}%)`).join(" → ");
   const lines = [
     `Дата: ${stamp}`,
-    "Задача: еженедельная сводка бота «Забеги России» (@ruruns_bot)",
-    `Пользователи: ${s.users} (за неделю +${s.usersWeek}), заблокировали ${s.blocked}, дайджест ${s.digest}`,
-    `Сохранения: ${s.follows} (за неделю +${s.followsWeek}); заявки на консультацию: ${s.consults} (за неделю ${s.consultsWeek})`,
-    `Источники: ${s.sources.length ? s.sources.map(([k, n]) => `${k} ${n}`).join(", ") : "нет"}`,
+    "Задача: еженедельная сводка бота «Забеги России» (@ruruns_bot), те же цифры, что /stats",
+    `Пользователи: ${s.users.total}, новые 7 дн ${s.users.new7}, 30 дн ${s.users.new30}; активные 7 дн ${s.users.active7}; заблокировали ${s.users.blocked}; отписались за 7 дн ${s.users.unsubscribed}`,
+    `Воронка 30 дн: ${funnel}`,
+    `Источники 30 дн (пришли/«Следить»/заявка): ${m.sources.length ? m.sources.map((x) => `${x.source} ${x.users}/${x.follow}/${x.consult}`).join(", ") : "нет"}`,
+    `Клики 7/30 дн: регистрация ${s.clicks.registration.d7}/${s.clicks.registration.d30}, сайт ${s.clicks.site.d7}/${s.clicks.site.d30}, календарь ${s.clicks.calendar.d7}/${s.clicks.calendar.d30}; заявок за всё время ${m.consults.length >= 10 ? "10+" : m.consults.length}`,
     "Ветка: нет (сводка из базы)",
   ];
   console.log(lines.join("\n"));
