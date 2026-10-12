@@ -34,6 +34,7 @@ import {
   type RaceRow,
 } from "@/app/races/races-logic";
 import { eventLink, sameRace, type MatchRow } from "../supabase/functions/race-calendar-sync/match";
+import { textDayInRange } from "../supabase/functions/race-calendar-sync/dates";
 
 const row = (over: Partial<RaceRow>): RaceRow => ({
   id: "x",
@@ -240,6 +241,19 @@ assert.equal(dateStub(toRace(row({ date_start: "2026-10-18" }))).weekend, true, 
   }
   assert.equal(sameRace(r("probeg", "Трейл-забег «O-Trail. FerrumFest»", "2026-10-18", "Железноводск", "Ставропольский край", "Ставропольский край, Железноводск"),
     r("marathonec", "О-Трейл Феррум Фест", "2026-10-17", "Железноводск", "", "Железноводск")), 2, "FerrumFest: разные даты, но то же имя в транслитерации - k2");
+}
+
+// --- День старта из текста события при диапазоне в списке (orgeo, наряд 12.10.2026) ---
+// orgeo «17-18.10.2026», в тексте «18 октября 2026 года пройдёт…» — старт 18.10 (федерация так же).
+{
+  const page = "Алексей 17-18 октября 2026 Тверь, Гришкино. Чемпионат … дуатлон-кросс 18 октября 2026 года пройдёт Чемпионат и первенство Тверской области";
+  assert.equal(textDayInRange(page, "2026-10-17", "2026-10-18"), "2026-10-18");
+  assert.equal(textDayInRange("Старт 18 октября 2026 года состоится в 11:00", "2026-10-17", "2026-10-18"), "2026-10-18");
+  assert.equal(textDayInRange("Регистрация открыта до 17 октября 2026 года.", "2026-10-17", "2026-10-18"), null, "срок регистрации — не день старта");
+  assert.equal(textDayInRange("17 октября 2026 года пройдёт регистрация, 18 октября 2026 года пройдёт старт", "2026-10-17", "2026-10-18"), null, "два дня — неоднозначно, остаётся диапазон");
+  assert.equal(textDayInRange("5 ноября 2026 года пройдёт", "2026-10-17", "2026-10-18"), null, "день вне диапазона — нет");
+  assert.equal(textDayInRange("18 октября 2026 года пройдёт", "2026-10-18", "2026-10-18"), null, "один день в списке — текст не нужен");
+  assert.equal(textDayInRange("1 мая 2027 г. состоится забег", "2027-04-30", "2027-05-02"), "2027-05-01");
 }
 
 console.log("check:races ok");

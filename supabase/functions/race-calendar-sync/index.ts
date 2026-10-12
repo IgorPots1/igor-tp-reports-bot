@@ -5,6 +5,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
 import { buildExpected, findNextEdition, parsePastProbeg, probegPastUrl, weekWindows, type FutureRow, type PastRace } from "./expected.ts";
 import { findMatch } from "./match.ts";
+import { textDayInRange } from "./dates.ts";
 
 const UA = "igorp.run race calendar (+https://igorp.run)";
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -349,9 +350,20 @@ async function orgeo(today: Date, horizon: Date): Promise<Race[]> {
         if (Date.parse(dt[1]) - Date.parse(dt[0]) > 10 * 864e5) continue;
         const cls = classify(name, [], `${kind === "triathlon" ? "триатлон " : ""}${hint || ""}`, false);
         if (kind === "triathlon") cls.race_type = "tri";
+        // Диапазон в списке («17-18.10.2026»): день старта — из текста события, если он там назван
+        // один («18 октября 2026 года пройдёт…»). Иначе диапазон как есть (см. dates.ts).
+        let [ds, de] = dt;
+        if (ds !== de) {
+          try {
+            const page = clean(decode((await get(`https://orgeo.ru/event/info/${sid}`)).replace(/<[^>]+>/g, " ")));
+            const day = textDayInRange(page, ds, de);
+            if (day) ds = de = day;
+          } catch (_) { /* страница не открылась — остаётся диапазон из списка */ }
+          await sleep(600);
+        }
         out.set(sid, {
           id: `orgeo:${sid}`, source: "orgeo", source_id: sid, source_url: `https://orgeo.ru/event/${sid}`, name,
-          date_start: dt[0], date_end: dt[1], date_text: clean(dateT), city, region, location: segs.join(", "),
+          date_start: ds, date_end: de, date_text: clean(dateT), city, region, location: segs.join(", "),
           distances: [], dist_km: [], race_type: cls.race_type, tags: cls.tags,
           site_url: null, reg_url: `https://orgeo.ru/event/${sid}`, vk_url: null,
         });
