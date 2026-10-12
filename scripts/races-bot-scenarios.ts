@@ -524,13 +524,16 @@ async function main() {
     await cb(p, "dg:off");
     assert.equal((await store.getUser(p.id))?.digest_on, false);
     await cb(p, "dg:on");
-    await cb(p, "s:pause");
-    await env.update(cbu(p, "s:pause"));
+    // Настройки (с 12.10.2026): пауза — вариант режима на 2 недели, снимается выбором частоты.
+    await cb(p, "s:dg:pause");
+    await env.update(cbu(p, "s:dg:pause"));
     assert.ok((await store.getUser(p.id))?.paused_until, "пауза включена и двойной клик её не снял");
-    await cb(p, "s:pause");
-    assert.equal((await store.getUser(p.id))?.paused_until, null, "пауза снята");
+    let c = calls.length;
+    await cb(p, "s:dg:w1");
+    assert.equal((await store.getUser(p.id))?.paused_until, null, "пауза снята выбором частоты");
+    assert.match(allText(p.id, c), /Готово: дайджест раз в неделю\. Следующий придёт/);
     await cb(p, "s:unsub");
-    const c = calls.length;
+    c = calls.length;
     await cb(p, "s:unsub");
     assert.match(allText(p.id, c), /уже отписан/);
     const unsub = (await env.events(p.id)).filter((e) => e.event === "unsubscribe").length;
@@ -543,7 +546,7 @@ async function main() {
       await cb(p, "city:moskva");
       await cb(p, "dg:on");
     }
-    await cb(paused, "s:pause");
+    await cb(paused, "s:dg:pause");
     await env.update({ update_id: ++upd, my_chat_member: { chat: { id: blocked.id, type: "private" }, from: blocked, new_chat_member: { status: "kicked" } } });
     const c = calls.length;
     await env.tick!();
@@ -618,6 +621,35 @@ async function main() {
     await cb(p, "myp:2");
     assert.ok(sentTo(p.id, c).length === 1);
     return `сохранено ${(await store.listFollows(p.id)).length}`;
+  });
+
+  await scenario("Настройки: состояние вверху = база, каждое нажатие меняет одну вещь и подтверждает", async () => {
+    const p = person("Настройки");
+    await env.update(msg(p, "/start"));
+    await cb(p, "city:moskva");
+    await cb(p, "dg:on");
+    const lines: string[] = [];
+    // «Одна вещь» = режим дайджеста (неделя / 2 недели / месяц / пауза / выкл); город, типы и
+    // дистанции не трогаются никогда.
+    const { digestMode } = await import("@/features/races-bot/texts");
+    for (const [data, want] of [["s:dg:w2", "w2"], ["s:dg:w4", "w4"], ["s:dg:off", "off"], ["s:dg:pause", "pause"], ["s:dg:w1", "w1"]] as const) {
+      const before = { ...(await store.getUser(p.id))! } as Record<string, unknown>;
+      const c = calls.length;
+      await cb(p, data);
+      const afterU = (await store.getUser(p.id))!;
+      const after = afterU as unknown as Record<string, unknown>;
+      const other = ["city", "types", "distances", "digest_last_at", "source"].filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+      assert.deepEqual(other, [], `${data}: задело ${other.join(",")}`);
+      assert.equal(digestMode(afterU, LIVE ? new Date() : NOW), want, `${data}: режим`);
+      const done = textsTo(p.id, c).at(-1)!;
+      assert.match(done, /^Готово: /, `${data}: подтверждение`);
+      lines.push(`${data} → ${done.slice(0, 70)}`);
+    }
+    const c = calls.length;
+    await env.update(msg(p, "/settings"));
+    const u = (await store.getUser(p.id))!;
+    assert.match(allText(p.id, c), new RegExp(`Дайджест: раз в неделю, по понедельникам\\. Город: ${u.city}\\.`));
+    return lines.join("; ");
   });
 
   // Сквозные: длина, кнопки, длинное тире.

@@ -12,6 +12,7 @@ import {
   countdown,
   daysBetween,
   inCity,
+  localParts,
   raceCode,
   usuallyIn,
   type BotRace,
@@ -404,31 +405,84 @@ export function myRaces(all: { race: Race; code: string; site?: string }[], toda
   };
 }
 
-export function settings(u: { city: string | null; digest_on: boolean; digest_every_weeks: number; paused_until: string | null }, now: Date): Msg {
-  const paused = u.paused_until && Date.parse(u.paused_until) > now.getTime();
-  const sub = !u.digest_on
-    ? "выключены"
-    : `${u.city || "город не выбран"}, ${u.digest_every_weeks === 2 ? "раз в две недели" : "по понедельникам"}`;
-  const lines = [
-    `Город: <b>${esc(u.city || "не выбран")}</b>`,
-    `Новые забеги: <b>${sub}</b>`,
-    "Тихие часы: <b>22:00-9:00</b>",
-    `Сообщений в неделю: <b>${u.digest_every_weeks === 2 ? "не больше 1 в две недели" : "не больше 1"}</b>`,
-  ];
-  if (paused) lines.push(`Пауза до <b>${longDate(u.paused_until!.slice(0, 10))}</b>`);
+// ── настройки ────────────────────────────────────────────────────────────────
+//
+// Было (до 12.10.2026): «Реже/Чаще» и «Пауза на месяц/Снять паузу» — переключатели, у которых
+// не видно ни текущего состояния, ни результата. Стало: состояние одной фразой вверху, режим
+// дайджеста выбирается из пяти вариантов (текущий с ✓), после нажатия — что именно изменилось.
+
+type SettingsUser = {
+  city: string | null; types: string[]; distances: string[]; digest_on: boolean; digest_every_weeks: number;
+  digest_last_at: string | null; paused_until: string | null; tz?: string | null;
+};
+
+export type DigestMode = "w1" | "w2" | "w4" | "pause" | "off";
+
+export function digestMode(u: SettingsUser, now: Date): DigestMode {
+  if (u.paused_until && Date.parse(u.paused_until) > now.getTime()) return "pause";
+  if (!u.digest_on) return "off";
+  return u.digest_every_weeks === 4 ? "w4" : u.digest_every_weeks === 2 ? "w2" : "w1";
+}
+
+const FREQ: Record<number, string> = { 1: "раз в неделю", 2: "раз в 2 недели", 4: "раз в месяц" };
+const freqText = (weeks: number) => FREQ[weeks] ?? FREQ[1];
+
+/** «26 октября» из YYYY-MM-DD. */
+function dayMonth(iso: string): string {
+  const a = d(iso);
+  return `${a.getUTCDate()} ${MONTHS_GEN[a.getUTCMonth()]}`;
+}
+
+/** Одна фраза: что сейчас включено. Совпадает с базой поле в поле. */
+export function settingsState(u: SettingsUser, now: Date): string {
+  const mode = digestMode(u, now);
+  const digest =
+    mode === "off" ? "не присылаю"
+    : mode === "pause" ? `на паузе до ${dayMonth(u.paused_until!.slice(0, 10))}${u.digest_on ? `, потом ${freqText(u.digest_every_weeks)}` : ""}`
+    : `${freqText(u.digest_every_weeks)}, по понедельникам`;
+  return `Дайджест: ${digest}. Город: ${u.city || "не выбран"}. Типы и дистанции: ${filtersLine(u.types, u.distances)}.`;
+}
+
+export function settings(u: SettingsUser, now: Date): Msg {
+  const mode = digestMode(u, now);
+  const opt = (m: DigestMode, label: string): Button[] => [{ text: mode === m ? `✓ ${label}` : label, callback_data: `s:dg:${m}` }];
   return {
-    text: `Настройки\n\n${lines.join("\n")}`,
+    text:
+      `<b>Настройки</b>\n\n${esc(settingsState(u, now))}\n\n` +
+      "Дайджест: новые забеги в твоём городе, одним сообщением по понедельникам. " +
+      "Напоминания о сохранённых забегах приходят всегда, кроме паузы. Ночью (22:00-9:00) не пишу.",
     reply_markup: {
       inline_keyboard: [
-        [
-          { text: u.digest_every_weeks === 2 ? "Чаще" : "Реже", callback_data: "s:rarer" },
-          { text: paused ? "Снять паузу" : "Пауза на месяц", callback_data: "s:pause" },
-        ],
-        [{ text: "Сменить город", callback_data: "s:city" }, { text: "Отписаться от всего", callback_data: "s:unsub" }],
+        opt("w1", "Присылать раз в неделю"),
+        opt("w2", "Раз в 2 недели"),
+        opt("w4", "Раз в месяц"),
+        opt("pause", mode === "pause" ? `На паузе до ${dayMonth(u.paused_until!.slice(0, 10))}` : "Поставить на паузу на 2 недели"),
+        opt("off", "Не присылать дайджест"),
+        [{ text: "Сменить город", callback_data: "s:city" }, { text: "Сменить типы и дистанции", callback_data: "s:prefs" }],
+        [{ text: "Мои забеги", callback_data: "my" }, { text: "Отписаться от всего", callback_data: "s:unsub" }],
       ],
     },
   };
 }
+
+/** Подтверждение после выбора режима: что изменилось и когда ждать следующего. */
+export function settingsDone(u: SettingsUser, now: Date, mode: DigestMode, next: string | null, same: boolean): Msg {
+  const pre = same ? "Так уже стоит" : "Готово";
+  const today = localParts(now, u.tz || "Europe/Moscow").date;
+  const when = (iso: string) => (iso === today ? "сегодня" : daysBetween(today, iso) === 1 ? "завтра" : dayMonth(iso));
+  if (mode === "off") return { text: `${pre}: дайджест не присылаю. Напоминания о сохранённых забегах остаются.` };
+  if (mode === "pause") {
+    return {
+      text:
+        `${pre}: пауза до ${dayMonth(u.paused_until!.slice(0, 10))}. До этого ничего не пришлю: ни дайджест, ни напоминания.` +
+        (next ? ` Потом дайджест ${freqText(u.digest_every_weeks)}, первый ${when(next)}.` : ""),
+    };
+  }
+  return { text: `${pre}: дайджест ${freqText(u.digest_every_weeks)}. Следующий придёт ${next ? when(next) : "в ближайший понедельник"}, если появятся новые забеги.` };
+}
+
+/** Старые кнопки «Реже»/«Пауза на месяц» в прежних сообщениях: ничего не меняют, показывают новый экран. */
+export const SETTINGS_OUTDATED = "Эта кнопка из старой версии настроек. Вот новые: всё видно сразу.";
 
 export const UNSUBSCRIBED: Msg = {
   text: "Отписал от всего: ни дайджеста, ни напоминаний. Сохранённые забеги я снял. Вернуться можно командой /start.",

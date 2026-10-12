@@ -356,6 +356,38 @@ export function localParts(now: Date, tz: string): { date: string; hour: number;
   return { date: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour), weekday: wd };
 }
 
+/** Частота дайджеста: 1, 2 или 4 недели (4 — «раз в месяц»). Прочее — раз в неделю. */
+export const DIGEST_WEEKS = [1, 2, 4] as const;
+export function digestPeriodDays(weeks: number): number {
+  return 7 * ((DIGEST_WEEKS as readonly number[]).includes(weeks) ? weeks : 1);
+}
+
+/** Пауза из настроек: на 2 недели. */
+export const PAUSE_DAYS = 14;
+
+/**
+ * Дата (YYYY-MM-DD по времени человека), когда дайджест может прийти в следующий раз: первый
+ * понедельник 10:00–22:00 после паузы, не раньше чем через период от прошлого дайджеста — те же
+ * условия, что planUser. null — дайджест выключен. Сам дайджест придёт, только если будут новые забеги.
+ */
+export function nextDigestDate(
+  u: { digest_on: boolean; digest_every_weeks: number; digest_last_at: string | null; paused_until: string | null; tz?: string | null },
+  now: Date,
+): string | null {
+  if (!u.digest_on) return null;
+  const tz = u.tz || "Europe/Moscow";
+  const pause = u.paused_until ? Date.parse(u.paused_until) : 0;
+  const last = u.digest_last_at ? Date.parse(u.digest_last_at) : null;
+  const period = digestPeriodDays(u.digest_every_weeks);
+  let t = Math.max(now.getTime(), pause);
+  for (let i = 0; i < 24 * 7 * 6; i++, t += 3600_000) {
+    const { date, hour, weekday } = localParts(new Date(t), tz);
+    if (weekday !== 1 || hour < 10 || hour >= 22) continue;
+    if (last === null || t - last >= (period - 1) * 864e5) return date;
+  }
+  return null;
+}
+
 export function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((Date.parse(`${toIso}T00:00:00Z`) - Date.parse(`${fromIso}T00:00:00Z`)) / 864e5);
 }
@@ -441,7 +473,7 @@ export function planUser(input: {
 
   // Дайджест: понедельник, с 10:00, раз в неделю (или в две). Нет новых — ничего.
   if (user.digest_on && user.city && weekday === 1 && hour >= 10) {
-    const periodDays = 7 * (user.digest_every_weeks === 2 ? 2 : 1);
+    const periodDays = digestPeriodDays(user.digest_every_weeks);
     const last = user.digest_last_at ? Date.parse(user.digest_last_at) : null;
     if (last === null || now.getTime() - last >= (periodDays - 1) * 864e5) {
       const since = Math.max(last ?? 0, now.getTime() - periodDays * 864e5);

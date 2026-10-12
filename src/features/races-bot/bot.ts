@@ -22,6 +22,8 @@ import {
   matchUser,
   nearbyRaces,
   nearestCities,
+  nextDigestDate,
+  PAUSE_DAYS,
   NEARBY_KM,
   parseSearch,
   parseStart,
@@ -576,17 +578,15 @@ export function createBot(deps: BotDeps) {
       case "noconsult":
         return send(u.tg_id, T.NO_CONSULT);
       case "s": {
-        if (arg === "rarer") {
-          u = await store.saveUser({ tg_id: u.tg_id, digest_every_weeks: u.digest_every_weeks === 2 ? 1 : 2 });
-          if (u.digest_every_weeks === 2) await track(u.tg_id, "settings_less");
-        } else if (arg === "pause") {
-          const paused = u.paused_until && Date.parse(u.paused_until) > now().getTime();
-          u = await store.saveUser({
-            tg_id: u.tg_id,
-            paused_until: paused ? null : new Date(now().getTime() + 30 * 864e5).toISOString(),
-          });
-          if (!paused) await track(u.tg_id, "pause");
-        } else if (arg === "city") {
+        if (arg.startsWith("dg:")) return setDigestMode(u, arg.slice(3), msg);
+        if (arg === "rarer" || arg === "pause") {
+          // Старые кнопки-переключатели из прежних сообщений: ничего не меняют (было непонятно,
+          // что они переключили), показывают новый экран, где всё видно.
+          await send(u.tg_id, { text: T.SETTINGS_OUTDATED });
+          return send(u.tg_id, T.settings(u, now()));
+        }
+        if (arg === "prefs") return send(u.tg_id, T.prefs(u.types, u.distances, "Отметь, что интересно, и нажми «Показать забеги»."));
+        if (arg === "city") {
           await store.saveUser({ tg_id: u.tg_id, state: null });
           return pickCity(u.tg_id);
         } else if (arg === "unsub") {
@@ -609,6 +609,38 @@ export function createBot(deps: BotDeps) {
       default:
         return;
     }
+  }
+
+  /**
+   * Режим дайджеста из настроек: ровно одна вещь — режим (неделя / 2 недели / месяц / пауза / выкл).
+   * Выбор частоты снимает паузу и включает дайджест; «Не присылать» выключает и снимает паузу
+   * (напоминания о сохранённых снова идут). Экран правится на месте, ниже — что изменилось.
+   */
+  async function setDigestMode(u: BotUser, want: string, msg: TgMessage | undefined) {
+    const modes: T.DigestMode[] = ["w1", "w2", "w4", "pause", "off"];
+    if (!modes.includes(want as T.DigestMode)) return send(u.tg_id, T.settings(u, now()));
+    const mode = want as T.DigestMode;
+    const same = T.digestMode(u, now()) === mode;
+    if (!same) {
+      const weeks = { w1: 1, w2: 2, w4: 4 } as Record<string, number>;
+      if (mode === "pause") {
+        u = await store.saveUser({ tg_id: u.tg_id, paused_until: new Date(now().getTime() + PAUSE_DAYS * 864e5).toISOString() });
+        await track(u.tg_id, "pause");
+      } else if (mode === "off") {
+        u = await store.saveUser({ tg_id: u.tg_id, digest_on: false, paused_until: null });
+        await track(u.tg_id, "unsubscribe", { meta: { from: "settings_digest" } });
+      } else {
+        u = await store.saveUser({ tg_id: u.tg_id, digest_on: true, digest_every_weeks: weeks[mode], paused_until: null });
+        if (weeks[mode] > 1) await track(u.tg_id, "settings_less", { meta: { weeks: weeks[mode] } });
+      }
+    }
+    const screen = T.settings(u, now());
+    if (msg && !same) {
+      await tg
+        .call("editMessageText", { chat_id: u.tg_id, message_id: msg.message_id, text: screen.text, parse_mode: "HTML", reply_markup: screen.reply_markup })
+        .catch(() => undefined);
+    }
+    return send(u.tg_id, T.settingsDone(u, now(), mode, nextDigestDate(u, now()), same));
   }
 
   async function guarded(tgId: number, fn: () => Promise<void>) {

@@ -38,6 +38,7 @@ import {
   kmBetween,
   nearbyRaces,
   nearestCities,
+  nextDigestDate,
   type BotRace,
 } from "@/features/races-bot/core";
 import { computeBotStats, statsMessage, type StatEvent } from "@/features/races-bot/stats";
@@ -265,16 +266,96 @@ async function main() {
   assert.ok(!store.follows.some((f) => f.race_id === TRAIL.id), "старт убран");
 
   // ── настройки ─────────────────────────────────────────────────────────────
-  reset();
-  await bot.handleUpdate(msg(USER, "/settings"));
-  assert.match(texts(501)[0], /Тихие часы: <b>22:00-9:00<\/b>/);
-  await bot.handleUpdate(cb(USER, "s:rarer"));
-  assert.equal(store.users.get(501)?.digest_every_weeks, 2, "«Реже» — раз в две недели");
-  await bot.handleUpdate(cb(USER, "s:rarer"));
-  await bot.handleUpdate(cb(USER, "s:pause"));
-  assert.ok(Date.parse(store.users.get(501)!.paused_until!) > NOW.getTime() + 29 * 864e5, "пауза на месяц");
-  await bot.handleUpdate(cb(USER, "s:pause"));
-  assert.equal(store.users.get(501)?.paused_until, null, "пауза снимается");
+  // Было: «Реже/Чаще» и «Пауза на месяц/Снять паузу» — переключатели; чек держал «Реже» = 2 недели
+  // и паузу на 30 дней. Отменено нарядом 12.10.2026: человек не понимал, что они переключили.
+  // Стало и стережётся: вверху состояние одной фразой, совпадающее с базой; режим дайджеста —
+  // один из пяти вариантов, ✓ ровно у текущего; каждое нажатие меняет ТОЛЬКО режим и говорит,
+  // что изменилось и когда следующий дайджест; старые кнопки ничего не меняют.
+  {
+    reset();
+    await bot.handleUpdate(cb(USER, "s:dg:w1"));
+    reset();
+    await bot.handleUpdate(msg(USER, "/settings"));
+    const me = () => store.users.get(501)!;
+    const screen0 = sent(501).at(-1)!;
+    assert.ok(String(screen0.params.text).includes(T.esc(T.settingsState(me(), NOW))), "состояние вверху = база");
+    assert.match(T.settingsState(me(), NOW), /^Дайджест: раз в неделю, по понедельникам\. Город: Москва\. Типы и дистанции: .+\.$/);
+    assert.deepEqual(buttons(screen0).filter((b) => b.text.startsWith("✓ ")).map((b) => b.text), ["✓ Присылать раз в неделю"], "✓ ровно у текущего");
+    for (const label of ["Раз в 2 недели", "Раз в месяц", "Поставить на паузу на 2 недели", "Не присылать дайджест", "Сменить город", "Сменить типы и дистанции", "Мои забеги"]) {
+      assert.ok(buttons(screen0).some((b) => b.text === label), `кнопка «${label}»`);
+    }
+    const MODE_FIELDS = new Set(["digest_on", "digest_every_weeks", "paused_until"]);
+    const press = async (data: string) => {
+      const before = { ...me() } as Record<string, unknown>;
+      const c = calls.length;
+      const evBefore = store.events.length;
+      await bot.handleUpdate({ callback_query: { id: String(mid++), from: USER, data, message: { message_id: 4242, chat: { id: 501, type: "private" } } } });
+      CLICK += 5000;
+      const after = me() as unknown as Record<string, unknown>;
+      const changed = Object.keys({ ...before, ...after }).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+      assert.ok(changed.every((k) => MODE_FIELDS.has(k)), `${data}: задело не только режим (${changed.join(",")})`);
+      const out = calls.slice(c);
+      return { changed, out, done: String(out.filter((x) => x.method === "sendMessage").at(-1)?.params.text ?? ""), edit: out.find((x) => x.method === "editMessageText"), events: store.events.slice(evBefore) };
+    };
+    const checkEdit = (r: Awaited<ReturnType<typeof press>>, mark: string) => {
+      assert.ok(r.edit, "экран правится на месте");
+      assert.ok(String(r.edit!.params.text).includes(T.esc(T.settingsState(me(), NOW))), "после нажатия состояние = база");
+      assert.deepEqual(buttons(r.edit!).filter((b) => b.text.startsWith("✓ ")).map((b) => b.text), [mark]);
+    };
+    let r = await press("s:dg:w2");
+    assert.deepEqual(r.changed, ["digest_every_weeks"], "меняется только частота");
+    assert.equal(me().digest_every_weeks, 2);
+    // понедельник 13:00 по Москве, дайджестов ещё не было: следующий — сегодня
+    assert.equal(r.done, "Готово: дайджест раз в 2 недели. Следующий придёт сегодня, если появятся новые забеги.");
+    checkEdit(r, "✓ Раз в 2 недели");
+    r = await press("s:dg:w2");
+    assert.deepEqual(r.changed, [], "повтор того же варианта ничего не меняет");
+    assert.match(r.done, /^Так уже стоит: дайджест раз в 2 недели/);
+    assert.equal(r.edit, undefined);
+    assert.equal(r.events.length, 0, "и не пишет событие");
+    r = await press("s:dg:w4");
+    assert.deepEqual(r.changed, ["digest_every_weeks"]);
+    assert.equal(me().digest_every_weeks, 4, "раз в месяц = 4 недели");
+    checkEdit(r, "✓ Раз в месяц");
+    r = await press("s:dg:pause");
+    assert.deepEqual(r.changed, ["paused_until"], "пауза меняет только паузу");
+    assert.equal(Date.parse(me().paused_until!), NOW.getTime() + 14 * 864e5, "пауза ровно 2 недели");
+    assert.match(r.done, /^Готово: пауза до 26 октября\. До этого ничего не пришлю: ни дайджест, ни напоминания\. Потом дайджест раз в месяц, первый \d+ [а-я]+\.$/);
+    checkEdit(r, "✓ На паузе до 26 октября");
+    assert.match(T.settingsState(me(), NOW), /^Дайджест: на паузе до 26 октября, потом раз в месяц\./);
+    r = await press("s:dg:w1");
+    assert.deepEqual(r.changed.sort(), ["digest_every_weeks", "paused_until"], "частота снимает паузу");
+    assert.equal(me().paused_until, null);
+    assert.equal(nextDigestDate(me(), NOW), "2026-10-12");
+    assert.match(r.done, /Следующий придёт сегодня,/, "дата следующего = расчёт");
+    // дайджест сегодня уже был: следующий через неделю, датой
+    const lastWas = me().digest_last_at;
+    me().digest_last_at = "2026-10-12T07:30:00Z";
+    assert.equal(T.settingsDone(me(), NOW, "w1", nextDigestDate(me(), NOW), false).text, "Готово: дайджест раз в неделю. Следующий придёт 19 октября, если появятся новые забеги.");
+    me().digest_last_at = lastWas;
+    checkEdit(r, "✓ Присылать раз в неделю");
+    r = await press("s:dg:off");
+    assert.deepEqual(r.changed, ["digest_on"]);
+    assert.equal(r.done, "Готово: дайджест не присылаю. Напоминания о сохранённых забегах остаются.");
+    checkEdit(r, "✓ Не присылать дайджест");
+    assert.equal(nextDigestDate(me(), NOW), null);
+    r = await press("s:dg:w1");
+    assert.deepEqual(r.changed, ["digest_on"]);
+    // старые кнопки в прежних сообщениях: ничего не меняют
+    for (const old of ["s:rarer", "s:pause"]) {
+      r = await press(old);
+      assert.deepEqual(r.changed, [], `${old} больше ничего не переключает`);
+      assert.ok(r.out.some((x) => String(x.params.text).startsWith("Эта кнопка из старой версии настроек")));
+    }
+    r = await press("s:prefs");
+    assert.deepEqual(r.changed, []);
+    assert.ok(r.out.some((x) => buttons(x).some((b) => b.callback_data === "show")), "типы и дистанции с «Показать забеги»");
+    // nextDigestDate: понедельник 10:00 по времени человека, после паузы и не раньше периода
+    assert.equal(nextDigestDate({ digest_on: true, digest_every_weeks: 1, digest_last_at: null, paused_until: null }, new Date("2026-10-12T10:00:00Z")), "2026-10-12");
+    assert.equal(nextDigestDate({ digest_on: true, digest_every_weeks: 1, digest_last_at: "2026-10-12T07:00:00Z", paused_until: null }, new Date("2026-10-12T10:00:00Z")), "2026-10-19");
+    assert.equal(nextDigestDate({ digest_on: true, digest_every_weeks: 4, digest_last_at: "2026-10-12T07:00:00Z", paused_until: null }, new Date("2026-10-12T10:00:00Z")), "2026-11-09");
+    assert.equal(nextDigestDate({ digest_on: true, digest_every_weeks: 1, digest_last_at: null, paused_until: "2026-10-26T10:00:00Z" }, new Date("2026-10-12T10:00:00Z")), "2026-10-26");
+  }
 
   // ── /stats только тренеру ──────────────────────────────────────────────────
   // Было: одна строка счётчиков «Забеги России: статистика». Теперь один экран с воронкой,
@@ -359,12 +440,14 @@ async function main() {
 
   // пауза глушит всё
   await bot.handleUpdate(cb(USER, `f:${raceCode(SHORT.id)}`));
-  await bot.handleUpdate(cb(USER, "s:pause"));
+  // Было «s:pause» (пауза на месяц, переключатель); теперь пауза — вариант режима, 2 недели.
+  await bot.handleUpdate(cb(USER, "s:dg:pause"));
   reset();
   NOW = new Date("2026-10-18T08:00:00Z"); // за 6 дней до SHORT
   await bot.runTick();
   assert.equal(texts(501).length, 0, "на паузе — ничего");
-  await bot.handleUpdate(cb(USER, "s:pause"));
+  await bot.handleUpdate(cb(USER, "s:dg:w1"));
+  assert.equal(store.users.get(501)?.paused_until, null, "выбор частоты снимает паузу");
 
   // дайджест: понедельник 10:30, новые за неделю в городе и по фильтрам
   store.users.get(501)!.types = [];
