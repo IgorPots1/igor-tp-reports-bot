@@ -51,6 +51,10 @@ import {
   vkSweepYear,
   nameSimilar,
   validateInsert,
+  validateExpected,
+  findExpectedDuplicate,
+  findAnnounced,
+  EXPECTED_MAX_AGE_DAYS,
   validateSuggestionVerdict,
   validateUpdate,
   weeklySummary,
@@ -327,6 +331,32 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.ok(!isVkRaceCandidate({ date: "2026-10-01", text: "Трейл в субботу, приходите" }, today), "без даты");
   assert.equal(vkSweepYear("2026-10-12"), 2027);
   assert.equal(vkSweepYear("2027-03-01"), 2027);
+}
+
+// ── ожидаемые через шлюз (наряд 12.10.2026): регулярный старт без даты следующего года ──
+{
+  const ok = {
+    name: "Трейл Олбово", city: "Тверь", region: "Тверская область", race_type: "trail",
+    last_date: "2026-06-21", last_url: "https://vk.com/tver_run", reason: "регулярный, 2027 не объявлен",
+  };
+  assert.deepEqual(validateExpected(ok, TODAY), [], "валидный ожидаемый");
+  assert.match(validateExpected({ ...ok, last_date: "2026-11-01" }, TODAY).join(";"), /не в прошлом/, "будущая дата — это insert, не ожидаемый");
+  assert.match(validateExpected({ ...ok, last_date: "2025-08-01" }, TODAY).join(";"), new RegExp(`старше ${EXPECTED_MAX_AGE_DAYS}`), "слишком старый");
+  assert.match(validateExpected({ ...ok, last_url: "vk.com/tver_run" }, TODAY).join(";"), /last_url/, "ссылка обязательна");
+  assert.match(validateExpected({ ...ok, reason: " " }, TODAY).join(";"), /нет причины/);
+  assert.match(validateExpected({ ...ok, race_type: "ocr" }, TODAY).join(";"), /race_type/);
+  assert.match(validateExpected({ ...ok, name: "Детский забег Олбово" }, TODAY).join(";"), /детский/);
+  assert.equal(manualId(ok.name, ok.last_date), "manual:treil-olbovo-2026", "id по году прошлого проведения");
+  const known = [
+    { id: "probeg:1", name: "Трейл «Олбово»", city: "Тверь", status: "expected" },
+    { id: "probeg:2", name: "Старицкие версты", city: "Старица", status: "dropped" },
+  ];
+  assert.equal(findExpectedDuplicate(ok, known)?.id, "probeg:1", "уже в ожидаемых — отказ");
+  assert.equal(findExpectedDuplicate({ ...ok, city: "Торжок" }, known), null, "другой город — не дубль");
+  assert.equal(findExpectedDuplicate({ ...ok, name: "Старицкие версты", city: "Старица" }, known), null, "dropped не мешает");
+  const cal = [{ id: "probeg:9", name: "Трейл Олбово 2027", date_start: "2027-06-20", date_end: null, city: "Тверь", race_type: "trail" }];
+  assert.equal(findAnnounced(ok, cal)?.id, "probeg:9", "дата уже в календаре — не ожидаемый");
+  assert.equal(findAnnounced({ ...ok, city: "Кимры" }, cal), null);
 }
 
 console.log("check:races-manual ok");

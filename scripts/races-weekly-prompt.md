@@ -59,9 +59,18 @@
   стояние в воде, велогонки, OCR.
 - Сайты, которые собирает робот (уровень A), НЕ обходить и в реестр не класть: probeg.org, marathonec.ru,
   iron-star.com, orgeo.ru, where2run.ru, myrace.info, sportsauce.ru, racetime.online, reg.place, reg.o-time.ru,
-  heroleague.ru и забег.рф (xn--80acghh.xn--p1ai).
+  heroleague.ru, забег.рф (xn--80acghh.xn--p1ai) и reg.russiarunning.com (робот с 12.10.2026; robots.txt
+  reg.russiarunning.com открыт, «Allow: /»; закрыт только russiarunning.com без reg., его не трогать).
 - Ничего не выдумывай. Не уверен в дате: не добавляй. Каждая ссылка должна быть открыта тобой.
 - Без длинных тире в текстах, только дефис.
+
+ПРАВИЛА ДЛЯ expected (регулярный старт, дата следующего года ещё не объявлена)
+- Старт прошёл в этом году (или в последние 12 месяцев), организатор его регулярно проводит, а даты
+  2027 нет нигде: такой старт НЕ в insert, а в `expected`. Шлюз пишет его в ожидаемые (сайт показывает
+  «ожидается, обычно в <месяц>»), а когда дата появится в календаре, строка сама станет объявленной.
+- Обязательно: прошлая дата `last_date` (YYYY-MM-DD, в прошлом) и `last_url` - где это прошлое
+  проведение подтверждено (пост организатора, его сайт, протокол). Те же запреты, что для insert.
+- Дата 2027 известна: это insert, а не expected.
 
 КАНДИДАТЫ В АВТОСБОР
 Если сайт даёт больше 15 стартов в России обычным HTML или JSON (без входа и без обхода
@@ -77,6 +86,9 @@ robots.txt), запиши его в `candidates`: url страницы со сп
               "race_type": "road|trail|tri|track", "distances": ["21,1 км"], "dist_km": [21.1],
               "tags": ["ultra|night|fest|marathon|half"], "site_url": "https://..." , "reg_url": null, "vk_url": null,
               "source_url": "https://... (где подтверждена дата)", "reason": "коротко, откуда"}],
+  "expected": [{"name": "...", "city": "...", "region": "...", "race_type": "road|trail|tri", "distances": ["10 км"],
+                "last_date": "YYYY-MM-DD (прошлое проведение)", "last_url": "https://... (где оно подтверждено)",
+                "site_url": "https://... или null", "reason": "коротко: регулярный, дата 2027 не объявлена"}],
   "sources": [{"url": "https://...", "name": "...", "kind": "organizer|series|federation|calendar|registration|vk",
                "region": "...", "race_types": ["tri"], "tier": "B|C", "status": "ok|dead|blocked", "last_checked": "{{TODAY}}", "note": "..."}],
   "candidates": [{"url": "https://...", "races": 40, "dated_with_year": true, "note": "..."}],

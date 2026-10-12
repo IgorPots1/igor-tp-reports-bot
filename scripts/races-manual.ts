@@ -38,6 +38,8 @@
  *     "update": [{ "id": "manual:...", "date_start": "...", "date_end": "...", "reason": "..." , ...поля }],
  *     "remove": [{ "id": "manual:...", "reason": "..." }],
  *     "insert": [{ "name": "...", "date_start": "...", ... , "source_url": "...", "reason": "..." }],
+ *     "expected": [{ "name": "...", "city": "...", "last_date": "2026-08-15", "last_url": "...", "race_type": "trail", "reason": "..." }],
+ *                    регулярный старт без даты следующего года → race_expected (source manual, status expected)
  *     "sources": [{ "url": "...", "name": "...", "kind": "organizer", ... }],     новые сайты и правки статуса
  *     "candidates": [{ "url": "...", "races": 40, "dated_with_year": true, "note": "..." }],  кандидаты в автосбор
  *     "queries": ["триатлон Казань 2027", ...] }                               поисковые запросы недели
@@ -53,6 +55,7 @@ import { fileURLToPath } from "node:url";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
+import { nameKey } from "../supabase/functions/race-calendar-sync/expected";
 
 export const MAX_INSERTS = 40;
 export const MAX_UPDATES = 60;
@@ -81,6 +84,27 @@ export type RaceInsert = {
   reason?: string;
 };
 export type RaceUpdate = { id: string; reason: string } & Partial<Omit<RaceInsert, "reason">>;
+/**
+ * Регулярный старт, у которого дата следующего проведения ещё не объявлена: в race_expected
+ * (source manual, status expected). Прошлое проведение — дата и ссылка на организатора, где оно
+ * подтверждено. Когда дата появится в календаре, edge-функция (стадия expected) сама переведёт
+ * строку в announced, как и строки probeg.
+ */
+export type ExpectedInsert = {
+  name: string;
+  city: string;
+  region?: string | null;
+  race_type: string;
+  distances?: string[];
+  /** Прошлое проведение, YYYY-MM-DD: в прошлом и не старше EXPECTED_MAX_AGE_DAYS. */
+  last_date: string;
+  /** Где прошлое проведение подтверждено (организатор, ВК, протокол). */
+  last_url: string;
+  site_url?: string | null;
+  reason: string;
+};
+/** Старше — edge-функция всё равно уведёт в dropped (400 дней): не вносим. */
+export const EXPECTED_MAX_AGE_DAYS = 380;
 export type SourceKind = "organizer" | "series" | "federation" | "calendar" | "registration" | "vk";
 /** ok: живой; dead: не открывается, пуст или зеркало; blocked: robots.txt, капча, бан (не обходим). */
 export type SourceStatus = "ok" | "dead" | "blocked";
@@ -144,6 +168,7 @@ export type Proposal = {
   update?: RaceUpdate[];
   remove?: { id: string; reason: string }[];
   insert?: RaceInsert[];
+  expected?: ExpectedInsert[];
 };
 export type CalendarRow = { id: string; name: string; date_start: string; date_end: string | null; city: string | null; region?: string | null; race_type: string | null };
 
@@ -325,6 +350,35 @@ export function validateInsert(r: RaceInsert, todayIso: string): string[] {
     e.push("по названию похоже на онлайн, абонемент, кемп, тренировку, детский старт или велогонку");
   }
   return e;
+}
+
+export function validateExpected(r: ExpectedInsert, todayIso: string): string[] {
+  const e: string[] = [];
+  if (!r.name?.trim()) e.push("нет названия");
+  if (!r.city?.trim()) e.push("нет города");
+  if (!RACE_TYPES.has(r.race_type)) e.push(`race_type ${r.race_type}`);
+  if (!ISO.test(r.last_date || "")) e.push(`прошлая дата ${r.last_date} не YYYY-MM-DD`);
+  else if (r.last_date >= todayIso) e.push(`прошлая дата ${r.last_date} не в прошлом: с датой старт идёт в insert`);
+  else if (Date.parse(todayIso) - Date.parse(r.last_date) > EXPECTED_MAX_AGE_DAYS * 864e5) e.push(`прошлая дата ${r.last_date} старше ${EXPECTED_MAX_AGE_DAYS} дней`);
+  if (!httpUrl(r.last_url)) e.push("нет last_url, где подтверждено прошлое проведение");
+  if (r.site_url && !httpUrl(r.site_url)) e.push("site_url не ссылка");
+  if (!r.reason?.trim()) e.push("нет причины");
+  if (/онлайн|online|виртуал|абонемент|кэмп|кемп|camp|тренировк|детск|kids|велогонк/i.test(r.name)) {
+    e.push("по названию похоже на онлайн, абонемент, кемп, тренировку, детский старт или велогонку");
+  }
+  return e;
+}
+
+export type ExpectedRowLite = { id: string; name: string; city: string | null; status: string };
+
+/** Уже есть в ожидаемых (expected или announced): похожее название и тот же город. */
+export function findExpectedDuplicate(r: ExpectedInsert, rows: ExpectedRowLite[]): ExpectedRowLite | null {
+  return rows.find((x) => x.status !== "dropped" && norm(x.city) === norm(r.city) && nameSimilar(x.name, r.name)) ?? null;
+}
+
+/** Следующее проведение уже в календаре: похожее название, тот же город, дата позже прошлой. */
+export function findAnnounced(r: ExpectedInsert, calendar: CalendarRow[]): CalendarRow | null {
+  return calendar.find((x) => x.date_start > r.last_date && norm(x.city) === norm(r.city) && nameSimilar(x.name, r.name)) ?? null;
 }
 
 export function validateUpdate(u: RaceUpdate, todayIso: string): string[] {
@@ -797,7 +851,7 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   return hits;
 }
 
-type Outcome = { kind: "fixed" | "removed" | "added" | "skipped"; id: string; text: string; link?: string; tri?: boolean };
+type Outcome = { kind: "fixed" | "removed" | "added" | "expected" | "skipped"; id: string; text: string; link?: string; tri?: boolean };
 
 async function cmdApply(file: string, apply: boolean) {
   const sb = db();
@@ -806,7 +860,9 @@ async function cmdApply(file: string, apply: boolean) {
   const updates = p.update || [];
   const removes = p.remove || [];
   const inserts = p.insert || [];
-  if (inserts.length > MAX_INSERTS) throw new Error(`вставок ${inserts.length} > ${MAX_INSERTS}: прогон остановлен`);
+  const expected = p.expected || [];
+  // Ожидаемые — тоже вставки: общий предохранитель.
+  if (inserts.length + expected.length > MAX_INSERTS) throw new Error(`вставок ${inserts.length + expected.length} > ${MAX_INSERTS}: прогон остановлен`);
   if (updates.length + removes.length > MAX_UPDATES) throw new Error(`правок ${updates.length + removes.length} > ${MAX_UPDATES}: прогон остановлен`);
 
   const out: Outcome[] = [];
@@ -899,6 +955,50 @@ async function cmdApply(file: string, apply: boolean) {
   }
 
   for (const r of inserts) await tryInsert(r);
+
+  // Ожидаемые: только race_expected, только новые строки source manual. Существующие (в том
+  // числе строки probeg) не трогаем: дубль по названию и городу — отказ; дата уже в календаре —
+  // отказ (это не ожидаемый, а объявленный старт).
+  if (expected.length) {
+    const { data: exRows, error: exErr } = await sb.from("race_expected").select("id,name,city,status");
+    if (exErr) throw exErr;
+    const known = (exRows || []) as ExpectedRowLite[];
+    for (const r of expected) {
+      const errs = validateExpected(r, today);
+      const id = manualId(r.name, r.last_date);
+      const dup = errs.length ? null : findExpectedDuplicate(r, known);
+      const next = errs.length || dup ? null : findAnnounced(r, calendar);
+      if (errs.length || dup || next || known.some((x) => x.id === id)) {
+        const why = errs.join("; ") || (dup ? `уже в ожидаемых: ${dup.id} «${dup.name}» (${dup.status})` : next ? `дата уже в календаре: ${next.id} ${next.date_start} «${next.name}»` : "такой id уже есть");
+        out.push({ kind: "skipped", id, text: why });
+        continue;
+      }
+      const row = {
+        id,
+        source: "manual",
+        name: r.name.trim(),
+        name_key: nameKey(r.name),
+        city: r.city.trim(),
+        region: r.region ?? null,
+        race_type: r.race_type,
+        distances: r.distances ?? [],
+        last_date: r.last_date,
+        last_month: Number(r.last_date.slice(5, 7)),
+        last_url: r.last_url,
+        site_url: r.site_url ?? null,
+        last_finishers: null,
+        status: "expected",
+        seen_at: now,
+        updated_at: now,
+      };
+      if (apply) {
+        const { error } = await sb.from("race_expected").insert(row);
+        if (error) throw error;
+      }
+      known.push({ id, name: row.name, city: row.city, status: "expected" });
+      out.push({ kind: "expected", id, text: `прошлый ${r.last_date} ${row.name}, ${row.city}: ${r.reason}`, link: r.last_url });
+    }
+  }
 
   // Заявки с сайта (race_suggestions). Меняются только status, note, race_id и только
   // у заявок в статусе new: разобранную повторно не перепишешь.
@@ -1072,7 +1172,7 @@ export function weeklySummary(a: {
   const lines = [
     `Дата: ${a.today}`,
     `Задача: еженедельное обновление ручных стартов /races${a.apply ? "" : " (ХОЛОСТОЙ ПРОГОН, в базу ничего не записано)"}`,
-    `Итог: проверено ${checked}, исправлено ${n("fixed")}, убрано ${n("removed")}, добавлено ${n("added")} (из них триатлонов ${tri}), отклонено шлюзом ${n("skipped")}`,
+    `Итог: проверено ${checked}, исправлено ${n("fixed")}, убрано ${n("removed")}, добавлено ${n("added")} (из них триатлонов ${tri}), в ожидаемые ${n("expected")}, отклонено шлюзом ${n("skipped")}`,
     `Источники: новых в реестре ${a.merged.added.length}, сменили статус ${a.merged.changed.length}, всего в работе (ok, B и C) ${a.activeTotal}; поисковых запросов ${(a.proposal.queries || []).length}`,
   ];
   const t = a.tiers;
