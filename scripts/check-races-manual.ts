@@ -39,7 +39,9 @@ import {
   VK_METHODS,
   VK_MIN_INTERVAL_MS,
   VK_SEARCH_WORDS,
+  isVkRaceCandidate,
   vkQueriesForCity,
+  vkSweepYear,
   nameSimilar,
   validateInsert,
   validateSuggestionVerdict,
@@ -223,6 +225,22 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.equal(findDuplicate(at("Вьюнок Трейл", "Гарболово", "2027-05-15", "Ленинградская область"), cal)?.id, "probeg:9001", "Вьюнок: с регионом тоже дубль");
   assert.equal(findDuplicate(at("Осенний кросс", "Талдом", "2026-10-18", "Московская область"), cal), null, "«Осенний кросс» Талдом и Североморск — не дубли");
   assert.ok(!isTwin(tw("DAB Vertical Autumn Night", "Москва", "2026-11-28"), tw("Трейл «Лесландия. Night»", "Мяглово", "2026-11-28")), "и для снятия ручного старта");
+}
+
+// --- vk-sweep: отбор постов. Дата словами («18 апреля 2027») проходит — первый полный проход
+// 12.10.2026 её терял из-за \b у кириллицы; реклама туров и итоги отсекаются; старше 180 дней — нет.
+{
+  const today = "2026-10-12";
+  assert.ok(isVkRaceCandidate({ date: "2026-09-23", text: "Открыли регистрацию на весенний трейл! 🗓️18 апреля 2027, г. Истра" }, today));
+  assert.ok(isVkRaceCandidate({ date: "2026-09-13", text: "17 июля 2027 года K-RUN проводит Ультратрейл «Восьмерка»" }, today));
+  assert.ok(isVkRaceCandidate({ date: "2026-08-31", text: "Челябинский марафон 2027: 📆 Когда: 22.08.2027" }, today));
+  assert.ok(isVkRaceCandidate({ date: "2026-08-23", text: "ТрейлФест 7 – 8 ноября 2026 г." }, today), "диапазон дней");
+  assert.ok(!isVkRaceCandidate({ date: "2026-10-10", text: "Турция, раннее бронирование, вылет 9 мая, отель 5*, марафон скидок" }, today), "туры");
+  assert.ok(!isVkRaceCandidate({ date: "2026-10-04", text: "Итоги забега 4 октября: результаты" }, today), "итоги");
+  assert.ok(!isVkRaceCandidate({ date: "2026-01-02", text: "Трейл 18 апреля 2026" }, today), "старше 180 дней");
+  assert.ok(!isVkRaceCandidate({ date: "2026-10-01", text: "Трейл в субботу, приходите" }, today), "без даты");
+  assert.equal(vkSweepYear("2026-10-12"), 2027);
+  assert.equal(vkSweepYear("2027-03-01"), 2027);
 }
 
 console.log("check:races-manual ok");

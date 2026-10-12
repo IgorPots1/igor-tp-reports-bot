@@ -41,6 +41,22 @@ fi
 "${GATE[@]}" cities > "$WORK/cities.json" || echo "[]" > "$WORK/cities.json"
 # Поиск во ВКонтакте только при сервисном ключе в .env.local основной папки.
 if grep -q '^VK_SERVICE_TOKEN=.' "$REPO/.env.local" 2>/dev/null; then VK_MODE="есть"; else VK_MODE="нет"; fi
+# ВК — по ВСЕМ точкам каждую неделю (1664 поиска), детерминированно, до агента: шлюз сам ищет,
+# отбрасывает людей и закрытые группы и кладёт кандидатов в файл; агент их только проверяет.
+# Лимит ВК (6/29): обход останавливается, состояние в ~/ops-log/races/vk-sweep.json, следующий
+# запуск (com.igor.races.vk-resume на следующий день или этот раннер) продолжит с той же точки.
+echo "[]" > "$WORK/vk-candidates.json"
+if [ "$VK_MODE" = "есть" ]; then
+  "${GATE[@]}" vk-sweep "$WORK/vk-candidates.json"
+  case $? in
+    0) echo "ВК: обход по всем точкам закончен" ;;
+    4) echo "ВК: лимит, остановился; продолжу на следующий день (кандидаты пока частичные)" ;;
+    *) echo "ВК: обход упал, агент идёт без кандидатов из ВК" ;;
+  esac
+  # Незаконченный прошлый круг пишет в свой файл: агенту отдаём файл текущего круга.
+  VK_OUT="$(python3 -c "import json,os;p=os.path.expanduser('~/ops-log/races/vk-sweep.json');print(json.load(open(p)).get('out',''))" 2>/dev/null)"
+  if [ -n "$VK_OUT" ] && [ -f "$VK_OUT" ] && [ "$VK_OUT" != "$WORK/vk-candidates.json" ]; then cp "$VK_OUT" "$WORK/vk-candidates.json"; fi
+fi
 rm -f "$WORK/proposal.json"
 
 PROMPT="$(sed -e "s|{{TODAY}}|$TODAY|g" -e "s|{{REPO}}|$REPO|g" -e "s|{{VK}}|$VK_MODE|g" "$REPO/scripts/races-weekly-prompt.md")"

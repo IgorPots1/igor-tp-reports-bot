@@ -924,10 +924,118 @@ async function vkCall(method: string, params: Record<string, string>, token: str
       await new Promise((r) => setTimeout(r, 1100));
       continue;
     }
+    // 29 — «Rate limit reached»: суточный лимит метода, повторять сегодня бесполезно.
+    if (body.error?.error_code === 29) throw new VkLimitError(`ВК ${method}: 29 ${body.error.error_msg}`);
     if (body.error) throw new Error(`ВК ${method}: ${body.error.error_code} ${body.error.error_msg}`);
     return body.response ?? {};
   }
-  throw new Error(`ВК ${method}: лимит запросов, три попытки`);
+  throw new VkLimitError(`ВК ${method}: 6 слишком много запросов, три попытки`);
+}
+
+/** Упёрлись в лимит ВК (ошибка 6 после повторов или 29): обход останавливается и продолжается позже. */
+export class VkLimitError extends Error {}
+
+// ── полный обход ВК по всем точкам (vk-sweep) ────────────────────────────────
+//
+// 1664 поиска (208 точек × 8 слов) агенту поштучно не по силам, поэтому обход детерминированный:
+// шлюз сам ищет, отбрасывает людей и закрытые группы (slimVkCommunityPosts), оставляет посты с
+// датой и словом про бег и пишет кандидатов в файл. Агент только проверяет кандидатов по
+// правилам. Лимит ВК — остановка с записью, где остановились; следующий запуск продолжает.
+
+export type VkSweepState = {
+  cycle: string; // дата начала круга
+  next: number; // индекс следующей точки
+  total: number;
+  out: string; // файл кандидатов этого круга
+  queries: number;
+  posts: number;
+  candidates: number;
+  stopped?: string | null;
+  done_at?: string | null;
+};
+
+export function vkSweepStatePath(): string {
+  return process.env.RACES_VK_SWEEP_STATE || path.join(os.homedir(), "ops-log", "races", "vk-sweep.json");
+}
+
+/** Год в запросе: с сентября ищем уже следующий сезон. */
+export function vkSweepYear(todayIso: string): number {
+  const [y, m] = todayIso.split("-").map(Number);
+  return m >= 9 ? y + 1 : y;
+}
+
+// Без \b после месяца: в JS \b не видит границу у кириллицы, и «18 апреля 2027» не проходил —
+// первый полный проход 12.10.2026 нашёл из-за этого только даты цифрами (22 кандидата на 15516 постов).
+const VK_DATE_RE = /(?<![\dа-яё])\d{1,2}(?:\s*[-–]\s*\d{1,2})?\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?![а-яё])|(?<!\d)\d{1,2}\.\d{2}\.20\d{2}(?!\d)/i;
+const VK_RACE_RE = /трейл|забег|марафон|полумарафон|триатлон|акватлон|дуатлон|скайран|ультра|swimrun|кросс/i;
+const VK_NOISE_RE = /бронирован|турагент|туроператор|отель|вылет|ночей|всё включено|все включено|итоги|результаты|протокол|фотоотч[её]т/i;
+
+/** Пост стоит показать агенту: свежий (до 180 дней), есть дата и слово про бег, не реклама туров и не итоги. */
+export function isVkRaceCandidate(p: { date: string; text: string }, todayIso: string): boolean {
+  const ageDays = (Date.parse(`${todayIso}T00:00:00Z`) - Date.parse(`${p.date}T00:00:00Z`)) / 864e5;
+  if (!(ageDays <= 180)) return false;
+  return VK_RACE_RE.test(p.text) && VK_DATE_RE.test(p.text) && !VK_NOISE_RE.test(p.text);
+}
+
+async function cmdVkSweep(outArg: string | undefined) {
+  loadExtraEnv();
+  loadScriptEnv();
+  const token = process.env.VK_SERVICE_TOKEN?.trim();
+  if (!token) {
+    console.log("VK_SERVICE_TOKEN не задан: обход ВК пропущен");
+    process.exit(3);
+  }
+  const cities = readCities();
+  if (!cities.length) throw new Error(`нет точек обхода: ${citiesPath()}`);
+  const today = todayBelgrade();
+  const year = vkSweepYear(today);
+  const statePath = vkSweepStatePath();
+  const prev = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, "utf8")) as VkSweepState) : null;
+  // Незаконченный круг продолжаем в тот же файл; законченный — начинаем новый.
+  const state: VkSweepState =
+    prev && !prev.done_at
+      ? { ...prev, stopped: null, total: cities.length }
+      : { cycle: today, next: 0, total: cities.length, out: path.resolve(outArg || `vk-candidates-${today}.json`), queries: 0, posts: 0, candidates: 0 };
+  const save = () => {
+    mkdirSync(path.dirname(statePath), { recursive: true });
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  };
+  const found: Record<string, unknown>[] = existsSync(state.out) ? JSON.parse(readFileSync(state.out, "utf8")) : [];
+  const seen = new Set(found.map((c) => String(c.url)));
+  console.log(`vk-sweep: круг ${state.cycle}, с точки ${state.next + 1} из ${cities.length}, год ${year}, файл ${state.out}`);
+  try {
+    for (let i = state.next; i < cities.length; i++) {
+      const city = cities[i]!;
+      for (const q of vkQueriesForCity(city.name, year)) {
+        const r = await vkCall("newsfeed.search", { q, count: "100" }, token);
+        state.queries += 1;
+        const posts = ((r.items as VkPost[]) || []).filter((p) => Number(p.owner_id) < 0);
+        if (!posts.length) continue;
+        const ids = [...new Set(posts.map((p) => String(-Number(p.owner_id))))];
+        const groups = ((await vkCall("groups.getById", { group_ids: ids.join(",") }, token)).groups as VkGroup[]) || [];
+        const slim = slimVkCommunityPosts(posts, groups);
+        state.posts += slim.length;
+        for (const p of slim) {
+          if (seen.has(p.url) || !isVkRaceCandidate(p, today)) continue;
+          seen.add(p.url);
+          found.push({ point: city.name, region: city.region, query: q, ...p });
+        }
+      }
+      state.next = i + 1;
+      state.candidates = found.length;
+      writeFileSync(state.out, `${JSON.stringify(found, null, 1)}\n`);
+      save();
+    }
+    state.done_at = new Date().toISOString();
+    save();
+    console.log(`vk-sweep: круг закончен. Запросов ${state.queries}, постов сообществ ${state.posts}, кандидатов ${found.length}`);
+  } catch (error) {
+    if (!(error instanceof VkLimitError)) throw error;
+    state.stopped = `${new Date().toISOString()} ${error.message}`;
+    save();
+    console.log(`vk-sweep: ЛИМИТ ВК, остановился на точке ${state.next + 1} из ${cities.length} (${cities[state.next]?.name}). Продолжу при следующем запуске.`);
+    process.exit(4);
+  }
 }
 
 async function cmdVk(method: string, query: string) {
@@ -974,7 +1082,7 @@ async function cmdVk(method: string, query: string) {
 async function main() {
   const [cmd, rawArg] = process.argv.slice(2);
   // Путь к файлу предложения агент даёт от своей рабочей папки: делаем его абсолютным до смены папки.
-  const arg = rawArg && (cmd === "dup" || cmd === "apply") ? path.resolve(rawArg) : rawArg;
+  const arg = rawArg && (cmd === "dup" || cmd === "apply" || cmd === "vk-sweep") ? path.resolve(rawArg) : rawArg;
   process.chdir(REPO_ROOT);
   const apply = process.argv.includes("--apply");
   if (cmd === "list") return cmdList();
@@ -988,6 +1096,7 @@ async function main() {
   if (cmd === "cities") return cmdCities(Number(rawArg) || CITIES_PER_WEEK);
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
+  if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
   console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
