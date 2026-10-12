@@ -9,6 +9,7 @@
 
 import {
   decideReminder,
+  releasedSessionsOnly,
   EVENING_WINDOW,
   MISSED_STREAK_SILENCE,
   MORNING_WINDOW,
@@ -174,6 +175,46 @@ function main(): void {
   expect(
     at({ localHour: 20, hasActivityToday: true, alreadySentKinds: ["today_session"] }).send === true,
     "утреннее не запирает вечернее: они про разное"
+  );
+
+  step("НАПОМИНАЕМ ТОЛЬКО ПРО ОТДАННЫЕ НЕДЕЛИ");
+  /* ЭТОГО УТВЕРЖДЕНИЯ НЕ БЫЛО, И В ЭТОМ БЫЛА ДЫРА [наряд Игоря, 12.10.2026].
+   *
+   * Чек напоминаний проверял только решатель, которому сессию передают уже
+   * ГОТОВОЙ. Выбор сессии жил в раннере и не был покрыт ничем — поэтому там
+   * спокойно стояло «бери всё из опубликованного цикла», хотя единица отдачи
+   * это НЕДЕЛЯ. Неделя 12.10 была собрана и не отдана, ученица её не видела, а
+   * раннер 14 октября объявил бы ей тренировку из неё. */
+  const plan = [
+    { weekStart: "2026-10-05", sessionDate: "2026-10-08", title: "6 x 5" },
+    { weekStart: "2026-10-05", sessionDate: "2026-10-10", title: "Лёгкий" },
+    { weekStart: "2026-10-12", sessionDate: "2026-10-14", title: "6 x 4" },
+    { weekStart: "2026-10-12", sessionDate: "2026-10-16", title: "Лёгкий" },
+  ];
+  const onlyFirstReleased = releasedSessionsOnly(plan, new Set(["2026-10-05"]));
+  expect(
+    onlyFirstReleased.length === 2 && onlyFirstReleased.every((s) => s.weekStart === "2026-10-05"),
+    `из цикла берутся только тренировки отданных недель: ${onlyFirstReleased.length} из ${plan.length}`
+  );
+  expect(
+    releasedSessionsOnly(plan, new Set(["2026-10-05"])).every((s) => s.sessionDate !== "2026-10-14"),
+    "тренировка неотданной недели в напоминания НЕ попадает"
+  );
+  // НЕДЕЛЯ БЕЗ СТРОКИ СОСТОЯНИЯ = НЕ ОТДАНА. Строгая сторона выбрана осознанно:
+  // забытая строка даёт молчание, которое тренер заметит, а обратная ошибка
+  // молча пишет человеку про план, которого он не видит.
+  expect(
+    releasedSessionsOnly(plan, new Set<string>()).length === 0,
+    "ни одной отданной недели — не напоминаем вообще, а не напоминаем про всё"
+  );
+  expect(
+    releasedSessionsOnly(plan, new Set(["2026-10-05", "2026-10-12"])).length === 4,
+    "обе недели отданы — берём обе"
+  );
+  // Отбор НЕ ЗАВИСИТ от порядка и не теряет день, попавший в обе выборки.
+  expect(
+    releasedSessionsOnly([...plan].reverse(), new Set(["2026-10-12"])).length === 2,
+    "порядок входа на отбор не влияет"
   );
 
   step("ОКНО ПЕРЕЖИВАЕТ ПРОПУЩЕННЫЙ ЗАПУСК");

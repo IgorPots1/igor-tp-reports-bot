@@ -138,6 +138,31 @@ function inWindow(hour: number, window: { fromHour: number; toHour: number }): b
   return hour >= window.fromHour && hour <= window.toHour;
 }
 
+/**
+ * НАПОМИНАТЬ МОЖНО ТОЛЬКО ПРО ОТДАННЫЕ НЕДЕЛИ [наряд Игоря, 12.10.2026].
+ *
+ * ЧТО ЭТО ЗА ДЫРА. Раннер брал тренировки прямо из опубликованного ЦИКЛА, а
+ * единица отдачи — НЕДЕЛЯ: `intervals_plan_weeks.status`. Неделя 12.10 была
+ * собрана и не отдана, ученица её не видела, а раннер 14 октября в 07:30
+ * объявил бы ей «Сегодня по плану: 6 x 4 мин, 54 минуты» — про тренировку,
+ * которой нет на её экране. Человек открывает приложение и не находит того, о
+ * чём ему написали; после такого он перестаёт верить и экрану, и сообщениям.
+ *
+ * Механизм отданных недель существует ровно для того, чтобы этого не было
+ * (см. loadStudentView: неделя без released ученице не показывается). Раннер
+ * был единственным, кто про него не знал.
+ *
+ * НЕДЕЛЯ БЕЗ СТРОКИ СОСТОЯНИЯ СЧИТАЕТСЯ НЕ ОТДАННОЙ — та же осознанно строгая
+ * сторона, что и у экрана ученицы: забытая строка даёт молчание, которое тренер
+ * заметит, а обратная ошибка молча пишет человеку про чужой план.
+ */
+export function releasedSessionsOnly<T extends { weekStart: string }>(
+  sessions: T[],
+  releasedWeekStarts: ReadonlySet<string>
+): T[] {
+  return sessions.filter((session) => releasedWeekStarts.has(session.weekStart));
+}
+
 export function decideReminder(input: ReminderInput): ReminderDecision {
   if (!input.hasPublishedPlan) {
     return { send: false, reason: "плана нет или он не опубликован" };

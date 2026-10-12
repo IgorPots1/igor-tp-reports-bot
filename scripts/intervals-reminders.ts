@@ -20,10 +20,11 @@ import { todayIsoInZone } from "@/features/intervals/loop/clock";
 import {
   areRemindersEnabled,
   decideReminder,
+  releasedSessionsOnly,
   type ReminderKind,
 } from "@/features/intervals/loop/reminders";
 import { reportedWeekStart } from "@/features/intervals/loop/weekly-report";
-import { getPublishedCycle, listPauses, listSessionsInRange } from "@/features/intervals/loop/repository";
+import { getPublishedCycle, listPauses, listPlanWeeks, listSessionsInRange } from "@/features/intervals/loop/repository";
 import { pauseCovering, pauseLabelRu } from "@/features/intervals/loop/pause";
 import { flushPendingInboundNotices } from "@/features/intervals/loop/inbound-notify";
 import { createSupabaseServerClient } from "@/features/supabase/server";
@@ -149,7 +150,25 @@ async function main(): Promise<void> {
     // Окно на неделю назад нужно для одного: посчитать серию пропусков. Без неё
     // бот не отличит «первый раз не сложилось» от «человек пропал».
     const weekAgo = shiftIso(today, -7);
-    const sessions = cycle ? await listSessionsInRange(cycle.id, weekAgo, today) : [];
+    /**
+     * ТОЛЬКО ОТДАННЫЕ НЕДЕЛИ. Разбор — в шапке releasedSessionsOnly. Коротко:
+     * единица отдачи это НЕДЕЛЯ, а раннер брал тренировки из цикла целиком и
+     * мог написать человеку про план, которого он не видит.
+     */
+    const releasedWeekStarts = new Set(
+      cycle
+        ? (await listPlanWeeks(cycle.id))
+            .filter((week) => week.status === "released")
+            .map((week) => week.weekStart)
+        : []
+    );
+    const allSessions = cycle ? await listSessionsInRange(cycle.id, weekAgo, today) : [];
+    const sessions = releasedSessionsOnly(allSessions, releasedWeekStarts);
+    if (allSessions.length !== sessions.length) {
+      console.log(
+        `  · ${student.studentName}: тренировок в цикле ${allSessions.length}, из отданных недель ${sessions.length} — про неотданные не напоминаем`
+      );
+    }
     const todaySession = sessions.find((session) => session.sessionDate === today) ?? null;
 
     const [{ data: checkins }, { data: activities }, { data: sentRows }] = await Promise.all([
