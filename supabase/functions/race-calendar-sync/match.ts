@@ -5,7 +5,23 @@
 export type MatchRow = {
   id: string; source: string; name: string; date_start: string; date_end: string;
   city: string; region: string; location: string | null; race_type: string;
+  site_url?: string | null; reg_url?: string | null;
 };
+
+// Ссылка на страницу конкретного события (регистрация, карточка старта), без схемы, www, query, хвостового слэша.
+// Голые домены, паблики и общие страницы календарей - не событие: «key-run.ru/», «vk.com/группа», «orgeo.ru».
+const EVENT_PATH = /^\/(event|events|race|races|start|starts|competition|competitions)\/[^/]+/i;
+const NOT_EVENT_HOST = /(^|\.)(vk\.com|vk\.ru|t\.me|instagram\.com|ok\.ru|youtube\.com|facebook\.com)$/;
+export function eventLink(url: string | null | undefined): string | null {
+  if (!url) return null;
+  let u: URL;
+  try { u = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const path = decodeURIComponent(u.pathname).replace(/\/+$/, "");
+  if (NOT_EVENT_HOST.test(host) || !EVENT_PATH.test(path)) return null;
+  return `${host}${path.toLowerCase()}`;
+}
+const links = (r: MatchRow) => [eventLink(r.reg_url), eventLink(r.site_url)].filter((x): x is string => !!x);
 const STOP = new Set(["забег", "пробег", "трейл", "trail", "марафон", "полумарафон", "кросс", "race", "run", "фестиваль", "бега", "по", "на", "и", "в", "the", "открытый", "чемпионат", "этап", "кубок", "2026", "2027", "г"]);
 const tokCache = new Map<string, Set<string>>();
 export function tokens(s: string): Set<string> {
@@ -113,6 +129,14 @@ const BIG_CITY = /^(москва|санкт-петербург|екатерин�
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5);
 // 0 = no match, 1 = same race on overlapping dates, 2 = same race but sources disagree on the date (<= 7 days apart)
 export function sameRace(p: MatchRow, s: MatchRow): 0 | 1 | 2 {
+  // одна и та же ссылка на событие и даты рядом (пересекаются или расходятся не больше чем на день) - один старт,
+  // как бы ни назывался: «Трейлфест МинВоды» и «Змейка Трейл» - одна регистрация reg.russiarunning.com/event/TreylfestZmeyka2026
+  const lp = links(p), ls = links(s);
+  if (lp.length && ls.length && lp.some((l) => ls.includes(l))) {
+    const near = s.date_start <= p.date_end && p.date_start <= s.date_end
+      || Math.abs(dayDiff(s.date_start, p.date_start)) <= 1 || Math.abs(dayDiff(s.date_end, p.date_end)) <= 1;
+    if (near) return 1;
+  }
   // разные регионы - разные старты, как бы ни совпали слова: «Кросс лыжников» в Гатчине (Ленинградская)
   // и «Кросс лыжников МГУ» в Красногорске (Московская) склеились 12.10.2026 по одному слову «лыжников»
   const rp = rowRegion(p), rs = rowRegion(s);

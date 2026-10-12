@@ -653,7 +653,7 @@ const RR_REGION = /(^|\s)(обл|край|респ|АО|Аобл|автоном�
 // детские лиги и старты, OCR, туры с проживанием, тренировки - не старт для календаря
 const RR_SKIP = /рогейн|ориентир|квест|тренировк|спортпакет|спорт-пакет|(^|[\s«"])тур[- ]|экспедици|детск|юниорск|препятстви/i;
 // фан-форматы по мультфильмам и персонажам, пробежки с медалью - не старт для календаря (Игорь 12.10.2026)
-const RR_FUN = /пробежк[аи] с медал|^пробежка\b|пробежка\s*[«"]|мульти[\s_-]*сери|кино[\s_-]*сери|мультфильм|дисней|disney|зверополис|zootopia|джуди\s*хопс|ник\s*уайлд|nik\s*wi?l?de|белоснежк|бэмби|бемби|золушк|холодное сердце|щенячий патруль|смешарик|фиксик|маша и медвед|человек[\s-]паук|супергеро|принцесс/i;
+const RR_FUN = /мама,?\s*я\s*бегу|пробежк[аи] с медал|^пробежка\b|пробежка\s*[«"]|мульти[\s_-]*сери|кино[\s_-]*сери|мультфильм|дисней|disney|зверополис|zootopia|джуди\s*хопс|ник\s*уайлд|nik\s*wi?l?de|белоснежк|бэмби|бемби|золушк|холодное сердце|щенячий патруль|смешарик|фиксик|маша и медвед|человек[\s-]паук|супергеро|принцесс/i;
 const RR_KIDS = /\d+\s*[-–]\s*\d+\s*лет|до \d+ лет|дет|ребен|малыш/i;
 function rrRegion(seg: string): string {
   const s = clean(seg);
@@ -826,7 +826,7 @@ async function mergeStage(today: Date, stats: Record<string, unknown>) {
   const all: (Race & { merged_into: string | null; confirmed_by: string[]; alt_dates: string[] })[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb.from("race_events")
-      .select("id,source,name,date_start,date_end,city,region,location,race_type,merged_into,confirmed_by,alt_dates")
+      .select("id,source,name,date_start,date_end,city,region,location,race_type,site_url,reg_url,merged_into,confirmed_by,alt_dates")
       .eq("status", "active").gte("date_end", iso(today)).range(from, from + 999);
     if (error) throw new Error(`load: ${error.message}`);
     all.push(...((data || []) as any[]));

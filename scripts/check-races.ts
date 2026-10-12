@@ -33,7 +33,7 @@ import {
   toRace,
   type RaceRow,
 } from "@/app/races/races-logic";
-import { sameRace, type MatchRow } from "../supabase/functions/race-calendar-sync/match";
+import { eventLink, sameRace, type MatchRow } from "../supabase/functions/race-calendar-sync/match";
 
 const row = (over: Partial<RaceRow>): RaceRow => ({
   id: "x",
@@ -220,6 +220,24 @@ assert.equal(dateStub(toRace(row({ date_start: "2026-10-18" }))).weekend, true, 
   yes(r("probeg", "Легкоатлетический кросс «Максима Кросс классик»", "2026-10-18", "Горки Сухаревские", "Московская область", "Московская область, Дмитровский район, д. Горки Сухаревские", "road"),
     r("regplace", "Максима Кросс классик", "2026-10-18", "Дмитровский район (Московская область)", "", "Дмитровский район (Московская область)", "road"),
     "регион из «… (Московская область)» - «московская», а не «дмитровский»");
+  // Общая ссылка на конкретное событие (наряд 12.10.2026): один старт при любых названиях.
+  {
+    const rr = "https://reg.russiarunning.com/event/TreylfestZmeyka2026";
+    const zmeyka = { ...r("probeg", "Забег «Змейка Трейл»", "2026-11-07", "Минеральные Воды", "Ставропольский край", "Ставропольский край, Минеральные Воды"), site_url: "https://key-run.ru/", reg_url: rr };
+    for (const src of ["marathonec", "where2run", "russiarunning"])
+      assert.equal(sameRace(zmeyka, { ...r(src, src === "russiarunning" ? "Трейлфест МинВоды 2026" : "Трейлфест «МинВоды»", "2026-11-07", "Минеральные Воды"), reg_url: `${rr}?utm_source=x` }), 1,
+        `Трейлфест МинВоды (${src}) = Змейка Трейл: одна регистрация (было: разные названия, не склеивались)`);
+    // общая страница организатора или паблик - не событие: два разных старта одного организатора в соседние дни
+    const a1 = { ...r("probeg", "Осенний трейл «Бештау»", "2026-11-07", "Пятигорск", "Ставропольский край"), site_url: "https://key-run.ru/" };
+    const b1 = { ...r("marathonec", "Забег «Машук»", "2026-11-08", "Пятигорск"), site_url: "https://www.key-run.ru", reg_url: "https://vk.com/keyrun" };
+    no(a1, b1, "общая страница организатора (голый домен) и паблик ВК не делают старты одним");
+    assert.equal(eventLink("https://www.Reg.Place/events/abc/?utm_source=vk"), "reg.place/events/abc");
+    assert.equal(eventLink("https://orgeo.ru"), null);
+    assert.equal(eventLink("https://iron-star.com/event/"), null, "страница календаря без id - не событие");
+    assert.equal(eventLink("https://vk.com/event/123"), null);
+    // даты дальше дня - не склеиваем даже по общей ссылке (перенос или следующее проведение)
+    no(zmeyka, { ...r("marathonec", "Трейлфест «МинВоды»", "2026-11-10", "Минеральные Воды"), reg_url: rr }, "та же ссылка, но через 3 дня");
+  }
   assert.equal(sameRace(r("probeg", "Трейл-забег «O-Trail. FerrumFest»", "2026-10-18", "Железноводск", "Ставропольский край", "Ставропольский край, Железноводск"),
     r("marathonec", "О-Трейл Феррум Фест", "2026-10-17", "Железноводск", "", "Железноводск")), 2, "FerrumFest: разные даты, но то же имя в транслитерации - k2");
 }
