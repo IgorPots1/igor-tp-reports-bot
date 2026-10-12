@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 const MAX_AGE_S = 24 * 3600;
 
 export async function POST(request: Request) {
-  let body: { initData?: unknown; action?: unknown; raceId?: unknown };
+  let body: { initData?: unknown; action?: unknown; raceId?: unknown; from?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -20,6 +20,8 @@ export async function POST(request: Request) {
   const initData = typeof body.initData === "string" ? body.initData : "";
   const action = body.action === "follow" || body.action === "unfollow" ? body.action : "list";
   const raceId = typeof body.raceId === "string" && body.raceId.length <= 200 ? body.raceId : undefined;
+  // Откуда открыт календарь (from в ссылке web_app из бота) — только для статистики.
+  const from = typeof body.from === "string" && /^[a-z_]{1,20}$/.test(body.from) ? body.from : null;
   let token: string;
   try {
     token = botToken();
@@ -40,6 +42,7 @@ export async function POST(request: Request) {
       { id: user.id, first_name: user.firstName ?? undefined, username: user.username ?? undefined },
       action,
       raceId,
+      from,
     );
     return Response.json({ ok: true, follows });
   } catch (e) {

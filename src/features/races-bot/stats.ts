@@ -40,6 +40,10 @@ export type BotStatsReport = {
   people: { newDay: number; newWeek: number; newPeriod: number; newAll: number; active: number; returning: number; startPresses: number };
   /** Пришли снова через другую метку, чем первый приход: люди по метке. */
   returnedVia: { source: string; people: number }[];
+  /** Календарь (Mini App): уникальные люди за период и откуда открыли; ветка воронки новых. */
+  calendar: { people: number; byFrom: { from: string; people: number }[]; cohort: number; cohortPct: number | null };
+  /** Напоминание через 30 минут: сколько ушло за период и сколько из получивших потом что-то нажали. */
+  nudge: { sent: number; acted: number };
   users: { total: number; new7: number; new30: number; active7: number; blocked: number; unsubscribed: number };
   funnel: FunnelStep[];
   sources: { source: string; users: number; follow: number; consult: number }[];
@@ -216,9 +220,33 @@ export function computeBotStats(input: {
     newByDay.push({ day, n: users.filter((u) => u.created_at.slice(0, 10) === day).length });
   }
 
+  // Календарь: уникальные люди за период, по месту открытия (метка from в ссылке web_app).
+  const opens = win.filter((e) => e.event === "open_calendar" && e.tg_id !== null);
+  const byFrom = new Map<string, Set<number>>();
+  for (const e of opens) {
+    const f = String((e.meta as { from?: unknown } | null)?.from ?? "") || "other";
+    if (!byFrom.has(f)) byFrom.set(f, new Set());
+    byFrom.get(f)!.add(e.tg_id as number);
+  }
+  const openedEver = did(["open_calendar"]);
+  const cohortOpened = cohort.filter((u) => openedEver.has(u.tg_id)).length;
+  const calendar = {
+    people: new Set(opens.map((e) => e.tg_id as number)).size,
+    byFrom: [...byFrom.entries()].map(([from, ids]) => ({ from, people: ids.size })).sort((a, b) => b.people - a.people),
+    cohort: cohortOpened,
+    cohortPct: cohort.length ? Math.round((cohortOpened / cohort.length) * 100) : null,
+  };
+  const nudged = win.filter((e) => e.event === "nudge_sent" && e.tg_id !== null);
+  const nudge = {
+    sent: nudged.length,
+    acted: nudged.filter((n) => events.some((e) => e.tg_id === n.tg_id && e.event !== "start" && e.event !== "nudge_sent" && e.created_at > n.created_at)).length,
+  };
+
   return {
     period,
     people,
+    calendar,
+    nudge,
     returnedVia: [...via.entries()].map(([source, ids]) => ({ source, people: ids.size })).sort((a, b) => b.people - a.people),
     users: {
       total: users.length,
@@ -241,6 +269,10 @@ export function computeBotStats(input: {
     newByDay,
   };
 }
+
+const CAL_FROM: Record<string, string> = {
+  first: "первое сообщение", list: "под списком", menu: "меню", my: "Мои забеги", reminder: "напоминание", other: "без метки",
+};
 
 const PERIOD_LABEL: Record<string, string> = { "7": "7 дней", "30": "30 дней", all: "всё время" };
 
@@ -269,6 +301,10 @@ export function statsMessage(s: BotStatsReport): { text: string; reply_markup: {
     "",
     `<b>Воронка новых за период</b> (люди, % от предыдущего шага):`,
     ...s.funnel.map((f) => (f.key === "came" || f.pct === null ? `${f.label}: ${f.people}` : `${f.label}: ${f.people} (${f.pct}%)`)),
+    `Ветка: пришёл → открыл календарь: ${s.calendar.cohort}${s.calendar.cohortPct === null ? "" : ` (${s.calendar.cohortPct}%)`}`,
+    "",
+    `<b>Открыли календарь:</b> ${s.calendar.people} чел.${s.calendar.byFrom.length ? ` (${s.calendar.byFrom.map((x) => `${CAL_FROM[x.from] ?? esc(x.from)} ${x.people}`).join(", ")})` : ""}`,
+    `Напоминание через 30 минут: ушло ${s.nudge.sent}, после него что-то нажали ${s.nudge.acted}`,
     "",
     "<b>Источники по первому приходу</b> (новые / ⭐ / заявка):",
     ...(s.sources.length ? s.sources.map((x) => `${esc(x.source)}: ${x.users} / ${x.follow} / ${x.consult}`) : ["нет"]),

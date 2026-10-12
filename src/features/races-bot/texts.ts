@@ -67,19 +67,61 @@ export function raceUrl(r: Race): string {
   return r.reg || r.site || r.vk || r.src || CALENDAR_URL;
 }
 
-function calendarButton(text: string, q?: string): Button {
-  return { text, web_app: { url: q ? `${CALENDAR_URL}?q=${encodeURIComponent(q)}` : CALENDAR_URL } };
+/** Откуда открыт календарь: для статистики («первое сообщение», «под списком», «меню»…). */
+export type CalendarFrom = "first" | "list" | "menu" | "my" | "reminder";
+
+/** Кнопка Mini App. q — город или запрос: календарь сразу открывается отфильтрованным по нему. */
+export function calendarButton(text: string, q?: string, from?: CalendarFrom): Button {
+  const p = new URLSearchParams();
+  if (q) p.set("q", q);
+  if (from) p.set("from", from);
+  const qs = p.toString();
+  return { text, web_app: { url: qs ? `${CALENDAR_URL}?${qs}` : CALENDAR_URL } };
 }
+
+export const CALENDAR_LABEL = "📅 Весь календарь";
 
 // ── онбординг ────────────────────────────────────────────────────────────────
 
 export const TOP_CITIES = ["Москва", "Санкт-Петербург", "Казань", "Екатеринбург"];
 
-export function greeting(nRaces: number, nCities: number): Msg {
+/** «470+»: вниз до десятка, чтобы число не устаревало каждый день. */
+function racesCount(n: number): string {
+  return n >= 20 ? `${Math.floor(n / 10) * 10}+` : String(n);
+}
+
+/** Первое сообщение нового человека: два явных пути, город и весь календарь. Кнопки городов — после «Выбрать город». */
+export function greeting(nRaces: number): Msg {
   return {
     text:
-      `Привет! Я собираю все беговые забеги России: ${nRaces} ${plural(nRaces, "забег", "забега", "забегов")} ` +
-      `в ${nCities} ${plural(nCities, "городе", "городах", "городах")}, до конца 2027.\n\nГде ты бегаешь?`,
+      `Привет! Я собираю все беговые старты России: ${racesCount(nRaces)} забегов до конца 2027. ` +
+      "Выбери свой город, и я покажу старты рядом. Или открой весь календарь и посмотри сам.",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "📍 Выбрать город", callback_data: "pick" }],
+        [calendarButton("📅 Открыть весь календарь", undefined, "first")],
+      ],
+    },
+  };
+}
+
+/** Одно мягкое напоминание через 30 минут, если после /start ничего не нажато. Никогда повторно. */
+export function nudge(): Msg {
+  return {
+    text: "Если удобно, выбери свой город, и я покажу старты рядом. Или открой весь календарь и посмотри сам.",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "📍 Выбрать город", callback_data: "pick" }],
+        [calendarButton("📅 Открыть весь календарь", undefined, "reminder")],
+      ],
+    },
+  };
+}
+
+/** Выбор города: топ-города, геолокация, «Другой город». */
+export function cityPicker(): Msg {
+  return {
+    text: "Где ты бегаешь?",
     reply_markup: {
       inline_keyboard: [
         [{ text: "Москва", callback_data: `city:${citySlug("Москва")}` }, { text: "Санкт-Петербург", callback_data: `city:${citySlug("Санкт-Петербург")}` }],
@@ -156,7 +198,7 @@ export function shortListActions(filtered: boolean, q?: string, digestOffer = fa
   const rows: Button[][] = [];
   if (digestOffer) rows.push([{ text: "Присылать новые по понедельникам", callback_data: "dg:on" }, { text: "Не надо", callback_data: "dg:off" }]);
   if (filtered) rows.push([{ text: "Снять фильтры", callback_data: "nf" }]);
-  rows.push([{ text: "Сменить город", callback_data: "s:city" }, calendarButton("Весь календарь", q)]);
+  rows.push([{ text: "Сменить город", callback_data: "s:city" }, calendarButton(CALENDAR_LABEL, q, "list")]);
   const base = filtered ? "Можно снять фильтры, сменить город или открыть весь календарь." : "Можно сменить город или открыть весь календарь.";
   return { text: digestOffer ? `Новые забеги появляются каждую неделю: присылать их раз в неделю? ${base}` : base, reply_markup: { inline_keyboard: rows } };
 }
@@ -179,14 +221,14 @@ export function listFooter(more: number, city: string | null, digestOn: boolean,
     text += " Присылать новые раз в неделю?";
     rows.push([{ text: "Да, по понедельникам", callback_data: "dg:on" }, { text: "Не надо", callback_data: "dg:off" }]);
   }
-  rows.push([calendarButton("Открыть весь календарь", q ?? city ?? undefined)]);
+  rows.push([calendarButton(CALENDAR_LABEL, q ?? city ?? undefined, "list")]);
   return { text, reply_markup: { inline_keyboard: rows } };
 }
 
 export function nothingFound(where: string, q?: string): Msg {
   return {
     text: `Пока не нашёл забегов ${where}. Попробуй написать город (например, «Казань») или вид и город («трейл Казань»).`,
-    reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь", q)], [{ text: "Меню", callback_data: "menu" }]] },
+    reply_markup: { inline_keyboard: [[calendarButton(CALENDAR_LABEL, q, "list")], [{ text: "Меню", callback_data: "menu" }]] },
   };
 }
 
@@ -197,7 +239,7 @@ export function menuKeyboard(city: string | null): Keyboard {
   return {
     inline_keyboard: [
       ...(city ? [[{ text: `Забеги ${inCity(city)}`, callback_data: "show" }]] : []),
-      [{ text: "Мои забеги", callback_data: "my" }, calendarButton("Весь календарь")],
+      [{ text: "Мои забеги", callback_data: "my" }, calendarButton(CALENDAR_LABEL, city ?? undefined, "menu")],
       [{ text: "Настройки", callback_data: "s:menu" }, { text: "Сменить город", callback_data: "s:city" }],
       [{ text: "Начать заново", callback_data: "restart" }],
     ],
@@ -313,12 +355,12 @@ export const NO_CONSULT: Msg = { text: "Хорошо. Если понадоби�
 
 export const MY_PAGE = 10;
 
-export function myRaces(all: { race: Race; code: string; site?: string }[], today: string, page = 0): Msg {
+export function myRaces(all: { race: Race; code: string; site?: string }[], today: string, page = 0, city?: string | null): Msg {
   const items = all.slice(page * MY_PAGE, (page + 1) * MY_PAGE);
   if (!all.length) {
     return {
-      text: "Ты пока не следишь ни за одним забегом. Найди свой и нажми «Следить».",
-      reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь")]] },
+      text: "Ты пока не следишь ни за одним забегом. Найди свой в календаре или в списке и нажми ⭐.",
+      reply_markup: { inline_keyboard: [[calendarButton(CALENDAR_LABEL, city ?? undefined, "my")]] },
     };
   }
   const lines = items.map(({ race }) => {
@@ -340,6 +382,7 @@ export function myRaces(all: { race: Race; code: string; site?: string }[], toda
           { text: "Убрать старт", callback_data: `u:${code}` },
         ]),
         ...(nav.length ? [nav] : []),
+        [calendarButton(CALENDAR_LABEL, city ?? undefined, "my")],
       ],
     },
   };

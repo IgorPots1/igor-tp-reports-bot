@@ -52,7 +52,7 @@ export type BotEvent =
   | "start" | "city_chosen" | "filters_done" | "list_shown" | "search" | "follow" | "unfollow" | "open_calendar"
   | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
   | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked"
-  | "expected_watch" | "expected_announced";
+  | "expected_watch" | "expected_announced" | "pick_city" | "nudge_sent";
 
 export type EventOpts = { raceId?: string | null; source?: string | null; meta?: Record<string, unknown> };
 
@@ -86,6 +86,8 @@ export interface BotStore {
   seenOnce(key: string, windowSec: number): Promise<boolean>;
   /** Уборка старых ключей защиты от повторов (тик). */
   pruneSeen(): Promise<void>;
+  /** Кандидаты на напоминание: пришли в [from, to], не заблокировали, без города и без событий кроме start. */
+  listNudgeCandidates(fromIso: string, toIso: string): Promise<BotUser[]>;
 }
 
 export class BotBlockedError extends Error {}
@@ -128,6 +130,10 @@ export type TgUpdate = {
 
 /** Окно, в котором второе нажатие той же кнопки тем же человеком считается двойным кликом. */
 export const DOUBLE_CLICK_SEC = 3;
+
+/** Напоминание после /start без действий: не раньше 30 минут и не позже 3 часов. */
+export const NUDGE_AFTER_MIN = 30;
+export const NUDGE_MAX_MIN = 180;
 
 export function createBot(deps: BotDeps) {
   const { store, tg } = deps;
@@ -192,7 +198,12 @@ export function createBot(deps: BotDeps) {
 
   async function greet(chatId: number) {
     const races = await deps.races();
-    await send(chatId, T.greeting(races.length, knownCities(races).length));
+    await send(chatId, T.greeting(races.length));
+  }
+
+  /** Выбор города (после «📍 Выбрать город», «Сменить город», /city). */
+  async function pickCity(chatId: number) {
+    await send(chatId, T.cityPicker());
   }
 
   async function showExpected(u: BotUser, items: ExpectedItem[]) {
@@ -229,7 +240,7 @@ export function createBot(deps: BotDeps) {
   const PAGE = 5;
 
   async function showCityList(u: BotUser, offset = 0) {
-    if (!u.city) return greet(u.tg_id);
+    if (!u.city) return pickCity(u.tg_id);
     return showList(u, u.city, u.types, u.distances, offset);
   }
 
@@ -319,7 +330,7 @@ export function createBot(deps: BotDeps) {
       .sort((a, b) => a.ds.localeCompare(b.ds))
       .map((race) => ({ race, code: raceCode(race.id), site: siteLink(u, race) }));
     const pages = Math.max(1, Math.ceil(items.length / T.MY_PAGE));
-    await send(u.tg_id, T.myRaces(items, today(u), Math.min(Math.max(page, 0), pages - 1)));
+    await send(u.tg_id, T.myRaces(items, today(u), Math.min(Math.max(page, 0), pages - 1), u.city));
   }
 
   async function savedRaces(u: BotUser): Promise<{ race: BotRace }[]> {
@@ -383,7 +394,7 @@ export function createBot(deps: BotDeps) {
           T.prefs(u.types, u.distances, `Подписал на новые забеги ${inCity(city)}: одно сообщение в неделю, по понедельникам.`),
         );
       }
-      return greet(u.tg_id);
+      return pickCity(u.tg_id);
     }
     return greet(u.tg_id);
   }
@@ -404,10 +415,10 @@ export function createBot(deps: BotDeps) {
       if (name === "calendar") {
         return send(u.tg_id, {
           text: "Весь календарь забегов: поиск по городу, фильтры, кнопка «Следить».",
-          reply_markup: { inline_keyboard: [[{ text: "Открыть календарь", web_app: { url: T.CALENDAR_URL } }]] },
+          reply_markup: { inline_keyboard: [[T.calendarButton(T.CALENDAR_LABEL, u.city ?? undefined, "menu")]] },
         });
       }
-      if (name === "city") return greet(u.tg_id);
+      if (name === "city") return pickCity(u.tg_id);
       if (name === "settings") return send(u.tg_id, T.settings(u, now()));
       if (name === "delete") return send(u.tg_id, T.DELETE_CONFIRM);
       if (name === "stats") {
@@ -461,8 +472,11 @@ export function createBot(deps: BotDeps) {
       case "city": {
         const races = await deps.races();
         const city = findCityBySlug([...T.TOP_CITIES, ...knownCities(races), ...knownRegions(races)], arg);
-        return city ? setCity(u, city) : greet(u.tg_id);
+        return city ? setCity(u, city) : pickCity(u.tg_id);
       }
+      case "pick":
+        await track(u.tg_id, "pick_city");
+        return pickCity(u.tg_id);
       case "menu":
         return welcomeBack(u, "Меню");
       case "restart":
@@ -559,7 +573,7 @@ export function createBot(deps: BotDeps) {
           if (!paused) await track(u.tg_id, "pause");
         } else if (arg === "city") {
           await store.saveUser({ tg_id: u.tg_id, state: null });
-          return greet(u.tg_id);
+          return pickCity(u.tg_id);
         } else if (arg === "unsub") {
           if (!u.digest_on && !(await store.listFollows(u.tg_id)).length) return send(u.tg_id, T.ALREADY_UNSUBSCRIBED);
           await store.removeAllFollows(u.tg_id);
@@ -658,6 +672,11 @@ export function createBot(deps: BotDeps) {
     }
     const counts: Record<string, number> = { users: users.length, sent: 0, blocked: 0, errors: 0, announced: 0 };
     await store.pruneSeen().catch((e) => console.error(`[races-bot] pruneSeen: ${e instanceof Error ? e.message : String(e)}`));
+    counts.nudged = await runNudge().catch((e) => {
+      counts.errors += 1;
+      console.error(`[races-bot] nudge: ${e instanceof Error ? e.message : String(e)}`);
+      return 0;
+    });
     // «Объявили дату»: одно сообщение подписавшимся, старт сразу в «Мои забеги». Тихие часы уважаем.
     try {
       const userById = new Map(users.map((x) => [x.tg_id, x]));
@@ -746,9 +765,10 @@ export function createBot(deps: BotDeps) {
   }
 
   /** Мини-апп внутри Telegram: список сохранённых и звёздочка «Следить / Не следить». */
-  async function miniapp(from: TgUser, action: "list" | "follow" | "unfollow", raceId?: string): Promise<string[]> {
+  async function miniapp(from: TgUser, action: "list" | "follow" | "unfollow", raceId?: string, opened?: string | null): Promise<string[]> {
     const u = await ensureUser(from);
-    if (action === "list") await track(u.tg_id, "open_calendar");
+    // opened — откуда открыт календарь (from в ссылке web_app): first, list, menu, my, reminder.
+    if (action === "list") await track(u.tg_id, "open_calendar", { meta: { from: opened ?? null } });
     if (action !== "list" && raceId) {
       if (action === "follow") {
         const r = (await deps.races()).find((x) => x.id === raceId);
@@ -770,5 +790,37 @@ export function createBot(deps: BotDeps) {
     return kind === "r" ? r.reg || r.site || T.raceUrl(r) : r.site || T.raceUrl(r);
   }
 
-  return { handleUpdate, runTick, miniapp, click };
+  /**
+   * Одно мягкое напоминание тем, кто пришёл 30 минут — 3 часа назад и после /start ничего не нажал.
+   * Один раз навсегда: claimSend по ключу (nudge, start). Ночью (22–9) не шлём и потом не догоняем:
+   * напоминание через 10 часов уже не «через 30 минут». Зовётся тиком раз в 10 минут и почасовым.
+   */
+  async function runNudge(): Promise<number> {
+    const t = now();
+    const from = new Date(t.getTime() - NUDGE_MAX_MIN * 60000).toISOString();
+    const to = new Date(t.getTime() - NUDGE_AFTER_MIN * 60000).toISOString();
+    let n = 0;
+    for (const u of await store.listNudgeCandidates(from, to)) {
+      const { hour } = localParts(t, u.tz || "Europe/Moscow");
+      if (hour < 9 || hour >= 22) continue;
+      if (!(await store.claimSend(u.tg_id, "nudge", "start"))) continue;
+      try {
+        await send(u.tg_id, T.nudge());
+        await track(u.tg_id, "nudge_sent");
+        n += 1;
+      } catch (e) {
+        if (e instanceof BotBlockedError) {
+          await store.saveUser({ tg_id: u.tg_id, blocked: true });
+          await track(u.tg_id, "blocked");
+        } else {
+          // Сбой сети — не «отправлено»: снять отметку, следующий тик попробует (пока в окне).
+          await store.releaseSend(u.tg_id, "nudge", "start");
+          console.error(`[races-bot] nudge ${u.tg_id}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    return n;
+  }
+
+  return { handleUpdate, runTick, runNudge, miniapp, click };
 }

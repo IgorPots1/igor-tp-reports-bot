@@ -215,6 +215,24 @@ export const supabaseStore: BotStore = {
     fail("seenOnce", error);
     return data === true;
   },
+  async listNudgeCandidates(fromIso, toIso) {
+    const sb = createSupabaseServerClient();
+    const { data, error } = await sb
+      .from("race_bot_users")
+      .select(USER_COLS)
+      .gte("created_at", fromIso)
+      .lte("created_at", toIso)
+      .is("city", null)
+      .eq("blocked", false);
+    fail("listNudgeCandidates", error);
+    const users = (data ?? []) as unknown as BotUser[];
+    if (!users.length) return [];
+    // Что-то нажал (город, календарь, «Выбрать город», ⭐, поиск…) — любое событие кроме start.
+    const ev = await sb.from("race_bot_events").select("tg_id").in("tg_id", users.map((u) => u.tg_id)).neq("event", "start");
+    fail("listNudgeCandidates events", ev.error);
+    const acted = new Set(((ev.data ?? []) as { tg_id: number }[]).map((e) => Number(e.tg_id)));
+    return users.filter((u) => !acted.has(Number(u.tg_id)));
+  },
   async pruneSeen() {
     const old = new Date(Date.now() - 3 * 864e5).toISOString();
     fail("pruneSeen", (await createSupabaseServerClient().from("race_bot_seen").delete().lt("at", old)).error);

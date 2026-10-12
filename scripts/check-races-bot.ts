@@ -156,9 +156,19 @@ async function main() {
   // Было «ig_story»: метка без префикса. Теперь источник хранится как в ссылке — src_<метка>, r_*,
   // c_<город>, — чтобы в /stats метки разных видов не смешивались (наряд статистики 12.10).
   assert.equal(store.users.get(501)?.source, "src_ig_story", "источник из start=src_ с префиксом");
+  // Было: первое сообщение сразу с кнопками городов («Где ты бегаешь?»). Отменено нарядом 12.10:
+  // два явных пути — «📍 Выбрать город» и «📅 Открыть весь календарь» (Mini App), и НИ ОДНОЙ кнопки
+  // города, пока человек не нажал «Выбрать город».
   const greet = sent(501)[0];
-  assert.match(String(greet.params.text), /Где ты бегаешь\?/);
-  assert.deepEqual(buttons(greet).map((b) => b.text), ["Москва", "Санкт-Петербург", "Казань", "Екатеринбург", "Отправить геолокацию", "Другой город"]);
+  assert.match(String(greet.params.text), /^Привет! Я собираю все беговые старты России: \d+\+? забегов до конца 2027\. Выбери свой город, и я покажу старты рядом\. Или открой весь календарь и посмотри сам\.$/);
+  assert.deepEqual(buttons(greet).map((b) => b.text), ["📍 Выбрать город", "📅 Открыть весь календарь"], "ровно два пути, без городов");
+  assert.equal(buttons(greet)[0].callback_data, "pick");
+  assert.match(String((buttons(greet)[1].web_app as { url: string }).url), /\/races\?from=first$/, "календарь из первого сообщения помечен");
+  assert.ok(!/Где ты бегаешь/.test(String(greet.params.text)));
+  await bot.handleUpdate(cb(USER, "pick"));
+  const picker = sent(501).at(-1)!;
+  assert.match(String(picker.params.text), /Где ты бегаешь\?/);
+  assert.deepEqual(buttons(picker).map((b) => b.text), ["Москва", "Санкт-Петербург", "Казань", "Екатеринбург", "Отправить геолокацию", "Другой город"]);
   await bot.handleUpdate(cb(USER, `city:${citySlug("Москва")}`));
   assert.equal(store.users.get(501)?.city, "Москва");
   assert.match(texts(501).at(-1)!, /Что тебе интересно\? Можно выбрать несколько\./);
@@ -486,6 +496,83 @@ async function main() {
     assert.equal(step("click").people, 1);
     assert.equal(step("click").pct, null, "на шаге до — никого: процента нет, а не «0%»");
     assert.match(statsMessage(s).text, /Регистрация или сайт: 1\n/);
+  }
+
+  // ── первый экран: календарь сразу, город, молчание 30 минут (наряд 12.10.2026) ──
+  {
+    const CAL = { id: 6101, first_name: "Календарь", username: "cal6101" };
+    const CITY = { id: 6102, first_name: "Город", username: "city6102" };
+    const QUIET = { id: 6103, first_name: "Молчун", username: "quiet6103" };
+    const startAt = NOW;
+    for (const p of [CAL, CITY, QUIET]) await bot.handleUpdate(msg(p, "/start ig_channel"));
+    // календарь сразу: Mini App с меткой first
+    await bot.miniapp({ id: CAL.id, first_name: CAL.first_name }, "list", undefined, "first");
+    assert.deepEqual(store.events.filter((e) => e.tg_id === CAL.id && e.event === "open_calendar").map((e) => e.meta), [{ from: "first" }]);
+    // город: «Выбрать город» → Москва
+    await bot.handleUpdate(cb(CITY, "pick"));
+    await bot.handleUpdate(cb(CITY, `city:${citySlug("Москва")}`));
+    assert.equal(store.users.get(CITY.id)?.city, "Москва");
+    // 20 минут: рано
+    NOW = new Date(startAt.getTime() + 20 * 60000);
+    assert.equal(await bot.runNudge(), 0, "до 30 минут не напоминаем");
+    // 35 минут: одно напоминание молчуну, тем, кто нажал, ничего
+    NOW = new Date(startAt.getTime() + 35 * 60000);
+    const before = calls.length;
+    assert.equal(await bot.runNudge(), 1);
+    const nudges = calls.slice(before).filter((c) => c.method === "sendMessage");
+    assert.deepEqual(nudges.map((c) => c.params.chat_id), [QUIET.id], "только тому, кто ничего не нажал");
+    assert.deepEqual(buttons(nudges[0]).map((b) => b.text), ["📍 Выбрать город", "📅 Открыть весь календарь"], "те же два пути");
+    assert.match(String((buttons(nudges[0])[1].web_app as { url: string }).url), /from=reminder/);
+    // второго нет: ни через 10 минут, ни почасовым тиком
+    NOW = new Date(startAt.getTime() + 45 * 60000);
+    assert.equal(await bot.runNudge(), 0, "второго напоминания нет");
+    await bot.runTick();
+    assert.equal(calls.slice(before).filter((c) => c.method === "sendMessage" && c.params.chat_id === QUIET.id && String(c.params.text).startsWith("Если удобно")).length, 1);
+    assert.equal(store.events.filter((e) => e.tg_id === QUIET.id && e.event === "nudge_sent").length, 1);
+    // поздно (больше 3 часов) — не догоняем
+    const LATE = { id: 6104, first_name: "Поздно", username: "late6104" };
+    NOW = startAt;
+    await bot.handleUpdate(msg(LATE, "/start"));
+    NOW = new Date(startAt.getTime() + 4 * 3600000);
+    assert.equal(await bot.runNudge(), 0, "через 4 часа уже не напоминаем");
+    NOW = startAt;
+    // статистика: календарь по людям и откуда, ветка воронки
+    const s = computeBotStats({
+      users: [...store.users.values()].filter((u) => [CAL.id, CITY.id, QUIET.id].includes(u.tg_id)),
+      events: store.events.filter((e) => e.tg_id !== null && [CAL.id, CITY.id, QUIET.id].includes(e.tg_id)),
+      follows: [], now: new Date(startAt.getTime() + 3600000), period: 30,
+    });
+    assert.equal(s.calendar.people, 1);
+    assert.deepEqual(s.calendar.byFrom, [{ from: "first", people: 1 }]);
+    assert.equal(s.calendar.cohort, 1);
+    assert.equal(s.calendar.cohortPct, 33);
+    assert.deepEqual(s.nudge, { sent: 1, acted: 0 });
+    const sm = statsMessage(s).text;
+    assert.match(sm, /Ветка: пришёл → открыл календарь: 1 \(33%\)/);
+    assert.match(sm, /Открыли календарь:<\/b> 1 чел\. \(первое сообщение 1\)/);
+  }
+
+  // ── 📅 Весь календарь: под списком, в «С возвращением!», в «Мои забеги», в ответе на непонятное ──
+  {
+    const K = { id: 6201, first_name: "Кира", username: "kira6201" };
+    await bot.handleUpdate(msg(K, "/start"));
+    await bot.handleUpdate(cb(K, `city:${citySlug("Москва")}`));
+    const calBtn = (from: number) => calls.slice(from).filter((c) => c.method === "sendMessage" && c.params.chat_id === K.id).flatMap(buttons).find((b) => b.text === "📅 Весь календарь");
+    const places: [string, () => Promise<void>, string][] = [
+      ["под списком", () => bot.handleUpdate(cb(K, "show")), "list"],
+      ["С возвращением", () => bot.handleUpdate(msg(K, "/start")), "menu"],
+      ["Мои забеги", () => bot.handleUpdate(cb(K, "my")), "my"],
+      ["непонятный текст", () => bot.handleUpdate({ message: { message_id: mid++, chat: { id: K.id, type: "private" }, from: K, sticker: { file_id: "x" } } } as never), "menu"],
+    ];
+    for (const [where, act, from] of places) {
+      const c = calls.length;
+      await act();
+      const b = calBtn(c);
+      assert.ok(b?.web_app, `📅 Весь календарь: ${where}`);
+      const url = (b!.web_app as { url: string }).url;
+      assert.match(url, new RegExp(`from=${from}`), `метка ${from}: ${where}`);
+      assert.match(url, /q=%D0%9C%D0%BE%D1%81%D0%BA%D0%B2%D0%B0|q=Москва/, `календарь сразу с городом: ${where}`);
+    }
   }
 
   // ── подпись ссылок /go/ ────────────────────────────────────────────────────

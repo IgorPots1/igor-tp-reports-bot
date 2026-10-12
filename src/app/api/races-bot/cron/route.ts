@@ -16,7 +16,11 @@ export async function POST(request: Request) {
     return new Response("misconfigured", { status: 500 });
   }
   if (request.headers.get("x-cron-key") !== key) return new Response("forbidden", { status: 403 });
+  // {"only":"nudge"} — частый тик (раз в 10 минут, race_bot_nudge_tick): только напоминание
+  // после /start без действий. Пустое тело — почасовой тик целиком.
+  const body = (await request.json().catch(() => null)) as { only?: unknown } | null;
   try {
+    if (body?.only === "nudge") return Response.json({ ok: true, nudged: await productionBot().runNudge() });
     const counts = await productionBot().runTick();
     return Response.json({ ok: true, ...counts });
   } catch (e) {

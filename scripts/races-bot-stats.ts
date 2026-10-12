@@ -29,6 +29,7 @@ async function main() {
     // Люди — уникальные tg_id без тренера и тестовых; нажатия /start — отдельно (сырые).
     `Люди: новые за день ${s.people.newDay}, за неделю ${s.people.newWeek}, всего ${s.people.newAll}; активные 7 дн ${s.people.active}, из них вернувшиеся ${s.people.returning}; нажатий /start 7 дн ${s.people.startPresses}; заблокировали ${s.users.blocked}`,
     `Воронка новых за 30 дн (люди, % от предыдущего): ${funnel}`,
+    `Календарь 30 дн: открыли ${m.calendar.people} чел. (${m.calendar.byFrom.map((x) => `${x.from} ${x.people}`).join(", ") || "нет"}); пришёл → открыл календарь ${m.calendar.cohort}${m.calendar.cohortPct === null ? "" : ` (${m.calendar.cohortPct}%)`}; напоминание 30 мин: ушло ${m.nudge.sent}, нажали после ${m.nudge.acted}`,
     `Источники по первому приходу, 30 дн (новые/⭐/заявка): ${m.sources.length ? m.sources.map((x) => `${x.source} ${x.users}/${x.follow}/${x.consult}`).join(", ") : "нет"}; вернулись через: ${m.returnedVia.length ? m.returnedVia.map((x) => `${x.source} ${x.people}`).join(", ") : "нет"}`,
     `Клики 7/30 дн: регистрация ${s.clicks.registration.d7}/${s.clicks.registration.d30}, сайт ${s.clicks.site.d7}/${s.clicks.site.d30}, календарь ${s.clicks.calendar.d7}/${s.clicks.calendar.d30}; заявок за всё время ${m.consults.length >= 10 ? "10+" : m.consults.length}`,
     "Ветка: нет (сводка из базы)",

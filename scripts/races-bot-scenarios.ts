@@ -74,13 +74,15 @@ type Env = {
   update(u: TgUpdate): Promise<void>;
   events(id: number): Promise<StatEvent[]>;
   click(id: number, r: BotRace, kind: "r" | "s"): Promise<string>;
-  miniapp(id: number): Promise<void>;
+  miniapp(id: number, from?: string): Promise<void>;
   tick: null | (() => Promise<Record<string, number>>);
+  nudge: null | (() => Promise<number>);
+  setNow: (d: Date) => void;
   pause(): Promise<void>;
   cleanup(ids: number[]): Promise<void>;
 };
 
-const NOW = new Date("2026-10-12T10:00:00Z"); // понедельник, 13:00 по Москве: окно дайджеста
+let NOW = new Date("2026-10-12T10:00:00Z"); // понедельник, 13:00 по Москве: окно дайджеста
 let CLICK = Date.parse("2026-10-12T10:00:00Z");
 
 function memEnv(): Env {
@@ -109,8 +111,10 @@ function memEnv(): Env {
     update: (u) => bot.handleUpdate(u),
     events: async (id) => store.events.filter((e) => e.tg_id === id),
     click: (id, r, kind) => bot.click(id, r, kind),
-    miniapp: async (id) => void (await bot.miniapp({ id, first_name: "Тест" }, "list")),
+    miniapp: async (id, from) => void (await bot.miniapp({ id, first_name: "Тест" }, "list", undefined, from)),
     tick: () => bot.runTick(),
+    nudge: () => bot.runNudge(),
+    setNow: (d) => void (NOW = d),
     pause: async () => void (CLICK += 5000),
     cleanup: async () => undefined,
   };
@@ -156,8 +160,10 @@ async function liveEnv(): Promise<Env> {
       return (data ?? []) as StatEvent[];
     },
     click: (id, r, kind) => rt.productionBot().click(id, r, kind),
-    miniapp: async (id) => void (await rt.productionBot().miniapp({ id, first_name: "Тест" }, "list")),
+    miniapp: async (id, from) => void (await rt.productionBot().miniapp({ id, first_name: "Тест" }, "list", undefined, from)),
     tick: null,
+    nudge: null,
+    setNow: () => undefined,
     // Окно двойного клика — 3 секунды по часам базы: «второе нажатие позже» ждёт по-настоящему.
     pause: () => new Promise((r) => setTimeout(r, 3500)),
     async cleanup(ids) {
@@ -234,7 +240,11 @@ async function main() {
     const p = person("Новый");
     let c = calls.length;
     await env.update(msg(p, "/start"));
-    assert.match(allText(p.id, c), /Где ты бегаешь\?/, "приветствие с выбором города");
+    const first = sentTo(p.id, c).at(-1)!;
+    assert.deepEqual(buttons(first).map((b) => b.text), ["📍 Выбрать город", "📅 Открыть весь календарь"], "первое сообщение: два пути, без городов");
+    c = calls.length;
+    await cb(p, "pick");
+    assert.match(allText(p.id, c), /Где ты бегаешь\?/, "города после «Выбрать город»");
     await cb(p, "city:moskva");
     assert.equal((await store.getUser(p.id))?.city, "Москва");
     await cb(p, "t:road");
@@ -256,6 +266,31 @@ async function main() {
     assert.ok(!textsTo(p.id, c).some((t) => t.includes("Нажми ⭐, и я напомню")), "подсказка только один раз");
     return `карточек ${cards.length}, source=direct`;
   });
+
+  await scenario("Новый жмёт «📅 Открыть весь календарь» сразу", async () => {
+    const p = person("Календарь");
+    const c = calls.length;
+    await env.update(msg(p, "/start ig_channel"));
+    const url = (btnsTo(p.id, c).find((b) => b.text === "📅 Открыть весь календарь")?.web_app as { url: string } | undefined)?.url;
+    assert.ok(url && /\/races\?from=first$/.test(url), `web_app ${url}`);
+    await env.miniapp(p.id, "first");
+    const ev = (await env.events(p.id)).find((e) => e.event === "open_calendar");
+    assert.deepEqual(ev?.meta, { from: "first" });
+  });
+  await scenario("Молчит 30 минут: одно напоминание, второго нет", async () => {
+    const t0 = NOW;
+    const p = person("Молчун");
+    await env.update(msg(p, "/start"));
+    env.setNow(new Date(t0.getTime() + 35 * 60000));
+    const c = calls.length;
+    await env.nudge!();
+    env.setNow(new Date(t0.getTime() + 50 * 60000));
+    await env.nudge!();
+    await env.tick!();
+    env.setNow(t0);
+    const got = textsTo(p.id, c).filter((t) => t.startsWith("Если удобно"));
+    assert.equal(got.length, 1, `напоминаний ${got.length}`);
+  }, true);
 
   // 2. Город текстом, 5+ написаний, неизвестный город, текст без «Другой город».
   const spellings: [string, string][] = [["спб", "Санкт-Петербург"], ["питер", "Санкт-Петербург"], ["мск", "Москва"], ["екб", "Екатеринбург"], ["нижний", "Нижний Новгород"], ["Екатеренбург", "Екатеринбург"], ["казнь", "Казань"]];
@@ -361,7 +396,7 @@ async function main() {
     await cb(existing, "city:moskva");
     c = calls.length;
     await cb(existing, "restart");
-    assert.match(allText(existing.id, c), /Где ты бегаешь/);
+    assert.ok(btnsTo(existing.id, c).some((b) => b.text === "📍 Выбрать город"), "«Начать заново» — первый экран");
     assert.equal((await store.getUser(existing.id))?.city, null);
     assert.equal((await store.listFollows(existing.id)).length, 1, "сохранённое остаётся");
     await cb(existing, "city:moskva");

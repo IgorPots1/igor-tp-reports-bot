@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { citySlug, inCity, raceCode, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
 
@@ -198,13 +198,18 @@ export default function RacesCalendar({
     return () => window.clearInterval(t);
   }, []);
 
+  // Откуда открыт календарь из бота (?from= в ссылке web_app): читается при первом рендере,
+  // до того как фильтры перепишут адрес, и уходит только с первым «list» — для статистики.
+  const openedFrom = useRef<string | null>(typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("from") : null);
+
   const miniapp = useCallback(
     async (action: "list" | "follow" | "unfollow", raceId?: string) => {
       if (!initData) return;
+      const from = action === "list" ? openedFrom.current : null;
       const res = await fetch("/api/races-bot/miniapp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initData, action, raceId }),
+        body: JSON.stringify({ initData, action, raceId, from }),
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; follows?: string[] } | null;
       if (body?.ok && body.follows) setSaved(new Set(body.follows));

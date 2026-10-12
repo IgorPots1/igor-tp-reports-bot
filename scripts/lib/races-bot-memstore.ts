@@ -14,7 +14,7 @@ export function memStore(kit: { now: () => Date; announced: Map<string, string>;
   const blank = (tg_id: number): BotUser => ({
     tg_id, first_name: null, username: null, city: null, types: [], distances: [], digest_on: false, digest_every_weeks: 1,
     digest_last_at: null, paused_until: null, tz: "Europe/Moscow", source: null, state: null, consult_offered_at: null,
-    consult_requested_at: null, blocked: false, created_at: "2026-10-01T00:00:00Z",
+    consult_requested_at: null, blocked: false, created_at: kit.now().toISOString(),
   });
   const seen = new Map<string, number>();
   const clock = kit.clock ?? (() => Date.now());
@@ -27,6 +27,10 @@ export function memStore(kit: { now: () => Date; announced: Map<string, string>;
       if (at !== undefined && t - at < windowSec * 1000) return false;
       seen.set(key, t);
       return true;
+    },
+    async listNudgeCandidates(fromIso, toIso) {
+      const acted = new Set(events.filter((e) => e.event !== "start" && e.tg_id !== null).map((e) => e.tg_id as number));
+      return [...users.values()].filter((u) => u.created_at >= fromIso && u.created_at <= toIso && !u.city && !u.blocked && !acted.has(u.tg_id));
     },
     async pruneSeen() {
       const t = clock();
