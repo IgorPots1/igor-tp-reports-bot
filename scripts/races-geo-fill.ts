@@ -40,10 +40,21 @@ function regionMatches(region: string, p: Place): boolean {
   const have = lower([a.state, a.region, a.city, a.county, p.display_name].filter(Boolean).join(" "));
   return want.some((w) => have.includes(w));
 }
-const SETTLEMENT = new Set(["city", "town", "village", "hamlet", "municipality", "suburb", "city_district", "isolated_dwelling", "locality", "state", "region"]);
+// Регион целиком (state/region) — НЕ место старта: точка в центре области дала бы ложные «52 км».
+const SETTLEMENT = new Set(["city", "town", "village", "hamlet", "municipality", "suburb", "city_district", "isolated_dwelling", "locality"]);
+const NOT_A_POINT = new Set(["state", "region", "country"]);
 
-async function nominatim(q: string): Promise<Place[]> {
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&countrycodes=ru&accept-language=ru&q=${encodeURIComponent(q)}`;
+// В OpenStreetMap эти регионы вне countrycodes=ru: ищем в ru,ua, регион всё равно сверяется.
+const OSM_UA = /крым|севастопол|херсон|запорож|донецк|луганск/i;
+
+/** «г.т. Исеть», «рп. Сузун», «ст-ца Тацинская», «. Коктебель» → название без приставки. */
+function cleanName(s: string): string {
+  return s.replace(/^[\s.]*(г\.?\s*т\.|г\.?\s*п\.|рп\.|пгт\.?|п\.|пос\.|с\.|д\.|ст-ца|станица|г\.)\s*/i, "").replace(/^[\s.]+/, "").trim();
+}
+
+async function nominatim(q: string, ua = false): Promise<Place[]> {
+  const cc = ua ? "ru,ua" : "ru";
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&countrycodes=${cc}&accept-language=ru&q=${encodeURIComponent(q)}`;
   const res = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ru" } });
   await sleep(PAUSE_MS);
   if (res.status === 429 || res.status === 403) throw new Error(`Nominatim ${res.status}: стоп, лимит`);
@@ -51,12 +62,31 @@ async function nominatim(q: string): Promise<Place[]> {
   return (await res.json()) as Place[];
 }
 
-async function geocode({ city, region }: Pair): Promise<{ lat: number | null; lon: number | null; display: string | null; note: string | null }> {
+/** Пары без региона: точка у той же записи с регионом (Симферополь без региона нашёлся на Алтае). */
+let TWINS = new Map<string, { lat: number; lon: number; region: string }>();
+
+async function geocode({ city: rawCity, region }: Pair): Promise<{ lat: number | null; lon: number | null; display: string | null; note: string | null }> {
+  const city = cleanName(rawCity);
+  if (!region) {
+    const twin = TWINS.get(lower(city));
+    if (twin) return { lat: twin.lat, lon: twin.lon, display: null, note: `регион не указан: точка взята у «${city}, ${twin.region}»` };
+  }
   const tries = region && lower(region) !== lower(city) ? [`${city}, ${region}`, city] : [city];
+  const ua = OSM_UA.test(region) || OSM_UA.test(city);
   let seen: string | null = null;
   for (const q of tries) {
-    const found = await nominatim(q);
+    const found = (await nominatim(q, ua)).filter((p) => !NOT_A_POINT.has(p.addresstype ?? ""));
     const ok = found.filter((p) => SETTLEMENT.has(p.addresstype ?? "") && regionMatches(region, p));
+    // Без региона и одноимённые места в разных областях (Байкал, Донецк): точку не угадываем.
+    // Сёла с тем же именем не в счёт: «Брянск» — город, а не село в Бурятии. Неоднозначно — когда
+    // одноимённых ГОРОДОВ несколько в разных областях (Донецк) или городов нет вовсе (Байкал).
+    if (!region && ok.length) {
+      const same = ok.filter((p) => lower(p.display_name).split(",")[0].trim() === lower(city));
+      const towns = same.filter((p) => p.addresstype === "city" || p.addresstype === "town");
+      const states = new Set((towns.length ? towns : same).map((p) => p.address?.state ?? p.address?.region ?? ""));
+      if (states.size > 1) return { lat: null, lon: null, display: ok[0].display_name, note: `неоднозначно без региона: ${[...states].join(" / ")}` };
+      if (towns.length) ok.splice(0, ok.length, ...towns);
+    }
     // Не населённый пункт (курорт, урочище, парк), но регион совпал: место старта, берём с пометкой.
     const place = ok[0] ?? (region ? found.find((p) => regionMatches(region, p)) : undefined);
     if (place) {
@@ -99,7 +129,16 @@ async function fill() {
   const { data: have, error } = await sb.from("race_geo").select("key");
   if (error) throw new Error(`race_geo: ${error.message}`);
   const known = new Set(((have ?? []) as { key: string }[]).map((g) => g.key));
-  const todo = pairs.filter((p) => !known.has(geoKey(p.city, p.region))).slice(0, LIMIT);
+  const { data: tw } = await sb.from("race_geo").select("city,region,lat,lon").neq("region", "").not("lat", "is", null).order("checked_at");
+  TWINS = new Map();
+  for (const g of (tw ?? []) as { city: string; region: string; lat: number; lon: number }[]) if (!TWINS.has(lower(cleanName(g.city)))) TWINS.set(lower(cleanName(g.city)), g);
+  // --redo: заново те, что не узнаны, и те, где в поле города стоит регион (раньше брали центр области).
+  const redo = process.argv.includes("--redo")
+    ? new Set(((await sb.from("race_geo").select("key,city,lat,note").neq("source", "manual")).data ?? [])
+        .filter((g: { city: string; lat: number | null; note?: string | null }) => g.lat === null || (g.note ?? "").includes("регион не указан") || /област|край|республик|автономн|округ/i.test(g.city) || /^\s*[.]|^(г\.?\s*т\.|г\.?\s*п\.|рп\.|п\.|ст-ца)/i.test(g.city))
+        .map((g: { key: string }) => g.key))
+    : new Set<string>();
+  const todo = pairs.filter((p) => !known.has(geoKey(p.city, p.region)) || redo.has(geoKey(p.city, p.region))).slice(0, LIMIT);
   console.log(`пар «город, регион»: ${pairs.length}, уже в race_geo: ${known.size}, спросить: ${todo.length} (~${Math.ceil((todo.length * 2 * PAUSE_MS) / 60000)} мин максимум)`);
   let ok = 0;
   for (const [i, p] of todo.entries()) {
