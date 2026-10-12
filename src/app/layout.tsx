@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Analytics } from "@vercel/analytics/next";
 import type { ReactNode } from "react";
 import {
   OG_IMAGE_HEIGHT,
@@ -10,6 +9,7 @@ import {
   SITE_NAME,
   SITE_URL,
 } from "@/lib/site";
+import SiteAnalytics from "./site-analytics";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -55,7 +55,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
     <html lang="ru">
       <body>
         {children}
-        <Analytics />
+        <SiteAnalytics />
       </body>
     </html>
   );
