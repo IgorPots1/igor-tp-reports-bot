@@ -4,6 +4,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
 import { buildExpected, findNextEdition, parsePastProbeg, probegPastUrl, weekWindows, type FutureRow, type PastRace } from "./expected.ts";
+import { findMatch } from "./match.ts";
 
 const UA = "igorp.run race calendar (+https://igorp.run)";
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -637,88 +638,7 @@ async function heroleague(today: Date, horizon: Date): Promise<Race[]> {
   return out;
 }
 
-// ---------- duplicate detection across sources ----------
-const STOP = new Set(["забег", "пробег", "трейл", "trail", "марафон", "полумарафон", "кросс", "race", "run", "фестиваль", "бега", "по", "на", "и", "в", "the", "открытый", "чемпионат", "этап", "кубок", "2026", "2027", "г"]);
-const tokCache = new Map<string, Set<string>>();
-function tokens(s: string): Set<string> {
-  const hit = tokCache.get(s); if (hit) return hit;
-  const t = tokens0(s); tokCache.set(s, t); return t;
-}
-function tokens0(s: string): Set<string> {
-  return new Set(s.toLowerCase().replace(/ё/g, "е").replace(/[«»"'.,:;!?()|—–\-\/]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w) && !/^[ivxlc]+$/.test(w)));
-}
-function sim(a: string, b: string): number {
-  const A = tokens(a), B = tokens(b);
-  if (!A.size || !B.size) return 0;
-  let inter = 0;
-  for (const w of A) if ([...B].some((x) => x === w || (w.length > 4 && x.length > 4 && (x.startsWith(w.slice(0, 5)) || w.startsWith(x.slice(0, 5)))))) inter++;
-  return inter / Math.min(A.size, B.size);
-}
-const TR: Record<string, string> = { а:"a",б:"b",в:"v",г:"g",д:"d",е:"e",ё:"e",ж:"zh",з:"z",и:"i",й:"i",к:"k",л:"l",м:"m",н:"n",о:"o",п:"p",р:"r",с:"s",т:"t",у:"u",ф:"f",х:"h",ц:"ts",ч:"ch",ш:"sh",щ:"sch",ъ:"",ы:"y",ь:"",э:"e",ю:"yu",я:"ya" };
-const latCache = new Map<string, string>();
-const lat = (s: string) => { const h = latCache.get(s); if (h !== undefined) return h; const v = lat0(s); latCache.set(s, v); return v; };
-const lat0 = (s: string) => s.toLowerCase().split("").map((c) => TR[c] ?? c).join("").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-// transliterated substring overlap: catches "O-Trail FerrumFest" vs "О-Трейл Феррум Фест"
-// words shorter than 5 letters are ignored: "osen" is a substring of "osenniy" but «ОСЕНЬ трейл» is not «Осенний кросс»
-function simLatin(a: string, b: string): number {
-  const ta = lat(a).split(" ").filter((w) => w.length >= 5 && !/^(treil|trail|zabeg|probeg|marafon|race|fest|festival|kross|cross)$/.test(w));
-  const tb = lat(b).split(" ").filter((w) => w.length >= 5 && !/^(treil|trail|zabeg|probeg|marafon|race|fest|festival|kross|cross)$/.test(w));
-  const ca = lat(a).replace(/ /g, ""), cb = lat(b).replace(/ /g, "");
-  const [short, longC] = ta.length <= tb.length ? [ta, cb] : [tb, ca];
-  if (!short.length) return 0;
-  return short.filter((w) => longC.includes(w)).length / short.length;
-}
-// generic words that say nothing about which race it is: never enough on their own to glue two places together
-const GENERIC = /^(осен|весен|весна|зимн|зима|летн|лето|новогод|рождеств|старт|город|соревнован|первенств|ночн|детск|семейн|открыт|областн|легкоатлет|всероссийск|парк|ультра|трейлов|гонка|выходн|дня|памяти|бег|забег|кросс|пробег|фестивал|серия|кубок|чемпионат|этап|super|run|race)/;
-const distinct = (s: string) => new Set([...tokens(s)].filter((w) => !GENERIC.test(w)));
-function simSets(A: Set<string>, B: Set<string>): number {
-  let inter = 0;
-  for (const w of A) if ([...B].some((x) => x === w || (w.length > 4 && x.length > 4 && (x.startsWith(w.slice(0, 5)) || w.startsWith(x.slice(0, 5)))))) inter++;
-  return inter / Math.min(A.size, B.size);
-}
-// null-safe: у ручных строк location бывает пустым (шлюз не требовал его до 12.10.2026),
-// и склейка падала на первом же сравнении с таким стартом.
-const norm = (s: string | null | undefined) => (s || "").toLowerCase().replace(/ё/g, "е").trim();
-const BIG_CITY = /^(москва|санкт-петербург|екатеринбург|новосибирск|казань|нижний новгород|краснодар|самара|ростов-на-дону|уфа|пермь|челябинск|воронеж|красноярск|сочи)$/i;
-const dayDiff = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5);
-// 0 = no match, 1 = same race on overlapping dates, 2 = same race but sources disagree on the date (<= 7 days apart)
-function sameRace(p: Race, s: Race): 0 | 1 | 2 {
-  const cityMatch = !s.city || !p.city || norm(p.location).includes(norm(s.city)) || norm(s.city).includes(norm(p.city));
-  const score = Math.max(sim(p.name, s.name), simLatin(p.name, s.name));
-  const overlap = s.date_start <= p.date_end && p.date_start <= s.date_end;
-  const smallTown = !!s.city && !BIG_CITY.test(norm(s.city));
-  const regionMatch = !!s.region && norm(p.location).includes(norm(s.region).split(" ")[0]);
-  // both places known and different: only a match on meaningful words of the name counts
-  // (one shared word such as "осенний" or "старт" glued races from different cities together)
-  // («Вьюнок трейл» in Гарболово and in Куйвози is one race; «Осенний кросс» in Талдом and Североморск are two)
-  if (s.city && p.city && !cityMatch && !regionMatch) {
-    const A = distinct(p.name), B = distinct(s.name);
-    if (!A.size || !B.size || simSets(A, B) < 0.8) return 0;
-  }
-  if (overlap) {
-    if (score >= 0.8) return 1;
-    if (regionMatch && score >= 0.4) return 1;
-    if (cityMatch && score >= 0.5) return 1;
-    if (cityMatch && smallTown && score >= 0.25) return 1;
-    // same day, same small town, same kind of race: almost always one event listed under two names
-    if (cityMatch && smallTown && s.city && p.city && p.race_type === s.race_type && p.race_type !== "track") return 1;
-    return 0;
-  }
-  if (Math.abs(dayDiff(s.date_start, p.date_start)) <= 7 && cityMatch && score >= 0.6) return 2;
-  return 0;
-}
-const dayNum = (d: string) => Math.floor(Date.parse(d) / 864e5);
-function findMatch(pool: Race[], s: Race): [Race | undefined, 0 | 1 | 2] {
-  let near: Race | undefined;
-  const a = dayNum(s.date_start) - 7, b = dayNum(s.date_end) + 7;
-  for (const x of pool) {
-    if (dayNum(x.date_end) < a || dayNum(x.date_start) > b) continue;
-    const r = sameRace(x, s);
-    if (r === 1) return [x, 1];
-    if (r === 2 && !near) near = x;
-  }
-  return near ? [near, 2] : [undefined, 0];
-}
+// ---------- duplicate detection across sources: см. ./match.ts ----------
 
 // ---------- link checking ----------
 async function checkLinks(limit: number) {
