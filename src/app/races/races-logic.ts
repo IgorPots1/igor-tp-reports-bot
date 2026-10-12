@@ -131,12 +131,29 @@ export function displayName(name: string): string {
   return name.replace(/\s+[—–]\s+/g, " - ");
 }
 
+/** Устаревший год в названии: «Rosa Wild Fest 2026» с датой 2027 показываем без года.
+ *  Убирается, только если ВСЕ годы в названии раньше года даты: «Здравствуй Новый Год 2027»
+ *  31 декабря 2026 — так и задумано и не трогается. В базе название не меняется. */
+export function stripStaleYear(name: string, dateStart: string): string {
+  const years = name.match(/(?<!\d)20\d\d(?!\d)/g);
+  if (!years) return name;
+  const y = Number(dateStart.slice(0, 4));
+  if (!years.every((x) => Number(x) < y)) return name;
+  const out = name
+    .replace(/\s*[-–—]?\s*[(\[]?(?<!\d)20\d\d(?!\d)[)\]]?/g, " ")
+    .replace(/\s+([»"),.])/g, "$1")
+    .replace(/\s+[-–—,.:]\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return out || name;
+}
+
 export function toRace(r: RaceRow): Race {
   const km = (r.dist_km || []).map(Number).filter((x) => Number.isFinite(x));
   const srcs = r.sources || [];
   return {
     id: r.id,
-    name: displayName(r.name),
+    name: displayName(stripStaleYear(r.name, r.date_start)),
     ds: r.date_start,
     de: r.date_end || r.date_start,
     city: r.city || "",

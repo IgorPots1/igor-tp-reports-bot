@@ -8,6 +8,8 @@
 
 import assert from "node:assert/strict";
 
+import { toExpected } from "@/app/races/expected";
+
 import {
   buildExpected,
   findNextEdition,
@@ -75,5 +77,10 @@ assert.deepEqual(splitPlace("Приморский край, Владивосто
 assert.deepEqual(splitPlace("г. Санкт-Петербург, Пушкин"), { city: "Санкт-Петербург", region: "Санкт-Петербург" });
 assert.deepEqual(splitPlace("Республика Татарстан, Лаишевский район, с. Сокуры"), { city: "Сокуры", region: "Республика Татарстан" });
 assert.deepEqual(splitPlace("Ульяновск"), { city: "Ульяновск", region: null });
+
+// Ожидаемый старт показывается без года прошлого проведения (данные не меняются).
+const exRow = { id: "probeg:1", name: "Осенний марафон 2025", city: "Пермь", region: null, race_type: "road", distances: ["42,2 км"], last_month: 10, last_date: "2025-10-12", last_url: "https://probeg.org/event/1/", site_url: null };
+assert.equal(toExpected(exRow).name, "Осенний марафон", "год прошлого проведения не показываем");
+assert.equal(toExpected({ ...exRow, name: "Осенний марафон 2026", last_date: "2025-10-12" }).name, "Осенний марафон 2026", "год вперёд не трогаем");
 
 console.log("check:races-expected ok");

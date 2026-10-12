@@ -22,6 +22,7 @@ import {
   applyFilters,
   dateStub,
   displayName,
+  stripStaleYear,
   distMatch,
   distPills,
   filtersFromSearch,
@@ -61,6 +62,18 @@ assert.equal(displayName("XIII марафон «Мучкап – Шапкино�
 assert.equal(displayName("Тропа Хийси — Выборг Фаворит"), "Тропа Хийси - Выборг Фаворит");
 assert.equal(displayName("Сочи-Марафон 2026"), "Сочи-Марафон 2026", "обычный дефис не трогаем");
 assert.equal(toRace(row({ name: "Кросс Питер — Осень 2026" })).name, "Кросс Питер - Осень 2026", "в карточке уже дефис");
+// Год из названия, отставший от даты, при выводе убирается (данные не меняются), 12.10.2026.
+assert.equal(toRace(row({ name: "Т-Банк Rosa Wild Fest 2026", date_start: "2027-09-03" })).name, "Т-Банк Rosa Wild Fest", "год 2026 при дате 2027 не показываем");
+assert.equal(stripStaleYear("Golden Ring Ultra Trail 100 2026", "2027-07-23"), "Golden Ring Ultra Trail 100", "число 100 не год");
+assert.equal(stripStaleYear("Марафон-2026 «Белые ночи»", "2027-06-20"), "Марафон «Белые ночи»");
+assert.equal(stripStaleYear("Забег (2026)", "2027-01-10"), "Забег");
+assert.equal(
+  stripStaleYear("87 Пробег-Марафон «Покровские Пруды — Здравствуй Новый Год 2027»", "2026-12-31"),
+  "87 Пробег-Марафон «Покровские Пруды — Здравствуй Новый Год 2027»",
+  "год позже даты — так задумано, не трогаем",
+);
+assert.equal(stripStaleYear("Казанский марафон 2027", "2027-05-02"), "Казанский марафон 2027", "год совпадает — не трогаем");
+assert.equal(stripStaleYear("2026", "2027-05-02"), "2026", "пустым название не становится");
 assert.equal(toRace(row({ region: "Ханты-Мансийский автономный округ — Югра" })).region, "Ханты-Мансийский автономный округ - Югра", "и в регионе");
 
 // Источники.
