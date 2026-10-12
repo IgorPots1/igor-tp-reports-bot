@@ -371,14 +371,27 @@ export function validateExpected(r: ExpectedInsert, todayIso: string): string[] 
 
 export type ExpectedRowLite = { id: string; name: string; city: string | null; status: string };
 
-/** Уже есть в ожидаемых (expected или announced): похожее название и тот же город. */
-export function findExpectedDuplicate(r: ExpectedInsert, rows: ExpectedRowLite[]): ExpectedRowLite | null {
-  return rows.find((x) => x.status !== "dropped" && norm(x.city) === norm(r.city) && nameSimilar(x.name, r.name)) ?? null;
+/**
+ * То же событие для ожидаемых: значимые слова названий совпадают (meaningfulMatch), и слова-топонимы
+ * города в счёт не идут. Было (12.10.2026, первый прогон): «Тверской бег. Весенний кросс на Дорошихе»
+ * считался дублем «Тверского полумарафона» по одному «тверской», «Трейл Завидово» — дублем
+ * «Ironlady и Manstar Завидово» по «завидово».
+ */
+export function sameExpectedEvent(a: string, b: string, city: string | null): boolean {
+  if (norm(a) === norm(b)) return true;
+  const stems = norm(city).split(" ").filter((w) => w.length >= 4).map((w) => w.slice(0, Math.max(4, w.length - 2)));
+  const strip = (s: string) => norm(s).split(" ").filter((w) => !stems.some((st) => w.startsWith(st))).join(" ");
+  return meaningfulMatch(strip(a), strip(b));
 }
 
-/** Следующее проведение уже в календаре: похожее название, тот же город, дата позже прошлой. */
+/** Уже есть в ожидаемых (expected или announced): то же событие в том же городе. */
+export function findExpectedDuplicate(r: ExpectedInsert, rows: ExpectedRowLite[]): ExpectedRowLite | null {
+  return rows.find((x) => x.status !== "dropped" && norm(x.city) === norm(r.city) && sameExpectedEvent(x.name, r.name, r.city)) ?? null;
+}
+
+/** Следующее проведение уже в календаре: то же событие, тот же город, дата позже прошлой. */
 export function findAnnounced(r: ExpectedInsert, calendar: CalendarRow[]): CalendarRow | null {
-  return calendar.find((x) => x.date_start > r.last_date && norm(x.city) === norm(r.city) && nameSimilar(x.name, r.name)) ?? null;
+  return calendar.find((x) => x.date_start > r.last_date && norm(x.city) === norm(r.city) && sameExpectedEvent(x.name, r.name, r.city)) ?? null;
 }
 
 export function validateUpdate(u: RaceUpdate, todayIso: string): string[] {

@@ -357,6 +357,14 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   const cal = [{ id: "probeg:9", name: "Трейл Олбово 2027", date_start: "2027-06-20", date_end: null, city: "Тверь", race_type: "trail" }];
   assert.equal(findAnnounced(ok, cal)?.id, "probeg:9", "дата уже в календаре — не ожидаемый");
   assert.equal(findAnnounced({ ...ok, city: "Кимры" }, cal), null);
+  // Первый прогон 12.10.2026: топоним города не делает разные старты одним.
+  const tver = [
+    { id: "probeg:79950", name: "Тверской полумарафон", city: "Тверь", status: "expected" },
+    { id: "probeg:72603", name: "Забег «Ironlady и Manstar Завидово 2026»", city: "Завидово", status: "expected" },
+  ];
+  assert.equal(findExpectedDuplicate({ ...ok, name: "Тверской бег. Весенний кросс на Дорошихе" }, tver), null, "«тверской» — не основание для дубля");
+  assert.equal(findExpectedDuplicate({ ...ok, name: "Трейл «Завидово»", city: "Завидово" }, tver), null, "«завидово» — не основание для дубля");
+  assert.equal(findExpectedDuplicate({ ...ok, name: "Тверской полумарафон" }, tver)?.id, "probeg:79950", "то же название — дубль");
 }
 
 console.log("check:races-manual ok");
