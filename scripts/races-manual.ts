@@ -123,7 +123,7 @@ export type Proposal = {
   remove?: { id: string; reason: string }[];
   insert?: RaceInsert[];
 };
-export type CalendarRow = { id: string; name: string; date_start: string; date_end: string | null; city: string | null; race_type: string | null };
+export type CalendarRow = { id: string; name: string; date_start: string; date_end: string | null; city: string | null; region?: string | null; race_type: string | null };
 
 // ── чистая логика (её держит check:races-manual) ─────────────────────────────
 
@@ -156,6 +156,44 @@ export function nameSimilar(a: string, b: string): boolean {
   return common / Math.min(A.size, B.size) >= 0.5;
 }
 
+// Слова, которые не говорят, КАКОЙ это старт: сезон, время суток, жанр, формат. Как GENERIC
+// в edge-функции race-calendar-sync (sameRace). Сравнение по началу слова: «осен» ловит и
+// «осенний», и «осенняя». Между разными местами одних таких слов мало для дубля: 12.10.2026
+// «Лесландия. Night» (Мяглово) склеилась с «DAB Vertical Autumn Night» (Москва) одним «night».
+const GENERIC = /^(осен|весен|весна|зимн|зима|летн|лето|новогод|рождеств|ночн|night|autumn|spring|winter|summer|старт|город|соревнован|первенств|детск|семейн|открыт|областн|легкоатлет|всероссийск|парк|ультра|ultra|трейл|trail|гонка|выходн|памяти|бег|забег|кросс|пробег|фестивал|fest|серия|кубок|чемпионат|этап|city|run|race|super)/;
+
+/** Значимые слова названия: без служебных (STOP) и без общих (GENERIC). */
+export function meaningfulTokens(s: string): Set<string> {
+  return new Set([...tokens(s)].filter((w) => !GENERIC.test(w)));
+}
+
+/** Доля совпавших значимых слов (точно или по первым 5 буквам) от меньшего набора — как simSets в edge-функции. */
+function overlapShare(A: Set<string>, B: Set<string>): number {
+  let inter = 0;
+  for (const w of A) {
+    if ([...B].some((x) => x === w || (w.length > 4 && x.length > 4 && (x.startsWith(w.slice(0, 5)) || w.startsWith(x.slice(0, 5)))))) inter += 1;
+  }
+  return inter / Math.min(A.size, B.size);
+}
+
+/** Оба места известны и разные: город не совпадает (ни вхождением) и регион не совпадает. */
+export function placesDiffer(a: { city: string | null; region?: string | null }, b: { city: string | null; region?: string | null }): boolean {
+  const ca = norm(a.city);
+  const cb = norm(b.city);
+  if (!ca || !cb || ca.includes(cb) || cb.includes(ca)) return false;
+  const ra = norm(a.region).split(" ")[0];
+  const rb = norm(b.region).split(" ")[0];
+  return !(ra && rb && ra === rb);
+}
+
+/** Между разными местами название совпадает, только если совпали значимые слова. Нет значимых — не дубль. */
+export function meaningfulMatch(a: string, b: string): boolean {
+  const A = meaningfulTokens(a);
+  const B = meaningfulTokens(b);
+  if (!A.size || !B.size) return false;
+  return overlapShare(A, B) >= 0.8;
+}
+
 function commonTokens(a: string, b: string): number {
   const B = tokens(b);
   let n = 0;
@@ -167,15 +205,19 @@ function commonTokens(a: string, b: string): number {
  *  Строже, чем дубль при вставке: здесь ошибка снимает живой старт. На 11.10.2026 одно похожее имя
  *  без города дало 3 ложных из 4: «Осенний кросс» Запрудня ~ Североморск, «Новогодний дуатлон-кросс»
  *  Красноярск ~ «Новогодний хоровод» Обнинск, «Рождественский забег» Москва ~ Ростов. */
-export function isTwin(m: { name: string; date_start: string; city: string | null }, x: { name: string; date_start: string; city: string | null }): boolean {
+export function isTwin(
+  m: { name: string; date_start: string; city: string | null; region?: string | null },
+  x: { name: string; date_start: string; city: string | null; region?: string | null },
+): boolean {
   if (m.date_start !== x.date_start || !nameSimilar(m.name, x.name)) return false;
+  if (placesDiffer(m, x) && !meaningfulMatch(m.name, x.name)) return false;
   const sameCity = Boolean(norm(m.city)) && norm(m.city) === norm(x.city);
   return sameCity || commonTokens(m.name, x.name) >= 2;
 }
 
 /** Двойник ручного старта среди строк, видимых во view под чужим (не manual:) id. */
-export function findVisibleTwin<T extends { id: string; name: string; date_start: string; city: string | null }>(
-  m: { name: string; date_start: string; city: string | null },
+export function findVisibleTwin<T extends { id: string; name: string; date_start: string; city: string | null; region?: string | null }>(
+  m: { name: string; date_start: string; city: string | null; region?: string | null },
   visible: T[],
 ): T | null {
   return visible.find((x) => !x.id.startsWith("manual:") && isTwin(m, x)) ?? null;
@@ -185,11 +227,13 @@ function dayDiff(a: string, b: string): number {
   return Math.abs((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 864e5);
 }
 
-/** Дубль по правилу тренера: дата ±2 дня И (похожее название ИЛИ тот же город и тип). */
-export function findDuplicate(r: Pick<RaceInsert, "name" | "date_start" | "city" | "race_type">, rows: CalendarRow[]): CalendarRow | null {
+/** Дубль по правилу тренера: дата ±2 дня И (похожее название ИЛИ тот же город и тип).
+ *  Если города и регионы разные, «похожее название» считается только по значимым словам
+ *  (meaningfulMatch) — как sameRace в edge-функции race-calendar-sync. */
+export function findDuplicate(r: Pick<RaceInsert, "name" | "date_start" | "city" | "race_type"> & { region?: string | null }, rows: CalendarRow[]): CalendarRow | null {
   for (const x of rows) {
     if (dayDiff(r.date_start, x.date_start) > 2) continue;
-    if (nameSimilar(r.name, x.name)) return x;
+    if (nameSimilar(r.name, x.name) && (!placesDiffer(r, x) || meaningfulMatch(r.name, x.name))) return x;
     if (norm(r.city) && norm(r.city) === norm(x.city) && r.race_type === x.race_type) return x;
   }
   return null;
@@ -431,7 +475,7 @@ async function calendarRows(sb: SupabaseClient): Promise<CalendarRow[]> {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb
       .from("race_calendar")
-      .select("id,name,date_start,date_end,city,race_type")
+      .select("id,name,date_start,date_end,city,region,race_type")
       .order("date_start")
       .order("id")
       .range(from, from + 999);
@@ -497,7 +541,7 @@ async function cmdDup(file: string) {
 
 async function cmdDedupe(apply: boolean, quiet = false) {
   const sb = db();
-  const { data: manual, error } = await sb.from("race_events").select("id,name,date_start,city").eq("source", "manual").eq("status", "active");
+  const { data: manual, error } = await sb.from("race_events").select("id,name,date_start,city,region").eq("source", "manual").eq("status", "active");
   if (error) throw error;
   // Двойник ищется во VIEW race_calendar, то есть среди того, что реально видно на
   // странице, а не в сырых строках race_events. 11.10.2026 пробный прогон снял «ОСЕНЬ

@@ -31,7 +31,10 @@ import {
   markCities,
   isAutoCollected,
   manualId,
+  meaningfulMatch,
+  meaningfulTokens,
   mergeSources,
+  placesDiffer,
   slimVkCommunityPosts,
   VK_METHODS,
   VK_MIN_INTERVAL_MS,
@@ -195,6 +198,31 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.ok(!JSON.stringify(feed).includes("555") && !JSON.stringify(feed).includes("777"));
   const wall = slimVkCommunityPosts(posts, groups, { fromGroupOnly: true });
   assert.deepEqual(wall.map((p) => p.url), ["https://vk.com/wall-100_1"], "на стене — только посты самой группы");
+}
+
+// --- дубль между разными местами: только по значимым словам (как sameRace в edge-функции
+// race-calendar-sync, 12.10.2026). Было: одного общего слова хватало — «Лесландия. Night» в Мяглово
+// и «DAB Vertical Autumn Night» в Москве шлюз назвал дублем из-за «night», а «Осенний кросс» в
+// Талдоме и в Североморске — из-за «осенний». Теперь общие слова (сезон, ночной, старт, забег,
+// трейл, кросс, фестиваль, кубок, этап, серия, city run…) между разными местами не считаются.
+{
+  const cal: CalendarRow[] = [
+    { id: "probeg:75797", name: "Трейл «Лесландия. Night»", date_start: "2026-11-28", date_end: "2026-11-28", city: "Мяглово", region: "Ленинградская область", race_type: "trail" },
+    { id: "probeg:9001", name: "ВьюнОк Трейл | GoodTrail", date_start: "2027-05-15", date_end: "2027-05-15", city: "Куйвози", region: "", race_type: "trail" },
+    { id: "probeg:9002", name: "Первенство ЗАТО г. Североморск по бегу «Осенний кросс»", date_start: "2026-10-18", date_end: "2026-10-18", city: "Североморск", region: "Мурманская область", race_type: "trail" },
+  ];
+  const at = (name: string, city: string, date: string, region = "") =>
+    ({ name, date_start: date, date_end: date, city, region, race_type: "trail" }) as unknown as RaceInsert;
+  assert.ok(!meaningfulMatch("Лесландия. Night", "DAB Vertical Autumn Night"), "общий только «night»");
+  assert.deepEqual([...meaningfulTokens("DAB Vertical Autumn Night")].sort(), ["dab", "vertical"]);
+  assert.ok(placesDiffer({ city: "Москва", region: "Москва" }, { city: "Мяглово", region: "Ленинградская область" }));
+  assert.ok(!placesDiffer({ city: "Гарболово", region: "Ленинградская область" }, { city: "Куйвози", region: "Ленинградская область" }), "тот же регион");
+  assert.ok(!placesDiffer({ city: "Пушкин", region: null }, { city: "", region: null }), "место неизвестно — правило молчит");
+  assert.equal(findDuplicate(at("DAB Vertical Autumn Night", "Москва", "2026-11-28", "Москва"), cal), null, "Лесландия (Мяглово) и DAB (Москва) — не дубли");
+  assert.equal(findDuplicate(at("Вьюнок Трейл", "Гарболово", "2027-05-15"), cal)?.id, "probeg:9001", "Вьюнок: Гарболово ~ Куйвози, регион неизвестен — дубль по значимому слову");
+  assert.equal(findDuplicate(at("Вьюнок Трейл", "Гарболово", "2027-05-15", "Ленинградская область"), cal)?.id, "probeg:9001", "Вьюнок: с регионом тоже дубль");
+  assert.equal(findDuplicate(at("Осенний кросс", "Талдом", "2026-10-18", "Московская область"), cal), null, "«Осенний кросс» Талдом и Североморск — не дубли");
+  assert.ok(!isTwin(tw("DAB Vertical Autumn Night", "Москва", "2026-11-28"), tw("Трейл «Лесландия. Night»", "Мяглово", "2026-11-28")), "и для снятия ручного старта");
 }
 
 console.log("check:races-manual ok");
