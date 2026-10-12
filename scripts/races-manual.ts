@@ -112,6 +112,8 @@ export type Source = {
   robot?: string;
   /** Когда источник B впервые предложен Игорю в робота: пишем один раз. */
   robot_candidate_at?: string;
+  /** Свой порог «стартов в календаре» для предложения в робота (по умолчанию 10). */
+  robot_candidate_min?: number;
 };
 export type Candidate = { url: string; races: number; dated_with_year: boolean; note?: string };
 /** Вердикт агента по заявке с сайта. added требует insert: старт идёт через тот же шлюз. */
@@ -351,9 +353,11 @@ export const ROBOTS: Record<string, string> = {
   probeg: "https://probeg.org", marathonec: "https://marathonec.ru", ironstar: "https://iron-star.com",
   orgeo: "https://orgeo.ru", where2run: "https://where2run.ru", myrace: "https://myrace.info",
   sportsauce: "https://sportsauce.ru", racetime: "https://racetime.online", regplace: "https://reg.place",
-  otime: "https://reg.o-time.ru",
+  otime: "https://reg.o-time.ru", heroleague: "https://heroleague.ru",
 };
-export const AUTO_COLLECTED = Object.values(ROBOTS).map((u) => new URL(u).hostname);
+/** Сайты, которые робот покрывает через другой адрес: забег.рф отдаёт данные heroleague.ru. */
+const ROBOT_ALIASES = ["xn--80acghh.xn--p1ai"];
+export const AUTO_COLLECTED = [...Object.values(ROBOTS).map((u) => new URL(u).hostname), ...ROBOT_ALIASES];
 /** Серии и организаторы с несколькими стартами (наряд 12.10.2026): уровень B без подсчёта. */
 const NAMED_B = ["startrail.ru", "goldenultra.ru", "edge-ultra.ru", "heroleague.ru", "xn--80acghh.xn--p1ai", "x-waters.com", "wildtrail.ru"];
 const KINDS = new Set(["organizer", "series", "federation", "calendar", "registration", "vk"]);
@@ -435,6 +439,7 @@ export function normalizeRegistry(raw: Partial<Source>[]): Source[] {
     };
     if (x.robot) s.robot = x.robot;
     if (x.robot_candidate_at) s.robot_candidate_at = x.robot_candidate_at;
+    if (x.robot_candidate_min) s.robot_candidate_min = x.robot_candidate_min;
     if (x.next_check === undefined) s.next_check = nextCheck(s);
     out.push(s);
   }
@@ -592,10 +597,14 @@ export function promoteSources(reg: Source[], newLast30: Map<string, number>, to
   return up;
 }
 
-/** B с 10+ стартами в календаре — кандидат в робота (A). Отмечается один раз. */
+/**
+ * B с 10+ стартами в календаре — кандидат в робота (A). Отмечается один раз. У источника может быть
+ * свой порог robot_candidate_min (goldenultra, begisveterkom, t.me/cityrunrun — 25, решение Игоря 12.10.2026);
+ * blocked (robots.txt, как reg.russiarunning.com) не предлагается никогда.
+ */
 export function robotCandidates(reg: Source[], todayIso: string): Source[] {
   const out: Source[] = [];
-  for (const s of reg) if (s.tier === "B" && s.status === "ok" && s.races_found_total >= 10 && !s.robot_candidate_at) {
+  for (const s of reg) if (s.tier === "B" && s.status === "ok" && s.races_found_total >= (s.robot_candidate_min ?? 10) && !s.robot_candidate_at) {
     s.robot_candidate_at = todayIso;
     out.push(s);
   }

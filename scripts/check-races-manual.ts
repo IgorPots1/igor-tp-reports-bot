@@ -141,6 +141,7 @@ assert.equal(dateText("2027-05-30", "2027-05-30"), "30.05.2027");
 // Реестр.
 assert.ok(isAutoCollected("https://probeg.org/event/1/") && isAutoCollected("https://www.reg.place/x") && !isAutoCollected("https://reg.russiarunning.com/event/x"));
 assert.ok(isAutoCollected("https://reg.o-time.ru/race/26646"), "o-time собирает робот (наряд 12.10.2026): агент по нему не ходит");
+assert.ok(isAutoCollected("https://heroleague.ru/race") && isAutoCollected("https://xn--80acghh.xn--p1ai/Тверь"), "Лигу Героев и забег.рф собирает робот heroleague");
 const reg: Source[] = [];
 const m1 = mergeSources(reg, [{ url: "https://x-waters.com/events/ural/", kind: "series" }, { url: "https://probeg.org/event/5/" }], TODAY);
 assert.equal(m1.added.length, 1);
@@ -206,6 +207,13 @@ assert.ok(!sourceMatches("https://reg.russiarunning.com/event/A", "https://reg.r
   r[0].races_found_total = 10;
   assert.equal(robotCandidates(r, TODAY).length, 1);
   assert.equal(robotCandidates(r, "2026-10-19").length, 0, "кандидат в робота пишется Игорю один раз");
+  // Свой порог (решение Игоря 12.10.2026): goldenultra и др. - не раньше 25 стартов; blocked - никогда.
+  const own = mergeSources([], [{ url: "https://own.example/", kind: "series" }, { url: "https://rr.example/", kind: "calendar", status: "blocked" }], TODAY).reg;
+  own[0].races_found_total = 24; own[0].robot_candidate_min = 25;
+  own[1].races_found_total = 140;
+  assert.equal(robotCandidates(own, TODAY).length, 0, "24 из 25 - рано; blocked с 140 - никогда");
+  own[0].races_found_total = 25;
+  assert.equal(robotCandidates(own, TODAY).length, 1);
   const alert = tierAlert({ byTier: { A: 0, B: 0, C: 0, fishing: 0 }, robots: [{ robot: "orgeo", rows: null, new: null, prevRows: null, ranAt: "2026-10-11", alert: "0 строк" }], promoted: up, candidates: [], broken: [] });
   assert.match(alert || "", /робот orgeo: 0 строк/);
   assert.match(alert || "", /повышен C→B: https:\/\/five\.example\//);

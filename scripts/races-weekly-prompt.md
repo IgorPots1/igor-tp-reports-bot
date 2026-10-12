@@ -58,7 +58,8 @@
 - Не добавлять: онлайн, абонементы, кемпы, тренировки, детские старты, заплывы без бега,
   стояние в воде, велогонки, OCR.
 - Сайты, которые собирает робот (уровень A), НЕ обходить и в реестр не класть: probeg.org, marathonec.ru,
-  iron-star.com, orgeo.ru, where2run.ru, myrace.info, sportsauce.ru, racetime.online, reg.place, reg.o-time.ru.
+  iron-star.com, orgeo.ru, where2run.ru, myrace.info, sportsauce.ru, racetime.online, reg.place, reg.o-time.ru,
+  heroleague.ru и забег.рф (xn--80acghh.xn--p1ai).
 - Ничего не выдумывай. Не уверен в дате: не добавляй. Каждая ссылка должна быть открыта тобой.
 - Без длинных тире в текстах, только дефис.
 
