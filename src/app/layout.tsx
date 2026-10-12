@@ -9,6 +9,7 @@ import {
   SITE_NAME,
   SITE_URL,
 } from "@/lib/site";
+import PageViewTracker from "./page-view-tracker";
 import SiteAnalytics from "./site-analytics";
 import "./globals.css";
 
@@ -56,6 +57,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <body>
         {children}
         <SiteAnalytics />
+        <PageViewTracker />
       </body>
     </html>
   );

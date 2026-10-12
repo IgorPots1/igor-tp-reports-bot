@@ -390,6 +390,7 @@
     "check:raskladka": "npx tsx scripts/check-raskladka.ts",
     "check:marathon-ready": "npx tsx scripts/check-marathon-ready.ts",
     "check:marathon-calendar": "npx tsx scripts/check-marathon-calendar.ts",
+    "check:page-views": "npx tsx scripts/check-page-views.ts",
     "check:races": "npx tsx scripts/check-races.ts",
     "check:races-manual": "npx tsx scripts/check-races-manual.ts",
     "check:races-suggest": "npx tsx scripts/check-races-suggest.ts",
