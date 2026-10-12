@@ -25,7 +25,7 @@ const eslintConfig = [
     // настоящие замечания тонули ровно так же, как раньше тонули в машинном коде
     // .next-admin. Чинить lint в инструменте, который завтра сотрут, незачем
     // [решение Игоря, 24.09.2026].
-    ignores: [".next/**", ".next-admin*/**", "next-env.d.ts", "**/scripts/tmp-*"]
+    ignores: [".next/**", ".next-admin*/**", "next-env.d.ts", "**/scripts/tmp-*", "supabase/functions/**"]
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
