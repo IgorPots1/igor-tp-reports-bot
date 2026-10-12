@@ -185,6 +185,29 @@ export const SCALED_COOLDOWN_MIN = 3;
 export const WARMUP_CAP_MIN = 21;
 export const COOLDOWN_CAP_MIN = 5;
 
+/**
+ * ПРОПОРЦИЯ НЕ РЕШАЕТ ОТДЕЛЬНЫЕ МИНУТЫ У САМОГО ПОТОЛКА
+ * [наряд Игоря, 13.10.2026: «права карточка, не генератор»].
+ *
+ * Потолок 21 — это РАЗМИНКА ИЗ КАРТОЧКИ ТРЕНЕРА: ходьба 5, лёгкий бег 10,
+ * ускорения 3, спокойный бег 3. Пропорция 13/23 выведена из той же карточки на
+ * блоке 38.5.
+ *
+ * Что случилось без прилипания: у 5 x 6 блок 36 (на одно восстановление меньше,
+ * чем у 6 x 5), пропорция дала 20.35 → 20, и структура разминки отдала эту
+ * минуту из ЛЁГКОГО БЕГА — вышло 5/9/3/3 вместо 5/10/3/3. Сессия 61 вместо 62,
+ * то есть сгенерированная 5 x 6 расходилась с рукописной на её неделе 12.10.
+ *
+ * Блок 36 и блок 38.5 — одна и та же практика. Пропорция, измеренная в ОДНОЙ
+ * точке, не вправе резать по минуте внутри своей же окрестности: это снова
+ * правило без границ применения, из-за которого её уже ловили 28.09.
+ *
+ * Поэтому у самого потолка берётся карточка. Допуск 2 минуты — ширина той самой
+ * окрестности: блок 31.5 (6 x 4, разгрузка) даёт 18 и НЕ прилипает, короткие
+ * форматы не меняются ни на минуту, как и обещано в 28.09.
+ */
+export const WARMUP_SNAP_TOLERANCE_MIN = 2;
+
 export function withScaledWarmup(p: QualityPreset): QualityPreset {
   const block = p.reps * p.workMinutes + Math.max(0, p.reps - 1) * p.recoveryMinutes;
   if (block <= 0) return p;
@@ -203,10 +226,13 @@ export function withScaledWarmup(p: QualityPreset): QualityPreset {
    * Потолок — его собственные числа. Ниже потолка пропорция работает как
    * работала, и короткие форматы не меняются ни на минуту.
    */
-  const warm = Math.min(
+  const warmRaw = Math.min(
     WARMUP_CAP_MIN,
     Math.max(SCALED_WARMUP_MIN, Math.round((block * 13) / 23))
   );
+  // У самого потолка верна карточка, не пропорция — разбор у
+  // WARMUP_SNAP_TOLERANCE_MIN выше.
+  const warm = WARMUP_CAP_MIN - warmRaw <= WARMUP_SNAP_TOLERANCE_MIN ? WARMUP_CAP_MIN : warmRaw;
   const cool = Math.min(
     COOLDOWN_CAP_MIN,
     Math.max(SCALED_COOLDOWN_MIN, Math.round((block * 3) / 23))

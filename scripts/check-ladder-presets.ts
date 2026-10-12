@@ -166,6 +166,61 @@ if (!answers) {
   }
 }
 
+console.log("\n── СГЕНЕРИРОВАННАЯ 5 x 6 РАВНА РУКОПИСНОЙ МИНУТА В МИНУТУ ──");
+/**
+ * ПОЧЕМУ ЭТО ПРОВЕРЯЕТСЯ НА ЖИВОЙ НЕДЕЛЕ. 5 x 6 на неделе 12.10 поставлена
+ * рукой по карточке тренера: разминка 5/10/3/3, заминка 5, итого 62 минуты.
+ * Генератор давал 61 — пропорция обвязки резала минуту из ЛЁГКОГО БЕГА, и
+ * первая же перегенерация молча укоротила бы отданную неделю.
+ *
+ * Сравниваются не только минуты, но и СОСТАВ: равенство итога могло бы
+ * сойтись и при переставленных внутренностях.
+ */
+{
+  const { data: wk } = await sb
+    .from("intervals_plan_sessions")
+    .select("title, minutes, segments, intervals_plan_cycles!inner(source_id, status)")
+    .eq("intervals_plan_cycles.source_id", SOURCE)
+    .eq("intervals_plan_cycles.status", "published")
+    .eq("session_date", "2026-10-14")
+    .maybeSingle();
+  const hand = wk as { title: string; minutes: number; segments: Array<{ label: string; minutes: number }> } | null;
+  if (!hand) {
+    expect(false, "рукописная 5 x 6 на 14.10 не найдена — сравнивать не с чем");
+  } else if (!answers) {
+    expect(false, "анкеты нет — генератор не собрать");
+  } else {
+    const { data: src2 } = await sb
+      .from("student_data_sources").select("easy_pace_sec_per_km").eq("id", SOURCE).maybeSingle();
+    const sp = startingPointFromAnswers(answers, {
+      manualEasyPaceSec: Number((src2 as { easy_pace_sec_per_km: number } | null)?.easy_pace_sec_per_km ?? 0),
+    }) as never;
+    (sp as unknown as { runsOnTreadmill: boolean }).runsOnTreadmill = runSurfacesIncludeTreadmill(answers.runSurfaces);
+    const target = {
+      weekIndex: 6, totalWeeks: 14, role: "рост",
+      aerobicMin: 145, qualityMin: 30, days: 3,
+      baseWeekMin: 148, hasTargetRace: false, intent: "maintenance",
+      preferQualityPreset: "int_walk_5x6", preferQualityPresets: ["int_walk_5x6"],
+      minQualityWorkMin: null,
+    } as unknown as CycleWeekTarget;
+    const week = buildWeek(buildAnchors(sp, null), buildEnvelope(sp), catalog, "2026-10-19", false, null, target, undefined);
+    const gen = week.sessions.find((s) => s.role === "quality");
+    expect(
+      gen?.minutes === hand.minutes,
+      `минуты: сгенерировано ${gen?.minutes}, рукой ${hand.minutes}`
+    );
+    const genSegs = (gen as unknown as { segments?: Array<{ label: string; minutes: number }> })?.segments ?? [];
+    const shape = (xs: Array<{ label: string; minutes: number }>): string =>
+      xs.map((x) => `${x.minutes} ${x.label}`).join(" / ");
+    expect(
+      shape(genSegs) === shape(hand.segments),
+      `состав совпадает\n       сгенерировано: ${shape(genSegs)}\n       рукой:         ${shape(hand.segments)}`
+    );
+    const easyGen = genSegs.find((x) => /лёгкий бег/iu.test(x.label));
+    expect(easyGen?.minutes === 10, `лёгкий бег в разминке 10 минут, а не 9: ${easyGen?.minutes}`);
+  }
+}
+
 console.log("");
 if (failures === 0) {
   console.log("check:ladder-presets — все проверки пройдены");

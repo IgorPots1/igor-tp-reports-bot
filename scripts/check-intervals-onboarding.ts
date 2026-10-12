@@ -352,7 +352,7 @@ assert.ok(
   // работы, а бюджет качественной у человека с 70 мин в неделю — 30. Неделя за
   // неделей уходила без работы с причиной no_preset_fits_week.
   {
-    const { withScaledWarmup, presetSessionMinutes } = await import(
+    const { withScaledWarmup, presetSessionMinutes, WARMUP_CAP_MIN, WARMUP_SNAP_TOLERANCE_MIN } = await import(
       "../tools/trainingpeaks-export/scripts/lib/autoplanner-catalog.ts"
     );
     // Пресет задан здесь явно, а не взят из стаба: withScaledWarmup — чистая
@@ -369,10 +369,42 @@ assert.ok(
       presetSessionMinutes(scaled) < presetSessionMinutes(short),
       "пропорциональная обвязка обязана делать сессию короче каталожной"
     );
-    // Пропорция из карточек тренера: разминка треть сессии, заминка восьмая.
+    /* ПЕРЕПИСАНО [наряд Игоря, 13.10.2026]. Прежде здесь утверждалась
+     * пропорция БЕЗ ОГОВОРОК, как единственное правило. С 13.10 у самого
+     * потолка берётся разминка из карточки тренера (21), потому что пропорция,
+     * измеренная в одной точке, не вправе резать по минуте внутри своей же
+     * окрестности: у 5 x 6 она давала 20, структура отдавала минуту из лёгкого
+     * бега (5/9/3/3 вместо 5/10/3/3), и сгенерированная тренировка расходилась
+     * с рукописной на живой неделе.
+     *
+     * Утверждение стало ТОЧНЕЕ: пропорция проверяется там, где она и
+     * действует — НИЖЕ зоны прилипания, — а сама зона проверяется отдельно. */
     const block = short.reps * short.workMinutes + Math.max(0, short.reps - 1) * short.recoveryMinutes;
-    assert.equal(scaled.warmupMinutes, Math.max(5, Math.round((block * 13) / 23)));
+    const proportional = Math.max(5, Math.round((block * 13) / 23));
+    assert.ok(
+      WARMUP_CAP_MIN - proportional > WARMUP_SNAP_TOLERANCE_MIN,
+      `блок ${block} должен лежать НИЖЕ зоны прилипания, иначе проверка пропорции бессмысленна`
+    );
+    assert.equal(scaled.warmupMinutes, proportional, "ниже зоны прилипания работает пропорция");
     assert.equal(scaled.cooldownMinutes, Math.max(3, Math.round((block * 3) / 23)));
+
+    /* ЗОНА ПРИЛИПАНИЯ: у самого потолка верна карточка. */
+    const fiveBySix = withScaledWarmup({
+      ...short, presetCode: "int_walk_5x6", reps: 5, workMinutes: 6, recoveryMinutes: 1.5,
+      totalWorkMinutes: 30, intensityIntent: "intervals",
+    });
+    assert.equal(
+      fiveBySix.warmupMinutes,
+      WARMUP_CAP_MIN,
+      "5 x 6: блок 36 даёт пропорцию 20, но берётся карточка 21 — иначе лёгкий бег станет 9 минут"
+    );
+    /* А РАЗГРУЗОЧНЫЙ ФОРМАТ НЕ ПРИЛИПАЕТ, и это обещание из правки 28.09:
+     * короткие форматы не меняются ни на минуту. */
+    const sixByFour = withScaledWarmup({
+      ...short, presetCode: "int_walk_6x4", reps: 6, workMinutes: 4, recoveryMinutes: 1.5,
+      totalWorkMinutes: 24, intensityIntent: "intervals",
+    });
+    assert.equal(sixByFour.warmupMinutes, 18, "6 x 4: блок 31.5 даёт 18 и НЕ прилипает к 21");
 
     // ПОЛЫ: короче пяти и трёх это уже не разминка и не заминка.
     const tinyScaled = withScaledWarmup({ ...short, reps: 1, workMinutes: 1, recoveryMinutes: 0 });
