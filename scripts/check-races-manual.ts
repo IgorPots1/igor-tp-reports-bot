@@ -34,6 +34,13 @@ import {
   meaningfulMatch,
   meaningfulTokens,
   mergeSources,
+  normalizeRegistry,
+  promoteSources,
+  robotCandidates,
+  robotHealth,
+  ROBOTS,
+  sourceMatches,
+  tierAlert,
   placesDiffer,
   slimVkCommunityPosts,
   VK_METHODS,
@@ -133,15 +140,77 @@ assert.equal(dateText("2027-05-30", "2027-05-30"), "30.05.2027");
 
 // Реестр.
 assert.ok(isAutoCollected("https://probeg.org/event/1/") && isAutoCollected("https://www.reg.place/x") && !isAutoCollected("https://reg.russiarunning.com/event/x"));
+assert.ok(isAutoCollected("https://reg.o-time.ru/race/26646"), "o-time собирает робот (наряд 12.10.2026): агент по нему не ходит");
 const reg: Source[] = [];
 const m1 = mergeSources(reg, [{ url: "https://x-waters.com/events/ural/", kind: "series" }, { url: "https://probeg.org/event/5/" }], TODAY);
 assert.equal(m1.added.length, 1);
 assert.equal(m1.rejected.length, 1, "автосбор отклонён");
+assert.equal(m1.reg[0].tier, "B", "X-Waters - серия, уровень B");
+assert.equal(m1.reg[0].status, "ok");
 const m2 = mergeSources(m1.reg, [{ url: "https://x-waters.com/events/ural", status: "dead", note: "404" }], "2026-10-18");
 assert.equal(m2.added.length, 0, "тот же сайт без слэша не дубль");
 assert.equal(m2.reg[0].status, "dead");
 assert.equal(dueSources(m2.reg, "2026-12-01").length, 0, "dead раньше 90 дней не обходим");
 assert.equal(dueSources(m2.reg, "2027-01-17").length, 1, "dead через 90 дней перепроверяем");
+assert.equal(mergeSources([], [{ url: "https://site.example/", status: "blocked" }], TODAY).reg[0].next_check, "2027-01-09", "blocked тоже раз в 90 дней (TODAY + 90)");
+
+// Уровни (наряд 12.10.2026). БЫЛО: dueSources отдавал агенту ВСЕ active каждую неделю (228 сайтов,
+// большинство одного старта). Отменено: B каждую неделю, C раз в месяц (каждую неделю за 3 месяца до
+// прошлогодней даты), A никогда. Держим и «когда идти», и «когда НЕ идти» — иначе C снова поедут еженедельно.
+{
+  const one = (tier: "B" | "C", last: string) => mergeSources([], [{ url: `https://${tier}.example/`, tier, last_checked: last }], last).reg;
+  assert.equal(dueSources(one("B", "2026-10-12"), "2026-10-18").length, 0, "B через 6 дней ещё рано");
+  assert.equal(dueSources(one("B", "2026-10-12"), "2026-10-19").length, 1, "B через неделю");
+  assert.equal(dueSources(one("C", "2026-10-12"), "2026-10-19").length, 0, "C через неделю НЕ обходим");
+  assert.equal(dueSources(one("C", "2026-10-12"), "2026-11-10").length, 0, "C через 29 дней ещё рано");
+  assert.equal(dueSources(one("C", "2026-10-12"), "2026-11-11").length, 1, "C через месяц");
+  assert.equal(dueSources(one("C", "2026-10-12"), "2026-10-19", new Set(["c.example"])).length, 1, "C у прошлогодней даты - каждую неделю");
+  const legacy = normalizeRegistry([
+    { url: "https://a.example/", kind: "organizer", status: "active" as never, last_checked: "2026-10-12" },
+    { url: "https://b.example/", kind: "calendar", status: "js_only" as never, last_checked: "2026-10-12" },
+    { url: "https://c.example/", kind: "calendar", status: "mirror" as never, note: "копия probeg" },
+    { url: "https://reg.o-time.ru/calendar", kind: "calendar", status: "active" as never },
+  ]);
+  assert.deepEqual(legacy.slice(0, 3).map((s) => `${s.tier}/${s.status}`), ["C/ok", "B/ok", "B/dead"], "старые статусы: active и js_only -> ok, mirror -> dead");
+  assert.match(legacy[2].note, /^зеркало/);
+  assert.ok(!legacy.some((s) => s.url === "https://reg.o-time.ru/calendar" && s.tier !== "A"), "старая запись агента по сайту робота уходит");
+  assert.deepEqual(legacy.filter((s) => s.tier === "A").map((s) => s.robot).sort(), Object.keys(ROBOTS).sort(), "у каждого робота одна запись A");
+  assert.equal(dueSources(legacy, "2027-06-01").filter((s) => s.tier === "A").length, 0, "A агент не обходит никогда");
+}
+assert.ok(sourceMatches("https://vk.com/rltrail", "https://vk.ru/rltrail?w=wall-1_2"), "vk.ru и vk.com - один паблик");
+assert.ok(!sourceMatches("https://vk.com/rl", "https://vk.com/rltrail"), "паблик по пути целиком, не по началу имени");
+assert.ok(sourceMatches("https://startrail.ru/", "https://startrail.ru/lwtrail") && !sourceMatches("https://startrail.ru/", "https://startrail.ru.evil/x"));
+assert.ok(!sourceMatches("https://reg.russiarunning.com/event/A", "https://reg.russiarunning.com/event/B"), "страница события на площадке - не вся площадка");
+
+// Робот (A) по race_sync_runs: тревога на ошибку, ноль, падение больше 50 %, долгую тишину; новичок - не тревога.
+{
+  const run = (day: string, robot: string, st: unknown) => ({ started_at: `${day}T22:07:00Z`, stats: { stage: "scrape", sources: [robot], [robot]: st }, error: null });
+  const h = robotHealth(["probeg", "orgeo", "where2run", "myrace", "regplace", "otime"], [
+    run("2026-10-11", "probeg", { rows: 397, new: 2 }), run("2026-10-04", "probeg", { rows: 390, new: 1 }),
+    run("2026-10-11", "orgeo", "error: 503"),
+    run("2026-10-11", "where2run", { rows: 0, new: 0 }),
+    run("2026-10-11", "myrace", { rows: 14, new: 0 }), run("2026-10-04", "myrace", { rows: 31, new: 0 }),
+    run("2026-09-27", "regplace", { rows: 12, new: 0 }),
+  ], "2026-10-12");
+  assert.deepEqual(h.map((x) => x.alert === null ? "ok" : x.alert.split(":")[0].split(" ")[0]), ["ok", "ошибка", "0", "строк", "не", "ok"]);
+  assert.equal(h[0].new, 2);
+  assert.equal(h[5].ranAt, null, "otime до деплоя: не тревога, а «ещё не собирался»");
+}
+
+// Повышение C→B от 5 новых за 30 дней; кандидат в робота - один раз.
+{
+  const r = mergeSources([], [{ url: "https://five.example/", kind: "organizer" }, { url: "https://four.example/", kind: "organizer" }], TODAY).reg;
+  const up = promoteSources(r, new Map([["five.example", 5], ["four.example", 4]]), TODAY);
+  assert.deepEqual(up.map((s) => s.url), ["https://five.example/"]);
+  assert.equal(r[1].tier, "C", "4 новых - не повышаем");
+  r[0].races_found_total = 10;
+  assert.equal(robotCandidates(r, TODAY).length, 1);
+  assert.equal(robotCandidates(r, "2026-10-19").length, 0, "кандидат в робота пишется Игорю один раз");
+  const alert = tierAlert({ byTier: { A: 0, B: 0, C: 0, fishing: 0 }, robots: [{ robot: "orgeo", rows: null, new: null, prevRows: null, ranAt: "2026-10-11", alert: "0 строк" }], promoted: up, candidates: [], broken: [] });
+  assert.match(alert || "", /робот orgeo: 0 строк/);
+  assert.match(alert || "", /повышен C→B: https:\/\/five\.example\//);
+  assert.equal(tierAlert({ byTier: { A: 3, B: 1, C: 0, fishing: 2 }, robots: [], promoted: [], candidates: [], broken: [] }), null, "без событий не пишем");
+}
 
 // Заявки с сайта: вердикт агента проверяется до записи.
 const uuid = "0b7f2a8e-3c1d-4e5f-9a6b-7c8d9e0f1a2b";
@@ -178,7 +247,8 @@ const sum = weeklySummary({
   activeTotal: 12,
 });
 assert.match(sum, /добавлено 1 \(из них триатлонов 1\)/);
-assert.match(sum, /всего active 12/);
+// Было «всего active 12»: статуса active больше нет (ok/dead/blocked, 12.10.2026), считаем живые B и C.
+assert.match(sum, /всего в работе \(ok, B и C\) 12/);
 assert.match(sum, /Кандидаты в автосбор:\n- https:\/\/cal\.example\/list: около 40 стартов/);
 assert.ok(!/[—–]/.test(sum), "без длинных тире");
 assert.match(sum, /Заявки с сайта: разобрано 0/);

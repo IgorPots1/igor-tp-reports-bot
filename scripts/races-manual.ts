@@ -26,6 +26,7 @@
  *   npx tsx scripts/races-manual.ts apply <proposal.json> [--apply]   итог недели пишется в ops-log
  *   npx tsx scripts/races-manual.ts sources [all]           реестр источников (active, или все)
  *   npx tsx scripts/races-manual.ts sources-seed [--apply]  стартовое наполнение реестра
+ *   npx tsx scripts/races-manual.ts sources-tiers [--apply] разовая разметка уровней A/B/C по календарю
  *
  * РЕЕСТР ИСТОЧНИКОВ живёт вне репозитория: ~/ops-log/races/sources.json. Его ведёт
  * этот скрипт, агент только предлагает новые сайты и смену статуса. Сайты,
@@ -81,7 +82,15 @@ export type RaceInsert = {
 };
 export type RaceUpdate = { id: string; reason: string } & Partial<Omit<RaceInsert, "reason">>;
 export type SourceKind = "organizer" | "series" | "federation" | "calendar" | "registration" | "vk";
-export type SourceStatus = "active" | "dead" | "mirror" | "js_only";
+/** ok: живой; dead: не открывается, пуст или зеркало; blocked: robots.txt, капча, бан (не обходим). */
+export type SourceStatus = "ok" | "dead" | "blocked";
+/**
+ * Уровни (решение Игоря 12.10.2026):
+ *   A — агрегаторы, их собирает робот race-calendar-sync; агент по ним не ходит, а смотрит race_sync_runs;
+ *   B — организаторы и серии с несколькими стартами: проверка каждую неделю;
+ *   C — сайт одного старта: раз в месяц, а за 3 месяца до прошлогодней даты (race_expected) каждую неделю.
+ */
+export type SourceTier = "A" | "B" | "C";
 export type Source = {
   url: string;
   name: string;
@@ -92,6 +101,17 @@ export type Source = {
   last_checked: string | null;
   status: SourceStatus;
   note: string;
+  tier: SourceTier;
+  /** Когда агенту идти сюда снова. null: сразу (или уровень A, по нему не ходят). */
+  next_check: string | null;
+  /** Сколько будущих стартов календаря ссылаются на источник (пересчёт каждую неделю). У A: rows последнего сбора. */
+  races_found_total: number;
+  /** Сколько новых стартов дал последний прогон. */
+  races_new_last: number;
+  /** Только A: ключ источника в race-calendar-sync (stats в race_sync_runs). */
+  robot?: string;
+  /** Когда источник B впервые предложен Игорю в робота: пишем один раз. */
+  robot_candidate_at?: string;
 };
 export type Candidate = { url: string; races: number; dated_with_year: boolean; note?: string };
 /** Вердикт агента по заявке с сайта. added требует insert: старт идёт через тот же шлюз. */
@@ -323,13 +343,111 @@ export function todayBelgrade(now = new Date()): string {
 
 // ── реестр источников ────────────────────────────────────────────────────────
 
-/** Их собирает edge-функция race-calendar-sync: в реестр не кладём, агент по ним не ходит. */
-export const AUTO_COLLECTED = [
-  "probeg.org", "marathonec.ru", "iron-star.com", "orgeo.ru", "where2run.ru",
-  "myrace.info", "sportsauce.ru", "racetime.online", "reg.place",
-];
+/**
+ * Уровень A: их собирает edge-функция race-calendar-sync (ключ — как в её SCRAPERS). Агент по ним
+ * не ходит и не предлагает их в реестр; в реестре у каждого одна запись tier A.
+ */
+export const ROBOTS: Record<string, string> = {
+  probeg: "https://probeg.org", marathonec: "https://marathonec.ru", ironstar: "https://iron-star.com",
+  orgeo: "https://orgeo.ru", where2run: "https://where2run.ru", myrace: "https://myrace.info",
+  sportsauce: "https://sportsauce.ru", racetime: "https://racetime.online", regplace: "https://reg.place",
+  otime: "https://reg.o-time.ru",
+};
+export const AUTO_COLLECTED = Object.values(ROBOTS).map((u) => new URL(u).hostname);
+/** Серии и организаторы с несколькими стартами (наряд 12.10.2026): уровень B без подсчёта. */
+const NAMED_B = ["startrail.ru", "goldenultra.ru", "edge-ultra.ru", "heroleague.ru", "xn--80acghh.xn--p1ai", "x-waters.com", "wildtrail.ru"];
 const KINDS = new Set(["organizer", "series", "federation", "calendar", "registration", "vk"]);
-const STATUSES = new Set(["active", "dead", "mirror", "js_only"]);
+const STATUSES = new Set(["ok", "dead", "blocked"]);
+/** Старые статусы реестра (до 12.10.2026) и из старых предложений агента. */
+const LEGACY_STATUS: Record<string, SourceStatus> = { active: "ok", js_only: "ok", mirror: "dead" };
+
+export function normStatus(x: string | null | undefined): SourceStatus | null {
+  if (!x) return null;
+  if (STATUSES.has(x)) return x as SourceStatus;
+  return LEGACY_STATUS[x] ?? null;
+}
+
+export function addDays(isoDate: string, n: number): string {
+  return new Date(Date.parse(`${isoDate}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+}
+
+/** Уровень по виду, пока нет подсчёта: сайт организатора и страница регистрации — C, остальное (серии, календари, паблики) — B. */
+export function defaultTier(url: string, kind: SourceKind): SourceTier {
+  if (isAutoCollected(url)) return "A";
+  const h = hostOf(url);
+  if (NAMED_B.some((d) => h === d || h.endsWith(`.${d}`))) return "B";
+  return kind === "organizer" || kind === "registration" ? "C" : "B";
+}
+
+/**
+ * Когда снова проверять. A: никогда (смотрим race_sync_runs). dead и blocked: через 90 дней.
+ * B: через неделю. C: через месяц, а если близко прошлогодняя дата старта (expectedSoon) — через неделю.
+ */
+export function nextCheck(s: Pick<Source, "tier" | "status" | "last_checked">, expectedSoon = false): string | null {
+  if (s.tier === "A") return null;
+  if (!s.last_checked) return null;
+  const days = s.status !== "ok" ? 90 : s.tier === "B" || expectedSoon ? 7 : 30;
+  return addDays(s.last_checked, days);
+}
+
+/** Прошлогодний старт близко: от 90 дней до годовщины и до 14 дней после неё. */
+export function expectedIsSoon(lastDate: string, todayIso: string): boolean {
+  const anniv = addDays(lastDate, 365);
+  return todayIso >= addDays(anniv, -90) && todayIso <= addDays(anniv, 14);
+}
+
+/**
+ * Ссылка относится к источнику: у корня сайта — тот же хост, у источника с путём (паблик ВК,
+ * страница события на площадке регистрации) — ссылка начинается с его пути.
+ */
+export function sourceMatches(sourceUrl: string, url: string | null | undefined): boolean {
+  if (!url) return false;
+  const vk = (k: string) => k.replace(/^vk\.ru\//, "vk.com/").replace(/^m\.vk\.com\//, "vk.com/");
+  const sk = vk(sourceKey(sourceUrl));
+  const uk = vk(sourceKey(url));
+  if (!sk || !uk) return false;
+  return uk === sk || uk.startsWith(`${sk}/`);
+}
+
+/** Реестр из файла к нынешнему виду: старые статусы, уровни, счётчики, запись A на каждого робота. */
+export function normalizeRegistry(raw: Partial<Source>[]): Source[] {
+  const out: Source[] = [];
+  for (const x of raw) {
+    if (!x.url) continue;
+    // Сайты робота живут одной записью A на источник (ниже); старые записи агента по ним не нужны.
+    if (isAutoCollected(x.url) && x.tier !== "A") continue;
+    const kind = (x.kind && KINDS.has(x.kind) ? x.kind : "organizer") as SourceKind;
+    const legacyMirror = x.status === "mirror" && !/зеркало/i.test(x.note || "");
+    const s: Source = {
+      url: x.url,
+      name: x.name || hostOf(x.url),
+      kind,
+      region: x.region ?? null,
+      race_types: x.race_types || [],
+      found_at: x.found_at || x.last_checked || "",
+      last_checked: x.last_checked ?? null,
+      status: normStatus(x.status) ?? "ok",
+      note: legacyMirror ? `зеркало${x.note ? `: ${x.note}` : ""}` : x.note || "",
+      tier: x.tier === "A" || x.tier === "B" || x.tier === "C" ? x.tier : defaultTier(x.url, kind),
+      next_check: x.next_check ?? null,
+      races_found_total: x.races_found_total ?? 0,
+      races_new_last: x.races_new_last ?? 0,
+    };
+    if (x.robot) s.robot = x.robot;
+    if (x.robot_candidate_at) s.robot_candidate_at = x.robot_candidate_at;
+    if (x.next_check === undefined) s.next_check = nextCheck(s);
+    out.push(s);
+  }
+  for (const [key, url] of Object.entries(ROBOTS)) {
+    if (out.some((s) => s.robot === key)) continue;
+    out.push({
+      url, name: hostOf(url), kind: "calendar", region: null, race_types: [], found_at: "", last_checked: null,
+      status: "ok", note: "собирает робот race-calendar-sync", tier: "A", next_check: null,
+      races_found_total: 0, races_new_last: 0, robot: key,
+    });
+  }
+  return out;
+}
 
 export function registryPath(): string {
   return process.env.RACES_SOURCES_FILE || path.join(os.homedir(), "ops-log", "races", "sources.json");
@@ -359,8 +477,8 @@ export function isAutoCollected(url: string): boolean {
 }
 
 export function readRegistry(file = registryPath()): Source[] {
-  if (!existsSync(file)) return [];
-  return JSON.parse(readFileSync(file, "utf8")) as Source[];
+  if (!existsSync(file)) return normalizeRegistry([]);
+  return normalizeRegistry(JSON.parse(readFileSync(file, "utf8")) as Partial<Source>[]);
 }
 
 /** Слить предложенные сайты в реестр. Новые добавляются, известные обновляют статус и отметку проверки. */
@@ -380,9 +498,12 @@ export function mergeSources(reg: Source[], incoming: Partial<Source>[], todayIs
     }
     const prev = byKey.get(sourceKey(x.url));
     if (prev) {
-      const status = x.status && STATUSES.has(x.status) ? x.status : prev.status;
-      const next = { ...prev, status, last_checked: x.last_checked || todayIso, note: x.note ?? prev.note };
-      if (next.status !== prev.status || next.note !== prev.note) changed.push(next);
+      const status = normStatus(x.status) ?? prev.status;
+      // Уровень агент может уточнить между B и C; A ставит только робот, повышение — шлюз.
+      const tier = (x.tier === "B" || x.tier === "C") && prev.tier !== "A" ? x.tier : prev.tier;
+      const next = { ...prev, status, tier, last_checked: x.last_checked || todayIso, note: x.note ?? prev.note };
+      next.next_check = nextCheck(next);
+      if (next.status !== prev.status || next.note !== prev.note || next.tier !== prev.tier) changed.push(next);
       Object.assign(prev, next);
       continue;
     }
@@ -394,9 +515,15 @@ export function mergeSources(reg: Source[], incoming: Partial<Source>[], todayIs
       race_types: (x.race_types || []).filter((t) => RACE_TYPES.has(t)),
       found_at: x.found_at || todayIso,
       last_checked: x.last_checked || todayIso,
-      status: x.status && STATUSES.has(x.status) ? x.status : "active",
+      status: normStatus(x.status) ?? "ok",
       note: x.note || "",
+      tier: "C",
+      next_check: null,
+      races_found_total: 0,
+      races_new_last: 0,
     };
+    s.tier = x.tier === "B" || x.tier === "C" ? x.tier : defaultTier(s.url, s.kind);
+    s.next_check = nextCheck(s);
     byKey.set(sourceKey(s.url), s);
     reg.push(s);
     added.push(s);
@@ -404,17 +531,75 @@ export function mergeSources(reg: Source[], incoming: Partial<Source>[], todayIs
   return { reg, added, changed, rejected };
 }
 
-/** Что агенту обходить на этой неделе: active, плюс dead старше 90 дней на перепроверку. */
-export function dueSources(reg: Source[], todayIso: string): Source[] {
-  const t = Date.parse(`${todayIso}T00:00:00Z`);
+/**
+ * Что агенту обходить на этой неделе: B и C, у кого подошёл срок; dead и blocked раз в 90 дней.
+ * A не обходится никогда. soon: ключи источников C, у которых близко прошлогодняя дата старта.
+ * Было до 12.10.2026: все active каждую неделю (228 сайтов, большинство одного старта).
+ */
+export function dueSources(reg: Source[], todayIso: string, soon: Set<string> = new Set()): Source[] {
   return reg.filter((s) => {
-    if (s.status === "active") return true;
-    if (s.status === "dead") {
-      const last = s.last_checked ? Date.parse(`${s.last_checked}T00:00:00Z`) : 0;
-      return t - last >= 90 * 864e5;
-    }
-    return false;
+    if (s.tier === "A") return false;
+    const next = nextCheck(s, soon.has(sourceKey(s.url)));
+    return !next || next <= todayIso;
   });
+}
+
+export type RobotRun = { started_at: string; stats: Record<string, unknown> | null; error: string | null };
+export type RobotHealth = { robot: string; rows: number | null; new: number | null; prevRows: number | null; ranAt: string | null; alert: string | null };
+
+/**
+ * Уровень A по race_sync_runs (самые свежие сначала): тревога при ошибке, нуле строк, падении больше
+ * чем вдвое против прошлого сбора и если источник не собирался 8 дней. Ни разу не собиравшийся
+ * (только что подключён, ещё не задеплоен) — не тревога, а пометка.
+ */
+export function robotHealth(robots: string[], runs: RobotRun[], todayIso: string): RobotHealth[] {
+  return robots.map((robot) => {
+    const seen = runs.filter((r) => r.stats && Array.isArray(r.stats.sources) && (r.stats.sources as string[]).includes(robot));
+    if (!seen.length) return { robot, rows: null, new: null, prevRows: null, ranAt: null, alert: null };
+    const [last, prev] = seen;
+    const ranAt = last.started_at.slice(0, 10);
+    const st = last.stats![robot];
+    const rowsOf = (v: unknown) => (v && typeof v === "object" && typeof (v as { rows?: unknown }).rows === "number" ? (v as { rows: number }).rows : null);
+    const rows = rowsOf(st);
+    const fresh = st && typeof st === "object" ? ((st as { new?: number }).new ?? null) : null;
+    const prevRows = prev ? rowsOf(prev.stats![robot]) : null;
+    let alert: string | null = null;
+    if (ranAt < addDays(todayIso, -8)) alert = `не собирался с ${ranAt}`;
+    else if (last.error || typeof st === "string") alert = `ошибка: ${String(last.error || st).slice(0, 160)}`;
+    else if (rows === 0) alert = "0 строк";
+    else if (rows !== null && prevRows && rows < prevRows * 0.5) alert = `строк ${rows} против ${prevRows} в прошлый раз (падение больше 50%)`;
+    return { robot, rows, new: fresh, prevRows, ranAt, alert };
+  });
+}
+
+/** Сколько стартов из списка ссылаются на источник (site/source/reg/vk). */
+export function countMatches(src: string, rows: { site_url?: string | null; source_url?: string | null; reg_url?: string | null; vk_url?: string | null }[]): number {
+  return rows.filter((r) => [r.site_url, r.source_url, r.reg_url, r.vk_url].some((u) => sourceMatches(src, u))).length;
+}
+
+/** Повышение C→B: 5+ новых стартов за 30 дней. Возвращает повышенные (меняет записи на месте). */
+export function promoteSources(reg: Source[], newLast30: Map<string, number>, todayIso: string): Source[] {
+  const up: Source[] = [];
+  for (const s of reg) {
+    const n = newLast30.get(sourceKey(s.url)) ?? 0;
+    if (s.tier === "C" && n >= 5) {
+      s.tier = "B";
+      s.note = `${s.note ? `${s.note}; ` : ""}повышен C→B ${todayIso}: ${n} новых за 30 дней`;
+      s.next_check = nextCheck(s);
+      up.push(s);
+    }
+  }
+  return up;
+}
+
+/** B с 10+ стартами в календаре — кандидат в робота (A). Отмечается один раз. */
+export function robotCandidates(reg: Source[], todayIso: string): Source[] {
+  const out: Source[] = [];
+  for (const s of reg) if (s.tier === "B" && s.status === "ok" && s.races_found_total >= 10 && !s.robot_candidate_at) {
+    s.robot_candidate_at = todayIso;
+    out.push(s);
+  }
+  return out;
 }
 
 function writeRegistry(reg: Source[], file = registryPath()) {
@@ -495,6 +680,39 @@ async function manualRow(sb: SupabaseClient, id: string) {
   const { data, error } = await sb.from("race_events").select("id,source,status,name,date_start,date_end").eq("id", id).eq("source", "manual").maybeSingle();
   if (error) throw error;
   return data;
+}
+
+type LinkRow = { source?: string; first_seen?: string; site_url: string | null; source_url: string | null; reg_url: string | null; vk_url: string | null };
+
+/** Будущие активные старты (все источники) со ссылками: для счётчика races_found_total. */
+async function futureLinkRows(sb: SupabaseClient, todayIso: string): Promise<LinkRow[]> {
+  const out: LinkRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("race_events").select("id,source,first_seen,site_url,source_url,reg_url,vk_url")
+      .eq("status", "active").gte("date_end", todayIso).order("id").range(from, from + 999);
+    if (error) throw error;
+    out.push(...((data || []) as LinkRow[]));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
+/** Источники C, у которых близко прошлогодняя дата старта (race_expected): их смотрим каждую неделю. */
+async function expectedSoonKeys(sb: SupabaseClient, reg: Source[], todayIso: string): Promise<Set<string>> {
+  const { data, error } = await sb.from("race_expected").select("last_date,site_url,last_url").eq("status", "expected");
+  if (error) throw error;
+  const soon = new Set<string>();
+  for (const e of data || []) {
+    if (!e.last_date || !expectedIsSoon(e.last_date as string, todayIso)) continue;
+    for (const s of reg) if (s.tier === "C" && (sourceMatches(s.url, e.site_url as string | null) || sourceMatches(s.url, e.last_url as string | null))) soon.add(sourceKey(s.url));
+  }
+  return soon;
+}
+
+async function syncRuns(sb: SupabaseClient, todayIso: string): Promise<RobotRun[]> {
+  const { data, error } = await sb.from("race_sync_runs").select("started_at,stats,error")
+    .gte("started_at", `${addDays(todayIso, -45)}T00:00:00Z`).order("started_at", { ascending: false });
+  if (error) throw error;
+  return (data || []) as RobotRun[];
 }
 
 // ── команды ──────────────────────────────────────────────────────────────────
@@ -620,6 +838,7 @@ async function cmdApply(file: string, apply: boolean) {
   }
 
   const calendar = await calendarRows(sb);
+  const addedRows: RaceInsert[] = [];
   /** Одна вставка с полной проверкой: окно, правила, дубль, занятый id. */
   async function tryInsert(r: RaceInsert): Promise<{ ok: true; id: string } | { ok: false; id: string; dup: CalendarRow | null; reason: string }> {
     const errs = validateInsert(r, today);
@@ -665,6 +884,7 @@ async function cmdApply(file: string, apply: boolean) {
       calendar.push({ id, name: row.name, date_start: row.date_start, date_end: end, city: row.city, race_type: row.race_type });
     }
     out.push({ kind: "added", id, text: `${dateText(r.date_start, end)} ${row.name}, ${row.city}${r.reason ? `: ${r.reason}` : ""}`, link: r.source_url, tri: r.race_type === "tri" });
+    addedRows.push(r);
     return { ok: true, id };
   }
 
@@ -718,6 +938,7 @@ async function cmdApply(file: string, apply: boolean) {
   // Реестр источников: новые сайты и смена статуса.
   const reg = readRegistry();
   const merged = mergeSources(reg, p.sources || [], today);
+  const tiers = await tierStats(sb, merged.reg, p, addedRows, today);
   if (apply) writeRegistry(merged.reg);
 
   // Точки обхода: у проверенных на этой неделе обновится last_searched.
@@ -731,12 +952,19 @@ async function cmdApply(file: string, apply: boolean) {
     proposal: p,
     out,
     merged,
-    activeTotal: merged.reg.filter((x) => x.status === "active").length,
+    activeTotal: merged.reg.filter((x) => x.status === "ok" && x.tier !== "A").length,
     suggestions: suggestionsOut,
     citiesMarked,
     citiesTotal: cityList.length,
+    tiers,
   });
   console.log(summary);
+  // Игорю сразу, а не только в ops-log: сбой робота, повышение уровня, кандидат в робота.
+  const alert = tierAlert(tiers);
+  if (apply && alert) {
+    const { sendCoachTelegramMessage } = await import("../tools/trainingpeaks-export/scripts/lib/coach-telegram-notify.ts");
+    await sendCoachTelegramMessage(alert);
+  }
   if (apply) {
     const dir = process.env.RACES_OPS_LOG_DIR || path.join(os.homedir(), "ops-log", "igor-tp-reports-bot");
     mkdirSync(dir, { recursive: true });
@@ -752,6 +980,70 @@ async function cmdApply(file: string, apply: boolean) {
   return out;
 }
 
+export type TierStats = {
+  /** Новые старты недели: робот (A, из race_sync_runs), B, C и «рыбалка» (ВК, поиск, заявки — без источника в реестре). */
+  byTier: { A: number; B: number; C: number; fishing: number };
+  robots: RobotHealth[];
+  promoted: Source[];
+  candidates: Source[];
+  /** Источники B/C, которые на этой неделе стали dead или blocked. */
+  broken: Source[];
+  failed?: string;
+};
+
+/** Счётчики уровней, здоровье робота, повышения. Меняет записи реестра на месте; сбой базы не роняет apply. */
+async function tierStats(sb: SupabaseClient, reg: Source[], p: Proposal, added: RaceInsert[], today: string): Promise<TierStats> {
+  const t: TierStats = { byTier: { A: 0, B: 0, C: 0, fishing: 0 }, robots: [], promoted: [], candidates: [], broken: [] };
+  const checked = new Set((p.sources || []).filter((x) => x.url).map((x) => sourceKey(x.url!)));
+  for (const r of added) {
+    const tiersHit = reg.filter((s) => s.tier !== "A" && countMatches(s.url, [r])).map((s) => s.tier);
+    if (tiersHit.includes("B")) t.byTier.B += 1;
+    else if (tiersHit.includes("C")) t.byTier.C += 1;
+    else t.byTier.fishing += 1;
+  }
+  for (const s of reg) {
+    if (s.tier === "A") continue;
+    const n = countMatches(s.url, added);
+    if (n || checked.has(sourceKey(s.url))) s.races_new_last = n;
+    if (checked.has(sourceKey(s.url)) && s.status !== "ok") t.broken.push(s);
+  }
+  try {
+    const rows = await futureLinkRows(sb, today);
+    const since = addDays(today, -30);
+    const recent = rows.filter((r) => r.source === "manual" && (r.first_seen || "") >= since);
+    const last30 = new Map<string, number>();
+    for (const s of reg) if (s.tier !== "A") {
+      s.races_found_total = countMatches(s.url, rows);
+      last30.set(sourceKey(s.url), countMatches(s.url, recent));
+    }
+    t.promoted = promoteSources(reg, last30, today);
+    t.candidates = robotCandidates(reg, today);
+    t.robots = robotHealth(Object.keys(ROBOTS), await syncRuns(sb, today), today);
+    for (const h of t.robots) {
+      const s = reg.find((x) => x.robot === h.robot);
+      if (!s || !h.ranAt) continue;
+      Object.assign(s, { last_checked: h.ranAt, races_found_total: h.rows ?? s.races_found_total, races_new_last: h.new ?? 0 });
+      t.byTier.A += h.new ?? 0;
+    }
+    const soon = await expectedSoonKeys(sb, reg, today);
+    for (const s of reg) s.next_check = nextCheck(s, soon.has(sourceKey(s.url)));
+  } catch (e) {
+    t.failed = e instanceof Error ? e.message : String(e);
+  }
+  return t;
+}
+
+/** Текст тревоги Игорю или null, если писать не о чем. */
+export function tierAlert(t: TierStats | undefined): string | null {
+  if (!t) return null;
+  const lines: string[] = [];
+  for (const h of t.robots) if (h.alert) lines.push(`робот ${h.robot}: ${h.alert}`);
+  if (t.failed) lines.push(`уровни не посчитаны: ${t.failed.slice(0, 160)}`);
+  for (const s of t.promoted) lines.push(`повышен C→B: ${s.url} (${s.name})`);
+  for (const s of t.candidates) lines.push(`кандидат в робота (B, ${s.races_found_total} стартов в календаре): ${s.url}; проверь вёрстку`);
+  return lines.length ? `Календарь /races, еженедельный прогон:\n${lines.map((l) => `- ${l}`).join("\n")}` : null;
+}
+
 export function weeklySummary(a: {
   apply: boolean;
   today: string;
@@ -762,6 +1054,7 @@ export function weeklySummary(a: {
   suggestions?: SuggestionOutcome[];
   citiesMarked?: number;
   citiesTotal?: number;
+  tiers?: TierStats;
 }): string {
   const n = (k: Outcome["kind"]) => a.out.filter((o) => o.kind === k).length;
   const tri = a.out.filter((o) => o.kind === "added" && o.tri).length;
@@ -770,8 +1063,19 @@ export function weeklySummary(a: {
     `Дата: ${a.today}`,
     `Задача: еженедельное обновление ручных стартов /races${a.apply ? "" : " (ХОЛОСТОЙ ПРОГОН, в базу ничего не записано)"}`,
     `Итог: проверено ${checked}, исправлено ${n("fixed")}, убрано ${n("removed")}, добавлено ${n("added")} (из них триатлонов ${tri}), отклонено шлюзом ${n("skipped")}`,
-    `Источники: новых в реестре ${a.merged.added.length}, сменили статус ${a.merged.changed.length}, всего active ${a.activeTotal}; поисковых запросов ${(a.proposal.queries || []).length}`,
+    `Источники: новых в реестре ${a.merged.added.length}, сменили статус ${a.merged.changed.length}, всего в работе (ok, B и C) ${a.activeTotal}; поисковых запросов ${(a.proposal.queries || []).length}`,
   ];
+  const t = a.tiers;
+  if (t) {
+    lines.push(`Новые старты по уровням: робот A ${t.byTier.A}, B ${t.byTier.B}, C ${t.byTier.C}, рыбалка (ВК, поиск, заявки) ${t.byTier.fishing}`);
+    const bad = t.robots.filter((h) => h.alert);
+    const quiet = t.robots.filter((h) => !h.ranAt).map((h) => h.robot);
+    lines.push(`Робот (уровень A): ${bad.length ? `ТРЕВОГА ${bad.map((h) => `${h.robot}: ${h.alert}`).join("; ")}` : "без тревог"}${quiet.length ? `; ещё не собирался: ${quiet.join(", ")}` : ""}`);
+    if (t.broken.length) lines.push(`Источники с ошибками: ${t.broken.map((s) => `${s.url} (${s.status}${s.note ? `: ${s.note.slice(0, 80)}` : ""})`).join("; ")}`);
+    if (t.promoted.length) lines.push(`Повышены C→B: ${t.promoted.map((s) => s.url).join(", ")}`);
+    if (t.candidates.length) lines.push(`Кандидаты в робота (B, 10+ стартов): ${t.candidates.map((s) => `${s.url} (${s.races_found_total})`).join(", ")}`);
+    if (t.failed) lines.push(`Уровни: не посчитаны, ${t.failed.slice(0, 160)}`);
+  }
   if (a.proposal.agent_failed) lines.splice(2, 0, `АГЕНТ НЕ ДАЛ ПРЕДЛОЖЕНИЯ: ${a.proposal.agent_failed}. Проверки и поиск этой недели не сделаны, сняты только дубли с основным потоком.`);
   const sg = a.suggestions || [];
   const sgn = (st: string) => sg.filter((x) => x.status === st).length;
@@ -782,7 +1086,7 @@ export function weeklySummary(a: {
   for (const c of cands) lines.push(`- ${c.url}: около ${c.races} стартов, даты с годом: ${c.dated_with_year ? "да" : "нет"}${c.note ? `; ${c.note}` : ""}`);
   lines.push("Изменения:");
   for (const o of a.out) lines.push(`- ${o.kind}: ${o.id}: ${o.text}${o.link ? ` (${o.link})` : ""}`);
-  for (const s of a.merged.added) lines.push(`- источник добавлен: ${s.url} (${s.kind}${s.region ? `, ${s.region}` : ""})`);
+  for (const s of a.merged.added) lines.push(`- источник добавлен: ${s.url} (уровень ${s.tier}, ${s.kind}${s.region ? `, ${s.region}` : ""})`);
   for (const s of a.merged.changed) lines.push(`- источник ${s.status}: ${s.url}${s.note ? `: ${s.note}` : ""}`);
   for (const r of a.merged.rejected) lines.push(`- источник отклонён: ${r}`);
   for (const x of sg) lines.push(`- заявка ${x.status}: ${x.id}${x.url ? ` (${x.url})` : ""}: ${x.note}`);
@@ -792,8 +1096,45 @@ export function weeklySummary(a: {
 
 async function cmdSources(all: boolean) {
   const reg = readRegistry();
-  const list = all ? reg : dueSources(reg, todayBelgrade());
-  console.log(JSON.stringify(list, null, 2));
+  if (all) return void console.log(JSON.stringify(reg, null, 2));
+  const today = todayBelgrade();
+  let soon = new Set<string>();
+  try {
+    soon = await expectedSoonKeys(db(), reg, today);
+  } catch (e) {
+    // Без базы C идут по месячному сроку: лучше так, чем без списка.
+    console.error(`[races-manual] race_expected не прочитан: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  console.log(JSON.stringify(dueSources(reg, today, soon), null, 2));
+}
+
+/**
+ * Разовая разметка уровней по данным (наряд 12.10.2026): у кого в файле ещё нет tier, уровень
+ * B, если не сайт организатора, в списке серий или 2+ будущих стартов календаря ссылаются на него;
+ * иначе C. Записи A по роботам добавляет normalizeRegistry. Уже размеченные не трогает.
+ */
+async function cmdSourcesTiers(apply: boolean) {
+  const file = registryPath();
+  const raw = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Partial<Source>[]) : [];
+  const untiered = new Set(raw.filter((x) => x.url && !x.tier).map((x) => sourceKey(x.url!)));
+  const reg = readRegistry(file);
+  const today = todayBelgrade();
+  const rows = await futureLinkRows(db(), today);
+  const tally: Record<string, number> = {};
+  for (const s of reg) {
+    if (s.tier !== "A") s.races_found_total = countMatches(s.url, rows);
+    if (s.tier !== "A" && untiered.has(sourceKey(s.url))) {
+      if (s.tier === "C" && s.races_found_total >= 2) s.tier = "B";
+      s.next_check = nextCheck(s);
+    }
+    tally[`${s.tier}/${s.status}`] = (tally[`${s.tier}/${s.status}`] ?? 0) + 1;
+  }
+  console.log(`записей ${reg.length} (в файле было ${raw.length}): ${Object.entries(tally).sort().map(([k, v]) => `${k} ${v}`).join(", ")}`);
+  console.log(`к обходу на этой неделе: ${dueSources(reg, today).length}`);
+  if (apply) {
+    writeRegistry(reg, file);
+    console.log(`записано: ${file}`);
+  }
 }
 
 /** Стартовое наполнение: сайты из docs/races-missing.md и ссылки ручных стартов. */
@@ -818,11 +1159,8 @@ async function cmdSourcesSeed(apply: boolean) {
       const m = /^(?:https?:\/\/)?([a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s(),]*)?)/i.exec(cells[1]);
       if (!m) continue;
       const verdict = cells[2].toLowerCase();
-      const status: SourceStatus = /закрыт|не существует|не отвечает|не резолв|спам|захвачен/.test(verdict)
-        ? "dead"
-        : /только js|js/.test(verdict)
-          ? "js_only"
-          : "active";
+      // js_only больше не статус: read шлюза — настоящий браузер, такие сайты читаются.
+      const status: SourceStatus = /закрыт|не существует|не отвечает|не резолв|спам|захвачен/.test(verdict) ? "dead" : "ok";
       incoming.push({ url: `https://${m[1]}`, name: cells[1].replace(/^\S+\s*/, "").replace(/^\(|\)$/g, "") || m[1], note: `из docs/races-missing.md: ${cells[2].slice(0, 120)}`, kind: "calendar", status });
     }
   }
@@ -1098,12 +1436,13 @@ async function main() {
   if (cmd === "apply" && arg) return void (await cmdApply(arg, apply));
   if (cmd === "sources") return cmdSources(arg === "all");
   if (cmd === "sources-seed") return cmdSourcesSeed(apply);
+  if (cmd === "sources-tiers") return cmdSourcesTiers(apply);
   if (cmd === "suggestions") return cmdSuggestions();
   if (cmd === "cities") return cmdCities(Number(rawArg) || CITIES_PER_WEEK);
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
   if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
-  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
+  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
 
