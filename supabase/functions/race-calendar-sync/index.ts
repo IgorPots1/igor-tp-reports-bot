@@ -638,6 +638,112 @@ async function heroleague(today: Date, horizon: Date): Promise<Race[]> {
   return out;
 }
 
+// ---------- source: reg.russiarunning.com (RussiaRunning: регистрация на старты по всей России) ----------
+// robots.txt reg.russiarunning.com: «Allow: /». russiarunning.com (без reg.) НЕ трогаем: там /events и
+// /event/* закрыты. Страница reg.*/event/<code> - пустая оболочка SPA, данные приходят из того же
+// POST /api/events/list, что и список: EventsLoaderType 0 = предстоящие (2 = прошедшие, 3 = онлайн).
+// Список отдаёт всё нужное разом (название, даты, адрес, дистанции): ~2 запроса на прогон вместо
+// ~190 страниц, поэтому кэша по slug нет - постраничных запросов нет вовсе. Сверено 12.10.2026:
+// 189 предстоящих + 74 онлайн + 2 текущих = 265 /event/ в sitemap, т.е. список полный.
+const RR_RUN = new Set(["run", "trail", "run-relay", "triathlon", "triathlon-relay", "aquathlon", "duathlon", "swimrun"]);
+const RR_TRI = new Set(["triathlon", "triathlon-relay", "aquathlon", "duathlon", "swimrun"]);
+// страна - из адреса события (адрес в формате ФИАС: «188300, Россия, Ленинградская обл, ..., г Гатчина»)
+const RR_ABROAD = /словени|испани|турци|оаэ|эмират|черногори|корея|итали|саудов|кени|серби|египет|австри|катар|япони|швеци|португал|чехи|германи|армени|монголи|венгри|дани|британ|швейцар|франци|латви|литв|эстони|финлянд|польш|кипр|грузи|абхаз|казахстан|беларус|узбекистан|кыргыз|киргиз|таджикистан|азербайджан|таиланд|вьетнам|китай|индонези|мальдив|шри-ланк/i;
+const RR_REGION = /(^|\s)(обл|край|респ|АО|Аобл|автономный округ|Автономный округ)(\s|$)|^г (Москва|Санкт-Петербург|Севастополь)$/;
+// детские лиги и старты, OCR, туры с проживанием, тренировки - не старт для календаря
+const RR_SKIP = /рогейн|ориентир|квест|тренировк|спортпакет|спорт-пакет|(^|[\s«"])тур[- ]|экспедици|детск|юниорск|препятстви/i;
+const RR_KIDS = /\d+\s*[-–]\s*\d+\s*лет|до \d+ лет|дет|ребен|малыш/i;
+function rrRegion(seg: string): string {
+  const s = clean(seg);
+  const fed = s.match(/^г (Москва|Санкт-Петербург|Севастополь)$/);
+  if (fed) return fed[1];
+  if (/^респ\s+/i.test(s)) return "Республика " + s.replace(/^респ\s+/i, "");
+  return s.replace(/\s+обл$/i, " область").replace(/\s+Аобл$/, " автономная область").replace(/\s+респ$/i, " Республика").replace(/\s+АО$/, " автономный округ");
+}
+function rrPlace(address: string, place: string): { city: string; region: string; location: string } {
+  const segs = clean(address).split(",").map((x) => x.trim()).filter((x) => x && !/^\d{3,6}( \d{2})?$/.test(x) && x !== "Россия");
+  const region = segs.length && RR_REGION.test(segs[0]) ? rrRegion(segs[0]) : "";
+  let city = "", district = "";
+  const kept: string[] = region ? [region] : [];
+  for (const seg of segs.slice(region ? 1 : 0)) {
+    const m = seg.match(/^(г|пгт|рп|с|д|п|пос|х|ст-ца|аул|м-в|дп|кп|сл|село|деревня|поселок|посёлок)\.?\s+([А-ЯЁA-Z].*)$/);
+    if (m) { city = m[2].trim(); kept.push(seg); continue; }
+    const r = seg.match(/^(.+?)\s+р-н$/);
+    if (r && !city) { district = `${r[1]} район`; kept.push(seg); continue; }
+    if (/^(ул|пр-кт|пр-д|пер|ш|наб|б-р|пл|туп|аллея|ал|д|зд|стр|к|кв|влд|тер|мкр|км|парк|р-н)\.?\s/.test(seg)) break;
+  }
+  // Москва/Петербург/Севастополь: город - сам субъект («г Москва, г Зеленоград» -> Москва), как в splitLocation
+  if (FEDERAL.includes(region)) return { city: region, region, location: kept.join(", ") };
+  if (!city) {
+    // адреса без населённого пункта («Нижегородская обл»): город из свободного поля place, иначе район
+    const p = clean(place).split(",")[0].replace(/^(г\.|город)\s*/i, "").trim();
+    city = p && !/област|край|респ|округ|россия/i.test(p) && p.length <= 40 ? p : district;
+  }
+  return { city, region: region !== city ? region : "", location: kept.length ? kept.join(", ") : clean(place) };
+}
+async function russiarunning(today: Date, horizon: Date, maxRequests = 300): Promise<Race[]> {
+  const headers = { "User-Agent": UA, "Accept-Language": "ru", "Content-Type": "application/json" };
+  let requests = 0;
+  async function page(skip: number): Promise<{ list: any[]; totalCount: number }> {
+    for (let i = 0; i < 3; i++) {
+      if (requests >= maxRequests) throw new Error(`russiarunning: лимит ${maxRequests} запросов`);
+      if (requests > 0) await sleep(1100); // не чаще раза в секунду, включая повторы
+      requests++;
+      try {
+        const r = await fetch("https://reg.russiarunning.com/api/events/list", {
+          method: "POST", headers,
+          body: JSON.stringify({ Page: { Skip: skip, Take: 100 }, Filter: { EventsLoaderType: 0 }, Language: "ru" }),
+        });
+        if (r.ok) { const j = await r.json(); return { list: j.list || [], totalCount: Number(j.totalCount) || 0 }; }
+        if (r.status === 429) { await sleep(8000 * (i + 1)); continue; }
+        if (r.status < 500) throw new Error(`russiarunning: ${r.status}`);
+      } catch (e) { if (i === 2) throw e; }
+      await sleep(1500 * (i + 1));
+    }
+    throw new Error("russiarunning: unreachable");
+  }
+  const events: any[] = [];
+  for (let skip = 0; skip < 3000; skip += 100) {
+    const { list, totalCount } = await page(skip);
+    events.push(...list);
+    if (!list.length || events.length >= totalCount) break;
+  }
+  const out = new Map<string, Race>();
+  for (const x of events) {
+    const code = clean(x.code);
+    if (!code || !x.beginDate) continue;
+    const items = (x.raceItems || []).filter((r: any) => !r.isVirtualRace && RR_RUN.has(r.disciplineCode));
+    if (!items.length && !RR_RUN.has(x.disciplineCode)) continue; // лыжи, вело, OCR, плавание, сувениры
+    // только детские забеги («6-9 лет», «10-13 лет») - не старт для календаря
+    if (items.length && items.every((r: any) => RR_KIDS.test(String(r.name || "")))) continue;
+    const address = clean(x.address), placeT = clean(x.place);
+    if (RR_ABROAD.test(`${address} ${placeT}`) || FOREIGN.test(`${placeT} ${address}`)) continue;
+    const { city, region, location } = rrPlace(address, placeT);
+    if (!region && !city) continue; // страну не определить - не берём
+    const name = clean(decode(String(x.title || "")).replace(/\p{Extended_Pictographic}|️|\^/gu, "")).replace(/\s*\/\s*$/, "");
+    if (!name || !okRace(name, `${city} ${placeT}`) || RR_SKIP.test(name) || /online|онлайн/i.test(placeT)) continue;
+    // beginDate/endDate - МЕСТНОЕ время с ложным «Z» (Крымский марафон 00:00Z-23:59Z, Челябинский
+    // 00:00Z-23:59Z при timeZoneOffset 5): дату берём как есть, сдвиг на пояс увёл бы её на день.
+    const date_start = String(x.beginDate).slice(0, 10), date_end = x.endDate ? String(x.endDate).slice(0, 10) : date_start;
+    if (date_end < iso(today) || date_start > iso(horizon) || date_end < date_start) continue;
+    if (Date.parse(date_end) - Date.parse(date_start) > 10 * 864e5) continue; // абонементы и серии, не старт
+    const kms = [...new Set(items.map((r: any) => Math.round(Number(r.distance) * 1000) / 1000).filter((k: number) => k > 0))].sort((a, b) => b - a) as number[];
+    const distances = kms.map((k) => `${String(k).replace(".", ",")} км`);
+    const runItems = items.filter((r: any) => r.disciplineCode === "run" || r.disciplineCode === "trail");
+    const trail = x.disciplineCode === "trail" || (runItems.length > 0 && runItems.filter((r: any) => r.disciplineCode === "trail").length * 2 >= runItems.length);
+    const cls = classify(name, distances, String(x.sportSeriesTitle || ""), trail);
+    if (RR_TRI.has(x.disciplineCode) || (items.length && items.every((r: any) => RR_TRI.has(r.disciplineCode)))) cls.race_type = "tri";
+    const url = `https://reg.russiarunning.com/event/${encodeURIComponent(code)}`;
+    out.set(code, {
+      id: `russiarunning:${code}`, source: "russiarunning", source_id: code, source_url: url, name,
+      date_start, date_end, date_text: date_start === date_end ? date_start : `${date_start} - ${date_end}`, city, region, location,
+      distances, dist_km: kms, race_type: cls.race_type, tags: cls.tags,
+      site_url: null, reg_url: url, vk_url: null,
+    });
+  }
+  return [...out.values()];
+}
+
 // ---------- duplicate detection across sources: см. ./match.ts ----------
 
 // ---------- link checking ----------
@@ -671,12 +777,15 @@ async function checkLinks(limit: number) {
 //   ?stage=links               -> check that organiser sites answer
 //   ?stage=expected            -> last year's races without a next edition yet -> race_expected
 // merge order: richer sources first, so a race seen in several places keeps the most detailed row
-const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime", "heroleague"];
+// russiarunning - последним: новый источник не меняет уже сложившиеся склейки остальных.
+// ВНИМАНИЕ: на 12.10.2026 функция с russiarunning НЕ задеплоена и cron (scrape&sources=russiarunning) НЕ ставился.
+const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime", "heroleague", "russiarunning"];
 const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> = {
   probeg: (t, h) => probeg(t, h), marathonec: (t, h) => marathonec(t, h), ironstar: (t, h) => ironstar(t, h),
   orgeo: (t, h) => orgeo(t, h), where2run: (t, h) => where2run(t, h), myrace: (t, h) => myrace(t, h),
   sportsauce: (t, h) => sportsauce(t, h), racetime: (t, h) => racetime(t, h), regplace: (t) => regplace(t),
   otime: (t) => otime(t), heroleague: (t, h) => heroleague(t, h),
+  russiarunning: (t, h) => russiarunning(t, h), // cron не ставился (см. SECONDARY)
 };
 
 async function scrapeStage(sources: string[], today: Date, horizon: Date, stats: Record<string, unknown>) {
