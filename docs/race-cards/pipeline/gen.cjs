@@ -13,6 +13,7 @@
  *
  * Требуется puppeteer-core и Chromium в образе (/opt/pw-browsers/...).
  */
+/* eslint-disable @typescript-eslint/no-require-imports -- CommonJS-скрипт (.cjs), require здесь и есть способ импорта */
 const path = require('path');
 const fs = require('fs');
 
