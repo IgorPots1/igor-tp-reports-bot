@@ -604,7 +604,9 @@ function simSets(A: Set<string>, B: Set<string>): number {
   for (const w of A) if ([...B].some((x) => x === w || (w.length > 4 && x.length > 4 && (x.startsWith(w.slice(0, 5)) || w.startsWith(x.slice(0, 5)))))) inter++;
   return inter / Math.min(A.size, B.size);
 }
-const norm = (s: string) => s.toLowerCase().replace(/ё/g, "е").trim();
+// null-safe: у ручных строк location бывает пустым (шлюз не требовал его до 12.10.2026),
+// и склейка падала на первом же сравнении с таким стартом.
+const norm = (s: string | null | undefined) => (s || "").toLowerCase().replace(/ё/g, "е").trim();
 const BIG_CITY = /^(москва|санкт-петербург|екатеринбург|новосибирск|казань|нижний новгород|краснодар|самара|ростов-на-дону|уфа|пермь|челябинск|воронеж|красноярск|сочи)$/i;
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5);
 // 0 = no match, 1 = same race on overlapping dates, 2 = same race but sources disagree on the date (<= 7 days apart)

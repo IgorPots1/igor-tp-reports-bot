@@ -865,7 +865,8 @@ async function cmdApply(file: string, apply: boolean) {
       date_text: dateText(r.date_start, end),
       city: r.city.trim(),
       region: r.region ?? null,
-      location: r.location ?? null,
+      // Склейка edge-функции сравнивает место по location: пустой ломал её (12.10.2026).
+      location: r.location?.trim() || [r.region, r.city].filter((x) => x && x.trim()).join(", ") || null,
       distances: r.distances ?? [],
       dist_km: r.dist_km ?? [],
       race_type: r.race_type,
