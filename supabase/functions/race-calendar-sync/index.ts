@@ -352,12 +352,14 @@ async function orgeo(today: Date, horizon: Date): Promise<Race[]> {
         if (kind === "triathlon") cls.race_type = "tri";
         // Диапазон в списке («17-18.10.2026»): день старта — из текста события, если он там назван
         // один («18 октября 2026 года пройдёт…»). Иначе диапазон как есть (см. dates.ts).
+        // Двигаем только начало: многодневный старт («Backyard 14-16.08», в тексте «14 августа
+        // пройдёт») остаётся многодневным; 17-18 с «18 октября пройдёт» становится 18-18.
         let [ds, de] = dt;
         if (ds !== de) {
           try {
             const page = clean(decode((await get(`https://orgeo.ru/event/info/${sid}`)).replace(/<[^>]+>/g, " ")));
             const day = textDayInRange(page, ds, de);
-            if (day) ds = de = day;
+            if (day) ds = day;
           } catch (_) { /* страница не открылась — остаётся диапазон из списка */ }
           await sleep(600);
         }
