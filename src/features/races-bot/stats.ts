@@ -1,6 +1,12 @@
 /* Статистика бота «Забеги России»: чистый подсчёт из пользователей, событий и сохранений.
  * Один и тот же расчёт показывают /stats в боте (только тренеру) и раздел «Бот забегов» в
- * админке; его держит npm run check:races-bot. */
+ * админке; его держит npm run check:races-bot.
+ *
+ * Единица — человек (tg_id), не событие (наряд 12.10.2026). «Новый» = race_bot_users.created_at
+ * в периоде; повторные /start, переходы по другим ссылкам и возвраты новыми не считаются никогда.
+ * Нажатия /start (сырые) — отдельной строкой. Тренер и фейковые тестовые tg_id не считаются. */
+
+import { parseStart, startSource } from "./core";
 
 export type StatPeriod = 7 | 30 | "all";
 
@@ -25,10 +31,15 @@ export type StatEvent = {
 
 export type StatFollow = { tg_id: number; race_id: string; race_name: string | null; race_city: string | null; created_at: string };
 
-export type FunnelStep = { key: string; label: string; people: number; pct: number };
+/** pct — от предыдущего шага; null, когда на предыдущем шаге никого (делить не на что, «0%» врал бы). */
+export type FunnelStep = { key: string; label: string; people: number; pct: number | null };
 
 export type BotStatsReport = {
   period: StatPeriod;
+  /** Люди (уникальные tg_id). newPeriod — новые за выбранный период. */
+  people: { newDay: number; newWeek: number; newPeriod: number; newAll: number; active: number; returning: number; startPresses: number };
+  /** Пришли снова через другую метку, чем первый приход: люди по метке. */
+  returnedVia: { source: string; people: number }[];
   users: { total: number; new7: number; new30: number; active7: number; blocked: number; unsubscribed: number };
   funnel: FunnelStep[];
   sources: { source: string; users: number; follow: number; consult: number }[];
@@ -39,13 +50,22 @@ export type BotStatsReport = {
   newByDay: { day: string; n: number }[];
 };
 
+/** Воронка по людям, пришедшим в периоде; процент — от предыдущего шага. */
 export const FUNNEL: [string, string][] = [
-  ["start", "Старт"],
-  ["city_chosen", "Выбрал город"],
+  ["came", "Пришёл"],
+  ["city", "Выбрал город"],
   ["list_shown", "Увидел список"],
-  ["follow", "Нажал «Следить»"],
-  ["consult_click", "Нажал «Записаться»"],
+  ["follow", "Нажал ⭐"],
+  ["click", "Регистрация или сайт"],
+  ["consult_click", "Запросил консультацию"],
 ];
+
+/** Метка прихода из события start: колонка source, иначе разбор параметра (старые записи до 12.10). */
+function startLabel(e: StatEvent): string | null {
+  if (e.source) return e.source;
+  const param = (e.meta as { param?: string | null } | null)?.param ?? null;
+  return startSource(parseStart(param));
+}
 
 const DAY = 864e5;
 
@@ -69,8 +89,14 @@ export function computeBotStats(input: {
   follows: StatFollow[];
   now: Date;
   period: StatPeriod;
+  /** tg_id, которых не считать: тренер и фейковые тестовые. */
+  exclude?: Set<number>;
 }): BotStatsReport {
-  const { users, events, follows, now, period } = input;
+  const ex = input.exclude ?? new Set<number>();
+  const users = input.users.filter((u) => !ex.has(u.tg_id));
+  const events = input.events.filter((e) => e.tg_id === null || !ex.has(e.tg_id));
+  const follows = input.follows.filter((f) => !ex.has(f.tg_id));
+  const { now, period } = input;
   const from = period === "all" ? 0 : since(now, period);
   const d7 = since(now, 7);
   const d30 = since(now, 30);
@@ -78,24 +104,86 @@ export function computeBotStats(input: {
 
   const peopleWith = (ev: string, list: StatEvent[] = win) => new Set(list.filter((e) => e.event === ev && e.tg_id !== null).map((e) => e.tg_id as number));
 
-  // Воронка: в людях, считая от тех, кто нажал старт в этом периоде.
-  const starters = peopleWith("start");
+  // Первый приход человека: его самое раннее событие start. Источник — users.source, а у
+  // записей до 12.10 (source не писался) — метка этого первого start.
+  const startsByUser = new Map<number, StatEvent[]>();
+  for (const e of [...events].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    if (e.event !== "start" || e.tg_id === null) continue;
+    if (!startsByUser.has(e.tg_id)) startsByUser.set(e.tg_id, []);
+    startsByUser.get(e.tg_id)!.push(e);
+  }
+  const firstSource = (u: StatUser): string => {
+    if (u.source) return u.source;
+    const first = startsByUser.get(u.tg_id)?.[0];
+    return first ? startLabel(first) ?? "direct" : "без метки";
+  };
+
+  // Люди.
+  const isNew = (u: StatUser) => inWindow(u.created_at, from);
+  const cohort = users.filter(isNew);
+  const activeIds = new Set(win.filter((e) => e.tg_id !== null).map((e) => e.tg_id as number));
+  const created = new Map(users.map((u) => [u.tg_id, Date.parse(u.created_at)]));
+  // Вернувшиеся: были раньше периода и что-то сделали в нём. За «всё время» — активны не в день прихода.
+  const returning = [...activeIds].filter((id) => {
+    const c = created.get(id);
+    if (c === undefined) return false;
+    if (period !== "all") return c < from;
+    return win.some((e) => e.tg_id === id && Date.parse(e.created_at) - c >= DAY);
+  });
+  const people = {
+    newDay: users.filter((u) => inWindow(u.created_at, since(now, 1))).length,
+    newWeek: users.filter((u) => inWindow(u.created_at, d7)).length,
+    newPeriod: cohort.length,
+    newAll: users.length,
+    active: [...activeIds].filter((id) => created.has(id)).length,
+    returning: returning.length,
+    startPresses: win.filter((e) => e.event === "start" && e.tg_id !== null).length,
+  };
+
+  // Воронка: люди, пришедшие в периоде; шаги — за всё их время в боте; % от предыдущего шага.
+  const did = (ev: string[]) => new Set(events.filter((e) => e.tg_id !== null && ev.includes(e.event)).map((e) => e.tg_id as number));
+  const stepSets: Record<string, Set<number>> = {
+    came: new Set(cohort.map((u) => u.tg_id)),
+    city: new Set([...did(["city_chosen"]), ...users.filter((u) => u.city).map((u) => u.tg_id)]),
+    list_shown: did(["list_shown"]),
+    follow: new Set([...did(["follow"]), ...follows.map((f) => f.tg_id)]),
+    click: did(["click_registration", "click_site"]),
+    consult_click: did(["consult_click"]),
+  };
+  let prev = cohort.length;
   const funnel = FUNNEL.map(([key, label]) => {
-    const did = key === "start" ? starters : new Set([...peopleWith(key)].filter((id) => starters.has(id)));
-    return { key, label, people: did.size, pct: starters.size ? Math.round((did.size / starters.size) * 100) : 0 };
+    const n = cohort.filter((u) => stepSets[key].has(u.tg_id)).length;
+    const pct = key === "came" ? 100 : prev ? Math.round((n / prev) * 100) : null;
+    prev = n;
+    return { key, label, people: n, pct };
   });
 
-  // Источники: кто пришёл в периоде, и сколько из них дошли до «Следить» и до заявки (за всё время).
-  const followers = peopleWith("follow", events);
-  const consulters = peopleWith("consult_click", events);
+  // Источники по первому приходу: новые за период, сколько дошли до ⭐ и до заявки.
+  const followers = stepSets.follow;
+  const consulters = stepSets.consult_click;
   const bySource = new Map<string, { users: number; follow: number; consult: number }>();
-  for (const u of users.filter((x) => inWindow(x.created_at, from))) {
-    const k = u.source || "без метки";
+  for (const u of cohort) {
+    const k = firstSource(u);
     const s = bySource.get(k) ?? { users: 0, follow: 0, consult: 0 };
     s.users += 1;
     if (followers.has(u.tg_id)) s.follow += 1;
     if (consulters.has(u.tg_id)) s.consult += 1;
     bySource.set(k, s);
+  }
+
+  // «Вернулся через»: start в периоде с меткой, отличной от первого прихода (не сам первый start).
+  const via = new Map<string, Set<number>>();
+  for (const [id, starts] of startsByUser) {
+    const u = users.find((x) => x.tg_id === id);
+    if (!u) continue;
+    const first = firstSource(u);
+    for (const e of starts.slice(1)) {
+      if (!inWindow(e.created_at, from)) continue;
+      const label = startLabel(e);
+      if (!label || label === first) continue;
+      if (!via.has(label)) via.set(label, new Set());
+      via.get(label)!.add(id);
+    }
   }
 
   const count = (ev: string, fromMs: number) => events.filter((e) => e.event === ev && inWindow(e.created_at, fromMs)).length;
@@ -130,6 +218,8 @@ export function computeBotStats(input: {
 
   return {
     period,
+    people,
+    returnedVia: [...via.entries()].map(([source, ids]) => ({ source, people: ids.size })).sort((a, b) => b.people - a.people),
     users: {
       total: users.length,
       new7: users.filter((u) => inWindow(u.created_at, d7)).length,
@@ -166,16 +256,23 @@ function shortDate(iso: string): string {
 export function statsMessage(s: BotStatsReport): { text: string; reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } } {
   const p = PERIOD_LABEL[String(s.period)];
   const u = s.users;
+  const pp = s.people;
   const lines = [
     `<b>Забеги России · ${p}</b>`,
     "",
-    `<b>Пользователи:</b> ${u.total}, новые 7 дн ${u.new7}, 30 дн ${u.new30}; активные 7 дн ${u.active7}; заблокировали ${u.blocked}; отписались ${u.unsubscribed}`,
+    "<b>Люди</b> (уникальные, без тренера и тестовых):",
+    `Новые: за день ${pp.newDay}, за неделю ${pp.newWeek}, за всё время ${pp.newAll}`,
+    `Новые за период: ${pp.newPeriod}`,
+    `Активные за период: ${pp.active}, из них вернувшиеся: ${pp.returning}`,
+    `Нажатия /start за период: ${pp.startPresses} (сырые, с повторами)`,
+    `Заблокировали: ${u.blocked}; отписались за период: ${u.unsubscribed}`,
     "",
-    `<b>Воронка (${p}):</b>`,
-    ...s.funnel.map((f) => `${f.label}: ${f.people} (${f.pct}%)`),
+    `<b>Воронка новых за период</b> (люди, % от предыдущего шага):`,
+    ...s.funnel.map((f) => (f.key === "came" || f.pct === null ? `${f.label}: ${f.people}` : `${f.label}: ${f.people} (${f.pct}%)`)),
     "",
-    "<b>Источники</b> (пришли / «Следить» / заявка):",
+    "<b>Источники по первому приходу</b> (новые / ⭐ / заявка):",
     ...(s.sources.length ? s.sources.map((x) => `${esc(x.source)}: ${x.users} / ${x.follow} / ${x.consult}`) : ["нет"]),
+    `<b>Вернулись через:</b> ${s.returnedVia.length ? s.returnedVia.map((x) => `${esc(x.source)} ${x.people}`).join(", ") : "нет"}`,
     "",
     `<b>Клики</b> 7 дн / 30 дн: Регистрация ${s.clicks.registration.d7}/${s.clicks.registration.d30}, Сайт ${s.clicks.site.d7}/${s.clicks.site.d30}, Календарь ${s.clicks.calendar.d7}/${s.clicks.calendar.d30}`,
     `<b>Топ забегов:</b> ${s.topRaces.length ? s.topRaces.map((r) => `${esc(r.name)} (${r.n})`).join("; ") : "нет"}`,

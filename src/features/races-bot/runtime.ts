@@ -103,7 +103,7 @@ export async function loadBotRaces(): Promise<BotRace[]> {
 // ── хранилище ────────────────────────────────────────────────────────────────
 
 const USER_COLS =
-  "tg_id,first_name,username,city,types,distances,digest_on,digest_every_weeks,digest_last_at,paused_until,tz,source,state,consult_offered_at,consult_requested_at,blocked,created_at";
+  "tg_id,first_name,username,city,types,distances,digest_on,digest_every_weeks,digest_last_at,paused_until,tz,source,state,consult_offered_at,consult_requested_at,blocked,created_at,star_hint_at";
 const FOLLOW_COLS = "tg_id,race_id,race_name,race_date,race_end,race_city,created_at";
 
 function fail(what: string, e: { message: string } | null): void {
@@ -210,6 +210,15 @@ export const supabaseStore: BotStore = {
   async loadStats(period, now) {
     return loadBotStats(period, now);
   },
+  async seenOnce(key, windowSec) {
+    const { data, error } = await createSupabaseServerClient().rpc("race_bot_seen_once", { p_key: key, p_window_sec: windowSec });
+    fail("seenOnce", error);
+    return data === true;
+  },
+  async pruneSeen() {
+    const old = new Date(Date.now() - 3 * 864e5).toISOString();
+    fail("pruneSeen", (await createSupabaseServerClient().from("race_bot_seen").delete().lt("at", old)).error);
+  },
   async addExpectedWatch(tgId, expectedId) {
     const { error } = await createSupabaseServerClient()
       .from("race_bot_expected_watch")
@@ -271,12 +280,23 @@ async function selectAll<T>(table: string, cols: string): Promise<T[]> {
 
 /** Статистика бота за период: /stats, админка и еженедельная сводка — одним расчётом (stats.ts). */
 export async function loadBotStats(period: StatPeriod, now = new Date()) {
-  const [users, events, follows] = await Promise.all([
+  const [users, events, follows, exclude] = await Promise.all([
     selectAll<StatUser>("race_bot_users", "tg_id,first_name,username,city,source,created_at,blocked"),
     selectAll<StatEvent>("race_bot_events", "tg_id,event,race_id,source,meta,created_at"),
     selectAll<StatFollow>("race_bot_follows", "tg_id,race_id,race_name,race_city,created_at"),
+    statsExclude(),
   ]);
-  return computeBotStats({ users, events, follows, now, period });
+  return computeBotStats({ users, events, follows, now, period, exclude });
+}
+
+/** Кого не считать: тренер (coach_chat_id) всегда, плюс race_bot_config.stats_exclude (фейковые тестовые tg_id). */
+export async function statsExclude(): Promise<Set<number>> {
+  const out = new Set<number>();
+  for (const key of ["coach_chat_id", "stats_exclude"]) {
+    const v = await supabaseStore.getConfig(key);
+    for (const x of (v || "").split(/[\s,;]+/)) if (/^-?\d+$/.test(x)) out.add(Number(x));
+  }
+  return out;
 }
 
 // ── погода и геокодер ────────────────────────────────────────────────────────

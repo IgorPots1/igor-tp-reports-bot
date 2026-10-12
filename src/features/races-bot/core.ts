@@ -57,7 +57,7 @@ export type StartParam =
   | { kind: "race"; code: string }
   | { kind: "expected"; code: string }
   | { kind: "city"; slug: string }
-  | { kind: "src"; label: string }
+  | { kind: "src"; label: string; raw: string }
   | { kind: "none" };
 
 export function parseStart(raw: string | null | undefined): StartParam {
@@ -66,8 +66,19 @@ export function parseStart(raw: string | null | undefined): StartParam {
   if (p.startsWith("r_") && p.length > 2) return { kind: "race", code: p.slice(2) };
   if (p.startsWith("c_") && p.length > 2) return { kind: "city", slug: p.slice(2) };
   if (p.startsWith("e_") && p.length > 2) return { kind: "expected", code: p.slice(2) };
-  if (p.startsWith("src_") && p.length > 4) return { kind: "src", label: p.slice(4) };
-  return { kind: "none" };
+  if (p.startsWith("src_") && p.length > 4) return { kind: "src", label: p.slice(4), raw: p };
+  // Любая другая метка — тоже источник, как есть. Было: принимались только src_*, и ссылки
+  // из Instagram (start=ig_channel) приходили без источника — у 7 первых людей source был пуст.
+  return { kind: "src", label: p, raw: p };
+}
+
+/** Источник прихода в том виде, как в ссылке: ig_channel, src_ig_story; старты — r_*, ожидаемые — e_*, город — c_<город>. */
+export function startSource(p: StartParam): string | null {
+  if (p.kind === "race") return "r_*";
+  if (p.kind === "expected") return "e_*";
+  if (p.kind === "city") return `c_${p.slug}`;
+  if (p.kind === "src") return p.raw;
+  return null;
 }
 
 // Ссылка igorp.run/go/<код>: r|s + код старта, дальше tg_id в base36 и подпись (её считает runtime.ts
@@ -97,10 +108,72 @@ export function knownCities(races: BotRace[]): string[] {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
 }
 
+/** Регионы стартов, самые частые первыми. */
+export function knownRegions(races: BotRace[]): string[] {
+  const counts = new Map<string, number>();
+  for (const r of races) if (r.region && norm(r.region) !== norm(r.city)) counts.set(r.region, (counts.get(r.region) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+}
+
+// Как люди пишут город: сокращения и разговорные названия.
+const CITY_ALIASES: Record<string, string> = {
+  спб: "Санкт-Петербург", питер: "Санкт-Петербург", петербург: "Санкт-Петербург", "санкт петербург": "Санкт-Петербург",
+  "с-пб": "Санкт-Петербург", "с пб": "Санкт-Петербург", ленинград: "Санкт-Петербург", "санкт-петербурге": "Санкт-Петербург",
+  мск: "Москва", москве: "Москва", масква: "Москва",
+  екб: "Екатеринбург", ебург: "Екатеринбург", екат: "Екатеринбург", екатеринбурге: "Екатеринбург",
+  нижний: "Нижний Новгород", нн: "Нижний Новгород", "н новгород": "Нижний Новгород", "н.новгород": "Нижний Новгород", нижнем: "Нижний Новгород",
+  новосиб: "Новосибирск", нск: "Новосибирск", ростов: "Ростов-на-Дону", краснодаре: "Краснодар", казани: "Казань",
+  подмосковье: "Московская область", ленобласть: "Ленинградская область", "ленинградская обл": "Ленинградская область",
+  "московская обл": "Московская область",
+};
+
+function cleanCityText(text: string): string {
+  return norm(text)
+    .replace(/[«»"'!?.,]+$/g, "")
+    .replace(/^(г\.?|город|в|во)\s+/, "")
+    .replace(/\s+(обл\.?|область)$/, " область")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function lev(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const d = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 1; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[m][n];
+}
+
+/** Точное совпадение, сокращение («спб», «екб») или начало названия от 4 букв. Для поиска текстом. */
 export function matchCity(cities: string[], text: string): string | null {
-  const t = norm(text).trim();
+  const t = cleanCityText(text);
   if (!t) return null;
+  const alias = CITY_ALIASES[t];
+  if (alias && cities.some((c) => norm(c) === norm(alias))) return cities.find((c) => norm(c) === norm(alias))!;
   return cities.find((c) => norm(c) === t) ?? cities.find((c) => norm(c).startsWith(t) && t.length >= 4) ?? null;
+}
+
+/**
+ * Город, который человек написал словами (онбординг, геолокация): сокращения, опечатки, область.
+ * Нет уверенного совпадения — city: null и до трёх ближайших вариантов для кнопок; молча
+ * подставлять написанное нельзя (было: «Тверьь» становилась городом, и список был пуст).
+ */
+export function resolveCity(races: BotRace[], text: string): { city: string | null; suggestions: string[] } {
+  const cities = knownCities(races);
+  const places = [...cities, ...knownRegions(races)];
+  const t = cleanCityText(text);
+  if (!t) return { city: null, suggestions: [] };
+  const direct = matchCity(places, text);
+  if (direct) return { city: direct, suggestions: [] };
+  const alias = CITY_ALIASES[t];
+  if (alias) return { city: null, suggestions: [] };
+  const scored = places
+    .map((c) => ({ c, d: lev(t, norm(c)) }))
+    .sort((a, b) => a.d - b.d || places.indexOf(a.c) - places.indexOf(b.c));
+  const tol = t.length <= 5 ? 1 : 2;
+  const best = scored.filter((x) => x.d <= tol);
+  if (best.length === 1 || (best.length > 1 && best[0].d < best[1].d)) return { city: best[0].c, suggestions: [] };
+  return { city: null, suggestions: scored.filter((x) => x.d <= Math.max(3, Math.ceil(t.length / 3))).slice(0, 3).map((x) => x.c) };
 }
 
 // ── «в Москве» ───────────────────────────────────────────────────────────────
@@ -138,6 +211,23 @@ export function matchUser(r: Race, types: string[], dists: string[]): boolean {
   const tOk = !types.length || types.includes(r.type);
   const dOk = !dists.length || dists.some((d) => distOk(r, d as DistId));
   return tOk && dOk;
+}
+
+/**
+ * «Рядом»: старты того же региона, что и город человека (регион города — самый частый у его
+ * стартов), кроме самого города. Координат у стартов нет, поэтому соседние регионы и радиус
+ * 200 км пока не считаются.
+ */
+export function nearbyRaces(races: BotRace[], city: string, types: string[], dists: string[]): { region: string | null; races: BotRace[] } {
+  const c = norm(city);
+  const counts = new Map<string, number>();
+  for (const r of races) if (norm(r.city) === c && r.region) counts.set(r.region, (counts.get(r.region) || 0) + 1);
+  const region = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? (races.some((r) => norm(r.region) === c) ? city : null);
+  if (!region) return { region: null, races: [] };
+  return {
+    region,
+    races: races.filter((r) => norm(r.region) === norm(region) && norm(r.city) !== c && matchUser(r, types, dists)),
+  };
 }
 
 export function inUserCity(r: Race, city: string | null): boolean {

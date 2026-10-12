@@ -22,13 +22,14 @@ async function main() {
   const s = await loadBotStats(7, now);
   const m = await loadBotStats(30, now);
   const stamp = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Belgrade", dateStyle: "short", timeStyle: "short" }).format(now);
-  const funnel = m.funnel.map((f) => `${f.label} ${f.people} (${f.pct}%)`).join(" → ");
+  const funnel = m.funnel.map((f) => (f.pct === null ? `${f.label} ${f.people}` : `${f.label} ${f.people} (${f.pct}%)`)).join(" → ");
   const lines = [
     `Дата: ${stamp}`,
     "Задача: еженедельная сводка бота «Забеги России» (@ruruns_bot), те же цифры, что /stats",
-    `Пользователи: ${s.users.total}, новые 7 дн ${s.users.new7}, 30 дн ${s.users.new30}; активные 7 дн ${s.users.active7}; заблокировали ${s.users.blocked}; отписались за 7 дн ${s.users.unsubscribed}`,
-    `Воронка 30 дн: ${funnel}`,
-    `Источники 30 дн (пришли/«Следить»/заявка): ${m.sources.length ? m.sources.map((x) => `${x.source} ${x.users}/${x.follow}/${x.consult}`).join(", ") : "нет"}`,
+    // Люди — уникальные tg_id без тренера и тестовых; нажатия /start — отдельно (сырые).
+    `Люди: новые за день ${s.people.newDay}, за неделю ${s.people.newWeek}, всего ${s.people.newAll}; активные 7 дн ${s.people.active}, из них вернувшиеся ${s.people.returning}; нажатий /start 7 дн ${s.people.startPresses}; заблокировали ${s.users.blocked}`,
+    `Воронка новых за 30 дн (люди, % от предыдущего): ${funnel}`,
+    `Источники по первому приходу, 30 дн (новые/⭐/заявка): ${m.sources.length ? m.sources.map((x) => `${x.source} ${x.users}/${x.follow}/${x.consult}`).join(", ") : "нет"}; вернулись через: ${m.returnedVia.length ? m.returnedVia.map((x) => `${x.source} ${x.people}`).join(", ") : "нет"}`,
     `Клики 7/30 дн: регистрация ${s.clicks.registration.d7}/${s.clicks.registration.d30}, сайт ${s.clicks.site.d7}/${s.clicks.site.d30}, календарь ${s.clicks.calendar.d7}/${s.clicks.calendar.d30}; заявок за всё время ${m.consults.length >= 10 ? "10+" : m.consults.length}`,
     "Ветка: нет (сводка из базы)",
   ];

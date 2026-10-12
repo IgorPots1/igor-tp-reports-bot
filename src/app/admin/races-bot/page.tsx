@@ -80,12 +80,15 @@ export default async function RacesBotAdminPage({
         <>
           <div className="admin-summary-grid">
             {[
-              ["Всего", s.users.total],
-              ["Новые за 7 дней", s.users.new7],
-              ["Новые за 30 дней", s.users.new30],
-              ["Активные за 7 дней", s.users.active7],
+              // Люди — уникальные tg_id без тренера и тестовых; нажатия /start — сырые, отдельно.
+              ["Люди всего", s.people.newAll],
+              ["Новые за день", s.people.newDay],
+              ["Новые за неделю", s.people.newWeek],
+              ["Новые за период", s.people.newPeriod],
+              ["Активные за период", s.people.active],
+              ["Вернувшиеся", s.people.returning],
+              ["Нажатия /start (сырые)", s.people.startPresses],
               ["Заблокировали", s.users.blocked],
-              ["Отписались", s.users.unsubscribed],
             ].map(([label, value]) => (
               <div key={String(label)} className="admin-summary-card">
                 <div className="admin-summary-label">{label}</div>
@@ -100,16 +103,16 @@ export default async function RacesBotAdminPage({
           </div>
 
           <div className="admin-card">
-            <h2 className="admin-card-header">Воронка</h2>
+            <h2 className="admin-card-header">Воронка новых за период (люди, % от предыдущего шага)</h2>
             <div style={{ display: "grid", gap: 8 }}>
               {s.funnel.map((f) => (
                 <div key={f.key} style={{ display: "grid", gridTemplateColumns: "180px 1fr 90px", gap: 12, alignItems: "center" }}>
                   <span>{f.label}</span>
                   <div style={{ background: "#ede9e0", borderRadius: 6, height: 18 }}>
-                    <div style={{ width: `${f.pct}%`, background: "#e5480e", height: 18, borderRadius: 6, minWidth: f.people ? 4 : 0 }} />
+                    <div style={{ width: `${f.pct ?? 0}%`, background: "#e5480e", height: 18, borderRadius: 6, minWidth: f.people ? 4 : 0 }} />
                   </div>
                   <span>
-                    {f.people} · {f.pct}%
+                    {f.people}{f.pct === null ? "" : ` · ${f.pct}%`}
                   </span>
                 </div>
               ))}
@@ -117,14 +120,14 @@ export default async function RacesBotAdminPage({
           </div>
 
           <div className="admin-card">
-            <h2 className="admin-card-header">Источники</h2>
+            <h2 className="admin-card-header">Источники по первому приходу</h2>
             <div className="admin-table-wrap">
               <table className="admin-table">
                 <thead>
                   <tr>
                     <th>Метка</th>
                     <th>Пришли</th>
-                    <th>Нажали «Следить»</th>
+                    <th>Нажали ⭐</th>
                     <th>Заявка</th>
                   </tr>
                 </thead>

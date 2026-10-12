@@ -129,22 +129,52 @@ function filtersPhrase(types: string[], dists: string[]): string {
 }
 
 export function listHeader(where: string, types: string[], dists: string[]): Msg {
-  return { text: `Ближайшие забеги ${where}${filtersPhrase(types, dists)}. Нажми <b>«Следить»</b>, и я напомню о главном.` };
+  return { text: `Ближайшие забеги ${where}${filtersPhrase(types, dists)}. Нажми <b>⭐ Следить</b>, и я напомню о главном.` };
+}
+
+/** Один раз, после первого показанного списка (наряд 12.10.2026: 3 списка, 0 сохранений). */
+export const STAR_HINT: Msg = { text: "Нажми ⭐, и я напомню, когда пора начинать готовиться." };
+
+export function hasFilters(types: string[], dists: string[]): boolean {
+  return types.length > 0 || dists.length > 0;
+}
+
+/** Мало или нет стартов: что сказать перед блоками «Рядом» и «Ожидаются». */
+export function shortListNote(where: string, n: number, filtered: boolean): Msg {
+  const head = n === 0
+    ? `${where[0].toUpperCase()}${where.slice(1)} по ${filtered ? "этим фильтрам" : "этому запросу"} пока ни одного забега.`
+    : `${where[0].toUpperCase()}${where.slice(1)} пока ${n} ${plural(n, "забег", "забега", "забегов")}${filtered ? " по этим фильтрам" : ""}.`;
+  return { text: `${head} Вот что ещё можно посмотреть:` };
+}
+
+export function nearbyHeader(region: string): Msg {
+  return { text: `<b>Рядом</b>, ${esc(region)}:` };
+}
+
+/** Кнопки под коротким списком: снять фильтры, сменить город, весь календарь. */
+export function shortListActions(filtered: boolean, q?: string, digestOffer = false): Msg {
+  const rows: Button[][] = [];
+  if (digestOffer) rows.push([{ text: "Присылать новые по понедельникам", callback_data: "dg:on" }, { text: "Не надо", callback_data: "dg:off" }]);
+  if (filtered) rows.push([{ text: "Снять фильтры", callback_data: "nf" }]);
+  rows.push([{ text: "Сменить город", callback_data: "s:city" }, calendarButton("Весь календарь", q)]);
+  const base = filtered ? "Можно снять фильтры, сменить город или открыть весь календарь." : "Можно сменить город или открыть весь календарь.";
+  return { text: digestOffer ? `Новые забеги появляются каждую неделю: присылать их раз в неделю? ${base}` : base, reply_markup: { inline_keyboard: rows } };
 }
 
 /** regUrl — ссылка «Регистрация» (через igorp.run/go/, чтобы записать клик); null — кнопки нет. */
 export function card(r: Race, following: boolean, regUrl: string | null = r.reg || r.site || null): Msg {
-  const row: Button[] = [following ? { text: "✓ Слежу", callback_data: `my` } : { text: "Следить", callback_data: `f:${raceCode(r.id)}` }];
+  const row: Button[] = [following ? { text: "✓ Слежу", callback_data: `my` } : { text: "⭐ Следить", callback_data: `f:${raceCode(r.id)}` }];
   const url = regUrl;
   if (url) row.push({ text: "Регистрация", url });
   return { text: `<b>${shortDate(r)}</b> · ${esc(r.name)}\n${esc(raceMeta(r))}`, reply_markup: { inline_keyboard: [row] } };
 }
 
-export function listFooter(more: number, city: string | null, digestOn: boolean, q?: string): Msg {
+export function listFooter(more: number, city: string | null, digestOn: boolean, q?: string, nextOffset?: number): Msg {
   const rows: Button[][] = [];
   let text: string;
   if (more > 0) text = `Ещё ${more} ${plural(more, "забег", "забега", "забегов")}${city ? ` ${inCity(city)}` : ""} до конца года.`;
   else text = "Это все забеги по этому запросу.";
+  if (more > 0 && nextOffset !== undefined) rows.push([{ text: `Показать ещё ${Math.min(more, 5)}`, callback_data: `more:${nextOffset}` }]);
   if (city && !digestOn) {
     text += " Присылать новые раз в неделю?";
     rows.push([{ text: "Да, по понедельникам", callback_data: "dg:on" }, { text: "Не надо", callback_data: "dg:off" }]);
@@ -155,10 +185,77 @@ export function listFooter(more: number, city: string | null, digestOn: boolean,
 
 export function nothingFound(where: string, q?: string): Msg {
   return {
-    text: `Пока не нашёл забегов ${where} по этим фильтрам. Попробуй убрать фильтр дистанции или открой весь календарь.`,
-    reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь", q)]] },
+    text: `Пока не нашёл забегов ${where}. Попробуй написать город (например, «Казань») или вид и город («трейл Казань»).`,
+    reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь", q)], [{ text: "Меню", callback_data: "menu" }]] },
   };
 }
+
+// ── возврат, главное меню, город не найден, не текст ─────────────────────────
+
+/** Главное меню: город, мои забеги, календарь, настройки, смена города, начать заново. */
+export function menuKeyboard(city: string | null): Keyboard {
+  return {
+    inline_keyboard: [
+      ...(city ? [[{ text: `Забеги ${inCity(city)}`, callback_data: "show" }]] : []),
+      [{ text: "Мои забеги", callback_data: "my" }, calendarButton("Весь календарь")],
+      [{ text: "Настройки", callback_data: "s:menu" }, { text: "Сменить город", callback_data: "s:city" }],
+      [{ text: "Начать заново", callback_data: "restart" }],
+    ],
+  };
+}
+
+function filtersLine(types: string[], dists: string[]): string {
+  const t = TYPE_BUTTONS.filter(([id]) => types.includes(id)).map(([, l]) => l.toLowerCase());
+  const ds = DIST_BUTTONS.filter(([id]) => dists.includes(id)).map(([, l]) => l.toLowerCase());
+  return [...t, ...ds].join(", ") || "все забеги";
+}
+
+/** Повторный /start у человека, который уже выбрал город: сводка и меню, без онбординга. */
+export function welcomeBack(
+  u: { first_name: string | null; city: string | null; types: string[]; distances: string[] },
+  saved: { race: Race }[],
+  today: string,
+  head = "С возвращением!",
+): Msg {
+  const next = saved[0];
+  const lines = [
+    `<b>${head}</b>`,
+    `Город: <b>${esc(u.city || "не выбран")}</b>`,
+    `Фильтры: ${esc(filtersLine(u.types, u.distances))}`,
+    saved.length
+      ? `Сохранено: ${saved.length} ${plural(saved.length, "забег", "забега", "забегов")}, ближайший: ${esc(next.race.name)} (${countdown(daysBetween(today, next.race.ds))})`
+      : "Сохранённых забегов пока нет: нажми ⭐ под забегом.",
+  ];
+  return { text: lines.join("\n"), reply_markup: menuKeyboard(u.city) };
+}
+
+export function cityNotFound(text: string, suggestions: string[]): Msg {
+  const rows: Button[][] = suggestions.map((c) => [{ text: c, callback_data: `city:${citySlug(c)}` }]);
+  rows.push([{ text: "Отправить геолокацию", callback_data: "geo" }, calendarButton("Весь календарь")]);
+  return {
+    text: suggestions.length
+      ? `Не нашёл город «${esc(text.slice(0, 60))}». Может быть, один из этих?`
+      : `Не нашёл город «${esc(text.slice(0, 60))}» среди городов с забегами. Попробуй написать иначе (например, «Нижний Новгород») или отправь геолокацию.`,
+    reply_markup: { inline_keyboard: rows },
+  };
+}
+
+export function unknownInput(city: string | null): Msg {
+  return {
+    text: "Я понимаю текст и кнопки. Напиши город или, например, «трейл Казань», или выбери в меню.",
+    reply_markup: menuKeyboard(city),
+  };
+}
+
+export function unknownCommand(city: string | null): Msg {
+  return { text: "Такой команды нет. Напиши город или, например, «трейл Казань».", reply_markup: menuKeyboard(city) };
+}
+
+export function alreadyFollowing(r: Race): Msg {
+  return { text: `Уже слежу за «${esc(r.name)}». Напомню, когда пора готовиться.`, reply_markup: NAV };
+}
+
+export const ALREADY_UNSUBSCRIBED: Msg = { text: "Ты уже отписан от всего. Вернуться можно командой /start." };
 
 export const DIGEST_ON: Msg = { text: "Договорились: новые забеги буду присылать по понедельникам, одно сообщение в неделю." };
 export const DIGEST_OFF: Msg = { text: "Хорошо, без рассылки. Найти забеги можно в любой момент: напиши, например, «трейл Казань»." };
@@ -214,8 +311,11 @@ export const NO_CONSULT: Msg = { text: "Хорошо. Если понадоби�
 
 // ── мои забеги, настройки, удаление ──────────────────────────────────────────
 
-export function myRaces(items: { race: Race; code: string; site?: string }[], today: string): Msg {
-  if (!items.length) {
+export const MY_PAGE = 10;
+
+export function myRaces(all: { race: Race; code: string; site?: string }[], today: string, page = 0): Msg {
+  const items = all.slice(page * MY_PAGE, (page + 1) * MY_PAGE);
+  if (!all.length) {
     return {
       text: "Ты пока не следишь ни за одним забегом. Найди свой и нажми «Следить».",
       reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь")]] },
@@ -225,13 +325,22 @@ export function myRaces(items: { race: Race; code: string; site?: string }[], to
     const left = daysBetween(today, race.ds);
     return `<b>${esc(race.name)}</b> · ${countdown(left)}\n${shortDate(race)} · ${esc(raceMeta(race))}`;
   });
+  // Страницы по 10: текст укладывается в 4096 знаков, кнопок не больше 100 (лимиты Telegram).
+  const pages = Math.ceil(all.length / MY_PAGE);
+  const nav: Button[] = [];
+  if (page > 0) nav.push({ text: "Назад", callback_data: `myp:${page - 1}` });
+  if (page < pages - 1) nav.push({ text: `Ещё (${all.length - (page + 1) * MY_PAGE})`, callback_data: `myp:${page + 1}` });
+  const head = pages > 1 ? `Твои забеги (${page + 1}/${pages})` : "Твои забеги";
   return {
-    text: `Твои забеги\n\n${lines.join("\n\n")}`,
+    text: `${head}\n\n${lines.join("\n\n")}`.slice(0, 4000),
     reply_markup: {
-      inline_keyboard: items.map(({ race, code, site }) => [
-        { text: `Сайт старта · ${race.name.slice(0, 24)}`, url: site ?? raceUrl(race) },
-        { text: "Убрать старт", callback_data: `u:${code}` },
-      ]),
+      inline_keyboard: [
+        ...items.map(({ race, code, site }) => [
+          { text: `Сайт старта · ${race.name.slice(0, 24)}`, url: site ?? raceUrl(race) },
+          { text: "Убрать старт", callback_data: `u:${code}` },
+        ]),
+        ...(nav.length ? [nav] : []),
+      ],
     },
   };
 }
