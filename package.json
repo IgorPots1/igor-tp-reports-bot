@@ -381,6 +381,7 @@
     "check:activity-numbers": "npx tsx scripts/check-activity-numbers.ts",
     "check:lexicon-committed": "npx tsx scripts/check-lexicon-committed.ts",
     "check:treadmill-shape": "npx tsx scripts/check-treadmill-shape.ts",
+    "check:ladder-presets": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-ladder-presets.ts",
     "check:interval-ladder": "npx tsx scripts/check-interval-ladder.ts",
     "check:training-gaps": "npx tsx scripts/check-training-gaps.ts",
     "check:derive-distance": "npx tsx scripts/check-derive-distance.ts",
