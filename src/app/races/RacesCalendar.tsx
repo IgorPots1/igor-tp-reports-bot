@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import { citySlug, inCity, raceCode } from "@/features/races-bot/core";
 
 import {
   DISTS,
@@ -22,7 +24,24 @@ import {
 import SuggestRace from "./SuggestRace";
 import styles from "./races.module.css";
 
-function RaceItem({ r }: { r: Race }) {
+/** Как показывать «Следить»: ссылкой в бота (сайт) или звёздочкой (внутри Telegram). */
+type FollowUi =
+  | { mode: "site"; bot: string | null }
+  | { mode: "tg"; saved: boolean; busy: boolean; onToggle: (r: Race) => void };
+
+function tgLink(bot: string, start: string): string {
+  return `https://t.me/${bot}?start=${start}`;
+}
+
+function StarIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
+      <path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />
+    </svg>
+  );
+}
+
+function RaceItem({ r, follow }: { r: Race; follow: FollowUi }) {
   const stub = dateStub(r);
   const pills = distPills(r);
   const where = r.region && r.region !== r.city;
@@ -36,7 +55,21 @@ function RaceItem({ r }: { r: Race }) {
         <div className={styles.w}>{stub.wd}</div>
       </div>
       <div className={styles.body}>
-        <div className={styles.title}>{r.name}</div>
+        <div className={styles.titleRow}>
+          <div className={styles.title}>{r.name}</div>
+          {follow.mode === "tg" ? (
+            <button
+              type="button"
+              className={`${styles.star} ${follow.saved ? styles.starOn : ""}`}
+              aria-pressed={follow.saved}
+              aria-label={follow.saved ? "Не следить" : "Следить"}
+              disabled={follow.busy}
+              onClick={() => follow.onToggle(r)}
+            >
+              <StarIcon filled={follow.saved} />
+            </button>
+          ) : null}
+        </div>
         <div className={styles.where}>
           <b>{r.city || "место уточняется"}</b>
           {where ? `, ${r.region}` : null}
@@ -88,17 +121,121 @@ function RaceItem({ r }: { r: Race }) {
             </a>
           ) : null}
         </div>
+        {follow.mode === "site" && follow.bot ? (
+          <div className={styles.follow}>
+            <a className={styles.followBtn} href={tgLink(follow.bot, `r_${raceCode(r.id)}`)} target="_blank" rel="noopener noreferrer">
+              <StarIcon filled={false} />
+              Следить в Telegram
+            </a>
+            <span className={styles.followHint}>напомню, когда пора готовиться, и про погоду накануне</span>
+          </div>
+        ) : null}
       </div>
     </li>
   );
 }
 
-export default function RacesCalendar({ races, failed }: { races: Race[]; failed: boolean }) {
+type TgWebApp = { initData?: string; ready?: () => void; expand?: () => void };
+
+function telegramWebApp(): TgWebApp | null {
+  const w = window as unknown as { Telegram?: { WebApp?: TgWebApp } };
+  return w.Telegram?.WebApp?.initData ? w.Telegram.WebApp : null;
+}
+
+const BANNER_KEY = "races_tg_city_banner_closed";
+
+export default function RacesCalendar({
+  races,
+  failed,
+  botUsername,
+}: {
+  races: Race[];
+  failed: boolean;
+  botUsername: string | null;
+}) {
   const [f, setF] = useState<Filters>(NO_FILTERS);
   const [query, setQuery] = useState("");
   /* Месяцы, которые человек раскрыл или свернул сам. Пока он ничего не
      трогал, открыт ближайший месяц (при поиске два первых). */
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  /* Внутри Telegram (мини-апп бота): initData есть, звёздочка вместо ссылки в бота. */
+  const [initData, setInitData] = useState<string | null>(null);
+  const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+  const [onlyMine, setOnlyMine] = useState(false);
+  const [bannerClosed, setBannerClosed] = useState(true);
+
+  // Внутри Telegram страница открывается с #tgWebAppData=…: только тогда подключаем скрипт
+  // Telegram (обычным посетителям сторонний скрипт не нужен) и ждём его несколько секунд.
+  useEffect(() => {
+    try {
+      setBannerClosed(window.localStorage.getItem(BANNER_KEY) === "1");
+    } catch {
+      setBannerClosed(false);
+    }
+    if (!/tgWebApp(Data|Platform)/.test(window.location.hash)) return;
+    if (!document.querySelector("script[data-tg-webapp]")) {
+      const el = document.createElement("script");
+      el.src = "https://telegram.org/js/telegram-web-app.js";
+      el.async = true;
+      el.dataset.tgWebapp = "1";
+      document.head.appendChild(el);
+    }
+    let tries = 0;
+    const t = window.setInterval(() => {
+      const app = telegramWebApp();
+      if (app) {
+        app.ready?.();
+        app.expand?.();
+        setInitData(app.initData || null);
+      }
+      if (app || ++tries > 25) window.clearInterval(t);
+    }, 200);
+    return () => window.clearInterval(t);
+  }, []);
+
+  const miniapp = useCallback(
+    async (action: "list" | "follow" | "unfollow", raceId?: string) => {
+      if (!initData) return;
+      const res = await fetch("/api/races-bot/miniapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, action, raceId }),
+      });
+      const body = (await res.json().catch(() => null)) as { ok?: boolean; follows?: string[] } | null;
+      if (body?.ok && body.follows) setSaved(new Set(body.follows));
+    },
+    [initData],
+  );
+
+  useEffect(() => {
+    if (initData) void miniapp("list");
+  }, [initData, miniapp]);
+
+  async function toggle(r: Race) {
+    const on = !saved.has(r.id);
+    setBusy(r.id);
+    setSaved((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(r.id);
+      else next.delete(r.id);
+      return next;
+    });
+    try {
+      await miniapp(on ? "follow" : "unfollow", r.id);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function closeBanner() {
+    setBannerClosed(true);
+    try {
+      window.localStorage.setItem(BANNER_KEY, "1");
+    } catch {
+      /* приватный режим: закрыто до перезагрузки */
+    }
+  }
 
   // Фильтры из адреса: страница статическая (ISR), поэтому читаем их в браузере.
   useEffect(() => {
@@ -115,16 +252,20 @@ export default function RacesCalendar({ races, failed }: { races: Race[]; failed
     return () => window.clearTimeout(t);
   }, [query]);
 
-  // Фильтры в адрес: ссылкой «трейлы в Казани» можно поделиться.
+  // Фильтры в адрес: ссылкой «трейлы в Казани» можно поделиться. Hash не трогаем: внутри
+  // Telegram в нём #tgWebAppData, из которого скрипт Telegram берёт initData.
   useEffect(() => {
-    const next = `${window.location.pathname}${filtersToSearch(f)}`;
-    if (next !== `${window.location.pathname}${window.location.search}`) {
+    const next = `${window.location.pathname}${filtersToSearch(f)}${window.location.hash}`;
+    if (next !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
       window.history.replaceState(null, "", next);
     }
     setOpen({});
   }, [f]);
 
-  const list = useMemo(() => applyFilters(races, f), [races, f]);
+  const list = useMemo(() => {
+    const base = applyFilters(races, f);
+    return onlyMine ? base.filter((r) => saved.has(r.id)) : base;
+  }, [races, f, onlyMine, saved]);
   const months = useMemo(() => groupByMonth(list), [list]);
   const typeBase = useMemo(() => applyFilters(races, f, "type"), [races, f]);
   const distBase = useMemo(() => applyFilters(races, f, "dist"), [races, f]);
@@ -138,6 +279,14 @@ export default function RacesCalendar({ races, failed }: { races: Race[]; failed
   const nCities = new Set(races.map((r) => r.city).filter(Boolean)).size;
   const listCities = new Set(list.map((r) => r.city).filter(Boolean)).size;
   const dirty = f.q !== "" || f.type !== "all" || f.dist !== "all";
+  const inTg = initData !== null;
+  // Плашка подписки — когда в поиске ровно город из календаря.
+  const bannerCity = useMemo(() => {
+    const q = f.q.trim().toLowerCase().replace(/ё/g, "е");
+    return q ? cities.find((c) => c.toLowerCase().replace(/ё/g, "е") === q) ?? null : null;
+  }, [f.q, cities]);
+  const followUi = (r: Race): FollowUi =>
+    inTg ? { mode: "tg", saved: saved.has(r.id), busy: busy === r.id, onToggle: toggle } : { mode: "site", bot: botUsername };
 
   function reset() {
     setQuery("");
@@ -147,7 +296,7 @@ export default function RacesCalendar({ races, failed }: { races: Race[]; failed
   return (
     <div className={styles.wrap}>
       <header className={styles.top}>
-        <h1 className={styles.h1}>Старты России</h1>
+        <h1 className={styles.h1}>Забеги России</h1>
         <p className={styles.lede}>
           Шоссе, трейлы, ультра и триатлон. Введите город, и забеги разложатся по месяцам. У каждого
           старта ссылка на сайт организатора и регистрацию.
@@ -279,7 +428,7 @@ export default function RacesCalendar({ races, failed }: { races: Race[]; failed
                 </summary>
                 <ol className={styles.races}>
                   {m.races.map((r) => (
-                    <RaceItem key={r.id} r={r} />
+                    <RaceItem key={r.id} r={r} follow={followUi(r)} />
                   ))}
                 </ol>
               </details>
@@ -287,6 +436,41 @@ export default function RacesCalendar({ races, failed }: { races: Race[]; failed
           })
         )}
       </div>
+
+      {inTg ? (
+        <div className={styles.dock}>
+          <button
+            type="button"
+            className={`${styles.btn} ${styles.primary} ${styles.dockBtn}`}
+            aria-pressed={onlyMine}
+            onClick={() => setOnlyMine((v) => !v)}
+          >
+            {onlyMine ? "Все забеги" : `Мои забеги · ${saved.size}`}
+          </button>
+        </div>
+      ) : botUsername && bannerCity && !bannerClosed ? (
+        <div className={styles.dock}>
+          <div className={styles.banner}>
+            <div className={styles.bannerText}>
+              <b>Новые забеги {inCity(bannerCity)} в Telegram</b>
+              <span>одно сообщение в неделю</span>
+            </div>
+            <a
+              className={`${styles.btn} ${styles.primary}`}
+              href={tgLink(botUsername, `c_${citySlug(bannerCity)}`)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Подписаться
+            </a>
+            <button type="button" className={styles.bannerClose} aria-label="Скрыть" onClick={closeBanner}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

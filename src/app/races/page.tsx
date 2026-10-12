@@ -32,7 +32,11 @@ export default async function RacesPage() {
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
       <SiteHeader />
-      <RacesCalendar races={races} failed={loaded === null} />
+      <RacesCalendar
+        races={races}
+        failed={loaded === null}
+        botUsername={(process.env.RACES_BOT_USERNAME || "ruruns_bot").trim().replace(/^@/, "") || null}
+      />
     </div>
   );
 }

@@ -9,7 +9,7 @@ const CONTACT_EMAIL = "potseluevigoralexeevich@gmail.com";
 
 // Дата правится руками при каждом изменении текста. Автоподстановка new Date()
 // врала бы: «обновлено» менялось бы от пересборки, а не от правки политики.
-const UPDATED_AT = "11 октября 2026";
+const UPDATED_AT = "12 октября 2026";
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/privacy",
@@ -302,7 +302,23 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section number="08" title="Cookie и аналитика">
+        <Section number="08" title="Telegram-бот «Забеги России»">
+          <p style={bodyStyle}>
+            Бот @ruruns_bot присылает новые забеги вашего города и напоминания о
+            сохранённых стартах. Для этого он хранит ваш Telegram ID, имя и
+            username из Telegram, выбранный город, фильтры (тип и дистанции) и
+            список забегов, за которыми вы следите, а также отметки о том, какие
+            напоминания уже отправлены, чтобы не присылать их повторно.
+          </p>
+          <p style={bodyStyle}>
+            Если вы записываетесь на консультацию, тренер получает ваше имя,
+            username, город и список сохранённых забегов. Для рекламы данные не
+            используются и третьим лицам не передаются. Удалить всё, что бот знает
+            о вас, можно командой /delete прямо в боте: данные удаляются сразу.
+          </p>
+        </Section>
+
+        <Section number="09" title="Cookie и аналитика">
           <p style={bodyStyle}>
             На публичных страницах проекта нет рекламных трекеров и внешних
             систем аналитики. Служебные cookie используются только там, где нужен
@@ -310,7 +326,7 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section number="09" title="Изменения">
+        <Section number="10" title="Изменения">
           <p style={bodyStyle}>
             Если политика изменится, изменится и дата вверху страницы. Про
             изменения, которые расширяют состав собираемых данных, ученикам
@@ -358,6 +374,9 @@ export default function PrivacyPage() {
             The &ldquo;Add a race&rdquo; form on igorp.run/races collects the race link and,
             optionally, its name, city, date, a contact and an &ldquo;I am the
             organiser&rdquo; flag. The contact is used only to clarify race details.
+            The Telegram bot @ruruns_bot stores your Telegram ID, name, username,
+            city, filters and the races you follow; send /delete to the bot to
+            erase all of it immediately.
             To limit spam the server stores a salted hash of your IP address, not
             the address itself.
           </p>

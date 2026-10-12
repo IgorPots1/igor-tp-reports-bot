@@ -630,3 +630,112 @@
     padding: 12px 14px;
   }
 }
+
+/* ── бот «Забеги России»: «Следить в Telegram», звёздочка мини-аппа, плашка ── */
+
+.titleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.star {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.starOn {
+  background: var(--accent-ink);
+  border-color: var(--accent-ink);
+  color: #ffffff;
+}
+
+.star:disabled {
+  opacity: 0.6;
+}
+
+.follow {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.wrap .followBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border-radius: 12px;
+  background: var(--ink);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+  padding: 0 16px;
+  justify-self: start;
+}
+
+.followHint {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dock {
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  margin-top: 16px;
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+}
+
+.dockBtn {
+  width: 100%;
+  justify-content: center;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--ink);
+  color: #ffffff;
+  border-radius: 16px;
+  padding: 12px 8px 12px 14px;
+}
+
+.bannerText {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.bannerText span {
+  font-size: 13px;
+  color: #c9c3b6;
+}
+
+.bannerClose {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #c9c3b6;
+  cursor: pointer;
+}

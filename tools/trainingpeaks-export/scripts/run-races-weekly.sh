@@ -78,5 +78,8 @@ else
   STATUS=failed
 fi
 
+# Сводка бота «Забеги России» в ops-log теми же цифрами, что /stats. Сбой сводки не роняет прогон.
+npx --prefix "$REPO" tsx "$REPO/scripts/races-bot-stats.ts" --ops-log || echo "сводка бота: не получилась"
+
 npm --prefix "$REPO/tools/trainingpeaks-export" run --silent tp-heartbeat -- --job=races_weekly --status="$STATUS" || true
 echo "races weekly: готово ($STATUS)"
