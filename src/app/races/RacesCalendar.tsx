@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { citySlug, inCity, raceCode } from "@/features/races-bot/core";
+import { citySlug, inCity, raceCode, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
 
 import {
   DISTS,
@@ -17,6 +17,8 @@ import {
   filtersFromSearch,
   filtersToSearch,
   groupByMonth,
+  MONTHS,
+  norm,
   plural,
   type Filters,
   type Race,
@@ -148,10 +150,12 @@ export default function RacesCalendar({
   races,
   failed,
   botUsername,
+  expected = [],
 }: {
   races: Race[];
   failed: boolean;
   botUsername: string | null;
+  expected?: ExpectedItem[];
 }) {
   const [f, setF] = useState<Filters>(NO_FILTERS);
   const [query, setQuery] = useState("");
@@ -267,6 +271,23 @@ export default function RacesCalendar({
     return onlyMine ? base.filter((r) => saved.has(r.id)) : base;
   }, [races, f, onlyMine, saved]);
   const months = useMemo(() => groupByMonth(list), [list]);
+  // Ожидаемые: те же поиск и фильтры, что у стартов (дистанции — по километрам из строк).
+  const expectedByMonth = useMemo(() => {
+    if (onlyMine) return [];
+    const words = norm(f.q).split(/[\s,]+/).filter(Boolean);
+    const shown = expected.filter((e) => {
+      if (f.type !== "all" && e.type !== f.type) return false;
+      if (f.dist !== "all" && !distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)) return false;
+      const hay = norm(`${e.name} ${e.city} ${e.region}`);
+      return words.every((w) => hay.includes(w));
+    });
+    const by = new Map<number, ExpectedItem[]>();
+    for (const e of shown) by.set(e.lastMonth, [...(by.get(e.lastMonth) || []), e]);
+    // С ближайшего месяца: сейчас октябрь — сначала ноябрь, декабрь, потом весна.
+    const startM = new Date().getMonth() + 1;
+    return [...by.entries()].sort((a, b) => ((a[0] - startM + 12) % 12) - ((b[0] - startM + 12) % 12));
+  }, [expected, f, onlyMine]);
+  const expectedCount = expectedByMonth.reduce((n, [, xs]) => n + xs.length, 0);
   const typeBase = useMemo(() => applyFilters(races, f, "type"), [races, f]);
   const distBase = useMemo(() => applyFilters(races, f, "dist"), [races, f]);
   const cities = useMemo(() => {
@@ -436,6 +457,67 @@ export default function RacesCalendar({
           })
         )}
       </div>
+
+      {expectedCount ? (
+        <section className={styles.expected} aria-label="Ожидаемые старты">
+          <h2 className={styles.expectedTitle}>Ожидаются, дата 2027 пока не объявлена</h2>
+          <p className={styles.expectedLede}>
+            Прошли в прошлом сезоне, а даты следующего проведения ещё нет. {expectedCount}{" "}
+            {plural(expectedCount, "старт", "старта", "стартов")}, по месяцу прошлого проведения.
+          </p>
+          {expectedByMonth.map(([m, xs]) => (
+            <details key={m} className={styles.month}>
+              <summary className={styles.summary}>
+                <span className={styles.mName}>{MONTHS[m - 1]}</span>
+                <span className={styles.mCount}>
+                  <b>{xs.length}</b> ожидается
+                </span>
+                <span className={styles.caret} aria-hidden="true" />
+              </summary>
+              <ol className={styles.races}>
+                {xs.map((e) => (
+                  <li key={e.id} className={`${styles.race} ${styles.expectedItem}`}>
+                    <div className={styles.stub}>
+                      <div className={styles.d}>?</div>
+                      <div className={styles.w}>{MONTHS[m - 1].slice(0, 3).toLowerCase()}</div>
+                    </div>
+                    <div className={styles.body}>
+                      <div className={styles.title}>{e.name}</div>
+                      <div className={styles.where}>
+                        <b>{e.city || "место уточняется"}</b>
+                        {e.region && e.region !== e.city ? `, ${e.region}` : null} · {usuallyIn(m)}
+                      </div>
+                      <div className={styles.meta}>
+                        <span className={`${styles.pill} ${styles.expectedPill}`}>ожидается</span>
+                        {e.distances.slice(0, 5).map((d, i) => (
+                          <span key={`${d}-${i}`} className={`${styles.pill} ${styles.dist}`}>
+                            {d}
+                          </span>
+                        ))}
+                      </div>
+                      <div className={styles.links}>
+                        <a className={`${styles.btn} ${styles.quiet}`} href={e.lastUrl} target="_blank" rel="noopener noreferrer">
+                          Прошлый старт
+                        </a>
+                        {e.site ? (
+                          <a className={styles.btn} href={e.site} target="_blank" rel="noopener noreferrer">
+                            Организатор
+                          </a>
+                        ) : null}
+                        {botUsername ? (
+                          <a className={styles.btn} href={tgLink(botUsername, `e_${raceCode(e.id)}`)} target="_blank" rel="noopener noreferrer">
+                            Сообщить, когда объявят дату
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          ))}
+        </section>
+      ) : null}
 
       {inTg ? (
         <div className={styles.dock}>

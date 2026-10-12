@@ -24,6 +24,7 @@ import { toRace, type RaceRow } from "@/app/races/races-logic";
 import { validateTelegramInitDataWithToken } from "@/features/telegram/validate-init-data";
 import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotUser } from "@/features/races-bot/bot";
 import {
+  type ExpectedItem,
   START_PARAM_RE,
   citySlug,
   parseGo,
@@ -58,10 +59,17 @@ const EXTRA = Array.from({ length: 6 }, (_, i) =>
 
 let RACES: BotRace[] = [HALF, TRAIL, KAZAN, SHORT, ...EXTRA];
 
+// Ожидаемые: прошлогодние без даты. ANNOUNCED — какие уже объявили дату (id ожидаемого → race_id).
+const EXP_NIGHT: ExpectedItem = { id: "probeg:2", name: "Ночной забег", city: "Москва", region: "Москва", type: "road", distances: ["10 км"], km: [10], lastMonth: 6, lastDate: "2026-06-20", lastUrl: "https://probeg.org/event/2/", site: "" };
+const EXP_KAZAN: ExpectedItem = { id: "probeg:7", name: "Казанский ночной забег", city: "Казань", region: "Татарстан", type: "road", distances: ["10 км"], km: [10], lastMonth: 7, lastDate: "2026-07-11", lastUrl: "https://probeg.org/event/7/", site: "" };
+const EXPECTED: ExpectedItem[] = [EXP_NIGHT, EXP_KAZAN];
+const ANNOUNCED = new Map<string, string>();
+
 // ── хранилище в памяти и запись Telegram ─────────────────────────────────────
 
 function memStore(): BotStore & { users: Map<number, BotUser>; follows: BotFollow[]; sends: { tg_id: number; kind: string; race_id: string | null }[]; config: Map<string, string>; events: StatEvent[] } {
   const events: StatEvent[] = [];
+  const watches: { id: number; tg_id: number; expected_id: string; notified_at: string | null }[] = [];
   const users = new Map<number, BotUser>();
   const follows: BotFollow[] = [];
   const sends: { tg_id: number; kind: string; race_id: string | null }[] = [];
@@ -107,6 +115,12 @@ function memStore(): BotStore & { users: Map<number, BotUser>; follows: BotFollo
     async logEvent(tg, event, opts) {
       events.push({ tg_id: tg, event, race_id: opts?.raceId ?? null, source: opts?.source ?? null, meta: opts?.meta ?? {}, created_at: NOW.toISOString() });
     },
+    async addExpectedWatch(tg, eid) { if (!watches.some((w) => w.tg_id === tg && w.expected_id === eid)) watches.push({ id: watches.length + 1, tg_id: tg, expected_id: eid, notified_at: null }); },
+    async listExpectedWatches(tg) { return watches.filter((w) => w.tg_id === tg && !w.notified_at).map((w) => w.expected_id); },
+    async listDueAnnouncements() {
+      return watches.filter((w) => !w.notified_at && ANNOUNCED.has(w.expected_id)).map((w) => ({ id: w.id, tg_id: w.tg_id, expected_id: w.expected_id, race_id: ANNOUNCED.get(w.expected_id)! }));
+    },
+    async markWatchNotified(id) { const w = watches.find((x) => x.id === id); if (w) w.notified_at = NOW.toISOString(); },
     async loadStats(period, now) {
       return computeBotStats({
         users: [...users.values()].map((u) => ({ tg_id: u.tg_id, first_name: u.first_name, username: u.username, city: u.city, source: u.source, created_at: u.created_at, blocked: u.blocked })),
@@ -138,6 +152,7 @@ const bot = createBot({
   store,
   tg,
   races: async () => RACES,
+  expected: async () => EXPECTED.filter((e) => !ANNOUNCED.has(e.id)),
   now: () => NOW,
   coachUsername: "IgorPotseluev",
   reverseGeocode: async () => "Казань",
@@ -402,6 +417,44 @@ async function main() {
     assert.ok(mine.has(ev), `событие ${ev} пишется`);
   }
   assert.equal(store.events.find((e) => e.event === "start" && e.tg_id === 501)?.source, "src_ig_story", "старт с источником");
+
+  // ── ожидаемые старты: «Сообщить, когда объявят дату» ───────────────────────
+  {
+    const OLEG = { id: 811, first_name: "Олег", username: "oleg811" };
+    NOW = new Date("2026-10-12T10:00:00Z");
+    reset();
+    await bot.handleUpdate(msg(OLEG, "трейл Москва"));
+    await bot.handleUpdate(msg(OLEG, "забег Москва"));
+    const block = sent(811).find((c) => String(c.params.text).startsWith("Ожидаются, дата 2027 пока не объявлена"));
+    assert.ok(block, "под списком — ожидаемые города");
+    assert.match(String(block!.params.text), /Ночной забег<\/b>, Москва, обычно в июне/);
+    const watchBtn = buttons(block!).find((b) => b.callback_data?.startsWith("ew:"));
+    assert.ok(watchBtn, "кнопка «Сообщить, когда объявят»");
+    await bot.handleUpdate(cb(OLEG, watchBtn!.callback_data!));
+    assert.match(texts(811).at(-1)!, /сообщу, как только объявят дату «Ночной забег»/);
+    // с сайта: start=e_<код>
+    await bot.handleUpdate(msg(OLEG, `/start e_${raceCode(EXP_KAZAN.id)}`));
+    assert.match(texts(811).at(-1)!, /Казанский ночной забег/);
+    assert.equal(store.users.get(811)?.source, "e_*", "источник e_*");
+    // дата объявлена: в календаре появился старт, тик шлёт одно сообщение и добавляет в «Мои забеги»
+    const NIGHT27 = race("probeg:4001", "Ночной забег", "2027-06-19", "Москва", "road", [10]);
+    RACES = [...RACES, NIGHT27];
+    ANNOUNCED.set(EXP_NIGHT.id, NIGHT27.id);
+    reset();
+    NOW = new Date("2026-10-12T20:30:00Z"); // 23:30 МСК — тихие часы
+    await bot.runTick();
+    assert.ok(!texts(811).some((t) => t.startsWith("<b>Объявили дату")), "в тихие часы — ждём");
+    NOW = new Date("2026-10-13T08:00:00Z");
+    await bot.runTick();
+    const ann = texts(811).filter((t) => t.startsWith("<b>Объявили дату:</b> Ночной забег, 19 июня, сб"));
+    assert.equal(ann.length, 1, "«Объявили дату» одно сообщение");
+    assert.ok(store.follows.some((f) => f.tg_id === 811 && f.race_id === NIGHT27.id), "сразу в «Мои забеги»");
+    reset();
+    await bot.runTick();
+    assert.ok(!texts(811).some((t) => t.startsWith("<b>Объявили дату")), "повторно — нет");
+    assert.ok(store.events.some((e) => e.event === "expected_watch" && e.tg_id === 811));
+    assert.ok(store.events.some((e) => e.event === "expected_announced" && e.tg_id === 811));
+  }
 
   // ── /delete ───────────────────────────────────────────────────────────────
   await bot.handleUpdate(msg(USER, "/delete"));

@@ -10,7 +10,8 @@ create table if not exists public.race_bot_events (
   event text not null check (event in (
     'start', 'city_chosen', 'filters_done', 'list_shown', 'search', 'follow', 'unfollow', 'open_calendar',
     'click_registration', 'click_site', 'consult_offer_shown', 'consult_click', 'digest_sent',
-    'digest_opened_list', 'settings_less', 'pause', 'unsubscribe', 'delete', 'blocked'
+    'digest_opened_list', 'settings_less', 'pause', 'unsubscribe', 'delete', 'blocked',
+    'expected_watch', 'expected_announced'
   )),
   race_id text,
   source text,

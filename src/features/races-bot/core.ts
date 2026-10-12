@@ -55,6 +55,7 @@ export function citySlug(city: string): string {
 
 export type StartParam =
   | { kind: "race"; code: string }
+  | { kind: "expected"; code: string }
   | { kind: "city"; slug: string }
   | { kind: "src"; label: string }
   | { kind: "none" };
@@ -64,6 +65,7 @@ export function parseStart(raw: string | null | undefined): StartParam {
   if (!p || !START_PARAM_RE.test(p)) return { kind: "none" };
   if (p.startsWith("r_") && p.length > 2) return { kind: "race", code: p.slice(2) };
   if (p.startsWith("c_") && p.length > 2) return { kind: "city", slug: p.slice(2) };
+  if (p.startsWith("e_") && p.length > 2) return { kind: "expected", code: p.slice(2) };
   if (p.startsWith("src_") && p.length > 4) return { kind: "src", label: p.slice(4) };
   return { kind: "none" };
 }
@@ -325,4 +327,49 @@ export function planUser(input: {
     else if (left === 1 && hour >= 12 && once("d1")) out.push({ kind: "d1", race: r });
   }
   return out;
+}
+
+// ── ожидаемые старты (race_expected): прошлогодние без объявленной даты ──────
+
+export type ExpectedItem = {
+  id: string;
+  name: string;
+  city: string;
+  region: string;
+  type: string;
+  distances: string[];
+  km: number[];
+  lastMonth: number;
+  lastDate: string;
+  lastUrl: string;
+  site: string;
+};
+
+const MONTH_PREP = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
+
+/** «обычно в мае». */
+export function usuallyIn(month: number): string {
+  return `обычно в ${MONTH_PREP[(month - 1 + 12) % 12]}`;
+}
+
+/** «21,1 км» → 21.1, «500 м» → 0.5, «марафон» → 42.195. */
+export function distKm(d: string): number | null {
+  const s = d.toLowerCase();
+  if (/^марафон/.test(s)) return 42.195;
+  if (/^полумарафон/.test(s)) return 21.0975;
+  let m = s.match(/^(\d+(?:[.,]\d+)?)\s*км/);
+  if (m) return Number(m[1].replace(",", "."));
+  m = s.match(/^(\d+(?:[.,]\d+)?)\s*м(?![а-я])/);
+  if (m) return Number(m[1].replace(",", ".")) / 1000;
+  return null;
+}
+
+export function expectedInCity(e: ExpectedItem, city: string | null): boolean {
+  if (!city) return false;
+  const c = norm(city);
+  return norm(e.city) === c || (!!e.region && norm(e.region) === c);
+}
+
+export function findExpectedByCode(list: ExpectedItem[], code: string): ExpectedItem | null {
+  return list.find((e) => raceCode(e.id) === code) ?? null;
 }

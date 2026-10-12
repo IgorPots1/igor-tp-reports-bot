@@ -8,7 +8,8 @@ import { prepare, type RaceRow } from "@/app/races/races-logic";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotTg, type BotUser } from "./bot";
-import { localParts, raceCode, type BotRace, type GoCode } from "./core";
+import { localParts, raceCode, type BotRace, type ExpectedItem, type GoCode } from "./core";
+import { toExpected } from "@/app/races/expected";
 import { computeBotStats, type StatEvent, type StatFollow, type StatPeriod, type StatUser } from "./stats";
 import type { Weather } from "./texts";
 
@@ -209,7 +210,53 @@ export const supabaseStore: BotStore = {
   async loadStats(period, now) {
     return loadBotStats(period, now);
   },
+  async addExpectedWatch(tgId, expectedId) {
+    const { error } = await createSupabaseServerClient()
+      .from("race_bot_expected_watch")
+      .upsert({ tg_id: tgId, expected_id: expectedId }, { onConflict: "tg_id,expected_id", ignoreDuplicates: true });
+    fail("addExpectedWatch", error);
+  },
+  async listExpectedWatches(tgId) {
+    const { data, error } = await createSupabaseServerClient().from("race_bot_expected_watch").select("expected_id").eq("tg_id", tgId).is("notified_at", null);
+    fail("listExpectedWatches", error);
+    return ((data as { expected_id: string }[]) || []).map((r) => r.expected_id);
+  },
+  async listDueAnnouncements() {
+    const { data, error } = await createSupabaseServerClient()
+      .from("race_bot_expected_watch")
+      .select("id,tg_id,expected_id,race_expected!inner(status,race_id)")
+      .is("notified_at", null)
+      .eq("race_expected.status", "announced");
+    fail("listDueAnnouncements", error);
+    return ((data as unknown as { id: number; tg_id: number; expected_id: string; race_expected: { race_id: string | null } }[]) || [])
+      .filter((r) => r.race_expected?.race_id)
+      .map((r) => ({ id: r.id, tg_id: r.tg_id, expected_id: r.expected_id, race_id: r.race_expected.race_id as string }));
+  },
+  async markWatchNotified(id) {
+    fail("markWatchNotified", (await createSupabaseServerClient().from("race_bot_expected_watch").update({ notified_at: new Date().toISOString() }).eq("id", id)).error);
+  },
 };
+
+let expectedCache: { at: number; items: ExpectedItem[] } | null = null;
+
+/** Ожидаемые старты для бота (status = expected). Кэш 10 минут на инстанс. */
+export async function loadBotExpected(): Promise<ExpectedItem[]> {
+  if (expectedCache && Date.now() - expectedCache.at < 10 * 60 * 1000) return expectedCache.items;
+  const sb = createSupabaseServerClient();
+  const items: ExpectedItem[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from("race_expected")
+      .select("id,name,city,region,race_type,distances,last_month,last_date,last_url,site_url")
+      .eq("status", "expected")
+      .range(from, from + 999);
+    fail("race_expected", error);
+    items.push(...((data as Parameters<typeof toExpected>[0][]) || []).map(toExpected));
+    if (!data || data.length < 1000) break;
+  }
+  expectedCache = { at: Date.now(), items };
+  return items;
+}
 
 async function selectAll<T>(table: string, cols: string): Promise<T[]> {
   const sb = createSupabaseServerClient();
@@ -272,6 +319,7 @@ export function productionBot() {
     store: supabaseStore,
     tg: tgApi,
     races: loadBotRaces,
+    expected: loadBotExpected,
     coachUsername: coachUsername(),
     reverseGeocode: nominatimCity,
     weather: openMeteoWeather,

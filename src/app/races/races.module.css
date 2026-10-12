@@ -739,3 +739,30 @@
   color: #c9c3b6;
   cursor: pointer;
 }
+
+/* ── ожидаемые старты: без даты, серый бейдж ── */
+
+.expected {
+  margin-top: 28px;
+}
+
+.expectedTitle {
+  font-size: 20px;
+  margin: 0 0 6px;
+}
+
+.expectedLede {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.expectedItem .d {
+  color: var(--muted);
+}
+
+.wrap .expectedPill {
+  background: var(--chip);
+  color: var(--muted);
+  font-weight: 600;
+}

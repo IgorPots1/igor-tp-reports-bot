@@ -13,7 +13,9 @@ import {
   daysBetween,
   inCity,
   raceCode,
+  usuallyIn,
   type BotRace,
+  type ExpectedItem,
   type PlanFollow,
 } from "./core";
 
@@ -355,4 +357,35 @@ export function digest(
       ? [{ text: `И ещё ${races.length - 5} в календаре.`, reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь", city)]] } }]
       : [];
   return [head, ...cards, ...tail];
+}
+
+// ── ожидаемые старты ─────────────────────────────────────────────────────────
+
+/** Блок под списком: ожидаемые старты без даты и кнопка «Сообщить, когда объявят дату». */
+export function expectedBlock(items: ExpectedItem[], watching: Set<string>): Msg {
+  const lines = items.map((e) => `· <b>${esc(e.name)}</b>, ${esc(e.city || "место уточняется")}, ${usuallyIn(e.lastMonth)}`);
+  return {
+    text: `Ожидаются, дата 2027 пока не объявлена:\n${lines.join("\n")}`,
+    reply_markup: {
+      inline_keyboard: items.map((e) =>
+        watching.has(e.id)
+          ? [{ text: `✓ Сообщу: ${e.name.slice(0, 28)}`, callback_data: "noop" }]
+          : [{ text: `Сообщить, когда объявят: ${e.name.slice(0, 22)}`, callback_data: `ew:${raceCode(e.id)}` }],
+      ),
+    },
+  };
+}
+
+export function expectedWatching(e: ExpectedItem): Msg {
+  return {
+    text: `Хорошо: сообщу, как только объявят дату «${esc(e.name)}» (${esc(e.city || "")}, ${usuallyIn(e.lastMonth)}). Сразу добавлю его в «Мои забеги».`,
+    reply_markup: { inline_keyboard: [[{ text: "Прошлый старт", url: e.lastUrl }]] },
+  };
+}
+
+export function announced(r: Race): Msg {
+  return {
+    text: `<b>Объявили дату:</b> ${esc(r.name)}, ${longDate(r.ds)} · ${esc(r.city || "")}.\nДобавил его в «Мои забеги»: напомню, когда пора готовиться, и про погоду накануне.`,
+    reply_markup: NAV,
+  };
 }

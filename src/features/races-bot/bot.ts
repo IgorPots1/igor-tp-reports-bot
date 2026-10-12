@@ -9,6 +9,8 @@ import { norm } from "@/app/races/races-logic";
 
 import {
   consultAllowed,
+  expectedInCity,
+  findExpectedByCode,
   findCityBySlug,
   findRaceByCode,
   inCity,
@@ -23,6 +25,7 @@ import {
   raceCode,
   searchRaces,
   type BotRace,
+  type ExpectedItem,
   type PlanFollow,
   type PlanUser,
 } from "./core";
@@ -43,7 +46,8 @@ export type BotFollow = PlanFollow & { tg_id: number };
 export type BotEvent =
   | "start" | "city_chosen" | "filters_done" | "list_shown" | "search" | "follow" | "unfollow" | "open_calendar"
   | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
-  | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked";
+  | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked"
+  | "expected_watch" | "expected_announced";
 
 export type EventOpts = { raceId?: string | null; source?: string | null; meta?: Record<string, unknown> };
 
@@ -64,6 +68,11 @@ export interface BotStore {
   listAllFollows(): Promise<BotFollow[]>;
   listSentKeys(): Promise<Map<number, Set<string>>>;
   logEvent(tgId: number | null, event: BotEvent, opts?: EventOpts): Promise<void>;
+  addExpectedWatch(tgId: number, expectedId: string): Promise<void>;
+  listExpectedWatches(tgId: number): Promise<string[]>;
+  /** Подписки «сообщить, когда объявят», у которых старт уже announced и сообщение ещё не ушло. */
+  listDueAnnouncements(): Promise<{ id: number; tg_id: number; expected_id: string; race_id: string }[]>;
+  markWatchNotified(id: number): Promise<void>;
   loadStats(period: StatPeriod, now: Date): Promise<BotStatsReport>;
 }
 
@@ -77,6 +86,8 @@ export type BotDeps = {
   store: BotStore;
   tg: BotTg;
   races: () => Promise<BotRace[]>;
+  /** Ожидаемые старты (race_expected, status = expected). */
+  expected?: () => Promise<ExpectedItem[]>;
   now?: () => Date;
   coachUsername: string;
   reverseGeocode?: (lat: number, lon: number) => Promise<string | null>;
@@ -157,6 +168,30 @@ export function createBot(deps: BotDeps) {
     await send(chatId, T.greeting(races.length, knownCities(races).length));
   }
 
+  async function showExpected(u: BotUser, items: ExpectedItem[]) {
+    if (!items.length) return;
+    const watching = new Set(await store.listExpectedWatches(u.tg_id));
+    await send(u.tg_id, T.expectedBlock(items.slice(0, 3), watching));
+  }
+
+  async function expectedFor(filter: (e: ExpectedItem) => boolean): Promise<ExpectedItem[]> {
+    if (!deps.expected) return [];
+    try {
+      return (await deps.expected()).filter(filter);
+    } catch (e) {
+      console.error(`[races-bot] ожидаемые: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }
+  }
+
+  async function watchExpected(u: BotUser, code: string) {
+    const e = deps.expected ? findExpectedByCode(await deps.expected(), code) : null;
+    if (!e) return send(u.tg_id, { text: "Этот старт уже объявил дату или пропал из списка ожидаемых. Посмотри календарь." });
+    await store.addExpectedWatch(u.tg_id, e.id);
+    await track(u.tg_id, "expected_watch", { raceId: e.id, meta: { race_name: e.name } });
+    return send(u.tg_id, T.expectedWatching(e));
+  }
+
   async function showCityList(u: BotUser) {
     if (!u.city) return greet(u.tg_id);
     const races = (await deps.races()).filter((r) => inUserCity(r, u.city) && matchUser(r, u.types, u.distances));
@@ -167,6 +202,7 @@ export function createBot(deps: BotDeps) {
     for (const r of races.slice(0, 5)) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
     await send(u.tg_id, T.listFooter(races.length - 5, u.city, u.digest_on));
     await track(u.tg_id, "list_shown", { meta: { city: u.city, n: races.length } });
+    await showExpected(u, await expectedFor((e) => expectedInCity(e, u.city) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, u.types, u.distances)));
   }
 
   async function showSearch(u: BotUser, text: string) {
@@ -185,6 +221,11 @@ export function createBot(deps: BotDeps) {
     await track(u.tg_id, "list_shown", { meta: { search: true, n: found.length } });
     const digestOffer = city && norm(city) === norm(u.city) ? city : null;
     await send(u.tg_id, T.listFooter(found.length - 5, digestOffer, u.digest_on, s.q || undefined));
+    const words = s.q.split(/\s+/).filter(Boolean);
+    await showExpected(u, await expectedFor((e) =>
+      (city ? expectedInCity(e, city) : words.every((w) => norm(`${e.name} ${e.city} ${e.region}`).includes(w))) &&
+      matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, s.types, s.dists) &&
+      (!s.month || e.lastMonth === s.month)));
   }
 
   async function follow(u: BotUser, r: BotRace, via = "bot") {
@@ -232,7 +273,7 @@ export function createBot(deps: BotDeps) {
   async function onStart(u: BotUser, param: string | undefined) {
     const p = parseStart(param);
     // Источник для статистики: src_<метка> как есть, все ссылки на старты — «r_*», город — c_<город>.
-    const source = p.kind === "src" ? `src_${p.label}` : p.kind === "race" ? "r_*" : p.kind === "city" ? `c_${p.slug}` : null;
+    const source = p.kind === "src" ? `src_${p.label}` : p.kind === "race" ? "r_*" : p.kind === "city" ? `c_${p.slug}` : p.kind === "expected" ? "e_*" : null;
     await track(u.tg_id, "start", { source, meta: { param: param ?? null } });
     if (p.kind === "race") {
       if (!u.source) u = await store.saveUser({ tg_id: u.tg_id, source: "r_*" });
@@ -240,6 +281,10 @@ export function createBot(deps: BotDeps) {
       if (r) return follow(u, r);
       await send(u.tg_id, { text: "Этот забег уже прошёл или убран из календаря." });
       return greet(u.tg_id);
+    }
+    if (p.kind === "expected") {
+      if (!u.source) u = await store.saveUser({ tg_id: u.tg_id, source: "e_*" });
+      return watchExpected(u, p.code);
     }
     if (p.kind === "city") {
       const races = await deps.races();
@@ -340,6 +385,10 @@ export function createBot(deps: BotDeps) {
       case "show":
         await track(u.tg_id, "filters_done", { meta: { types: u.types, distances: u.distances } });
         return showCityList(u);
+      case "ew":
+        return watchExpected(u, arg);
+      case "noop":
+        return;
       case "dlist":
         await track(u.tg_id, "digest_opened_list");
         return showCityList(u);
@@ -455,7 +504,34 @@ export function createBot(deps: BotDeps) {
       if (!byUser.has(f.tg_id)) byUser.set(f.tg_id, []);
       byUser.get(f.tg_id)!.push(f);
     }
-    const counts: Record<string, number> = { users: users.length, sent: 0, blocked: 0, errors: 0 };
+    const counts: Record<string, number> = { users: users.length, sent: 0, blocked: 0, errors: 0, announced: 0 };
+    // «Объявили дату»: одно сообщение подписавшимся, старт сразу в «Мои забеги». Тихие часы уважаем.
+    try {
+      const userById = new Map(users.map((x) => [x.tg_id, x]));
+      for (const w of await store.listDueAnnouncements()) {
+        const u = userById.get(w.tg_id);
+        const r = racesById.get(w.race_id);
+        if (!u || !r) continue;
+        const { hour } = localParts(t, u.tz || "Europe/Moscow");
+        if (hour < 9 || hour >= 22) continue;
+        try {
+          await send(u.tg_id, T.announced(r));
+          await store.addFollow(u.tg_id, r);
+          await store.markWatchNotified(w.id);
+          await track(u.tg_id, "expected_announced", { raceId: r.id, meta: { race_name: r.name, expected_id: w.expected_id } });
+          counts.announced += 1;
+        } catch (e) {
+          if (e instanceof BotBlockedError) {
+            await store.saveUser({ tg_id: u.tg_id, blocked: true });
+            await track(u.tg_id, "blocked");
+            await store.markWatchNotified(w.id);
+          } else throw e;
+        }
+      }
+    } catch (e) {
+      counts.errors += 1;
+      console.error(`[races-bot] объявленные даты: ${e instanceof Error ? e.message : String(e)}`);
+    }
     for (const u of users) {
       const mine = byUser.get(u.tg_id) ?? [];
       const actions = planUser({ now: t, user: u, follows: mine, racesById, races, sent: sentByUser.get(u.tg_id) ?? new Set() });

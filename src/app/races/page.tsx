@@ -5,6 +5,7 @@ import SiteHeader from "@/components/SiteHeader";
 import { jetbrains, onest } from "@/lib/fonts";
 
 import RacesCalendar from "./RacesCalendar";
+import { loadExpected } from "./expected";
 import { loadRaces } from "./load";
 import "./races-page.css";
 import styles from "./races.module.css";
@@ -26,7 +27,7 @@ export const viewport: Viewport = {
 export const revalidate = 3600;
 
 export default async function RacesPage() {
-  const loaded = await loadRaces();
+  const [loaded, expected] = await Promise.all([loadRaces(), loadExpected()]);
   const races = loaded ?? [];
 
   return (
@@ -35,6 +36,7 @@ export default async function RacesPage() {
       <RacesCalendar
         races={races}
         failed={loaded === null}
+        expected={expected}
         botUsername={(process.env.RACES_BOT_USERNAME || "ruruns_bot").trim().replace(/^@/, "") || null}
       />
     </div>

@@ -3,6 +3,7 @@
 // Runs weekly (pg_cron). Protected by x-sync-key header.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
+import { buildExpected, findNextEdition, parsePastProbeg, probegPastUrl, weekWindows, type FutureRow, type PastRace } from "./expected.ts";
 
 const UA = "igorp.run race calendar (+https://igorp.run)";
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -593,6 +594,7 @@ async function checkLinks(limit: number) {
 //   ?stage=scrape&sources=a,b  -> fetch those calendars, upsert their rows, retire rows they no longer list
 //   ?stage=merge               -> link duplicates across sources (reads rows from the DB)
 //   ?stage=links               -> check that organiser sites answer
+//   ?stage=expected            -> last year's races without a next edition yet -> race_expected
 // merge order: richer sources first, so a race seen in several places keeps the most detailed row
 const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace"];
 const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> = {
@@ -678,6 +680,67 @@ async function mergeStage(today: Date, stats: Record<string, unknown>) {
   Object.assign(stats, { rows: all.length, merged, date_conflicts: conflicts, changed: changes.length });
 }
 
+// ---------- expected: прошлогодние старты без даты следующего проведения ----------
+// Обходит probeg по неделям за последние 380 дней (таблица режется на 100 строках — такую неделю
+// дробит по дням), сравнивает с календарём и пишет race_expected. Строки announced/dropped не трогает,
+// expected → announced, когда в календаре нашлось следующее проведение; давно прошедшие → dropped.
+async function expectedStage(today: Date, stats: Record<string, unknown>) {
+  const yesterday = iso(new Date(today.getTime() - 864e5));
+  const from = iso(new Date(today.getTime() - 380 * 864e5));
+  const past = new Map<string, PastRace>();
+  let capped = 0;
+  for (const [a, b] of weekWindows(from, yesterday)) {
+    let rows = parsePastProbeg(await get(probegPastUrl(a, b)));
+    if (rows.length >= 100) {
+      capped++;
+      rows = [];
+      for (let t = Date.parse(a); t <= Date.parse(b); t += 864e5) {
+        const d = iso(new Date(t));
+        rows.push(...parsePastProbeg(await get(probegPastUrl(d, d))));
+        await sleep(800);
+      }
+    }
+    for (const r of rows) past.set(r.sid, r);
+    await sleep(800);
+  }
+  const future: FutureRow[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await sb.from("race_calendar").select("id,name,date_start,city,region").gte("date_start", iso(today)).range(f, f + 999);
+    if (error) throw new Error(`calendar: ${error.message}`);
+    future.push(...((data || []) as FutureRow[]));
+    if (!data || data.length < 1000) break;
+  }
+  const { data: existingRows, error: exErr } = await sb.from("race_expected").select("id,name,city,last_date,status");
+  if (exErr) throw new Error(`race_expected: ${exErr.message}`);
+  const existing = new Map((existingRows || []).map((r) => [r.id as string, r]));
+  const { expected, announced } = buildExpected([...past.values()], future);
+  const now = new Date().toISOString();
+  // Новые и ещё ожидаемые — обновить; announced/dropped не трогать.
+  const upserts = expected
+    .filter((e) => !existing.has(e.id) || existing.get(e.id)!.status === "expected")
+    .map((e) => ({ ...e, status: "expected", seen_at: now, updated_at: now }));
+  for (let i = 0; i < upserts.length; i += 300) {
+    const { error } = await sb.from("race_expected").upsert(upserts.slice(i, i + 300), { onConflict: "id" });
+    if (error) throw new Error(`upsert expected: ${error.message}`);
+  }
+  // Объявленные: и из прохода, и среди уже ожидаемых строк, которых в проходе нет.
+  const toAnnounce = new Map(announced.filter((a) => existing.get(a.id)?.status === "expected").map((a) => [a.id, a.race_id]));
+  for (const r of existingRows || []) {
+    if (r.status !== "expected" || toAnnounce.has(r.id as string)) continue;
+    const next = findNextEdition({ name: r.name as string, city: (r.city as string) || "", date: r.last_date as string }, future);
+    if (next) toAnnounce.set(r.id as string, next.id);
+  }
+  for (const [id, race_id] of toAnnounce) {
+    const { error } = await sb.from("race_expected").update({ status: "announced", race_id, announced_at: now, updated_at: now }).eq("id", id).eq("status", "expected");
+    if (error) throw new Error(`announce ${id}: ${error.message}`);
+  }
+  const dropBefore = iso(new Date(today.getTime() - 400 * 864e5));
+  const { data: dropped, error: dErr } = await sb.from("race_expected").update({ status: "dropped", updated_at: now })
+    .eq("status", "expected").lt("last_date", dropBefore).select("id");
+  if (dErr) throw new Error(`drop: ${dErr.message}`);
+  Object.assign(stats, { past: past.size, capped_weeks: capped, expected: expected.length, written: upserts.length, announced: toAnnounce.size, dropped: (dropped || []).length });
+}
+
 Deno.serve(async (req) => {
   const { data: cfg } = await sb.from("race_sync_config").select("value").eq("key", "sync_key").single();
   if (!cfg?.value || req.headers.get("x-sync-key") !== cfg.value) return new Response("forbidden", { status: 403 });
@@ -694,6 +757,7 @@ Deno.serve(async (req) => {
     if (stage === "scrape") await scrapeStage(sources.length ? sources : ["probeg"], today, horizon, stats);
     else if (stage === "merge") await mergeStage(today, stats);
     else if (stage === "links") stats.links = await checkLinks(Number(params.get("limit") || 150));
+    else if (stage === "expected") await expectedStage(today, stats);
     await sb.from("race_sync_runs").update({ finished_at: new Date().toISOString(), stats }).eq("id", run!.id);
     return new Response(JSON.stringify(stats), { headers: { "Content-Type": "application/json" } });
   } catch (e) {

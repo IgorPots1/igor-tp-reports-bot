@@ -394,6 +394,7 @@
     "check:races-manual": "npx tsx scripts/check-races-manual.ts",
     "check:races-suggest": "npx tsx scripts/check-races-suggest.ts",
     "check:races-bot": "npx tsx scripts/check-races-bot.ts",
+    "check:races-expected": "npx tsx scripts/check-races-expected.ts",
     "check:og-images": "npx tsx scripts/check-og-images.ts",
     "check:fonts-selfhosted": "npx tsx scripts/check-fonts-selfhosted.ts",
     "check:checkin-draft": "npx tsx scripts/check-checkin-draft.ts",
