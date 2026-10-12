@@ -780,14 +780,14 @@ async function checkLinks(limit: number) {
 //   ?stage=expected            -> last year's races without a next edition yet -> race_expected
 // merge order: richer sources first, so a race seen in several places keeps the most detailed row
 // russiarunning - последним: новый источник не меняет уже сложившиеся склейки остальных.
-// ВНИМАНИЕ: на 12.10.2026 функция с russiarunning НЕ задеплоена и cron (scrape&sources=russiarunning) НЕ ставился.
+// russiarunning в бою с 12.10.2026: cron race-calendar-scrape-russiarunning, воскресенье 22:29 UTC.
 const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime", "heroleague", "russiarunning"];
 const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> = {
   probeg: (t, h) => probeg(t, h), marathonec: (t, h) => marathonec(t, h), ironstar: (t, h) => ironstar(t, h),
   orgeo: (t, h) => orgeo(t, h), where2run: (t, h) => where2run(t, h), myrace: (t, h) => myrace(t, h),
   sportsauce: (t, h) => sportsauce(t, h), racetime: (t, h) => racetime(t, h), regplace: (t) => regplace(t),
   otime: (t) => otime(t), heroleague: (t, h) => heroleague(t, h),
-  russiarunning: (t, h) => russiarunning(t, h), // cron не ставился (см. SECONDARY)
+  russiarunning: (t, h) => russiarunning(t, h),
 };
 
 async function scrapeStage(sources: string[], today: Date, horizon: Date, stats: Record<string, unknown>) {
