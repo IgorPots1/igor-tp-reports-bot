@@ -535,7 +535,70 @@ export function qualityFormatHint(workMin: number): string {
  * роль недели пересчитывается при сборке с учётом того, как прошла предыдущая (C2),
  * а реактивная разгрузка может понизить любую неделю в любой момент.
  */
-export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: number): WeekForecast[] {
+/**
+ * СЧЁТЧИК РОСТА ОБНУЛЯЕТСЯ ПОСЛЕ ПЕРЕРЫВА [наряд Игоря, 12.10.2026].
+ *
+ * Мезоцикл «три недели роста, четвёртая разгрузка» в цикле был всегда, но
+ * четвёртая считалась от ГЕОМЕТРИИ ЦИКЛА: индексы недель, отложенные от его
+ * конца шагом deloadEveryN. Факт того, бегал человек или нет, в расстановку не
+ * входил вообще.
+ *
+ * Отсюда абсурд, который и вскрылся: ученица не бегала восемь дней, вернулась,
+ * отработала первую неделю — и следующая по календарю оказалась разгрузочной.
+ * Разгрузка после одной недели работы разгружает от ничего.
+ *
+ * ПОЧЕМУ ДНИ, А НЕ ПРОПУЩЕННЫЕ ТРЕНИРОВКИ. Для лестницы формата единицей
+ * выбрана пропущенная плановая (её обычный промежуток 3–4 дня, и порог в днях
+ * ложно срабатывал бы на нормальном ритме). Здесь порог семь дней, он заведомо
+ * больше любого нормального промежутка, поэтому день — честная единица.
+ *
+ * ПРОМЕЖУТКИ СЧИТАЮТСЯ МЕЖДУ ПРОБЕЖКАМИ, А НЕ ПО ЗАПИСИ О ПАУЗЕ. У неё пауза
+ * записана 01–05.10, это пять дней, а без бега она была с 30.09 по 08.10 —
+ * восемь. Запись о паузе отражает договорённость, а счётчик роста должен
+ * отражать тренировки: человек мог не бегать и без паузы, и наоборот.
+ */
+export const GROWTH_RESET_GAP_DAYS = 7;
+
+/**
+ * Индексы недель (1-based), в которых счётчик роста начинается заново.
+ *
+ * Неделя сброса — та, в которую попала ПЕРВАЯ ПРОБЕЖКА ПОСЛЕ перерыва: именно
+ * она и есть «рост 1». Неделя самого перерыва ростом не считается: в ней
+ * тренировок не было.
+ */
+export function growthResetWeekIndexes(input: {
+  runDates: string[];
+  firstWeekStart: string;
+  weeks: number;
+}): number[] {
+  const days = [...new Set(input.runDates)].filter(Boolean).sort();
+  const start = Date.parse(`${input.firstWeekStart}T00:00:00Z`);
+  const idxOf = (iso: string): number =>
+    Math.floor((Date.parse(`${iso}T00:00:00Z`) - start) / (7 * 86_400_000)) + 1;
+
+  const out: number[] = [];
+  for (let i = 1; i < days.length; i += 1) {
+    const gap = Math.round(
+      (Date.parse(`${days[i]}T00:00:00Z`) - Date.parse(`${days[i - 1]}T00:00:00Z`)) / 86_400_000
+    );
+    if (gap < GROWTH_RESET_GAP_DAYS) continue;
+    const idx = idxOf(days[i]);
+    if (idx >= 1 && idx <= input.weeks && !out.includes(idx)) out.push(idx);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+export function forecast(
+  draft: CycleDraft,
+  firstWeekStart: string,
+  weeks: number,
+  /**
+   * Недели (1-based), где счётчик роста обнулён перерывом. Не передали —
+   * расстановка прежняя, от геометрии цикла: вызовы, которые о перерывах не
+   * знают, ломаться не должны.
+   */
+  growthResets: number[] = []
+): WeekForecast[] {
   const out: WeekForecast[] = [];
   let aer = draft.baseAerobicMin;
   let qual = draft.baseQualityMin;
@@ -576,8 +639,30 @@ export function forecast(draft: CycleDraft, firstWeekStart: string, weeks: numbe
       ? weeks
       : weeksToRace - taperLen;                       // неделя перед началом подводки
     const lastAllowed = lastGrowthIdx - MIN_GROWTH_BETWEEN_DELOAD_AND_TAPER;
-    for (let k = lastAllowed; k >= 2; k -= draft.deloadEveryN) {
-      if (k <= weeks) deloadWeeks.add(k);
+
+    const lastReset = growthResets.length > 0 ? Math.max(...growthResets) : null;
+    if (lastReset !== null) {
+      /**
+       * СЧЁТЧИК ИДЁТ ВПЕРЁД ОТ СБРОСА, А НЕ НАЗАД ОТ КОНЦА ЦИКЛА.
+       *
+       * Неделя сброса — рост 1, разгрузка после третьей недели роста, то есть
+       * на deloadEveryN-й считая от сброса. Дальше тем же шагом: «все разгрузки
+       * дальше по циклу сдвигаются следом».
+       *
+       * Недели ДО сброса оставляем прежней геометрии, но только те, что строго
+       * раньше него: после сброса прошлая расстановка больше ничего не
+       * описывает, и держать её значило бы поставить две разгрузки рядом.
+       */
+      for (let k = lastReset + draft.deloadEveryN - 1; k <= Math.min(weeks, lastAllowed); k += draft.deloadEveryN) {
+        deloadWeeks.add(k);
+      }
+      for (let k = lastAllowed; k >= 2; k -= draft.deloadEveryN) {
+        if (k < lastReset) deloadWeeks.add(k);
+      }
+    } else {
+      for (let k = lastAllowed; k >= 2; k -= draft.deloadEveryN) {
+        if (k <= weeks) deloadWeeks.add(k);
+      }
     }
   }
 

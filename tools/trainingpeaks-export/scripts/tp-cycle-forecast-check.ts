@@ -42,6 +42,8 @@ import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
   MAX_SINGLE_STEP, STEP_AEROBIC, STEP_QUALITY, TAPER_PROFILE, TAPER_NO_PEAK_FACTOR,
   clampShare, forecast, pickTargetRace, weightedWeeklyBase, type CycleDraft, type CycleIntent,
+  growthResetWeekIndexes,
+  GROWTH_RESET_GAP_DAYS,
 } from "./lib/training-cycle.ts";
 
 const addWeeks = (d: string, n: number): string => new Date(Date.parse(d) + n * 7 * 86400000).toISOString().slice(0, 10);
@@ -94,6 +96,75 @@ async function main(): Promise<void> {
     check("возврат после разгрузки = уровню последней недели роста",
       di > 0 && !!lastGrowthBefore && !!afterDeload && afterDeload.aerobicMin === lastGrowthBefore.aerobicMin,
       `до разгрузки ${lastGrowthBefore?.aerobicMin}, после ${afterDeload?.aerobicMin} — должны совпадать`);
+  }
+
+  // ── 1a. СЧЁТЧИК РОСТА ОБНУЛЯЕТСЯ ПЕРЕРЫВОМ [наряд Игоря, 12.10.2026] ──
+  //
+  // ПОЧЕМУ ЭТИХ УТВЕРЖДЕНИЙ НЕ БЫЛО. Прежние проверки ищут разгрузку поиском
+  // (findIndex по роли) и говорят о её ГЛУБИНЕ и о возврате после неё. ГДЕ она
+  // стоит, не стерёг никто — поэтому расстановка спокойно считалась от
+  // геометрии цикла, и у живой ученицы разгрузка встала через одну неделю
+  // после восьми дней без бега. Разгрузка после одной недели работы разгружает
+  // от ничего.
+  {
+    const d = draft();
+    const weeks = 14;
+
+    // Без перерывов — расстановка прежняя, старые вызовы не ломаются.
+    const plain = forecast(d, MON, weeks);
+    const plainDeloads = plain.filter((x) => x.role === "плановая разгрузка").map((x) => x.index);
+    const withEmpty = forecast(d, MON, weeks, []);
+    check("без перерывов расстановка не меняется",
+      JSON.stringify(plainDeloads) === JSON.stringify(withEmpty.filter((x) => x.role === "плановая разгрузка").map((x) => x.index)),
+      `${plainDeloads.join(",")} против ${withEmpty.filter((x) => x.role === "плановая разгрузка").map((x) => x.index).join(",")}`);
+
+    // Сброс на 4-й неделе: она рост 1, разгрузка на 4-й СЧИТАЯ ОТ НЕЁ, то есть 7-я.
+    const reset = forecast(d, MON, weeks, [4]);
+    const deloads = reset.filter((x) => x.role === "плановая разгрузка").map((x) => x.index);
+    check("после сброса разгрузка стоит через три недели роста, а не по геометрии цикла",
+      deloads.includes(4 + d.deloadEveryN - 1) && !deloads.includes(4),
+      `разгрузки на неделях ${deloads.join(", ")}; ждём ${4 + d.deloadEveryN - 1}, и НЕ ждём 4`);
+    check("неделя сброса это рост, а не разгрузка",
+      reset[3].role === "рост", `неделя 4: ${reset[3].role}`);
+    check("две недели после сброса тоже рост",
+      reset[4].role === "рост" && reset[5].role === "рост",
+      `недели 5 и 6: ${reset[4].role} / ${reset[5].role}`);
+    // «Все разгрузки дальше по циклу сдвигаются следом».
+    check("дальше тем же шагом",
+      deloads.includes(4 + 2 * d.deloadEveryN - 1),
+      `ждём ещё одну на ${4 + 2 * d.deloadEveryN - 1}: ${deloads.join(", ")}`);
+    // Прежняя расстановка после сброса НЕ остаётся: две разгрузки рядом хуже
+    // любой одной не на месте.
+    check("прежние разгрузки после сброса сняты",
+      plainDeloads.filter((i) => i >= 4).every((i) => !deloads.includes(i) || (i - (4 + d.deloadEveryN - 1)) % d.deloadEveryN === 0),
+      `было ${plainDeloads.join(",")}, стало ${deloads.join(",")}`);
+  }
+
+  // ── 1b. ПРОМЕЖУТКИ СЧИТАЮТСЯ МЕЖДУ ПРОБЕЖКАМИ ──
+  {
+    // Её настоящие пробежки: 20, 23, 26, 30 сентября, затем 8, 9, 11 октября.
+    // Между 30.09 и 08.10 восемь дней — это сброс. Остальные промежутки 3–4 дня.
+    const runDates = ["2026-09-20", "2026-09-23", "2026-09-26", "2026-09-30", "2026-10-08", "2026-10-09", "2026-10-11"];
+    const idx = growthResetWeekIndexes({ runDates, firstWeekStart: "2026-09-14", weeks: 14 });
+    check("восьмидневный перерыв даёт сброс на неделе первой пробежки ПОСЛЕ него",
+      JSON.stringify(idx) === JSON.stringify([4]),
+      `недели сброса: ${idx.join(", ") || "нет"}; ждём 4 (неделя 05.10, в неё попала пробежка 08.10)`);
+    // Её обычный ритм сбросов НЕ даёт: 3–4 дня это норма, а не перерыв.
+    check("промежутки 3–4 дня сбросом не считаются",
+      growthResetWeekIndexes({ runDates: runDates.slice(0, 4), firstWeekStart: "2026-09-14", weeks: 14 }).length === 0,
+      "на 20/23/26/30 сентября сбросов быть не должно");
+    // Ровно семь дней — уже сброс: порог включительный.
+    check(`ровно ${GROWTH_RESET_GAP_DAYS} дней это уже сброс`,
+      growthResetWeekIndexes({ runDates: ["2026-09-14", "2026-09-21"], firstWeekStart: "2026-09-14", weeks: 14 }).length === 1,
+      "порог включительный");
+    check(`шесть дней это ещё не сброс`,
+      growthResetWeekIndexes({ runDates: ["2026-09-14", "2026-09-20"], firstWeekStart: "2026-09-14", weeks: 14 }).length === 0,
+      "шесть дней под порог не попадают");
+    // Одна пробежка или ни одной — сбросов нет: «никогда не бегал» это не перерыв.
+    check("без пробежек и с одной пробежкой сбросов нет",
+      growthResetWeekIndexes({ runDates: [], firstWeekStart: "2026-09-14", weeks: 14 }).length === 0 &&
+      growthResetWeekIndexes({ runDates: ["2026-09-14"], firstWeekStart: "2026-09-14", weeks: 14 }).length === 0,
+      "пусто");
   }
 
   // ── 2. разгрузка режет ровно на заявленные доли от ПОКАЗАННОЙ прошлой недели ──

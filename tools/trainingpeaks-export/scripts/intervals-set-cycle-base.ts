@@ -39,7 +39,7 @@ import { getOnboardingAnswers } from "@/features/intervals/loop/repository";
 import { startingPointFromAnswers } from "@/features/intervals/onboarding/starting-point";
 
 import { buildDraftFromOnboarding } from "./lib/intervals-plan-adapter.ts";
-import { forecast } from "./lib/training-cycle.ts";
+import { forecast, growthResetWeekIndexes, GROWTH_RESET_GAP_DAYS } from "./lib/training-cycle.ts";
 
 const COMMIT = process.argv.includes("--commit");
 
@@ -207,7 +207,29 @@ async function main(): Promise<void> {
 
   const firstWeekStart = String(cycle.first_week_start);
   const lengthWeeks = Number(cycle.length_weeks);
-  const weeks = forecast(draft, firstWeekStart, lengthWeeks);
+  /**
+   * СБРОС СЧЁТЧИКА РОСТА СЧИТАЕТСЯ ПО ФАКТУ ПРОБЕЖЕК [наряд Игоря, 12.10.2026].
+   *
+   * Промежутки берутся МЕЖДУ ПРОБЕЖКАМИ, а не из записи о паузе: запись
+   * отражает договорённость, а счётчик роста должен отражать тренировки.
+   * Человек мог не бегать и без паузы, и наоборот.
+   */
+  const { data: runRows } = await supabase
+    .from("intervals_activities")
+    .select("start_date_local")
+    .eq("source_id", String(source.id))
+    .order("start_date_local", { ascending: true });
+  const runDates = (runRows ?? [])
+    .map((r) => String((r as { start_date_local: string }).start_date_local ?? "").slice(0, 10))
+    .filter(Boolean);
+  const resets = growthResetWeekIndexes({ runDates, firstWeekStart, weeks: lengthWeeks });
+  if (resets.length > 0) {
+    console.log(
+      `  ✋ счётчик роста обнулён перерывом ${GROWTH_RESET_GAP_DAYS}+ дней: недели ${resets.join(", ")} — ` +
+        `разгрузка считается вперёд от последней из них`
+    );
+  }
+  const weeks = forecast(draft, firstWeekStart, lengthWeeks, resets);
 
   console.log(
     `\nСтанет: аэробная база ${draft.baseAerobicMin} + работа ${draft.baseQualityMin} мин/нед · ` +
