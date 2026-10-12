@@ -191,6 +191,7 @@ async function main(): Promise<void> {
   // ── Запись и происхождение ──
   step("ЗАПИСЬ И ПРОИСХОЖДЕНИЕ");
   const written = await saveOnboardingAnswers({
+    changedBy: "script:check-onboarding-prefill",
     sourceId,
     goalKind: merged.values.goalKind as "start_running",
     raceDate: null,

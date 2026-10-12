@@ -370,6 +370,8 @@
     "check:first-student-loop": "npx tsx scripts/check-first-student-loop.ts",
     "intervals:sync": "npx tsx scripts/intervals-sync-active.ts",
     "check:onboarding-prefill": "npx tsx scripts/check-onboarding-prefill.ts",
+    "check:onboarding-history": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/check-onboarding-history.ts",
+    "anketa:history": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local scripts/anketa-history.ts",
     "check:valentina-form": "npx tsx scripts/check-valentina-form.ts",
     "check:intervals-oauth": "npx tsx scripts/check-intervals-oauth.ts",
     "check:connection-health": "npx tsx scripts/check-connection-health.ts",

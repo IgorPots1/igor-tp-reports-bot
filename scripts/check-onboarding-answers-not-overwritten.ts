@@ -54,6 +54,7 @@ async function main(): Promise<void> {
   // флагами (improve/4 дня/200 мин) — ровно так тренер и напоролся на баг
   // на Валентине, задав план не тем, что она ответила.
   const saved = await saveOnboardingAnswers({
+    changedBy: "script:check-onboarding-answers-not-overwritten",
     sourceId,
     goalKind: "regular",
     raceDate: null,

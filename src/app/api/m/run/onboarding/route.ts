@@ -201,6 +201,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   const saved = await saveOnboardingAnswers({
+    // АНКЕТУ ЗАПОЛНЯЕТ УЧЕНИЦА, и источник у такой правки она сама.
+    changedBy: "student",
+    origin: "student_answer",
     sourceId,
     goalKind: values.goalKind,
     raceDate: values.raceDate,

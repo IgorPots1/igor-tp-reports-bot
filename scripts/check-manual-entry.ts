@@ -84,6 +84,7 @@ async function main(): Promise<void> {
 
   step("АНКЕТА, ЧТОБЫ БЫЛО КУДА ЗАКРЫВАТЬ ПЛАНОВУЮ СЕССИЮ");
   const savedAnswers = await saveOnboardingAnswers({
+    changedBy: "script:check-manual-entry",
     sourceId,
     goalKind: "improve",
     raceDate: null,

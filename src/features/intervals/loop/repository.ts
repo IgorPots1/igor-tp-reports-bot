@@ -10,6 +10,7 @@ import { createSupabaseServerClient, describeSupabaseError } from "@/features/su
 
 import type { CheckinChange, CheckinEdit, CheckinSnapshot } from "./checkin-edit";
 import type { Pause } from "./pause";
+import { onboardingFieldChanges, type FieldOrigin } from "./onboarding-history";
 
 import { isPrefillableField, type Prefill, type PrefillableField } from "./prefill";
 import type {
@@ -957,6 +958,22 @@ export async function getOnboardingAnswers(
 
 export type OnboardingAnswersInput = {
   sourceId: string;
+  /**
+   * КТО ПРАВИТ: "student" | "coach:<кто>" | "script:<какой>".
+   *
+   * Поле ОБЯЗАТЕЛЬНОЕ, и это выбор: с необязательным у него был бы дефолт, а
+   * дефолт здесь означает приписать правку не тому. Типизация заставляет
+   * каждое место вызова ответить на вопрос, кто это делает.
+   */
+  changedBy: string;
+  /**
+   * ОТКУДА ВЗЯТО. Для коачских правок обязательно — так требует наряд и так
+   * держит констрейнт в базе. Правка ученицей источника не требует: она и есть
+   * источник.
+   */
+  origin?: FieldOrigin | null;
+  /** Свободная пометка в историю: «пересчитал по отданным неделям». */
+  originNote?: string | null;
   goalKind: "race" | "regular" | "improve" | "start_running" | null;
   raceDate: string | null;
   raceDistanceKm: number | null;
@@ -993,6 +1010,18 @@ export async function saveOnboardingAnswers(
   client?: Client
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   const supabase = client ?? createSupabaseServerClient();
+  /**
+   * СНИМОК «ДО» ЧИТАЕТСЯ ОБЯЗАТЕЛЬНО ДО UPSERT: после него прежних значений
+   * взять неоткуда. Та же развилка, что у чек-инов (getCheckinByDate перед
+   * saveCheckin), и ошибиться в ней легко — порядок здесь и есть правило.
+   */
+  const { data: beforeData } = await supabase
+    .from("intervals_onboarding_answers")
+    .select("*")
+    .eq("source_id", input.sourceId)
+    .maybeSingle();
+  const beforeRow = (beforeData as Record<string, unknown> | null) ?? null;
+
   const { data, error } = await supabase
     .from("intervals_onboarding_answers")
     .upsert(
@@ -1024,6 +1053,60 @@ export async function saveOnboardingAnswers(
     .select("id")
     .single();
   if (error) return { ok: false, message: describeSupabaseError(error) };
+
+  /**
+   * ИСТОРИЯ ПИШЕТСЯ ПОСЛЕ УСПЕШНОЙ ЗАПИСИ, И ЕЁ СБОЙ НЕ ОТМЕНЯЕТ АНКЕТУ.
+   *
+   * Порядок выбран так осознанно. Анкета — то, по чему человеку собирают план;
+   * история — то, по чему потом разбираются. Потерять анкету из-за того, что не
+   * записалась история, значит поменять важное на второстепенное. Сбой истории
+   * уходит в лог ОТДЕЛЬНОЙ строкой: молча терять провенанс тоже нельзя, иначе
+   * через месяц окажется, что его нет, и никто не вспомнит почему.
+   */
+  const changes = onboardingFieldChanges(beforeRow, {
+    goal_kind: input.goalKind,
+    race_date: input.raceDate,
+    race_distance_km: input.raceDistanceKm,
+    days_per_week: input.daysPerWeek,
+    self_reported_weekly_minutes: input.selfReportedWeeklyMinutes,
+    unavailable_weekdays: input.unavailableWeekdays,
+    preferred_long_weekday: input.preferredLongWeekday,
+    can_run_continuously: input.canRunContinuously,
+    run_style: input.runStyle,
+    week_stability: input.weekStability,
+    available_weekdays: input.availableWeekdays,
+    preferred_quality_weekday: input.preferredQualityWeekday,
+    time_of_day: input.timeOfDay,
+    run_surfaces: input.runSurfaces,
+    week_breakers: input.weekBreakers,
+    max_session_minutes: input.maxSessionMinutes,
+    days_per_week_source: input.daysPerWeekSource,
+    coach_set_fields: input.coachSetFields,
+  });
+  if (changes.length > 0) {
+    const { error: histError } = await supabase
+      .from("intervals_onboarding_field_history")
+      .insert(
+        changes.map((change) => ({
+          source_id: input.sourceId,
+          field: change.field,
+          value_before: change.valueBefore,
+          value_after: change.valueAfter,
+          changed_by: input.changedBy,
+          origin: input.origin ?? null,
+          note: input.originNote ?? null,
+        }))
+      );
+    if (histError) {
+      console.error("[intervals.anketa] история полей НЕ записана", {
+        sourceId: input.sourceId,
+        changedBy: input.changedBy,
+        fields: changes.map((c) => c.field),
+        error: describeSupabaseError(histError),
+      });
+    }
+  }
+
   return { ok: true, id: String((data as { id: string }).id) };
 }
 

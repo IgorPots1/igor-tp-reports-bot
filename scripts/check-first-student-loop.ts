@@ -176,6 +176,7 @@ async function main(): Promise<void> {
   step("1. ФОРМА");
 
   const tooManyDays = await saveOnboardingAnswers({
+    changedBy: "script:check-first-student-loop",
     sourceId,
     goalKind: "start_running",
     raceDate: null,
@@ -201,6 +202,7 @@ async function main(): Promise<void> {
   );
 
   const noContinuity = await saveOnboardingAnswers({
+    changedBy: "script:check-first-student-loop",
     sourceId,
     goalKind: "start_running",
     raceDate: null,
@@ -226,6 +228,7 @@ async function main(): Promise<void> {
   );
 
   const saved = await saveOnboardingAnswers({
+    changedBy: "script:check-first-student-loop",
     sourceId,
     goalKind: "start_running",
     raceDate: null,
