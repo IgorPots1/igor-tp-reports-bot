@@ -217,7 +217,7 @@ async function main(): Promise<void> {
   const { data: runRows } = await supabase
     .from("intervals_activities")
     .select("start_date_local")
-    .eq("source_id", String(source.id))
+    .eq("source_id", sourceId)
     .order("start_date_local", { ascending: true });
   const runDates = (runRows ?? [])
     .map((r) => String((r as { start_date_local: string }).start_date_local ?? "").slice(0, 10))
