@@ -149,12 +149,12 @@ export const supabaseStore: BotStore = {
       fail("claimSend", (await sb.from("race_bot_sends").insert({ tg_id: tgId, kind, race_id: null })).error);
       return true;
     }
-    const { data, error } = await sb
-      .from("race_bot_sends")
-      .upsert({ tg_id: tgId, kind, race_id: raceId }, { onConflict: "tg_id,kind,race_id", ignoreDuplicates: true })
-      .select("id");
+    // Обычная вставка: уникальный индекс частичный (where race_id is not null), и ON CONFLICT
+    // через PostgREST его не выводит. Конфликт 23505 = уже отправляли.
+    const { error } = await sb.from("race_bot_sends").insert({ tg_id: tgId, kind, race_id: raceId });
+    if (error && (error as { code?: string }).code === "23505") return false;
     fail("claimSend", error);
-    return (data || []).length > 0;
+    return true;
   },
   async releaseSend(tgId, kind, raceId) {
     let q = createSupabaseServerClient().from("race_bot_sends").delete().eq("tg_id", tgId).eq("kind", kind);
