@@ -484,6 +484,87 @@ async function regplace(today: Date): Promise<Race[]> {
   return out;
 }
 
+// ---------- source: reg.o-time.ru (Северо-Запад, все виды спорта; берём только бег: sport/2) ----------
+const EN_MON: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const RU_MON_H2: Record<string, number> = { "январ": 1, "феврал": 2, "март": 3, "апрел": 4, "май": 5, "июн": 6, "июл": 7, "август": 8, "сентябр": 9, "октябр": 10, "ноябр": 11, "декабр": 12 };
+function otimeRegion(r: string): string {
+  r = clean(r);
+  if (/^р\.\s*/i.test(r)) return "Республика " + r.replace(/^р\.\s*/i, "");
+  return r.replace(/\s*обл\.?$/i, " область").replace(/\s*кр\.?$/i, " край");
+}
+function otimeCity(region: string, place: string): string {
+  if (FEDERAL.includes(region)) return region;
+  const m = place.match(/(?:^|[\s,])(?:г\.|д\.|дер\.|с\.|п\.|пос\.|пгт|р\.п\.|ст\.)\s*([А-ЯЁ][А-Яа-яЁё-]+(?: [А-ЯЁ][а-яё-]+)?)/);
+  if (m) return m[1];
+  return region.replace(/^Республика /, "");
+}
+async function otime(today: Date): Promise<Race[]> {
+  let html = "";
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch("https://reg.o-time.ru/calendar", { headers: { "User-Agent": UA, "Accept-Language": "ru" } });
+      if (r.ok) { html = new TextDecoder("windows-1251").decode(new Uint8Array(await r.arrayBuffer())); break; }
+    } catch (e) { if (i === 2) throw e; }
+    await sleep(1500 * (i + 1));
+  }
+  if (!html) throw new Error("o-time: empty");
+  const out: Race[] = [];
+  const seen = new Set<string>();
+  let h2Year = 0, h2Month = 0;
+  for (const sec of html.split(/<H2>/i).slice(1)) {
+    const title = clean(sec.slice(0, sec.search(/<\/H2>/i)).replace(/<[^>]+>/g, " "));
+    const ym = title.match(/([А-Яа-яЁё]+)\s+(\d{4})/);
+    if (ym) { h2Year = +ym[2]; h2Month = Object.entries(RU_MON_H2).find(([k]) => ym[1].toLowerCase().startsWith(k))?.[1] || 0; }
+    for (const day of sec.split('<div class="all">').slice(1)) {
+      const dm = day.match(/<article class="alldate"><b><font[^>]*>(\d{1,2})<br><font[^>]*>([A-Za-z]{3})/);
+      if (!dm) continue;
+      const d = +dm[1], mo = EN_MON[dm[2].toLowerCase()];
+      if (!mo) continue;
+      let year = ym && h2Month === mo ? h2Year : today.getUTCFullYear();
+      if (!(ym && h2Month === mo) && Date.UTC(year, mo - 1, d) < today.getTime() - 14 * 864e5) year++;
+      const date = iso(new Date(Date.UTC(year, mo - 1, d)));
+      if (date < iso(today)) continue;
+      for (const row of day.split(/<div class="allinner\d*">/).slice(1)) {
+        if (!/img\/sport\/2\.png/.test(row)) continue;
+        const nm = row.match(/<article class="allname">[\s\S]*?<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
+        if (!nm) continue;
+        const href = decode(nm[1]);
+        let name = clean(decode(nm[2].replace(/<[^>]+>/g, "")));
+        if (/отмен/i.test(name)) continue;
+        name = name.replace(/^\[[^\]]*\]\s*/, "").trim();
+        let dateEnd = date;
+        const span = name.match(/\s*\((\d{2})\.(\d{2})\s*-\s*(\d{2})\.(\d{2})\)\s*$/);
+        if (span) {
+          name = name.slice(0, span.index).trim();
+          const ey = +span[4] < mo ? year + 1 : year;
+          dateEnd = `${ey}-${span[4]}-${span[3]}`;
+        }
+        const pm = row.match(/<article class="allplace"><b>([\s\S]*?)<\/b>([\s\S]*?)<\/article>/);
+        const region = otimeRegion(decode((pm?.[1] || "").replace(/<[^>]+>/g, "")));
+        const place = clean(decode((pm?.[2] || "").replace(/<[^>]+>/g, "")));
+        const city = otimeCity(region, place);
+        if (!name || ORGEO_SKIP.test(name.replace(/\s+и\s+детск[\s\S]*$/i, "")) || !okRace(name, city)) continue;
+        const raceId = (href.match(/reg\.o-time\.ru\/race\/(\d+)/) || [])[1];
+        const sid = raceId || `${date}-${name.toLowerCase().replace(/[^a-zа-яё0-9]+/gi, "-").slice(0, 60)}`;
+        if (seen.has(sid)) continue;
+        seen.add(sid);
+        const icons = row.match(/<article class="allicons">([\s\S]*?)<\/article>/)?.[1] || "";
+        const vk = (icons.match(/href="(https?:\/\/vk\.(?:com|ru)\/[^"]+)"/) || [])[1] || (/vk\.(com|ru)\//.test(href) ? href : null);
+        const site = (icons.match(/href="(https?:\/\/[^"]+)"[^>]*><img[^>]*site\.gif/) || [])[1] || (!raceId && !/vk\.(com|ru)\//.test(href) ? href : null);
+        const cls = classify(name, [], place, false);
+        out.push({
+          id: `otime:${sid}`, source: "otime", source_id: sid,
+          source_url: raceId ? `https://reg.o-time.ru/race/${raceId}` : "https://reg.o-time.ru/calendar", name,
+          date_start: date, date_end: dateEnd, date_text: dateEnd === date ? date : `${date} - ${dateEnd}`, city, region, location: [region, place].filter(Boolean).join(", "),
+          distances: [], dist_km: [], race_type: cls.race_type, tags: cls.tags,
+          site_url: site, reg_url: raceId ? `https://reg.o-time.ru/race/${raceId}` : null, vk_url: vk,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // ---------- duplicate detection across sources ----------
 const STOP = new Set(["забег", "пробег", "трейл", "trail", "марафон", "полумарафон", "кросс", "race", "run", "фестиваль", "бега", "по", "на", "и", "в", "the", "открытый", "чемпионат", "этап", "кубок", "2026", "2027", "г"]);
 const tokCache = new Map<string, Set<string>>();
@@ -596,11 +677,12 @@ async function checkLinks(limit: number) {
 //   ?stage=links               -> check that organiser sites answer
 //   ?stage=expected            -> last year's races without a next edition yet -> race_expected
 // merge order: richer sources first, so a race seen in several places keeps the most detailed row
-const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace"];
+const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime"];
 const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> = {
   probeg: (t, h) => probeg(t, h), marathonec: (t, h) => marathonec(t, h), ironstar: (t, h) => ironstar(t, h),
   orgeo: (t, h) => orgeo(t, h), where2run: (t, h) => where2run(t, h), myrace: (t, h) => myrace(t, h),
   sportsauce: (t, h) => sportsauce(t, h), racetime: (t, h) => racetime(t, h), regplace: (t) => regplace(t),
+  otime: (t) => otime(t),
 };
 
 async function scrapeStage(sources: string[], today: Date, horizon: Date, stats: Record<string, unknown>) {
