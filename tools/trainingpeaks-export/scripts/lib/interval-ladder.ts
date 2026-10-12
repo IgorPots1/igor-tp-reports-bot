@@ -48,6 +48,27 @@
  */
 
 /** Ступени по порядку прохождения. Индекс в массиве и есть номер ступени. */
+/**
+ * ПОРЯДОК СТУПЕНЕЙ — ЯВНЫЙ ИНДЕКС, А НЕ МИНУТЫ РАБОТЫ
+ * [ряд задан Игорем 12.10.2026].
+ *
+ * ПОЧЕМУ МИНУТЫ НЕ МОГУТ БЫТЬ КЛЮЧОМ. У 6 x 5 и 5 x 6 работы РОВНО 30 минут
+ * у обеих. Пока ступень выводилась из минут, рукописная 5 x 6 читалась как
+ * 6 x 5, и перегенерация считала, что ученица стоит на предыдущей ступени:
+ * следующая неделя запрашивала 6 x 5, то есть откат.
+ *
+ * РЯД НЕМОНОТОНЕН ПО РАБОТЕ: 30 → 30 → 35 → 32 → 40. Это не ошибка и не
+ * недосмотр, а сам замысел: удлиняем отрезок, количество падает. 4 x 8 (32)
+ * стоит ВЫШЕ 5 x 7 (35), потому что восьмиминутный отрезок требует больше, чем
+ * семиминутный, хотя суммарной работы в нём меньше. Любая сортировка по
+ * минутам этот ряд переставит и сломает прогрессию.
+ *
+ * 8 x 4 УБРАН ИЗ ПРОГРЕССИИ [решение Игоря]. Прибавка восьмого
+ * четырёхминутного отрезка не даёт нового умения, а длина отрезка даёт. Пресет
+ * из каталога не удалён: если 8 x 4 встретится в истории, ступень по нему
+ * просто не определится, и лестница промолчит — это честнее, чем подставить
+ * соседнюю.
+ */
 export const WALK_INTERVAL_LADDER: ReadonlyArray<{ code: string; workMinutes: number; labelRu: string }> = [
   { code: "int_walk_3x3", workMinutes: 9, labelRu: "3 x 3 мин" },
   { code: "int_walk_4x3", workMinutes: 12, labelRu: "4 x 3 мин" },
@@ -55,7 +76,10 @@ export const WALK_INTERVAL_LADDER: ReadonlyArray<{ code: string; workMinutes: nu
   { code: "int_walk_6x4", workMinutes: 24, labelRu: "6 x 4 мин" },
   { code: "int_walk_7x4", workMinutes: 28, labelRu: "7 x 4 мин" },
   { code: "int_walk_6x5", workMinutes: 30, labelRu: "6 x 5 мин" },
-  { code: "int_walk_8x4", workMinutes: 32, labelRu: "8 x 4 мин" },
+  { code: "int_walk_5x6", workMinutes: 30, labelRu: "5 x 6 мин" },
+  { code: "int_walk_5x7", workMinutes: 35, labelRu: "5 x 7 мин" },
+  { code: "int_walk_4x8", workMinutes: 32, labelRu: "4 x 8 мин" },
+  { code: "int_walk_4x10", workMinutes: 40, labelRu: "4 x 10 мин" },
 ];
 
 /** Ступень по коду пресета. null — формат не с этой лестницы. */
@@ -82,10 +106,66 @@ export function rungByCode(presetCode: string | null): number | null {
  * но если когда-нибудь совпадут две ступени, шагать надо от нижней: ошибиться
  * в сторону меньшей нагрузки дешевле.
  */
+/**
+ * Ступень по минутам работы — ЗАПАСНОЙ путь, и он ОТКАЗЫВАЕТСЯ при
+ * неоднозначности [правка 12.10.2026].
+ *
+ * Раньше брался первый совпавший, и это работало ровно до того дня, когда в
+ * ряду появились два формата с одинаковой работой: 6 x 5 и 5 x 6, по 30 минут
+ * каждый. Первый совпавший — это 6 x 5, то есть молчаливый откат на ступень
+ * вниз у человека, стоящего на 5 x 6.
+ *
+ * Теперь: одна ступень с такими минутами — возвращаем её; две и больше —
+ * возвращаем null. Промолчать честнее, чем угадать: при молчании лестница не
+ * двигает ступень и тренер видит это в заметке недели.
+ */
 export function rungByWorkMinutes(workMinutes: number | null): number | null {
   if (workMinutes === null || !Number.isFinite(workMinutes) || workMinutes <= 0) return null;
-  const index = WALK_INTERVAL_LADDER.findIndex((rung) => rung.workMinutes === workMinutes);
+  const matches = WALK_INTERVAL_LADDER.reduce<number[]>(
+    (acc, rung, index) => (rung.workMinutes === workMinutes ? [...acc, index] : acc),
+    []
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/**
+ * Ступень по ПОДПИСИ тренировки: «5 x 6 мин через 1:30 шагом» → ступень 5 x 6.
+ *
+ * ЗАЧЕМ ЭТО ЕСТЬ. Формат, поставленный рукой, лежит в сессии как название, а
+ * preset_code у него coach_hand_authored — по коду не узнать, по минутам
+ * неоднозначно. Название — единственное место, где у рукописной недели записан
+ * сам формат, и читать надо его.
+ *
+ * Сравниваем ЧИСЛА «повторы на длину», а не строку целиком: подпись может
+ * нести хвост («через 1:30 шагом»), и сравнение строк развалилось бы на первом
+ * же ином хвосте.
+ */
+export function rungByLabel(title: string | null): number | null {
+  if (!title) return null;
+  const m = /(\d+)\s*[x×хХ]\s*(\d+)/u.exec(title);
+  if (!m) return null;
+  const reps = Number(m[1]);
+  const dur = Number(m[2]);
+  const want = `${reps} x ${dur} мин`;
+  const index = WALK_INTERVAL_LADDER.findIndex((rung) => rung.labelRu === want);
   return index < 0 ? null : index;
+}
+
+/**
+ * Ступень по тренировке, которая РЕАЛЬНО записана. Один вход вместо трёх
+ * вызовов по месту: порядок попыток — часть правила, а не вкус вызывающего.
+ *
+ * ПОРЯДОК ЖЁСТКИЙ: код пресета → подпись → минуты работы. Код точен, подпись
+ * однозначна для рукописных, минуты последние и отказываются при
+ * неоднозначности. Собранный по месту порядок однажды переставят, и ступень
+ * начнёт определяться минутами у недели, где есть и код, и подпись.
+ */
+export function rungFromSession(input: {
+  presetCode: string | null;
+  title: string | null;
+  workMinutes: number | null;
+}): number | null {
+  return rungByCode(input.presetCode) ?? rungByLabel(input.title) ?? rungByWorkMinutes(input.workMinutes);
 }
 
 export type LadderHoldReason = "deload" | "pain" | "hard_week" | "break";

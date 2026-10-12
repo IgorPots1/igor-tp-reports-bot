@@ -42,7 +42,7 @@ import {
 } from "./lib/intervals-plan-adapter.ts";
 import { placeDiagnosticTest } from "./lib/intervals-diagnostic-test.ts";
 import { nextMonday, parseTargetFromDescription, workBand } from "./lib/intervals-session-target.ts";
-import { decideLadderStep, rungByCode, rungByWorkMinutes } from "./lib/interval-ladder.ts";
+import { decideLadderStep, rungByCode, rungFromSession } from "./lib/interval-ladder.ts";
 import { runSurfacesIncludeTreadmill, startingPointFromAnswers } from "@/features/intervals/onboarding/starting-point";
 import { releasedWorkFloor, sessionWorkMinutes } from "@/features/intervals/loop/released-work-volume";
 import { buildWeekSignal } from "@/features/intervals/loop/week-signal";
@@ -354,13 +354,22 @@ async function main(): Promise<void> {
   );
   const pastSessions = await listSessionsInRange(String(cycle.id), "2000-01-01", cutoff);
   const floor = releasedWorkFloor({ sessions: pastSessions, releasedWeekStarts });
-  const floorPresetCode = floor
+  /**
+   * САМАЯ РАБОТНАЯ СЕССИЯ ОТДАННОЙ НЕДЕЛИ — И ЕЁ КОД, И ЕЁ ПОДПИСЬ.
+   *
+   * Подпись нужна наравне с кодом: у рукописного формата preset_code равен
+   * coach_hand_authored, и формат записан ТОЛЬКО в названии («5 x 6 мин через
+   * 1:30 шагом»). Раньше брался лишь код, дальше шли минуты — а по минутам
+   * 5 x 6 неотличима от 6 x 5 (у обеих 30), и ступень молча съезжала вниз.
+   */
+  const floorSession = floor
     ? (pastSessions
         .filter((session) => session.weekStart === floor.weekStart)
-        .map((session) => ({ code: session.presetCode, work: sessionWorkMinutes(session) }))
+        .map((session) => ({ code: session.presetCode, title: session.title, work: sessionWorkMinutes(session) }))
         .filter((x) => x.work > 0)
-        .sort((a, b) => b.work - a.work)[0]?.code ?? null)
+        .sort((a, b) => b.work - a.work)[0] ?? null)
     : null;
+  const floorPresetCode = floorSession?.code ?? null;
   const pastCheckins = await listCheckins(String(source.id), 40);
   const signal = buildWeekSignal({
     checkins: pastCheckins,
@@ -407,7 +416,11 @@ async function main(): Promise<void> {
     `ПЕРЕРЫВ: пропущено плановых подряд ${missedStreak}` +
       ` · пауза ${pauseNow ? "ОТКРЫТА" : recentPause ? `была (${pauseLabelRu(recentPause, today)})` : "нет"}`
   );
-  let rung = rungByCode(floorPresetCode) ?? rungByWorkMinutes(floor?.workMinutes ?? null);
+  let rung = rungFromSession({
+    presetCode: floorPresetCode,
+    title: floorSession?.title ?? null,
+    workMinutes: floor?.workMinutes ?? null,
+  });
   let firstQualityWeek = true;
   console.log(
     `ПОЛ: ${floor ? `${floor.workMinutes} мин работы (неделя ${floor.weekStart}, отдана)` : "отданных недель нет"}` +
