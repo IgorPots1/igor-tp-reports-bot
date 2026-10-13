@@ -3,7 +3,7 @@
  * блок просто не показывается. */
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import { stripStaleYear } from "@/app/races/races-logic";
+import { displayName, stripStaleYear } from "@/app/races/races-logic";
 import { distKm, geoKey, type ExpectedItem } from "@/features/races-bot/core";
 import { canonicalSubject } from "@/app/races/subjects";
 
@@ -49,7 +49,7 @@ export function toExpected(r: Row): ExpectedItem {
   return {
     id: r.id,
     // Ждём следующее проведение: год прошлого («… 2025») при выводе не показываем.
-    name: stripStaleYear(r.name, `${Number(r.last_date.slice(0, 4)) + 1}-01-01`),
+    name: displayName(stripStaleYear(r.name, `${Number(r.last_date.slice(0, 4)) + 1}-01-01`)),
     city: r.city || "",
     region: r.region || "",
     type: r.race_type || "",

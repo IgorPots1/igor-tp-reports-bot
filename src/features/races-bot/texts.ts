@@ -674,6 +674,19 @@ function dayMon(iso: string): string {
   return `${a.getUTCDate()} ${MON_SHORT[a.getUTCMonth()]}`;
 }
 
+/** Дата карточки: «18 октября 2026, вс»; многодневный — «3-4 октября 2026», «31 октября - 1 ноября 2026». */
+export function cardDate(r: { ds: string; de: string }): string {
+  const a = d(r.ds);
+  const b = d(r.de);
+  const y = b.getUTCFullYear();
+  if (r.de !== r.ds) {
+    return a.getUTCMonth() === b.getUTCMonth()
+      ? `${a.getUTCDate()}-${b.getUTCDate()} ${MONTHS_GEN[b.getUTCMonth()]} ${y}`
+      : `${a.getUTCDate()} ${MONTHS_GEN[a.getUTCMonth()]} - ${b.getUTCDate()} ${MONTHS_GEN[b.getUTCMonth()]} ${y}`;
+  }
+  return `${a.getUTCDate()} ${MONTHS_GEN[a.getUTCMonth()]} ${y}, ${WD[a.getUTCDay()]}`;
+}
+
 /** Нижний ряд экранов навигации. */
 export function navRow(city: string | null): Button[] {
   return [{ text: "Фильтры", callback_data: "flt" }, { text: "Мои старты", callback_data: "my" }, calendarButton("📅 Календарь", city ?? undefined, "list")];
@@ -780,7 +793,7 @@ export function raceScreen(
   rows.push([{ text: "← К списку", callback_data: back }]);
   return {
     text:
-      `<b>${esc(r.name)}</b>\n${shortDate(r)} ${d(r.ds).getUTCFullYear()}\n📍 ${esc(place)}` +
+      `<b>${esc(r.name)}</b>\n${cardDate(r)}\n📍 ${esc(place)}` +
       `${TYPE_LABEL[r.type] ? `\n${TYPE_LABEL[r.type]}` : ""}${dist ? ` · ${esc(dist)}` : ""}` +
       (following ? "\n\n⭐ Слежу: напомню за 12 недель, за неделю и накануне." : ""),
     reply_markup: { inline_keyboard: rows },
@@ -798,7 +811,7 @@ export function expectedScreen(e: ExpectedItem, place: string, date: string, wat
   ];
   return {
     text:
-      `<b>${esc(e.name)}</b>\n~${dayMon(date)} ${date.slice(0, 4)}: ${expectedNote(e)}\n📍 ${esc(place)}` +
+      `<b>${esc(e.name)}</b>\n~${cardDate({ ds: date, de: date })}: ${expectedNote(e)}\n📍 ${esc(place)}` +
       `${e.distances.length ? `\n${esc(e.distances.slice(0, 5).join(" / "))}` : ""}` +
       (watching ? "\n\n✓ Сообщу, как только объявят дату." : ""),
     reply_markup: { inline_keyboard: rows },

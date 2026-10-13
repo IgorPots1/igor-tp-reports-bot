@@ -140,7 +140,21 @@ export function dayMonth(s: string): string {
 /** Название и регион для показа: « — » и « – » между словами становятся дефисом.
  *  В базе текст остаётся как у организатора, меняется только вывод. */
 export function displayName(name: string): string {
-  return name.replace(/\s+[—–]\s+/g, " - ");
+  return cleanQuotes(name.replace(/\s+[—–]\s+/g, " - "));
+}
+
+/**
+ * Вложенные и сдвоенные кавычки из источников: «Забег ««Moscow Drift Cross»»» → «Забег «Moscow
+ * Drift Cross»», «"Ночь"» → «Ночь», ""X"" → "X". В базе название не меняется, только показ.
+ */
+export function cleanQuotes(name: string): string {
+  return name
+    .replace(/«\s*["“”„]+/g, "«")
+    .replace(/["“”„]+\s*»/g, "»")
+    .replace(/«{2,}/g, "«")
+    .replace(/»{2,}/g, "»")
+    .replace(/"{2,}/g, '"')
+    .trim();
 }
 
 /** Устаревший год в названии: «Rosa Wild Fest 2026» с датой 2027 показываем без года.

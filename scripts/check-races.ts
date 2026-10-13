@@ -33,6 +33,7 @@ import {
   toRace,
   type RaceRow,
   subjectsOf,
+  cleanQuotes,
 } from "@/app/races/races-logic";
 import { canonicalSubject, subjectFromDisplay } from "@/app/races/subjects";
 import { eventLink, sameRace, type MatchRow } from "../supabase/functions/race-calendar-sync/match";
@@ -187,6 +188,13 @@ assert.deepEqual(filtersFromSearch("?type=hack&dist=<x>&q=&season=<b>"), { q: ""
   assert.deepEqual(fillRegion({ city: "Тверь", region: "Тверь" }, rows), { city: "Тверь", region: "Тверь" }, "непустой регион не трогаем");
   assert.deepEqual(fillRegion({ city: "Нигдеград", region: null }, rows), { city: "Нигдеград", region: null }, "не узнан — как есть");
 }
+
+// Вложенные кавычки из источников (13.10.2026): только в показе.
+assert.equal(cleanQuotes("Забег ««Moscow Drift Cross»»"), "Забег «Moscow Drift Cross»");
+assert.equal(cleanQuotes('Ночной трейл «"Грязная утка"»'), "Ночной трейл «Грязная утка»");
+assert.equal(cleanQuotes('Пробег ""Осень""'), 'Пробег "Осень"');
+assert.equal(cleanQuotes("Трейл «Краски осени»"), "Трейл «Краски осени»", "обычные не трогаем");
+assert.equal(toRace(row({ name: "Забег ««Moscow Drift Cross»»" })).name, "Забег «Moscow Drift Cross»");
 
 // Прошедшие и многодневные; сортировка и месяцы.
 const prep = prepare(

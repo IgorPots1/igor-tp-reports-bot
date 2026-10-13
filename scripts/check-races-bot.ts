@@ -222,7 +222,9 @@ async function main() {
   await bot.handleUpdate(cbm(USER, "so:near:0:0"));
   const card0 = screens(501).at(-1)!;
   assert.equal(card0.method, "editMessageText");
-  assert.match(String(card0.params.text), /^<b>Трейл «Краски осени»<\/b>\n18 окт, вс 2026\n📍 Москва/);
+  assert.match(String(card0.params.text), /^<b>Трейл «Краски осени»<\/b>\n18 октября 2026, вс\n📍 Москва/, "дата карточки полностью");
+  assert.equal(T.cardDate({ ds: "2026-10-03", de: "2026-10-04" }), "3-4 октября 2026");
+  assert.equal(T.cardDate({ ds: "2026-10-31", de: "2026-11-01" }), "31 октября - 1 ноября 2026");
   assert.deepEqual(buttons(card0).map((b) => b.text), ["⭐ Следить", "Регистрация", "Сайт", "← К списку"]);
   assert.equal(buttons(card0).at(-1)!.callback_data, "sn:near:0", "назад — на ту же страницу");
   // Было: «Регистрация» вела прямо на сайт организатора. Теперь — через igorp.run/go/<код>, чтобы
@@ -578,7 +580,7 @@ async function main() {
     await bot.handleUpdate(cbm(OLEG, "so:le27:0:0"));
     const expCard = screens(811).at(-1)!;
     assert.equal(expCard.method, "editMessageText");
-    assert.match(String(expCard.params.text), /^<b>Ночной забег<\/b>\n~20 июн 2027: дата ожидается, в 2026 было 20 июня/);
+    assert.match(String(expCard.params.text), /^<b>Ночной забег<\/b>\n~20 июня 2027, вс: дата ожидается, в 2026 было 20 июня/);
     assert.deepEqual(buttons(expCard).map((b) => b.text), ["Сообщить, когда объявят", "Прошлый старт", "← К списку"], "у ожидаемого нет ⭐");
     await bot.handleUpdate(cbm(OLEG, buttons(expCard)[0].callback_data!));
     assert.deepEqual(await store.listExpectedWatches(811), [EXP_NIGHT.id], "подписка «сообщить, когда объявят»");
