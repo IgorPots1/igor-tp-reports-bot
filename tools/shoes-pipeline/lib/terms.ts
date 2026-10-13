@@ -36,6 +36,13 @@ export type TermsEntry = {
   /** Когда прочитано. Условия меняются; решение старше 90 дней перечитывается. */
   readAt: string;
   note?: string;
+  /**
+   * Решение принял Игорь, а не прочтение условий: условий на сайте нет после
+   * честного поиска (тогда reading "permits" и quote null) либо источник
+   * исключён или допущен по его слову (Weeviews, Спорт Mail, 14.10.2026).
+   */
+  decided_by?: "igor";
+  decidedAt?: string;
 };
 
 export const TERMS_MAX_AGE_DAYS = 90;
@@ -64,6 +71,15 @@ const HAND: Record<string, TermsEntry> = {
       "publish, display, disclose, sell, rent, lease, modify, store, loan, distribute, publicly display or perform, co-brand, frame, permit third parties to link to, or create compilations or derivative works of the BR Platform, or any part thereof",
     readAt: "2026-10-14",
     note: "Там же: доступ «solely for your informational purposes and for your immediate, private, personal and non-commercial use».",
+  },
+  weeviews: {
+    reading: "forbids",
+    url: "https://www.weeviews.com/terms-of-service",
+    quote: null,
+    readAt: "2026-10-14",
+    decided_by: "igor",
+    decidedAt: "2026-10-14",
+    note: "Условия не запрещают, но это агрегатор чужих обзоров: права у авторов. Не брать — решение Игоря.",
   },
   rtings: {
     reading: "unread",

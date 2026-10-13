@@ -242,7 +242,16 @@ const norm = (s: string) =>
 function decide(source: Source, ev: Evidence | undefined): { status: TermsStatus; note: string } {
   const t = TERMS[source.id];
   // Условия запретили — остальное не важно, и сеть такой источник не трогает.
-  if (t?.reading === "forbids") return { status: "forbidden", note: `запрещено условиями: «${t.quote}» (${t.url})` };
+  if (t?.reading === "forbids") {
+    return {
+      status: "forbidden",
+      note: t.quote
+        ? `запрещено условиями: «${t.quote}» (${t.url})`
+        : t.decided_by === "igor"
+          ? `исключён решением Игоря ${t.decidedAt}: ${t.note ?? ""}`
+          : `закрыт: ${t.note ?? ""}`,
+    };
+  }
   if (!ev) return { status: "manual", note: "проверки не проводились" };
 
   const r = ev.robots;
@@ -269,6 +278,11 @@ function decide(source: Source, ev: Evidence | undefined): { status: TermsStatus
   if (t.reading === "unread") return { status: "manual", note: `условия не читаются: ${t.note ?? t.url}` };
   const age = (Date.now() - new Date(t.readAt).getTime()) / 86400000;
   if (age > TERMS_MAX_AGE_DAYS) return { status: "manual", note: `условия прочитаны ${Math.round(age)} дн. назад — перечитать` };
+  // Условий на сайте нет после честного поиска — разрешение даёт Игорь, и это
+  // видно в статусе: не «условия разрешают», а «решение Игоря».
+  if (t.reading === "permits" && t.decided_by === "igor" && !t.quote) {
+    return { status: "allowed", note: `условий нет после поиска — разрешён решением Игоря ${t.decidedAt}` };
+  }
   // Цитата обязана стоять в сохранённом тексте условий: пересказ не проходит.
   const file = resolve(TERMS_DIR, `${source.id}.txt`);
   if (!t.quote || !existsSync(file) || !norm(readFileSync(file, "utf8")).includes(norm(t.quote))) {

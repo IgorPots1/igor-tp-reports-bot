@@ -20,7 +20,7 @@ const TERMS_DIR = resolve("tools/shoes-pipeline/.cache/terms");
 const norm = (s: string) =>
   s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
 
-type Answer = { id: string; reading: TermsReading; quote: string | null; why?: string };
+type Answer = { id: string; reading: TermsReading | "none"; quote: string | null; why?: string };
 
 const out: Record<string, TermsEntry> = JSON.parse(readFileSync(READINGS, "utf8"));
 const evidence = JSON.parse(readFileSync(EVIDENCE, "utf8")) as Record<string, { terms: { url: string | null } | null }>;
@@ -31,6 +31,13 @@ for (const file of process.argv.slice(2)) {
     const url = evidence[a.id]?.terms?.url ?? null;
     const textPath = resolve(TERMS_DIR, `${a.id}.txt`);
     const text = existsSync(textPath) ? norm(readFileSync(textPath, "utf8")) : "";
+    // «Условий нет после поиска» — разрешение даёт Игорь (наряд 14.10.2026),
+    // и запись говорит об этом прямо, а не выдаёт себя за прочтённое разрешение.
+    if (a.reading === "none") {
+      out[a.id] = { reading: "permits", url, quote: null, readAt: today, decided_by: "igor", decidedAt: today, note: `условий нет после поиска: ${a.why ?? ""}` };
+      console.log(`${a.id.padEnd(22)} none → решение Игоря`);
+      continue;
+    }
     let entry: TermsEntry = { reading: a.reading, url, quote: a.quote, readAt: today, note: a.why };
     if (a.reading !== "unread" && (!a.quote || !text.includes(norm(a.quote)))) {
       entry = { reading: "unread", url, quote: null, readAt: today, note: `цитата читателя не найдена в тексте условий — перечитать (${a.why ?? ""})` };
