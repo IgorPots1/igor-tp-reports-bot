@@ -9,7 +9,6 @@ import { norm } from "@/app/races/races-logic";
 
 import {
   consultAllowed,
-  expectedInCity,
   findExpectedByCode,
   findCityBySlug,
   findRaceByCode,
@@ -20,14 +19,15 @@ import {
   localParts,
   matchCity,
   matchUser,
-  areaRaces,
-  citySubject,
-  cityPoint,
-  expectedInArea,
+  browseItems,
+  expectedDate,
+  seasonCounts,
+  seasons,
+  seasonSlice,
+  type SeasonItem,
   nearestCities,
   nextDigestDate,
   PAUSE_DAYS,
-  NEARBY_KM,
   parseSearch,
   parseStart,
   resolveCity,
@@ -51,6 +51,11 @@ export type BotUser = PlanUser & {
   consult_offered_at: string | null;
   consult_requested_at: string | null;
   star_hint_at?: string | null;
+  /** Живое меню: сообщение, которое бот правит на месте; старше 48 часов не правим. */
+  menu_message_id?: number | null;
+  menu_message_at?: string | null;
+  /** Что листает человек по сезонам: «город|типы|дистанции» или «q:запрос»; null — свой город. */
+  browse_ctx?: string | null;
   /** Точка из геолокации: «Рядом» считается от неё. Сбрасывается при выборе города кнопкой или текстом. */
   geo_lat?: number | null;
   geo_lon?: number | null;
@@ -141,6 +146,9 @@ export type TgUpdate = {
 /** Окно, в котором второе нажатие той же кнопки тем же человеком считается двойным кликом. */
 export const DOUBLE_CLICK_SEC = 3;
 
+/** Живое меню правим не дольше 48 часов, потом шлём новое. */
+export const MENU_TTL_MS = 48 * 3600 * 1000;
+
 /** Напоминание после /start без действий: не раньше 30 минут и не позже 3 часов. */
 export const NUDGE_AFTER_MIN = 30;
 export const NUDGE_MAX_MIN = 180;
@@ -168,14 +176,70 @@ export function createBot(deps: BotDeps) {
     return deps.goLink ? deps.goLink(u.tg_id, r, "s") : T.raceUrl(r);
   }
 
-  async function send(chatId: number, msg: T.Msg): Promise<void> {
-    await tg.call("sendMessage", {
+  /** Сообщение как есть, без правила меню: уведомление тренеру, /stats. */
+  async function sendRaw(chatId: number, msg: T.Msg): Promise<number | null> {
+    const res = (await tg.call("sendMessage", {
       chat_id: chatId,
       text: msg.text,
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
       ...(msg.reply_markup ? { reply_markup: msg.reply_markup } : {}),
-    });
+    })) as { message_id?: number } | null;
+    return typeof res?.message_id === "number" ? res.message_id : null;
+  }
+
+  /**
+   * «Меню всегда последнее» (наряд 13.10.2026): у человека одно живое сообщение с кнопками. Новое
+   * сообщение бота сначала снимает кнопки со старого, а само становится меню: свои кнопки или,
+   * если их нет, главное меню. Сообщение с reply-клавиатурой (снять её) меню не становится.
+   */
+  async function send(chatId: number, msg: T.Msg): Promise<void> {
+    const rm = msg.reply_markup as { inline_keyboard?: unknown[]; remove_keyboard?: boolean } | undefined;
+    if (rm && !rm.inline_keyboard) {
+      await sendRaw(chatId, msg);
+      return;
+    }
+    const u = await store.getUser(chatId);
+    if (!u) {
+      await sendRaw(chatId, msg);
+      return;
+    }
+    await dropMenu(u);
+    const markup = rm?.inline_keyboard?.length ? msg.reply_markup : T.menuKeyboard(u.city);
+    const id = await sendRaw(chatId, { text: msg.text, reply_markup: markup });
+    if (id !== null) await store.saveUser({ tg_id: chatId, menu_message_id: id, menu_message_at: now().toISOString() });
+  }
+
+  /** Снять кнопки со старого меню (оно могло быть уже снято или удалено — не важно). */
+  async function dropMenu(u: BotUser): Promise<void> {
+    if (!u.menu_message_id) return;
+    await tg.call("editMessageReplyMarkup", { chat_id: u.tg_id, message_id: u.menu_message_id, reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+  }
+
+  /**
+   * Экран на месте: нажатие в живом меню правит его (editMessageText). Не то сообщение, старше
+   * 48 часов или Telegram не дал изменить — новое меню внизу.
+   */
+  async function screen(u: BotUser, msg: T.Msg, origin?: TgMessage): Promise<void> {
+    const cur = await store.getUser(u.tg_id);
+    const age = cur?.menu_message_at ? now().getTime() - Date.parse(cur.menu_message_at) : Infinity;
+    if (origin && cur?.menu_message_id === origin.message_id && age < MENU_TTL_MS) {
+      try {
+        await tg.call("editMessageText", {
+          chat_id: u.tg_id,
+          message_id: origin.message_id,
+          text: msg.text,
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+          reply_markup: msg.reply_markup ?? T.menuKeyboard(cur.city),
+        });
+        return;
+      } catch (e) {
+        if (/message is not modified/i.test(e instanceof Error ? e.message : String(e))) return;
+        if (e instanceof BotBlockedError) throw e;
+      }
+    }
+    await send(u.tg_id, msg);
   }
 
   /** Пользователь создан в этом обновлении (первый приход): ему источник пишется при /start.
@@ -216,11 +280,6 @@ export function createBot(deps: BotDeps) {
     await send(chatId, T.cityPicker());
   }
 
-  async function showExpected(u: BotUser, items: ExpectedItem[]) {
-    if (!items.length) return;
-    const watching = new Set(await store.listExpectedWatches(u.tg_id));
-    await send(u.tg_id, T.expectedBlock(items.slice(0, 3), watching));
-  }
 
   async function expectedFor(filter: (e: ExpectedItem) => boolean): Promise<ExpectedItem[]> {
     if (!deps.expected) return [];
@@ -240,18 +299,12 @@ export function createBot(deps: BotDeps) {
     return send(u.tg_id, T.expectedWatching(e));
   }
 
-  /** Подсказка про ⭐ один раз, после первого списка, где было что сохранить. */
-  async function starHint(u: BotUser) {
-    if (u.star_hint_at) return;
-    await send(u.tg_id, T.STAR_HINT);
-    await store.saveUser({ tg_id: u.tg_id, star_hint_at: now().toISOString() });
-  }
 
-  const PAGE = 5;
 
-  async function showCityList(u: BotUser, offset = 0) {
+  async function showCityList(u: BotUser, origin?: TgMessage) {
     if (!u.city) return pickCity(u.tg_id);
-    return showList(u, u.city, u.types, u.distances, offset);
+    if (u.browse_ctx) u = await store.saveUser({ tg_id: u.tg_id, browse_ctx: null });
+    return showFork(u, origin);
   }
 
   /** Точка «Рядом»: своя геолокация (только для своего города), иначе город. */
@@ -259,72 +312,119 @@ export function createBot(deps: BotDeps) {
     return norm(city) === norm(u.city) && u.geo_lat != null && u.geo_lon != null ? { lat: u.geo_lat, lon: u.geo_lon } : null;
   }
 
-  async function showArea(u: BotUser, city: string, types: string[], dists: string[], offset: number, following: Set<string>, all: BotRace[]) {
-    const mine = userPoint(u, city);
-    const area = areaRaces(all, city, types, dists, mine);
-    if (!area.items.length) return area;
-    if (offset === 0) await send(u.tg_id, T.areaHeader(area.subject, NEARBY_KM, !!mine));
-    const page = area.items.slice(offset, offset + PAGE);
-    for (const { race, km } of page) await send(u.tg_id, T.card(race, following.has(race.id), regLink(u, race), T.placeLine(race, km)));
-    const more = area.items.length - offset - page.length;
-    if (more > 0) await send(u.tg_id, T.areaMore(more, offset + PAGE));
-    return area;
-  }
+  type Browse = { city: string; types: string[]; dists: string[]; q: string | null };
 
-  /**
-   * Список при выбранном городе — два блока: «В Твери» (точно этот город, страницами по 5) и
-   * «Тверская область и рядом» (область плюс 150 км, «Старица, 71 км», ближайшие первыми).
-   * Голое «ничего» запрещено: пусто в городе — сразу второй блок, «Ожидаются» и кнопки.
-   */
-  async function showList(u: BotUser, city: string, types: string[], dists: string[], offset = 0, month: number | null = null) {
-    const all = await deps.races();
-    const races = all.filter((r) => inUserCity(r, city) && matchUser(r, types, dists) && (!month || Number(r.ds.slice(5, 7)) === month));
-    const where = inCity(city);
-    const filtered = T.hasFilters(types, dists) || !!month;
-    const own = norm(city) === norm(u.city);
-    const following = await followingSet(u.tg_id);
-    const page = races.slice(offset, offset + PAGE);
-    if (offset === 0) await send(u.tg_id, races.length ? T.listHeader(where, types, dists) : T.shortListNote(where, 0, filtered));
-    for (const r of page) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
-    const more = races.length - offset - page.length;
-    if (offset > 0) {
-      await send(u.tg_id, T.listFooter(more, own ? city : null, u.digest_on, own ? undefined : city, own && !month ? offset + PAGE : undefined));
-      await track(u.tg_id, "list_shown", { meta: { city, n: races.length, offset } });
-      return;
+  /** Что листаем: свой город и фильтры, или город из поиска («трейл Казань»), или запрос без города. */
+  function browseOf(u: BotUser): Browse | null {
+    const c = u.browse_ctx;
+    if (c?.startsWith("q:")) return { city: "", types: [], dists: [], q: c.slice(2) };
+    if (c) {
+      const [city, t, d] = c.split("|");
+      return { city, types: t ? t.split(",") : [], dists: d ? d.split(",") : [], q: null };
     }
-    if (more > 0) await send(u.tg_id, T.cityMore(more, where, own && !month ? PAGE : undefined, own ? undefined : city));
-    const area = month ? { subject: "", items: [] as { race: BotRace; km: number | null }[] } : await showArea(u, city, types, dists, 0, following, all);
-    const from = userPoint(u, city) ?? cityPoint(all, city);
-    await showExpected(u, await expectedFor((e) => expectedInArea(e, city, area.subject || citySubject(all, city), from) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, types, dists)));
-    if (races.length < 3) await send(u.tg_id, T.shortListActions(filtered && own, city, own && !u.digest_on));
-    else await send(u.tg_id, T.listEnd(own ? city : null, u.digest_on, own ? undefined : city));
-    await track(u.tg_id, "list_shown", { meta: { city, n: races.length, area: area.items.length } });
-    if (races.length || area.items.length) await starHint(u);
+    return u.city ? { city: u.city, types: u.types, dists: u.distances, q: null } : null;
   }
 
+  /** Старты и ожидаемые для сезонов: город плюс область и 150 км (или запрос без города). */
+  async function itemsOf(u: BotUser, b: Browse): Promise<SeasonItem[]> {
+    const all = await deps.races();
+    const exp = await expectedFor(() => true);
+    const t = today(u);
+    if (b.q !== null) {
+      const s = parseSearch(b.q);
+      const words = s.q.split(/\s+/).filter(Boolean);
+      return [
+        ...searchRaces(all, s).filter((r) => r.de >= t).map((race) => ({ kind: "race" as const, race, km: null, date: race.ds < t ? t : race.ds, near: false })),
+        ...exp
+          .filter((e) => words.length && words.every((w) => norm(`${e.name} ${e.city} ${e.region}`).includes(w)) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, s.types, s.dists))
+          .map((e) => ({ kind: "exp" as const, e, km: null, date: expectedDate(e, t), near: false })),
+      ];
+    }
+    return browseItems(all, exp, b.city, b.types, b.dists, userPoint(u, b.city), t);
+  }
+
+  function browseTitle(b: Browse): string {
+    return b.q !== null ? `«${b.q}»` : b.city;
+  }
+
+  function filtersOf(b: Browse): string | null {
+    const f = T.filtersText(b.types, b.dists);
+    return f || null;
+  }
+
+  /** Развилка «На какой сезон ищешь старт?» в живом меню. */
+  async function showFork(u: BotUser, origin?: TgMessage) {
+    const b = browseOf(u);
+    if (!b) return pickCity(u.tg_id);
+    const items = await itemsOf(u, b);
+    const rows = seasons(today(u)).map((s) => ({ s, ...seasonCounts(items, s) }));
+    await screen(u, T.seasonFork(browseTitle(b), rows, filtersOf(b)), origin);
+    await track(u.tg_id, "list_shown", { meta: { city: b.city || null, q: b.q, fork: true, n: items.length } });
+  }
+
+  function seasonByKey(u: BotUser, key: string) {
+    return seasons(today(u)).find((s) => s.key === key) ?? null;
+  }
+
+  /** Список сезона, 5 на странице. Подсказка про ⭐ — один раз, строкой в том же сообщении. */
+  async function showSeason(u: BotUser, key: string, page: number, origin?: TgMessage) {
+    const b = browseOf(u);
+    const s = seasonByKey(u, key);
+    if (!b || !s) return showFork(u, origin);
+    const items = seasonSlice(await itemsOf(u, b), s);
+    if (!items.length) return showFork(u, origin);
+    const following = await followingSet(u.tg_id);
+    const msg = T.seasonList(browseTitle(b), s, items, page, following, (r) => !!regLink(u, r));
+    if (!u.star_hint_at) {
+      msg.text += `\n\n${T.STAR_HINT_LIST}`;
+      await store.saveUser({ tg_id: u.tg_id, star_hint_at: now().toISOString() });
+    }
+    await screen(u, msg, origin);
+  }
+
+  /** Карточка в том же сообщении; back — «sn:<сезон>:<страница>» или «sz» (к развилке). */
+  async function showItem(u: BotUser, x: SeasonItem, back: string, origin?: TgMessage, consult = false) {
+    if (x.kind === "race") {
+      const following = (await followingSet(u.tg_id)).has(x.race.id);
+      const place = x.near ? T.placeLine(x.race, x.km) : x.race.city || T.placeLine(x.race, null);
+      return screen(u, T.raceScreen(x.race, place, following, regLink(u, x.race), siteLink(u, x.race), back, consult), origin);
+    }
+    const watching = new Set(await store.listExpectedWatches(u.tg_id)).has(x.e.id);
+    const place = x.e.city ? `${x.e.city}${x.km === null ? "" : `, ${x.km} км`}` : x.e.subject || "место уточняется";
+    return screen(u, T.expectedScreen(x.e, place, x.date, watching, back), origin);
+  }
+
+  /** Найти пункт сезона по коду старта (для ⭐ в карточке): контекст тот же, что у списка. */
+  async function itemByCode(u: BotUser, code: string): Promise<SeasonItem | null> {
+    const b = browseOf(u);
+    if (b) {
+      const hit = (await itemsOf(u, b)).find((x) => raceCode(x.kind === "race" ? x.race.id : x.e.id) === code);
+      if (hit) return hit;
+    }
+    const r = findRaceByCode(await deps.races(), code);
+    return r ? { kind: "race", race: r, km: null, date: r.ds, near: false } : null;
+  }
+
+  /** «sn:ve27:2» из хвоста кнопки карточки «ve27:2»; «sz» — к развилке. */
+  function backOf(tail: string[]): string {
+    return tail[0] === "sz" || !tail[0] ? "sz" : `sn:${tail[0]}:${Number(tail[1]) || 0}`;
+  }
+
+  /** Поиск текстом: город узнан — развилка по сезонам этого города с фильтрами запроса; иначе — все найденные подряд. */
   async function showSearch(u: BotUser, text: string) {
     const all = await deps.races();
     const s = parseSearch(text);
     const city = s.q ? matchCity(knownCities(all), s.q) : null;
-    const found = city
-      ? all.filter((r) => inUserCity(r, city) && matchUser(r, s.types, s.dists) && (!s.month || Number(r.ds.slice(5, 7)) === s.month))
-      : searchRaces(all, s);
-    const where = city ? inCity(city) : `по запросу «${T.esc(text.trim())}»`;
+    const found = city ? all.filter((r) => inUserCity(r, city)) : searchRaces(all, s);
     await track(u.tg_id, "search", { meta: { q: text.trim().slice(0, 80), n: found.length } });
-    // Город узнан: тот же список, что по кнопке, с «Рядом» и «Ожидаются», если стартов мало.
-    if (city) return showList(u, city, s.types, s.dists, 0, s.month);
-    if (!found.length) return send(u.tg_id, T.nothingFound(where, s.q || undefined));
-    const following = await followingSet(u.tg_id);
-    await send(u.tg_id, T.listHeader(where, s.types, s.dists));
-    for (const r of found.slice(0, 5)) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
-    await track(u.tg_id, "list_shown", { meta: { search: true, n: found.length } });
-    const digestOffer = city && norm(city) === norm(u.city) ? city : null;
-    await send(u.tg_id, T.listFooter(found.length - 5, digestOffer, u.digest_on, s.q || undefined));
-    const words = s.q.split(/\s+/).filter(Boolean);
-    await showExpected(u, await expectedFor((e) =>
-      (city ? expectedInCity(e, city) : words.every((w) => norm(`${e.name} ${e.city} ${e.region}`).includes(w))) &&
-      matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, s.types, s.dists) &&
-      (!s.month || e.lastMonth === s.month)));
+    if (city) {
+      const own = norm(city) === norm(u.city) && !s.types.length && !s.dists.length;
+      u = await store.saveUser({ tg_id: u.tg_id, browse_ctx: own ? null : `${city}|${s.types.join(",")}|${s.dists.join(",")}` });
+      return showFork(u);
+    }
+    if (!found.length) return send(u.tg_id, T.nothingFound(`по запросу «${T.esc(text.trim())}»`, s.q || undefined));
+    u = await store.saveUser({ tg_id: u.tg_id, browse_ctx: `q:${text.trim().slice(0, 80)}` });
+    return showSeason(u, "all", 0);
   }
 
   async function follow(u: BotUser, r: BotRace, via = "bot") {
@@ -343,7 +443,7 @@ export function createBot(deps: BotDeps) {
     }
   }
 
-  async function showMy(u: BotUser, page = 0) {
+  async function showMy(u: BotUser, page = 0, origin?: TgMessage) {
     const races = await deps.races();
     const byId = new Map(races.map((r) => [r.id, r]));
     const items = (await store.listFollows(u.tg_id))
@@ -352,7 +452,7 @@ export function createBot(deps: BotDeps) {
       .sort((a, b) => a.ds.localeCompare(b.ds))
       .map((race) => ({ race, code: raceCode(race.id), site: siteLink(u, race) }));
     const pages = Math.max(1, Math.ceil(items.length / T.MY_PAGE));
-    await send(u.tg_id, T.myRaces(items, today(u), Math.min(Math.max(page, 0), pages - 1), u.city));
+    await screen(u, T.myRaces(items, today(u), Math.min(Math.max(page, 0), pages - 1), u.city), origin);
   }
 
   async function savedRaces(u: BotUser): Promise<{ race: BotRace }[]> {
@@ -377,7 +477,7 @@ export function createBot(deps: BotDeps) {
     const names = follows.map((f) => byId.get(f.race_id)?.name ?? f.race_name).filter((x): x is string => !!x);
     const coachChat = await store.getConfig("coach_chat_id");
     if (coachChat) {
-      await send(Number(coachChat), { text: T.coachNotice(u, names) });
+      await sendRaw(Number(coachChat), { text: T.coachNotice(u, names) });
     } else {
       console.error("[races-bot] заявка на консультацию, но chat_id тренера ещё не известен (он не писал боту /start)");
     }
@@ -514,17 +614,66 @@ export function createBot(deps: BotDeps) {
         await store.saveUser({ tg_id: u.tg_id, city: null, types: [], distances: [], state: null });
         return greet(u.tg_id);
       case "nf":
-        u = await store.saveUser({ tg_id: u.tg_id, types: [], distances: [] });
-        return showCityList(u);
+        u = await store.saveUser({ tg_id: u.tg_id, types: [], distances: [], browse_ctx: null });
+        return showCityList(u, msg);
       case "more":
-        return showCityList(u, Math.max(0, Number(arg) || 0));
-      case "area": {
-        if (!u.city) return pickCity(u.tg_id);
-        const all = await deps.races();
-        return void (await showArea(u, u.city, u.types, u.distances, Math.max(0, Number(arg) || 0), await followingSet(u.tg_id), all));
+      case "area":
+        // кнопки прежних списков (до сезонов): ведут на развилку
+        return showCityList(u, msg);
+      case "sz":
+        return showFork(u, msg);
+      case "sn": {
+        const [key, page] = arg.split(":");
+        return showSeason(u, key, Math.max(0, Number(page) || 0), msg);
       }
+      case "so": {
+        const [key, page, idx] = arg.split(":");
+        const b = browseOf(u);
+        const s = seasonByKey(u, key);
+        if (!b || !s) return showFork(u, msg);
+        const p = Math.max(0, Number(page) || 0);
+        const x = seasonSlice(await itemsOf(u, b), s)[p * T.SEASON_PAGE + (Number(idx) || 0)];
+        return x ? showItem(u, x, `sn:${key}:${p}`, msg) : showSeason(u, key, p, msg);
+      }
+      case "oc": {
+        const x = await itemByCode(u, arg);
+        return x ? showItem(u, x, "sz", msg) : showFork(u, msg);
+      }
+      case "sf":
+      case "su":
+      case "sw": {
+        const [code, ...tail] = arg.split(":");
+        const back = backOf(tail);
+        const x = await itemByCode(u, code);
+        if (!x) return showFork(u, msg);
+        let consultNow = false;
+        if (key === "sf" && x.kind === "race") {
+          if (!(await followingSet(u.tg_id)).has(x.race.id)) {
+            await store.addFollow(u.tg_id, x.race);
+            await track(u.tg_id, "follow", { raceId: x.race.id, meta: { race_name: x.race.name, city: x.race.city, via: "season" } });
+            if (consultAllowed(u.consult_offered_at, now())) {
+              consultNow = true;
+              await store.saveUser({ tg_id: u.tg_id, consult_offered_at: now().toISOString() });
+              await track(u.tg_id, "consult_offer_shown", { raceId: x.race.id, meta: { after: "follow" } });
+            }
+          }
+        } else if (key === "su" && x.kind === "race") {
+          if ((await followingSet(u.tg_id)).has(x.race.id)) {
+            await store.removeFollow(u.tg_id, x.race.id);
+            await track(u.tg_id, "unfollow", { raceId: x.race.id, meta: { race_name: x.race.name, via: "season" } });
+          }
+        } else if (key === "sw" && x.kind === "exp") {
+          if (!new Set(await store.listExpectedWatches(u.tg_id)).has(x.e.id)) {
+            await store.addExpectedWatch(u.tg_id, x.e.id);
+            await track(u.tg_id, "expected_watch", { raceId: x.e.id, meta: { race_name: x.e.name, via: "season" } });
+          }
+        }
+        return showItem(u, x, back, msg, consultNow);
+      }
+      case "flt":
+        return screen(u, T.prefs(u.types, u.distances, "Отметь, что интересно, и нажми «Показать забеги»."), msg);
       case "myp":
-        return showMy(u, Math.max(0, Number(arg) || 0));
+        return showMy(u, Math.max(0, Number(arg) || 0), msg);
       case "city_other":
         await store.saveUser({ tg_id: u.tg_id, state: "await_city" });
         return send(u.tg_id, T.ASK_CITY);
@@ -547,15 +696,17 @@ export function createBot(deps: BotDeps) {
         return;
       }
       case "show":
+        // «Показать забеги» после фильтров: свой город и свои фильтры
+        if (u.browse_ctx) u = await store.saveUser({ tg_id: u.tg_id, browse_ctx: null });
         await track(u.tg_id, "filters_done", { meta: { types: u.types, distances: u.distances } });
-        return showCityList(u);
+        return showCityList(u, msg);
       case "ew":
         return watchExpected(u, arg);
       case "noop":
         return;
       case "dlist":
         await track(u.tg_id, "digest_opened_list");
-        return showCityList(u);
+        return showCityList(u, msg);
       case "st": {
         const coachChat = await store.getConfig("coach_chat_id");
         if (!coachChat || Number(coachChat) !== u.tg_id) return;
@@ -587,10 +738,10 @@ export function createBot(deps: BotDeps) {
           await store.removeFollow(u.tg_id, f.race_id);
           await track(u.tg_id, "unfollow", { raceId: f.race_id, meta: { race_name: f.race_name } });
         }
-        return showMy(u);
+        return showMy(u, 0, msg);
       }
       case "my":
-        return showMy(u);
+        return showMy(u, 0, msg);
       case "consult":
         return consult(u, arg);
       case "noconsult":
@@ -780,8 +931,8 @@ export function createBot(deps: BotDeps) {
           }
           if (a.kind === "digest") {
             if (!(await store.claimSend(u.tg_id, "digest", null))) continue;
-            const following = new Set(mine.map((f) => f.race_id));
-            for (const m of T.digest(u.city!, a.races, following, (r) => regLink(u, r), a.area, a.subject)) await send(u.tg_id, m);
+            // Одно сообщение (оно же новое меню): кнопки 1–N открывают старт в нём же.
+            await send(u.tg_id, T.digestScreen(u.city!, a.races, a.area, a.subject));
             await store.saveUser({ tg_id: u.tg_id, digest_last_at: t.toISOString() });
             await track(u.tg_id, "digest_sent", { meta: { n: a.races.length, area: a.area.length } });
             counts.sent += 1;

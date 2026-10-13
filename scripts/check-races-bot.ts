@@ -41,6 +41,8 @@ import {
   knownRegions,
   nearestCities,
   nextDigestDate,
+  seasons,
+  expectedDate,
   type BotRace,
 } from "@/features/races-bot/core";
 import { computeBotStats, statsMessage, type StatEvent } from "@/features/races-bot/stats";
@@ -81,14 +83,17 @@ const ANNOUNCED = new Map<string, string>();
 type Call = { method: string; params: Record<string, unknown> };
 const calls: Call[] = [];
 const blockedChats = new Set<number>();
+/** Telegram не даёт изменить сообщение (удалено, слишком старое по его меркам): editMessageText падает. */
+const noEditChats = new Set<number>();
 const tg = {
   async call(method: string, params: Record<string, unknown>) {
+    if (method === "editMessageText" && noEditChats.has(Number(params.chat_id))) throw new Error("Telegram editMessageText: 400 Bad Request: message can't be edited");
     if (method === "sendMessage" && blockedChats.has(Number(params.chat_id))) throw new BotBlockedError("Forbidden: bot was blocked by the user");
     calls.push({ method, params });
     return { message_id: calls.length };
   },
 };
-const sent = (chat: number) => calls.filter((c) => c.method === "sendMessage" && c.params.chat_id === chat);
+const sent = (chat: number, from = 0) => calls.slice(from).filter((c) => c.method === "sendMessage" && c.params.chat_id === chat);
 const texts = (chat: number) => sent(chat).map((c) => String(c.params.text));
 const buttons = (c: Call) =>
   ((c.params.reply_markup as { inline_keyboard?: { text: string; callback_data?: string; url?: string; web_app?: unknown }[][] } | undefined)?.inline_keyboard ?? []).flat();
@@ -118,6 +123,13 @@ const msg = (from: typeof USER, text: string) => ({ message: { message_id: mid++
 const cb = (from: typeof USER, data: string) => (CLICK += 5000, {
   callback_query: { id: String(mid++), from, data, message: { message_id: mid, chat: { id: from.id, type: "private" } } },
 });
+// Нажатие в живом меню: то сообщение, id которого бот запомнил (menu_message_id).
+const cbm = (from: typeof USER, data: string) => (CLICK += 5000, {
+  callback_query: { id: String(mid++), from, data, message: { message_id: Number(store.users.get(from.id)?.menu_message_id ?? -1), chat: { id: from.id, type: "private" } } },
+});
+/** Что человек видит на экране: новые сообщения и правки текста, по порядку. */
+const screens = (chat: number, from = 0) =>
+  calls.slice(from).filter((c) => (c.method === "sendMessage" || c.method === "editMessageText") && c.params.chat_id === chat);
 
 async function main() {
   // ── коды и разбор ─────────────────────────────────────────────────────────
@@ -185,28 +197,58 @@ async function main() {
   assert.deepEqual(store.users.get(501)?.types, ["trail", "road"]);
   const edit = calls.filter((c) => c.method === "editMessageReplyMarkup").at(-1)!;
   assert.ok(buttons(edit).some((b) => b.text === "✓ Полумарафон"), "выбранное отмечено галочкой");
+  // Было: «Показать забеги» слало заголовок, до 5 карточек отдельными сообщениями, «Рядом» и
+  // подвал с рассылкой. Отменено нарядом 13.10.2026 (навигация по сезонам): одно живое сообщение —
+  // развилка по сезонам со счётчиками → список сезона по 5 → карточка в том же сообщении.
   reset();
-  await bot.handleUpdate(cb(USER, "show"));
-  const shown = sent(501);
-  assert.match(String(shown[0].params.text), /^Ближайшие забеги в Москве: шоссе и трейл, есть полумарафон\. Нажми/);
-  // Было «Следить» без значка; теперь заметная «⭐ Следить» (наряд 12.10: 3 списка — 0 сохранений).
-  const cards = shown.filter((c) => buttons(c).some((b) => b.text === "⭐ Следить"));
-  assert.ok(cards.length >= 1 && cards.length <= 5, `до 5 карточек, было ${cards.length}`);
+  await bot.handleUpdate(cbm(USER, "show"));
+  const fork = screens(501).at(-1)!;
+  assert.equal(fork.method, "editMessageText", "развилка — в том же сообщении");
+  assert.match(String(fork.params.text), /^<b>Москва и рядом\.<\/b> На какой сезон ищешь старт\?\nФильтры: шоссе, трейл, полумарафон\./);
+  assert.match(String(fork.params.text), /Ближайшие \(до 30 ноября\): 1 с датой, 0 ожидаются/);
+  assert.match(String(fork.params.text), /Весна 2027: 1 с датой, 0 ожидаются/);
+  const forkBtns = buttons(fork).map((b) => b.text);
+  assert.deepEqual(forkBtns.slice(0, 3), ["Ближайшие (до 30 ноября) · 1", "Весна 2027 · 1", "Все старты подряд · 2"]);
+  assert.ok(!forkBtns.some((t) => /^Зима|^Лето/.test(t)), "сезоны с нулём не показываются");
+  assert.deepEqual(forkBtns.slice(-3), ["Фильтры", "Мои старты", "📅 Календарь"], "нижний ряд");
+  // список сезона
+  await bot.handleUpdate(cbm(USER, "sn:near:0"));
+  const lst = screens(501).at(-1)!;
+  assert.equal(lst.method, "editMessageText");
+  assert.match(String(lst.params.text), /^<b>Москва и рядом · Ближайшие \(до 30 ноября\)<\/b>\n1-1 из 1\n\n1\. <b>18 окт, вс<\/b> · Трейл «Краски осени»\n    Москва · .+ · регистрация открыта/);
+  assert.match(String(lst.params.text), /Открой старт кнопкой с номером и нажми ⭐, и я напомню, когда пора начинать готовиться\./, "подсказка про ⭐ строкой, один раз");
+  assert.deepEqual(buttons(lst).map((b) => b.text), ["1", "Другой сезон", "Фильтры", "Мои старты", "📅 Календарь"]);
+  // карточка в том же сообщении
+  await bot.handleUpdate(cbm(USER, "so:near:0:0"));
+  const card0 = screens(501).at(-1)!;
+  assert.equal(card0.method, "editMessageText");
+  assert.match(String(card0.params.text), /^<b>Трейл «Краски осени»<\/b>\n18 окт, вс 2026\n📍 Москва/);
+  assert.deepEqual(buttons(card0).map((b) => b.text), ["⭐ Следить", "Регистрация", "Сайт", "← К списку"]);
+  assert.equal(buttons(card0).at(-1)!.callback_data, "sn:near:0", "назад — на ту же страницу");
   // Было: «Регистрация» вела прямо на сайт организатора. Теперь — через igorp.run/go/<код>, чтобы
   // записать клик (наряд статистики 12.10): ссылка подписана и привязана к этому человеку.
-  const regBtn = buttons(cards[0]).find((b) => b.text === "Регистрация");
+  const regBtn = buttons(card0).find((b) => b.text === "Регистрация");
   assert.ok(regBtn?.url?.startsWith("https://igorp.run/go/r"), `«Регистрация» через /go/: ${regBtn?.url}`);
   const parsedGo = parseGo(regBtn!.url!.split("/go/")[1]);
   assert.ok(parsedGo && parsedGo.kind === "r" && parsedGo.uid === 501, "в ссылке код старта и tg_id");
-  // Стартов меньше 3 (2 по фильтрам): вместо голого списка — «Рядом», «Ожидаются», «Снять фильтры»
-  // и то же предложение рассылки; после первого списка — подсказка про ⭐, один раз.
-  const footer = shown.find((c) => buttons(c).some((b) => b.callback_data === "dg:on"))!;
-  assert.ok(footer, "предложение рассылки есть и под коротким списком");
-  assert.ok(buttons(footer).some((b) => b.callback_data === "nf"), "кнопка «Снять фильтры»");
-  assert.match(String(shown.at(-1)!.params.text), /Нажми ⭐, и я напомню, когда пора начинать готовиться/);
-  reset();
-  await bot.handleUpdate(cb(USER, "show"));
-  assert.ok(!texts(501).some((t) => t.includes("Нажми ⭐, и я напомню")), "подсказка про ⭐ один раз");
+  // ⭐ в карточке: сохраняет, карточка остаётся, кнопка меняется; первая ⭐ — с консультацией
+  const c0 = calls.length;
+  await bot.handleUpdate(cbm(USER, buttons(card0)[0].callback_data!));
+  assert.ok(store.follows.some((f) => f.tg_id === 501 && f.race_id === TRAIL.id), "⭐ сохранил");
+  const card1 = screens(501, c0).at(-1)!;
+  assert.equal(card1.method, "editMessageText", "без новых сообщений");
+  assert.deepEqual(buttons(card1).map((b) => b.text), ["✓ Слежу · убрать", "Регистрация", "Сайт", "Бесплатная консультация", "← К списку"]);
+  assert.equal(sent(501, c0).length, 0, "ни одного нового сообщения");
+  // «← К списку» — та же страница, отметка ⭐, подсказки больше нет
+  await bot.handleUpdate(cbm(USER, "sn:near:0"));
+  const lst2 = String(screens(501).at(-1)!.params.text);
+  assert.match(lst2, /1\. ⭐ <b>18 окт, вс<\/b>/);
+  assert.ok(!lst2.includes("Открой старт кнопкой"), "подсказка про ⭐ один раз");
+  await bot.handleUpdate(cbm(USER, buttons(card1)[0].callback_data!.replace(/^su:/, "su:")));
+  // снять ⭐ из карточки
+  await bot.handleUpdate(cbm(USER, "so:near:0:0"));
+  await bot.handleUpdate(cbm(USER, `su:${raceCode(TRAIL.id)}:near:0`));
+  assert.ok(!store.follows.some((f) => f.tg_id === 501 && f.race_id === TRAIL.id), "✓ Слежу · убрать снимает");
   await bot.handleUpdate(cb(USER, "dg:on"));
   assert.equal(store.users.get(501)?.digest_on, true);
 
@@ -219,10 +261,16 @@ async function main() {
   await bot.handleUpdate(cb(USER, `city:${citySlug("Москва")}`));
 
   // ── поиск текстом ─────────────────────────────────────────────────────────
+  // Было: поиск слал список карточек. Стало: развилка по сезонам для найденного города с фильтром запроса.
   reset();
   await bot.handleUpdate(msg(USER, "трейл Казань"));
-  assert.match(texts(501)[0], /Ближайшие забеги в Казани: трейл/);
-  assert.ok(texts(501).some((t) => t.includes("Казанский трейл")));
+  assert.match(texts(501)[0], /^<b>Казань и рядом\.<\/b> На какой сезон ищешь старт\?\nФильтры: трейл\./);
+  assert.equal(store.users.get(501)?.browse_ctx, "Казань|trail|", "листаем Казань, свой город прежний");
+  assert.equal(store.users.get(501)?.city, "Москва");
+  await bot.handleUpdate(cbm(USER, "sn:ve27:0"));
+  assert.ok(String(screens(501).at(-1)!.params.text).includes("Казанский трейл"));
+  await bot.handleUpdate(cbm(USER, "show"));
+  assert.equal(store.users.get(501)?.browse_ctx, null, "«Показать забеги» — снова свой город");
 
   // ── сохранение по deep link с сайта и консультация ─────────────────────────
   reset();
@@ -233,9 +281,12 @@ async function main() {
   assert.match(savedText, /14 марта, вс · Москва/);
   assert.match(savedText, /за неделю: короткий чек-лист старта/);
   assert.match(savedText, /накануне: погоду на трассе/);
-  const offer = sent(501)[1];
+  // Было: первое предложение консультации — после deep link. С 13.10.2026 первая ⭐ (в карточке
+  // сезона выше) уже предложила её кнопкой «Бесплатная консультация» — в те же 30 дней второй раз не предлагаем.
+  assert.equal(sent(501).length, 1, "после ⭐ в карточке консультация не повторяется");
+  const offer = { params: T.consultOffer(raceCode(HALF.id)) as unknown as Record<string, unknown> };
   assert.match(String(offer.params.text), /Запишись на бесплатную консультацию: тренер разберёт твою ситуацию и даст конкретное решение под этот старт\./);
-  assert.deepEqual(buttons(offer).slice(0, 2).map((b) => b.text), ["Записаться", "Пока не нужно"]);
+  assert.deepEqual(buttons(offer as Call).slice(0, 2).map((b) => b.text), ["Записаться", "Пока не нужно"]);
   // второе сохранение в те же 30 дней — без предложения консультации
   reset();
   await bot.handleUpdate(cb(USER, `f:${raceCode(TRAIL.id)}`));
@@ -294,7 +345,8 @@ async function main() {
       await bot.handleUpdate({ callback_query: { id: String(mid++), from: USER, data, message: { message_id: 4242, chat: { id: 501, type: "private" } } } });
       CLICK += 5000;
       const after = me() as unknown as Record<string, unknown>;
-      const changed = Object.keys({ ...before, ...after }).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+      // menu_message_* — служебное «меню всегда последнее» (13.10.2026), не настройка человека
+      const changed = Object.keys({ ...before, ...after }).filter((k) => !k.startsWith("menu_message_") && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
       assert.ok(changed.every((k) => MODE_FIELDS.has(k)), `${data}: задело не только режим (${changed.join(",")})`);
       const out = calls.slice(c);
       return { changed, out, done: String(out.filter((x) => x.method === "sendMessage").at(-1)?.params.text ?? ""), edit: out.find((x) => x.method === "editMessageText"), events: store.events.slice(evBefore) };
@@ -458,11 +510,30 @@ async function main() {
   RACES = [...RACES, race("probeg:3001", "Новый осенний забег", "2026-11-29", "Москва", "road", [10], "2026-10-15T00:00:00Z")];
   reset();
   NOW = new Date("2026-10-19T07:30:00Z"); // пн 10:30 МСК
+  const menuBefore = store.users.get(501)!.menu_message_id;
+  assert.ok(menuBefore, "у человека есть живое меню");
   await bot.runTick();
-  // Было: «Новые забеги в Москве за неделю: 1». Стало (12.10.2026): дайджест из двух блоков, как
-  // список, — город и «область и рядом»; заголовок называет оба, второй блок только если там есть новые.
-  assert.ok(texts(501).includes("Новые забеги за неделю: в Москве 1."), "дайджест: заголовок");
-  assert.ok(!texts(501).some((t) => t.includes(" и рядом</b>")), "в области новых нет — второго блока нет");
+  // Было: дайджест — заголовок и карточки отдельными сообщениями (12.10.2026 — ещё и блок области).
+  // Стало (13.10.2026): одно сообщение со списком и кнопками 1–N, оно же новое меню; второй блок
+  // («и рядом») только если там есть новые.
+  const dg = sent(501).filter((c) => String(c.params.text).startsWith("<b>Новые забеги"));
+  assert.equal(dg.length, 1, "дайджест одним сообщением");
+  assert.match(String(dg[0].params.text), /^<b>Новые забеги за неделю:<\/b> в Москве 1\.\n\n1\. <b>29 ноя, вс<\/b> · Новый осенний забег/);
+  assert.ok(!String(dg[0].params.text).includes(" и рядом"), "в области новых нет — второго блока нет");
+  assert.deepEqual(buttons(dg[0]).map((b) => b.text), ["1", "Все старты по сезонам", "Фильтры", "Мои старты", "📅 Календарь"]);
+  // «меню всегда последнее»: со старого меню сняли кнопки; в этом же тике ушло ещё напоминание
+  // «через неделю» — кнопки остаются только у последнего сообщения, оно и живое меню
+  const strippedIds = calls.filter((c) => c.method === "editMessageReplyMarkup" && (c.params.reply_markup as { inline_keyboard: unknown[] }).inline_keyboard.length === 0).map((c) => c.params.message_id);
+  assert.ok(strippedIds.includes(menuBefore), "у старого меню сняли кнопки");
+  const lastSent = calls.filter((c) => c.method === "sendMessage" && c.params.chat_id === 501).length;
+  assert.equal(store.users.get(501)!.menu_message_id, calls.findLastIndex((c) => c.method === "sendMessage" && c.params.chat_id === 501) + 1, "живое меню — последнее сообщение");
+  assert.ok(lastSent >= 2 && strippedIds.length >= 2, "и у дайджеста кнопки сняты, когда ушло следующее");
+  // кнопка «1» открывает карточку в том же сообщении, «← К списку» — к развилке
+  await bot.handleUpdate(cbm(USER, buttons(dg[0])[0].callback_data!));
+  const dgCard = screens(501).at(-1)!;
+  assert.equal(dgCard.method, "editMessageText");
+  assert.match(String(dgCard.params.text), /^<b>Новый осенний забег<\/b>/);
+  assert.equal(buttons(dgCard).at(-1)!.callback_data, "sz");
   await bot.handleUpdate(cb(USER, "dlist"));
   reset();
   NOW = new Date("2026-10-26T07:30:00Z"); // следующий понедельник, новых нет
@@ -496,13 +567,24 @@ async function main() {
     reset();
     await bot.handleUpdate(msg(OLEG, "трейл Москва"));
     await bot.handleUpdate(msg(OLEG, "забег Москва"));
-    const block = sent(811).find((c) => String(c.params.text).startsWith("Ожидаются, дата 2027 пока не объявлена"));
-    assert.ok(block, "под списком — ожидаемые города");
-    assert.match(String(block!.params.text), /Ночной забег<\/b>, Москва, обычно в июне/);
-    const watchBtn = buttons(block!).find((b) => b.callback_data?.startsWith("ew:"));
-    assert.ok(watchBtn, "кнопка «Сообщить, когда объявят»");
-    await bot.handleUpdate(cb(OLEG, watchBtn!.callback_data!));
-    assert.match(texts(811).at(-1)!, /сообщу, как только объявят дату «Ночной забег»/);
+    // Было: блок «Ожидаются, дата 2027 пока не объявлена» под списком и кнопка ew:. С 13.10.2026
+    // ожидаемые идут в сезонах вперемешку с датированными: «~20 июн … дата ожидается, в 2026 было
+    // 20 июня»; в карточке ожидаемого вместо ⭐ — «Сообщить, когда объявят».
+    const forkO = String(screens(811).at(-1)!.params.text);
+    assert.match(forkO, /Лето 2027: 0 с датой, 1 ожидается/);
+    await bot.handleUpdate(cbm(OLEG, "sn:le27:0"));
+    const summer = String(screens(811).at(-1)!.params.text);
+    assert.match(summer, /1\. <b>~20 июн<\/b> · Ночной забег\n    Москва · дата ожидается, в 2026 было 20 июня/);
+    await bot.handleUpdate(cbm(OLEG, "so:le27:0:0"));
+    const expCard = screens(811).at(-1)!;
+    assert.equal(expCard.method, "editMessageText");
+    assert.match(String(expCard.params.text), /^<b>Ночной забег<\/b>\n~20 июн 2027: дата ожидается, в 2026 было 20 июня/);
+    assert.deepEqual(buttons(expCard).map((b) => b.text), ["Сообщить, когда объявят", "Прошлый старт", "← К списку"], "у ожидаемого нет ⭐");
+    await bot.handleUpdate(cbm(OLEG, buttons(expCard)[0].callback_data!));
+    assert.deepEqual(await store.listExpectedWatches(811), [EXP_NIGHT.id], "подписка «сообщить, когда объявят»");
+    const expCard2 = screens(811).at(-1)!;
+    assert.equal(buttons(expCard2)[0].text, "✓ Сообщу, когда объявят");
+    assert.match(String(expCard2.params.text), /Сообщу, как только объявят дату\./);
     // с сайта: start=e_<код>
     await bot.handleUpdate(msg(OLEG, `/start e_${raceCode(EXP_KAZAN.id)}`));
     assert.match(texts(811).at(-1)!, /Казанский ночной забег/);
@@ -645,11 +727,12 @@ async function main() {
   }
 
   // ── 📅 Весь календарь: под списком, в «С возвращением!», в «Мои забеги», в ответе на непонятное ──
+  // С 13.10.2026 под списком — нижний ряд навигации «Фильтры, Мои старты, 📅 Календарь» (макет «A»).
   {
     const K = { id: 6201, first_name: "Кира", username: "kira6201" };
     await bot.handleUpdate(msg(K, "/start"));
     await bot.handleUpdate(cb(K, `city:${citySlug("Москва")}`));
-    const calBtn = (from: number) => calls.slice(from).filter((c) => c.method === "sendMessage" && c.params.chat_id === K.id).flatMap(buttons).find((b) => b.text === "📅 Весь календарь");
+    const calBtn = (from: number) => calls.slice(from).filter((c) => c.method === "sendMessage" && c.params.chat_id === K.id).flatMap(buttons).find((b) => b.text === "📅 Весь календарь" || b.text === "📅 Календарь");
     const places: [string, () => Promise<void>, string][] = [
       ["под списком", () => bot.handleUpdate(cb(K, "show")), "list"],
       ["С возвращением", () => bot.handleUpdate(msg(K, "/start")), "menu"],
@@ -731,7 +814,9 @@ async function main() {
     assert.ok(dgi > 1, "второй блок дайджеста после города");
     assert.match(dg[dgi + 1], /📍 Лихославль, \d+ км$/);
 
-    // бот: Тверь — два блока; геолокация сохраняет точку, город кнопкой её сбрасывает
+    // бот (с 13.10.2026 — навигация по сезонам): развилка «Тверь и рядом» со счётчиками; внутри
+    // сезона сначала город, потом «Область и рядом» со строкой «город, км»; листание ◀ ▶,
+    // «← К списку» на ту же страницу; живое меню старше 48 часов не правится — новое внизу.
     const savedRaces = RACES;
     RACES = pool;
     const G = { id: 6301, first_name: "Гео", username: "geo6301" };
@@ -739,22 +824,62 @@ async function main() {
     await bot.handleUpdate(cb(G, "pick"));
     await bot.handleUpdate(cb(G, "city_other"));
     await bot.handleUpdate(msg(G, "Тверь"));
+    await bot.handleUpdate(cbm(G, "show"));
+    const fk = String(screens(G.id).at(-1)!.params.text);
+    assert.match(fk, /^<b>Тверь и рядом\.<\/b> На какой сезон ищешь старт\?/);
+    assert.match(fk, /Ближайшие \(до 30 ноября\): 3 с датой, 0 ожидаются/, "Старица, Конаково, Лихославль");
+    assert.match(fk, /Весна 2027: 3 с датой/, "2 в Твери + Клин");
+    assert.match(fk, /Лето 2027: 2 с датой/, "Бологое и строка без города");
+    assert.ok(!/Зима/.test(fk), "зима пустая — скрыта");
+    await bot.handleUpdate(cbm(G, "sn:ve27:0"));
+    const spring = String(screens(G.id).at(-1)!.params.text);
+    assert.match(spring, /1\. <b>9 мая, вс<\/b> · Тверской забег\n    Тверь[\s\S]*2\. <b>22 мая, сб<\/b> · Тверской полумарафон\n    Тверь[\s\S]*<i>Область и рядом:<\/i>\n3\. <b>20 мая, чт<\/b> · Клинский забег\n    Клин, \d+ км/, "сначала город, потом область и рядом с км");
+    // «Все старты подряд»: 8 стартов → 2 страницы; ▶, открыть на 2-й, «← К списку» — снова 2-я
+    await bot.handleUpdate(cbm(G, "sn:all:0"));
+    const p1 = screens(G.id).at(-1)!;
+    assert.match(String(p1.params.text), /\n1-5 из 8\n/);
+    const next = buttons(p1).find((b) => b.text === "▶");
+    assert.ok(next && !buttons(p1).some((b) => b.text === "◀"), "на первой странице только ▶");
+    await bot.handleUpdate(cbm(G, next!.callback_data!));
+    const p2 = screens(G.id).at(-1)!;
+    assert.match(String(p2.params.text), /\n6-8 из 8\n/);
+    assert.ok(buttons(p2).some((b) => b.text === "◀") && !buttons(p2).some((b) => b.text === "▶"));
+    assert.match(String(p2.params.text), /Тверская область, город не указан/, "строка без города — с пометкой");
+    await bot.handleUpdate(cbm(G, "so:all:1:0"));
+    const back = buttons(screens(G.id).at(-1)!).find((b) => b.text === "← К списку");
+    assert.equal(back?.callback_data, "sn:all:1", "назад — на ту же страницу");
+    await bot.handleUpdate(cbm(G, back!.callback_data!));
+    assert.match(String(screens(G.id).at(-1)!.params.text), /\n6-8 из 8\n/, "вернулись на 2-ю страницу");
+    // живое меню старше 48 часов: не правим, новое меню внизу, у старого кнопки сняты
+    const oldId = store.users.get(G.id)!.menu_message_id!;
+    store.users.get(G.id)!.menu_message_at = new Date(NOW.getTime() - 49 * 3600 * 1000).toISOString();
+    const c48 = calls.length;
+    await bot.handleUpdate(cbm(G, "sz"));
+    const after48 = calls.slice(c48);
+    assert.ok(!after48.some((x) => x.method === "editMessageText"), "старше 48 часов — не правим");
+    assert.ok(after48.some((x) => x.method === "editMessageReplyMarkup" && x.params.message_id === oldId), "у старого сняли кнопки");
+    assert.ok(after48.some((x) => x.method === "sendMessage" && /На какой сезон ищешь старт/.test(String(x.params.text))), "новое меню внизу");
+    assert.notEqual(store.users.get(G.id)!.menu_message_id, oldId);
+    // Telegram не дал изменить (удалено и т.п.): то же — новое меню внизу
+    noEditChats.add(G.id);
+    const cNo = calls.length;
+    const idNo = store.users.get(G.id)!.menu_message_id!;
+    await bot.handleUpdate(cbm(G, "sn:all:0"));
+    noEditChats.delete(G.id);
+    assert.ok(calls.slice(cNo).some((x) => x.method === "sendMessage" && /Все старты подряд/.test(String(x.params.text))), "не изменить — новое меню");
+    assert.notEqual(store.users.get(G.id)!.menu_message_id, idNo);
+    // юнит: границы сезонов и ожидаемая дата
+    assert.deepEqual(seasons("2026-10-13").map((x) => [x.key, x.label, x.from, x.to]), [
+      ["near", "Ближайшие (до 30 ноября)", "2026-10-13", "2026-11-30"],
+      ["zi27", "Зима 2026/27", "2026-12-01", "2027-02-28"],
+      ["ve27", "Весна 2027", "2027-03-01", "2027-05-31"],
+      ["le27", "Лето 2027", "2027-06-01", "2027-08-31"],
+      ["all", "Все старты подряд", "2026-10-13", "9999-12-31"],
+    ]);
+    assert.deepEqual(seasons("2026-12-10").slice(0, 2).map((x) => [x.key, x.from, x.to]), [["near", "2026-12-10", "2027-01-31"], ["zi27", "2027-02-01", "2027-02-28"]], "зима обрезана по концу «Ближайших»");
+    assert.equal(expectedDate({ lastDate: "2026-04-05" }, "2026-10-13"), "2027-04-05");
+    assert.equal(expectedDate({ lastDate: "2026-10-20" }, "2026-10-13"), "2027-10-20", "в этом году уже прошёл — следующий год");
     let c = calls.length;
-    await bot.handleUpdate(cb(G, "show"));
-    const out = calls.slice(c).filter((x) => x.method === "sendMessage").map((x) => String(x.params.text));
-    assert.match(out[0], /^Ближайшие забеги в Твери/, "первый блок — город");
-    assert.ok(out.slice(1, 3).every((t) => /Тверск(ой|ий)/.test(t)), "в первом блоке только Тверь");
-    const hi = out.findIndex((t) => t.startsWith("<b>Тверская область и рядом</b>"));
-    assert.ok(hi > 2, "второй блок после первого");
-    assert.match(out[hi + 1], /Тверская Карелия[\s\S]*📍 Лихославль, \d+ км$/, "первым ближайший, «город, км»");
-    assert.ok(!out.some((t) => /Белые ночи/.test(t)), "Петербург не попадает");
-    // второй блок длиннее страницы: «Показать ещё»
-    const areaBtn = calls.slice(c).flatMap(buttons).find((b) => b.callback_data?.startsWith("area:"));
-    assert.ok(areaBtn, "кнопка следующей страницы второго блока");
-    c = calls.length;
-    await bot.handleUpdate(cb(G, areaBtn!.callback_data!));
-    assert.ok(calls.slice(c).some((x) => /📍 /.test(String(x.params.text))), "следующая страница второго блока");
-    assert.ok(calls.slice(c).some((x) => /📍 Тверская область, город не указан$/.test(String(x.params.text))), "строка без города — в конце, с пометкой");
     const GEO = { id: 6302, first_name: "Точка", username: "pt6302" };
     await bot.handleUpdate(msg(GEO, "/start"));
     await bot.handleUpdate({ message: { message_id: mid++, chat: { id: GEO.id, type: "private" }, from: GEO, location: { latitude: 56.85, longitude: 35.9 } } } as never);
@@ -765,8 +890,10 @@ async function main() {
     await bot.handleUpdate(cb(GEO, buttons(near)[0].callback_data!));
     assert.deepEqual([store.users.get(GEO.id)?.city, store.users.get(GEO.id)?.geo_lat], ["Тверь", 56.85], "город из ближайших — точка остаётся");
     c = calls.length;
-    await bot.handleUpdate(cb(GEO, "show"));
-    assert.ok(calls.slice(c).some((x) => String(x.params.text).includes("до 150 км от тебя")), "второй блок от геолокации");
+    await bot.handleUpdate(cbm(GEO, "show"));
+    await bot.handleUpdate(cbm(GEO, "sn:all:0"));
+    // точка у Твери: Лихославль ~40 км — первый из «области и рядом» по км в ближайших
+    assert.ok(calls.slice(c).some((x) => /Лихославль, \d+ км/.test(String(x.params.text))), "км от геолокации");
     await bot.handleUpdate(cb(GEO, "s:city"));
     await bot.handleUpdate(cb(GEO, `city:${citySlug("Тверь")}`));
     assert.equal(store.users.get(GEO.id)?.geo_lat, null, "город кнопкой сбрасывает точку");
@@ -795,6 +922,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("check:races-bot FAILED:", e instanceof Error ? e.message : e);
+  console.error("check:races-bot FAILED:", e instanceof Error ? e.message : e, e instanceof Error ? e.stack?.split("\n")[1] : "");
   process.exit(1);
 });

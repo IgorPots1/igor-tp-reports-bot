@@ -573,3 +573,102 @@ export function expectedInArea(e: ExpectedItem, city: string | null, subject: st
 export function findExpectedByCode(list: ExpectedItem[], code: string): ExpectedItem | null {
   return list.find((e) => raceCode(e.id) === code) ?? null;
 }
+
+// ── сезоны: развилка «на какой сезон ищешь старт» (наряд 13.10.2026) ─────────
+
+export type Season = { key: string; label: string; from: string; to: string };
+
+const SEASON_NAMES: [string, number[]][] = [["Зима", [12, 1, 2]], ["Весна", [3, 4, 5]], ["Лето", [6, 7, 8]], ["Осень", [9, 10, 11]]];
+const MON_GEN_FULL = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
+
+const isoOf = (y: number, m: number, d: number) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+
+/**
+ * Развилка: «Ближайшие» (с сегодня до конца следующего месяца), три следующих сезона по 3 месяца
+ * (зима дек–фев, весна мар–май, лето июн–авг, осень сен–ноя; первый обрезается по концу «Ближайших»)
+ * и «Все старты подряд». key короткий: он идёт в callback_data.
+ */
+export function seasons(today: string): Season[] {
+  const [y, m] = [Number(today.slice(0, 4)), Number(today.slice(5, 7))];
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  const nearTo = isoOf(ny, nm, lastDay(ny, nm));
+  const out: Season[] = [{ key: "near", label: `Ближайшие (до ${lastDay(ny, nm)} ${MON_GEN_FULL[nm - 1]})`, from: today, to: nearTo }];
+  // день после «Ближайших»
+  let sy = nm === 12 ? ny + 1 : ny;
+  let sm = nm === 12 ? 1 : nm + 1;
+  let from = isoOf(sy, sm, 1);
+  for (let i = 0; i < 3; i++) {
+    const [name, months] = SEASON_NAMES.find(([, ms]) => ms.includes(sm))!;
+    const endM = months[2];
+    const endY = sm === 12 ? sy + 1 : sy;
+    const to = isoOf(endY, endM, lastDay(endY, endM));
+    const label = name === "Зима" ? `Зима ${endY - 1}/${String(endY).slice(2)}` : `${name} ${endY}`;
+    out.push({ key: `${["zi", "ve", "le", "os"][SEASON_NAMES.findIndex(([n]) => n === name)]}${String(endY).slice(2)}`, label, from, to });
+    sy = endM === 12 ? endY + 1 : endY;
+    sm = endM === 12 ? 1 : endM + 1;
+    from = isoOf(sy, sm, 1);
+  }
+  out.push({ key: "all", label: "Все старты подряд", from: today, to: "9999-12-31" });
+  return out;
+}
+
+/** Ожидаемая дата: прошлое проведение, перенесённое на ближайший год не раньше сегодня. */
+export function expectedDate(e: { lastDate: string }, today: string): string {
+  let y = Number(e.lastDate.slice(0, 4)) + 1;
+  const md = e.lastDate.slice(4);
+  while (`${y}${md}` < today) y += 1;
+  return `${y}${md}`;
+}
+
+export type SeasonItem =
+  | { kind: "race"; race: BotRace; km: number | null; date: string; near: boolean }
+  | { kind: "exp"; e: ExpectedItem; km: number | null; date: string; near: boolean };
+
+/**
+ * Состав для сезонов: город плюс область и 150 км, с фильтрами типов и дистанций; старты с датой и
+ * ожидаемые одним списком. Внутри сезона: сначала город (по дате), потом «область и рядом» (по дате,
+ * с км). near — из второго блока.
+ */
+export function browseItems(
+  races: BotRace[],
+  expected: ExpectedItem[],
+  city: string,
+  types: string[],
+  dists: string[],
+  origin: GeoPoint | null,
+  today: string,
+): SeasonItem[] {
+  const from = origin ?? cityPoint(races, city);
+  const out: SeasonItem[] = [];
+  for (const r of races) {
+    if (!inUserCity(r, city) || !matchUser(r, types, dists) || r.de < today) continue;
+    out.push({ kind: "race", race: r, km: null, date: r.ds < today ? today : r.ds, near: false });
+  }
+  for (const { race, km } of areaRaces(races, city, types, dists, origin).items) {
+    if (race.de < today) continue;
+    out.push({ kind: "race", race, km, date: race.ds < today ? today : race.ds, near: true });
+  }
+  const subject = citySubject(races, city);
+  for (const e of expected) {
+    if (!expectedInArea(e, city, subject, from) || !matchUser({ type: e.type, km: e.km, tags: [] } as unknown as Race, types, dists)) continue;
+    const near = !expectedInCity(e, city);
+    const km = near && from && e.geo ? Math.round(kmBetween(from, e.geo)) : null;
+    out.push({ kind: "exp", e, km, date: expectedDate(e, today), near });
+  }
+  return out;
+}
+
+/** Старты сезона: сначала город, потом область и рядом; внутри — по дате. */
+export function seasonSlice(items: SeasonItem[], s: Season): SeasonItem[] {
+  return items
+    .filter((x) => x.date >= s.from && x.date <= s.to)
+    .sort((a, b) => Number(a.near) - Number(b.near) || a.date.localeCompare(b.date) || (a.km ?? 0) - (b.km ?? 0));
+}
+
+/** Счётчики под кнопками: «N с датой, M ожидаются». */
+export function seasonCounts(items: SeasonItem[], s: Season): { dated: number; expected: number } {
+  const xs = items.filter((x) => x.date >= s.from && x.date <= s.to);
+  return { dated: xs.filter((x) => x.kind === "race").length, expected: xs.filter((x) => x.kind === "exp").length };
+}

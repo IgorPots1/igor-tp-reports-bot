@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { NEARBY_KM, areaRaces, citySlug, inCity, raceCode, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
+import { NEARBY_KM, areaRaces, citySlug, expectedDate, inCity, raceCode, seasons, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
 
 import {
   DISTS,
@@ -20,6 +20,7 @@ import {
   MONTHS,
   norm,
   plural,
+  inRange,
   subjectsOf,
   type Filters,
   type Race,
@@ -285,10 +286,14 @@ export default function RacesCalendar({
     setOpen({});
   }, [f]);
 
+  // Сезоны вкладками сверху — те же, что в боте: Ближайшие, три сезона, Все.
+  const today = useMemo(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date()), []);
+  const seasonTabs = useMemo(() => seasons(today), [today]);
+  const season = seasonTabs.find((s) => s.key === f.season && s.key !== "all") ?? null;
   const list = useMemo(() => {
-    const base = applyFilters(races, f);
+    const base = applyFilters(races, f).filter((r) => !season || inRange(r, season.from, season.to));
     return onlyMine ? base.filter((r) => saved.has(r.id)) : base;
-  }, [races, f, onlyMine, saved]);
+  }, [races, f, onlyMine, saved, season]);
   const months = useMemo(() => groupByMonth(list), [list]);
   // Ожидаемые: те же поиск и фильтры, что у стартов (дистанции — по километрам из строк).
   const expectedByMonth = useMemo(() => {
@@ -298,6 +303,10 @@ export default function RacesCalendar({
       if (f.type !== "all" && e.type !== f.type) return false;
       if (f.dist !== "all" && !distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)) return false;
       if (f.region && e.subject !== f.region) return false;
+      if (season) {
+        const d = expectedDate(e, today);
+        if (d < season.from || d > season.to) return false;
+      }
       const hay = norm(`${e.name} ${e.city} ${e.region} ${e.subject ?? ""}`);
       return words.every((w) => hay.includes(w));
     });
@@ -306,7 +315,7 @@ export default function RacesCalendar({
     // С ближайшего месяца: сейчас октябрь — сначала ноябрь, декабрь, потом весна.
     const startM = new Date().getMonth() + 1;
     return [...by.entries()].sort((a, b) => ((a[0] - startM + 12) % 12) - ((b[0] - startM + 12) % 12));
-  }, [expected, f, onlyMine]);
+  }, [expected, f, onlyMine, season, today]);
   const expectedCount = expectedByMonth.reduce((n, [, xs]) => n + xs.length, 0);
   const typeBase = useMemo(() => applyFilters(races, f, "type"), [races, f]);
   const distBase = useMemo(() => applyFilters(races, f, "dist"), [races, f]);
@@ -319,7 +328,7 @@ export default function RacesCalendar({
   const searching = f.q.trim() !== "";
   const nCities = new Set(races.map((r) => r.city).filter(Boolean)).size;
   const listCities = new Set(list.map((r) => r.city).filter(Boolean)).size;
-  const dirty = f.q !== "" || f.type !== "all" || f.dist !== "all" || f.region !== "";
+  const dirty = f.q !== "" || f.type !== "all" || f.dist !== "all" || f.region !== "" || !!f.season;
   const subjects = useMemo(() => subjectsOf(races), [races]);
   const inTg = initData !== null;
   // Плашка подписки — когда в поиске ровно город из календаря.
@@ -336,6 +345,9 @@ export default function RacesCalendar({
     return { subject: a.subject, items: a.items.filter(({ race }) => applyFilters([race], { ...f, q: "", region: "" }).length > 0) };
   }, [bannerCity, races, f, onlyMine]);
   useEffect(() => setAreaShown(8), [bannerCity]);
+  // Счётчик на вкладке сезона: те же фильтры, без самого сезона.
+  const seasonBase = useMemo(() => applyFilters(races, { ...f, season: "" }), [races, f]);
+  const seasonCount = (s: { from: string; to: string } | null) => (s ? seasonBase.filter((r) => inRange(r, s.from, s.to)).length : seasonBase.length);
   const followUi = (r: Race): FollowUi =>
     inTg ? { mode: "tg", saved: saved.has(r.id), busy: busy === r.id, onToggle: toggle } : { mode: "site", bot: botUsername };
 
@@ -364,6 +376,7 @@ export default function RacesCalendar({
         ) : null}
       </header>
 
+      <div className={inTg ? styles.pinnedTg : undefined}>
       <div className={styles.search}>
         <input
           type="search"
@@ -391,6 +404,26 @@ export default function RacesCalendar({
         ) : null}
       </div>
 
+        <div className={styles.seasons} role="tablist" aria-label="Сезон">
+          {seasonTabs.map((s) => {
+            const on = (f.season || "all") === s.key;
+            const n = seasonCount(s.key === "all" ? null : s);
+            if (!n && s.key !== "all") return null;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                className={styles.chip}
+                onClick={() => setF((p) => ({ ...p, season: s.key === "all" ? "" : s.key }))}
+              >
+                {s.key === "near" ? "Ближайшие" : s.key === "all" ? "Все" : s.label}
+                <span className={styles.n}>{n}</span>
+              </button>
+            );
+          })}
+        </div>
       <section className={styles.filters} aria-label="Фильтры">
         <div className={styles.chiprow} role="group" aria-label="Тип старта">
           <span className={styles.lbl}>Тип</span>
@@ -451,6 +484,7 @@ export default function RacesCalendar({
           ) : null}
         </p>
       </section>
+      </div>
 
       {/* Над списком, а в пустом результате поиска такая же форма стоит внутри сообщения. */}
       {races.length && list.length ? (

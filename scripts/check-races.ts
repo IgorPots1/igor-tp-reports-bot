@@ -137,11 +137,11 @@ assert.deepEqual(applyFilters(races, { q: "КАЗАНЬ татарстан", typ
 assert.equal(applyFilters(races, { q: "казань", type: "trail", dist: "all", region: "" }, "type").length, 2, "счётчик типа без своего фильтра");
 
 // Адрес.
-const f = { q: "Казань", type: "trail" as const, dist: "half" as const, region: "" };
+const f = { q: "Казань", type: "trail" as const, dist: "half" as const, region: "", season: "" };
 assert.equal(filtersToSearch(f), "?q=%D0%9A%D0%B0%D0%B7%D0%B0%D0%BD%D1%8C&type=trail&dist=half");
 assert.deepEqual(filtersFromSearch(filtersToSearch(f)), f, "адрес туда и обратно");
 assert.equal(filtersToSearch({ q: "", type: "all", dist: "all", region: "" }), "", "без фильтров адрес чистый");
-assert.deepEqual(filtersFromSearch("?type=hack&dist=<x>&q="), { q: "", type: "all", dist: "all", region: "" }, "мусор в адресе");
+assert.deepEqual(filtersFromSearch("?type=hack&dist=<x>&q=&season=<b>"), { q: "", type: "all", dist: "all", region: "", season: "" }, "мусор в адресе");
 
 // Области (наряд 12.10.2026): субъект одним написанием, фильтр «Вся Тверская область», город-область.
 {
@@ -159,7 +159,7 @@ assert.deepEqual(filtersFromSearch("?type=hack&dist=<x>&q="), { q: "", type: "al
   assert.deepEqual(applyFilters(all, { q: "", type: "all", dist: "all", region: "Тверская область" }).map((r) => r.id), ["t1", "t2", "t3"], "Вся Тверская область");
   assert.deepEqual(applyFilters(all, { q: "старица", type: "all", dist: "all", region: "" }).map((r) => r.id), ["t2"], "городок по-прежнему находится поиском");
   assert.deepEqual(subjectsOf(all), [{ subject: "Тверская область", n: 3 }, { subject: "Республика Татарстан", n: 1 }]);
-  const fr = { q: "", type: "all" as const, dist: "all" as const, region: "Тверская область" };
+  const fr = { q: "", type: "all" as const, dist: "all" as const, region: "Тверская область", season: "ve27" };
   assert.deepEqual(filtersFromSearch(filtersToSearch(fr)), fr, "область в адресе туда и обратно");
   assert.equal(canonicalSubject("Тверская обл"), "Тверская область");
   assert.equal(canonicalSubject("респ Татарстан"), "Республика Татарстан");

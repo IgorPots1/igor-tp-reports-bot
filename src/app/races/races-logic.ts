@@ -236,9 +236,9 @@ export function distMatch(r: Race, d: DistFilter): boolean {
   }
 }
 
-/** region — субъект целиком («Тверская область»); пусто — все. */
-export type Filters = { q: string; type: TypeFilter; dist: DistFilter; region: string };
-export const NO_FILTERS: Filters = { q: "", type: "all", dist: "all", region: "" };
+/** region — субъект целиком («Тверская область»); season — ключ сезона (near, ve27…); пусто — все. */
+export type Filters = { q: string; type: TypeFilter; dist: DistFilter; region: string; season?: string };
+export const NO_FILTERS: Filters = { q: "", type: "all", dist: "all", region: "", season: "" };
 
 export function haystack(r: Race): string {
   return norm([r.name, r.city, r.region, r.subject].join(" "));
@@ -266,6 +266,7 @@ export function filtersFromSearch(search: string): Filters {
   return {
     q: p.get("q") || "",
     region: p.get("region") || "",
+    season: /^[a-z]{2,4}\d{0,2}$/.test(p.get("season") || "") ? (p.get("season") as string) : "",
     type: type && TYPE_IDS.has(type) ? type : "all",
     dist: dist && DIST_IDS.has(dist) ? dist : "all",
   };
@@ -278,6 +279,7 @@ export function filtersToSearch(f: Filters): string {
   if (f.type !== "all") p.set("type", f.type);
   if (f.dist !== "all") p.set("dist", f.dist);
   if (f.region) p.set("region", f.region);
+  if (f.season) p.set("season", f.season);
   const s = p.toString();
   return s ? `?${s}` : "";
 }
@@ -316,6 +318,11 @@ export function groupByMonth(races: Race[]): MonthGroup[] {
 }
 
 /** Порядок: дата, потом название по-русски. Прошедшие (по дате конца) не показываются. */
+/** Старт в сезоне [from, to]: многодневный — если пересекается. */
+export function inRange(r: { ds: string; de: string }, from: string, to: string): boolean {
+  return r.de >= from && r.ds <= to;
+}
+
 /** Области для фильтра «Вся Тверская область»: субъекты стартов, самые частые первыми. */
 export function subjectsOf(races: Race[]): { subject: string; n: number }[] {
   const counts = new Map<string, number>();

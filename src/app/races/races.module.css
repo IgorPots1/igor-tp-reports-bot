@@ -90,6 +90,37 @@
 
 /* Закреплена только строка поиска: блок чипов на телефоне съел бы половину
    экрана, а поиск нужен под рукой всё время, пока листаешь месяцы. */
+/* Сезоны вкладками; в Mini App поиск, сезоны и фильтры закреплены сверху одним блоком
+   (фильтры строками с прокруткой вбок, чтобы блок не съедал экран). */
+.seasons {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 0 8px;
+  scrollbar-width: none;
+}
+
+.seasons::-webkit-scrollbar {
+  display: none;
+}
+
+.pinnedTg {
+  position: sticky;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 5;
+  background: var(--bg);
+}
+
+.pinnedTg .search {
+  position: static;
+}
+
+.pinnedTg .chiprow {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
 .search {
   position: sticky;
   top: env(safe-area-inset-top, 0px);

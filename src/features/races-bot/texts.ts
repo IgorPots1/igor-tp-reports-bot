@@ -18,6 +18,8 @@ import {
   type BotRace,
   type ExpectedItem,
   type PlanFollow,
+  type Season,
+  type SeasonItem,
 } from "./core";
 
 export type Button = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
@@ -135,13 +137,9 @@ export function cityPicker(): Msg {
 
 export const ASK_CITY: Msg = { text: "Напиши название города, например: Новосибирск" };
 
+/** Нижней reply-клавиатуры нет совсем (наряд 13.10.2026): геолокация — через скрепку. */
 export const ASK_GEO: Msg = {
-  text: "Нажми кнопку внизу, и я найду забеги рядом.",
-  reply_markup: {
-    keyboard: [[{ text: "Отправить геолокацию", request_location: true }]],
-    resize_keyboard: true,
-    one_time_keyboard: true,
-  },
+  text: "Пришли геолокацию: скрепка 📎 внизу, потом «Геопозиция». Найду города со стартами рядом. Или напиши город словами.",
 };
 
 const mark = (on: boolean, label: string) => (on ? `✓ ${label}` : label);
@@ -278,13 +276,21 @@ export function nothingFound(where: string, q?: string): Msg {
 export function menuKeyboard(city: string | null): Keyboard {
   return {
     inline_keyboard: [
-      ...(city ? [[{ text: `Забеги ${inCity(city)}`, callback_data: "show" }]] : []),
+      ...(city ? [[{ text: `Старты: ${city} и рядом`, callback_data: "sz" }]] : []),
       [{ text: "Мои забеги", callback_data: "my" }, calendarButton(CALENDAR_LABEL, city ?? undefined, "menu")],
       [{ text: "Настройки", callback_data: "s:menu" }, { text: "Сменить город", callback_data: "s:city" }],
       [{ text: "Начать заново", callback_data: "restart" }],
     ],
   };
 }
+
+/** Фильтры словами для развилки; пусто — фильтров нет. */
+export function filtersText(types: string[], dists: string[]): string {
+  return types.length || dists.length ? filtersLine(types, dists) : "";
+}
+
+/** Подсказка про ⭐ строкой в списке сезона (одна, в том же сообщении). */
+export const STAR_HINT_LIST = "Открой старт кнопкой с номером и нажми ⭐, и я напомню, когда пора начинать готовиться.";
 
 function filtersLine(types: string[], dists: string[]): string {
   const t = TYPE_BUTTONS.filter(([id]) => types.includes(id)).map(([, l]) => l.toLowerCase());
@@ -652,5 +658,170 @@ export function announced(r: Race): Msg {
   return {
     text: `<b>Объявили дату:</b> ${esc(r.name)}, ${longDate(r.ds)} · ${esc(r.city || "")}.\nДобавил его в «Мои забеги»: напомню, когда пора готовиться, и про погоду накануне.`,
     reply_markup: NAV,
+  };
+}
+
+// ── навигация по сезонам: одно живое сообщение (наряд 13.10.2026) ────────────
+//
+// Развилка «На какой сезон ищешь старт?» → список сезона по 5 (с датой и ожидаемые одним списком)
+// → карточка старта в том же сообщении, «← К списку» на ту же страницу. Нижний ряд везде:
+// Фильтры, Мои старты, Календарь.
+
+export const SEASON_PAGE = 5;
+
+function dayMon(iso: string): string {
+  const a = d(iso);
+  return `${a.getUTCDate()} ${MON_SHORT[a.getUTCMonth()]}`;
+}
+
+/** Нижний ряд экранов навигации. */
+export function navRow(city: string | null): Button[] {
+  return [{ text: "Фильтры", callback_data: "flt" }, { text: "Мои старты", callback_data: "my" }, calendarButton("📅 Календарь", city ?? undefined, "list")];
+}
+
+/** Развилка: сезоны с ненулевым счётчиком, под каждой кнопкой «N с датой, M ожидаются». */
+export function seasonFork(
+  city: string,
+  rows: { s: Season; dated: number; expected: number }[],
+  filters: string | null,
+): Msg {
+  const shown = rows.filter((r) => r.dated + r.expected > 0);
+  const head = `<b>${esc(city)} и рядом.</b> На какой сезон ищешь старт?${filters ? `\nФильтры: ${esc(filters)}.` : ""}`;
+  if (!shown.length) {
+    return {
+      text: `${head}\n\nПока ни одного старта${filters ? " по этим фильтрам" : ""}: ни с датой, ни ожидаемого.`,
+      reply_markup: { inline_keyboard: [[{ text: "Снять фильтры", callback_data: "nf" }, { text: "Сменить город", callback_data: "s:city" }], navRow(city)] },
+    };
+  }
+  const lines = shown.map((r) => `${r.s.label}: ${r.dated} с датой, ${r.expected} ${plural(r.expected, "ожидается", "ожидаются", "ожидаются")}`);
+  return {
+    text: `${head}\n\n${lines.join("\n")}`,
+    reply_markup: {
+      inline_keyboard: [...shown.map((r) => [{ text: `${r.s.label} · ${r.dated + r.expected}`, callback_data: `sn:${r.s.key}:0` }]), navRow(city)],
+    },
+  };
+}
+
+function itemPlace(x: SeasonItem): string {
+  if (x.kind === "race") return x.near ? placeLine(x.race, x.km) : x.race.city || placeLine(x.race, null);
+  const place = x.e.city || x.e.subject || "место уточняется";
+  return x.km === null ? place : `${place}, ${x.km} км`;
+}
+
+/** «дата ожидается, в 2026 было 5 апреля». */
+export function expectedNote(e: ExpectedItem): string {
+  const a = d(e.lastDate);
+  return `дата ожидается, в ${a.getUTCFullYear()} было ${a.getUTCDate()} ${MONTHS_GEN[a.getUTCMonth()]}`;
+}
+
+/** Список сезона: 5 на странице; кнопки 1–5 открывают старт, ◀ ▶ листают, «Другой сезон». */
+export function seasonList(
+  city: string,
+  s: Season,
+  items: SeasonItem[],
+  page: number,
+  following: Set<string>,
+  hasReg: (r: BotRace) => boolean,
+): Msg {
+  const pages = Math.max(1, Math.ceil(items.length / SEASON_PAGE));
+  const p = Math.min(Math.max(page, 0), pages - 1);
+  const slice = items.slice(p * SEASON_PAGE, (p + 1) * SEASON_PAGE);
+  const lines: string[] = [];
+  slice.forEach((x, i) => {
+    const prev = i > 0 ? slice[i - 1] : p > 0 ? items[p * SEASON_PAGE - 1] : null;
+    if (x.near && (!prev || !prev.near)) lines.push("<i>Область и рядом:</i>");
+    if (x.kind === "race") {
+      const star = following.has(x.race.id) ? "⭐ " : "";
+      const dist = distPills(x.race).join(" / ");
+      lines.push(`${i + 1}. ${star}<b>${shortDate(x.race)}</b> · ${esc(x.race.name)}\n    ${esc(itemPlace(x))}${dist ? ` · ${esc(dist)}` : ""}${hasReg(x.race) ? " · регистрация открыта" : ""}`);
+    } else {
+      lines.push(`${i + 1}. <b>~${dayMon(x.date)}</b> · ${esc(x.e.name)}\n    ${esc(itemPlace(x))} · ${expectedNote(x.e)}`);
+    }
+  });
+  const from = p * SEASON_PAGE + 1;
+  const to = p * SEASON_PAGE + slice.length;
+  const nav: Button[] = [];
+  if (p > 0) nav.push({ text: "◀", callback_data: `sn:${s.key}:${p - 1}` });
+  if (p < pages - 1) nav.push({ text: "▶", callback_data: `sn:${s.key}:${p + 1}` });
+  return {
+    text: `<b>${esc(city)} и рядом · ${esc(s.label)}</b>\n${from}-${to} из ${items.length}\n\n${lines.join("\n")}`,
+    reply_markup: {
+      inline_keyboard: [
+        slice.map((_, i) => ({ text: String(i + 1), callback_data: `so:${s.key}:${p}:${i}` })),
+        ...(nav.length ? [nav] : []),
+        [{ text: "Другой сезон", callback_data: "sz" }],
+        navRow(city),
+      ],
+    },
+  };
+}
+
+/** Карточка старта в том же сообщении. back — «sn:<сезон>:<страница>» или «sz». */
+export function raceScreen(
+  r: BotRace,
+  place: string,
+  following: boolean,
+  regUrl: string | null,
+  siteUrl: string | null,
+  back: string,
+  consult: boolean,
+): Msg {
+  const dist = distPills(r).join(" / ");
+  const code = raceCode(r.id);
+  const tail = back.replace(/^sn:/, "");
+  const rows: Button[][] = [
+    [following ? { text: "✓ Слежу · убрать", callback_data: `su:${code}:${tail}` } : { text: "⭐ Следить", callback_data: `sf:${code}:${tail}` }],
+  ];
+  const links: Button[] = [];
+  if (regUrl) links.push({ text: "Регистрация", url: regUrl });
+  if (siteUrl) links.push({ text: "Сайт", url: siteUrl });
+  if (links.length) rows.push(links);
+  if (consult) rows.push([{ text: "Бесплатная консультация", callback_data: `consult:${code}` }]);
+  rows.push([{ text: "← К списку", callback_data: back }]);
+  return {
+    text:
+      `<b>${esc(r.name)}</b>\n${shortDate(r)} ${d(r.ds).getUTCFullYear()}\n📍 ${esc(place)}` +
+      `${TYPE_LABEL[r.type] ? `\n${TYPE_LABEL[r.type]}` : ""}${dist ? ` · ${esc(dist)}` : ""}` +
+      (following ? "\n\n⭐ Слежу: напомню за 12 недель, за неделю и накануне." : ""),
+    reply_markup: { inline_keyboard: rows },
+  };
+}
+
+/** Карточка ожидаемого: вместо ⭐ «Сообщить, когда объявят». */
+export function expectedScreen(e: ExpectedItem, place: string, date: string, watching: boolean, back: string): Msg {
+  const code = raceCode(e.id);
+  const tail = back.replace(/^sn:/, "");
+  const rows: Button[][] = [
+    [watching ? { text: "✓ Сообщу, когда объявят", callback_data: "noop" } : { text: "Сообщить, когда объявят", callback_data: `sw:${code}:${tail}` }],
+    [{ text: "Прошлый старт", url: e.lastUrl }, ...(e.site ? [{ text: "Организатор", url: e.site }] : [])],
+    [{ text: "← К списку", callback_data: back }],
+  ];
+  return {
+    text:
+      `<b>${esc(e.name)}</b>\n~${dayMon(date)} ${date.slice(0, 4)}: ${expectedNote(e)}\n📍 ${esc(place)}` +
+      `${e.distances.length ? `\n${esc(e.distances.slice(0, 5).join(" / "))}` : ""}` +
+      (watching ? "\n\n✓ Сообщу, как только объявят дату." : ""),
+    reply_markup: { inline_keyboard: rows },
+  };
+}
+
+/** Дайджест одним сообщением: новые в городе и в области, кнопки 1–N открывают старт. */
+export function digestScreen(city: string, races: BotRace[], area: { race: BotRace; km: number | null }[], subject: string): Msg {
+  const items: { race: BotRace; place: string }[] = [
+    ...races.slice(0, 5).map((race) => ({ race, place: race.city })),
+    ...area.slice(0, 3).map(({ race, km }) => ({ race, place: placeLine(race, km) })),
+  ];
+  const lines = items.map((x, i) => `${i + 1}. <b>${shortDate(x.race)}</b> · ${esc(x.race.name)}\n    ${esc(x.place)}`);
+  const cityPart = `${inCity(city)} ${races.length}`;
+  const areaPart = area.length ? `, ${subject ? `${esc(subject)} и рядом` : "рядом"} ${area.length}` : "";
+  return {
+    text: `<b>Новые забеги за неделю:</b> ${cityPart}${areaPart}.\n\n${lines.join("\n")}`,
+    reply_markup: {
+      inline_keyboard: [
+        ...[items.slice(0, 4), items.slice(4, 8)].filter((g) => g.length).map((g, gi) => g.map((x, i) => ({ text: String(gi * 4 + i + 1), callback_data: `oc:${raceCode(x.race.id)}` }))),
+        [{ text: "Все старты по сезонам", callback_data: "sz" }],
+        navRow(city),
+      ],
+    },
   };
 }

@@ -104,7 +104,7 @@ export async function loadBotRaces(): Promise<BotRace[]> {
 // ── хранилище ────────────────────────────────────────────────────────────────
 
 const USER_COLS =
-  "tg_id,first_name,username,city,types,distances,digest_on,digest_every_weeks,digest_last_at,paused_until,tz,source,state,consult_offered_at,consult_requested_at,blocked,created_at,star_hint_at,geo_lat,geo_lon";
+  "tg_id,first_name,username,city,types,distances,digest_on,digest_every_weeks,digest_last_at,paused_until,tz,source,state,consult_offered_at,consult_requested_at,blocked,created_at,star_hint_at,geo_lat,geo_lon,menu_message_id,menu_message_at,browse_ctx";
 const FOLLOW_COLS = "tg_id,race_id,race_name,race_date,race_end,race_city,created_at";
 
 function fail(what: string, e: { message: string } | null): void {

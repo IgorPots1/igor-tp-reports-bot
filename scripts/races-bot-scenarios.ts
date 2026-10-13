@@ -248,22 +248,30 @@ async function main() {
     await cb(p, "city:moskva");
     assert.equal((await store.getUser(p.id))?.city, "Москва");
     await cb(p, "t:road");
+    // С 13.10.2026: «Показать забеги» → развилка по сезонам → список сезона → карточка с ⭐.
     c = calls.length;
     await cb(p, "show");
-    const cards = sentTo(p.id, c).filter((m) => buttons(m).some((b) => b.text === "⭐ Следить"));
-    assert.ok(cards.length >= 1 && cards.length <= 5, `карточек ${cards.length}`);
-    assert.ok(textsTo(p.id, c).some((t) => t.includes("Нажми ⭐, и я напомню, когда пора начинать готовиться")), "подсказка про ⭐");
-    const star = buttons(cards[0]).find((b) => b.text === "⭐ Следить")!.callback_data!;
-    await cb(p, star);
+    assert.match(allText(p.id, c), /На какой сезон ищешь старт\?/, "развилка");
+    c = calls.length;
+    await cb(p, "sn:all:0");
+    assert.match(allText(p.id, c), /^<b>[^<]+ и рядом · Все старты подряд<\/b>/m, "список сезона");
+    assert.ok(allText(p.id, c).includes("Открой старт кнопкой с номером и нажми ⭐"), "подсказка про ⭐");
+    c = calls.length;
+    await cb(p, "so:all:0:0");
+    const card = sentTo(p.id, c).at(-1)!;
+    const star = buttons(card).find((b) => b.text === "⭐ Следить")?.callback_data;
+    assert.ok(star, "в карточке ⭐ Следить");
+    await cb(p, star!);
     assert.equal((await store.listFollows(p.id)).length, 1);
+    const cards = [card];
     c = calls.length;
     await cb(p, "my");
     assert.ok(allText(p.id, c).length > 0, "«Мои забеги» ответил");
     const u = await store.getUser(p.id);
     assert.equal(u?.source, "direct", "первый приход без метки — direct");
     c = calls.length;
-    await cb(p, "show");
-    assert.ok(!textsTo(p.id, c).some((t) => t.includes("Нажми ⭐, и я напомню")), "подсказка только один раз");
+    await cb(p, "sn:all:0");
+    assert.ok(!textsTo(p.id, c).some((t) => t.includes("Открой старт кнопкой с номером")), "подсказка только один раз");
     return `карточек ${cards.length}, source=direct`;
   });
 
@@ -409,7 +417,7 @@ async function main() {
     await cb(p, "city:moskva");
     let c = calls.length;
     await cb(p, "show");
-    const none = sentTo(p.id, c).filter((m) => buttons(m).some((b) => b.text === "⭐ Следить")).length;
+    const none = Number(allText(p.id, c).match(/Все старты подряд: (\d+) с датой/)?.[1] ?? 0);
     assert.ok(none > 0, "без фильтров есть забеги");
     for (const t of ["road", "trail"]) await cb(p, `t:${t}`);
     c = calls.length;
@@ -436,21 +444,20 @@ async function main() {
     assert.equal((await store.getUser(p.id))?.city, shortCity);
     let c = calls.length;
     await cb(p, "show");
+    await cb(p, "sn:all:0");
     let all = allText(p.id, c);
-    // Было: при одном старте «…пока 1 забег. Вот что ещё можно посмотреть:». С 12.10.2026 всегда два
-    // блока: «Ближайшие забеги в <городе>» и «<область> и рядом»; «Вот что ещё…» — только когда в городе пусто.
-    assert.match(all, /Ближайшие забеги /);
-    assert.ok(all.indexOf("Ближайшие забеги ") < all.search(/<b>[^<]+ и рядом<\/b>/), "сначала город, потом область");
-    // Было «<b>Рядом</b>, регион:»; с 12.10.2026 — второй блок «<область> и рядом» со строкой «город, км».
-    assert.match(all, /<b>[^<]+ и рядом<\/b>/);
-    assert.match(all, /📍 [^\n,]+(, \d+ км|, город не указан)?(\n|$)/, "«город, км» (км — если у города есть точка)");
-    const expectedNote = /Ожидаются/.test(all);
-    // с фильтром: «Снять фильтры» обязательно, голого «ничего» нет
+    // Было (12.10.2026): два блока сообщениями «Ближайшие забеги в <городе>» и «<область> и рядом».
+    // С 13.10.2026 — развилка по сезонам, внутри сезона сначала город, потом «Область и рядом» с км.
+    assert.match(all, /На какой сезон ищешь старт\?/);
+    assert.match(all, /<i>Область и рядом:<\/i>/, "второй блок внутри сезона");
+    assert.ok(all.indexOf("1. ") < all.indexOf("<i>Область и рядом:</i>"), "сначала город, потом область");
+    const expectedNote = /дата ожидается/.test(all);
+    // с фильтром, по которому пусто: не голое «ничего», а «Снять фильтры» и «Сменить город»
     await cb(p, "d:ultra");
     c = calls.length;
     await cb(p, "show");
     all = allText(p.id, c);
-    assert.match(all, /Вот что ещё можно посмотреть/);
+    assert.match(all, /Пока ни одного старта по этим фильтрам/);
     const bs = btnsTo(p.id, c).map((b) => b.text);
     assert.ok(bs.includes("Снять фильтры") && bs.includes("Сменить город"), "кнопки");
     assert.ok(!/ничего не найдено/i.test(all));
@@ -606,17 +613,18 @@ async function main() {
   });
 
   // 14. Длинные списки.
-  await scenario("Длинные списки: «Показать ещё», «Мои забеги» страницами, 4096 и 100 кнопок", async () => {
+  await scenario("Длинные списки: ◀ ▶ по сезону, «Мои забеги» страницами, 4096 и 100 кнопок", async () => {
     const p = person("Много");
     await env.update(msg(p, "/start"));
     await cb(p, "city:moskva");
+    // Было: «Показать ещё» под списком карточек. С 13.10.2026 — ◀ ▶ в списке сезона, по 5.
     let c = calls.length;
-    await cb(p, "show");
-    const more = btnsTo(p.id, c).find((b) => b.callback_data?.startsWith("more:"));
-    assert.ok(more, "кнопка «Показать ещё»");
+    await cb(p, "sn:all:0");
+    const more = btnsTo(p.id, c).find((b) => b.text === "▶");
+    assert.ok(more, "кнопка ▶");
     c = calls.length;
     await cb(p, more!.callback_data!);
-    assert.ok(sentTo(p.id, c).some((m) => buttons(m).some((b) => b.text === "⭐ Следить")), "следующая страница");
+    assert.match(allText(p.id, c), /\n6-10 из \d+\n/, "следующая страница");
     for (const r of bigRaces.slice(0, 25)) await env.update(cbu(p, `f:${raceCode(r.id)}`));
     c = calls.length;
     await cb(p, "my");
