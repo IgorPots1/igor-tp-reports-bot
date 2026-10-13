@@ -29,10 +29,29 @@ const TAIL = /\b(Comments?|You May Also Like|Related Posts?|Newsletter|Subscribe
  */
 const COMPARATIVE = /\b(than the|than its|compared to|unlike the|versus|vs\.?|predecessor|previous version)\b/i;
 
-/** Обрезает страницу до конца собственно обзора. */
+/**
+ * Обрезает страницу до конца собственно обзора.
+ *
+ * Маркер конца засчитывается, только если стоит во ВТОРОЙ половине страницы.
+ * Прежняя версия резала по первому вхождению — а «Comment» стоит в меню
+ * Believe in the Run, «Popular Comparisons» в оглавлении RTINGS, оба наверху.
+ * От этих площадок оставалось 8–14 % страницы, они молчали по всем полям, и
+ * расхождения между обзорами «исчезали» не от чистоты, а потому что спорить
+ * становилось некому. Ошибка была невидимой: число расхождений выглядело как
+ * успех.
+ */
 export function reviewBody(text: string): string {
-  const m = text.match(TAIL);
-  return m && m.index && m.index > 600 ? text.slice(0, m.index) : text;
+  const half = text.length / 2;
+  const re = new RegExp(TAIL.source, "gi");
+  for (const m of text.matchAll(re)) {
+    if (m.index !== undefined && m.index >= half) return text.slice(0, m.index);
+  }
+  return text;
+}
+
+/** Какая доля страницы считается текстом обзора — для проверки, а не для разбора. */
+export function bodyShare(text: string): number {
+  return text.length === 0 ? 0 : reviewBody(text).length / text.length;
 }
 
 /** Предложения обзора без сравнительных — на них и ставятся вердикты. */
@@ -219,21 +238,6 @@ export function prosConsFrom(text: string, source: string): { pros: string[]; co
   return { pros: grab("Pros"), cons: grab("Cons") };
 }
 
-/**
- * Для какого веса бегуна модель. Обзоры говорят об этом прямо редко, поэтому
- * поле чаще пустое — и это честнее, чем выводить его из стека, которого у нас
- * больше нет.
- */
-export function weightClassFrom(raw: string): Extracted<"light" | "medium" | "heavy"> {
-  const text = ownSentences(raw);
-  const m = text.match(/[^.]{0,90}\b(heavier runners?|bigger runners?|lighter runners?|heavy runners?|clydesdale|larger athletes?)\b[^.]{0,90}\./i);
-  if (!m) return null;
-  const q = m[0].trim();
-  if (/\b(heavier|bigger|heavy|clydesdale|larger)\b/i.test(q)) return { value: "heavy", quote: q };
-  if (/\blighter\b/i.test(q)) return { value: "light", quote: q };
-  return null;
-}
-
 /** Одна фраза своими словами — берём вступление обзора, а не сочиняем. */
 export function summaryFrom(raw: string, source: string): Extracted<string> {
   const body = reviewBody(raw);
@@ -243,6 +247,25 @@ export function summaryFrom(raw: string, source: string): Extracted<string> {
   const chunk = i > -1 ? body.slice(i + anchor.length, i + anchor.length + 400) : body.slice(0, 400);
   const sent = chunk.match(/[A-Z][^.]{40,220}\./);
   return sent ? { value: sent[0].trim(), quote: sent[0].trim() } : null;
+}
+
+/**
+ * Явное заявление о выходе модели в тексте обзора: «available July 2025»,
+ * «released in March 2025», «the 2025 version». Это второй сигнал года, и он
+ * прямее даты публикации — обзор могут выпустить через полгода после выхода.
+ */
+export function releaseYearFrom(raw: string): Extracted<number> {
+  const text = reviewBody(raw);
+  const m =
+    text.match(/[^.]{0,60}\b(?:available|releas\w*|launch\w*|drops?|hits? (?:shelves|stores))\b[^.]{0,40}?\b(20[12]\d)\b[^.]{0,40}/i) ??
+    text.match(/[^.]{0,40}\b(20[12]\d)\s+(?:version|model|edition|update)\b[^.]{0,40}/i);
+  if (!m) return null;
+  return { value: Number(m[1]), quote: m[0].trim() };
+}
+
+/** Зимние приметы в самом обзоре — без них winter_grip не ставится. */
+export function mentionsWinter(raw: string): boolean {
+  return /\b(snow\w*|ice|icy|winter|frozen|slush)\b/i.test(ownSentences(raw));
 }
 
 /** Дата публикации обзора — она же вход для года модели на этапе разбора. */

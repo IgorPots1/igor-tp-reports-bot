@@ -17,6 +17,7 @@ import { fetchPage } from "./lib/fetch";
 import { looksLikeShoe, parseReviewUrl } from "./lib/review-url";
 import { sitemapsFromRobots, walkSitemaps } from "./lib/sitemap";
 import { SOURCES, type SourceId } from "./lib/sources";
+import { thesesFrom } from "./lib/theses";
 import {
   durabilityFrom,
   feelFrom,
@@ -24,10 +25,11 @@ import {
   heelHoldFrom,
   plainText,
   prosConsFrom,
+  mentionsWinter,
   publishedFrom,
   purposeFrom,
+  releaseYearFrom,
   summaryFrom,
-  weightClassFrom,
   widthFrom,
   winterGripFrom,
   type Extracted,
@@ -44,6 +46,8 @@ const args = process.argv.slice(2);
 const limitArg = args.indexOf("--limit");
 const LIMIT = limitArg > -1 ? Number(args[limitArg + 1]) : 20;
 const SHOW = args.includes("--show");
+const chArg = args.indexOf("--chinese");
+const EXTRA_CHINESE = chArg > -1 ? Number(args[chArg + 1]) : 0;
 
 const REPORTS = resolve("tools/shoes-pipeline/reports");
 mkdirSync(REPORTS, { recursive: true });
@@ -127,8 +131,11 @@ type Observed<T> = { value: T; quote: string; source: string; url: string; date:
  * частое или первое нельзя: обзоры субъективны, и расхождение между ними это
  * информация, а не шум.
  */
-function settle<T>(obs: Observed<T>[]): { value: T | null; evidence: Observed<T>[]; disputed: boolean } {
-  if (obs.length === 0) return { value: null, evidence: [], disputed: false };
+function settle<T>(
+  obs: Observed<T>[],
+  allowSingle: boolean
+): { value: T | null; evidence: Observed<T>[]; disputed: boolean; single: boolean } {
+  if (obs.length === 0) return { value: null, evidence: [], disputed: false, single: false };
   const groups = new Map<string, Observed<T>[]>();
   for (const o of obs) {
     const k = JSON.stringify(o.value);
@@ -136,9 +143,21 @@ function settle<T>(obs: Observed<T>[]): { value: T | null; evidence: Observed<T>
   }
   if (groups.size === 1) {
     const only = [...groups.values()][0];
-    return { value: only[0].value, evidence: only, disputed: false };
+    /**
+     * ДВА ИСТОЧНИКА, А НЕ ДВА НАБЛЮДЕНИЯ. Прежняя версия принимала вердикт,
+     * если все наблюдения согласны, — в том числе когда наблюдение одно. Так
+     * поле от единственного обзора проходило в базу под видом подтверждённого,
+     * и правило «вердикт без двух ссылок не попадает» не выполнялось вовсе.
+     * Исключение — модели с confidence low (китайские с одним обзором): там
+     * один источник это заявленное состояние, а не тихое нарушение.
+     */
+    const sources = new Set(only.map((o) => o.source)).size;
+    if (sources < 2 && !allowSingle) {
+      return { value: null, evidence: only, disputed: false, single: true };
+    }
+    return { value: only[0].value, evidence: only, disputed: false, single: false };
   }
-  return { value: null, evidence: obs, disputed: true };
+  return { value: null, evidence: obs, disputed: true, single: false };
 }
 
 /* --------------------------------- Разбор ---------------------------------- */
@@ -151,11 +170,19 @@ const chineseSingles = candidates.filter(
 console.log(`Моделей с двумя и более обзорами: ${multi.length}`);
 console.log(`Китайских с одним обзором (идут с confidence low): ${chineseSingles.length}`);
 
-const targets = [...multi, ...chineseSingles].slice(0, LIMIT);
+// Китайские добавляются ПОВЕРХ лимита, а не вытесняют модели из него: проверочный
+// прогон обязан повторить те же самые модели, иначе сравнивать не с чем.
+const targets = [
+  ...[...multi, ...chineseSingles].slice(0, LIMIT),
+  ...chineseSingles.slice(0, EXTRA_CHINESE),
+];
 console.log(`Берём в разбор: ${targets.length}\n`);
 
 const records: VerdictRecord[] = [];
 const disputes: string[] = [];
+const singles: string[] = [];
+const unmappedAll: string[] = [];
+const yearConflicts: string[] = [];
 
 for (const [i, c] of targets.entries()) {
   const texts: { source: string; url: string; text: string; date: string | null }[] = [];
@@ -172,6 +199,8 @@ for (const [i, c] of targets.entries()) {
   const verdicts: Verdicts = { ...EMPTY_VERDICTS, purpose: [], best_for: [], not_for: [] };
   const evidence: Evidence[] = [];
   const disputed: string[] = [];
+  const sourceCount = new Set(texts.map((t) => t.source)).size;
+  const allowSingle = sourceCount < 2;
 
   const run = <T>(field: keyof Verdicts, fn: (t: string, s: string) => Extracted<T>) => {
     const obs: Observed<T>[] = [];
@@ -179,7 +208,11 @@ for (const [i, c] of targets.entries()) {
       const got = fn(t.text, t.source);
       if (got) obs.push({ value: got.value, quote: got.quote, source: t.source, url: t.url, date: t.date });
     }
-    const s = settle(obs);
+    const s = settle(obs, allowSingle);
+    if (s.single) {
+      singles.push(`${c.key}.${field}: только ${s.evidence[0].source}`);
+      return null;
+    }
     if (s.disputed) {
       disputed.push(field);
       disputes.push(
@@ -198,8 +231,7 @@ for (const [i, c] of targets.entries()) {
   verdicts.width = run("width", (t) => widthFrom(t));
   verdicts.durability = run("durability", (t, s) => durabilityFrom(t, s));
   verdicts.heel_hold = run("heel_hold", (t) => heelHoldFrom(t));
-  verdicts.winter_grip = run("winter_grip", (t) => winterGripFrom(t));
-  verdicts.weight_class = run("weight_class", (t) => weightClassFrom(t));
+  // winter_grip решается ПОСЛЕ назначения: ниже, когда purpose уже известен.
 
   // Сводка — одна фраза из обзора, а не сочинённая: в базе не должно быть слов,
   // которых не говорил ни один источник.
@@ -223,27 +255,78 @@ for (const [i, c] of targets.entries()) {
   }
   verdicts.purpose = [...purposes] as Verdicts["purpose"];
 
+  /**
+   * Зимнее сцепление — только для трейла и зимы или при явном упоминании
+   * снега, льда, зимы в обзоре. У Clifton 11 стоял «good» по фразе «traction
+   * has been great on both wet and dry roads»: мокрый асфальт — не наледь, и
+   * зимний вердикт дорожной модели был советом, которого не давал ни один обзор.
+   */
+  const winterRelevant =
+    verdicts.purpose.includes("trail") ||
+    verdicts.purpose.includes("winter") ||
+    texts.some((t) => mentionsWinter(t.text));
+  verdicts.winter_grip = winterRelevant ? run("winter_grip", (t) => winterGripFrom(t)) : null;
+
+  // Плюсы и минусы обзоров не копируются: они переводятся в тезисы из словаря
+  // своими словами. Исходная фраза остаётся только в evidence.
+  const prosAll: { phrase: string; t: (typeof texts)[number] }[] = [];
+  const consAll: { phrase: string; t: (typeof texts)[number] }[] = [];
   for (const t of texts) {
     const { pros, cons } = prosConsFrom(t.text, t.source);
-    verdicts.best_for.push(...pros);
-    verdicts.not_for.push(...cons);
-    if (pros.length) evidence.push({ field: "best_for", url: t.url, source: t.source, date: t.date, quote: pros.join("; ").slice(0, 200) });
-    if (cons.length) evidence.push({ field: "not_for", url: t.url, source: t.source, date: t.date, quote: cons.join("; ").slice(0, 200) });
+    pros.forEach((phrase) => prosAll.push({ phrase, t }));
+    cons.forEach((phrase) => consAll.push({ phrase, t }));
   }
-  verdicts.best_for = [...new Set(verdicts.best_for)].slice(0, 4);
-  verdicts.not_for = [...new Set(verdicts.not_for)].slice(0, 4);
+  const th = thesesFrom(
+    prosAll.map((x) => x.phrase),
+    consAll.map((x) => x.phrase),
+    verdicts
+  );
+  unmappedAll.push(...th.unmapped.map((u) => `${c.key}: ${u}`));
+  const origin = (phrase: string, list: typeof prosAll) => list.find((x) => x.phrase === phrase)?.t;
+  for (const b of th.best_for) {
+    verdicts.best_for.push(b.text);
+    const t = origin(b.from, prosAll);
+    if (t) evidence.push({ field: "best_for", url: t.url, source: t.source, date: t.date, quote: b.from.slice(0, 200) });
+  }
+  for (const n of th.not_for) {
+    verdicts.not_for.push(n.text);
+    const t = origin(n.from, consAll);
+    if (t) evidence.push({ field: "not_for", url: t.url, source: t.source, date: t.date, quote: n.from.slice(0, 200) });
+  }
 
   // Год: самая ранняя дата публикации обзора. На этапе разбора сверяется с
   // сайтом бренда — пока это вход, а не окончательное значение.
+  /**
+   * Год — два сигнала из обзоров. Страница бренда тут не помогает: у Saucony
+   * на странице модели структурного поля года нет, а в тексте вперемешку 2024,
+   * 2025 и 2026 из подвала и соседних товаров; у HOKA страница товара не
+   * открылась вовсе. Год по случайной цифре со страницы был бы догадкой.
+   *
+   * Явное «available July 2025» в тексте прямее даты публикации — обзор могут
+   * выпустить через полгода после выхода, — поэтому при наличии берётся оно.
+   * Расхождение двух сигналов уходит в отчёт.
+   */
   const dates = texts.map((t) => t.date).filter((d): d is string => Boolean(d)).sort();
-  const year = dates.length > 0 ? Number(dates[0].slice(0, 4)) : null;
-
-  const sourceCount = new Set(texts.map((t) => t.source)).size;
+  const dateYear = dates.length > 0 ? Number(dates[0].slice(0, 4)) : null;
+  const stated = texts.map((t) => releaseYearFrom(t.text)).find((x) => x !== null) ?? null;
+  let year: number | null = dateYear;
+  let year_source: VerdictRecord["year_source"] = dateYear !== null ? "review_date" : null;
+  let year_conflict: string | null = null;
+  if (stated) {
+    year = stated.value;
+    year_source = "review_text";
+    if (dateYear !== null && dateYear !== stated.value) {
+      year_conflict = `обзор вышел в ${dateYear}, в тексте указан ${stated.value}: «${stated.quote.slice(0, 90)}»`;
+      yearConflicts.push(`${c.key}: ${year_conflict}`);
+    }
+  }
   records.push({
     id: c.key,
     brand: c.brand,
     model: c.model,
     year,
+    year_source,
+    year_conflict,
     verdicts,
     evidence,
     confidence: sourceCount >= 2 ? "normal" : "low",
@@ -258,9 +341,16 @@ for (const [i, c] of targets.entries()) {
 
 writeFileSync(resolve(REPORTS, "verdicts.json"), JSON.stringify(records, null, 2) + "\n");
 writeFileSync(resolve(REPORTS, "verdict-disputes.json"), JSON.stringify(disputes, null, 2) + "\n");
+writeFileSync(
+  resolve(REPORTS, "verdict-gaps.json"),
+  JSON.stringify({ singleSource: singles, unmappedPhrases: unmappedAll, yearConflicts }, null, 2) + "\n"
+);
 
 console.log(`\n${"═".repeat(70)}`);
 console.log(`Записей: ${records.length}, расхождений в отчёт: ${disputes.length}`);
+console.log(`Полей отклонено как одиночные: ${singles.length}`);
+console.log(`Фраз без темы в словаре: ${unmappedAll.length}`);
+console.log(`Расхождений по году: ${yearConflicts.length}`);
 if (SHOW) {
   for (const r of records.slice(0, 3)) {
     console.log(`\n${"─".repeat(70)}\n${JSON.stringify(r, null, 2)}`);

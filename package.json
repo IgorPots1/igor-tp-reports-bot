@@ -16,6 +16,7 @@
     "check:shoes-pipeline-rules": "npx tsx tools/shoes-pipeline/check-pipeline-rules.ts",
     "shoes:calibration-review": "npx tsx scripts/shoes-calibration-review.ts",
     "check:shoes-catalog": "npx tsx scripts/check-shoes-catalog.ts",
+    "check:shoes-verdict-criteria": "npx tsx scripts/check-shoes-verdict-criteria.ts",
     "check:shoes-picker": "npx tsx scripts/check-shoes-picker.ts",
     "check:runner-import-health": "bash tools/trainingpeaks-export/scripts/check-runner-import-health.sh",
     "test:miniapp-optimistic-action": "node --experimental-strip-types --test src/app/m/_shared/optimistic-action-core.test.ts",
