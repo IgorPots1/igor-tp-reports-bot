@@ -170,7 +170,7 @@ export const SOURCES: Source[] = [
   src("kant", "Кант", "shop", "https://www.kant.ru", SHOP),
   src("runlab", "RunLab", "shop", "https://runlab.ru", SHOP),
   src("sportkult", "Спорткульт", "shop", "https://www.sportkult.ru", SHOP),
-  src("sportmarafon", "Спортмарафон", "shop", "https://sportmarafon.ru", SHOP),
+  src("sportmarafon", "Спортмарафон", "shop", "https://sport-marafon.ru", SHOP),
   src("lamoda", "Lamoda", "shop", "https://www.lamoda.ru", SHOP),
 
 ];
