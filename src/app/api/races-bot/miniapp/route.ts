@@ -3,6 +3,7 @@
  * токеном бота; initDataUnsafe и любые id из тела запроса не принимаются. */
 
 import { parseTelegramInitDataUser, validateTelegramInitDataWithToken } from "@/features/telegram/validate-init-data";
+import { MINIAPP_ACTIONS, type MiniappAction } from "@/features/races-bot/bot";
 import { botToken, productionBot } from "@/features/races-bot/runtime";
 
 export const runtime = "nodejs";
@@ -11,14 +12,20 @@ export const dynamic = "force-dynamic";
 const MAX_AGE_S = 24 * 3600;
 
 export async function POST(request: Request) {
-  let body: { initData?: unknown; action?: unknown; raceId?: unknown; from?: unknown };
+  let body: { initData?: unknown; action?: unknown; raceId?: unknown; from?: unknown; a?: unknown; v?: unknown };
   try {
     body = await request.json();
   } catch {
     return Response.json({ ok: false, error: "bad_request" }, { status: 400 });
   }
   const initData = typeof body.initData === "string" ? body.initData : "";
-  const action = body.action === "follow" || body.action === "unfollow" ? body.action : "list";
+  const action = body.action === "follow" || body.action === "unfollow" || body.action === "event" ? body.action : "list";
+  // Действие внутри календаря для статистики (наряд 13.10.2026): только из белого списка.
+  const ev =
+    action === "event" && typeof body.a === "string" && (MINIAPP_ACTIONS as readonly string[]).includes(body.a)
+      ? { a: body.a as MiniappAction, v: typeof body.v === "string" ? body.v.slice(0, 60) : null }
+      : undefined;
+  if (action === "event" && !ev) return Response.json({ ok: false, error: "bad_request" }, { status: 400 });
   const raceId = typeof body.raceId === "string" && body.raceId.length <= 200 ? body.raceId : undefined;
   // Откуда открыт календарь (from в ссылке web_app из бота) — только для статистики.
   const from = typeof body.from === "string" && /^[a-z_]{1,20}$/.test(body.from) ? body.from : null;
@@ -43,6 +50,7 @@ export async function POST(request: Request) {
       action,
       raceId,
       from,
+      ev,
     );
     return Response.json({ ok: true, follows });
   } catch (e) {

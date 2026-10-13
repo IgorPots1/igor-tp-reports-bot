@@ -45,7 +45,7 @@ import {
   expectedDate,
   type BotRace,
 } from "@/features/races-bot/core";
-import { computeBotStats, statsMessage, type StatEvent } from "@/features/races-bot/stats";
+import { computeBotStats, dailyMessage, statsMessage, weeklyMessage, type StatEvent } from "@/features/races-bot/stats";
 
 import { memStore } from "./lib/races-bot-memstore";
 import * as T from "@/features/races-bot/texts";
@@ -368,7 +368,9 @@ async function main() {
     assert.deepEqual(r.changed, [], "повтор того же варианта ничего не меняет");
     assert.match(r.done, /^Так уже стоит: дайджест раз в 2 недели/);
     assert.equal(r.edit, undefined);
-    assert.equal(r.events.length, 0, "и не пишет событие");
+    // Было: «ни одного события». С 13.10.2026 любое нажатие пишет tap (статистика по дням);
+    // повтор по-прежнему не пишет смыслового события (settings_less, pause, unsubscribe).
+    assert.deepEqual(r.events.map((e) => e.event), ["tap"], "и не пишет смыслового события");
     r = await press("s:dg:w4");
     assert.deepEqual(r.changed, ["digest_every_weeks"]);
     assert.equal(me().digest_every_weeks, 4, "раз в месяц = 4 недели");
@@ -434,7 +436,8 @@ async function main() {
   assert.ok(!/Пришёл: 2/.test(st), "тренер в воронку не попал");
   assert.match(st, /src_ig_story: 1 \/ 1 \/ 1/, "источник по первому приходу дошёл до ⭐ и заявки");
   assert.match(st, /Анна @anna_runs · Москва · Полумарафон/, "заявка в списке");
-  assert.deepEqual(buttons(sent(900).at(-1)!).map((b) => b.text), ["7 дней", "• 30 дней", "Всё время"]);
+  // С 13.10.2026 под периодами — «По дням» (экран ежедневной активности).
+  assert.deepEqual(buttons(sent(900).at(-1)!).map((b) => b.text), ["7 дней", "• 30 дней", "Всё время", "По дням"]);
   await bot.handleUpdate(cb(COACH, "st:7"));
   const edited = calls.filter((c) => c.method === "editMessageText").at(-1)!;
   assert.match(String(edited.params.text), /Забеги России · 7 дней/, "период переключается");
@@ -900,6 +903,78 @@ async function main() {
     await bot.handleUpdate(cb(GEO, `city:${citySlug("Тверь")}`));
     assert.equal(store.users.get(GEO.id)?.geo_lat, null, "город кнопкой сбрасывает точку");
     RACES = savedRaces;
+  }
+
+  // ── статистика по дням (наряд 13.10.2026) ─────────────────────────────────
+  {
+    const mk = (tg: number, event: string, at: string, meta: Record<string, unknown> = {}): StatEvent => ({ tg_id: tg, event, race_id: null, source: null, meta, created_at: at });
+    const users = [
+      { tg_id: 1, first_name: "Пн", username: null, city: "Тверь", source: "ig_channel", created_at: "2026-10-12T09:00:00Z", blocked: false },
+      { tg_id: 2, first_name: "Ср", username: null, city: "Тверь", source: "direct", created_at: "2026-10-14T08:00:00Z", blocked: false },
+      { tg_id: 900, first_name: "Тренер", username: null, city: "Москва", source: null, created_at: "2026-10-01T00:00:00Z", blocked: false },
+    ];
+    const events = [
+      mk(1, "start", "2026-10-12T09:00:00Z"), mk(1, "tap", "2026-10-12T09:01:00Z", { k: "sz" }),
+      // среда по Москве: 13.10 22:30 UTC = 14.10 01:30 МСК
+      mk(1, "tap", "2026-10-13T22:30:00Z", { k: "sn" }), mk(1, "tap", "2026-10-14T10:00:00Z", { k: "so" }), mk(1, "card_open", "2026-10-14T10:00:01Z"),
+      mk(1, "follow", "2026-10-14T10:00:02Z", { race_name: "Старицкие версты" }), mk(1, "tap", "2026-10-14T10:00:02Z", { k: "sf" }),
+      mk(2, "start", "2026-10-14T08:00:00Z"), mk(2, "miniapp", "2026-10-14T08:05:00Z", { a: "reg" }), mk(2, "digest_sent", "2026-10-14T08:06:00Z"),
+      mk(900, "tap", "2026-10-14T11:00:00Z", { k: "st" }),
+    ];
+    const r = computeBotStats({ users, events, follows: [], now: new Date("2026-10-14T12:00:00Z"), period: 7, exclude: new Set([900]) });
+    const day = (d: string) => r.daily.days.find((x) => x.day === d)!;
+    assert.deepEqual(day("2026-10-12"), { day: "2026-10-12", presses: 2, active: 1, fresh: 1, returning: 0, returningPresses: 0 }, "понедельник: пришёл, новый");
+    assert.deepEqual(day("2026-10-13"), { day: "2026-10-13", presses: 0, active: 0, fresh: 0, returning: 0, returningPresses: 0 }, "вторник по Москве пуст (22:30 UTC — уже среда)");
+    assert.deepEqual(day("2026-10-14"), { day: "2026-10-14", presses: 5, active: 2, fresh: 1, returning: 1, returningPresses: 3 }, "среда: пн-шник вернувшийся, ср-шник новый; тренер и системные не считаются");
+    assert.equal(r.daily.days.length, 7);
+    assert.deepEqual(r.daily.week, { presses: 7, active: 2, fresh: 2, returning: 1, returningPresses: 3 });
+    assert.deepEqual(r.daily.retention, [{ day: "2026-10-12", arrived: 1, returned: 1 }, { day: "2026-10-14", arrived: 1, returned: 0 }], "удержание по дню прихода");
+    assert.deepEqual(r.daily.topToday.map((x) => [x.action, x.people, x.presses]), [
+      ["/start", 1, 1], ["⭐ Следить", 1, 1], ["Карточки", 1, 1], ["Регистрация", 1, 1], ["Сезоны", 1, 1],
+    ], `топ действий за день: ${JSON.stringify(r.daily.topToday.map((x) => [x.action, x.people, x.presses]))}`);
+    assert.deepEqual(r.topSaved, [{ name: "Старицкие версты", n: 1 }]);
+    const dm = dailyMessage(r).text;
+    assert.match(dm, /<pre>\nдень +нажат +актив +нов +верн +наж\.в\n/);
+    assert.match(dm, /ср 14 окт +5 +2 +1 +1 +3/);
+    assert.match(dm, /Удержание[\s\S]*пн 12 окт: пришли 1, вернулись за 7 дней 1 \(100%\)/);
+    assert.match(weeklyMessage(r), /^<b>Забеги России · итог недели<\/b>\n<pre>/);
+    assert.match(weeklyMessage(r), /Сохраняли<\/b> \(⭐\): Старицкие версты \(1\)/);
+
+    // бот: каждое нажатие — tap (что именно), карточка — card_open, Mini App — miniapp
+    const T1 = { id: 7001, first_name: "Тап", username: "tap7001" };
+    await bot.handleUpdate(msg(T1, "/start"));
+    await bot.handleUpdate(cb(T1, `city:${citySlug("Москва")}`));
+    await bot.handleUpdate(msg(T1, "/races"));
+    const taps = store.events.filter((e) => e.tg_id === 7001 && e.event === "tap").map((e) => (e.meta as { k: string }).k);
+    assert.deepEqual(taps, ["city", "/races"], "/start — своим событием, кнопка и команда — tap");
+    await bot.miniapp({ id: 7001, first_name: "Тап" }, "event", TRAIL.id, null, { a: "reg" });
+    await bot.miniapp({ id: 7001, first_name: "Тап" }, "event", undefined, null, { a: "hack" as never });
+    await bot.miniapp({ id: 7001, first_name: "Тап" }, "follow", TRAIL.id);
+    const mini = store.events.filter((e) => e.tg_id === 7001 && e.event === "miniapp").map((e) => (e.meta as { a: string }).a);
+    assert.deepEqual(mini, ["reg", "follow"], "действия календаря; чужое имя действия не пишется");
+    assert.ok(store.follows.some((f) => f.tg_id === 7001 && f.race_id === TRAIL.id), "«Следить» из календаря сохраняет как в боте");
+
+    // еженедельный итог тренеру: выключен — ничего; включён — один раз в понедельник с 10:00
+    const savedNow = NOW;
+    store.config.set("coach_chat_id", "900");
+    NOW = new Date("2026-10-19T07:30:00Z"); // пн 10:30 МСК
+    reset();
+    await bot.runTick();
+    assert.ok(!texts(900).some((t) => t.includes("итог недели")), "по умолчанию выключено");
+    store.config.set("weekly_stats", "1");
+    reset();
+    await bot.runTick();
+    assert.equal(texts(900).filter((t) => t.startsWith("<b>Забеги России · итог недели</b>")).length, 1, "итог недели тренеру");
+    reset();
+    NOW = new Date("2026-10-19T08:30:00Z");
+    await bot.runTick();
+    assert.ok(!texts(900).some((t) => t.includes("итог недели")), "второй раз в тот же понедельник — нет");
+    store.config.delete("weekly_stats");
+    NOW = savedNow;
+    // /stats → «По дням»
+    reset();
+    await bot.handleUpdate(cb(COACH, "st:days"));
+    assert.ok(calls.some((c) => /по дням<\/b>/.test(String(c.params.text))), "экран «По дням» у тренера");
   }
 
   // ── подпись ссылок /go/ ────────────────────────────────────────────────────

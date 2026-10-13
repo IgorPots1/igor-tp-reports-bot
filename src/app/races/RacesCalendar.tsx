@@ -52,7 +52,7 @@ function allLabel(subject: string): string {
 }
 
 /** away — для блока «Рядом в области»: «Старица, 71 км» вместо обычной строки места. */
-function RaceItem({ r, follow, away }: { r: Race; follow: FollowUi; away?: string }) {
+function RaceItem({ r, follow, away, onAct }: { r: Race; follow: FollowUi; away?: string; onAct?: (a: "open" | "reg" | "site", r: Race) => void }) {
   const stub = dateStub(r);
   const pills = distPills(r);
   const where = r.region && r.region !== r.city;
@@ -67,7 +67,9 @@ function RaceItem({ r, follow, away }: { r: Race; follow: FollowUi; away?: strin
       </div>
       <div className={styles.body}>
         <div className={styles.titleRow}>
-          <div className={styles.title}>{r.name}</div>
+          <div className={styles.title} onClick={() => onAct?.("open", r)}>
+            {r.name}
+          </div>
           {follow.mode === "tg" ? (
             <button
               type="button"
@@ -118,12 +120,12 @@ function RaceItem({ r, follow, away }: { r: Race; follow: FollowUi; away?: strin
         {r.checked ? <p className={`${styles.note} ${styles.checked}`}>{r.checked}</p> : null}
         <div className={styles.links}>
           {r.reg ? (
-            <a className={`${styles.btn} ${styles.primary}`} href={r.reg} target="_blank" rel="noopener noreferrer">
+            <a className={`${styles.btn} ${styles.primary}`} href={r.reg} target="_blank" rel="noopener noreferrer" onClick={() => onAct?.("reg", r)}>
               Регистрация
             </a>
           ) : null}
           {r.site ? (
-            <a className={styles.btn} href={r.site} target="_blank" rel="noopener noreferrer">
+            <a className={styles.btn} href={r.site} target="_blank" rel="noopener noreferrer" onClick={() => onAct?.("site", r)}>
               Сайт
             </a>
           ) : null}
@@ -231,6 +233,28 @@ export default function RacesCalendar({
     },
     [initData],
   );
+
+  // Статистика: что делают внутри календаря (только в Telegram, по подписанному initData).
+  // Тихо и без ожидания: сбой записи не мешает человеку.
+  const act = useCallback(
+    (a: "season" | "filter" | "open" | "reg" | "site", v?: string | null, raceId?: string) => {
+      if (!initData) return;
+      void fetch("/api/races-bot/miniapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ initData, action: "event", a, v: v ?? null, raceId }),
+        keepalive: true,
+      }).catch(() => undefined);
+    },
+    [initData],
+  );
+
+  // Поиск текстом — тоже фильтр; сам запрос в статистику не пишем.
+  const lastQ = useRef("");
+  useEffect(() => {
+    if (f.q.trim() && f.q !== lastQ.current) act("filter", "q");
+    lastQ.current = f.q;
+  }, [f.q, act]);
 
   useEffect(() => {
     if (initData) void miniapp("list");
@@ -348,6 +372,7 @@ export default function RacesCalendar({
   // Счётчик на вкладке сезона: те же фильтры, без самого сезона.
   const seasonBase = useMemo(() => applyFilters(races, { ...f, season: "" }), [races, f]);
   const seasonCount = (s: { from: string; to: string } | null) => (s ? seasonBase.filter((r) => inRange(r, s.from, s.to)).length : seasonBase.length);
+  const onRaceAct = (a: "open" | "reg" | "site", r: Race) => act(a, null, r.id);
   const followUi = (r: Race): FollowUi =>
     inTg ? { mode: "tg", saved: saved.has(r.id), busy: busy === r.id, onToggle: toggle } : { mode: "site", bot: botUsername };
 
@@ -416,7 +441,10 @@ export default function RacesCalendar({
                 role="tab"
                 aria-selected={on}
                 className={styles.chip}
-                onClick={() => setF((p) => ({ ...p, season: s.key === "all" ? "" : s.key }))}
+                onClick={() => {
+                  act("season", s.key);
+                  setF((p) => ({ ...p, season: s.key === "all" ? "" : s.key }));
+                }}
               >
                 {s.key === "near" ? "Ближайшие" : s.key === "all" ? "Все" : s.label}
                 <span className={styles.n}>{n}</span>
@@ -433,7 +461,10 @@ export default function RacesCalendar({
               type="button"
               className={styles.chip}
               aria-pressed={f.type === v}
-              onClick={() => setF((p) => ({ ...p, type: v }))}
+              onClick={() => {
+                act("filter", `type:${v}`);
+                setF((p) => ({ ...p, type: v }));
+              }}
             >
               {label}
               <span className={styles.n}>{v === "all" ? typeBase.length : typeBase.filter((r) => r.type === v).length}</span>
@@ -448,7 +479,10 @@ export default function RacesCalendar({
               type="button"
               className={styles.chip}
               aria-pressed={f.dist === v}
-              onClick={() => setF((p) => ({ ...p, dist: v }))}
+              onClick={() => {
+                act("filter", `dist:${v}`);
+                setF((p) => ({ ...p, dist: v }));
+              }}
             >
               {label}
               <span className={styles.n}>{distBase.filter((r) => distMatch(r, v)).length}</span>
@@ -464,7 +498,10 @@ export default function RacesCalendar({
               id="races-region"
               className={styles.select}
               value={f.region}
-              onChange={(e) => setF((p) => ({ ...p, region: e.target.value }))}
+              onChange={(e) => {
+                act("filter", `region:${e.target.value || "all"}`);
+                setF((p) => ({ ...p, region: e.target.value }));
+              }}
             >
               <option value="">Все области</option>
               {subjects.map(({ subject, n }) => (
@@ -533,7 +570,7 @@ export default function RacesCalendar({
                 </summary>
                 <ol className={styles.races}>
                   {m.races.map((r) => (
-                    <RaceItem key={r.id} r={r} follow={followUi(r)} />
+                    <RaceItem key={r.id} r={r} follow={followUi(r)} onAct={onRaceAct} />
                   ))}
                 </ol>
               </details>
@@ -555,6 +592,7 @@ export default function RacesCalendar({
                 key={race.id}
                 r={race}
                 follow={followUi(race)}
+                onAct={onRaceAct}
                 away={`${race.city || `${race.subject}, город не указан`}${km === null ? "" : `, ${km} км`}`}
               />
             ))}

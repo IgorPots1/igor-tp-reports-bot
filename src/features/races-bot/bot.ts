@@ -40,7 +40,7 @@ import {
   type PlanFollow,
   type PlanUser,
 } from "./core";
-import { statsMessage, type BotStatsReport, type StatPeriod } from "./stats";
+import { dailyMessage, statsMessage, weeklyMessage, type BotStatsReport, type StatPeriod } from "./stats";
 import * as T from "./texts";
 
 export type BotUser = PlanUser & {
@@ -67,7 +67,12 @@ export type BotEvent =
   | "start" | "city_chosen" | "filters_done" | "list_shown" | "search" | "follow" | "unfollow" | "open_calendar"
   | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
   | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked"
-  | "expected_watch" | "expected_announced" | "pick_city" | "nudge_sent";
+  | "expected_watch" | "expected_announced" | "pick_city" | "nudge_sent"
+  | "tap" | "card_open" | "miniapp";
+
+/** Действия в календаре Mini App, которые пишем в статистику (наряд 13.10.2026). */
+export const MINIAPP_ACTIONS = ["season", "filter", "open", "reg", "site"] as const;
+export type MiniappAction = (typeof MINIAPP_ACTIONS)[number];
 
 export type EventOpts = { raceId?: string | null; source?: string | null; meta?: Record<string, unknown> };
 
@@ -384,6 +389,8 @@ export function createBot(deps: BotDeps) {
 
   /** Карточка в том же сообщении; back — «sn:<сезон>:<страница>» или «sz» (к развилке). */
   async function showItem(u: BotUser, x: SeasonItem, back: string, origin?: TgMessage, consult = false) {
+    // «Какие старты смотрели» в еженедельном итоге
+    await track(u.tg_id, "card_open", x.kind === "race" ? { raceId: x.race.id, meta: { race_name: x.race.name } } : { raceId: x.e.id, meta: { race_name: x.e.name, expected: true } });
     if (x.kind === "race") {
       const following = (await followingSet(u.tg_id)).has(x.race.id);
       const place = x.near ? T.placeLine(x.race, x.km) : x.race.city || T.placeLine(x.race, null);
@@ -711,7 +718,7 @@ export function createBot(deps: BotDeps) {
         const coachChat = await store.getConfig("coach_chat_id");
         if (!coachChat || Number(coachChat) !== u.tg_id) return;
         const period: StatPeriod = arg === "7" ? 7 : arg === "all" ? "all" : 30;
-        const m = statsMessage(await store.loadStats(period, now()));
+        const m = arg === "days" ? dailyMessage(await store.loadStats(7, now())) : statsMessage(await store.loadStats(period, now()));
         if (msg) {
           await tg.call("editMessageText", { chat_id: u.tg_id, message_id: msg.message_id, text: m.text, parse_mode: "HTML", reply_markup: m.reply_markup });
           return;
@@ -860,11 +867,17 @@ export function createBot(deps: BotDeps) {
       // (было: unsubscribe дважды за секунду).
       if (!(await firstTime(`cb:${q.from.id}:${q.data || ""}`, DOUBLE_CLICK_SEC))) return;
       const u = await ensureUser(q.from);
+      // Нажатие для статистики по дням: что именно (часть до «:»), без самих данных.
+      const k = (q.data || "").split(":")[0];
+      if (k && k !== "noop") await track(u.tg_id, "tap", { meta: { k } });
       return guarded(u.tg_id, () => onCallback(u, q.data || "", q.message));
     }
     const m = update.message;
     if (!m || m.chat.type !== "private" || !m.from) return;
     const u = await ensureUser(m.from);
+    // Нажатие для статистики по дням: /start пишется своим событием start, остальное — tap.
+    const cmd = typeof m.text === "string" ? m.text.trim().match(/^\/(\w+)/)?.[1] : null;
+    if (cmd !== "start") await track(u.tg_id, "tap", { meta: { k: cmd ? `/${cmd}` : m.location ? "geo" : typeof m.text === "string" ? "text" : "other" } });
     if (m.location) return guarded(u.tg_id, () => onLocation(u, m.location!.latitude, m.location!.longitude));
     if (typeof m.text === "string") return guarded(u.tg_id, () => onText(u, m.text as string));
     // Стикер, фото, голосовое, документ: вежливо и с меню, без падения.
@@ -888,6 +901,11 @@ export function createBot(deps: BotDeps) {
     }
     const counts: Record<string, number> = { users: users.length, sent: 0, blocked: 0, errors: 0, announced: 0 };
     await store.pruneSeen().catch((e) => console.error(`[races-bot] pruneSeen: ${e instanceof Error ? e.message : String(e)}`));
+    counts.weekly = await sendWeekly(t).catch((e) => {
+      counts.errors += 1;
+      console.error(`[races-bot] weekly: ${e instanceof Error ? e.message : String(e)}`);
+      return 0;
+    });
     counts.nudged = await runNudge().catch((e) => {
       counts.errors += 1;
       console.error(`[races-bot] nudge: ${e instanceof Error ? e.message : String(e)}`);
@@ -981,10 +999,22 @@ export function createBot(deps: BotDeps) {
   }
 
   /** Мини-апп внутри Telegram: список сохранённых и звёздочка «Следить / Не следить». */
-  async function miniapp(from: TgUser, action: "list" | "follow" | "unfollow", raceId?: string, opened?: string | null): Promise<string[]> {
+  async function miniapp(
+    from: TgUser,
+    action: "list" | "follow" | "unfollow" | "event",
+    raceId?: string,
+    opened?: string | null,
+    ev?: { a: MiniappAction; v?: string | null },
+  ): Promise<string[]> {
     const u = await ensureUser(from);
     // opened — откуда открыт календарь (from в ссылке web_app): first, list, menu, my, reminder.
     if (action === "list") await track(u.tg_id, "open_calendar", { meta: { from: opened ?? null } });
+    // Что делают внутри календаря: сезон/вкладка, фильтр, открыл старт, «Регистрация», «Сайт».
+    if (action === "event" && ev && (MINIAPP_ACTIONS as readonly string[]).includes(ev.a)) {
+      await track(u.tg_id, "miniapp", { raceId: raceId ?? null, meta: { a: ev.a, v: ev.v ? String(ev.v).slice(0, 60) : null } });
+      return (await store.listFollows(u.tg_id)).map((f) => f.race_id);
+    }
+    if ((action === "follow" || action === "unfollow") && raceId) await track(u.tg_id, "miniapp", { raceId, meta: { a: action } });
     if (action !== "list" && raceId) {
       if (action === "follow") {
         const r = (await deps.races()).find((x) => x.id === raceId);
@@ -1004,6 +1034,28 @@ export function createBot(deps: BotDeps) {
   async function click(tgId: number | null, r: BotRace, kind: "r" | "s"): Promise<string> {
     await track(tgId, kind === "r" ? "click_registration" : "click_site", { raceId: r.id, meta: { race_name: r.name } });
     return kind === "r" ? r.reg || r.site || T.raceUrl(r) : r.site || T.raceUrl(r);
+  }
+
+  /**
+   * Еженедельный итог тренеру (наряд 13.10.2026): понедельник с 10:00 по Москве, один раз за неделю
+   * (claimSend по дате понедельника), за прошедшие пн–вс. Включается race_bot_config.weekly_stats = '1'.
+   */
+  async function sendWeekly(t: Date): Promise<number> {
+    if ((await store.getConfig("weekly_stats")) !== "1") return 0;
+    const coachChat = await store.getConfig("coach_chat_id");
+    if (!coachChat) return 0;
+    const { date, hour, weekday } = localParts(t, "Europe/Moscow");
+    if (weekday !== 1 || hour < 10) return 0;
+    if (!(await store.claimSend(Number(coachChat), "weekly_stats", date))) return 0;
+    // конец воскресенья по Москве: понедельник 00:00 МСК минус миллисекунда
+    const sundayEnd = new Date(Date.parse(`${date}T00:00:00+03:00`) - 1);
+    try {
+      await sendRaw(Number(coachChat), { text: weeklyMessage(await store.loadStats(7, sundayEnd)) });
+    } catch (e) {
+      await store.releaseSend(Number(coachChat), "weekly_stats", date);
+      throw e;
+    }
+    return 1;
   }
 
   /**

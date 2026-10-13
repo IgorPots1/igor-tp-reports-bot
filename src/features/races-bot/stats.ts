@@ -7,6 +7,7 @@
  * Нажатия /start (сырые) — отдельной строкой. Тренер и фейковые тестовые tg_id не считаются. */
 
 import { parseStart, startSource } from "./core";
+import { computeDaily, dailyLines, retentionLines, topLines, type DailyReport } from "./daily";
 
 export type StatPeriod = 7 | 30 | "all";
 
@@ -52,6 +53,11 @@ export type BotStatsReport = {
   topCities: { city: string; n: number }[];
   consults: { name: string; username: string | null; city: string | null; race: string | null; date: string }[];
   newByDay: { day: string; n: number }[];
+  /** По дням (7 дней, Москва), топ действий, удержание — наряд 13.10.2026. */
+  daily: DailyReport;
+  /** За 7 дней: какие старты открывали (карточки) и сохраняли (⭐). */
+  topViewed: { name: string; n: number }[];
+  topSaved: { name: string; n: number }[];
 };
 
 /** Воронка по людям, пришедшим в периоде; процент — от предыдущего шага. */
@@ -242,9 +248,17 @@ export function computeBotStats(input: {
     acted: nudged.filter((n) => events.some((e) => e.tg_id === n.tg_id && e.event !== "start" && e.event !== "nudge_sent" && e.created_at > n.created_at)).length,
   };
 
+  const week = events.filter((e) => inWindow(e.created_at, d7));
+  const nameOf = (e: StatEvent) => String((e.meta as { race_name?: unknown } | null)?.race_name ?? e.race_id ?? "?");
+  const topViewed = top(week.filter((e) => e.event === "card_open").map(nameOf), 5).map(({ key, n }) => ({ name: key, n }));
+  const topSaved = top(week.filter((e) => e.event === "follow").map(nameOf), 5).map(({ key, n }) => ({ name: key, n }));
+
   return {
     period,
     people,
+    daily: computeDaily(users, events, now),
+    topViewed,
+    topSaved,
     calendar,
     nudge,
     returnedVia: [...via.entries()].map(([source, ids]) => ({ source, people: ids.size })).sort((a, b) => b.people - a.people),
@@ -297,6 +311,7 @@ export function statsMessage(s: BotStatsReport): { text: string; reply_markup: {
     `Новые за период: ${pp.newPeriod}`,
     `Активные за период: ${pp.active}, из них вернувшиеся: ${pp.returning}`,
     `Нажатия /start за период: ${pp.startPresses} (сырые, с повторами)`,
+    `Сегодня: нажатий ${s.daily.days.at(-1)?.presses ?? 0}, активных ${s.daily.days.at(-1)?.active ?? 0}, из них вернувшихся ${s.daily.days.at(-1)?.returning ?? 0} (подробно: «По дням»)`,
     `Заблокировали: ${u.blocked}; отписались за период: ${u.unsubscribed}`,
     "",
     `<b>Воронка новых за период</b> (люди, % от предыдущего шага):`,
@@ -320,5 +335,39 @@ export function statsMessage(s: BotStatsReport): { text: string; reply_markup: {
       : ["пока нет"]),
   ];
   const btn = (label: string, v: string) => ({ text: String(s.period) === v ? `• ${label}` : label, callback_data: `st:${v}` });
-  return { text: lines.join("\n"), reply_markup: { inline_keyboard: [[btn("7 дней", "7"), btn("30 дней", "30"), btn("Всё время", "all")]] } };
+  return { text: lines.join("\n"), reply_markup: { inline_keyboard: [[btn("7 дней", "7"), btn("30 дней", "30"), btn("Всё время", "all")], [{ text: "По дням", callback_data: "st:days" }]] } };
+}
+
+/** Экран «По дням»: таблица за 7 дней, топ действий за сегодня и за неделю, удержание. */
+export function dailyMessage(s: BotStatsReport): { text: string; reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } } {
+  const lines = [
+    "<b>Забеги России · по дням</b> (Москва, без тренера и тестовых)",
+    "нажат — нажатий всего, актив — людей, нов — новых, верн — вернувшихся, наж.в — нажатий от вернувшихся",
+    ...dailyLines(s.daily),
+    "<b>Что жали сегодня</b> (люди, нажатия):",
+    ...topLines(s.daily.topToday),
+    "",
+    "<b>Что жали за 7 дней:</b>",
+    ...topLines(s.daily.topWeek),
+    "",
+    "<b>Удержание</b> (по дню прихода):",
+    ...retentionLines(s.daily),
+  ];
+  return { text: lines.join("\n"), reply_markup: { inline_keyboard: [[{ text: "← Общая статистика", callback_data: "st:30" }]] } };
+}
+
+/** Еженедельный итог тренеру по понедельникам: «По дням» за неделю, воронка, что смотрели и сохраняли. */
+export function weeklyMessage(s: BotStatsReport): string {
+  return [
+    "<b>Забеги России · итог недели</b>",
+    ...dailyLines(s.daily),
+    "<b>Воронка новых за неделю</b> (люди, % от предыдущего шага):",
+    ...s.funnel.map((f) => (f.key === "came" || f.pct === null ? `${f.label}: ${f.people}` : `${f.label}: ${f.people} (${f.pct}%)`)),
+    "",
+    `<b>Смотрели</b> (карточки): ${s.topViewed.length ? s.topViewed.map((r) => `${esc(r.name)} (${r.n})`).join("; ") : "нет"}`,
+    `<b>Сохраняли</b> (⭐): ${s.topSaved.length ? s.topSaved.map((r) => `${esc(r.name)} (${r.n})`).join("; ") : "нет"}`,
+    "",
+    "<b>Что жали за неделю:</b>",
+    ...topLines(s.daily.topWeek),
+  ].join("\n");
 }
