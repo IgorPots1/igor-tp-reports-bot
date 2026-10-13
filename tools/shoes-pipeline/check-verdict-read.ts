@@ -14,6 +14,7 @@ import {
   FEEL_ORDINAL,
   FIRMNESS_ORDINAL,
   checkQuote,
+  gateBySense,
   medianTowardCenter,
   settleField,
   vetAnswer,
@@ -154,6 +155,19 @@ ok("width: соседства нет — узкая против обычной 
 });
 ok("медиана нечётного числа — середина, без сдвига", () => {
   assert.equal(medianTowardCenter([1, 2, 2], 2), 2);
+});
+
+ok("смысловой шлюз: подтверждённое проходит, отвергнутое и непроверенное — нет", () => {
+  const items = [{ id: "a#0" }, { id: "a#1" }, { id: "b#0" }];
+  const g = gateBySense(items, [
+    { id: "a#0", ok: true },
+    { id: "a#1", ok: false, why: "про общий характер, не про жёсткость" },
+  ]);
+  assert.deepEqual(g.passed.map((x) => x.id), ["a#0"]);
+  assert.equal(g.failed.find((x) => x.id === "b#0")?.reason, "смысл не проверен");
+});
+ok("нет файла проверки — не засчитано ничего", () => {
+  assert.equal(gateBySense([{ id: "a#0" }], null).passed.length, 0);
 });
 
 console.log(`\ncheck-verdict-read: ${n} проверок прошли`);

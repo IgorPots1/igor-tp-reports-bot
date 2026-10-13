@@ -8,11 +8,15 @@
  *           будет искаться цитата;
  *   (чтение) модель по read/READER.md отвечает JSON-ом на каждую страницу —
  *           на подписке порциями или через API, это не код конвейера;
+ *   verify-pack  собирает прошедшие проверку кодом цитаты в пакет на
+ *           смысловую проверку; (проверка) отдельный короткий вызов по
+ *           read/VERIFIER.md отвечает, подтверждает ли цитата значение;
  *   settle  проверяет каждую цитату в сохранённой странице и сводит поля по
  *           правилам наряда. Проверку делает код, а не модель.
  *
  *   npx tsx tools/shoes-pipeline/read-verdicts.ts queue --limit 20 --chinese 5
  *   npx tsx tools/shoes-pipeline/read-verdicts.ts cost
+ *   npx tsx tools/shoes-pipeline/read-verdicts.ts verify-pack
  *   npx tsx tools/shoes-pipeline/read-verdicts.ts settle
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,12 +29,14 @@ import { mentionsWinter, plainText, publishedFrom, reviewBody } from "./lib/verd
 import {
   FEEL_ORDINAL,
   FIRMNESS_ORDINAL,
+  gateBySense,
   settleField,
   thesisDuplicates,
   vetAnswer,
   type Obs,
   type ReaderAnswer,
   type Rejected,
+  type SenseVerdict,
 } from "./lib/verdict-read";
 import {
   EMPTY_VERDICTS,
@@ -85,16 +91,28 @@ async function queue() {
   const tooOld: { key: string; newestReview: string }[] = [];
   for (const c of targets) {
     const pages: Page[] = [];
-    for (const l of c.links) {
-      const t = await pageText(l.source, l.url);
-      if (!t) continue;
-      mkdirSync(dirFor(c.key), { recursive: true });
-      // По предложению на строку: длинная строка обрезается инструментом чтения,
-      // и читатель не увидел бы часть обзора. Проверка цитаты схлопывает пробелы,
-      // так что перенос строки на неё не влияет.
-      writeFileSync(textPath(c.key, l.source), t.text.replace(/([.!?])\s+(?=[A-Z0-9"'(])/g, "$1\n"));
-      pages.push({ source: l.source, url: l.url, date: t.date, chars: t.text.length });
-    }
+    // Площадки качаются параллельно, страницы ОДНОЙ площадки — по очереди:
+    // пауза между запросами держится на хост, и два одновременных запроса к
+    // одному хосту её бы обошли.
+    const bySource = new Map<SourceId, typeof c.links>();
+    for (const l of c.links) bySource.set(l.source, [...(bySource.get(l.source) ?? []), l]);
+    await Promise.all(
+      [...bySource.values()].map(async (links) => {
+        for (const l of links) {
+          const t = await pageText(l.source, l.url);
+          if (!t) continue;
+          mkdirSync(dirFor(c.key), { recursive: true });
+          // По предложению на строку: длинная строка обрезается инструментом чтения,
+          // и читатель не увидел бы часть обзора. Проверка цитаты схлопывает пробелы,
+          // так что перенос строки на неё не влияет.
+          writeFileSync(textPath(c.key, l.source), t.text.replace(/([.!?])\s+(?=[A-Z0-9"'(])/g, "$1\n"));
+          pages.push({ source: l.source, url: l.url, date: t.date, chars: t.text.length });
+        }
+      })
+    );
+    // Порядок страниц — как в карте ссылок, а не как пришли ответы: очередь
+    // должна быть одинаковой от прогона к прогону.
+    pages.sort((x, y) => c.links.findIndex((l) => l.url === x.url) - c.links.findIndex((l) => l.url === y.url));
     const chinese = chineseSingles.includes(c);
     // Фильтр года — до чтения: дата публикации есть в разметке страницы, и
     // модель, о которой последний обзор вышел до 2023 года, читать незачем —
@@ -179,6 +197,74 @@ function modelNames(candidates: Candidate[]): string[] {
   return [...names];
 }
 
+/**
+ * Проверка кодом всех ответов по модели. Одна функция для verify-pack и
+ * settle: номер пункта (id) должен совпадать у обоих, иначе ответ смысловой
+ * проверки ляжет не на ту цитату.
+ */
+type Item = Obs<unknown> & { field: string; id: string };
+async function vetTask(t: Task, names: string[]) {
+  const own = t.model.split("-")[0].toLowerCase();
+  const others = names.filter((n) => n.toLowerCase() !== own);
+  const version = t.model.match(/-v?(\d+)(?:-|$)/)?.[1];
+  const ownName = { name: own, version: version ? Number(version) : null };
+  const accepted: Item[] = [];
+  const rejected: (Rejected & { source: string })[] = [];
+  const bodies: string[] = [];
+  const readSources = new Set<string>();
+  let unread = 0;
+  for (const p of t.pages) {
+    if (!existsSync(answerPath(t.key, p.source))) {
+      unread++;
+      continue;
+    }
+    const answer = JSON.parse(readFileSync(answerPath(t.key, p.source), "utf8")) as ReaderAnswer;
+    // Проверка — по сохранённой странице, заново вырезанной из кэша, а не по
+    // файлу, который видел читатель: доказательство это страница, а не наша копия.
+    const page = await pageText(p.source, p.url);
+    if (!page) continue;
+    bodies.push(page.text);
+    const v = vetAnswer(answer, page.text, others, ownName);
+    rejected.push(...v.rejected.map((r) => ({ ...r, source: p.source })));
+    if (answer.about_model) readSources.add(p.source);
+    v.accepted.forEach((a, i) =>
+      accepted.push({ id: `${p.source}#${i}`, field: a.field, value: a.value, quote: a.quote, source: p.source, url: p.url, date: p.date })
+    );
+  }
+  return { accepted, rejected, bodies, readSources, unread };
+}
+
+const verifyRequestPath = (key: string) => resolve(dirFor(key), "verify-request.json");
+const verifyPath = (key: string) => resolve(dirFor(key), "verify.json");
+
+/**
+ * Пакет на смысловую проверку: только пункты, прошедшие проверку кодом.
+ * Проверяющий видит поле, значение и цитату — и не видит ни страницы, ни
+ * ответа читателя целиком: он судит, говорит ли эта фраза то, что ей
+ * приписано, а не читает обзор заново.
+ */
+async function verifyPack() {
+  const candidates = await buildLinks();
+  const names = modelNames(candidates);
+  const tasks: Task[] = JSON.parse(readFileSync(QUEUE_PATH, "utf8"));
+  let packed = 0;
+  let waiting = 0;
+  for (const t of tasks) {
+    const v = await vetTask(t, names);
+    if (v.unread > 0) {
+      waiting++;
+      continue;
+    }
+    const items = v.accepted.map((a) => ({ id: a.id, field: a.field, value: a.value, quote: a.quote }));
+    writeFileSync(
+      verifyRequestPath(t.key),
+      JSON.stringify({ key: t.key, brand: t.brand, model: t.model, items }, null, 2) + "\n"
+    );
+    packed++;
+  }
+  console.log(`Пакетов на смысловую проверку: ${packed}; моделей ещё не дочитано: ${waiting}`);
+}
+
 type ModelReport = {
   key: string;
   fields: Record<string, string>;
@@ -203,35 +289,31 @@ async function settle() {
     tally[field][kind] = (tally[field][kind] ?? 0) + 1;
   };
   let unread = 0;
+  let unverified = 0;
   const yearNotes: string[] = [];
 
   for (const t of tasks) {
-    const own = t.model.split("-")[0].toLowerCase();
-    const others = names.filter((n) => n.toLowerCase() !== own);
-    const version = t.model.match(/-v?(\d+)(?:-|$)/)?.[1];
-    const ownName = { name: own, version: version ? Number(version) : null };
-    const accepted: (Obs<unknown> & { field: string })[] = [];
-    const rejected: ModelReport["rejected"] = [];
-    const bodies: string[] = [];
-    const readSources = new Set<string>();
+    const vt = await vetTask(t, names);
+    unread += vt.unread;
+    const rejected = vt.rejected;
+    const bodies = vt.bodies;
+    const readSources = vt.readSources;
 
-    for (const p of t.pages) {
-      if (!existsSync(answerPath(t.key, p.source))) {
-        unread++;
-        continue;
-      }
-      const answer = JSON.parse(readFileSync(answerPath(t.key, p.source), "utf8")) as ReaderAnswer;
-      // Проверка — по сохранённой странице, заново вырезанной из кэша, а не по
-      // файлу, который видел читатель: доказательство это страница, а не наша копия.
-      const page = await pageText(p.source, p.url);
-      if (!page) continue;
-      bodies.push(page.text);
-      const v = vetAnswer(answer, page.text, others, ownName);
-      rejected.push(...v.rejected.map((r) => ({ ...r, source: p.source })));
-      if (answer.about_model) readSources.add(p.source);
-      for (const a of v.accepted) {
-        accepted.push({ field: a.field, value: a.value, quote: a.quote, source: p.source, url: p.url, date: p.date });
-      }
+    /**
+     * Смысловая проверка (правка Игоря, 14.10.2026). Подстрока доказывает, что
+     * фраза есть на странице, но не то, что она про это поле: «balanced
+     * cushioning» прошла как доказательство жёсткости. Пункт засчитывается,
+     * только если отдельный проверяющий подтвердил смысл. Нет файла проверки —
+     * не засчитывается ничего: непроверенное не равно подтверждённому.
+     */
+    const sense: SenseVerdict[] | null = existsSync(verifyPath(t.key))
+      ? JSON.parse(readFileSync(verifyPath(t.key), "utf8"))
+      : null;
+    if (!sense && vt.unread === 0) unverified++;
+    const gate = gateBySense(vt.accepted, sense);
+    const accepted: Item[] = gate.passed;
+    for (const f of gate.failed) {
+      rejected.push({ field: f.field, value: f.value, quote: f.quote, source: f.source, reason: f.reason });
     }
 
     const verdicts: Verdicts = { ...EMPTY_VERDICTS, purpose: [], best_for: [], not_for: [] };
@@ -357,7 +439,9 @@ async function settle() {
   );
 
   console.log(`\n${"═".repeat(70)}`);
-  console.log(`Записей: ${records.length}; страниц без ответа: ${unread}; спорных полей Игорю: ${forIgor.length}`);
+  console.log(
+    `Записей: ${records.length}; страниц без ответа: ${unread}; моделей без смысловой проверки: ${unverified}; спорных полей Игорю: ${forIgor.length}`
+  );
   console.log("Сводка по полям (agreed — согласие, agreed_adjacent — соседние деления, медиана):");
   for (const [f, k] of Object.entries(tally)) console.log(`  ${f.padEnd(12)} ${JSON.stringify(k)}`);
   const why: Record<string, number> = {};
@@ -365,10 +449,41 @@ async function settle() {
   console.log(`Отброшено цитат: ${JSON.stringify(why)}`);
 }
 
+/* ---------------------------------- status --------------------------------- */
+
+/**
+ * Сколько осталось. Чтение идёт на подписке порциями и может остановиться на
+ * лимите — продолжение начинается отсюда: недочитанные модели раскладываются
+ * на порции по 5, дочитанные без смысловой проверки — отдельным списком.
+ */
+function status() {
+  const tasks: Task[] = JSON.parse(readFileSync(QUEUE_PATH, "utf8"));
+  const unread = tasks.filter((t) => t.pages.some((p) => !existsSync(answerPath(t.key, p.source))));
+  const unverified = tasks.filter(
+    (t) => !unread.includes(t) && !existsSync(verifyPath(t.key))
+  );
+  const portions: { key: string; sources: string[] }[][] = [];
+  for (let i = 0; i < unread.length; i += 5) {
+    portions.push(
+      unread.slice(i, i + 5).map((t) => ({
+        key: t.key,
+        sources: t.pages.filter((p) => !existsSync(answerPath(t.key, p.source))).map((p) => p.source),
+      }))
+    );
+  }
+  writeFileSync(resolve(READ_DIR, "portions.json"), JSON.stringify({ portions, unverified: unverified.map((t) => t.key) }, null, 2) + "\n");
+  console.log(
+    `Моделей в очереди: ${tasks.length}; не дочитано: ${unread.length} (порций по 5: ${portions.length}); ` +
+      `дочитано без смысловой проверки: ${unverified.length}`
+  );
+}
+
 if (cmd === "queue") await queue();
 else if (cmd === "cost") await cost();
+else if (cmd === "verify-pack") await verifyPack();
+else if (cmd === "status") status();
 else if (cmd === "settle") await settle();
 else {
-  console.error("Команда: queue | cost | settle");
+  console.error("Команда: queue | cost | status | verify-pack | settle");
   process.exit(1);
 }

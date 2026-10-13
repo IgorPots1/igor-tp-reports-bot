@@ -304,3 +304,27 @@ export const FEEL_ORDINAL = { order: FEEL_ORDER, center: 2 };
 export function thesisDuplicates(thesis: string, v: Verdicts): boolean {
   return coveredThesis(thesis, v);
 }
+
+/* ----------------------------- Смысловой шлюз ------------------------------ */
+
+export type SenseVerdict = { id: string; ok: boolean; why?: string };
+
+/**
+ * Пропускает только пункты, смысл которых подтвердил отдельный проверяющий.
+ * Нет ответа по пункту (или нет файла проверки вовсе) — пункт не засчитан:
+ * непроверенное не равно подтверждённому.
+ */
+export function gateBySense<T extends { id: string }>(
+  items: T[],
+  verdicts: SenseVerdict[] | null
+): { passed: T[]; failed: (T & { reason: string })[] } {
+  const byId = new Map((verdicts ?? []).map((v) => [v.id, v]));
+  const passed: T[] = [];
+  const failed: (T & { reason: string })[] = [];
+  for (const it of items) {
+    const v = byId.get(it.id);
+    if (v?.ok === true) passed.push(it);
+    else failed.push({ ...it, reason: v ? `смысл: ${v.why ?? "цитата не подтверждает значение"}` : "смысл не проверен" });
+  }
+  return { passed, failed };
+}
