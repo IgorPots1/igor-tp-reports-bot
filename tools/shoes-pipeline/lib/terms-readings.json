@@ -1,0 +1,128 @@
+{
+  "361": {
+    "reading": "forbids",
+    "url": "https://www.361sport.com/pages/terms-of-service",
+    "quote": "You agree not to reproduce, duplicate, copy, sell, resell or exploit any portion of the Service, use of the Service, or access to the Service or any contact on the website through which the service is provided, without express written permission by us.",
+    "readAt": "2026-10-13",
+    "note": "Запрещено воспроизводить, копировать и эксплуатировать любую часть сервиса без письменного разрешения."
+  },
+  "altra": {
+    "reading": "forbids",
+    "url": "https://www.altrarunning.com/en-us/pages/terms-and-conditions",
+    "quote": "(iv) use automated means, including spiders, scrapers, robots, crawlers, data mining tools, or the like to download data from the website;",
+    "readAt": "2026-10-13",
+    "note": "Запрещены автоматические средства (пауки, скраперы, роботы, краулеры, data mining); также запрещены копирование, производные работы и коммерческое использование."
+  },
+  "anta": {
+    "reading": "forbids",
+    "url": "https://www.anta.com/policies/terms-of-service",
+    "quote": "(h) to collect or track the personal information of others; (i) to spam, phish, pharm, pretext, spider, crawl, or scrape;",
+    "readAt": "2026-10-13",
+    "note": "Запрещено использовать сайт, чтобы spider, crawl или scrape."
+  },
+  "decathlon": {
+    "reading": "forbids",
+    "url": "https://www.decathlon.com/policies/terms-of-service",
+    "quote": "Use any robot, spider or other automatic device, process or means to access the Website for any purpose, including monitoring or copying any of the material on the Website;",
+    "readAt": "2026-10-13",
+    "note": "Запрещены роботы, пауки и любой автоматический доступ, а также копирование материалов; лицензия только для личного некоммерческого использования."
+  },
+  "dynafit": {
+    "reading": "forbids",
+    "url": "https://www.dynafit.com/imprint",
+    "quote": "The use of the website for commercial, professional or public purposes, in particular the reproduction, the transmission (by electronic or other means), the modification, the connection or other methods of use, total or partial, are prohibited without the written consent from Oberalp S.p.A.",
+    "readAt": "2026-10-13",
+    "note": "Контент только для частного использования; коммерческое использование, воспроизведение и модификация запрещены без письменного согласия."
+  },
+  "merrell": {
+    "reading": "unread",
+    "url": "https://www.merrell.com/US/en/content?caid=terms",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Страница — шапка/меню магазина; текста условий использования нет, только ссылки."
+  },
+  "mizuno": {
+    "reading": "unread",
+    "url": "https://emea.mizuno.com/eu/en/terms.html",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Это онлайн-условия продажи (Online Terms of Sales) и акции; условий использования контента сайта нет."
+  },
+  "nike": {
+    "reading": "unread",
+    "url": "https://www.nike.com/acg",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Страница ACG — навигация и подвал; текста условий использования нет."
+  },
+  "nnormal": {
+    "reading": "unread",
+    "url": "https://www.nnormal.com/html/legal/pdfs/legal_advice/legal_advice_EN.pdf",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Файл — нераспознанный бинарный PDF, текст не читается."
+  },
+  "puma": {
+    "reading": "unread",
+    "url": "https://us.puma.com/us/en/puma/sale-terms-and-conditions",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Страница — условия промо-акции и скидок, правил использования контента нет"
+  },
+  "reebok": {
+    "reading": "forbids",
+    "url": "https://www.reebok.com/pages/terms-conditions",
+    "quote": "Use any data mining, robots, or similar data gathering or extraction methods designed to scrape or extract data from our Services except in accordance with instructions contained in our robot.txt file",
+    "readAt": "2026-10-13",
+    "note": "Запрет скрейпинга и роботов; также запрет копирования и производных работ, лицензия только личная некоммерческая"
+  },
+  "runlab": {
+    "reading": "forbids",
+    "url": "https://runlab.ru/info/legal/polzovatelskoe-soglashenie/",
+    "quote": "не копировать (воспроизводить) в любой форме и способом входящие в состав Сервиса Правообладателя программы для ЭВМ и базы данных, включая любые их элементы и Контент, без получения предварительного письменного согласия",
+    "readAt": "2026-10-13",
+    "note": "Запрещено копирование контента и баз данных без письменного согласия"
+  },
+  "runningwarehouse": {
+    "reading": "forbids",
+    "url": "https://www.runningwarehouse.com/termsofuse.html",
+    "quote": "using any data mining, robots, crawling, data gathering and extraction tools, whether automatic or manual, or other means not purposely made available by us, including to develop or improve any software program, algorithm, or machine learning or artificial intelligence model",
+    "readAt": "2026-10-13",
+    "note": "Запрет роботов, краулеров, добычи данных и использования для ИИ/ML; также запрет копирования и производных работ"
+  },
+  "saucony": {
+    "reading": "forbids",
+    "url": "https://www.saucony.com/en/content?caid=terms",
+    "quote": "may not be copied, displayed, distributed, licensed, modified, published, reposted, reproduced, reused, sold, transmitted, used to create a derivative work, or otherwise used for public or commercial purposes without the express written consent of Wolverine",
+    "readAt": "2026-10-13",
+    "note": "Запрет копирования, производных работ и коммерческого использования; только личное некоммерческое"
+  },
+  "sportkult": {
+    "reading": "forbids",
+    "url": "https://www.sportkult.ru/pages/oferta",
+    "quote": "использовать вредоносный код, автоматизированные запросы, ботов, парсеры, краулеры или иные средства массового извлечения данных без письменного разрешения Владельца сайта",
+    "readAt": "2026-10-13",
+    "note": "Запрет ботов, парсеров и краулеров без письменного разрешения"
+  },
+  "sportmarafon": {
+    "reading": "unread",
+    "url": "https://sport-marafon.ru/oferta/",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Только оферта продажи товара; об использовании контента сайта ничего (кроме того, что тексты и картинки — собственность продавца)"
+  },
+  "topo": {
+    "reading": "forbids",
+    "url": "https://www.topoathletic.com/terms-conditions",
+    "quote": "none of this content may be used, copied, reproduced, distributed, republished, downloaded, modified, displayed, posted or transmitted in any form or by any means",
+    "readAt": "2026-10-13",
+    "note": "Запрет копирования, скачивания и изменения контента без письменного разрешения"
+  },
+  "on": {
+    "reading": "unread",
+    "url": "https://www.on.com/en-ch/terms-and-conditions",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "страница условий отдала пустой текст (рисуется скриптом)"
+  }
+}
