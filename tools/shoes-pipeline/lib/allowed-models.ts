@@ -46,7 +46,15 @@ export const WAVES: Record<number, SourceId[]> = {
 
 const COVERAGE = resolve("tools/shoes-pipeline/reports/coverage-allowed.json");
 
-const brandTitle = (id: string) => SOURCES.find((s) => s.id === id)?.title ?? id;
+/** Бренды, которых нет в реестре источников (сайт бренда не источник). */
+const EXTRA_BRANDS: Record<string, string> = {
+  mounttocoast: "Mount to Coast",
+  norda: "Norda",
+  karhu: "Karhu",
+  arcteryx: "Arc'teryx",
+  tnf: "The North Face",
+};
+const brandTitle = (id: string) => SOURCES.find((s) => s.id === id)?.title ?? EXTRA_BRANDS[id] ?? id;
 
 export function loadAllowedModels(sources?: SourceId[]): AllowedModel[] {
   if (!existsSync(COVERAGE)) {

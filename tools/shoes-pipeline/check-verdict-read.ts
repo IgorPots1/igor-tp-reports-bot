@@ -22,6 +22,7 @@ import {
   type Obs,
   type ReaderAnswer,
 } from "./lib/verdict-read";
+import { ALL_CON, ALL_PRO, OPPOSITE, THESIS_FIELD } from "./lib/theses";
 
 let n = 0;
 const ok = (name: string, fn: () => void) => {
@@ -198,6 +199,14 @@ ok("vetAnswer отбрасывает firmness, спорящий со слова�
   const w = vetAnswer(answer({ firmness: { value: 1, quote: "The midsole feels soft and protective underfoot" } }), PAGE, []);
   assert.equal(w.accepted.length, 0);
   assert.equal(w.rejected[0].reason, "цитата про мягкость не даёт 1–2");
+});
+
+ok("пары противоположных тезисов и привязки к полям — дословно из словаря", () => {
+  // Опечатка в паре молча отключила бы правило «противоположные тезисы снимаются
+  // оба» (у Tecton X 3 в карточке спорили «просторная» и «узкая колодка»).
+  const dict = new Set([...ALL_PRO, ...ALL_CON]);
+  for (const [a, b] of OPPOSITE) assert.ok(dict.has(a) && dict.has(b), `${a} / ${b}`);
+  for (const t of Object.keys(THESIS_FIELD)) assert.ok(dict.has(t), t);
 });
 
 console.log(`\ncheck-verdict-read: ${n} проверок прошли`);

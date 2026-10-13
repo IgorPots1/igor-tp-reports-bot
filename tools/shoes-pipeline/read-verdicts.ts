@@ -28,6 +28,7 @@ import { resolve } from "node:path";
 import { fetchPage } from "./lib/fetch";
 import { CHINESE, WAVES, loadAllowedModels, type AllowedModel } from "./lib/allowed-models";
 import { SOURCES, type SourceId } from "./lib/sources";
+import { OPPOSITE, THESIS_FIELD } from "./lib/theses";
 import { mentionsWinter, plainText, publishedFrom, reviewBody } from "./lib/verdict-extract";
 import {
   FEEL_ORDINAL,
@@ -394,9 +395,18 @@ async function settle() {
     }
 
     // Тезисы — из словаря, по одному на тему, без дублей с полями. Не больше 4.
+    // Тезис спорного поля не ставится, противоположные пары снимаются обе.
+    const contested = new Set<string>();
+    for (const [a, b] of OPPOSITE) {
+      const has = (t: string) => of("best_for").some((o) => o.value === t) || of("not_for").some((o) => o.value === t);
+      if (has(a) && has(b)) [a, b].forEach((t) => contested.add(t));
+    }
     for (const field of ["best_for", "not_for"] as const) {
       for (const o of of(field)) {
         const thesis = o.value as string;
+        if (contested.has(thesis)) continue;
+        const tied = THESIS_FIELD[thesis];
+        if (tied && disputed.includes(tied)) continue;
         if (verdicts[field].includes(thesis) || thesisDuplicates(thesis, verdicts)) continue;
         if (verdicts[field].length >= 4) break;
         verdicts[field].push(thesis);
@@ -427,6 +437,14 @@ async function settle() {
     }
     // Отметка читателя «не беговая» — модель не идёт в черновики (наряд: вторая
     // волна читается с такими отметками прямо при чтении).
+    // Ни одна страница не оказалась обзором этой модели (сравнение «X vs Y»,
+    // подборка) — черновика нет: пустая запись выглядела бы как модель без
+    // данных, а это модель без обзора.
+    if (vt.unread === 0 && readSources.size === 0 && vt.notRunning.length === 0) {
+      excluded.push({ key: t.key, why: "страницы — не обзор этой модели (сравнение или подборка)" });
+      console.log(`  ${t.brand} ${t.model} — обзора модели нет: в черновики не идёт`);
+      continue;
+    }
     // Исключается, только если НИ ОДИН источник не признал модель беговой.
     if (vt.notRunning.length > 0 && readSources.size === 0) {
       excluded.push({ key: t.key, why: `не беговая: ${vt.notRunning.join(", ")}` });
