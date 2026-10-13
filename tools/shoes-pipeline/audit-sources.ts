@@ -80,7 +80,21 @@ for (const source of SOURCES) {
       redirect: "follow",
     });
     httpCode = res.status;
-    if (res.ok) {
+    /**
+     * Переход мог увести НЕ ТУДА. Inov-8 перебрасывает www.inov-8.com на
+     * inov8.com, теряя путь: запрос за robots.txt оказывается на главной, та
+     * отдаёт 403, и аудит объявляет бренд закрытым. Бренд при этом открыт —
+     * его настоящий robots.txt отдаёт 200.
+     *
+     * Поэтому проверяем, что приехали туда, куда шли. Иначе это не вердикт по
+     * robots.txt, а вердикт по чужой странице, и выносить его нельзя.
+     */
+    if (!new URL(res.url).pathname.endsWith("/robots.txt")) {
+      outcome = "unreachable";
+      console.log(
+        `  ! ${source.title}: переход увёл с robots.txt на ${res.url} — вердикт не выносим`
+      );
+    } else if (res.ok) {
       text = await res.text();
       outcome = "parsed";
     } else if (res.status === 404 || res.status === 410) {

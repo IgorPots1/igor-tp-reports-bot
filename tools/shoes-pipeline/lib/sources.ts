@@ -109,7 +109,7 @@ export const SOURCES: Source[] = [
   src("scott", "Scott", "brand", "https://www.scott-sports.com", SPEC),
   src("altra", "Altra", "brand", "https://www.altrarunning.com", SPEC),
   src("topo", "Topo Athletic", "brand", "https://www.topoathletic.com", SPEC),
-  src("inov8", "Inov-8", "brand", "https://www.inov-8.com", SPEC),
+  src("inov8", "Inov-8", "brand", "https://www.inov8.com", SPEC),
   src("merrell", "Merrell", "brand", "https://www.merrell.com", SPEC),
   src("craft", "Craft", "brand", "https://www.craftsportswear.com", SPEC),
   src("dynafit", "Dynafit", "brand", "https://www.dynafit.com", SPEC),
@@ -151,6 +151,15 @@ export const SOURCES: Source[] = [
   src("kant", "Кант", "shop", "https://www.kant.ru", SHOP),
   src("runlab", "RunLab", "shop", "https://runlab.ru", SHOP),
   src("sportkult", "Спорткульт", "shop", "https://www.sportkult.ru", SHOP),
+  src("sportmarafon", "Спортмарафон", "shop", "https://sportmarafon.ru", SHOP),
+  src("lamoda", "Lamoda", "shop", "https://www.lamoda.ru", SHOP),
+
+  /* Маркетплейсы — ТОЛЬКО китайские бренды, см. lib/marketplace-rule.ts.
+   * На них встречаются подделки, и отправлять человека туда за парой за
+   * двадцать тысяч нельзя. Ограничение живёт правилом в коде и проверяется
+   * валидатором, а не висит комментарием, который через месяц никто не прочтёт. */
+  src("ozon", "Ozon", "shop", "https://www.ozon.ru", SHOP),
+  src("wildberries", "Wildberries", "shop", "https://www.wildberries.ru", SHOP),
 ];
 
 
