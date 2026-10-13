@@ -17,28 +17,16 @@
  * лицензия, письмо, договорённость.
  */
 
-export type SourceId =
-  | "asics"
-  | "nike"
-  | "hoka"
-  | "newbalance"
-  | "brooks"
-  | "saucony"
-  | "adidas"
-  | "mizuno"
-  | "puma"
-  | "on"
-  | "salomon"
-  | "runningwarehouse"
-  | "roadtrailrun"
-  | "doctorsofrunning"
-  | "rtings"
-  | "xtep"
-  | "lining"
-  | "anta"
-  | "361"
-  | "peak"
-  | "kailas";
+export type SourceId = string;
+
+/**
+ * Что это за площадка. Проходы поиска моделей идут по типам, а не по списку
+ * имён: каталог бренда, каталог магазина и подборка обзорщика дают РАЗНОЕ.
+ * Бренд даёт полноту текущей линейки, магазин — то, что ещё продаётся (включая
+ * прошлые поколения), обзорщик — то, по чему вообще существуют обзоры, то есть
+ * реальный потолок каталога подбора.
+ */
+export type SourceKind = "brand" | "shop" | "review";
 
 export type TermsStatus =
   /** robots.txt разрешает нужные пути, автоматический сбор не запрещён. */
@@ -53,6 +41,7 @@ export type TermsStatus =
 export type Source = {
   id: SourceId;
   title: string;
+  kind: SourceKind;
   origin: string;
   /** Пути, которые конвейер реально обходил бы. Их и проверяет аудит. */
   probePaths: string[];
@@ -79,29 +68,91 @@ export const USER_AGENT =
 /** Пауза между запросами к ОДНОМУ хосту. Наряд: без нагрузки на чужие сайты. */
 export const HOST_DELAY_MS = 4000;
 
+/**
+ * Пути для проверки — КОРЕНЬ и КАРТА САЙТА, а не разделы каталога.
+ *
+ * Прежняя версия перечисляла выдуманные адреса вида «/us/en-us/running-shoes/»,
+ * и они отдавали 404 и 302: угаданный путь проверяет не сайт, а фантазию. Разделы
+ * каталога находятся потом, из карты сайта, а гейт спрашивается про то, что
+ * существует наверняка.
+ */
+const PROBE = ["/", "/sitemap.xml"];
+
+const src = (
+  id: string,
+  title: string,
+  kind: SourceKind,
+  origin: string,
+  provides: string[]
+): Source => ({ id, title, kind, origin, probePaths: PROBE, provides, status: "unknown" });
+
+const SPEC = ["заявленные характеристики", "названия моделей"];
+const SHOP = ["названия моделей", "цена", "наличие"];
+const REVIEW = ["вердикты из обзоров", "названия моделей", "перекрёстные ссылки"];
+
 export const SOURCES: Source[] = [
-  { id: "asics", title: "ASICS", origin: "https://www.asics.com", probePaths: ["/us/en-us/running-shoes/c/aa10000000/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "nike", title: "Nike", origin: "https://www.nike.com", probePaths: ["/w/mens-running-shoes-37v7jznik1zy7ok"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "hoka", title: "HOKA", origin: "https://www.hoka.com", probePaths: ["/en/us/mens-road/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "newbalance", title: "New Balance", origin: "https://www.newbalance.com", probePaths: ["/men/shoes/running/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "brooks", title: "Brooks", origin: "https://www.brooksrunning.com", probePaths: ["/en_us/mens-running-shoes/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "saucony", title: "Saucony", origin: "https://www.saucony.com", probePaths: ["/en/mens-running-shoes/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "adidas", title: "adidas", origin: "https://www.adidas.com", probePaths: ["/us/men-running-shoes"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "mizuno", title: "Mizuno", origin: "https://emea.mizuno.com", probePaths: ["/eu/en-gb/running/shoes"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "puma", title: "PUMA", origin: "https://us.puma.com", probePaths: ["/us/en/men/shoes/running-shoes"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "on", title: "On", origin: "https://www.on.com", probePaths: ["/en-us/shop/mens/running-shoes"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "salomon", title: "Salomon", origin: "https://www.salomon.com", probePaths: ["/en-us/shop/men/footwear/trail-running.html"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "runningwarehouse", title: "Running Warehouse", origin: "https://www.runningwarehouse.com", probePaths: ["/catpage-MRSHOES.html"], provides: ["вес, стек, дроп, цена, наличие"], status: "unknown" },
-  { id: "roadtrailrun", title: "Road Trail Run", origin: "https://www.roadtrailrun.com", probePaths: ["/search/label/Running%20Shoe%20Reviews"], provides: ["формулировки мягкости", "китайские бренды"], status: "unknown" },
-  { id: "doctorsofrunning", title: "Doctors of Running", origin: "https://www.doctorsofrunning.com", probePaths: ["/search/label/Shoe%20Review"], provides: ["формулировки мягкости", "китайские бренды"], status: "unknown" },
-  { id: "rtings", title: "RTINGS", origin: "https://www.rtings.com", probePaths: ["/shoes"], provides: ["лабораторные замеры (публичные страницы)"], status: "unknown" },
-  { id: "xtep", title: "Xtep", origin: "https://www.xtep.com", probePaths: ["/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "lining", title: "Li-Ning", origin: "https://www.lining.com", probePaths: ["/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "anta", title: "ANTA", origin: "https://www.anta.com", probePaths: ["/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "361", title: "361 Degrees", origin: "https://www.361sport.com", probePaths: ["/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "peak", title: "PEAK", origin: "https://www.peaksport.com", probePaths: ["/"], provides: ["заявленные характеристики"], status: "unknown" },
-  { id: "kailas", title: "Kailas", origin: "https://www.kailas.com", probePaths: ["/"], provides: ["заявленные характеристики"], status: "unknown" },
+  // ---------- Бренды, основные ----------
+  src("nike", "Nike", "brand", "https://www.nike.com", SPEC),
+  src("adidas", "adidas", "brand", "https://www.adidas.com", SPEC),
+  src("asics", "ASICS", "brand", "https://www.asics.com", SPEC),
+  src("hoka", "HOKA", "brand", "https://www.hoka.com", SPEC),
+  src("saucony", "Saucony", "brand", "https://www.saucony.com", SPEC),
+  src("newbalance", "New Balance", "brand", "https://www.newbalance.com", SPEC),
+  src("brooks", "Brooks", "brand", "https://www.brooksrunning.com", SPEC),
+  src("puma", "PUMA", "brand", "https://us.puma.com", SPEC),
+  src("mizuno", "Mizuno", "brand", "https://emea.mizuno.com", SPEC),
+  src("on", "On", "brand", "https://www.on.com", SPEC),
+  src("salomon", "Salomon", "brand", "https://www.salomon.com", SPEC),
+
+  // ---------- Бренды, трейл и нишевые ----------
+  src("lasportiva", "La Sportiva", "brand", "https://www.lasportiva.com", SPEC),
+  src("scott", "Scott", "brand", "https://www.scott-sports.com", SPEC),
+  src("altra", "Altra", "brand", "https://www.altrarunning.com", SPEC),
+  src("topo", "Topo Athletic", "brand", "https://www.topoathletic.com", SPEC),
+  src("inov8", "Inov-8", "brand", "https://www.inov-8.com", SPEC),
+  src("merrell", "Merrell", "brand", "https://www.merrell.com", SPEC),
+  src("craft", "Craft", "brand", "https://www.craftsportswear.com", SPEC),
+  src("dynafit", "Dynafit", "brand", "https://www.dynafit.com", SPEC),
+  src("nnormal", "NNormal", "brand", "https://nnormal.com", SPEC),
+
+  // ---------- Бренды, массовые и магазинные ----------
+  src("decathlon", "Decathlon / Kiprun", "brand", "https://www.decathlon.com", SPEC),
+  src("reebok", "Reebok", "brand", "https://www.reebok.com", SPEC),
+  src("underarmour", "Under Armour", "brand", "https://www.underarmour.com", SPEC),
+  src("skechers", "Skechers", "brand", "https://www.skechers.com", SPEC),
+  src("diadora", "Diadora", "brand", "https://www.diadora.com", SPEC),
+
+  /* ---------- Бренды китайские ----------
+   * Отдельным проходом С САМОГО НАЧАЛА, а не по остаточному принципу: по ним
+   * меньше источников, и оставленные на конец они не получат внимания вовсе. */
+  src("lining", "Li-Ning", "brand", "https://www.lining.com", SPEC),
+  src("anta", "ANTA", "brand", "https://www.anta.com", SPEC),
+  src("xtep", "Xtep", "brand", "https://www.xtep.com", SPEC),
+  src("361", "361 Degrees", "brand", "https://www.361sport.com", SPEC),
+  src("peak", "PEAK", "brand", "https://www.peaksport.com", SPEC),
+  src("kailas", "Kailas", "brand", "https://www.kailas.com", SPEC),
+
+  /* ---------- Обзорные площадки ----------
+   * Дают две вещи: вердикты и реальный ПОТОЛОК каталога подбора. Сколько
+   * моделей обозрено — столько и может попасть в выдачу, сколько бы их ни
+   * выпустили бренды. */
+  src("roadtrailrun", "Road Trail Run", "review", "https://www.roadtrailrun.com", REVIEW),
+  src("doctorsofrunning", "Doctors of Running", "review", "https://www.doctorsofrunning.com", REVIEW),
+  src("believeintherun", "Believe in the Run", "review", "https://believeintherun.com", REVIEW),
+  src("rtings", "RTINGS", "review", "https://www.rtings.com", REVIEW),
+
+  /* ---------- Магазины ----------
+   * Держат то, чего уже нет на сайте бренда, — прошлые поколения, на которых
+   * держится ИНДЕКС. Российские отдельно: они показывают, что реально доступно
+   * на том рынке, и только они дают рублёвую цену. */
+  src("runningwarehouse", "Running Warehouse", "shop", "https://www.runningwarehouse.com", SHOP),
+  src("sportmaster", "Спортмастер", "shop", "https://www.sportmaster.ru", SHOP),
+  src("streetbeat", "Street Beat", "shop", "https://street-beat.ru", SHOP),
+  src("kant", "Кант", "shop", "https://www.kant.ru", SHOP),
+  src("runlab", "RunLab", "shop", "https://runlab.ru", SHOP),
+  src("sportkult", "Спорткульт", "shop", "https://www.sportkult.ru", SHOP),
 ];
+
 
 export const sourceById = (id: SourceId): Source => {
   const s = SOURCES.find((x) => x.id === id);
