@@ -35,11 +35,11 @@
     "note": "Контент только для частного использования; коммерческое использование, воспроизведение и модификация запрещены без письменного согласия."
   },
   "merrell": {
-    "reading": "unread",
-    "url": "https://www.merrell.com/US/en/content?caid=terms",
-    "quote": null,
+    "reading": "forbids",
+    "url": "https://www.merrell.com/CA/en_CA/content?caid=terms",
+    "quote": "The information, materials, and other content of this Site may not be copied, displayed, distributed, licensed, modified, published, reposted, reproduced, reused, sold, transmitted, used to create a derivative work, or otherwise used for public or commercial purposes without the express written consent of Wolverine.",
     "readAt": "2026-10-13",
-    "note": "Страница — шапка/меню магазина; текста условий использования нет, только ссылки."
+    "note": "Запрещает копирование, воспроизведение, производные работы и коммерческое использование контента без письменного согласия."
   },
   "mizuno": {
     "reading": "unread",
@@ -50,10 +50,10 @@
   },
   "nike": {
     "reading": "unread",
-    "url": "https://www.nike.com/acg",
+    "url": "https://www.nike.com/help/a/terms-of-use",
     "quote": null,
     "readAt": "2026-10-13",
-    "note": "Страница ACG — навигация и подвал; текста условий использования нет."
+    "note": "Файл — навигация и подвал главной страницы Nike, текста Terms of Use нет."
   },
   "nnormal": {
     "reading": "unread",
@@ -124,5 +124,159 @@
     "quote": null,
     "readAt": "2026-10-13",
     "note": "страница условий отдала пустой текст (рисуется скриптом)"
+  },
+  "fleetfeet": {
+    "reading": "forbids",
+    "url": "https://www.fleetfeet.com/terms-of-use",
+    "quote": "You may use the Services for your personal, non-commercial use only. You must not reproduce, distribute, modify, create derivative works of, publicly display, publicly perform, republish, download, store, or transmit any of the material on the Services.",
+    "readAt": "2026-10-13",
+    "note": "Только личное некоммерческое использование; запрет копирования, производных работ, скачивания и хранения; также запрет spider/crawl/scrape."
+  },
+  "blacktoerunning": {
+    "reading": "forbids",
+    "url": "https://www.blacktoerunning.com/pages/terms-of-service",
+    "quote": "(c) collect or track the personal information of others; (d) spam, phish, pharm, pretext, spider, crawl, or scrape; or (e)",
+    "readAt": "2026-10-13",
+    "note": "Прямой запрет spider/crawl/scrape; плюс только личное некоммерческое использование и запрет копирования/хранения."
+  },
+  "marathonsports": {
+    "reading": "forbids",
+    "url": "https://www.marathonsports.com/terms-of-use",
+    "quote": "(h) to collect or track the personal information of others; (i) to spam, phish, pharm, pretext, spider, crawl, or scrape; (j)",
+    "readAt": "2026-10-13",
+    "note": "Прямой запрет spider/crawl/scrape; запрет воспроизведения/копирования без письменного разрешения."
+  },
+  "myracekit": {
+    "reading": "forbids",
+    "url": "https://www.myracekit.com/policies/terms-of-service",
+    "quote": "conduct any systematic or automated data collection activities (including without limitation scraping, data mining, data extraction and data harvesting) on or in relation to our website without our express written consent",
+    "readAt": "2026-10-13",
+    "note": "Запрет автоматизированного сбора данных, скрапинга и data mining без письменного согласия."
+  },
+  "thesportsedit": {
+    "reading": "forbids",
+    "url": "https://thesportsedit.com/pages/terms-conditions",
+    "quote": "You may view the Website on your computer screen and print the Content on your printer for your personal and non-commercial use only.",
+    "readAt": "2026-10-13",
+    "note": "Только личное некоммерческое использование; без письменного согласия нельзя копировать/воспроизводить контент."
+  },
+  "altitudesports": {
+    "reading": "forbids",
+    "url": "https://altitude-sports.com/terms-conditions",
+    "quote": "you may not modify, copy, reproduce, publish, post, transmit, distribute, display, perform, create derivative works from, transfer or sell any content without the express prior written consent of Altitude-sports.com.",
+    "readAt": "2026-10-13",
+    "note": "Запрет копирования, воспроизведения и производных работ; сайт только для личного некоммерческого использования."
+  },
+  "treelinereview": {
+    "reading": "forbids",
+    "url": "https://www.treelinereview.com/terms-conditions",
+    "quote": "No material from this Site may be copied, reproduced, republished, uploaded, posted, transmitted, or distributed in any manner or form except as expressly provided above",
+    "readAt": "2026-10-13",
+    "note": "Запрет копирования и воспроизведения; разрешено лишь личное некоммерческое скачивание."
+  },
+  "findmyfootwear": {
+    "reading": "forbids",
+    "url": "https://findmyfootwear.com/terms-of-service/",
+    "quote": "engaging in any data mining, data harvesting, data extracting or any other similar activity in relation to this Website",
+    "readAt": "2026-10-13",
+    "note": "Прямой запрет data mining/harvesting/extracting; также запрет коммерциализации материалов."
+  },
+  "marathons": {
+    "reading": "unread",
+    "url": "https://www.marathons.com/mentions-legales",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Только юридическая информация (mentions légales), не условия использования."
+  },
+  "runandbecome": {
+    "reading": "forbids",
+    "url": "https://runandbecome.com/terms",
+    "quote": "Any use of the site or its contents, including copying or storing it or them in whole or part, other than for your own personal, non-commercial use is prohibited without the permission of our company.",
+    "readAt": "2026-10-13",
+    "note": "Любое использование, включая копирование и хранение, кроме личного некоммерческого, запрещено."
+  },
+  "weeviews": {
+    "reading": "unread",
+    "url": "https://www.weeviews.com/terms-of-service",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Условия прочитаны целиком и автоматический доступ, хранение и производные не запрещают, но явной лицензии нет, а площадка — агрегатор чужих обзоров: права у авторов. Решает Игорь."
+  },
+  "solefeed": {
+    "reading": "forbids",
+    "url": "https://solefeed.com/terms",
+    "quote": "You're free to use our content for personal, non-commercial purposes.",
+    "readAt": "2026-10-13",
+    "note": "Короткие условия разрешают только личное некоммерческое использование; коммерческий каталог не покрыт. Неоднозначно, поэтому не permits."
+  },
+  "alpindustria": {
+    "reading": "unread",
+    "url": "https://alpindustria.ru/not_public_offer.html",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Страница не условия сайта: заголовок «Не является публичной офертой», остальное — оболочка магазина (корзина, доставка, оплата)."
+  },
+  "kinash": {
+    "reading": "unread",
+    "url": "https://kinash.ru/pages/oferta",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Договор публичной оферты розничной купли-продажи товара; правил использования сайта и контента нет."
+  },
+  "sports": {
+    "reading": "forbids",
+    "url": "https://www.sports.ru/docs/agreement",
+    "quote": "4.4. Пользователь Веб-портала не имеет права вносить изменения, публиковать, передавать третьим лицам, участвовать в продаже или уступке, создавать производные продукты или иным образом использовать, частично или полностью, содержание Веб-портала.",
+    "readAt": "2026-10-13",
+    "note": "Запрещает создавать производные продукты и использовать содержание веб-портала."
+  },
+  "tj": {
+    "reading": "forbids",
+    "url": "https://t-j.ru/wiki/terms/",
+    "quote": "3.5. Использовать без специального на то разрешения Банка автоматизированные скрипты для сбора информации на Сайте и/или взаимодействия с Сайтом и его функциями.",
+    "readAt": "2026-10-13",
+    "note": "Запрещает автоматизированные скрипты для сбора информации без разрешения банка."
+  },
+  "sportmail": {
+    "reading": "unread",
+    "url": "https://sportmail.ru/policy/",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Запрет хранения касается только материалов агентств AP/AFP/Reuters; собственные материалы, по условиям, воспроизводятся со ссылкой. Однозначного разрешения на автоматический сбор и производные нет — решает Игорь."
+  },
+  "reminder": {
+    "reading": "unread",
+    "url": "https://reminder.media/public_offer_subscription",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Публичная оферта на платную подписку; правил использования контента сайта нет."
+  },
+  "academymarathon": {
+    "reading": "forbids",
+    "url": "https://academymarathon.ru/terms_of_use",
+    "quote": "Любое использование информации с этого сайта, элементов дизайна и оформления допускается лишь с разрешения правообладателя и только со ссылкой на источник: www.academymarathon.ru",
+    "readAt": "2026-10-13",
+    "note": "Любое использование информации, дизайна сайта допускается только с разрешения правообладателя; явного разрешения на парсинг и производные работы нет."
+  },
+  "runlab-blog": {
+    "reading": "forbids",
+    "url": "https://www.runlab.ru/info/legal/polzovatelskoe-soglashenie/",
+    "quote": "не копировать (воспроизводить) в любой форме и способом входящие в состав Сервиса Правообладателя программы для ЭВМ и базы данных, включая любые их элементы и Контент, без получения предварительного письменного согласия их владельца;",
+    "readAt": "2026-10-13",
+    "note": "Запрещает копировать контент и базы данных сервиса без письменного согласия, а также создавать сервисы на его основе."
+  },
+  "sportmarafon-blog": {
+    "reading": "unread",
+    "url": "https://sport-marafon.ru/oferta/",
+    "quote": null,
+    "readAt": "2026-10-13",
+    "note": "Оферта розничной продажи товаров; правил использования контента сайта нет."
+  },
+  "dtf": {
+    "reading": "forbids",
+    "url": "https://dtf.ru/terms",
+    "quote": "использовать без специального на то разрешения Администрации Сайта автоматизированные скрипты (программы) для сбора информации на Сайте и/или взаимодействия с Сайтом и его функциональностью",
+    "readAt": "2026-10-13",
+    "note": "Пункт 5.3.8: запрет автоматизированных скриптов для сбора информации; права пользователей — только личное некоммерческое использование (6.1)."
   }
 }

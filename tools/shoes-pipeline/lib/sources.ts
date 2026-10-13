@@ -126,7 +126,7 @@ const REVIEW = ["вердикты из обзоров", "названия мод
 
 export const SOURCES: Source[] = [
   // ---------- Бренды, основные ----------
-  src("nike", "Nike", "brand", "https://www.nike.com", SPEC),
+  src("nike", "Nike", "brand", "https://www.nike.com", SPEC, { termsUrl: "https://www.nike.com/help/a/terms-of-use" }),
   src("adidas", "adidas", "brand", "https://www.adidas.com", SPEC),
   src("asics", "ASICS", "brand", "https://www.asics.com", SPEC),
   src("hoka", "HOKA", "brand", "https://www.hoka.com", SPEC),
@@ -144,7 +144,7 @@ export const SOURCES: Source[] = [
   src("altra", "Altra", "brand", "https://www.altrarunning.com", SPEC),
   src("topo", "Topo Athletic", "brand", "https://www.topoathletic.com", SPEC),
   src("inov8", "Inov-8", "brand", "https://www.inov8.com", SPEC),
-  src("merrell", "Merrell", "brand", "https://www.merrell.com", SPEC),
+  src("merrell", "Merrell", "brand", "https://www.merrell.com", SPEC, { termsUrl: "https://www.merrell.com/CA/en_CA/content?caid=terms" }),
   src("craft", "Craft", "brand", "https://www.craftsportswear.com", SPEC),
   src("dynafit", "Dynafit", "brand", "https://www.dynafit.com", SPEC),
   src("nnormal", "NNormal", "brand", "https://nnormal.com", SPEC),
@@ -194,7 +194,7 @@ export const SOURCES: Source[] = [
    * прогона гейта: загрузчик их не пускает, пока все три проверки не пройдены
    * и Игорь не посмотрел таблицу. Путь проверки — реальная страница обзора. */
   src("theruntesters", "theruntesters.com", "review", "https://theruntesters.com", REVIEW, { lang: "en", probePaths: ["/saucony-endorphin-speed-5-review/"] }),
-  src("marathonhandbook", "marathonhandbook.com", "review", "https://marathonhandbook.com", REVIEW, { lang: "en", probePaths: ["/saucony-endorphin-elite-2-review/"] }),
+  src("marathonhandbook", "marathonhandbook.com", "review", "https://marathonhandbook.com", REVIEW, { lang: "en", termsUrl: "https://marathonhandbook.com/terms-of-use/", probePaths: ["/saucony-endorphin-elite-2-review/"] }),
   src("runningwarehouse-blog", "www.runningwarehouse.com", "review", "https://www.runningwarehouse.com", REVIEW, { lang: "en", probePaths: ["/reviews/Saucony-Shoe-Reviews/saucony-endorphin-speed-5.html"] }),
   src("fleetfeet", "www.fleetfeet.com", "review", "https://www.fleetfeet.com", REVIEW, { lang: "en", probePaths: ["/blog/nike-pegasus-42-review-a-versatile-workhorse"] }),
   src("therunningchannel", "therunningchannel.com", "review", "https://therunningchannel.com", REVIEW, { lang: "en", probePaths: ["/new-balance-sc-elite-5/"] }),
@@ -258,7 +258,7 @@ export const SOURCES: Source[] = [
   src("anotherfinestep", "anotherfinestep.org", "review", "https://anotherfinestep.org", REVIEW, { lang: "ru", probePaths: ["/vybor-begovyh-krossovok-lichnyj-opyt/"] }),
   src("runners", "runners.ru", "review", "https://runners.ru", REVIEW, { lang: "ru", probePaths: ["/school/kak-vybrat-krossovki-dlya-bega/"] }),
   src("sneakers", "sneakers.by", "review", "https://sneakers.by", REVIEW, { lang: "ru", probePaths: ["/blog/community/novye-krossovki-dlya-bega-kotorye-vy-ne-dolzhny-propustit"] }),
-  src("dtf", "dtf.ru", "review", "https://dtf.ru", REVIEW, { lang: "ru", probePaths: ["/ruslan-titov/3983729-top-10-begovykh-krossovok-2025"] }),
+  src("dtf", "dtf.ru", "review", "https://dtf.ru", REVIEW, { lang: "ru", termsUrl: "https://dtf.ru/terms", probePaths: ["/ruslan-titov/3983729-top-10-begovykh-krossovok-2025"] }),
 
 ];
 

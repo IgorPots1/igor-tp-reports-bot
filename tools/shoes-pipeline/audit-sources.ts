@@ -17,7 +17,7 @@
  *   npx tsx tools/shoes-pipeline/audit-sources.ts            — сеть + решение
  *   npx tsx tools/shoes-pipeline/audit-sources.ts --offline  — только решение
  *        по сохранённым доказательствам (после записи прочтённых условий)
- *   npx tsx tools/shoes-pipeline/audit-sources.ts --only id1,id2
+ *   npx tsx tools/shoes-pipeline/audit-sources.ts --only id1,id2 [--skip-done]
  *
  * Вежливо: по хосту не чаще раза в HOST_DELAY_MS, хосты по очереди. Источник,
  * который условия уже запретили, сеть не трогает вовсе.
@@ -211,7 +211,9 @@ async function probe(source: Source): Promise<Evidence> {
     await sleep(HOST_DELAY_MS);
     homeHtml = (await get(`${source.origin}/`))?.body ?? page.body;
   }
-  const known = TERMS[source.id]?.url ?? source.termsUrl;
+  // Адрес из реестра важнее прочитанного раньше: его ставят, когда прежняя
+  // страница оказалась не той (меню вместо условий, условия продажи).
+  const known = source.termsUrl ?? TERMS[source.id]?.url;
   const candidates = [...new Set([...(known ? [known] : []), ...termsLinks(homeHtml, source.origin)])].slice(0, 3);
   let best: { url: string; text: string; hits: number } | null = null;
   for (const url of candidates) {
@@ -281,19 +283,38 @@ const saved: Record<string, Evidence> = existsSync(EVIDENCE_PATH)
   ? JSON.parse(readFileSync(EVIDENCE_PATH, "utf8"))
   : {};
 
-for (const source of SOURCES) {
-  if (OFFLINE || (ONLY && !ONLY.has(source.id))) continue;
-  if (TERMS[source.id]?.reading === "forbids") continue;
-  saved[source.id] = await probe(source);
-  const e = saved[source.id];
-  console.log(
-    `  ${source.id.padEnd(22)} robots=${e.robots.outcome}` +
-      `${e.robots.aiBlocked.length ? `, ИИ закрыт: ${e.robots.aiBlocked.length}` : ""}` +
-      ` live=${e.live ? `${e.live.http}${e.live.challenge ? " капча" : ""}` : "—"} условия=${e.terms?.url ?? "—"}`
-  );
-  writeFileSync(EVIDENCE_PATH, JSON.stringify(saved, null, 2) + "\n");
-  await sleep(HOST_DELAY_MS);
-}
+/**
+ * Хосты проверяются пулом по POOL одновременно: у разных источников разные
+ * хосты, и пауза HOST_DELAY_MS держится внутри probe() на каждый хост. Прежний
+ * последовательный проход шёл полтора часа на 66 кандидатов.
+ */
+const POOL = 6;
+const SKIP_DONE = args.includes("--skip-done");
+const today = new Date().toISOString().slice(0, 10);
+const todo = SOURCES.filter(
+  (s) =>
+    !OFFLINE &&
+    (!ONLY || ONLY.has(s.id)) &&
+    TERMS[s.id]?.reading !== "forbids" &&
+    !(SKIP_DONE && saved[s.id]?.checkedAt.startsWith(today))
+);
+let cursor = 0;
+await Promise.all(
+  Array.from({ length: POOL }, async () => {
+    while (cursor < todo.length) {
+      const source = todo[cursor++];
+      saved[source.id] = await probe(source);
+      const e = saved[source.id];
+      console.log(
+        `  ${source.id.padEnd(22)} robots=${e.robots.outcome}` +
+          `${e.robots.aiBlocked.length ? `, ИИ закрыт: ${e.robots.aiBlocked.length}` : ""}` +
+          ` live=${e.live ? `${e.live.http}${e.live.challenge ? " капча" : ""}` : "—"} условия=${e.terms?.url ?? "—"}`
+      );
+      // Один процесс, одна запись: потоки пула пишут общий объект целиком.
+      writeFileSync(EVIDENCE_PATH, JSON.stringify(saved, null, 2) + "\n");
+    }
+  })
+);
 
 const results = SOURCES.map((s) => ({
   id: s.id,
