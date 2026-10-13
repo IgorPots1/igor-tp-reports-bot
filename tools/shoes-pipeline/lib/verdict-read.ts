@@ -44,6 +44,14 @@ export type ReaderAnswer = {
   best_for: { thesis: string; quote: string }[];
   not_for: { thesis: string; quote: string }[];
   release: { year: number; quote: string } | null;
+  /** false — страница про НЕ беговую обувь (лайфстайл, хайкинг, баскетбол). */
+  running_shoe?: boolean;
+  /**
+   * Дословный запрет из условий, если он стоит на самой странице (подвал,
+   * плашка): «копирование запрещено», «no scraping». Код сверит его с полной
+   * страницей, и источник уйдёт на закрытие.
+   */
+  terms_notice?: string | null;
 };
 
 export const FEEL_ORDER: Feel[] = ["firm_responsive", "balanced", "soft_stable", "bouncy_soft", "plush"];

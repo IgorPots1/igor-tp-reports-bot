@@ -248,6 +248,21 @@ function Card({ rec, best }: { rec: Recommendation; best: boolean }) {
         </p>
       ) : null}
 
+      {s.basis && s.basis.length > 0 ? (
+        <details className={styles.details}>
+          <summary className={styles.summary}>На чём основано</summary>
+          <ul className={styles.basisList}>
+            {s.basis.map((b) => (
+              <li key={b.url}>
+                <a href={b.url} target="_blank" rel="noopener noreferrer">
+                  {b.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
       <details className={styles.details}>
         <summary className={styles.summary}>Цифры и разбор баллов</summary>
         <div className={styles.numbers}>

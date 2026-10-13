@@ -14,8 +14,11 @@
  *   settle  проверяет каждую цитату в сохранённой странице и сводит поля по
  *           правилам наряда. Проверку делает код, а не модель.
  *
- *   npx tsx tools/shoes-pipeline/read-verdicts.ts queue --limit 20 --chinese 5
- *   npx tsx tools/shoes-pipeline/read-verdicts.ts cost
+ * Читаются ТОЛЬКО источники, прошедшие гейт (lib/allowed-models.ts), по волнам.
+ * Результат — черновики тренерского каталога (status: "draft"), не подбор:
+ * подтверждает Игорь.
+ *
+ *   npx tsx tools/shoes-pipeline/read-verdicts.ts queue --wave 1 --limit 20
  *   npx tsx tools/shoes-pipeline/read-verdicts.ts verify-pack
  *   npx tsx tools/shoes-pipeline/read-verdicts.ts settle
  */
@@ -23,8 +26,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { fetchPage } from "./lib/fetch";
-import { buildLinks, pickTargets, type Candidate } from "./lib/model-links";
-import type { SourceId } from "./lib/sources";
+import { CHINESE, WAVES, loadAllowedModels, type AllowedModel } from "./lib/allowed-models";
+import { SOURCES, type SourceId } from "./lib/sources";
 import { mentionsWinter, plainText, publishedFrom, reviewBody } from "./lib/verdict-extract";
 import {
   FEEL_ORDINAL,
@@ -55,17 +58,22 @@ const num = (flag: string, dflt: number) => {
 };
 
 const REPORTS = resolve("tools/shoes-pipeline/reports");
-const READ_DIR = resolve("tools/shoes-pipeline/.cache/read");
+/**
+ * Отдельный каталог для чтения разрешённых источников. В прежнем .cache/read
+ * лежат тексты и ответы по Doctors of Running и Believe in the Run (удаление —
+ * за Игорем); в общих папках моделей их старые смысловые проверки смешались бы
+ * с новыми, и settle принял бы чужую проверку за свою.
+ */
+const READ_DIR = resolve("tools/shoes-pipeline/.cache/read-allowed");
 const QUEUE_PATH = resolve(READ_DIR, "queue.json");
 mkdirSync(READ_DIR, { recursive: true });
 mkdirSync(REPORTS, { recursive: true });
 
 /**
- * Каталог — модели 2024 года и новее плюс 2023-й, если он ещё в продаже
- * (решение Игоря). Наличие в продаже проверяется контуром цен, а он отложен,
- * поэтому 2023-й пока проходит с пометкой в отчёте, а не отсеивается молча.
+ * Черновики — модели 2024 года и новее (решение Игоря, 14.10.2026: «до 2024»
+ * в черновики не идут). Обзор старше — модель отмечается и не читается.
  */
-const MIN_YEAR = 2023;
+const MIN_YEAR = 2024;
 
 type Page = { source: SourceId; url: string; date: string | null; chars: number };
 type Task = { key: string; brand: string; model: string; chinese: boolean; pages: Page[] };
@@ -81,12 +89,27 @@ async function pageText(source: SourceId, url: string): Promise<{ text: string; 
   return { text: reviewBody(plainText(r.body)), date: publishedFrom(r.body) };
 }
 
+/** Название площадки для блока «на чём основано». */
+const titleOf = (id: string) => SOURCES.find((s) => s.id === id)?.title ?? id;
+
 /* ---------------------------------- queue ---------------------------------- */
 
 async function queue() {
-  const candidates = await buildLinks();
-  const { multi, chineseSingles, targets } = pickTargets(candidates, num("--limit", 20), num("--chinese", 0));
-  console.log(`Моделей с двумя и более обзорами: ${multi.length}; китайских с одним: ${chineseSingles.length}`);
+  const wave = num("--wave", 1);
+  const limit = num("--limit", 20);
+  const models = loadAllowedModels(WAVES[wave]);
+  const nSrc = (m: AllowedModel) => new Set(m.links.map((l) => l.source)).size;
+  const recent = (m: AllowedModel) => m.links.some((l) => (l.lastmod ?? "").slice(0, 4) >= String(MIN_YEAR));
+  /**
+   * Порядок: сначала модели на двух источниках волны и больше (есть с чем
+   * сверять), потом со свежей датой в карте, потом остальные. Китайская
+   * модель, если есть в волне, ставится в пилот обязательно — наряд просит
+   * показать и её.
+   */
+  const ranked = [...models].sort((a, b) => nSrc(b) - nSrc(a) || Number(recent(b)) - Number(recent(a)));
+  const chineseFirst = ranked.find((m) => CHINESE.has(m.brandId));
+  const targets = [...new Set([...(chineseFirst ? [chineseFirst] : []), ...ranked])].slice(0, limit);
+  console.log(`Волна ${wave}: моделей ${models.length}, на двух источниках и больше ${models.filter((m) => nSrc(m) >= 2).length}`);
   const tasks: Task[] = [];
   const tooOld: { key: string; newestReview: string }[] = [];
   for (const c of targets) {
@@ -113,10 +136,24 @@ async function queue() {
     // Порядок страниц — как в карте ссылок, а не как пришли ответы: очередь
     // должна быть одинаковой от прогона к прогону.
     pages.sort((x, y) => c.links.findIndex((l) => l.url === x.url) - c.links.findIndex((l) => l.url === y.url));
-    const chinese = chineseSingles.includes(c);
+    /**
+     * Одна страница на источник — самая свежая. Файл ответа читателя назван по
+     * источнику, и вторая страница того же источника молча затёрла бы первую.
+     *
+     * Модель без номера версии в названии («air-zoom-pegasus») — одна страница
+     * вообще: два обзора без номера могут быть про разные поколения, и свести
+     * их значило бы смешать модели.
+     */
+    const newestFirst = (a: Page, b: Page) => (b.date ?? "").localeCompare(a.date ?? "");
+    const perSource = new Map<string, Page>();
+    for (const p of [...pages].sort(newestFirst)) if (!perSource.has(p.source)) perSource.set(p.source, p);
+    let kept = [...perSource.values()];
+    if (!/\d/.test(c.model)) kept = kept.sort(newestFirst).slice(0, 1);
+    pages.splice(0, pages.length, ...kept);
+    const chinese = CHINESE.has(c.brandId);
     // Фильтр года — до чтения: дата публикации есть в разметке страницы, и
-    // модель, о которой последний обзор вышел до 2023 года, читать незачем —
-    // в базу она не попадёт, а чтение стоит денег.
+    // модель, о которой последний обзор вышел до 2024 года, читать незачем —
+    // в черновики она не попадёт.
     const newest = pages.map((p) => p.date).filter((d): d is string => Boolean(d)).sort().pop();
     if (newest && Number(newest.slice(0, 4)) < MIN_YEAR) {
       tooOld.push({ key: c.key, newestReview: newest });
@@ -133,38 +170,6 @@ async function queue() {
   console.log(`Очередь: ${QUEUE_PATH}`);
 }
 
-/* ---------------------------------- cost ----------------------------------- */
-
-/**
- * Смета на весь каталог. Размер страниц, которые уже скачаны, — фактический;
- * для остальных — средний по той же площадке из скачанных. Перекачивать 800
- * страниц ради сметы — лишняя нагрузка на чужие сайты.
- */
-async function cost() {
-  const candidates = await buildLinks();
-  const { multi, chineseSingles } = pickTargets(candidates, 0, 0);
-  const all = [...multi, ...chineseSingles];
-  const sizes = new Map<string, number[]>();
-  const tasks: Task[] = existsSync(QUEUE_PATH) ? JSON.parse(readFileSync(QUEUE_PATH, "utf8")) : [];
-  for (const t of tasks) for (const p of t.pages) sizes.set(p.source, [...(sizes.get(p.source) ?? []), p.chars]);
-  const avg = (s: string) => {
-    const v = sizes.get(s) ?? [];
-    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN;
-  };
-  let pages = 0;
-  let chars = 0;
-  for (const c of all as Candidate[]) {
-    for (const l of c.links) {
-      pages++;
-      chars += avg(l.source);
-    }
-  }
-  const instructions = readFileSync(resolve("tools/shoes-pipeline/read/READER.md"), "utf8").length;
-  console.log(JSON.stringify({ models: all.length, pages, reviewChars: Math.round(chars), instructionChars: instructions,
-    perSourceAvgChars: Object.fromEntries([...sizes.keys()].map((s) => [s, Math.round(avg(s))])),
-    sampledPages: [...sizes.values()].reduce((a, v) => a + v.length, 0) }, null, 2));
-}
-
 /* --------------------------------- settle ---------------------------------- */
 
 /**
@@ -173,8 +178,8 @@ async function cost() {
  * Первая версия брала первое слово названия из карты ссылок без учёта
  * регистра — и выбросила 281 честную цитату: в карте есть мусорные «модели»
  * на shoe-, heel-, running-, а «shoe» стоит почти в каждой фразе обзора.
- * Теперь имя — это первое слово названия модели, у которой есть ДВА источника
- * (настоящая модель, а не обрывок адреса), оно не бренд и не обычное английское
+ * Теперь имя — это первое слово названия модели из разрешённых источников,
+ * оно не бренд и не обычное английское
  * слово (системный словарь), и в цитате ищется С ЗАГЛАВНОЙ буквы: «Clifton»,
  * «Pegasus», «Novablast». Ghost и Rincon из-за этого не ловятся по имени — их
  * держит отсев сравнительных оборотов.
@@ -183,13 +188,12 @@ const DICT_PATH = "/usr/share/dict/words";
 const ENGLISH: Set<string> = existsSync(DICT_PATH)
   ? new Set(readFileSync(DICT_PATH, "utf8").split("\n").filter((w) => /^[a-z]+$/.test(w)))
   : new Set();
-function modelNames(candidates: Candidate[]): string[] {
+function modelNames(candidates: AllowedModel[]): string[] {
   const brands = new Set(
     candidates.flatMap((c) => [c.brandId ?? "", ...c.brand.toLowerCase().split(/\s+/)]).filter(Boolean)
   );
   const names = new Set<string>();
   for (const c of candidates) {
-    if (new Set(c.links.map((l) => l.source)).size < 2) continue;
     const first = c.model.split("-")[0].toLowerCase();
     if (first.length < 4 || !/^[a-z]+$/.test(first) || brands.has(first) || ENGLISH.has(first)) continue;
     names.add(first[0].toUpperCase() + first.slice(1));
@@ -212,6 +216,8 @@ async function vetTask(t: Task, names: string[]) {
   const rejected: (Rejected & { source: string })[] = [];
   const bodies: string[] = [];
   const readSources = new Set<string>();
+  const notRunning: string[] = [];
+  const termsNotices: { source: string; quote: string }[] = [];
   let unread = 0;
   for (const p of t.pages) {
     if (!existsSync(answerPath(t.key, p.source))) {
@@ -224,6 +230,22 @@ async function vetTask(t: Task, names: string[]) {
     const page = await pageText(p.source, p.url);
     if (!page) continue;
     bodies.push(page.text);
+    /**
+     * Запрет в условиях, встреченный на самой странице (подвал, плашка), —
+     * сигнал закрыть источник (наряд, п.6). Цитата сверяется с ПОЛНЫМ текстом
+     * страницы, а не с телом обзора: подвал из тела вырезан.
+     */
+    if (answer.terms_notice) {
+      const r = await fetchPage(p.source, p.url);
+      const full = r.ok ? plainText(r.body) : "";
+      if (full.replace(/\s+/g, " ").includes(answer.terms_notice.replace(/\s+/g, " ").trim())) {
+        termsNotices.push({ source: p.source, quote: answer.terms_notice });
+      }
+    }
+    if (answer.running_shoe === false) {
+      notRunning.push(p.source);
+      continue;
+    }
     const v = vetAnswer(answer, page.text, others, ownName);
     rejected.push(...v.rejected.map((r) => ({ ...r, source: p.source })));
     if (answer.about_model) readSources.add(p.source);
@@ -231,7 +253,7 @@ async function vetTask(t: Task, names: string[]) {
       accepted.push({ id: `${p.source}#${i}`, field: a.field, value: a.value, quote: a.quote, source: p.source, url: p.url, date: p.date })
     );
   }
-  return { accepted, rejected, bodies, readSources, unread };
+  return { accepted, rejected, bodies, readSources, unread, notRunning, termsNotices };
 }
 
 const verifyRequestPath = (key: string) => resolve(dirFor(key), "verify-request.json");
@@ -244,8 +266,7 @@ const verifyPath = (key: string) => resolve(dirFor(key), "verify.json");
  * приписано, а не читает обзор заново.
  */
 async function verifyPack() {
-  const candidates = await buildLinks();
-  const names = modelNames(candidates);
+  const names = modelNames(loadAllowedModels());
   const tasks: Task[] = JSON.parse(readFileSync(QUEUE_PATH, "utf8"));
   let packed = 0;
   let waiting = 0;
@@ -272,8 +293,7 @@ type ModelReport = {
 };
 
 async function settle() {
-  const candidates = await buildLinks();
-  const names = modelNames(candidates);
+  const names = modelNames(loadAllowedModels());
   const tasks: Task[] = JSON.parse(readFileSync(QUEUE_PATH, "utf8"));
   const decisionsPath = resolve(REPORTS, "verdict-decisions.json");
   const decisions: { id: string; field: keyof Verdicts; value: unknown }[] = existsSync(decisionsPath)
@@ -291,10 +311,13 @@ async function settle() {
   let unread = 0;
   let unverified = 0;
   const yearNotes: string[] = [];
+  const excluded: { key: string; why: string }[] = [];
+  const termsNotices: { key: string; source: string; quote: string }[] = [];
 
   for (const t of tasks) {
     const vt = await vetTask(t, names);
     unread += vt.unread;
+    termsNotices.push(...vt.termsNotices.map((n) => ({ key: t.key, ...n })));
     const rejected = vt.rejected;
     const bodies = vt.bodies;
     const readSources = vt.readSources;
@@ -320,10 +343,12 @@ async function settle() {
     const evidence: Evidence[] = [];
     const disputed: string[] = [];
     const fields: Record<string, string> = {};
-    const allowSingle = t.chinese;
+    // Черновику хватает одного источника (решение Игоря, 14.10.2026): последнее
+    // слово всё равно за ним. Расхождение двух источников по-прежнему спор.
+    const allowSingle = true;
     const of = (f: string) => accepted.filter((a) => a.field === f);
     const ev = (field: keyof Verdicts, o: Obs<unknown>) =>
-      evidence.push({ field, url: o.url, source: o.source, date: o.date, quote: o.quote });
+      evidence.push({ field, url: o.url, source: o.source, source_title: titleOf(o.source), date: o.date, quote: o.quote });
 
     const one = (field: keyof Verdicts, ordinal: { order: unknown[]; center: number } | null) => {
       const s = settleField(of(field), allowSingle, ordinal);
@@ -396,10 +421,18 @@ async function settle() {
 
     // Второй рубеж: год из текста обзора тоже может оказаться старым.
     if (year !== null && year < MIN_YEAR) {
-      console.log(`  ${t.brand} ${t.model} — год ${year}, старше ${MIN_YEAR}: в базу не идёт`);
+      excluded.push({ key: t.key, why: `до ${MIN_YEAR}: год ${year}` });
+      console.log(`  ${t.brand} ${t.model} — год ${year}, до ${MIN_YEAR}: в черновики не идёт`);
       continue;
     }
-    if (year === 2023) yearNotes.push(`${t.key}: 2023 — в продаже ли, проверит контур цен`);
+    // Отметка читателя «не беговая» — модель не идёт в черновики (наряд: вторая
+    // волна читается с такими отметками прямо при чтении).
+    // Исключается, только если НИ ОДИН источник не признал модель беговой.
+    if (vt.notRunning.length > 0 && readSources.size === 0) {
+      excluded.push({ key: t.key, why: `не беговая: ${vt.notRunning.join(", ")}` });
+      console.log(`  ${t.brand} ${t.model} — не беговая обувь: в черновики не идёт`);
+      continue;
+    }
 
     // Решения Игоря по спорным полям.
     const decided_by: VerdictRecord["decided_by"] = {};
@@ -419,9 +452,10 @@ async function settle() {
       year_conflict,
       verdicts,
       evidence,
-      confidence: t.chinese ? "low" : "normal",
+      confidence: readSources.size >= 2 ? "normal" : "low",
       disputed,
       decided_by,
+      status: "draft",
     });
     reports.push({ key: t.key, fields, rejected });
     const filled = TWO_SOURCE_FIELDS.filter((f) => verdicts[f] !== null).length;
@@ -431,7 +465,14 @@ async function settle() {
     );
   }
 
-  writeFileSync(resolve(REPORTS, "verdicts.json"), JSON.stringify(records, null, 2) + "\n");
+  // Черновики тренерского каталога: в подбор не идут, пока Игорь не подтвердит.
+  writeFileSync(resolve(REPORTS, "coach-drafts.json"), JSON.stringify(records, null, 2) + "\n");
+  writeFileSync(resolve(REPORTS, "coach-drafts-excluded.json"), JSON.stringify(excluded, null, 2) + "\n");
+  if (termsNotices.length > 0) {
+    writeFileSync(resolve(REPORTS, "terms-notices.json"), JSON.stringify(termsNotices, null, 2) + "\n");
+    console.log(`\n!!! На страницах найден запрет в условиях — источники к закрытию: ${[...new Set(termsNotices.map((n) => n.source))].join(", ")}`);
+    console.log("    Закрыть и удалить всё полученное: npx tsx tools/shoes-pipeline/close-source.ts <id> \"причина\"");
+  }
   writeFileSync(resolve(REPORTS, "verdict-for-igor.json"), JSON.stringify(forIgor, null, 2) + "\n");
   writeFileSync(
     resolve(REPORTS, "verdict-read-report.json"),
@@ -479,11 +520,10 @@ function status() {
 }
 
 if (cmd === "queue") await queue();
-else if (cmd === "cost") await cost();
 else if (cmd === "verify-pack") await verifyPack();
 else if (cmd === "status") status();
 else if (cmd === "settle") await settle();
 else {
-  console.error("Команда: queue | cost | status | verify-pack | settle");
+  console.error("Команда: queue | status | verify-pack | settle");
   process.exit(1);
 }

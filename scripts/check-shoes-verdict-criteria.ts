@@ -11,7 +11,8 @@ import {
   fitWarnings,
   runnerWeightFromVerdicts,
 } from "../src/features/shoes/verdict-criteria";
-import { EMPTY_VERDICTS, type Verdicts } from "../src/features/shoes/verdict-types";
+import { basisLinks } from "../src/features/shoes/verdict-basis";
+import { EMPTY_VERDICTS, type VerdictRecord, type Verdicts } from "../src/features/shoes/verdict-types";
 
 let failures = 0;
 const check = (cond: boolean, msg: string) => {
@@ -36,6 +37,23 @@ console.log("=== ощущение: шкала опросника и firmness о�
   );
   check(feelFromVerdicts(5, v({})).score === NEUTRAL, "firmness неизвестен — нейтрально");
   check(feelFromVerdicts(5, v({ firmness: 1 })).note?.text === "заметно жёстче, чем ты просил", "жёсткая при просьбе мягкой — минус «жёстче»");
+}
+
+console.log("\n=== «на чём основано»: только ссылки, без цитат ===");
+{
+  const rec: VerdictRecord = {
+    id: "x", brand: "B", model: "m", year: 2026, year_source: null, year_conflict: null,
+    verdicts: v({}), confidence: "low", disputed: [], decided_by: {}, status: "draft",
+    evidence: [
+      { field: "firmness", url: "https://a.example/r1", source: "a", source_title: "Площадка А", date: null, quote: "SECRET QUOTE ONE" },
+      { field: "feel", url: "https://a.example/r1", source: "a", source_title: "Площадка А", date: null, quote: "SECRET QUOTE TWO" },
+      { field: "width", url: "https://b.example/r2", source: "b", source_title: "Площадка Б", date: null, quote: "SECRET QUOTE THREE" },
+    ],
+  };
+  const basis = basisLinks(rec);
+  check(basis.length === 2, "один обзор — одна строка, хоть полей по нему несколько");
+  check(!JSON.stringify(basis).includes("SECRET"), "в блок карточки не попадает текст цитаты");
+  check(basis.every((b) => Object.keys(b).sort().join() === "title,url"), "в блоке только название и ссылка");
 }
 
 console.log("\n=== вес бегуна от 85 кг ===");

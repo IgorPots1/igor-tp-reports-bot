@@ -63,6 +63,8 @@ export type Evidence = {
   field: keyof Verdicts;
   url: string;
   source: string;
+  /** Название площадки для карточки («на чём основано»). */
+  source_title?: string;
   /** Дата публикации обзора. Нужна и как год модели на этапе разбора. */
   date: string | null;
   /** Кусок текста, по которому вердикт поставлен, — чтобы можно было проверить. */
@@ -101,6 +103,14 @@ export type VerdictRecord = {
    * принятое, когда обзоры разошлись и четвёртый источник не помог.
    */
   decided_by: Partial<Record<keyof Verdicts, "igor">>;
+  /**
+   * Черновик тренерского каталога (решение Игоря, 14.10.2026). Прочитанное
+   * идёт не прямо в подбор, а черновиком: Игорь подтверждает. В подбор
+   * попадает только confirmed. Один источник для черновика — нормально.
+   */
+  status: "draft" | "confirmed";
+  confirmed_by?: "igor";
+  confirmedAt?: string;
 };
 
 export const EMPTY_VERDICTS: Verdicts = {

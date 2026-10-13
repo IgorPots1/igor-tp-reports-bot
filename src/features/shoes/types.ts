@@ -95,10 +95,19 @@ export type Shoe = {
 
   image: string | null;
   sources: string[];
+  /**
+   * «На чём основано»: обзоры, по которым поставлены вердикты, — только
+   * название площадки и ссылка. Цитат здесь нет и быть не может: цитата живёт
+   * во внутреннем evidence для проверки, на клиент не уезжает.
+   */
+  basis?: ReviewBasis[];
   verified_at: string | null;
   /** Метка демонстрационной записи: числа не сверены по источникам. */
   demo?: boolean;
 };
+
+/** Ссылка на обзор для блока «на чём основано» в карточке. */
+export type ReviewBasis = { title: string; url: string };
 
 /** Запись без цен — ровно то, что уезжает на клиент. */
 export type ClientShoe = Omit<Shoe, "price">;

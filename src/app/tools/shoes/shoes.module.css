@@ -698,3 +698,18 @@
   margin-top: 28px;
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* «На чём основано»: только ссылки на обзоры, без цитат. */
+.basisList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.basisList a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
