@@ -90,7 +90,32 @@ const COMPARATIVE_THAN =
 const COMPARATIVE =
   /\b(compared (to|with)|in comparison|unlike|versus|vs\.?|predecessor|previous (version|model|iteration)|last (year's|version|model))\b/i;
 
+/** Сравнения по-русски: первая волна наполовину русскоязычная. */
+const COMPARATIVE_RU =
+  /(чем у|чем в|по сравнению с|в сравнении с|в отличие от|предшественни|предыдущ\w* (верси|модел)|прошл\w* (верси|модел))/i;
+
 export type QuoteVerdict = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Слова и шкала не должны спорить (инвариант Игоря, 14.10.2026). Шкала
+ * firmness: 1 жёстко … 5 очень мягко. Цитата со словами плотности не может
+ * дать 4–5, со словами мягкости — 1–2. Обе группы в одной цитате («firm but
+ * soft underfoot») оставляют только середину, 3.
+ *
+ * Правило буквальное и нарочно грубое: «not too firm» тоже содержит «firm» и
+ * не даст 4–5. Потерять честную цитату дешевле, чем записать мягкой модель,
+ * про которую обзор сказал «firm».
+ */
+const FIRM_WORDS = /\b(firm\w*|stiff\w*|harsh\w*|hard|harder|dense\w*|rigid\w*)\b|плотн|жёстк|жестк|твёрд|твердь|твердая|твёрдая/i;
+const SOFT_WORDS = /\b(soft\w*|plush\w*|squish\w*|pillow\w*|cushy|mushy|marshmallow\w*)\b|мягк/i;
+
+export function firmnessConflict(value: number, quote: string): string | null {
+  const firm = FIRM_WORDS.test(quote);
+  const soft = SOFT_WORDS.test(quote);
+  if (firm && value >= 4) return "цитата про плотность не даёт 4–5";
+  if (soft && value <= 2) return "цитата про мягкость не даёт 1–2";
+  return null;
+}
 
 /**
  * Цитата засчитывается, если:
@@ -108,7 +133,7 @@ export function checkQuote(page: string, quote: string, otherModels: string[], o
   if (q.length < QUOTE_MIN) return { ok: false, reason: `короче ${QUOTE_MIN} знаков` };
   if (q.length > QUOTE_MAX) return { ok: false, reason: `длиннее ${QUOTE_MAX} знаков` };
   if (!normalizeForQuote(page).includes(q)) return { ok: false, reason: "нет на странице" };
-  if (COMPARATIVE.test(q) || COMPARATIVE_THAN.test(q)) return { ok: false, reason: "сравнение с другой моделью" };
+  if (COMPARATIVE.test(q) || COMPARATIVE_THAN.test(q) || COMPARATIVE_RU.test(q)) return { ok: false, reason: "сравнение с другой моделью" };
   const lower = q.toLowerCase();
   // Имя модели — с заглавной: «Clifton», а не «clifton» внутри обычной фразы.
   const other = otherModels.find((m) => new RegExp(`\\b${escapeRe(m)}\\b`).test(q));
@@ -183,6 +208,13 @@ export function vetAnswer(
     if (!valueOk(f, c.value)) {
       rejected.push({ field: f, value: c.value, quote: c.quote, reason: "значение вне шкалы" });
       continue;
+    }
+    if (f === "firmness") {
+      const conflict = firmnessConflict(c.value as number, c.quote ?? "");
+      if (conflict) {
+        rejected.push({ field: f, value: c.value, quote: c.quote, reason: conflict });
+        continue;
+      }
     }
     take(f, c.value, c.quote);
   }

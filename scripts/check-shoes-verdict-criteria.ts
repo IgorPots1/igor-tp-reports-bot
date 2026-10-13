@@ -7,6 +7,7 @@ import {
   FIT_UNKNOWN,
   NEUTRAL,
   NOT_FOR_HEAVY,
+  feelFromVerdicts,
   fitWarnings,
   runnerWeightFromVerdicts,
 } from "../src/features/shoes/verdict-criteria";
@@ -19,7 +20,25 @@ const check = (cond: boolean, msg: string) => {
 };
 const v = (patch: Partial<Verdicts>): Verdicts => ({ ...EMPTY_VERDICTS, purpose: [], best_for: [], not_for: [], ...patch });
 
-console.log("=== вес бегуна от 85 кг ===");
+console.log("=== ощущение: шкала опросника и firmness одного направления ===");
+// firmness: 1 жёстко … 5 очень мягко (решение Игоря 14.10.2026; до этого шкала
+// вердикта шла наоборот). Ответ «максимум мягкости» обязан поднимать firmness 5.
+{
+  const soft5 = feelFromVerdicts(5, v({ firmness: 5 })).score;
+  const hard1 = feelFromVerdicts(5, v({ firmness: 1 })).score;
+  check(soft5 > hard1, "«максимум мягкости» поднимает firmness 5 выше firmness 1");
+  check(soft5 === 1, "«максимум мягкости» и firmness 5 — полное попадание");
+  const order = [1, 2, 3, 4, 5].map((f) => feelFromVerdicts(5, v({ firmness: f as 1 })).score);
+  check(order.every((x, i) => i === 0 || x > order[i - 1]), "при «максимум мягкости» балл растёт с firmness монотонно");
+  check(
+    feelFromVerdicts(1, v({ firmness: 1 })).score > feelFromVerdicts(1, v({ firmness: 5 })).score,
+    "«жёстко и отзывчиво» поднимает firmness 1 выше firmness 5"
+  );
+  check(feelFromVerdicts(5, v({})).score === NEUTRAL, "firmness неизвестен — нейтрально");
+  check(feelFromVerdicts(5, v({ firmness: 1 })).note?.text === "заметно жёстче, чем ты просил", "жёсткая при просьбе мягкой — минус «жёстче»");
+}
+
+console.log("\n=== вес бегуна от 85 кг ===");
 check(runnerWeightFromVerdicts(92, v({ durability: "high", purpose: ["daily"] })).score === 1, "живучая ежедневная — плюс");
 check(runnerWeightFromVerdicts(92, v({ durability: "high", purpose: ["max"] })).score === 1, "живучая максималка — плюс");
 check(runnerWeightFromVerdicts(92, v({ durability: "high", purpose: ["race"] })).score === NEUTRAL, "живучая, но стартовая — нейтрально");

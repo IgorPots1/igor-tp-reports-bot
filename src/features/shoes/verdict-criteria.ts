@@ -66,3 +66,24 @@ export function fitWarnings(dislikes: Dislike[], v: Verdicts): string[] {
   // подряд читаются как сбой, а не как забота.
   return narrowComplaint || heelComplaint ? [FIT_UNKNOWN] : [];
 }
+
+/**
+ * Ощущение под стопой: ответ опросника против firmness из обзоров.
+ *
+ * Шкалы ОДНОГО направления (решение Игоря, 14.10.2026): в опроснике «1 жёстко
+ * и отзывчиво … 5 максимум мягкости», в вердикте firmness 1 жёстко … 5 очень
+ * мягко. Поэтому сравнение прямое — расстояние между ответом и вердиктом, без
+ * переворота. Переворот в коде — ровно то место, где шкалы однажды
+ * разъезжаются молча; его здесь нет нарочно.
+ *
+ * firmness неизвестен — нейтрально, как любое пустое поле.
+ */
+export function feelFromVerdicts(answerFeel: 1 | 2 | 3 | 4 | 5, v: Verdicts): CriterionOutcome {
+  if (v.firmness === null) return { score: NEUTRAL, note: null };
+  const diff = v.firmness - answerFeel;
+  const score = Math.max(0, 1 - Math.abs(diff) / 4);
+  if (diff === 0) return { score, note: { text: "ощущение под ногой ровно то, что просил", tone: "plus" } };
+  if (diff >= 2) return { score, note: { text: "заметно мягче, чем ты просил", tone: "minus" } };
+  if (diff <= -2) return { score, note: { text: "заметно жёстче, чем ты просил", tone: "minus" } };
+  return { score, note: null };
+}

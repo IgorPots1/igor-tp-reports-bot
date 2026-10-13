@@ -55,6 +55,8 @@ const CON: Theme[] = [
   { key: "thin-cushion", re: /\bcushion\w*\b.*\b(barely|not enough|lack\w*|thin|adequate)\b|\b(barely|not enough|lack\w*)\b.*\bcushion\w*/i, thesis: "мало амортизации для длинных" },
   { key: "slow", re: /\b(propulsion|less efficient|not fast|faster paces?|speed|versatility into)\b/i, thesis: "не для быстрой работы" },
   { key: "flat", re: /\b(rebound|bounce|flat|dead|lifeless)\b/i, thesis: "мало отдачи от пены" },
+  // firmness 1–2 — жёсткая и плотная (шкала опросника: 1 жёстко … 5 мягко).
+  // До 14.10 шкала шла наоборот, и это условие снимало тезис у МЯГКИХ моделей.
   { key: "firm", re: /\b(firm\w*|harsh|stiff)\b/i, thesis: "ощутимо жёсткая под стопой", coveredBy: (v) => v.firmness !== null && v.firmness <= 2 },
   { key: "wear", re: /\b(outsole|durab\w*|wears?|shred\w*)\b/i, thesis: "подошва быстро стирается", coveredBy: (v) => v.durability === "low" },
   { key: "heel", re: /\bheel\b.*\b(slip\w*|rub\w*|irritat\w*)\b/i, thesis: "может натирать или болтаться в пятке", coveredBy: (v) => v.heel_hold === "loose" || v.heel_hold === "stiff" },

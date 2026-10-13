@@ -14,6 +14,7 @@ import {
   FEEL_ORDINAL,
   FIRMNESS_ORDINAL,
   checkQuote,
+  firmnessConflict,
   gateBySense,
   medianTowardCenter,
   settleField,
@@ -69,6 +70,27 @@ ok("«than many shoes» — сравнение с другими, отброше
 ok("«Compared to …» в начале предложения тоже ловится", () => {
   const page = "Compared to the old foam, this ride is much softer underfoot.";
   assert.equal(checkQuote(page, "Compared to the old foam, this ride is much softer", []).ok, false);
+});
+ok("шкала firmness — 1 жёстко … 5 мягко: «firm» не даёт 4–5", () => {
+  // До 14.10.2026 шкала шла наоборот (1 очень мягкая). Инвариант Игоря держит
+  // направление опросника: слова и число не должны спорить.
+  assert.ok(firmnessConflict(5, "It is remarkably firm underfoot"));
+  assert.ok(firmnessConflict(4, "плотная пена, жёсткая на пятке"));
+  assert.equal(firmnessConflict(2, "It is remarkably firm underfoot"), null);
+});
+ok("шкала firmness: «soft», «мягкая» не даёт 1–2", () => {
+  assert.ok(firmnessConflict(1, "The foam feels soft and plush"));
+  assert.ok(firmnessConflict(2, "очень мягкая подошва"));
+  assert.equal(firmnessConflict(5, "The foam feels soft and plush"), null);
+});
+ok("обе группы слов в одной цитате оставляют только середину", () => {
+  assert.ok(firmnessConflict(4, "firm but soft underfoot"));
+  assert.ok(firmnessConflict(2, "firm but soft underfoot"));
+  assert.equal(firmnessConflict(3, "firm but soft underfoot"), null);
+});
+ok("сравнение по-русски не засчитывается", () => {
+  const page = "Пена мягче, чем у прошлой версии, и это заметно на длинных.";
+  assert.equal(checkQuote(page, "Пена мягче, чем у прошлой версии, и это заметно", []).ok, false);
 });
 ok("прошлая версия той же линейки не засчитывается", () => {
   const r = checkQuote(PAGE, "The Clifton 10 felt a bit softer overall.", [], { name: "clifton", version: 11 });
@@ -168,6 +190,14 @@ ok("смысловой шлюз: подтверждённое проходит, 
 });
 ok("нет файла проверки — не засчитано ничего", () => {
   assert.equal(gateBySense([{ id: "a#0" }], null).passed.length, 0);
+});
+
+ok("vetAnswer отбрасывает firmness, спорящий со словами цитаты", () => {
+  const v = vetAnswer(answer({ firmness: { value: 5, quote: "The midsole feels soft and protective underfoot" } }), PAGE, []);
+  assert.equal(v.accepted.length, 1);
+  const w = vetAnswer(answer({ firmness: { value: 1, quote: "The midsole feels soft and protective underfoot" } }), PAGE, []);
+  assert.equal(w.accepted.length, 0);
+  assert.equal(w.rejected[0].reason, "цитата про мягкость не даёт 1–2");
 });
 
 console.log(`\ncheck-verdict-read: ${n} проверок прошли`);
