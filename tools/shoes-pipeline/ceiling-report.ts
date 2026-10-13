@@ -13,8 +13,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { looksLikeShoe, parseReviewUrl, type ReviewModel } from "./lib/review-url";
 import { sitemapsFromRobots, walkSitemaps } from "./lib/sitemap";
 import { SOURCES } from "./lib/sources";
+
+/** Китайские бренды — наряд требует их числа отдельной строкой. */
+const CHINESE = new Set(["lining", "anta", "xtep", "361", "peak", "kailas", "bmai"]);
 
 const REPORTS = resolve("tools/shoes-pipeline/reports");
 mkdirSync(REPORTS, { recursive: true });
@@ -44,8 +48,9 @@ const REVIEW_URL: Record<string, (path: string) => boolean> = {
   },
 };
 
-type Row = { id: string; title: string; total: number; reviews: number; sample: string[] };
+type Row = { id: string; title: string; total: number; reviews: number };
 const rows: Row[] = [];
+const all: ReviewModel[] = [];
 
 for (const source of SOURCES.filter((s) => s.kind === "review" && REVIEW_URL[s.id])) {
   const declared = await sitemapsFromRobots(source.id, source.origin);
@@ -53,32 +58,104 @@ for (const source of SOURCES.filter((s) => s.kind === "review" && REVIEW_URL[s.i
   const walk = await walkSitemaps(source.id, roots, { maxMaps: 25 });
 
   const isReview = REVIEW_URL[source.id];
-  const reviews = walk.urls.filter((u) => {
+  let kept = 0;
+  for (const e of walk.entries) {
+    let path: string;
     try {
-      return isReview(new URL(u).pathname);
+      path = new URL(e.url).pathname;
     } catch {
-      return false;
+      continue;
     }
-  });
+    if (!isReview(path)) continue;
+    const parsed = parseReviewUrl(source.id, e.url, e.lastmod);
+    if (!parsed) continue;
+    // Обзор не про кроссовки — не модель. Иначе потолок завышается одеждой,
+    // очками и средствами восстановления.
+    if (!looksLikeShoe(`${parsed.model} ${parsed.brandTitle ?? ""}`)) continue;
+    all.push(parsed);
+    kept += 1;
+  }
 
-  rows.push({
-    id: source.id,
-    title: source.title,
-    total: walk.urls.length,
-    reviews: reviews.length,
-    sample: reviews.slice(0, 3),
-  });
-  console.log(`${source.title.padEnd(22)} адресов ${String(walk.urls.length).padStart(6)}, похожих на обзор модели ${String(reviews.length).padStart(5)}`);
-  for (const s of reviews.slice(0, 2)) console.log(`    ${s}`);
+  rows.push({ id: source.id, title: source.title, total: walk.urls.length, reviews: kept });
+  console.log(`${source.title.padEnd(22)} адресов ${String(walk.urls.length).padStart(6)}, разобрано обзоров ${String(kept).padStart(5)}`);
 }
 
-writeFileSync(resolve(REPORTS, "ceiling.json"), JSON.stringify(rows, null, 2) + "\n");
+/* ------------------- Сведение: одна модель у разных площадок ------------------- */
 
-const sum = rows.reduce((a, r) => a + r.reviews, 0);
+type Model = { key: string; brandId: string | null; brandTitle: string | null; model: string; sources: Set<string>; newest: string | null };
+const models = new Map<string, Model>();
+for (const r of all) {
+  const m = models.get(r.key) ?? {
+    key: r.key,
+    brandId: r.brandId,
+    brandTitle: r.brandTitle,
+    model: r.model,
+    sources: new Set<string>(),
+    newest: null,
+  };
+  m.sources.add(r.source);
+  if (r.lastmod && (!m.newest || r.lastmod > m.newest)) m.newest = r.lastmod;
+  if (!m.brandId && r.brandId) { m.brandId = r.brandId; m.brandTitle = r.brandTitle; }
+  models.set(r.key, m);
+}
+
+const list = [...models.values()];
+/**
+ * ДАТА ИЗ КАРТЫ САЙТА НЕ ГОДИТСЯ КАК ГОД МОДЕЛИ, и это измерено, а не
+ * предположено: у моделей с двумя обзорами 346 из 348 помечены текущим годом.
+ * lastmod — дата последнего ИЗМЕНЕНИЯ страницы, а популярные обзоры правят
+ * постоянно. Поэтому год здесь НЕ фильтруется, и число «моделей 2024 и новее»
+ * честно не выдаётся: для него нужен год из самой страницы обзора.
+ */
+const fresh = (m: Model) => (m.newest ? m.newest >= "2024-01-01" : false);
+
+const withTwo = list.filter((m) => m.sources.size >= 2);
+const withOne = list.filter((m) => m.sources.size === 1);
+const freshTwo = withTwo.filter(fresh);
+const freshOne = withOne.filter(fresh);
+const chinese = list.filter((m) => m.brandId && CHINESE.has(m.brandId));
+const unknownBrand = list.filter((m) => !m.brandId);
+
 console.log(`\n${"═".repeat(70)}`);
-console.log(`Страниц обзоров суммарно по площадкам: ${sum}`);
-console.log(
-  `Это НЕ число моделей: одну модель обозревают несколько площадок, и пересечение\n` +
-    `здесь не снято — для этого нужно сопоставить названия. Верхняя граница сверху.`
+console.log(`Уникальных моделей после снятия пересечений: ${list.length}`);
+console.log(`  обзор на двух и более площадках: ${withTwo.length}  (из них свежие: ${freshTwo.length})`);
+console.log(`  обзор на одной площадке:         ${withOne.length}  (из них свежие: ${freshOne.length})`);
+console.log(`  бренд не распознан:              ${unknownBrand.length}`);
+console.log(`\nКитайские бренды: ${chinese.length} моделей`);
+const byChinese = new Map<string, number>();
+for (const m of chinese) byChinese.set(m.brandTitle ?? "?", (byChinese.get(m.brandTitle ?? "?") ?? 0) + 1);
+for (const [b, n] of [...byChinese].sort((a, b) => b[1] - a[1])) console.log(`  ${b}: ${n}`);
+
+writeFileSync(
+  resolve(REPORTS, "ceiling.json"),
+  JSON.stringify(
+    {
+      perSource: rows,
+      models: list.map((m) => ({ ...m, sources: [...m.sources] })),
+      totals: {
+        unique: list.length,
+        twoPlus: withTwo.length,
+        twoPlusFresh: freshTwo.length,
+        one: withOne.length,
+        oneFresh: freshOne.length,
+        chinese: chinese.length,
+        unknownBrand: unknownBrand.length,
+      },
+    },
+    null,
+    2
+  ) + "\n"
 );
+
 console.log(`\nОтчёт: ${resolve(REPORTS, "ceiling.json")}`);
+
+/* --------------------------------- Стоп-кран --------------------------------- */
+
+const GATE = 150;
+if (freshTwo.length < GATE) {
+  console.log(`\n${"!".repeat(70)}`);
+  console.log(`СТОП-КРАН: моделей с двумя обзорами и свежей датой — ${freshTwo.length}, порог ${GATE}.`);
+  console.log(`Дальше по наряду идти нельзя, пока это не разобрано.`);
+} else {
+  console.log(`\nСтоп-кран не сработал: ${freshTwo.length} моделей с двумя обзорами при пороге ${GATE}.`);
+}

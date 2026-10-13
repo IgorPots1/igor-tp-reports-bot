@@ -23,9 +23,19 @@ export async function sitemapsFromRobots(sourceId: SourceId, origin: string): Pr
   return [...res.body.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => m[1].trim());
 }
 
+/** Адрес страницы и дата последнего изменения, если карта её объявила. */
+export type SitemapEntry = { url: string; lastmod: string | null };
+
 export type SitemapWalk = {
   /** Все адреса страниц, найденные в картах. */
   urls: string[];
+  /**
+   * Те же адреса с датами. Дата нужна как ЗАМЕНИТЕЛЬ года модели: года
+   * выпуска в адресе обзора нет, а дата публикации обзора о современной
+   * модели обычно близка к её выходу. Это приближение, и в отчёте оно
+   * называется приближением, а не годом модели.
+   */
+  entries: SitemapEntry[];
   /** Сколько карт реально прочитано — для отчёта о полноте обхода. */
   mapsRead: number;
   /** Карты, до которых не дошли: лимит глубины или отказ загрузки. */
@@ -48,6 +58,7 @@ export async function walkSitemaps(
   const seen = new Set<string>();
   const queue = [...roots];
   const urls = new Set<string>();
+  const entries = new Map<string, string | null>();
   const skipped: { url: string; reason: string }[] = [];
   let mapsRead = 0;
 
@@ -68,16 +79,34 @@ export async function walkSitemaps(
     }
     mapsRead += 1;
 
-    const locs = [...res.body.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+    // Берём <url>…</url> целиком, чтобы вместе с адресом достался и <lastmod>:
+    // по отдельности они не связываются, а порядок в карте не гарантирован.
+    const blocks = [...res.body.matchAll(/<(?:url|sitemap)>([\s\S]*?)<\/(?:url|sitemap)>/gi)].map((m) => m[1]);
+    const fromBlocks = blocks.map((b) => ({
+      loc: b.match(/<loc>\s*([^<\s]+)\s*<\/loc>/i)?.[1] ?? null,
+      lastmod: b.match(/<lastmod>\s*([^<\s]+)\s*<\/lastmod>/i)?.[1] ?? null,
+    }));
+    // Запасной разбор: часть карт отдаёт <loc> без обёртки <url>.
+    const locs = fromBlocks.length > 0
+      ? fromBlocks.filter((x) => x.loc).map((x) => ({ loc: x.loc as string, lastmod: x.lastmod }))
+      : [...res.body.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => ({ loc: m[1], lastmod: null }));
     // Индекс карт отличается от карты страниц тегом <sitemapindex>, но у части
     // сайтов он соврал; надёжнее смотреть на сам адрес.
-    for (const loc of locs) {
+    for (const { loc, lastmod } of locs) {
       if (/\.xml(\.gz)?(\?|$)/i.test(loc)) queue.push(loc);
-      else if (!opts.urlFilter || opts.urlFilter.test(loc)) urls.add(loc);
+      else if (!opts.urlFilter || opts.urlFilter.test(loc)) {
+        urls.add(loc);
+        if (!entries.has(loc) || entries.get(loc) === null) entries.set(loc, lastmod);
+      }
     }
   }
 
-  return { urls: [...urls], mapsRead, skipped };
+  return {
+    urls: [...urls],
+    entries: [...entries].map(([url, lastmod]) => ({ url, lastmod })),
+    mapsRead,
+    skipped,
+  };
 }
 
 /**
