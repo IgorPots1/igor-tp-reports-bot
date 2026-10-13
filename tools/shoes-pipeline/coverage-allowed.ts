@@ -41,15 +41,37 @@ const BRANDS: [string, string][] = [
 const STOP = new Set(
   "review reviews obzor obzory test tested testing krossovok krossovki krossovka begovyh begovye dlya bega first look impressions long term after km miles vs versus mens womens men women trail running shoe shoes running-shoe the a and i".split(" ")
 );
-const NOT_SHOE = /apparel|shorts|jacket|tights|socks|glasses|watch|headphones|backpack|vest|bottle|gel|insole|gaiter|cap|gloves/;
+const NOT_SHOE = /apparel|shorts|jacket|tights|socks|glasses|watch|headphones|backpack|vest|bottle|-gel-|insole|gaiter|-cap-|gloves|pants|shirt|hoodie|parka|tent|sleeping|stove|filter|boot|sandal|slide|lifestyle|kurtka|shtany|futbolka|ryukzak|chasy/;
 
+/**
+ * Адрес должен быть обзором: слово обзора в пути. Без этого фильтра в счёт шли
+ * карточки товаров магазинов (Спортмарафон, Kinash — тысячи «моделей») и вся
+ * экипировка брендов у обзорщиков: первая версия насчитала 11 922 модели.
+ */
+const REVIEW_WORD = /review|obzor|otzyv|test|tested|-vs-/i;
+
+/**
+ * Разделы, где у источника лежат именно беговые обзоры. Где раздела нет —
+ * весь сайт, и число это оценка сверху (лайфстайл, хайкинг попадают в счёт).
+ */
+const SECTION: Record<string, RegExp> = {
+  activegearreview: /\/running-gear\/[^/]*running-shoes\//,
+  kinash: /^\/blog\//,
+};
+
+let sourceOf = "";
 function modelFrom(url: string): string | null {
   let seg: string;
+  let path: string;
   try {
-    seg = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "";
+    path = new URL(url).pathname;
+    seg = path.split("/").filter(Boolean).pop() ?? "";
   } catch {
     return null;
   }
+  if (!REVIEW_WORD.test(path)) return null;
+  const section = SECTION[sourceOf];
+  if (section && !section.test(path)) return null;
   const s = `-${seg.toLowerCase().replace(/\.html?$/, "").replace(/[^a-z0-9]+/g, "-")}-`;
   if (NOT_SHOE.test(s)) return null;
   for (const [slug, id] of BRANDS) {
@@ -70,6 +92,7 @@ const perSource: { id: string; urls: number; models: number; models2024: number;
 for (const src of reviewSources) {
   const declared = await sitemapsFromRobots(src.id, src.origin);
   const walk = await walkSitemaps(src.id, declared.length ? declared : [`${src.origin}/sitemap.xml`], { maxMaps: 30 });
+  sourceOf = src.id;
   const models = new Set<string>();
   const models2024 = new Set<string>();
   for (const e of walk.entries) {
