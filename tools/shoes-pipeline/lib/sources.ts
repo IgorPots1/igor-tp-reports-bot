@@ -1,6 +1,11 @@
 /**
  * Реестр источников базы кроссовок.
  *
+ * RUNREPEAT ИСКЛЮЧЁН НАСОВСЕМ (13.10.2026): владелец отказал в использовании
+ * данных. Отказ покрывает всё — сами замеры, цитаты из них и пересказ. Поэтому
+ * источника нет не в статусе «запрещён», а нет в списке вовсе: статус можно
+ * переключить, отсутствие записи переключить нельзя.
+ *
  * Правило наряда: источник, запрещающий автоматический сбор, в конвейер не
  * включается. Поэтому реестр — не справочник, а ГЕЙТ: загрузчик спрашивает
  * его перед каждым запросом, и страница источника со статусом, отличным от
@@ -13,7 +18,6 @@
  */
 
 export type SourceId =
-  | "runrepeat"
   | "asics"
   | "nike"
   | "hoka"
@@ -76,33 +80,6 @@ export const USER_AGENT =
 export const HOST_DELAY_MS = 4000;
 
 export const SOURCES: Source[] = [
-  {
-    id: "runrepeat",
-    title: "RunRepeat",
-    origin: "https://runrepeat.com",
-    probePaths: ["/catalog/running-shoes", "/asics-novablast-5"],
-    provides: [
-      "midsole_durometer_ha",
-      "heel_counter_stiffness",
-      "outsole_durability",
-      "outsole_thickness_mm",
-      "стек и дроп (замер)",
-      "вес мужской и женской версии",
-    ],
-    // Проверено 02.09.2026: robots.txt разрешает страницы моделей и каталог
-    // (закрыты только поиск и адреса с фильтрами); условий, запрещающих
-    // автоматический сбор, у сайта нет вовсе — страницы /terms* отдают 404, а
-    // legal-disclaimer и privacy-policy про сбор данных молчат. По правилу
-    // раздела 4 («источник, ЗАПРЕЩАЮЩИЙ сбор, не включается») источник проходит.
-    //
-    // Отдельно и честно: RunRepeat — датская компания, и эти замеры её
-    // коммерческий продукт (в подвале сайта Retailer Data Access API и Lab data
-    // for academic use). В ЕС на базы данных есть право sui generis, и оно про
-    // существенное извлечение, независимо от robots.txt. Это не техническая
-    // развилка, а решение владельца продукта: Игорь принял его 02.09.2026,
-    // ответив «бери». Меняешь статус обратно — меняй и эту запись.
-    status: "unknown",
-  },
   { id: "asics", title: "ASICS", origin: "https://www.asics.com", probePaths: ["/us/en-us/running-shoes/c/aa10000000/"], provides: ["заявленные характеристики"], status: "unknown" },
   { id: "nike", title: "Nike", origin: "https://www.nike.com", probePaths: ["/w/mens-running-shoes-37v7jznik1zy7ok"], provides: ["заявленные характеристики"], status: "unknown" },
   { id: "hoka", title: "HOKA", origin: "https://www.hoka.com", probePaths: ["/en/us/mens-road/"], provides: ["заявленные характеристики"], status: "unknown" },
