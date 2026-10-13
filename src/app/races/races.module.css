@@ -118,6 +118,25 @@
   border-color: var(--accent);
 }
 
+/* Фильтр «Вся Тверская область»: тот же вид, что поле поиска. */
+.select {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  font: inherit;
+  font-size: 16px; /* меньше 16 px iOS приближает страницу при фокусе */
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .reset {
   flex: none;
   min-height: 48px;

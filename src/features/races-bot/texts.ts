@@ -190,13 +190,27 @@ export function shortListNote(where: string, n: number, filtered: boolean): Msg 
   return { text: `${head} Вот что ещё можно посмотреть:` };
 }
 
-export function nearbyHeader(region: string): Msg {
-  return { text: `<b>Рядом</b>, ${esc(region)}:` };
+/**
+ * Второй блок: «Тверская область и рядом» (та же область плюс 150 км). fromYou — радиус от геолокации.
+ * Было (до 12.10.2026): «Рядом, <регион>» или «Рядом, до 150 км от города» и только при коротком списке.
+ */
+export function areaHeader(subject: string, km: number, fromYou: boolean): Msg {
+  const what = subject ? `${esc(subject)} и рядом` : "Рядом";
+  return { text: `<b>${what}</b>: до ${km} км ${fromYou ? "от тебя" : "от города"}, ближайшие первыми.` };
 }
 
-/** «Рядом» по радиусу: ближайшие первыми. fromYou — считали от геолокации, а не от города. */
-export function nearbyRadiusHeader(km: number, fromYou: boolean): Msg {
-  return { text: `<b>Рядом</b>, до ${km} км ${fromYou ? "от тебя" : "от города"}, ближайшие первыми:` };
+/** «Ещё в области и рядом»: следующая страница второго блока. */
+export function areaMore(n: number, nextOffset: number): Msg {
+  return {
+    text: `И ещё ${n} ${plural(n, "забег", "забега", "забегов")} в области и рядом.`,
+    reply_markup: { inline_keyboard: [[{ text: `Показать ещё ${Math.min(n, 5)}`, callback_data: `area:${nextOffset}` }]] },
+  };
+}
+
+/** Где старт второго блока: «Старица, 71 км»; город не указан — «Тверская область, город не указан». */
+export function placeLine(r: Race, km: number | null): string {
+  const place = r.city || (r.subject ? `${r.subject}, город не указан` : "город не указан");
+  return km === null ? place : `${place}, ${km} км`;
 }
 
 /** Кнопки под коротким списком: снять фильтры, сменить город, весь календарь. */
@@ -210,12 +224,12 @@ export function shortListActions(filtered: boolean, q?: string, digestOffer = fa
 }
 
 /** regUrl — ссылка «Регистрация» (через igorp.run/go/, чтобы записать клик); null — кнопки нет. */
-/** km — для «Рядом»: расстояние по прямой отдельной строкой (не путать с дистанциями забега). */
-export function card(r: Race, following: boolean, regUrl: string | null = r.reg || r.site || null, km?: number): Msg {
+/** place — для блока «область и рядом»: «Старица, 71 км» отдельной строкой (не путать с дистанциями забега). */
+export function card(r: Race, following: boolean, regUrl: string | null = r.reg || r.site || null, place?: string): Msg {
   const row: Button[] = [following ? { text: "✓ Слежу", callback_data: `my` } : { text: "⭐ Следить", callback_data: `f:${raceCode(r.id)}` }];
   const url = regUrl;
   if (url) row.push({ text: "Регистрация", url });
-  const away = km === undefined ? "" : `\n📍 ${km} км по прямой`;
+  const away = place === undefined ? "" : `\n📍 ${esc(place)}`;
   return { text: `<b>${shortDate(r)}</b> · ${esc(r.name)}\n${esc(raceMeta(r))}${away}`, reply_markup: { inline_keyboard: [row] } };
 }
 
@@ -227,6 +241,24 @@ export function listFooter(more: number, city: string | null, digestOn: boolean,
   if (more > 0 && nextOffset !== undefined) rows.push([{ text: `Показать ещё ${Math.min(more, 5)}`, callback_data: `more:${nextOffset}` }]);
   if (city && !digestOn) {
     text += " Присылать новые раз в неделю?";
+    rows.push([{ text: "Да, по понедельникам", callback_data: "dg:on" }, { text: "Не надо", callback_data: "dg:off" }]);
+  }
+  rows.push([calendarButton(CALENDAR_LABEL, q ?? city ?? undefined, "list")]);
+  return { text, reply_markup: { inline_keyboard: rows } };
+}
+
+/** Первый блок длиннее страницы: «Ещё N в Твери» с кнопкой, до второго блока. */
+export function cityMore(more: number, where: string, nextOffset?: number, q?: string): Msg {
+  const rows: Button[][] = nextOffset !== undefined ? [[{ text: `Показать ещё ${Math.min(more, 5)} ${where}`, callback_data: `more:${nextOffset}` }]] : [[calendarButton(CALENDAR_LABEL, q, "list")]];
+  return { text: `Ещё ${more} ${plural(more, "забег", "забега", "забегов")} ${where}.`, reply_markup: { inline_keyboard: rows } };
+}
+
+/** Конец списка из двух блоков: предложить дайджест (свой город, если не подписан) и весь календарь. */
+export function listEnd(city: string | null, digestOn: boolean, q?: string): Msg {
+  const rows: Button[][] = [];
+  let text = "Весь календарь со всеми фильтрами:";
+  if (city && !digestOn) {
+    text = "Присылать новые забеги раз в неделю, по понедельникам?";
     rows.push([{ text: "Да, по понедельникам", callback_data: "dg:on" }, { text: "Не надо", callback_data: "dg:off" }]);
   }
   rows.push([calendarButton(CALENDAR_LABEL, q ?? city ?? undefined, "list")]);
@@ -563,22 +595,33 @@ export function cancelled(f: PlanFollow): Msg {
   };
 }
 
+/**
+ * Дайджест — два блока, как список: новые «в Твери» и новые «Тверская область и рядом» («Старица, 71 км»).
+ * Было (до 12.10.2026): только город.
+ */
 export function digest(
   city: string,
   races: BotRace[],
   following: Set<string>,
   regUrl: (r: BotRace) => string | null = (r) => r.reg || r.site || null,
+  area: { race: BotRace; km: number | null }[] = [],
+  subject = "",
 ): Msg[] {
   const head: Msg = {
-    text: `Новые забеги ${inCity(city)} за неделю: ${races.length}.`,
-    reply_markup: { inline_keyboard: [[{ text: `Все забеги ${inCity(city).replace(/^в /, "в ")}`, callback_data: "dlist" }]] },
+    text: `Новые забеги за неделю: ${inCity(city)} ${races.length}${area.length ? `, в области и рядом ${area.length}` : ""}.`,
+    reply_markup: { inline_keyboard: [[{ text: `Все забеги ${inCity(city)}`, callback_data: "dlist" }]] },
   };
-  const cards = races.slice(0, 5).map((r) => card(r, following.has(r.id), regUrl(r)));
-  const tail: Msg[] =
-    races.length > 5
-      ? [{ text: `И ещё ${races.length - 5} в календаре.`, reply_markup: { inline_keyboard: [[calendarButton("Открыть календарь", city)]] } }]
-      : [];
-  return [head, ...cards, ...tail];
+  const out: Msg[] = [head];
+  if (races.length) {
+    out.push(...races.slice(0, 5).map((r) => card(r, following.has(r.id), regUrl(r))));
+    if (races.length > 5) out.push({ text: `И ещё ${races.length - 5} ${inCity(city)} в календаре.`, reply_markup: { inline_keyboard: [[calendarButton(CALENDAR_LABEL, city)]] } });
+  }
+  if (area.length) {
+    out.push({ text: `<b>${subject ? `${esc(subject)} и рядом` : "Рядом"}</b>, ближайшие первыми:` });
+    out.push(...area.slice(0, 3).map(({ race, km }) => card(race, following.has(race.id), regUrl(race), placeLine(race, km))));
+    if (area.length > 3) out.push({ text: `И ещё ${area.length - 3} в области и рядом.`, reply_markup: { inline_keyboard: [[{ text: "Все забеги в области и рядом", callback_data: "dlist" }]] } });
+  }
+  return out;
 }
 
 // ── ожидаемые старты ─────────────────────────────────────────────────────────

@@ -11,9 +11,12 @@
  *   npx tsx --env-file=<.env.local> scripts/races-geo-fill.ts --apply    — спросить и записать в race_geo
  *   npx tsx --env-file=<.env.local> scripts/races-geo-fill.ts --report   — итог: узнано / не узнано
  *   npx tsx --env-file=<.env.local> scripts/races-geo-fill.ts --sample   — «Рядом» для Твери, Магнитогорска, Владикавказа
+ *   npx tsx --env-file=<.env.local> scripts/races-geo-fill.ts --subjects [--apply] — субъект РФ (race_geo.subject)
+ *     из сохранённого ответа геокодера; у пар без ответа — у той же записи с регионом, иначе обратный геокодер.
  */
 
-import { geoKey, nearbyRaces, NEARBY_KM } from "@/features/races-bot/core";
+import { areaRaces, geoKey, NEARBY_KM } from "@/features/races-bot/core";
+import { canonicalSubject, subjectFromDisplay } from "@/app/races/subjects";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 const UA = "igorp.run races calendar geo-fill (+https://igorp.run/races)";
@@ -102,6 +105,48 @@ async function geocode({ city: rawCity, region }: Pair): Promise<{ lat: number |
   return { lat: null, lon: null, display: seen, note: seen ? "регион не совпал или не населённый пункт" : "нет результата" };
 }
 
+async function reverseSubject(lat: number, lon: number): Promise<string | null> {
+  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=5&accept-language=ru&lat=${lat}&lon=${lon}`, { headers: { "User-Agent": UA } });
+  await sleep(PAUSE_MS);
+  if (!res.ok) return null;
+  const j = (await res.json()) as { display_name?: string; address?: Record<string, string> };
+  return subjectFromDisplay(j.display_name) ?? canonicalSubject(j.address?.state);
+}
+
+async function subjects() {
+  const sb = createSupabaseServerClient();
+  const { data, error } = await sb.from("race_geo").select("key,city,region,lat,lon,display_name,subject").not("lat", "is", null);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as { key: string; city: string; region: string; lat: number; lon: number; display_name: string | null; subject: string | null }[];
+  const byCity = new Map<string, string>();
+  const out = new Map<string, string | null>();
+  for (const r of rows) {
+    const s0 = subjectFromDisplay(r.display_name);
+    out.set(r.key, s0);
+    if (s0 && r.region) byCity.set(lower(r.city), s0);
+  }
+  let rev = 0;
+  for (const r of rows) {
+    if (out.get(r.key)) continue;
+    let s1 = byCity.get(lower(r.city)) ?? null;
+    if (!s1) { s1 = await reverseSubject(r.lat, r.lon); rev += 1; }
+    out.set(r.key, s1);
+  }
+  const changed = rows.filter((r) => (out.get(r.key) ?? null) !== (r.subject ?? null));
+  const none = rows.filter((r) => !out.get(r.key));
+  console.log(`строк с точкой ${rows.length}, субъект определён ${rows.length - none.length}, обратный геокодер ${rev}, к записи ${changed.length}`);
+  for (const r of none) console.log(`  без субъекта: ${r.city}, ${r.region} · ${r.display_name ?? ""}`);
+  const counts = new Map<string, number>();
+  for (const v of out.values()) if (v) counts.set(v, (counts.get(v) ?? 0) + 1);
+  console.log(`субъектов ${counts.size}; пример: ${[...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, n]) => `${k} ${n}`).join(", ")}`);
+  if (!APPLY) return;
+  for (const r of changed) {
+    const { error: e } = await sb.from("race_geo").update({ subject: out.get(r.key) ?? null }).eq("key", r.key);
+    if (e) throw new Error(e.message);
+  }
+  console.log(`записано ${changed.length}`);
+}
+
 async function loadPairs(): Promise<Pair[]> {
   const sb = createSupabaseServerClient();
   const out = new Map<string, Pair>();
@@ -149,6 +194,7 @@ async function fill() {
     const { error: e } = await sb.from("race_geo").upsert({
       key: geoKey(p.city, p.region), city: p.city, region: p.region, lat: g.lat, lon: g.lon,
       source: g.lat !== null ? "nominatim" : "none", display_name: g.display, note: g.note, checked_at: new Date().toISOString(),
+      subject: g.lat !== null ? subjectFromDisplay(g.display) : null,
     }, { onConflict: "key" });
     if (e) throw new Error(`race_geo upsert: ${e.message}`);
   }
@@ -175,15 +221,15 @@ async function report() {
 async function sample() {
   const { loadBotRaces } = await import("@/features/races-bot/runtime");
   const races = await loadBotRaces();
-  for (const city of ["Тверь", "Магнитогорск", "Владикавказ"]) {
+  for (const city of (process.argv.find((a) => a.startsWith("--cities="))?.split("=")[1] || "Тверь,Магнитогорск,Владикавказ").split(",")) {
     const own = races.filter((r) => r.city === city);
-    const near = nearbyRaces(races, city, [], []);
-    console.log(`\n${city}: своих стартов ${own.length}, координаты города ${own[0]?.geo ? `${own[0].geo.lat.toFixed(2)},${own[0].geo.lon.toFixed(2)}` : "нет"}; «Рядом» ${near.radius ? `до ${NEARBY_KM} км` : `регион ${near.region}`}: ${near.races.length}`);
-    for (const r of near.races.slice(0, 10)) console.log(`  ${near.km.get(r.id) ?? "?"} км · ${r.ds} · ${r.name} · ${r.city}`);
+    const area = areaRaces(races, city, [], []);
+    console.log(`\n${city}: в городе ${own.length}; «${area.subject || "?"} и рядом» (до ${NEARBY_KM} км): ${area.items.length}`);
+    for (const { race, km } of area.items.slice(0, 12)) console.log(`  ${race.city || `${race.subject}, город не указан`}${km === null ? "" : `, ${km} км`} · ${race.ds} · ${race.name}`);
   }
 }
 
-const main = process.argv.includes("--report") ? report : process.argv.includes("--sample") ? sample : fill;
+const main = process.argv.includes("--report") ? report : process.argv.includes("--sample") ? sample : process.argv.includes("--subjects") ? subjects : fill;
 main().catch((e) => {
   console.error("races-geo-fill FAILED:", e instanceof Error ? e.message : e);
   process.exit(1);

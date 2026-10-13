@@ -4,7 +4,7 @@
 import { prepare, type Race, type RaceRow } from "./races-logic";
 
 const COLUMNS =
-  "id,source,source_url,name,date_start,date_end,city,region,distances,dist_km,race_type,tags,site_url,reg_url,vk_url,sources,link_ok,alt_dates,checked_note";
+  "id,source,source_url,name,date_start,date_end,city,region,distances,dist_km,race_type,tags,site_url,reg_url,vk_url,sources,link_ok,alt_dates,checked_note,subject,lat,lon";
 const PAGE = 1000;
 
 /* Чтение view public.race_calendar публичным ключом (anon / publishable):

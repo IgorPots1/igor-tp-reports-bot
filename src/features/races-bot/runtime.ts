@@ -8,8 +8,8 @@ import { prepare, type RaceRow } from "@/app/races/races-logic";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotTg, type BotUser } from "./bot";
-import { geoKey, localParts, raceCode, type BotRace, type ExpectedItem, type GeoPoint, type GoCode } from "./core";
-import { toExpected } from "@/app/races/expected";
+import { localParts, raceCode, type BotRace, type ExpectedItem, type GoCode } from "./core";
+import { loadGeoRows, toExpected, withGeo } from "@/app/races/expected";
 import { computeBotStats, type StatEvent, type StatFollow, type StatPeriod, type StatUser } from "./stats";
 import type { Weather } from "./texts";
 
@@ -74,7 +74,7 @@ export const tgApi: BotTg = {
 // ── старты ───────────────────────────────────────────────────────────────────
 
 const COLUMNS =
-  "id,source,source_url,name,date_start,date_end,city,region,distances,dist_km,race_type,tags,site_url,reg_url,vk_url,sources,link_ok,alt_dates,checked_note,first_seen";
+  "id,source,source_url,name,date_start,date_end,city,region,distances,dist_km,race_type,tags,site_url,reg_url,vk_url,sources,link_ok,alt_dates,checked_note,first_seen,subject,lat,lon";
 
 let racesCache: { at: number; races: BotRace[] } | null = null;
 
@@ -95,32 +95,10 @@ export async function loadBotRaces(): Promise<BotRace[]> {
     if (!data || data.length < 1000) break;
   }
   const firstSeen = new Map(rows.map((r) => [r.id, r.first_seen]));
-  // Координаты городов — из кэша race_geo (scripts/races-geo-fill.ts), без геокодера на лету.
-  // Сбой чтения не ломает бота: «Рядом» вернётся к «тот же регион».
-  const geo = await loadGeo().catch((e) => {
-    console.error(`[races-bot] race_geo: ${e instanceof Error ? e.message : String(e)}`);
-    return new Map<string, GeoPoint>();
-  });
-  const races = prepare(rows, localParts(new Date(), "Europe/Moscow").date).map((r) => ({
-    ...r,
-    firstSeen: firstSeen.get(r.id) ?? null,
-    geo: geo.get(geoKey(r.city, r.region)) ?? null,
-  }));
+  // Точка и субъект города — из самого race_calendar (race_geo_point), как у сайта.
+  const races = prepare(rows, localParts(new Date(), "Europe/Moscow").date).map((r) => ({ ...r, firstSeen: firstSeen.get(r.id) ?? null }));
   racesCache = { at: Date.now(), races };
   return races;
-}
-
-/** race_geo: ключ «город, регион» → точка; только узнанные (lat/lon не null). */
-export async function loadGeo(): Promise<Map<string, GeoPoint>> {
-  const sb = createSupabaseServerClient();
-  const out = new Map<string, GeoPoint>();
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb.from("race_geo").select("key,lat,lon").not("lat", "is", null).order("key").range(from, from + 999);
-    if (error) throw new Error(error.message);
-    for (const g of (data ?? []) as { key: string; lat: number; lon: number }[]) out.set(g.key, { lat: g.lat, lon: g.lon });
-    if (!data || data.length < 1000) break;
-  }
-  return out;
 }
 
 // ── хранилище ────────────────────────────────────────────────────────────────
@@ -294,6 +272,8 @@ export async function loadBotExpected(): Promise<ExpectedItem[]> {
   if (expectedCache && Date.now() - expectedCache.at < 10 * 60 * 1000) return expectedCache.items;
   const sb = createSupabaseServerClient();
   const items: ExpectedItem[] = [];
+  // Область и точка для «Ожидаются» по области и радиусу; сбой чтения — без них, как раньше.
+  const geo = await loadGeoRows().catch(() => new Map());
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb
       .from("race_expected")
@@ -301,7 +281,7 @@ export async function loadBotExpected(): Promise<ExpectedItem[]> {
       .eq("status", "expected")
       .range(from, from + 999);
     fail("race_expected", error);
-    items.push(...((data as Parameters<typeof toExpected>[0][]) || []).map(toExpected));
+    items.push(...((data as Parameters<typeof toExpected>[0][]) || []).map((r) => withGeo(toExpected(r), geo)));
     if (!data || data.length < 1000) break;
   }
   expectedCache = { at: Date.now(), items };

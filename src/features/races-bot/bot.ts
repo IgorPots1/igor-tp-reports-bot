@@ -20,7 +20,10 @@ import {
   localParts,
   matchCity,
   matchUser,
-  nearbyRaces,
+  areaRaces,
+  citySubject,
+  cityPoint,
+  expectedInArea,
   nearestCities,
   nextDigestDate,
   PAUSE_DAYS,
@@ -251,7 +254,28 @@ export function createBot(deps: BotDeps) {
     return showList(u, u.city, u.types, u.distances, offset);
   }
 
-  /** Список города: страницами по 5; если стартов меньше 3 — «Рядом», «Ожидаются» и «Снять фильтры». */
+  /** Точка «Рядом»: своя геолокация (только для своего города), иначе город. */
+  function userPoint(u: BotUser, city: string): { lat: number; lon: number } | null {
+    return norm(city) === norm(u.city) && u.geo_lat != null && u.geo_lon != null ? { lat: u.geo_lat, lon: u.geo_lon } : null;
+  }
+
+  async function showArea(u: BotUser, city: string, types: string[], dists: string[], offset: number, following: Set<string>, all: BotRace[]) {
+    const mine = userPoint(u, city);
+    const area = areaRaces(all, city, types, dists, mine);
+    if (!area.items.length) return area;
+    if (offset === 0) await send(u.tg_id, T.areaHeader(area.subject, NEARBY_KM, !!mine));
+    const page = area.items.slice(offset, offset + PAGE);
+    for (const { race, km } of page) await send(u.tg_id, T.card(race, following.has(race.id), regLink(u, race), T.placeLine(race, km)));
+    const more = area.items.length - offset - page.length;
+    if (more > 0) await send(u.tg_id, T.areaMore(more, offset + PAGE));
+    return area;
+  }
+
+  /**
+   * Список при выбранном городе — два блока: «В Твери» (точно этот город, страницами по 5) и
+   * «Тверская область и рядом» (область плюс 150 км, «Старица, 71 км», ближайшие первыми).
+   * Голое «ничего» запрещено: пусто в городе — сразу второй блок, «Ожидаются» и кнопки.
+   */
   async function showList(u: BotUser, city: string, types: string[], dists: string[], offset = 0, month: number | null = null) {
     const all = await deps.races();
     const races = all.filter((r) => inUserCity(r, city) && matchUser(r, types, dists) && (!month || Number(r.ds.slice(5, 7)) === month));
@@ -260,33 +284,22 @@ export function createBot(deps: BotDeps) {
     const own = norm(city) === norm(u.city);
     const following = await followingSet(u.tg_id);
     const page = races.slice(offset, offset + PAGE);
-    if (offset === 0 && races.length < 3) {
-      // Мало стартов: что есть, потом «Рядом», «Ожидаются» и «Снять фильтры». Голое «ничего» запрещено.
-      if (races.length) await send(u.tg_id, T.listHeader(where, types, dists));
-      for (const r of races) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
-      await send(u.tg_id, T.shortListNote(where, races.length, filtered));
-      // Своя геолокация — радиус от неё; иначе от города (race_geo); координат нет — тот же регион.
-      const mine = own && u.geo_lat != null && u.geo_lon != null ? { lat: u.geo_lat, lon: u.geo_lon } : null;
-      const near = nearbyRaces(all, city, types, dists, mine);
-      if (near.races.length) {
-        await send(u.tg_id, near.radius ? T.nearbyRadiusHeader(NEARBY_KM, !!mine) : T.nearbyHeader(near.region!));
-        for (const r of near.races.slice(0, 3)) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r), near.km.get(r.id)));
-      }
-      await showExpected(u, await expectedFor((e) => (expectedInCity(e, city) || (!!near.region && expectedInCity(e, near.region))) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, types, dists)));
-      await send(u.tg_id, T.shortListActions(filtered && own, city, own && !u.digest_on));
-      await track(u.tg_id, "list_shown", { meta: { city, n: races.length, nearby: near.races.length } });
-      if (races.length || near.races.length) await starHint(u);
-      return;
-    }
-    if (offset === 0) await send(u.tg_id, T.listHeader(where, types, dists));
+    if (offset === 0) await send(u.tg_id, races.length ? T.listHeader(where, types, dists) : T.shortListNote(where, 0, filtered));
     for (const r of page) await send(u.tg_id, T.card(r, following.has(r.id), regLink(u, r)));
     const more = races.length - offset - page.length;
-    await send(u.tg_id, T.listFooter(more, own ? city : null, u.digest_on, own ? undefined : city, own && !month ? offset + PAGE : undefined));
-    await track(u.tg_id, "list_shown", { meta: { city, n: races.length, offset } });
-    if (offset === 0) {
-      await starHint(u);
-      await showExpected(u, await expectedFor((e) => expectedInCity(e, city) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, types, dists)));
+    if (offset > 0) {
+      await send(u.tg_id, T.listFooter(more, own ? city : null, u.digest_on, own ? undefined : city, own && !month ? offset + PAGE : undefined));
+      await track(u.tg_id, "list_shown", { meta: { city, n: races.length, offset } });
+      return;
     }
+    if (more > 0) await send(u.tg_id, T.cityMore(more, where, own && !month ? PAGE : undefined, own ? undefined : city));
+    const area = month ? { subject: "", items: [] as { race: BotRace; km: number | null }[] } : await showArea(u, city, types, dists, 0, following, all);
+    const from = userPoint(u, city) ?? cityPoint(all, city);
+    await showExpected(u, await expectedFor((e) => expectedInArea(e, city, area.subject || citySubject(all, city), from) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, types, dists)));
+    if (races.length < 3) await send(u.tg_id, T.shortListActions(filtered && own, city, own && !u.digest_on));
+    else await send(u.tg_id, T.listEnd(own ? city : null, u.digest_on, own ? undefined : city));
+    await track(u.tg_id, "list_shown", { meta: { city, n: races.length, area: area.items.length } });
+    if (races.length || area.items.length) await starHint(u);
   }
 
   async function showSearch(u: BotUser, text: string) {
@@ -505,6 +518,11 @@ export function createBot(deps: BotDeps) {
         return showCityList(u);
       case "more":
         return showCityList(u, Math.max(0, Number(arg) || 0));
+      case "area": {
+        if (!u.city) return pickCity(u.tg_id);
+        const all = await deps.races();
+        return void (await showArea(u, u.city, u.types, u.distances, Math.max(0, Number(arg) || 0), await followingSet(u.tg_id), all));
+      }
       case "myp":
         return showMy(u, Math.max(0, Number(arg) || 0));
       case "city_other":
@@ -763,9 +781,9 @@ export function createBot(deps: BotDeps) {
           if (a.kind === "digest") {
             if (!(await store.claimSend(u.tg_id, "digest", null))) continue;
             const following = new Set(mine.map((f) => f.race_id));
-            for (const m of T.digest(u.city!, a.races, following, (r) => regLink(u, r))) await send(u.tg_id, m);
+            for (const m of T.digest(u.city!, a.races, following, (r) => regLink(u, r), a.area, a.subject)) await send(u.tg_id, m);
             await store.saveUser({ tg_id: u.tg_id, digest_last_at: t.toISOString() });
-            await track(u.tg_id, "digest_sent", { meta: { n: a.races.length } });
+            await track(u.tg_id, "digest_sent", { meta: { n: a.races.length, area: a.area.length } });
             counts.sent += 1;
             continue;
           }

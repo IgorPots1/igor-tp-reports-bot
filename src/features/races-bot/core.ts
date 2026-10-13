@@ -7,6 +7,7 @@
  */
 
 import { distMatch, norm, plural, type Race } from "@/app/races/races-logic";
+import { canonicalSubject } from "@/app/races/subjects";
 
 export type GeoPoint = { lat: number; lon: number };
 
@@ -45,7 +46,7 @@ export function nearestCities(races: BotRace[], at: GeoPoint, n = 3): string[] {
 }
 
 /** Точка города: координаты любого его старта (у всех стартов города они одни — из race_geo). */
-export function cityPoint(races: BotRace[], city: string): GeoPoint | null {
+export function cityPoint(races: Race[], city: string): GeoPoint | null {
   const c = norm(city);
   return races.find((r) => norm(r.city) === c && r.geo)?.geo ?? null;
 }
@@ -151,7 +152,8 @@ export function knownCities(races: BotRace[]): string[] {
 /** Регионы стартов, самые частые первыми. */
 export function knownRegions(races: BotRace[]): string[] {
   const counts = new Map<string, number>();
-  for (const r of races) if (r.region && norm(r.region) !== norm(r.city)) counts.set(r.region, (counts.get(r.region) || 0) + 1);
+  // субъекты одним написанием («Тверская область», а не «Тверь» / «Тверская» / «Тверская обл»)
+  for (const r of races) if (r.subject && norm(r.subject) !== norm(r.city)) counts.set(r.subject, (counts.get(r.subject) || 0) + 1);
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
 }
 
@@ -258,49 +260,49 @@ export function matchUser(r: Race, types: string[], dists: string[]): boolean {
  * стартов), кроме самого города. Координат у стартов нет, поэтому соседние регионы и радиус
  * 200 км пока не считаются.
  */
+/** Субъект города: самый частый у его стартов; город не в календаре — сам как субъект («Тверская область»). */
+export function citySubject(races: Race[], city: string): string {
+  const c = norm(city);
+  const counts = new Map<string, number>();
+  for (const r of races) if (norm(r.city) === c && r.subject) counts.set(r.subject, (counts.get(r.subject) || 0) + 1);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (top) return top;
+  return races.find((r) => norm(r.subject) === c)?.subject ?? canonicalSubject(city) ?? "";
+}
+
+export type AreaItem<R extends Race = BotRace> = { race: R; km: number | null };
+
 /**
- * «Рядом» для короткого списка. Есть координаты (геолокация человека или город из race_geo) —
- * старты других городов в радиусе NEARBY_KM, ближайшие первыми, km — расстояние. Координат нет —
- * как раньше: тот же регион (radius: false, km пуст).
+ * Второй блок списка: «Тверская область и рядом». Старты не в самом городе — та же область
+ * (субъект) ИЛИ в радиусе NEARBY_KM от точки (геолокация человека или город), ближайшие первыми,
+ * без точки — после, по дате. Маленький город (Старица) получает в этот блок и областной центр.
+ * Было (до 12.10.2026): только если стартов меньше трёх, и либо радиус, либо регион как строка.
  */
-export function nearbyRaces(
-  races: BotRace[],
+export function areaRaces<R extends Race>(
+  races: R[],
   city: string,
   types: string[],
   dists: string[],
   origin?: GeoPoint | null,
-): { region: string | null; races: BotRace[]; km: Map<string, number>; radius: boolean } {
-  const c = norm(city);
-  const counts = new Map<string, number>();
-  for (const r of races) if (norm(r.city) === c && r.region) counts.set(r.region, (counts.get(r.region) || 0) + 1);
-  const region = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? (races.some((r) => norm(r.region) === c) ? city : null);
+): { subject: string; items: AreaItem<R>[] } {
+  const subject = citySubject(races, city);
   const from = origin ?? cityPoint(races, city);
-  const km = new Map<string, number>();
-  if (from) {
-    const near: BotRace[] = [];
-    for (const r of races) {
-      if (!r.geo || norm(r.city) === c || !matchUser(r, types, dists)) continue;
-      const d = kmBetween(from, r.geo);
-      if (d > NEARBY_KM) continue;
-      km.set(r.id, Math.round(d));
-      near.push(r);
-    }
-    near.sort((a, b) => km.get(a.id)! - km.get(b.id)! || a.ds.localeCompare(b.ds));
-    return { region, races: near, km, radius: true };
+  const items: AreaItem<R>[] = [];
+  for (const r of races) {
+    if (inUserCity(r, city) || !matchUser(r, types, dists)) continue;
+    const d = from && r.geo ? kmBetween(from, r.geo) : null;
+    const same = !!subject && r.subject === subject;
+    if (same || (d !== null && d <= NEARBY_KM)) items.push({ race: r, km: d === null ? null : Math.round(d) });
   }
-  if (!region) return { region: null, races: [], km, radius: false };
-  return {
-    region,
-    races: races.filter((r) => norm(r.region) === norm(region) && norm(r.city) !== c && matchUser(r, types, dists)),
-    km,
-    radius: false,
-  };
+  items.sort((a, b) => (a.km ?? Infinity) - (b.km ?? Infinity) || a.race.ds.localeCompare(b.race.ds));
+  return { subject, items };
 }
 
 export function inUserCity(r: Race, city: string | null): boolean {
   if (!city) return false;
   const c = norm(city);
-  return norm(r.city) === c || (norm(r.region) === c && !!r.region);
+  // выбран субъект целиком («Тверская область»): все его старты
+  return norm(r.city) === c || (norm(r.region) === c && !!r.region) || (!!r.subject && norm(r.subject) === c);
 }
 
 // ── поиск текстом: «трейл Казань», «марафон май» ─────────────────────────────
@@ -428,6 +430,8 @@ export type PlanUser = {
   tz: string;
   blocked: boolean;
   created_at: string;
+  geo_lat?: number | null;
+  geo_lon?: number | null;
 };
 
 export type PlanFollow = {
@@ -440,7 +444,7 @@ export type PlanFollow = {
 };
 
 export type PlanAction =
-  | { kind: "digest"; races: BotRace[] }
+  | { kind: "digest"; races: BotRace[]; area: AreaItem[]; subject: string }
   | { kind: "w12" | "d7" | "d1"; race: BotRace }
   | { kind: "after" | "cancelled"; follow: PlanFollow }
   | { kind: "drop"; follow: PlanFollow };
@@ -477,15 +481,12 @@ export function planUser(input: {
     const last = user.digest_last_at ? Date.parse(user.digest_last_at) : null;
     if (last === null || now.getTime() - last >= (periodDays - 1) * 864e5) {
       const since = Math.max(last ?? 0, now.getTime() - periodDays * 864e5);
-      const fresh = races.filter(
-        (r) =>
-          r.ds >= today &&
-          r.firstSeen !== null &&
-          Date.parse(r.firstSeen) > since &&
-          inUserCity(r, user.city) &&
-          matchUser(r, user.types, user.distances),
-      );
-      if (fresh.length) out.push({ kind: "digest", races: fresh });
+      const isFresh = (r: BotRace) => r.ds >= today && r.firstSeen !== null && Date.parse(r.firstSeen) > since;
+      const fresh = races.filter((r) => isFresh(r) && inUserCity(r, user.city) && matchUser(r, user.types, user.distances));
+      // Второй блок, как в списке: та же область и 150 км (от геолокации, если она есть).
+      const point = user.geo_lat != null && user.geo_lon != null ? { lat: user.geo_lat, lon: user.geo_lon } : null;
+      const area = areaRaces(races.filter(isFresh), user.city, user.types, user.distances, point ?? cityPoint(races, user.city));
+      if (fresh.length || area.items.length) out.push({ kind: "digest", races: fresh, area: area.items, subject: area.subject });
     }
   }
 
@@ -525,6 +526,9 @@ export type ExpectedItem = {
   name: string;
   city: string;
   region: string;
+  /** Субъект РФ и точка города (race_geo); для «Ожидаются» по области и радиусу. */
+  subject?: string;
+  geo?: GeoPoint | null;
   type: string;
   distances: string[];
   km: number[];
@@ -557,6 +561,13 @@ export function expectedInCity(e: ExpectedItem, city: string | null): boolean {
   if (!city) return false;
   const c = norm(city);
   return norm(e.city) === c || (!!e.region && norm(e.region) === c);
+}
+
+/** «Ожидаются» по той же логике, что список: город, его область и радиус NEARBY_KM. */
+export function expectedInArea(e: ExpectedItem, city: string | null, subject: string, from: GeoPoint | null): boolean {
+  if (expectedInCity(e, city)) return true;
+  if (subject && e.subject === subject) return true;
+  return !!from && !!e.geo && kmBetween(from, e.geo) <= NEARBY_KM;
 }
 
 export function findExpectedByCode(list: ExpectedItem[], code: string): ExpectedItem | null {

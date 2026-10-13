@@ -6,6 +6,7 @@ import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-do
 import { buildExpected, findNextEdition, parsePastProbeg, probegPastUrl, weekWindows, type FutureRow, type PastRace } from "./expected.ts";
 import { findMatch } from "./match.ts";
 import { textDayInRange } from "./dates.ts";
+import { fillRegion, type GeoSubjectRow } from "./geo.ts";
 
 const UA = "igorp.run race calendar (+https://igorp.run)";
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -804,13 +805,26 @@ const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> 
   russiarunning: (t, h) => russiarunning(t, h),
 };
 
+// Субъекты городов (race_geo): пустой region строки заполняется субъектом, city не меняется.
+// Сбой чтения не мешает сбору: строки уходят как есть.
+async function loadGeoSubjects(): Promise<GeoSubjectRow[]> {
+  const out: GeoSubjectRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("race_geo").select("key,city,subject").range(from, from + 999);
+    if (error) return out;
+    out.push(...((data || []) as GeoSubjectRow[]));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
 async function scrapeStage(sources: string[], today: Date, horizon: Date, stats: Record<string, unknown>) {
+  const geoRows = await loadGeoSubjects();
   for (const src of sources) {
     const fn = SCRAPERS[src];
     if (!fn) { stats[src] = "unknown source"; continue; }
     const t0 = new Date();
     let rows: Race[];
-    try { rows = await fn(today, horizon); }
+    try { rows = (await fn(today, horizon)).map((r) => fillRegion(r, geoRows)); }
     catch (e) { stats[src] = `error: ${String(e).slice(0, 200)}`; continue; }
     const now = new Date().toISOString();
     // new rows start unmerged; existing rows keep their merge fields until the merge stage recomputes them
@@ -914,7 +928,9 @@ async function expectedStage(today: Date, stats: Record<string, unknown>) {
   const { data: existingRows, error: exErr } = await sb.from("race_expected").select("id,name,city,last_date,status");
   if (exErr) throw new Error(`race_expected: ${exErr.message}`);
   const existing = new Map((existingRows || []).map((r) => [r.id as string, r]));
-  const { expected, announced } = buildExpected([...past.values()], future);
+  const { expected: built, announced } = buildExpected([...past.values()], future);
+  const geoRows = await loadGeoSubjects();
+  const expected = built.map((e) => fillRegion(e, geoRows));
   const now = new Date().toISOString();
   // Новые и ещё ожидаемые — обновить; announced/dropped не трогать.
   const upserts = expected

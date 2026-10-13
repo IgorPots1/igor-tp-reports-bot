@@ -36,7 +36,9 @@ import {
   startSource,
   geoKey,
   kmBetween,
-  nearbyRaces,
+  areaRaces,
+  knownCities,
+  knownRegions,
   nearestCities,
   nextDigestDate,
   type BotRace,
@@ -457,7 +459,10 @@ async function main() {
   reset();
   NOW = new Date("2026-10-19T07:30:00Z"); // пн 10:30 МСК
   await bot.runTick();
-  assert.ok(texts(501).some((t) => t.startsWith("Новые забеги в Москве за неделю: 1")), "дайджест");
+  // Было: «Новые забеги в Москве за неделю: 1». Стало (12.10.2026): дайджест из двух блоков, как
+  // список, — город и «область и рядом»; заголовок называет оба, второй блок только если там есть новые.
+  assert.ok(texts(501).includes("Новые забеги за неделю: в Москве 1."), "дайджест: заголовок");
+  assert.ok(!texts(501).some((t) => t.includes(" и рядом</b>")), "в области новых нет — второго блока нет");
   await bot.handleUpdate(cb(USER, "dlist"));
   reset();
   NOW = new Date("2026-10-26T07:30:00Z"); // следующий понедельник, новых нет
@@ -662,35 +667,71 @@ async function main() {
     }
   }
 
-  // ── «Рядом» по координатам (наряд 12.10.2026): радиус 150 км, ближайшие первыми, км ──
+  // ── города и области (наряды 12.10.2026: «Рядом» по координатам, потом город + область) ──
+  // Было: «Рядом» только при коротком списке, «📍 N км по прямой», заголовок «Рядом, до 150 км от
+  // города». Отменено: при выбранном городе всегда два блока — «В Твери» и «Тверская область и рядом»
+  // (та же область плюс 150 км), подпись «Старица, 71 км», ближайшие первыми; строка с областью вместо
+  // города городом не считается.
   {
     const TVER = { lat: 56.859, lon: 35.912 };
-    const at = (r: BotRace, g: { lat: number; lon: number } | null): BotRace => ({ ...r, geo: g });
-    const tver = at(race("probeg:g1", "Тверской забег", "2027-05-09", "Тверь", "road", [10]), TVER);
-    const torzhok = at(race("probeg:g2", "Торжокский полумарафон", "2027-06-01", "Торжок", "road", [21.1]), { lat: 57.041, lon: 34.96 }); // ~60 км
-    const klin = at(race("probeg:g3", "Клинский забег", "2027-05-20", "Клин", "road", [10]), { lat: 56.331, lon: 36.729 }); // ~80 км
-    const rzhev = at(race("probeg:g4", "Ржевский забег", "2027-07-01", "Ржев", "road", [10]), { lat: 56.262, lon: 34.329 }); // ~115 км
-    const spb = at(race("probeg:g5", "Белые ночи", "2027-06-27", "Санкт-Петербург", "road", [42.2]), { lat: 59.939, lon: 30.316 }); // ~480 км
-    const nogeo = at(race("probeg:g6", "Без координат", "2027-06-01", "Неизвестно", "road", [10]), null);
-    const pool = [tver, torzhok, klin, rzhev, spb, nogeo];
+    const TO = "Тверская область", NSO = "Новосибирская область";
+    const at = (r: BotRace, g: { lat: number; lon: number } | null, subject: string): BotRace => ({ ...r, geo: g, subject });
+    const tver = at(race("probeg:g1", "Тверской забег", "2027-05-09", "Тверь", "road", [10]), TVER, TO);
+    const tver2 = at(race("probeg:g1b", "Тверской полумарафон", "2027-05-22", "Тверь", "road", [21.1]), TVER, TO);
+    const staritsa = at(race("probeg:g2", "Старицкие версты", "2026-10-24", "Старица", "road", [10]), { lat: 56.508, lon: 34.931 }, TO); // ~71 км
+    const konakovo = at(race("probeg:g3", "Конаковская десятка", "2026-10-24", "Конаково", "road", [10]), { lat: 56.708, lon: 36.758 }, TO); // ~55 км
+    const likh = at(race("probeg:g4", "Тверская Карелия", "2026-10-25", "Лихославль", "trail", [10]), { lat: 57.124, lon: 35.467 }, TO); // ~40 км
+    const klin = at(race("probeg:g5", "Клинский забег", "2027-05-20", "Клин", "road", [10]), { lat: 56.331, lon: 36.729 }, "Московская область"); // ~80 км, другая область
+    const bologoe = at(race("probeg:g6", "Бологовский забег", "2027-06-01", "Бологое", "road", [10]), { lat: 57.886, lon: 34.054 }, TO); // ~160 км, но своя область
+    const spb = at(race("probeg:g7", "Белые ночи", "2027-06-27", "Санкт-Петербург", "road", [42.2]), { lat: 59.939, lon: 30.316 }, "Санкт-Петербург");
+    // строка, где в поле города записана область: city «Тверская область»
+    const noCityRow = toRace({ id: "manual:owl", source: "manual", source_url: null, name: "Сумасшедшая Сова", date_start: "2027-06-12", date_end: "2027-06-12", city: "Тверская область", region: "Тверская область", distances: [], dist_km: [], race_type: "trail", tags: [], site_url: null, reg_url: null, vk_url: null, sources: ["manual"], link_ok: true, alt_dates: [], checked_note: null, subject: null, lat: null, lon: null });
+    const owl: BotRace = { ...noCityRow, firstSeen: null };
+    const nsk = at(race("probeg:n1", "Новосибирский полумарафон", "2027-09-11", "Новосибирск", "road", [21.1]), { lat: 55.03, lon: 82.92 }, NSO);
+    const berdsk = at(race("probeg:n2", "Бердский пробег", "2027-05-15", "Бердск", "road", [10]), { lat: 54.758, lon: 83.107 }, NSO); // ~33 км
+    const iskitim = at(race("probeg:n3", "Искитимский трейл", "2027-06-15", "Искитим", "trail", [15]), { lat: 54.639, lon: 83.306 }, NSO); // ~51 км
+    const pool = [tver, tver2, staritsa, konakovo, likh, klin, bologoe, spb, owl, nsk, berdsk, iskitim];
+
     assert.equal(geoKey("Тверь ", "Тверская  область"), "тверь, тверская область");
     assert.ok(Math.abs(kmBetween(TVER, { lat: 59.939, lon: 30.316 }) - 480) < 15, "Тверь — Петербург ~480 км");
-    const n = nearbyRaces(pool, "Тверь", [], []);
-    assert.equal(n.radius, true);
-    assert.deepEqual(n.races.map((r) => r.city), ["Торжок", "Клин", "Ржев"], "ближайшие первыми, дальше 150 км и без координат — нет");
-    assert.ok(n.km.get(torzhok.id)! < n.km.get(klin.id)! && n.km.get(rzhev.id)! <= 150);
-    // от геолокации человека: точка у Клина — Клин ближе Торжка
-    const fromKlin = nearbyRaces(pool, "Тверь", [], [], { lat: 56.4, lon: 36.6 });
-    assert.equal(fromKlin.races[0].city, "Клин");
-    // у города нет координат — прежнее «тот же регион»
-    assert.equal(nearbyRaces(RACES, "Казань", [], []).radius, false);
-    // карточка «Рядом»: расстояние отдельной строкой, не в дистанциях
-    assert.match(T.card(torzhok, false, null, 61).text, /\n📍 61 км по прямой$/);
-    assert.match(T.nearbyRadiusHeader(150, true).text, /до 150 км от тебя, ближайшие первыми/);
-    assert.deepEqual(nearestCities(pool, { lat: 56.95, lon: 35.4 }), ["Торжок", "Тверь", "Ржев"].sort((a, b) =>
-      kmBetween({ lat: 56.95, lon: 35.4 }, pool.find((r) => r.city === a)!.geo!) - kmBetween({ lat: 56.95, lon: 35.4 }, pool.find((r) => r.city === b)!.geo!)));
+    // строка с областью вместо города: не город, а область с пометкой
+    assert.equal(owl.noCity, true);
+    assert.equal(owl.city, "", "«Тверская область» не становится городом");
+    assert.equal(owl.subject, TO);
+    assert.ok(!knownCities(pool).includes("Тверская область"), "в списке городов её нет");
+    assert.ok(knownRegions(pool).includes(TO), "а как область — есть");
+    // Тверь: второй блок — Старица, Конаково, Лихославль (область), Клин (150 км), Бологое (область, дальше 150), без Петербурга
+    const tv = areaRaces(pool, "Тверь", [], []);
+    assert.equal(tv.subject, TO);
+    const tvCities = tv.items.map((x) => x.race.city || "—");
+    for (const c of ["Старица", "Конаково", "Лихославль", "Клин", "Бологое"]) assert.ok(tvCities.includes(c), `Тверь, второй блок: ${c}`);
+    assert.ok(!tvCities.includes("Тверь") && !tvCities.includes("Санкт-Петербург"), "сам город и далёкое — нет");
+    assert.ok(tv.items.some((x) => x.race.id === "manual:owl" && x.km === null), "область без города — во втором блоке, без км");
+    assert.deepEqual(tv.items.slice(0, 3).map((x) => x.race.city), ["Лихославль", "Конаково", "Старица"], "ближайшие первыми");
+    assert.equal(T.placeLine(staritsa, tv.items.find((x) => x.race.city === "Старица")!.km), `Старица, ${tv.items.find((x) => x.race.city === "Старица")!.km} км`);
+    assert.ok(Math.abs(tv.items.find((x) => x.race.city === "Старица")!.km! - 71) <= 3, "Старица ~71 км");
+    assert.equal(T.placeLine(owl, null), "Тверская область, город не указан");
+    // Старица: Тверь (областной центр) во втором блоке
+    const st = areaRaces(pool, "Старица", [], []);
+    assert.ok(st.items.some((x) => x.race.city === "Тверь"), "Старица: Тверь во втором блоке");
+    // Новосибирск: Бердск, Искитим
+    const ns = areaRaces(pool, "Новосибирск", [], []);
+    assert.deepEqual(ns.items.map((x) => x.race.city), ["Бердск", "Искитим"], "Новосибирск: Бердск, Искитим");
+    // от геолокации человека: точка у Клина — Клин первым
+    assert.equal(areaRaces(pool, "Тверь", [], [], { lat: 56.4, lon: 36.6 }).items[0].race.city, "Клин");
+    // у города нет точки и области — второй блок пуст, без ошибок
+    assert.deepEqual(areaRaces(RACES, "Казань", [], []).items, []);
+    assert.match(T.card(staritsa, false, null, "Старица, 71 км").text, /\n📍 Старица, 71 км$/);
+    assert.match(T.areaHeader(TO, 150, false).text, /^<b>Тверская область и рядом<\/b>: до 150 км от города, ближайшие первыми\.$/);
+    assert.deepEqual(nearestCities(pool, { lat: 56.95, lon: 35.4 })[0], "Лихославль");
+    // дайджест: два блока, «город, км» во втором
+    const dg = T.digest("Тверь", [tver], new Set(), () => null, tv.items.slice(0, 2), TO).map((m) => m.text);
+    assert.equal(dg[0], "Новые забеги за неделю: в Твери 1, в области и рядом 2.");
+    const dgi = dg.indexOf("<b>Тверская область и рядом</b>, ближайшие первыми:");
+    assert.ok(dgi > 1, "второй блок дайджеста после города");
+    assert.match(dg[dgi + 1], /📍 Лихославль, \d+ км$/);
 
-    // бот: короткий список в Твери — «Рядом» по радиусу; геолокация сохраняет точку, город кнопкой её сбрасывает
+    // бот: Тверь — два блока; геолокация сохраняет точку, город кнопкой её сбрасывает
     const savedRaces = RACES;
     RACES = pool;
     const G = { id: 6301, first_name: "Гео", username: "geo6301" };
@@ -701,9 +742,19 @@ async function main() {
     let c = calls.length;
     await bot.handleUpdate(cb(G, "show"));
     const out = calls.slice(c).filter((x) => x.method === "sendMessage").map((x) => String(x.params.text));
-    const hi = out.findIndex((t) => t.includes("<b>Рядом</b>, до 150 км от города"));
-    assert.ok(hi >= 0, "заголовок «Рядом» по радиусу");
-    assert.match(out[hi + 1], /Торжокский[\s\S]*📍 \d+ км по прямой/, "первым ближайший, с км");
+    assert.match(out[0], /^Ближайшие забеги в Твери/, "первый блок — город");
+    assert.ok(out.slice(1, 3).every((t) => /Тверск(ой|ий)/.test(t)), "в первом блоке только Тверь");
+    const hi = out.findIndex((t) => t.startsWith("<b>Тверская область и рядом</b>"));
+    assert.ok(hi > 2, "второй блок после первого");
+    assert.match(out[hi + 1], /Тверская Карелия[\s\S]*📍 Лихославль, \d+ км$/, "первым ближайший, «город, км»");
+    assert.ok(!out.some((t) => /Белые ночи/.test(t)), "Петербург не попадает");
+    // второй блок длиннее страницы: «Показать ещё»
+    const areaBtn = calls.slice(c).flatMap(buttons).find((b) => b.callback_data?.startsWith("area:"));
+    assert.ok(areaBtn, "кнопка следующей страницы второго блока");
+    c = calls.length;
+    await bot.handleUpdate(cb(G, areaBtn!.callback_data!));
+    assert.ok(calls.slice(c).some((x) => /📍 /.test(String(x.params.text))), "следующая страница второго блока");
+    assert.ok(calls.slice(c).some((x) => /📍 Тверская область, город не указан$/.test(String(x.params.text))), "строка без города — в конце, с пометкой");
     const GEO = { id: 6302, first_name: "Точка", username: "pt6302" };
     await bot.handleUpdate(msg(GEO, "/start"));
     await bot.handleUpdate({ message: { message_id: mid++, chat: { id: GEO.id, type: "private" }, from: GEO, location: { latitude: 56.85, longitude: 35.9 } } } as never);
@@ -715,7 +766,7 @@ async function main() {
     assert.deepEqual([store.users.get(GEO.id)?.city, store.users.get(GEO.id)?.geo_lat], ["Тверь", 56.85], "город из ближайших — точка остаётся");
     c = calls.length;
     await bot.handleUpdate(cb(GEO, "show"));
-    assert.ok(calls.slice(c).some((x) => String(x.params.text).includes("до 150 км от тебя")), "«Рядом» от геолокации");
+    assert.ok(calls.slice(c).some((x) => String(x.params.text).includes("до 150 км от тебя")), "второй блок от геолокации");
     await bot.handleUpdate(cb(GEO, "s:city"));
     await bot.handleUpdate(cb(GEO, `city:${citySlug("Тверь")}`));
     assert.equal(store.users.get(GEO.id)?.geo_lat, null, "город кнопкой сбрасывает точку");

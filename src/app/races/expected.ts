@@ -4,7 +4,32 @@
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { stripStaleYear } from "@/app/races/races-logic";
-import { distKm, type ExpectedItem } from "@/features/races-bot/core";
+import { distKm, geoKey, type ExpectedItem } from "@/features/races-bot/core";
+import { canonicalSubject } from "@/app/races/subjects";
+
+type GeoRow = { key: string; lat: number | null; lon: number | null; subject: string | null };
+
+/** Точка и субъект ожидаемых стартов из race_geo (на сервере, сервисной ролью: таблица закрыта). */
+export async function loadGeoRows(): Promise<Map<string, GeoRow>> {
+  const sb = createSupabaseServerClient();
+  const out = new Map<string, GeoRow>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("race_geo").select("key,lat,lon,subject").order("key").range(from, from + 999);
+    if (error) throw error;
+    for (const g of (data as GeoRow[]) || []) out.set(g.key, g);
+    if (!data || data.length < 1000) return out;
+  }
+}
+
+/** Субъект и точка ожидаемого: из race_geo по «город, регион»; нет — субъект из написания региона. */
+export function withGeo(e: ExpectedItem, geo: Map<string, GeoRow>): ExpectedItem {
+  const g = geo.get(geoKey(e.city, e.region));
+  return {
+    ...e,
+    subject: g?.subject || canonicalSubject(e.region) || canonicalSubject(e.city) || "",
+    geo: g && g.lat !== null && g.lon !== null ? { lat: g.lat, lon: g.lon } : null,
+  };
+}
 
 type Row = {
   id: string;
@@ -41,6 +66,8 @@ export async function loadExpected(): Promise<ExpectedItem[]> {
   try {
     const sb = createSupabaseServerClient();
     const out: ExpectedItem[] = [];
+    // точки не прочитались — ожидаемые всё равно показываем, без области и радиуса
+    const geo = await loadGeoRows().catch(() => new Map<string, GeoRow>());
     for (let from = 0; ; from += 1000) {
       const { data, error } = await sb
         .from("race_expected")
@@ -50,7 +77,7 @@ export async function loadExpected(): Promise<ExpectedItem[]> {
         .order("name")
         .range(from, from + 999);
       if (error) throw error;
-      out.push(...((data as Row[]) || []).map(toExpected));
+      out.push(...((data as Row[]) || []).map((r) => withGeo(toExpected(r), geo)));
       if (!data || data.length < 1000) return out;
     }
   } catch (e) {

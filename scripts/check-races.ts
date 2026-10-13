@@ -32,9 +32,13 @@ import {
   prettyDist,
   toRace,
   type RaceRow,
+  subjectsOf,
 } from "@/app/races/races-logic";
+import { canonicalSubject, subjectFromDisplay } from "@/app/races/subjects";
 import { eventLink, sameRace, type MatchRow } from "../supabase/functions/race-calendar-sync/match";
 import { textDayInRange } from "../supabase/functions/race-calendar-sync/dates";
+import { fillRegion, geoKey as edgeGeoKey, subjectFor } from "../supabase/functions/race-calendar-sync/geo";
+import { geoKey as botGeoKey } from "@/features/races-bot/core";
 
 const row = (over: Partial<RaceRow>): RaceRow => ({
   id: "x",
@@ -126,18 +130,63 @@ const races = [
   toRace(row({ id: "2", name: "Трейл «Озёрный»", city: "Казань", region: "Республика Татарстан", race_type: "trail", dist_km: [21] })),
   toRace(row({ id: "3", name: "Ночной забег", city: "Орёл", region: "Орловская область", race_type: "road", dist_km: [10] })),
 ];
-assert.deepEqual(applyFilters(races, { q: "казань", type: "all", dist: "all" }).map((r) => r.id), ["1", "2"]);
-assert.deepEqual(applyFilters(races, { q: "орел", type: "all", dist: "all" }).map((r) => r.id), ["3"], "ё = е");
-assert.deepEqual(applyFilters(races, { q: "озерный", type: "all", dist: "all" }).map((r) => r.id), ["2"]);
-assert.deepEqual(applyFilters(races, { q: "КАЗАНЬ татарстан", type: "trail", dist: "all" }).map((r) => r.id), ["2"]);
-assert.equal(applyFilters(races, { q: "казань", type: "trail", dist: "all" }, "type").length, 2, "счётчик типа без своего фильтра");
+assert.deepEqual(applyFilters(races, { q: "казань", type: "all", dist: "all", region: "" }).map((r) => r.id), ["1", "2"]);
+assert.deepEqual(applyFilters(races, { q: "орел", type: "all", dist: "all", region: "" }).map((r) => r.id), ["3"], "ё = е");
+assert.deepEqual(applyFilters(races, { q: "озерный", type: "all", dist: "all", region: "" }).map((r) => r.id), ["2"]);
+assert.deepEqual(applyFilters(races, { q: "КАЗАНЬ татарстан", type: "trail", dist: "all", region: "" }).map((r) => r.id), ["2"]);
+assert.equal(applyFilters(races, { q: "казань", type: "trail", dist: "all", region: "" }, "type").length, 2, "счётчик типа без своего фильтра");
 
 // Адрес.
-const f = { q: "Казань", type: "trail" as const, dist: "half" as const };
+const f = { q: "Казань", type: "trail" as const, dist: "half" as const, region: "" };
 assert.equal(filtersToSearch(f), "?q=%D0%9A%D0%B0%D0%B7%D0%B0%D0%BD%D1%8C&type=trail&dist=half");
 assert.deepEqual(filtersFromSearch(filtersToSearch(f)), f, "адрес туда и обратно");
-assert.equal(filtersToSearch({ q: "", type: "all", dist: "all" }), "", "без фильтров адрес чистый");
-assert.deepEqual(filtersFromSearch("?type=hack&dist=<x>&q="), { q: "", type: "all", dist: "all" }, "мусор в адресе");
+assert.equal(filtersToSearch({ q: "", type: "all", dist: "all", region: "" }), "", "без фильтров адрес чистый");
+assert.deepEqual(filtersFromSearch("?type=hack&dist=<x>&q="), { q: "", type: "all", dist: "all", region: "" }, "мусор в адресе");
+
+// Области (наряд 12.10.2026): субъект одним написанием, фильтр «Вся Тверская область», город-область.
+{
+  const tv = toRace(row({ id: "t1", city: "Тверь", region: "Тверь", subject: "Тверская область", lat: 56.86, lon: 35.91 }));
+  const st = toRace(row({ id: "t2", city: "Старица", region: "Тверская область", subject: null }));
+  const owl = toRace(row({ id: "t3", city: "Тверская область", region: "Тверская область" }));
+  const kz = toRace(row({ id: "k1", city: "Казань", region: "Республика Татарстан", subject: "Республика Татарстан" }));
+  assert.equal(tv.subject, "Тверская область", "субъект из race_calendar");
+  assert.equal(st.subject, "Тверская область", "без точки — из написания региона");
+  assert.deepEqual(tv.geo, { lat: 56.86, lon: 35.91 });
+  assert.equal(owl.noCity, true);
+  assert.equal(owl.city, "", "«Тверская область» в поле города — не город");
+  assert.equal(owl.subject, "Тверская область");
+  const all = [tv, st, owl, kz];
+  assert.deepEqual(applyFilters(all, { q: "", type: "all", dist: "all", region: "Тверская область" }).map((r) => r.id), ["t1", "t2", "t3"], "Вся Тверская область");
+  assert.deepEqual(applyFilters(all, { q: "старица", type: "all", dist: "all", region: "" }).map((r) => r.id), ["t2"], "городок по-прежнему находится поиском");
+  assert.deepEqual(subjectsOf(all), [{ subject: "Тверская область", n: 3 }, { subject: "Республика Татарстан", n: 1 }]);
+  const fr = { q: "", type: "all" as const, dist: "all" as const, region: "Тверская область" };
+  assert.deepEqual(filtersFromSearch(filtersToSearch(fr)), fr, "область в адресе туда и обратно");
+  assert.equal(canonicalSubject("Тверская обл"), "Тверская область");
+  assert.equal(canonicalSubject("респ Татарстан"), "Республика Татарстан");
+  assert.equal(canonicalSubject("Удмуртия"), "Удмуртская Республика");
+  assert.equal(canonicalSubject("Тверская"), "Тверская область", "голое прилагательное orgeo");
+  assert.equal(canonicalSubject("Тверь"), null, "город — не субъект");
+  assert.equal(canonicalSubject("Москва"), "Москва");
+  assert.equal(subjectFromDisplay("Зура, Игринский район, Удмуртия, Приволжский федеральный округ, Россия"), "Удмуртская Республика");
+  assert.equal(subjectFromDisplay("Тверь, городской округ Тверь, Тверская область, Центральный федеральный округ, Россия"), "Тверская область");
+}
+
+// Пустой регион — субъектом из race_geo (робот и шлюз), city не меняется.
+{
+  const rows = [
+    { key: "тверь, тверь", city: "Тверь", subject: "Тверская область" },
+    { key: "тверь, тверская область", city: "Тверь", subject: "Тверская область" },
+    { key: "кировск, мурманская область", city: "Кировск", subject: "Мурманская область" },
+    { key: "кировск, ленинградская область", city: "Кировск", subject: "Ленинградская область" },
+  ];
+  assert.equal(edgeGeoKey("Тверь ", "Тверская  Область"), botGeoKey("Тверь ", "Тверская  Область"), "ключ робота = ключ бота");
+  assert.equal(subjectFor(rows, "Тверь", ""), "Тверская область", "по городу, если субъект у него один");
+  assert.equal(subjectFor(rows, "Кировск", ""), null, "одноимённые в разных областях — не угадываем");
+  assert.equal(subjectFor(rows, "Кировск", "Мурманская область"), "Мурманская область", "точный ключ");
+  assert.deepEqual(fillRegion({ city: "Тверь", region: "" }, rows), { city: "Тверь", region: "Тверская область" });
+  assert.deepEqual(fillRegion({ city: "Тверь", region: "Тверь" }, rows), { city: "Тверь", region: "Тверь" }, "непустой регион не трогаем");
+  assert.deepEqual(fillRegion({ city: "Нигдеград", region: null }, rows), { city: "Нигдеград", region: null }, "не узнан — как есть");
+}
 
 // Прошедшие и многодневные; сортировка и месяцы.
 const prep = prepare(

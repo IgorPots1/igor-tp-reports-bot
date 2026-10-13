@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { citySlug, inCity, raceCode, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
+import { NEARBY_KM, areaRaces, citySlug, inCity, raceCode, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
 
 import {
   DISTS,
@@ -20,6 +20,7 @@ import {
   MONTHS,
   norm,
   plural,
+  subjectsOf,
   type Filters,
   type Race,
 } from "./races-logic";
@@ -43,7 +44,14 @@ function StarIcon({ filled }: { filled: boolean }) {
   );
 }
 
-function RaceItem({ r, follow }: { r: Race; follow: FollowUi }) {
+/** «Вся Тверская область», «Весь Краснодарский край», «Москва». */
+function allLabel(subject: string): string {
+  if (/^(Москва|Санкт-Петербург|Севастополь)$/.test(subject)) return subject;
+  return /(край|округ)$/i.test(subject) ? `Весь ${subject}` : `Вся ${subject}`;
+}
+
+/** away — для блока «Рядом в области»: «Старица, 71 км» вместо обычной строки места. */
+function RaceItem({ r, follow, away }: { r: Race; follow: FollowUi; away?: string }) {
   const stub = dateStub(r);
   const pills = distPills(r);
   const where = r.region && r.region !== r.city;
@@ -73,8 +81,14 @@ function RaceItem({ r, follow }: { r: Race; follow: FollowUi }) {
           ) : null}
         </div>
         <div className={styles.where}>
-          <b>{r.city || "место уточняется"}</b>
-          {where ? `, ${r.region}` : null}
+          {away ? (
+            <b>{away}</b>
+          ) : (
+            <>
+              <b>{r.city || (r.noCity ? "город не указан" : "место уточняется")}</b>
+              {where ? `, ${r.region}` : null}
+            </>
+          )}
         </div>
         <div className={styles.meta}>
           {TYPE_LABEL[r.type] ? (
@@ -283,7 +297,8 @@ export default function RacesCalendar({
     const shown = expected.filter((e) => {
       if (f.type !== "all" && e.type !== f.type) return false;
       if (f.dist !== "all" && !distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)) return false;
-      const hay = norm(`${e.name} ${e.city} ${e.region}`);
+      if (f.region && e.subject !== f.region) return false;
+      const hay = norm(`${e.name} ${e.city} ${e.region} ${e.subject ?? ""}`);
       return words.every((w) => hay.includes(w));
     });
     const by = new Map<number, ExpectedItem[]>();
@@ -304,13 +319,23 @@ export default function RacesCalendar({
   const searching = f.q.trim() !== "";
   const nCities = new Set(races.map((r) => r.city).filter(Boolean)).size;
   const listCities = new Set(list.map((r) => r.city).filter(Boolean)).size;
-  const dirty = f.q !== "" || f.type !== "all" || f.dist !== "all";
+  const dirty = f.q !== "" || f.type !== "all" || f.dist !== "all" || f.region !== "";
+  const subjects = useMemo(() => subjectsOf(races), [races]);
   const inTg = initData !== null;
   // Плашка подписки — когда в поиске ровно город из календаря.
   const bannerCity = useMemo(() => {
     const q = f.q.trim().toLowerCase().replace(/ё/g, "е");
     return q ? cities.find((c) => c.toLowerCase().replace(/ё/g, "е") === q) ?? null : null;
   }, [f.q, cities]);
+  // Страница города (в поиске ровно город): блок «Рядом в области» — та же область и 150 км,
+  // ближайшие первыми, «Старица, 71 км». Тип и дистанция применяются, поиск и область — нет.
+  const [areaShown, setAreaShown] = useState(8);
+  const area = useMemo(() => {
+    if (!bannerCity || onlyMine) return { subject: "", items: [] as { race: Race; km: number | null }[] };
+    const a = areaRaces(races, bannerCity, [], []);
+    return { subject: a.subject, items: a.items.filter(({ race }) => applyFilters([race], { ...f, q: "", region: "" }).length > 0) };
+  }, [bannerCity, races, f, onlyMine]);
+  useEffect(() => setAreaShown(8), [bannerCity]);
   const followUi = (r: Race): FollowUi =>
     inTg ? { mode: "tg", saved: saved.has(r.id), busy: busy === r.id, onToggle: toggle } : { mode: "site", bot: botUsername };
 
@@ -397,6 +422,26 @@ export default function RacesCalendar({
             </button>
           ))}
         </div>
+        {subjects.length ? (
+          <div className={styles.chiprow}>
+            <label className={styles.lbl} htmlFor="races-region">
+              Область
+            </label>
+            <select
+              id="races-region"
+              className={styles.select}
+              value={f.region}
+              onChange={(e) => setF((p) => ({ ...p, region: e.target.value }))}
+            >
+              <option value="">Все области</option>
+              {subjects.map(({ subject, n }) => (
+                <option key={subject} value={subject}>
+                  {allLabel(subject)} · {n}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <p className={styles.resultLine} aria-live="polite">
           {list.length ? (
             <>
@@ -462,6 +507,31 @@ export default function RacesCalendar({
           })
         )}
       </div>
+
+      {area.items.length ? (
+        <section className={styles.expected} aria-label="Рядом в области">
+          <h2 className={styles.expectedTitle}>Рядом в области</h2>
+          <p className={styles.expectedLede}>
+            {area.subject ? `${area.subject} и` : "В"} радиусе {NEARBY_KM} км от города {bannerCity}: {area.items.length}{" "}
+            {plural(area.items.length, "старт", "старта", "стартов")}, ближайшие первыми.
+          </p>
+          <ol className={styles.races}>
+            {area.items.slice(0, areaShown).map(({ race, km }) => (
+              <RaceItem
+                key={race.id}
+                r={race}
+                follow={followUi(race)}
+                away={`${race.city || `${race.subject}, город не указан`}${km === null ? "" : `, ${km} км`}`}
+              />
+            ))}
+          </ol>
+          {area.items.length > areaShown ? (
+            <button type="button" className={styles.btn} onClick={() => setAreaShown((n) => n + 8)}>
+              Показать ещё {Math.min(8, area.items.length - areaShown)}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
 
       {expectedCount ? (
         <section className={styles.expected} aria-label="Ожидаемые старты">

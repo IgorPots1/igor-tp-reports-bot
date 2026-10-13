@@ -10,6 +10,8 @@
  *     иначе плашка стояла бы на каждом старте и ничего бы не значила.
  */
 
+import { FEDERAL_CITIES, canonicalSubject, isSubjectName } from "./subjects";
+
 export type RaceType = "road" | "trail" | "tri" | "track";
 
 export type RaceRow = {
@@ -32,6 +34,10 @@ export type RaceRow = {
   link_ok: boolean | null;
   alt_dates: string[] | null;
   checked_note: string | null;
+  /** Из race_calendar (race_geo_point): субъект РФ и точка города; null — город не узнан. */
+  subject?: string | null;
+  lat?: number | null;
+  lon?: number | null;
 };
 
 /** Старт в том виде, в каком он уходит в браузер: только нужные поля. */
@@ -55,6 +61,12 @@ export type Race = {
   linkBad: boolean;
   altDates: string[];
   checked: string;
+  /** Субъект РФ одним написанием («Тверская область»): по нему группируем «Вся Тверская область». */
+  subject: string;
+  /** Точка города (race_geo); null — город не узнан. */
+  geo: { lat: number; lon: number } | null;
+  /** В поле города записана область («Тверская область»): город не указан, отдельным городом не показываем. */
+  noCity: boolean;
 };
 
 export type TypeFilter = "all" | RaceType;
@@ -151,13 +163,18 @@ export function stripStaleYear(name: string, dateStart: string): string {
 export function toRace(r: RaceRow): Race {
   const km = (r.dist_km || []).map(Number).filter((x) => Number.isFinite(x));
   const srcs = r.sources || [];
+  // Город, который на деле область («Тверская область»), городом не считаем: исходное поле не трогаем,
+  // а в показе — «город не указан» и группа области.
+  const noCity = !!r.city && isSubjectName(r.city) && !FEDERAL_CITIES.includes(r.city.trim());
+  const subject = r.subject || canonicalSubject(r.region) || canonicalSubject(r.city) || "";
+  const geo = !noCity && typeof r.lat === "number" && typeof r.lon === "number" ? { lat: r.lat, lon: r.lon } : null;
   return {
     id: r.id,
     name: displayName(stripStaleYear(r.name, r.date_start)),
     ds: r.date_start,
     de: r.date_end || r.date_start,
-    city: r.city || "",
-    region: displayName(r.region || ""),
+    city: noCity ? "" : r.city || "",
+    region: displayName(r.region || subject),
     type: r.race_type || "",
     tags: r.tags || [],
     dist: r.distances || [],
@@ -171,6 +188,9 @@ export function toRace(r: RaceRow): Race {
     linkBad: r.link_ok === false,
     altDates: [...new Set((r.alt_dates || []).map((a) => a.split(":")[1]).filter((x) => x && x !== r.date_start))],
     checked: r.checked_note || "",
+    subject,
+    geo,
+    noCity,
   };
 }
 
@@ -216,11 +236,12 @@ export function distMatch(r: Race, d: DistFilter): boolean {
   }
 }
 
-export type Filters = { q: string; type: TypeFilter; dist: DistFilter };
-export const NO_FILTERS: Filters = { q: "", type: "all", dist: "all" };
+/** region — субъект целиком («Тверская область»); пусто — все. */
+export type Filters = { q: string; type: TypeFilter; dist: DistFilter; region: string };
+export const NO_FILTERS: Filters = { q: "", type: "all", dist: "all", region: "" };
 
 export function haystack(r: Race): string {
-  return norm([r.name, r.city, r.region].join(" "));
+  return norm([r.name, r.city, r.region, r.subject].join(" "));
 }
 
 /** skip: не применять один из фильтров (для счётчиков на его же чипах). */
@@ -230,6 +251,7 @@ export function applyFilters(races: Race[], f: Filters, skip?: "type" | "dist"):
     (r) =>
       (skip === "type" || f.type === "all" || r.type === f.type) &&
       (skip === "dist" || distMatch(r, f.dist)) &&
+      (!f.region || r.subject === f.region) &&
       words.every((w) => haystack(r).includes(w)),
   );
 }
@@ -243,6 +265,7 @@ export function filtersFromSearch(search: string): Filters {
   const dist = p.get("dist") as DistFilter | null;
   return {
     q: p.get("q") || "",
+    region: p.get("region") || "",
     type: type && TYPE_IDS.has(type) ? type : "all",
     dist: dist && DIST_IDS.has(dist) ? dist : "all",
   };
@@ -254,6 +277,7 @@ export function filtersToSearch(f: Filters): string {
   if (f.q.trim()) p.set("q", f.q.trim());
   if (f.type !== "all") p.set("type", f.type);
   if (f.dist !== "all") p.set("dist", f.dist);
+  if (f.region) p.set("region", f.region);
   const s = p.toString();
   return s ? `?${s}` : "";
 }
@@ -292,6 +316,13 @@ export function groupByMonth(races: Race[]): MonthGroup[] {
 }
 
 /** Порядок: дата, потом название по-русски. Прошедшие (по дате конца) не показываются. */
+/** Области для фильтра «Вся Тверская область»: субъекты стартов, самые частые первыми. */
+export function subjectsOf(races: Race[]): { subject: string; n: number }[] {
+  const counts = new Map<string, number>();
+  for (const r of races) if (r.subject) counts.set(r.subject, (counts.get(r.subject) || 0) + 1);
+  return [...counts.entries()].map(([subject, n]) => ({ subject, n })).sort((a, b) => b.n - a.n || a.subject.localeCompare(b.subject, "ru"));
+}
+
 export function prepare(rows: RaceRow[], todayIso: string): Race[] {
   return rows
     .map(toRace)

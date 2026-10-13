@@ -56,6 +56,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 import { nameKey } from "../supabase/functions/race-calendar-sync/expected";
+import { subjectFor, type GeoSubjectRow } from "../supabase/functions/race-calendar-sync/geo";
 
 export const MAX_INSERTS = 40;
 export const MAX_UPDATES = 60;
@@ -917,6 +918,15 @@ async function cmdApply(file: string, apply: boolean) {
 
   const calendar = await calendarRows(sb);
   const addedRows: RaceInsert[] = [];
+  // Пустой регион — субъектом из race_geo (город не меняется); не прочиталось — как есть.
+  const geoRows: GeoSubjectRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("race_geo").select("key,city,subject").range(from, from + 999);
+    if (error) break;
+    geoRows.push(...((data || []) as GeoSubjectRow[]));
+    if (!data || data.length < 1000) break;
+  }
+  const regionOf = (city: string, region: string | null | undefined) => (region && region.trim() ? region : subjectFor(geoRows, city, region) ?? null);
   /** Одна вставка с полной проверкой: окно, правила, дубль, занятый id. */
   async function tryInsert(r: RaceInsert): Promise<{ ok: true; id: string } | { ok: false; id: string; dup: CalendarRow | null; reason: string }> {
     const errs = validateInsert(r, today);
@@ -942,7 +952,7 @@ async function cmdApply(file: string, apply: boolean) {
       date_end: end,
       date_text: dateText(r.date_start, end),
       city: r.city.trim(),
-      region: r.region ?? null,
+      region: regionOf(r.city, r.region),
       // Склейка edge-функции сравнивает место по location: пустой ломал её (12.10.2026).
       location: r.location?.trim() || [r.region, r.city].filter((x) => x && x.trim()).join(", ") || null,
       distances: r.distances ?? [],
@@ -992,7 +1002,7 @@ async function cmdApply(file: string, apply: boolean) {
         name: r.name.trim(),
         name_key: nameKey(r.name),
         city: r.city.trim(),
-        region: r.region ?? null,
+        region: regionOf(r.city, r.region),
         race_type: r.race_type,
         distances: r.distances ?? [],
         last_date: r.last_date,

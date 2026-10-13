@@ -427,7 +427,7 @@ async function main() {
 
   // 6. Короткий список.
   const shortCity = [...cityCount.entries()].find(([city, n]) => n === 1 && env.races.some((r) => r.city === city && r.region && env.races.some((x) => x.region === r.region && x.city !== city)))?.[0];
-  await scenario(`Короткий список (${shortCity ?? "нет города"}): «Рядом», «Ожидаются», кнопки`, async () => {
+  await scenario(`Короткий список (${shortCity ?? "нет города"}): город и «область и рядом», «Ожидаются», кнопки`, async () => {
     assert.ok(shortCity, "нашёлся город с одним стартом");
     const p = person("Мало");
     await env.update(msg(p, "/start"));
@@ -437,8 +437,13 @@ async function main() {
     let c = calls.length;
     await cb(p, "show");
     let all = allText(p.id, c);
-    assert.match(all, /Вот что ещё можно посмотреть/);
-    assert.match(all, /<b>Рядом<\/b>/);
+    // Было: при одном старте «…пока 1 забег. Вот что ещё можно посмотреть:». С 12.10.2026 всегда два
+    // блока: «Ближайшие забеги в <городе>» и «<область> и рядом»; «Вот что ещё…» — только когда в городе пусто.
+    assert.match(all, /Ближайшие забеги /);
+    assert.ok(all.indexOf("Ближайшие забеги ") < all.search(/<b>[^<]+ и рядом<\/b>/), "сначала город, потом область");
+    // Было «<b>Рядом</b>, регион:»; с 12.10.2026 — второй блок «<область> и рядом» со строкой «город, км».
+    assert.match(all, /<b>[^<]+ и рядом<\/b>/);
+    assert.match(all, /📍 [^\n,]+(, \d+ км|, город не указан)?(\n|$)/, "«город, км» (км — если у города есть точка)");
     const expectedNote = /Ожидаются/.test(all);
     // с фильтром: «Снять фильтры» обязательно, голого «ничего» нет
     await cb(p, "d:ultra");
