@@ -12,7 +12,7 @@
  *
  * Только чтение robots.txt: по одному запросу на хост, с паузой.
  */
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { isAllowed, parseRobots } from "./lib/robots";
@@ -32,6 +32,13 @@ type Verdict = {
   paths: PathVerdict[];
   checkedAt: string;
 };
+
+// Каталог отчётов в git не идёт (в .gitignore), поэтому в свежем клоне его
+// просто нет. Создаём ЗАРАНЕЕ, до обхода: без этого скрипт честно опрашивал
+// все сорок с лишним источников и падал на последней строке, записывая
+// результат в несуществующий каталог, — три минуты вежливых запросов в мусор.
+const REPORTS_DIR = resolve("tools/shoes-pipeline/reports");
+mkdirSync(REPORTS_DIR, { recursive: true });
 
 const results: Verdict[] = [];
 
@@ -135,7 +142,7 @@ for (const source of SOURCES) {
   await sleep(HOST_DELAY_MS);
 }
 
-const out = resolve("tools/shoes-pipeline/reports/source-terms.json");
+const out = resolve(REPORTS_DIR, "source-terms.json");
 writeFileSync(out, JSON.stringify({ userAgent: USER_AGENT, checkedAt: new Date().toISOString(), sources: results }, null, 2) + "\n");
 
 const by = (s: TermsStatus) => results.filter((r) => r.status === s);
