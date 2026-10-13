@@ -108,3 +108,16 @@ export function thesesFrom(
 
 /** Для проверки: все тезисы словаря 3–7 слов, без цифр. */
 export const ALL_THESES = [...PRO, ...CON].map((t) => t.thesis);
+
+/**
+ * Словарь для читателя-модели: она выбирает тезис из этих списков дословно и
+ * прикладывает цитату. Чужая формулировка не проходит проверку кодом.
+ */
+export const ALL_PRO = PRO.map((t) => t.thesis);
+export const ALL_CON = CON.map((t) => t.thesis);
+
+/** Тезис дублирует уже поставленное поле вердикта (тема coveredBy). */
+export function coveredThesis(thesis: string, v: Verdicts): boolean {
+  const t = [...PRO, ...CON].find((x) => x.thesis === thesis);
+  return Boolean(t?.coveredBy?.(v));
+}

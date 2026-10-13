@@ -62,14 +62,39 @@ export function ownSentences(text: string): string {
     .join(" ");
 }
 
+const NAMED: Record<string, string> = {
+  nbsp: " ",
+  amp: "&",
+  quot: '"',
+  apos: "'",
+  lt: "<",
+  gt: ">",
+  rsquo: "\u2019",
+  lsquo: "\u2018",
+  rdquo: "\u201D",
+  ldquo: "\u201C",
+  ndash: "\u2013",
+  mdash: "\u2014",
+  hellip: "\u2026",
+  deg: "\u00B0",
+  bull: "\u2022",
+  middot: "\u00B7",
+  trade: "\u2122",
+  reg: "\u00AE",
+  copy: "\u00A9",
+  times: "\u00D7",
+};
+
 export function plainText(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/g, " ")
     .replace(/<style[\s\S]*?<\/style>/g, " ")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&#8217;|&rsquo;/g, "'")
+    // Сущности раскрываются ВСЕ, а не две-три: читатель-модель цитирует то, что
+    // видит, и «&#8220;» в тексте страницы не совпало бы ни с одной цитатой.
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&([a-z]+);/gi, (m, name: string) => NAMED[name.toLowerCase()] ?? m)
     .replace(/\s+/g, " ")
     .trim();
 }

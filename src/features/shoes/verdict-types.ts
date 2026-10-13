@@ -88,6 +88,12 @@ export type VerdictRecord = {
   confidence: Confidence;
   /** Поля, где обзоры разошлись: в отчёт человеку, а не усреднять. */
   disputed: string[];
+  /**
+   * Поля, значение которых поставил человек, разбирая спор. Пишется рядом с
+   * вердиктом, чтобы было видно: это не свод обзоров, а решение Игоря,
+   * принятое, когда обзоры разошлись и четвёртый источник не помог.
+   */
+  decided_by: Partial<Record<keyof Verdicts, "igor">>;
 };
 
 export const EMPTY_VERDICTS: Verdicts = {
