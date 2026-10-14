@@ -25,6 +25,12 @@ const meta = { userAgent: UA, country: "ru" };
 
 // пути
 for (const p of ["/admin", "/admin/tools-stats", "/m", "/m/desk", "/api", "/api/pv"]) assert.ok(isExcludedPath(p), p);
+// /wish/<token>: в адресе секрет виш-листа, ни один счётчик не должен его записать.
+for (const p of ["/wish", "/wish/0123456789abcdef0123456789abcdef"]) {
+  assert.ok(isExcludedPath(p), p);
+  assert.ok(!isTrackedPath(p), p);
+}
+assert.ok(!isExcludedPath("/wishes"), "/wishes");
 for (const p of ["/media", "/marathon", "/tools", "/apiary", "/"]) assert.ok(!isExcludedPath(p), p);
 for (const p of ["/", "/tools", "/tools/dress", "/races", "/races/x", "/camp", "/club/a", "/start"]) assert.ok(isTrackedPath(p), p);
 for (const p of ["/privacy", "/toolsx", "/startup", "/connect", "/go/r1", "/admin"]) assert.ok(!isTrackedPath(p), p);

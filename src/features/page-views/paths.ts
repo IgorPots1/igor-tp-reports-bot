@@ -8,8 +8,10 @@ function underPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
-/** Служебные зоны: админка, мини-апп, API. Ни в один счётчик не попадают. */
-const EXCLUDED_PREFIXES = ["/admin", "/m", "/api"];
+/** Служебные зоны: админка, мини-апп, API и личный виш-лист /wish/<token>.
+ * Ни в один счётчик не попадают: у /wish в адресе секретный токен, и он не
+ * должен оседать ни в page_views, ни в Vercel Analytics. */
+const EXCLUDED_PREFIXES = ["/admin", "/m", "/api", "/wish"];
 
 export function isExcludedPath(pathname: string): boolean {
   return EXCLUDED_PREFIXES.some((p) => underPrefix(pathname, p));
