@@ -73,3 +73,23 @@ export function loadAllowedModels(sources?: SourceId[]): AllowedModel[] {
   }
   return out;
 }
+
+/**
+ * Основные линейки — читаются первыми (решение Игоря, 14.10.2026), вместе с
+ * их стартовыми версиями. Сравнение по словам слага модели, а не подстрокой:
+ * «ride» как подстрока поймал бы «stride» и «hybrid».
+ */
+const PRIORITY_LINES = [
+  "pegasus", "vomero", "novablast", "nimbus", "cumulus", "kayano", "gt-2000", "clifton", "bondi", "mach",
+  "ride", "triumph", "endorphin", "1080", "880", "rebel", "ghost", "glycerin", "adrenaline", "boston",
+  "adios-pro", "evo-sl", "supernova", "deviate", "velocity", "magnify", "cloudmonster", "wave-rider",
+  "speedgoat", "peregrine", "cascadia",
+  // стартовые версии этих линеек
+  "alphafly", "vaporfly", "streakfly", "metaspeed", "sc-elite", "supercomp-elite", "rocket-x", "cielo-x",
+  "hyperion", "nitro-elite", "fast-r", "pro-evo", "takumi",
+];
+
+export function isPriorityLine(model: string): boolean {
+  const m = `-${model.toLowerCase().replace(/v(\d)/g, "-$1")}-`;
+  return PRIORITY_LINES.some((line) => m.includes(`-${line}-`) || m.includes(`-${line.replace("-", "")}-`));
+}

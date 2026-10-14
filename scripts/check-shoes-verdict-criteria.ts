@@ -12,6 +12,15 @@ import {
   runnerWeightFromVerdicts,
 } from "../src/features/shoes/verdict-criteria";
 import { basisLinks } from "../src/features/shoes/verdict-basis";
+import {
+  DRAFT_FIELDS,
+  THESES_BEST_FOR,
+  THESES_NOT_FOR,
+  applyDecision,
+  draftIsConfirmed,
+  type CoachDraft,
+} from "../src/features/shoes/coach-drafts";
+import { ALL_CON, ALL_PRO } from "../tools/shoes-pipeline/lib/theses";
 import { EMPTY_VERDICTS, type VerdictRecord, type Verdicts } from "../src/features/shoes/verdict-types";
 
 let failures = 0;
@@ -54,6 +63,25 @@ console.log("\n=== «на чём основано»: только ссылки, 
   check(basis.length === 2, "один обзор — одна строка, хоть полей по нему несколько");
   check(!JSON.stringify(basis).includes("SECRET"), "в блок карточки не попадает текст цитаты");
   check(basis.every((b) => Object.keys(b).sort().join() === "title,url"), "в блоке только название и ссылка");
+}
+
+console.log("\n=== страница проверки: решения Игоря по полям ===");
+{
+  const at = "2026-10-14T12:00:00Z";
+  const base = { value: 3, draft_value: 3, status: "draft" as const, evidence: [] };
+  const ok = applyDecision(base, "confirm", undefined, at);
+  check(ok.status === "confirmed" && ok.decided_by === "igor" && ok.value === 3, "«верно» — confirmed, decided_by igor, значение черновика");
+  const fix = applyDecision(base, "correct", 5, at);
+  check(fix.status === "confirmed" && fix.value === 5 && fix.draft_value === 3, "«поправить» — новое значение, черновое сохранено");
+  const dunno = applyDecision(base, "unknown", undefined, at);
+  check(dunno.status === "unknown" && dunno.value === null, "«не знаю» — поле пустое, не черновик");
+  const all = Object.fromEntries(DRAFT_FIELDS.map((f) => [f.key, ok])) as CoachDraft["fields"];
+  check(draftIsConfirmed(all), "модель подтверждена, когда черновых полей не осталось");
+  check(!draftIsConfirmed({ ...all, feel: base }), "одно черновое поле — модель ещё не подтверждена");
+  check(
+    JSON.stringify([...THESES_BEST_FOR]) === JSON.stringify(ALL_PRO) && JSON.stringify([...THESES_NOT_FOR]) === JSON.stringify(ALL_CON),
+    "словарь тезисов страницы совпадает со словарём конвейера"
+  );
 }
 
 console.log("\n=== вес бегуна от 85 кг ===");

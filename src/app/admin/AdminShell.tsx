@@ -36,6 +36,7 @@ export default function AdminShell({
               <Link href="/admin/intensive">Беговой интенсив</Link>
               <Link href="/admin/races-bot">Бот забегов</Link>
               <Link href="/admin/tools-stats">Просмотры сайта</Link>
+              <Link href="/admin/shoes-review">Кроссовки: проверка</Link>
               <Link href="/admin/students/weekly-reports">Недельные отчёты</Link>
               {process.env.CLUB_ADMIN_ENABLED === "true" && <Link href="/admin/club">Клуб</Link>}
             </nav>

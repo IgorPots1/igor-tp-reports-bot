@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { fetchPage } from "./lib/fetch";
-import { CHINESE, WAVES, loadAllowedModels, type AllowedModel } from "./lib/allowed-models";
+import { CHINESE, WAVES, isPriorityLine, loadAllowedModels, type AllowedModel } from "./lib/allowed-models";
 import { SOURCES, type SourceId } from "./lib/sources";
 import { OPPOSITE, THESIS_FIELD } from "./lib/theses";
 import { mentionsWinter, plainText, publishedFrom, reviewBody } from "./lib/verdict-extract";
@@ -77,7 +77,7 @@ mkdirSync(REPORTS, { recursive: true });
 const MIN_YEAR = 2024;
 
 type Page = { source: SourceId; url: string; date: string | null; chars: number };
-type Task = { key: string; brand: string; model: string; chinese: boolean; pages: Page[] };
+type Task = { key: string; brandId?: string; brand: string; model: string; chinese: boolean; pages: Page[] };
 
 const dirFor = (key: string) => resolve(READ_DIR, key.replace(/[^a-z0-9._-]/gi, "_"));
 export const textPath = (key: string, source: string) => resolve(dirFor(key), `${source}.txt`);
@@ -107,11 +107,25 @@ async function queue() {
    * модель, если есть в волне, ставится в пилот обязательно — наряд просит
    * показать и её.
    */
-  const ranked = [...models].sort((a, b) => nSrc(b) - nSrc(a) || Number(recent(b)) - Number(recent(a)));
-  const chineseFirst = ranked.find((m) => CHINESE.has(m.brandId));
-  const targets = [...new Set([...(chineseFirst ? [chineseFirst] : []), ...ranked])].slice(0, limit);
+  const ranked = [...models].sort(
+    (a, b) =>
+      Number(isPriorityLine(b.model)) - Number(isPriorityLine(a.model)) ||
+      nSrc(b) - nSrc(a) ||
+      Number(recent(b)) - Number(recent(a))
+  );
+  /**
+   * Очередь накопительная: прочитанное остаётся, --add N добавляет N новых
+   * моделей по приоритету (основные линейки первыми). Без --add — как раньше,
+   * пилотный набор с нуля.
+   */
+  const add = num("--add", 0);
+  const existing: Task[] = add > 0 && existsSync(QUEUE_PATH) ? JSON.parse(readFileSync(QUEUE_PATH, "utf8")) : [];
+  const have = new Set(existing.map((t) => t.key));
+  const fresh = ranked.filter((m) => !have.has(m.key));
+  const chineseFirst = add > 0 ? undefined : fresh.find((m) => CHINESE.has(m.brandId));
+  const targets = [...new Set([...(chineseFirst ? [chineseFirst] : []), ...fresh])].slice(0, add > 0 ? add : limit);
   console.log(`Волна ${wave}: моделей ${models.length}, на двух источниках и больше ${models.filter((m) => nSrc(m) >= 2).length}`);
-  const tasks: Task[] = [];
+  const tasks: Task[] = [...existing];
   const tooOld: { key: string; newestReview: string }[] = [];
   for (const c of targets) {
     const pages: Page[] = [];
@@ -161,7 +175,7 @@ async function queue() {
       console.log(`  ${c.key}: последний обзор ${newest} — старше ${MIN_YEAR}, не читаем`);
       continue;
     }
-    tasks.push({ key: c.key, brand: c.brand, model: c.model, chinese, pages });
+    tasks.push({ key: c.key, brandId: c.brandId, brand: c.brand, model: c.model, chinese, pages });
     console.log(`  ${c.key}: страниц ${pages.length}, знаков ${pages.reduce((s, p) => s + p.chars, 0)}`);
   }
   writeFileSync(QUEUE_PATH, JSON.stringify(tasks, null, 2) + "\n");
@@ -219,6 +233,7 @@ async function vetTask(t: Task, names: string[]) {
   const readSources = new Set<string>();
   const notRunning: string[] = [];
   const termsNotices: { source: string; quote: string }[] = [];
+  const modelNames: string[] = [];
   let unread = 0;
   for (const p of t.pages) {
     if (!existsSync(answerPath(t.key, p.source))) {
@@ -243,6 +258,7 @@ async function vetTask(t: Task, names: string[]) {
         termsNotices.push({ source: p.source, quote: answer.terms_notice });
       }
     }
+    if (answer.about_model && answer.model_name) modelNames.push(answer.model_name);
     if (answer.running_shoe === false) {
       notRunning.push(p.source);
       continue;
@@ -254,7 +270,7 @@ async function vetTask(t: Task, names: string[]) {
       accepted.push({ id: `${p.source}#${i}`, field: a.field, value: a.value, quote: a.quote, source: p.source, url: p.url, date: p.date })
     );
   }
-  return { accepted, rejected, bodies, readSources, unread, notRunning, termsNotices };
+  return { accepted, rejected, bodies, readSources, unread, notRunning, termsNotices, modelNames };
 }
 
 const verifyRequestPath = (key: string) => resolve(dirFor(key), "verify-request.json");
@@ -315,14 +331,28 @@ async function settle() {
   const excluded: { key: string; why: string }[] = [];
   const termsNotices: { key: string; source: string; quote: string }[] = [];
 
+  /**
+   * Шаг 1 — каждая модель очереди проверяется в СВОЁМ каталоге: там её ответы
+   * и смысловые проверки (номера пунктов привязаны к каталогу).
+   * Шаг 2 — принятое сводится по имени модели СО СТРАНИЦЫ (model_name, с
+   * версией): адрес «nike-air-zoom-pegasus» и страница «Pegasus 41» — одна
+   * модель, а два адреса без номера могут оказаться разными поколениями.
+   */
+  type Prepared = {
+    t: Task;
+    vt: Awaited<ReturnType<typeof vetTask>>;
+    accepted: Item[];
+    rejected: ModelReport["rejected"];
+    canonical: string;
+    modelName: string;
+  };
+  const slugOf = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const groups = new Map<string, Prepared[]>();
   for (const t of tasks) {
     const vt = await vetTask(t, names);
     unread += vt.unread;
     termsNotices.push(...vt.termsNotices.map((n) => ({ key: t.key, ...n })));
-    const rejected = vt.rejected;
-    const bodies = vt.bodies;
-    const readSources = vt.readSources;
-
+    const rejectedT = vt.rejected;
     /**
      * Смысловая проверка (правка Игоря, 14.10.2026). Подстрока доказывает, что
      * фраза есть на странице, но не то, что она про это поле: «balanced
@@ -335,10 +365,33 @@ async function settle() {
       : null;
     if (!sense && vt.unread === 0) unverified++;
     const gate = gateBySense(vt.accepted, sense);
-    const accepted: Item[] = gate.passed;
     for (const f of gate.failed) {
-      rejected.push({ field: f.field, value: f.value, quote: f.quote, source: f.source, reason: f.reason });
+      rejectedT.push({ field: f.field, value: f.value, quote: f.quote, source: f.source, reason: f.reason });
     }
+    const brandId = t.brandId ?? t.key.split("-")[0];
+    const named = vt.modelNames.find(Boolean);
+    const canonical = named ? `${brandId}-${slugOf(named)}` : t.key;
+    const prep: Prepared = { t, vt, accepted: gate.passed, rejected: rejectedT, canonical, modelName: named ?? t.model };
+    groups.set(canonical, [...(groups.get(canonical) ?? []), prep]);
+  }
+
+  for (const group of groups.values()) {
+    const first = group[0];
+    const t: Task = {
+      ...first.t,
+      key: first.canonical,
+      model: first.modelName,
+      pages: group.flatMap((g) => g.t.pages),
+    };
+    const vt = {
+      unread: group.reduce((n, g) => n + g.vt.unread, 0),
+      notRunning: group.flatMap((g) => g.vt.notRunning),
+      accepted: group.flatMap((g) => g.vt.accepted),
+    };
+    const rejected = group.flatMap((g) => g.rejected);
+    const bodies = group.flatMap((g) => g.vt.bodies);
+    const readSources = new Set(group.flatMap((g) => [...g.vt.readSources]));
+    const accepted: Item[] = group.flatMap((g) => g.accepted);
 
     const verdicts: Verdicts = { ...EMPTY_VERDICTS, purpose: [], best_for: [], not_for: [] };
     const evidence: Evidence[] = [];
@@ -373,7 +426,22 @@ async function settle() {
     verdicts.feel = one("feel", FEEL_ORDINAL) as Verdicts["feel"];
     verdicts.firmness = one("firmness", FIRMNESS_ORDINAL) as Verdicts["firmness"];
     verdicts.width = one("width", null) as Verdicts["width"];
-    verdicts.durability = one("durability", null) as Verdicts["durability"];
+    /**
+     * Износ: источники расходятся — поле пустое (правило Игоря, 14.10.2026).
+     * Голосом считается и ОТБРОШЕННАЯ цитата: «долговечность вызывает вопросы»
+     * не проходит как «низкий», но это всё равно несогласие с «высоким», и
+     * ставить «высокий» поверх него нельзя.
+     */
+    const durabilityVoices = new Set(
+      [...vt.accepted, ...rejected].filter((x) => x.field === "durability").map((x) => JSON.stringify(x.value))
+    );
+    if (durabilityVoices.size > 1) {
+      verdicts.durability = null;
+      fields.durability = "diverged";
+      count("durability", "diverged");
+    } else {
+      verdicts.durability = one("durability", null) as Verdicts["durability"];
+    }
     verdicts.heel_hold = one("heel_hold", null) as Verdicts["heel_hold"];
 
     // Назначение объединяется, а не сверяется: площадки смотрят на модель с

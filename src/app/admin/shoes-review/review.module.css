@@ -1,0 +1,133 @@
+/* Страница проверки черновиков кроссовок: только раскладка полей и подсветка.
+   Цвета и карточки — общие классы админки. */
+
+.wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.h1 {
+  margin: 0;
+}
+
+.batches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.batch,
+.batchActive {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  text-decoration: none;
+  opacity: 0.7;
+}
+
+.batchActive {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.counter {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.error {
+  color: #b42318;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.name {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.fields {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.field {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  cursor: pointer;
+}
+
+.fieldActive {
+  outline: 2px solid #2f6fed;
+}
+
+.st_confirmed {
+  background: rgba(46, 160, 67, 0.1);
+}
+
+.st_unknown {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.fieldHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fieldTitle {
+  font-weight: 600;
+}
+
+.status {
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+.value {
+  margin-top: 4px;
+}
+
+.quote {
+  margin: 6px 0 0;
+  padding-left: 10px;
+  border-left: 3px solid rgba(127, 127, 127, 0.4);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.buttons,
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.nav {
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 6px;
+}
+
+.option {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}

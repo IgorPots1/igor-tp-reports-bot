@@ -44,6 +44,8 @@ export type ReaderAnswer = {
   best_for: { thesis: string; quote: string }[];
   not_for: { thesis: string; quote: string }[];
   release: { year: number; quote: string } | null;
+  /** Название модели со страницы, с версией, без бренда: «Pegasus 41». */
+  model_name?: string | null;
   /** false — страница про НЕ беговую обувь (лайфстайл, хайкинг, баскетбол). */
   running_shoe?: boolean;
   /**
@@ -100,7 +102,7 @@ const COMPARATIVE =
 
 /** Сравнения по-русски: первая волна наполовину русскоязычная. */
 const COMPARATIVE_RU =
-  /(чем у|чем в|по сравнению с|в сравнении с|в отличие от|предшественни|предыдущ\w* (верси|модел)|прошл\w* (верси|модел))/i;
+  /(чем у|чем в|по сравнению с|в сравнении с|в отличие от|предшественни|предыдущ[а-яё]* (верси|модел)|прошл[а-яё]* (верси|модел))/i;
 
 export type QuoteVerdict = { ok: true } | { ok: false; reason: string };
 
@@ -116,6 +118,46 @@ export type QuoteVerdict = { ok: true } | { ok: false; reason: string };
  */
 const FIRM_WORDS = /\b(firm\w*|stiff\w*|harsh\w*|hard|harder|dense\w*|rigid\w*)\b|плотн|жёстк|жестк|твёрд|твердь|твердая|твёрдая/i;
 const SOFT_WORDS = /\b(soft\w*|plush\w*|squish\w*|pillow\w*|cushy|mushy|marshmallow\w*)\b|мягк/i;
+
+/**
+ * Основание для durability (правило Игоря, 14.10.2026): только пробег от
+ * 150 км или прямое утверждение о ресурсе подошвы. «After several runs,
+ * minimal wear» — не основание: несколько пробежек ничего не говорят о
+ * ресурсе, сколько бы слов «durability» ни стояло рядом.
+ *
+ * Названный пробег меньше 150 км — тоже не основание, даже с прогнозом
+ * «should last a long time»: прогноз по 100 км остаётся догадкой.
+ */
+const MILEAGE = /(\d{2,4})\s*(km|км|kilomet\w*|километр[а-яё]*|miles?|mi\b|мил[ьи]\w*)/gi;
+const SHORT_USE = /\b(after|in) (a few|several|a couple of|two|three|my first|the first) (runs?|outings|sessions|miles)|\bfirst (few )?runs?\b|после (нескольких|пары|первых) (пробеж|трениров)|несколько пробежек/i;
+const RESOURCE_CLAIM = /durab\w*|lifespan|long[- ]?lasting|\blast(s|ed)? (a long time|for (many|hundreds))|wear(s|ing)? (out|down|through) (quickly|fast|early)|chew(ed|ing)? through|ресурс|долговечн|износостойк|быстро (стира|изна)|стёрл|стерл/i;
+
+export function durabilityBasis(quote: string): string | null {
+  let mileage: number | null = null;
+  for (const m of quote.matchAll(MILEAGE)) {
+    const n = Number(m[1]);
+    const km = /mi/i.test(m[2]) ? n * 1.609 : n;
+    mileage = Math.max(mileage ?? 0, km);
+  }
+  if (mileage !== null) return mileage >= 150 ? null : `пробег ${Math.round(mileage)} км — меньше 150`;
+  if (SHORT_USE.test(quote)) return "несколько пробежек — не основание для ресурса";
+  if (!RESOURCE_CLAIM.test(quote)) return "нет пробега от 150 км и прямого утверждения о ресурсе";
+  return null;
+}
+
+/**
+ * «Не для тяжёлых бегунов» — только по прямой цитате про вес бегуна (правило
+ * Игоря): цитата называет тяжёлых бегунов И говорит, что им не подходит.
+ * «Долговечность вызывает вопросы, особенно для тяжёлых бегунов» — про износ,
+ * а не про пригодность, и тезиса не даёт.
+ */
+export const NOT_FOR_HEAVY_THESIS = "не для тяжёлых бегунов";
+const HEAVY = /\b(heav(y|ier)|bigger|larger) runners?\b|\bover \d+\s?(kg|lbs?)\b|тяжёл[а-яё]* бегун|тяжел[а-яё]* бегун|крупн[а-яё]* бегун|бегун[а-яё]* с (большим|высоким) весом/i;
+const UNSUITABLE = /\bnot\b|n't\b|\bavoid\b|\bstruggl\w*|bottom(s|ed)? out|не (подойд|подход|рекоменд|для|стоит|выдерж)|лучше (выбрать|взять|посмотреть)/i;
+
+export function heavyThesisBasis(quote: string): string | null {
+  return HEAVY.test(quote) && UNSUITABLE.test(quote) ? null : "нет прямой цитаты о том, что модель не подходит тяжёлым бегунам";
+}
 
 export function firmnessConflict(value: number, quote: string): string | null {
   const firm = FIRM_WORDS.test(quote);
@@ -224,6 +266,13 @@ export function vetAnswer(
         continue;
       }
     }
+    if (f === "durability") {
+      const why = durabilityBasis(c.quote ?? "");
+      if (why) {
+        rejected.push({ field: f, value: c.value, quote: c.quote, reason: why });
+        continue;
+      }
+    }
     take(f, c.value, c.quote);
   }
   for (const p of a.purpose ?? []) {
@@ -242,6 +291,13 @@ export function vetAnswer(
       if (!dict.includes(t.thesis)) {
         rejected.push({ field, value: t.thesis, quote: t.quote, reason: "тезиса нет в словаре" });
         continue;
+      }
+      if (t.thesis === NOT_FOR_HEAVY_THESIS) {
+        const why = heavyThesisBasis(t.quote ?? "");
+        if (why) {
+          rejected.push({ field, value: t.thesis, quote: t.quote, reason: why });
+          continue;
+        }
       }
       take(field, t.thesis, t.quote);
     }

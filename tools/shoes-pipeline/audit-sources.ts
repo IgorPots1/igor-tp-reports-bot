@@ -87,7 +87,7 @@ const TERMS_BEST =
 
 /** Ключевые слова пунктов, которые решают: доступ автоматом, хранение, производные, лицензия. */
 const CLAUSE =
-  /automat|robot|spider|scrap|crawl|data mining|extract|harvest|artificial intelligence|machine learning|\bAI\b|non-?commercial|personal use|derivative|compilation|reproduc|creative commons|licen[cs]e|автоматическ|робот|парс|скрап|сбор (данных|информации)|извлеч|копирова|воспроизвед|некоммерческ|личн\w+ использ|производн|переработ|искусственн|нейросет|машинн\w+ обучени|лицензи/gi;
+  /automat|robot|spider|scrap|crawl|data mining|extract|harvest|artificial intelligence|machine learning|\bAI\b|non-?commercial|personal use|derivative|compilation|reproduc|creative commons|licen[cs]e|автоматическ|робот|парс|скрап|сбор (данных|информации)|извлеч|копирова|воспроизвед|некоммерческ|личн[а-яё]+ использ|производн|переработ|искусственн|нейросет|машинн[а-яё]+ обучени|лицензи/gi;
 
 type Evidence = {
   id: string;

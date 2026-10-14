@@ -14,7 +14,9 @@ import {
   FEEL_ORDINAL,
   FIRMNESS_ORDINAL,
   checkQuote,
+  durabilityBasis,
   firmnessConflict,
+  heavyThesisBasis,
   gateBySense,
   medianTowardCenter,
   settleField,
@@ -207,6 +209,24 @@ ok("пары противоположных тезисов и привязки �
   const dict = new Set([...ALL_PRO, ...ALL_CON]);
   for (const [a, b] of OPPOSITE) assert.ok(dict.has(a) && dict.has(b), `${a} / ${b}`);
   for (const t of Object.keys(THESIS_FIELD)) assert.ok(dict.has(t), t);
+});
+
+ok("durability: «after several runs, minimal wear» — не основание (Speed 5, пилот)", () => {
+  // Правило Игоря 14.10.2026: пробег от 150 км или прямое утверждение о ресурсе.
+  assert.ok(durabilityBasis("After several runs, there's minimal wear, so durability looks solid for a lightweight trainer."));
+});
+ok("durability: пробег меньше 150 км не основание, даже с прогнозом", () => {
+  assert.ok(durabilityBasis("After more than 100km run in the shoe, there are no signs of wear, so this one should last a long time"));
+});
+ok("durability: пробег от 150 км или прямое утверждение — основание", () => {
+  assert.equal(durabilityBasis("After 300 km the outsole shows only light wear."), null);
+  assert.equal(durabilityBasis("With 120 miles on them the lugs look new."), null);
+  assert.equal(durabilityBasis("Ресурс подошвы — одна из сильных сторон модели."), null);
+});
+ok("«не для тяжёлых» — только прямая цитата о пригодности, не про износ", () => {
+  assert.ok(heavyThesisBasis("Долговечность подошвы вызывает вопросы, особенно для тяжёлых бегунов."));
+  assert.equal(heavyThesisBasis("Heavier runners may want to avoid it, as the foam bottoms out."), null);
+  assert.equal(heavyThesisBasis("Тяжёлым бегунам эта модель не подойдёт."), null);
 });
 
 console.log(`\ncheck-verdict-read: ${n} проверок прошли`);
