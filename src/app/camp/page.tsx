@@ -4,13 +4,14 @@ import Image from "next/image";
 import fs from "fs";
 import path from "path";
 import Carousel from "../club/Carousel";
-import { formatFlowStartDate, pastFlowsCount, seatsWord } from "@/lib/flow";
-import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
+import { pastFlowsCount } from "@/lib/flow";
+import { getFlowConfig } from "@/features/intensive/repository";
 import "./camp.css";
 import { jetbrains, onest } from "@/lib/fonts";
 
-// Число мест живое — считается по заявкам на каждый показ страницы.
-// Без этого Next отдавал бы статику, и счётчик замерз бы на времени сборки.
+// Цена и число прошедших потоков берутся из конфига интенсива на каждый показ.
+// Дату старта и счётчик мест страница больше не показывает: формат индивидуальный,
+// старт в любой день (решение Игоря, 14.10.2026).
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = publicPageMetadata({
@@ -37,8 +38,6 @@ const TgIcon = () => (
 
 export default async function IntensivePage() {
   const flow = await getFlowConfig();
-  const seatsLeft = await getSeatsLeft(flow);
-  const seatsClosed = seatsLeft <= 0;
   const hasHeroPhoto = fs.existsSync(
     path.join(process.cwd(), "public/intensive/hero.jpg")
   );
@@ -74,19 +73,17 @@ export default async function IntensivePage() {
             {/* CONFIG plashka */}
             <div className="flow-band">
               <div className="fb">
-                <div className="k">Поток</div>
-                <div className="v">{flow.number}-й</div>
+                <div className="k">Формат</div>
+                <div className="v">Индивидуально</div>
               </div>
               <div className="fb">
                 <div className="k">Старт</div>
-                <div className="v">{formatFlowStartDate(flow.startDateIso)}</div>
+                <div className="v">В любой день</div>
               </div>
               <div className="fb">
-                <div className="k">{seatsClosed ? "Мест" : "Осталось"}</div>
+                <div className="k">Мест</div>
                 <div className="v">
-                  <span className="acc">
-                    {seatsClosed ? "Набор закрыт" : `${seatsLeft} ${seatsWord(seatsLeft)}`}
-                  </span>
+                  <span className="acc">5 в неделю</span>
                 </div>
               </div>
             </div>
@@ -726,17 +723,15 @@ export default async function IntensivePage() {
           </div>
           <div className="band" style={{ marginBottom: "30px" }}>
             <div className="bandi">
-              <div className="v">Раз в 2-3 недели</div>
-              <div className="k">интенсив запускается потоками</div>
+              <div className="v">Старт в любой день</div>
+              <div className="k">без потоков и ожидания набора</div>
             </div>
             <div className="bandi">
-              <div className="v">Набор закрывается</div>
-              <div className="k">в течение часа после старта</div>
+              <div className="v">Индивидуально</div>
+              <div className="k">план только под тебя</div>
             </div>
             <div className="bandi">
-              <div className="v">
-                Всего {flow.seatsTotal} {seatsWord(flow.seatsTotal)}
-              </div>
+              <div className="v">5 человек в неделю</div>
               <div className="k">каждого веду лично</div>
             </div>
           </div>
@@ -780,18 +775,11 @@ export default async function IntensivePage() {
         <div className="wrap">
           <div className="final">
             <span className="urg">
-              {seatsClosed ? (
-                <>&#9203; Набор в этот поток закрыт</>
-              ) : (
-                <>
-                  &#9203; Осталось {seatsLeft} {seatsWord(seatsLeft)} в{" "}
-                  {flow.number}-м потоке
-                </>
-              )}
+              &#9203; Беру 5 человек в неделю
             </span>
             <h2>Хочешь бегать правильно и улучшать результаты?</h2>
             <p>
-              Записывайся сейчас, чтобы точно занять своё место в потоке.
+              Записывайся сейчас, и начнём уже на этой неделе.
               Отвечу лично и всё расскажу.
             </p>
             <a href={TG_LINK} className="btn btn--tg btn--lg">
