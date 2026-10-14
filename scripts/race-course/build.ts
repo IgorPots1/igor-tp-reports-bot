@@ -15,6 +15,8 @@
  *   --start <HH:MM>          час старта по местному времени (по умолчанию 10:00)
  *   --organizer-gain <m>     набор по данным организатора; не указан, значит «не указана»
  *   --source-kind/--source-url/--source-note   откуда трек (в публичный JSON)
+ *   --variant <slug>         дистанция многодистанционного старта (например 30k): файл <safe_id>-<slug>.json,
+ *                            свой профиль; без него один разбор на старт, как раньше
  *
  * Пишет src/data/race-courses/<safe_id>.json (публичный, без персональных данных),
  * обновляет src/data/race-courses/index.json (только publish=true, для кнопки в боте)
@@ -41,7 +43,7 @@ const MAX_TRACK_POINTS = 600;
 const WIND_YEARS: [number, number] = [2016, 2025];
 /** Длина трека против заявленной дистанции: больше этого, значит трек не тот или неполный. */
 const LENGTH_TOLERANCE = 0.1;
-const DATA_DIR = path.join(process.cwd(), "src", "data", "race-courses");
+const DATA_DIR_DEFAULT = path.join(process.cwd(), "src", "data", "race-courses");
 const PROFILE_DIR = "/Users/igor/ops-log/races/profiles";
 
 const argv = process.argv.slice(2);
@@ -51,8 +53,13 @@ const opt = (name: string) => {
   return i > 0 ? argv[i + 1] : undefined;
 };
 const flag = (name: string) => argv.includes(`--${name}`);
+// --data-dir: писать в src/data другого рабочего дерева (запуск из каталога с node_modules)
+const DATA_DIR = opt("data-dir") ?? DATA_DIR_DEFAULT;
 
 const safeId = (id: string) => id.replace(/[^A-Za-z0-9_-]/g, "_");
+const variant = opt("variant");
+if (variant && !/^[a-z0-9]+$/.test(variant)) throw new Error("--variant: только латиница и цифры, например 30k");
+const slug = (id: string) => safeId(id) + (variant ? `-${variant}` : "");
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
 async function main() {
@@ -103,7 +110,7 @@ async function main() {
   const fc = forecastDue ? await fetchForecast(startPoint, date, hour) : null;
   const forecast = fc ? { speedMs: r1(fc.speed), dir: Math.round(fc.dir), dirLabel: windStats([fc], 1).dirLabel, gustMs: fc.gust != null ? r1(fc.gust) : null } : null;
 
-  const outFile = path.join(DATA_DIR, `${safeId(raceId)}.json`);
+  const outFile = path.join(DATA_DIR, `${slug(raceId)}.json`);
   mkdirSync(DATA_DIR, { recursive: true });
 
   if (!line || line.length < 2) {
@@ -174,7 +181,7 @@ async function main() {
     + ` · ${checks.publish ? "публикуем" : "НЕ публикуем"}`;
   const img = await writeProfileImage(
     profileSvg({ title: name, subtitle, elevation: course.elevation, perKm: km, keyPoints: points }),
-    path.join(PROFILE_DIR, `${safeId(raceId)}.png`),
+    path.join(PROFILE_DIR, `${slug(raceId)}.png`),
   );
 
   console.log(JSON.stringify({
@@ -184,7 +191,8 @@ async function main() {
   }, null, 2));
 }
 
-/** index.json: какие старты имеют опубликованный разбор (его читает бот). */
+/** index.json: какие разборы опубликованы (его читает бот). Ключ — slug: у старта с несколькими
+ *  дистанциями их может быть несколько, бот берёт первый. */
 function updateIndex(id: string, publish: boolean) {
   const file = path.join(DATA_DIR, "index.json");
   let list: { raceId: string; slug: string }[] = [];
@@ -193,8 +201,8 @@ function updateIndex(id: string, publish: boolean) {
   } catch {
     list = [];
   }
-  list = list.filter((x) => x.raceId !== id);
-  if (publish) list.push({ raceId: id, slug: safeId(id) });
+  list = list.filter((x) => x.slug !== slug(id));
+  if (publish) list.push({ raceId: id, slug: slug(id) });
   list.sort((a, b) => a.raceId.localeCompare(b.raceId));
   writeFileSync(file, JSON.stringify(list, null, 1) + "\n");
 }
