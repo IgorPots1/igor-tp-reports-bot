@@ -28,6 +28,7 @@ import { resolve } from "node:path";
 import { fetchPage } from "./lib/fetch";
 import { CHINESE, WAVES, isPriorityLine, loadAllowedModels, newerGeneration, type AllowedModel } from "./lib/allowed-models";
 import { SOURCES, type SourceId } from "./lib/sources";
+import { TERMS } from "./lib/terms";
 import { OPPOSITE, THESIS_FIELD } from "./lib/theses";
 import { mentionsWinter, plainText, publishedFrom, reviewBody } from "./lib/verdict-extract";
 import {
@@ -133,7 +134,26 @@ async function queue() {
   });
   if (skippedOld.length) console.log(`Старые поколения не берём: ${skippedOld.length} (${skippedOld.slice(0, 8).join("; ")}…)`);
   const chineseFirst = add > 0 ? undefined : fresh.find((m) => CHINESE.has(m.brandId));
-  const targets = [...new Set([...(chineseFirst ? [chineseFirst] : []), ...fresh])].slice(0, add > 0 ? add : limit);
+  /**
+   * --keys: точечный список, который встаёт ПЕРВЫМ, из любых разрешённых
+   * источников, а не только из волны (пачка 2: актуальные версии моделей,
+   * убранных из пачки 1 как устаревшие). Остальное добивается по приоритету.
+   */
+  const keysArg = args.indexOf("--keys");
+  const pinned = keysArg > -1
+    ? args[keysArg + 1].split(",").map((k) => {
+        const m = index.find((x) => x.key === k);
+        if (!m) throw new Error(`--keys: нет в индексе разрешённых источников: ${k}`);
+        return m;
+      }).filter((m) => !have.has(m.key))
+    : [];
+  const pinnedKeys = new Set(pinned.map((m) => m.key));
+  const targets = [
+    ...pinned,
+    ...[...new Set([...(chineseFirst ? [chineseFirst] : []), ...fresh])]
+      .filter((m) => !pinnedKeys.has(m.key))
+      .slice(0, add > 0 ? add : limit),
+  ];
   console.log(`Волна ${wave}: моделей ${models.length}, на двух источниках и больше ${models.filter((m) => nSrc(m) >= 2).length}`);
   const tasks: Task[] = [...existing];
   const tooOld: { key: string; newestReview: string }[] = [];
@@ -261,6 +281,14 @@ async function vetTask(t: Task, names: string[]) {
      * сигнал закрыть источник (наряд, п.6). Цитата сверяется с ПОЛНЫМ текстом
      * страницы, а не с телом обзора: подвал из тела вырезан.
      */
+    // Разрешающая фраза источника («копирование разрешено со ссылкой») — не
+    // запрет: на ней источник и прошёл гейт. Читатель Mountain-race записал её
+    // в terms_notice, и без этой проверки источник ушёл бы на закрытие.
+    const permit = TERMS[p.source]?.reading === "permits" ? TERMS[p.source]?.quote : null;
+    const normQ = (x: string) => x.replace(/\s+/g, " ").trim();
+    if (answer.terms_notice && permit && normQ(permit).includes(normQ(answer.terms_notice).slice(0, 60))) {
+      answer.terms_notice = null;
+    }
     if (answer.terms_notice) {
       const r = await fetchPage(p.source, p.url);
       const full = r.ok ? plainText(r.body) : "";
@@ -380,7 +408,14 @@ async function settle() {
     }
     const brandId = t.brandId ?? t.key.split("-")[0];
     const named = vt.modelNames.find(Boolean);
-    const canonical = named ? `${brandId}-${slugOf(named)}` : t.key;
+    // Технологические приставки — не часть имени: «Adizero Evo SL» и «Evo SL»,
+    // «Gel-Nimbus 27» и «Nimbus 27» — одна модель, иначе черновик задваивался.
+    const bare = (x: string) =>
+      slugOf(x)
+        .replace(/^(gel|fresh-foam-x|fresh-foam|fuelcell|air-zoom|zoom|adizero)-/, "")
+        // Одна модель под двумя именами: «FuelCell SuperComp Elite v4» = «SC Elite v4».
+        .replace(/^supercomp-elite/, "sc-elite");
+    const canonical = named ? `${brandId}-${bare(named)}` : t.key;
     const prep: Prepared = { t, vt, accepted: gate.passed, rejected: rejectedT, canonical, modelName: named ?? t.model };
     groups.set(canonical, [...(groups.get(canonical) ?? []), prep]);
   }
@@ -515,6 +550,9 @@ async function settle() {
     }
     // Отметка читателя «не беговая» — модель не идёт в черновики (наряд: вторая
     // волна читается с такими отметками прямо при чтении).
+    // Ни одна страница ещё не прочитана — записи нет вовсе: пустой черновик
+    // выглядел бы как модель, о которой обзоры молчат.
+    if (vt.unread > 0 && readSources.size === 0 && vt.notRunning.length === 0) continue;
     // Ни одна страница не оказалась обзором этой модели (сравнение «X vs Y»,
     // подборка) — черновика нет: пустая запись выглядела бы как модель без
     // данных, а это модель без обзора.

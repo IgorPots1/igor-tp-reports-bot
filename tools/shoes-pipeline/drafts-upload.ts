@@ -79,14 +79,33 @@ const supabase = createClient(url, key, { auth: { persistSession: false, autoRef
 
 const { data: existingRows, error: readErr } = await supabase.from(TABLE).select("id,batch,position,fields");
 if (readErr) throw new Error(`чтение ${TABLE}: ${readErr.message}`);
-const existing = new Map((existingRows ?? []).map((r) => [r.id as string, r]));
-let nextPos = Math.max(-1, ...[...existing.values()].filter((r) => r.batch > 0).map((r) => (r.batch - 1) * BATCH_SIZE + r.position)) + 1;
-
+/**
+ * Сопоставление по ОЧИЩЕННОМУ имени. 14.10.2026 имя стало сводиться без
+ * технологических приставок («Adizero Evo SL» = «Evo SL»), и id части уже
+ * загруженных моделей изменились бы. Без этого загрузка создала бы дубли рядом
+ * со строками, где Игорь уже принимает решения. Есть строка с тем же
+ * очищенным именем — берётся её прежний id.
+ */
+const bareId = (id: string) => {
+  const [brand, ...rest] = id.split("-");
+  return `${brand}-${rest
+    .join("-")
+    .replace(/^(gel|fresh-foam-x|fresh-foam|fuelcell|air-zoom|zoom|adizero)-/, "")
+    .replace(/^supercomp-elite/, "sc-elite")}`;
+};
+const existingRaw = new Map((existingRows ?? []).map((r) => [r.id as string, r]));
+const byBare = new Map([...existingRaw.keys()].map((id) => [bareId(id), id]));
+for (const r of records) {
+  const legacy = byBare.get(bareId(r.id));
+  if (legacy && legacy !== r.id) r.id = legacy;
+}
+const existing = existingRaw;
 /** Поля, по которым Игорь уже решил, остаются его — обновляются только draft. */
 function merge(old: CoachDraft["fields"] | undefined, fresh: CoachDraft["fields"]): CoachDraft["fields"] {
+  if (!old) return fresh;
   const out: CoachDraft["fields"] = { ...fresh };
   for (const k of FIELD_KEYS) {
-    const prev = old?.[k] as DraftField | undefined;
+    const prev = old[k] as DraftField | undefined;
     if (prev && prev.status !== "draft") out[k] = prev;
   }
   return out;
@@ -104,21 +123,85 @@ function newerNote(r: VerdictRecord): string | null {
   return newer ? `в индексе есть новее: ${newer.slice(brandId.length + 1)}` : null;
 }
 
+/**
+ * Раскладка по пачкам. Пачка 1 и всё, что Игорь уже подтвердил или убрал, —
+ * на своих местах. Остальное раскладывается заново с пачки 2: сначала --front
+ * (актуальные версии вместо убранных как устаревшие) и --manual (пустые
+ * карточки для версий, которых нет ни в одном источнике), потом остальное по
+ * приоритету основных линеек.
+ *
+ *   --front id1,id2   --manual "Nike|Pegasus 42 Gore-Tex;Brand|Model"
+ */
+const argOf = (flag: string) => {
+  const i = process.argv.indexOf(flag);
+  return i > -1 ? process.argv[i + 1] : null;
+};
+const front = (argOf("--front") ?? "").split(",").filter(Boolean);
+const manualFront = (argOf("--manual") ?? "")
+  .split(";")
+  .filter(Boolean)
+  .map((x) => {
+    const [brand, model] = x.split("|");
+    return { brand, model, id: `manual-${brand}-${model}`.toLowerCase().replace(/[^a-z0-9а-яё]+/gi, "-") };
+  });
+
+type Slot = { batch: number; position: number };
+const fixed = new Map<string, Slot>();
+const { data: statusRows, error: stErr } = await supabase.from(TABLE).select("id,batch,position,status,kind");
+if (stErr) throw new Error(`чтение статусов ${TABLE}: ${stErr.message}`);
+for (const r of statusRows ?? []) {
+  if (r.batch <= 1 || r.status !== "draft") fixed.set(r.id, { batch: r.batch, position: r.position });
+}
+const taken = new Set([...fixed.values()].map((x) => `${x.batch}:${x.position}`));
+const layout = new Map<string, Slot>();
+let cursor = 0;
+const place = (id: string) => {
+  if (fixed.has(id) || layout.has(id)) return;
+  while (taken.has(`${Math.floor(cursor / BATCH_SIZE) + 2}:${cursor % BATCH_SIZE}`)) cursor++;
+  layout.set(id, { batch: Math.floor(cursor / BATCH_SIZE) + 2, position: cursor % BATCH_SIZE });
+  cursor++;
+};
+const recordIds = new Set(ordered.map((r) => r.id));
+for (const id of front) {
+  if (!recordIds.has(id)) console.log(`  --front: ${id} нет среди черновиков (не прочитан или убран) — пропускаю`);
+  else place(id);
+}
+for (const m of manualFront) place(m.id);
+// Модели, у которых в индексе есть поколение новее, — в конец: место в пачке
+// занимают рабочие модели, а устаревшую Игорь уберёт кнопкой там, где она есть.
+for (const r of ordered) if (!newerNote(r)) place(r.id);
+for (const r of ordered) place(r.id);
+
 const rows: Record<string, unknown>[] = [];
 for (const r of ordered) {
   const prev = existing.get(r.id);
-  const pos = prev ? (prev.batch - 1) * BATCH_SIZE + prev.position : nextPos++;
-  const fields = merge(prev?.fields, fieldsOf(r));
+  const slot = fixed.get(r.id) ?? layout.get(r.id)!;
   rows.push({
     id: r.id,
     brand: r.brand,
     model: r.model,
     kind: "reviewed",
-    batch: Math.floor(pos / BATCH_SIZE) + 1,
-    position: pos % BATCH_SIZE,
+    batch: slot.batch,
+    position: slot.position,
     confidence: r.confidence,
     note: [r.confidence === "low" ? "один источник" : null, newerNote(r)].filter(Boolean).join(" · ") || null,
-    fields: prev ? fields : fieldsOf(r),
+    fields: merge(prev?.fields, fieldsOf(r)),
+    updated_at: new Date().toISOString(),
+  });
+}
+for (const m of manualFront) {
+  if (existing.has(m.id)) continue;
+  const slot = layout.get(m.id)!;
+  rows.push({
+    id: m.id,
+    brand: m.brand,
+    model: m.model,
+    kind: "manual",
+    batch: slot.batch,
+    position: slot.position,
+    confidence: null,
+    note: "Актуальной версии нет ни в одном разрешённом источнике — пустая карточка, заполни сам.",
+    fields: Object.fromEntries(FIELD_KEYS.map((k) => [k, { value: null, draft_value: null, status: "draft", evidence: [] }])),
     updated_at: new Date().toISOString(),
   });
 }
@@ -137,18 +220,31 @@ for (const { brand, models } of CHINESE_MANUAL) {
       position: cn++,
       confidence: null,
       note: "Название из общих знаний, не из источника — проверь и поправь. Вердиктов нет: заполни сам.",
+      fields: Object.fromEntries(FIELD_KEYS.map((k) => [k, { value: null, draft_value: null, status: "draft", evidence: [] }])),
       // Набор полей у всех строк пакетной загрузки одинаковый: недостающее
       // PostgREST заполняет null, и not null на updated_at ронял всю загрузку.
       updated_at: new Date().toISOString(),
-      fields: Object.fromEntries(FIELD_KEYS.map((k) => [k, { value: null, draft_value: null, status: "draft", evidence: [] }])),
     });
   }
 }
 
 const byBatch = rows.reduce<Record<number, number>>((m, r) => ((m[r.batch as number] = (m[r.batch as number] ?? 0) + 1), m), {});
 console.log(`К загрузке: ${rows.length} (по пачкам: ${JSON.stringify(byBatch)}); уже в базе: ${existing.size}`);
-if (DRY) process.exit(0);
+if (DRY) {
+  for (const r of rows.filter((x) => (x.batch as number) >= 2).sort((a, b) => (a.batch as number) * 100 + (a.position as number) - ((b.batch as number) * 100 + (b.position as number)))) {
+    console.log(`  ${r.batch}:${r.position} ${r.brand} ${r.model}`);
+  }
+  process.exit(0);
+}
 
 const { error } = await supabase.from(TABLE).upsert(rows, { onConflict: "id" });
 if (error) throw new Error(`загрузка ${TABLE}: ${error.message}`);
+// Уже заведённые пустые карточки из --manual: переносится только место в
+// пачке, содержимое не трогается — его, возможно, уже заполняет Игорь.
+for (const m of manualFront) {
+  const slot = layout.get(m.id);
+  if (!existing.has(m.id) || !slot) continue;
+  const { error: mvErr } = await supabase.from(TABLE).update({ batch: slot.batch, position: slot.position }).eq("id", m.id);
+  if (mvErr) throw new Error(`место пустой карточки ${m.id}: ${mvErr.message}`);
+}
 console.log("Загружено. Страница: /admin/shoes-review");
