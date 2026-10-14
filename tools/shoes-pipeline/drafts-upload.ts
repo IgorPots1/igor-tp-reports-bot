@@ -17,7 +17,7 @@ import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
 import type { CoachDraft, DraftField, DraftFieldKey } from "../../src/features/shoes/coach-drafts";
-import { isPriorityLine } from "./lib/allowed-models";
+import { isPriorityLine, loadAllowedModels, newerGeneration } from "./lib/allowed-models";
 import type { VerdictRecord } from "./lib/verdict-types";
 
 const DRY = process.argv.includes("--dry");
@@ -92,6 +92,18 @@ function merge(old: CoachDraft["fields"] | undefined, fresh: CoachDraft["fields"
   return out;
 }
 
+/**
+ * Поколение: если в индексе есть более новая версия той же линейки, это
+ * видно в заметке модели — Игорь решает кнопкой «Убрать», устарела ли она.
+ */
+const index = loadAllowedModels();
+const slug = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+function newerNote(r: VerdictRecord): string | null {
+  const brandId = r.id.split("-")[0];
+  const newer = newerGeneration({ key: r.id, brandId, brand: r.brand, model: slug(r.model), links: [] }, index);
+  return newer ? `в индексе есть новее: ${newer.slice(brandId.length + 1)}` : null;
+}
+
 const rows: Record<string, unknown>[] = [];
 for (const r of ordered) {
   const prev = existing.get(r.id);
@@ -105,7 +117,7 @@ for (const r of ordered) {
     batch: Math.floor(pos / BATCH_SIZE) + 1,
     position: pos % BATCH_SIZE,
     confidence: r.confidence,
-    note: r.confidence === "low" ? "один источник" : null,
+    note: [r.confidence === "low" ? "один источник" : null, newerNote(r)].filter(Boolean).join(" · ") || null,
     fields: prev ? fields : fieldsOf(r),
     updated_at: new Date().toISOString(),
   });

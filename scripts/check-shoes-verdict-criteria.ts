@@ -17,6 +17,7 @@ import {
   THESES_BEST_FOR,
   THESES_NOT_FOR,
   applyDecision,
+  batchProgress,
   draftIsConfirmed,
   type CoachDraft,
 } from "../src/features/shoes/coach-drafts";
@@ -82,6 +83,8 @@ console.log("\n=== страница проверки: решения Игоря 
     JSON.stringify([...THESES_BEST_FOR]) === JSON.stringify(ALL_PRO) && JSON.stringify([...THESES_NOT_FOR]) === JSON.stringify(ALL_CON),
     "словарь тезисов страницы совпадает со словарём конвейера"
   );
+  const p = batchProgress([{ status: "confirmed" }, { status: "draft" }, { status: "excluded" }, { status: "excluded" }]);
+  check(p.total === 2 && p.confirmed === 1 && p.excluded === 2, "убранные из каталога в счётчик пачки не входят");
 }
 
 console.log("\n=== вес бегуна от 85 кг ===");

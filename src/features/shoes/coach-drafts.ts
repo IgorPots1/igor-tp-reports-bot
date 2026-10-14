@@ -180,8 +180,31 @@ export type CoachDraft = {
   confidence: "normal" | "low" | null;
   note: string | null;
   fields: Partial<Record<DraftFieldKey, DraftField>>;
-  status: "draft" | "confirmed";
+  /**
+   * excluded — Игорь убрал модель из каталога целиком (устарела, не беговая,
+   * дубль). В подбор не попадает, счётчик пачки её не учитывает.
+   */
+  status: "draft" | "confirmed" | "excluded";
+  excluded_reason: ExcludeReason | null;
 };
+
+export type ExcludeReason = "outdated" | "not_running" | "duplicate";
+
+export const EXCLUDE_REASONS: { value: ExcludeReason; label: string }[] = [
+  { value: "outdated", label: "устарела, есть новая версия" },
+  { value: "not_running", label: "не беговая" },
+  { value: "duplicate", label: "дубль" },
+];
+
+/** Сколько моделей пачки в работе и сколько подтверждено: убранные не считаются. */
+export function batchProgress(drafts: Pick<CoachDraft, "status">[]): { total: number; confirmed: number; excluded: number } {
+  const excluded = drafts.filter((d) => d.status === "excluded").length;
+  return {
+    total: drafts.length - excluded,
+    confirmed: drafts.filter((d) => d.status === "confirmed").length,
+    excluded,
+  };
+}
 
 /** Модель подтверждена, когда ни одного поля в статусе draft не осталось. */
 export function draftIsConfirmed(fields: CoachDraft["fields"]): boolean {

@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { fetchPage } from "./lib/fetch";
-import { CHINESE, WAVES, isPriorityLine, loadAllowedModels, type AllowedModel } from "./lib/allowed-models";
+import { CHINESE, WAVES, isPriorityLine, loadAllowedModels, newerGeneration, type AllowedModel } from "./lib/allowed-models";
 import { SOURCES, type SourceId } from "./lib/sources";
 import { OPPOSITE, THESIS_FIELD } from "./lib/theses";
 import { mentionsWinter, plainText, publishedFrom, reviewBody } from "./lib/verdict-extract";
@@ -121,7 +121,17 @@ async function queue() {
   const add = num("--add", 0);
   const existing: Task[] = add > 0 && existsSync(QUEUE_PATH) ? JSON.parse(readFileSync(QUEUE_PATH, "utf8")) : [];
   const have = new Set(existing.map((t) => t.key));
-  const fresh = ranked.filter((m) => !have.has(m.key));
+  // Поколение: при более новой версии той же линейки в индексе (по ВСЕМ
+  // разрешённым источникам, не только по волне) старая в пачку не идёт.
+  const index = loadAllowedModels();
+  const skippedOld: string[] = [];
+  const fresh = ranked.filter((m) => {
+    if (have.has(m.key)) return false;
+    const newer = newerGeneration(m, index);
+    if (newer) skippedOld.push(`${m.key} → есть ${newer}`);
+    return !newer;
+  });
+  if (skippedOld.length) console.log(`Старые поколения не берём: ${skippedOld.length} (${skippedOld.slice(0, 8).join("; ")}…)`);
   const chineseFirst = add > 0 ? undefined : fresh.find((m) => CHINESE.has(m.brandId));
   const targets = [...new Set([...(chineseFirst ? [chineseFirst] : []), ...fresh])].slice(0, add > 0 ? add : limit);
   console.log(`Волна ${wave}: моделей ${models.length}, на двух источниках и больше ${models.filter((m) => nSrc(m) >= 2).length}`);

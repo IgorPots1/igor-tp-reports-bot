@@ -4,15 +4,18 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 
 import {
   DRAFT_FIELDS,
+  EXCLUDE_REASONS,
   applyDecision,
+  batchProgress,
   draftIsConfirmed,
   type CoachDraft,
   type DraftField,
   type DraftFieldKey,
+  type ExcludeReason,
   type FieldDef,
 } from "@/features/shoes/coach-drafts";
 
-import { decideShoeDraftField } from "./actions";
+import { decideShoeDraftField, excludeShoeDraft } from "./actions";
 import styles from "./review.module.css";
 
 /**
@@ -22,6 +25,7 @@ import styles from "./review.module.css";
  *
  * Клавиши: ↑/↓ — поле; 1 или Enter — «верно»; 2 или E — «поправить»;
  * 3 или N — «не знаю»; ←/→ — модель. В правке: Enter — сохранить, Esc — отмена.
+ * X — «убрать из каталога»: затем 1/2/3 — причина, Esc — отмена.
  */
 
 const STATUS_WORD: Record<string, string> = { draft: "черновик", confirmed: "верно", unknown: "не знаю" };
@@ -34,14 +38,16 @@ function show(def: FieldDef, value: unknown): string {
 
 export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
   const [drafts, setDrafts] = useState(initial);
-  const [i, setI] = useState(() => Math.max(0, initial.findIndex((d) => d.status !== "confirmed")));
+  const [i, setI] = useState(() => Math.max(0, initial.findIndex((d) => d.status === "draft")));
+  const [excluding, setExcluding] = useState(false);
   const [fieldIx, setFieldIx] = useState(0);
   const [editing, setEditing] = useState<{ key: DraftFieldKey; value: unknown } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
   const draft = drafts[i];
-  const confirmedCount = drafts.filter((d) => d.status === "confirmed").length;
+  // Убранные из каталога в счётчик пачки не входят.
+  const progress = batchProgress(drafts);
   const def = DRAFT_FIELDS[fieldIx];
 
   const replace = (next: CoachDraft) => setDrafts((all) => all.map((d) => (d.id === next.id ? next : d)));
@@ -66,6 +72,24 @@ export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
     [drafts, i]
   );
 
+  const exclude = useCallback(
+    (reason: ExcludeReason | null) => {
+      const before = drafts[i];
+      replace({ ...before, status: reason ? "excluded" : draftIsConfirmed(before.fields) ? "confirmed" : "draft", excluded_reason: reason });
+      setExcluding(false);
+      setError(null);
+      startTransition(async () => {
+        const res = await excludeShoeDraft({ id: before.id, reason });
+        if (res.ok) replace(res.draft);
+        else {
+          replace(before);
+          setError(`Не сохранилось (${before.model}): ${res.error}`);
+        }
+      });
+    },
+    [drafts, i]
+  );
+
   const startEdit = useCallback(() => {
     const f = draft.fields[def.key];
     setEditing({ key: def.key, value: f?.value ?? (def.kind === "many" ? [] : null) });
@@ -74,6 +98,13 @@ export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
+      if (excluding) {
+        const ix = ["1", "2", "3"].indexOf(e.key);
+        if (ix > -1) exclude(EXCLUDE_REASONS[ix].value);
+        else if (e.key === "Escape") setExcluding(false);
+        e.preventDefault();
+        return;
+      }
       if (editing) {
         if (e.key === "Escape") setEditing(null);
         if (e.key === "Enter" && tag !== "TEXTAREA") {
@@ -84,6 +115,12 @@ export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
         return;
       }
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (e.key.toLowerCase() === "x" || e.key.toLowerCase() === "ч") {
+        if (drafts[i]?.status !== "excluded") setExcluding(true);
+        e.preventDefault();
+        return;
+      }
+      if (drafts[i]?.status === "excluded" && !e.key.startsWith("Arrow")) return;
       if (e.key === "ArrowDown") setFieldIx((f) => Math.min(DRAFT_FIELDS.length - 1, f + 1));
       else if (e.key === "ArrowUp") setFieldIx((f) => Math.max(0, f - 1));
       else if (e.key === "ArrowRight") {
@@ -100,7 +137,7 @@ export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [decide, def, drafts.length, editing, startEdit]);
+  }, [decide, def, drafts, editing, excluding, exclude, i, startEdit]);
 
   const sources = useMemo(() => {
     const seen = new Map<string, string>();
@@ -115,8 +152,9 @@ export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
   return (
     <section className="admin-section">
       <div className={styles.counter}>
-        Подтверждено {confirmedCount} из {drafts.length} · модель {i + 1} из {drafts.length}
-        <span className="admin-muted"> · ↑↓ поле · 1/Enter верно · 2/E поправить · 3/N не знаю · ←→ модель</span>
+        Подтверждено {progress.confirmed} из {progress.total}
+        {progress.excluded ? ` · убрано ${progress.excluded}` : ""} · модель {i + 1} из {drafts.length}
+        <span className="admin-muted"> · ↑↓ поле · 1/Enter верно · 2/E поправить · 3/N не знаю · X убрать · ←→ модель</span>
       </div>
       {error ? <p className={styles.error}>{error}</p> : null}
 
@@ -132,6 +170,27 @@ export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
           </div>
         </div>
         {draft.note ? <p className="admin-hint">{draft.note}</p> : null}
+        {draft.status === "excluded" ? (
+          <div className={styles.excluded}>
+            Убрана из каталога: {EXCLUDE_REASONS.find((r) => r.value === draft.excluded_reason)?.label ?? "причина не указана"}.
+            В подбор не попадёт.{" "}
+            <button type="button" onClick={() => exclude(null)}>Вернуть в каталог</button>
+          </div>
+        ) : excluding ? (
+          <div className={styles.excluded}>
+            Убрать из каталога — причина:{" "}
+            {EXCLUDE_REASONS.map((r, k) => (
+              <button key={r.value} type="button" onClick={() => exclude(r.value)}>
+                {k + 1} · {r.label}
+              </button>
+            ))}{" "}
+            <button type="button" onClick={() => setExcluding(false)}>Отмена (Esc)</button>
+          </div>
+        ) : (
+          <div className={styles.buttons}>
+            <button type="button" onClick={() => setExcluding(true)}>Убрать из каталога (X)</button>
+          </div>
+        )}
         {draft.kind === "manual" ? (
           <ManualName draft={draft} onSaved={replace} onError={setError} />
         ) : null}
@@ -167,7 +226,7 @@ export default function ReviewScreen({ initial }: { initial: CoachDraft[] }) {
                     </a>
                   </blockquote>
                 ))}
-                {active ? (
+                {active && draft.status !== "excluded" ? (
                   <div className={styles.buttons}>
                     {editing && editing.key === f.key ? (
                       <>

@@ -9,8 +9,8 @@ import {
   isAdminAccessBypassedForLocalDev,
   normalizeAdminRedirectPath,
 } from "@/lib/admin-auth";
-import { DRAFT_FIELDS, type CoachDraft, type DraftFieldKey } from "@/features/shoes/coach-drafts";
-import { decideDraftField } from "@/features/shoes/coach-drafts-repository";
+import { DRAFT_FIELDS, EXCLUDE_REASONS, type CoachDraft, type DraftFieldKey, type ExcludeReason } from "@/features/shoes/coach-drafts";
+import { decideDraftField, excludeDraft } from "@/features/shoes/coach-drafts-repository";
 
 async function ensureAdminAccess(redirectTarget: string): Promise<void> {
   if (isAdminAccessBypassedForLocalDev()) return;
@@ -38,6 +38,22 @@ export async function decideShoeDraftField(input: {
   try {
     const draft = await decideDraftField({ ...input, value: input.value ?? null });
     return { ok: true, draft };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/** «Убрать из каталога» с причиной; reason null — вернуть модель в работу. */
+export async function excludeShoeDraft(input: {
+  id: string;
+  reason: ExcludeReason | null;
+}): Promise<{ ok: true; draft: CoachDraft } | { ok: false; error: string }> {
+  await ensureAdminAccess("/admin/shoes-review");
+  if (input.reason !== null && !EXCLUDE_REASONS.some((r) => r.value === input.reason)) {
+    return { ok: false, error: "неизвестная причина" };
+  }
+  try {
+    return { ok: true, draft: await excludeDraft(input.id, input.reason) };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

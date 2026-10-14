@@ -93,3 +93,42 @@ export function isPriorityLine(model: string): boolean {
   const m = `-${model.toLowerCase().replace(/v(\d)/g, "-$1")}-`;
   return PRIORITY_LINES.some((line) => m.includes(`-${line}-`) || m.includes(`-${line.replace("-", "")}-`));
 }
+
+/**
+ * Линейка и поколение из имени модели: «clifton-9» → clifton, 9;
+ * «gel-nimbus-27» → gel-nimbus, 27; «1080v14» → 1080, 14; «pegasus-41-gore» →
+ * pegasus, 41 (хвост после номера — исполнение, не линейка).
+ */
+export function lineAndVersion(model: string): { line: string; version: number } | null {
+  const toks = model.toLowerCase().replace(/(\d)v(\d)/g, "$1-$2").replace(/v(\d+)\b/g, "$1").split(/[^a-z0-9]+/).filter(Boolean);
+  for (let k = toks.length - 1; k > 0; k--) {
+    if (/^\d{1,2}$/.test(toks[k])) {
+      // Технологические приставки — не часть линейки: «gel-nimbus» и «nimbus»,
+      // «fresh-foam-x-1080» и «1080» — одна линейка, иначе Nimbus 26 не видел 27.
+      const line = toks
+        .slice(0, k)
+        .join("-")
+        .replace(/^(gel|fresh-foam-x|fresh-foam|fuelcell|air-zoom|zoom|adizero|nitro)-/, "");
+      return { line, version: Number(toks[k]) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Есть ли в индексе более новое поколение той же линейки того же бренда
+ * (решение Игоря, 14.10.2026): Clifton 9 при Clifton 10 или 11 в пачку не
+ * ставится — читать старое поколение, когда в продаже новое, незачем.
+ */
+export function newerGeneration(m: AllowedModel, index: AllowedModel[]): string | null {
+  const lv = lineAndVersion(m.model);
+  if (!lv) return null;
+  let best: { version: number; key: string } | null = null;
+  for (const o of index) {
+    if (o.brandId !== m.brandId) continue;
+    const ov = lineAndVersion(o.model);
+    if (!ov || ov.line !== lv.line || ov.version <= lv.version) continue;
+    if (!best || ov.version > best.version) best = { version: ov.version, key: o.key };
+  }
+  return best ? best.key : null;
+}

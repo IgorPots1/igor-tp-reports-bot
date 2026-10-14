@@ -25,6 +25,7 @@ import {
   type ReaderAnswer,
 } from "./lib/verdict-read";
 import { ALL_CON, ALL_PRO, OPPOSITE, THESIS_FIELD } from "./lib/theses";
+import { lineAndVersion, newerGeneration, type AllowedModel } from "./lib/allowed-models";
 
 let n = 0;
 const ok = (name: string, fn: () => void) => {
@@ -227,6 +228,19 @@ ok("«не для тяжёлых» — только прямая цитата о
   assert.ok(heavyThesisBasis("Долговечность подошвы вызывает вопросы, особенно для тяжёлых бегунов."));
   assert.equal(heavyThesisBasis("Heavier runners may want to avoid it, as the foam bottoms out."), null);
   assert.equal(heavyThesisBasis("Тяжёлым бегунам эта модель не подойдёт."), null);
+});
+
+ok("поколение: Clifton 9 при Clifton 11 в индексе — старое, в пачку не идёт", () => {
+  // Решение Игоря 14.10.2026: при более новой версии той же линейки старую не ставим.
+  const m = (brandId: string, model: string): AllowedModel => ({ key: `${brandId}-${model}`, brandId, brand: brandId, model, links: [] });
+  const idx = [m("hoka", "clifton-9"), m("hoka", "clifton-11"), m("brooks", "ghost-16"), m("brooks", "ghost-18"), m("asics", "gel-nimbus-27")];
+  assert.equal(newerGeneration(idx[0], idx), "hoka-clifton-11");
+  assert.equal(newerGeneration(idx[2], idx), "brooks-ghost-18");
+  assert.equal(newerGeneration(idx[1], idx), null);
+  assert.equal(newerGeneration(m("asics", "nimbus-26"), idx), "asics-gel-nimbus-27", "приставка gel- — та же линейка");
+  assert.equal(newerGeneration(m("brooks", "ghost-max-2"), idx), null, "Ghost Max — другая линейка");
+  assert.equal(newerGeneration(m("saucony", "clifton-9"), idx), null, "чужой бренд — не поколение");
+  assert.deepEqual(lineAndVersion("pegasus-41-gore"), { line: "pegasus", version: 41 });
 });
 
 console.log(`\ncheck-verdict-read: ${n} проверок прошли`);
