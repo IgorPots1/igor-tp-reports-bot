@@ -977,6 +977,15 @@ async function main() {
     assert.ok(calls.some((c) => /по дням<\/b>/.test(String(c.params.text))), "экран «По дням» у тренера");
   }
 
+  // ── разбор трассы (пилот 14.10.2026): кнопка в карточке только там, где разбор опубликован ──
+  {
+    const fox = race("probeg:75594", "Mad Fox Ultra", "2026-12-18", "Переславль-Залесский", "trail", [40.7]);
+    const withCourse = buttons({ params: T.raceScreen(fox, "Переславль-Залесский", false, null, null, "sz", false) as unknown as Record<string, unknown> } as Call);
+    assert.equal(withCourse.find((b) => b.text === "Разбор трассы")?.url, "https://igorp.run/races/probeg_75594/trassa");
+    const noCourse = buttons({ params: T.raceScreen(TRAIL, "Москва", false, null, null, "sz", false) as unknown as Record<string, unknown> } as Call);
+    assert.ok(!noCourse.some((b) => b.text === "Разбор трассы"), "нет разбора — нет кнопки");
+  }
+
   // ── подпись ссылок /go/ ────────────────────────────────────────────────────
   process.env.RACES_BOT_TOKEN = "123456:TEST-token";
   const { goLink, goUser } = await import("@/features/races-bot/runtime");

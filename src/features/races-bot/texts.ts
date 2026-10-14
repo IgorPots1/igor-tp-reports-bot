@@ -4,6 +4,7 @@
 
 import { MONTHS_GEN, TYPE_LABEL, distPills, plural, type Race } from "@/app/races/races-logic";
 import { SITE_URL } from "@/lib/site";
+import { courseUrl } from "@/features/race-course";
 
 import {
   DIST_BUTTONS,
@@ -789,6 +790,9 @@ export function raceScreen(
   if (regUrl) links.push({ text: "Регистрация", url: regUrl });
   if (siteUrl) links.push({ text: "Сайт", url: siteUrl });
   if (links.length) rows.push(links);
+  // Разбор трассы (пилот 14.10.2026): кнопка, только если для старта он собран.
+  const course = courseUrl(r.id);
+  if (course) rows.push([{ text: "Разбор трассы", url: course }]);
   if (consult) rows.push([{ text: "Бесплатная консультация", callback_data: `consult:${code}` }]);
   rows.push([{ text: "← К списку", callback_data: back }]);
   return {
