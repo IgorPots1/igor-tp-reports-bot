@@ -1,6 +1,42 @@
 [
  {
+  "raceId": "probeg:73995",
+  "slug": "probeg_73995-30k"
+ },
+ {
+  "raceId": "probeg:73995",
+  "slug": "probeg_73995-19k"
+ },
+ {
+  "raceId": "probeg:73995",
+  "slug": "probeg_73995-9k"
+ },
+ {
+  "raceId": "probeg:73995",
+  "slug": "probeg_73995-3k"
+ },
+ {
   "raceId": "probeg:75594",
   "slug": "probeg_75594"
+ },
+ {
+  "raceId": "probeg:77976",
+  "slug": "probeg_77976-100k"
+ },
+ {
+  "raceId": "probeg:77976",
+  "slug": "probeg_77976-30k"
+ },
+ {
+  "raceId": "probeg:77976",
+  "slug": "probeg_77976-10k"
+ },
+ {
+  "raceId": "probeg:77976",
+  "slug": "probeg_77976-5k"
+ },
+ {
+  "raceId": "probeg:77976",
+  "slug": "probeg_77976-50k"
  }
 ]
