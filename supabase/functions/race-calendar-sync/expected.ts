@@ -15,7 +15,7 @@ export type PastRace = {
   site: string | null;
 };
 
-export type FutureRow = { id: string; name: string; date_start: string; city: string | null; region: string | null };
+export type FutureRow = { id: string; name: string; date_start: string; city: string | null; region: string | null; race_type?: string | null };
 
 export type ExpectedRow = {
   id: string; // probeg:<sid> прошлого проведения
@@ -103,12 +103,33 @@ export function keyTokens(name: string): Set<string> {
   );
 }
 
-function overlap(a: Set<string>, b: Set<string>): number {
+/** Доля слов a, нашедшихся в b (точно или по общему началу из 5 букв). */
+function cover(a: Set<string>, b: Set<string>): number {
   if (!a.size || !b.size) return 0;
   let n = 0;
   for (const w of a) if ([...b].some((x) => x === w || (w.length > 4 && x.length > 4 && (x.startsWith(w.slice(0, 5)) || w.startsWith(x.slice(0, 5)))))) n++;
-  return n / Math.min(a.size, b.size);
+  return n / a.size;
 }
+
+/**
+ * Похожесть названий в обе стороны: меньшая из долей. Было (до 15.10.2026): доля от меньшего ключа,
+ * и «Завидово» целиком входил в «IRONSTAR Завидово», а «DAB Vertical Summer» — в «… Summer Night».
+ */
+export function nameScore(a: string, b: string): number {
+  const A = keyTokens(a), B = keyTokens(b);
+  return Math.min(cover(A, B), cover(B, A));
+}
+
+// Разновидность одной серии: ночной, зимний, летний… Слово есть только с одной стороны — это другой
+// старт серии, а не следующее проведение («DAB Vertical Summer» ≠ «DAB Vertical Summer Night»).
+const VARIANTS: [string, RegExp][] = [
+  ["night", /night|ночн|ночь|полуночн/i],
+  ["winter", /winter|зимн|зима/i],
+  ["spring", /spring|весенн|весна/i],
+  ["summer", /summer|летн|лето/i],
+  ["autumn", /autumn|осенн|осень/i],
+];
+const variants = (name: string) => VARIANTS.filter(([, re]) => re.test(name)).map(([k]) => k).join(",");
 
 const norm = (s: string | null | undefined) => (s || "").toLowerCase().replace(/ё/g, "е").trim();
 
@@ -124,22 +145,30 @@ export function weekDiff(a: string, b: string): number {
   return Math.min(d, 52 - d);
 }
 
+/** Окно следующего проведения: годовщина прошлого через год или через два, ±60 дней. */
+export const EDITION_WINDOW_DAYS = 60;
+export function nearAnniversary(lastIso: string, nextIso: string): boolean {
+  const gap = (Date.parse(`${nextIso}T00:00:00Z`) - Date.parse(`${lastIso}T00:00:00Z`)) / 864e5;
+  return Math.abs(gap - 365) <= EDITION_WINDOW_DAYS || Math.abs(gap - 730) <= EDITION_WINDOW_DAYS;
+}
+
 /**
- * Следующее проведение прошлого старта в календаре: дата позже прошлой (в пределах 13 месяцев),
- * та же неделя года ±2, похожее название (по ключу без года и номеров) и тот же город, если оба известны.
+ * Следующее проведение прошлого старта в календаре. Строго, потому что в announced строка уходит
+ * сама, без тренера: годовщина через год или два ±60 дней, тот же город (без учёта регистра и ё),
+ * тот же тип, если известен с обеих сторон, похожее название в обе стороны (nameScore ≥ 0.75) и
+ * одна и та же разновидность серии (ночной, зимний…).
+ * Было (до 15.10.2026): неделя года ±2 в 120–400 днях, доля от меньшего ключа ≥ 0.6, тип не сверялся.
  */
-export function findNextEdition(p: { name: string; city: string; date: string }, future: FutureRow[]): FutureRow | null {
-  const key = keyTokens(p.name);
-  const pTime = Date.parse(`${p.date}T00:00:00Z`);
+export function findNextEdition(p: { name: string; city: string; date: string; race_type?: string | null }, future: FutureRow[]): FutureRow | null {
+  const kind = variants(p.name);
   let best: { row: FutureRow; score: number } | null = null;
   for (const f of future) {
-    const t = Date.parse(`${f.date_start}T00:00:00Z`);
-    if (!(t > pTime + 120 * 864e5 && t < pTime + 400 * 864e5)) continue;
-    if (weekDiff(p.date, f.date_start) > 2) continue;
-    const cityKnown = !!p.city && !!f.city;
-    if (cityKnown && !(norm(f.city).includes(norm(p.city)) || norm(p.city).includes(norm(f.city)))) continue;
-    const score = overlap(key, keyTokens(f.name));
-    if (score >= 0.6 && (!best || score > best.score)) best = { row: f, score };
+    if (!nearAnniversary(p.date, f.date_start)) continue;
+    if (!p.city || !f.city || norm(f.city) !== norm(p.city)) continue;
+    if (p.race_type && f.race_type && p.race_type !== f.race_type) continue;
+    if (variants(f.name) !== kind) continue;
+    const score = nameScore(p.name, f.name);
+    if (score >= 0.75 && (!best || score > best.score)) best = { row: f, score };
   }
   return best?.row ?? null;
 }
@@ -169,7 +198,7 @@ export function buildExpected(past: PastRace[], future: FutureRow[]): { expected
     const k = `${key}|${norm(p.city)}`;
     if (seenKey.has(k)) continue;
     seenKey.add(k);
-    const next = findNextEdition(p, future);
+    const next = findNextEdition({ ...p, race_type: type }, future);
     const id = `probeg:${p.sid}`;
     if (next) {
       announced.push({ id, race_id: next.id });

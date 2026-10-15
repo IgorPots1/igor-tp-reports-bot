@@ -7,7 +7,8 @@
  *     город и тип). Дата в 3 дня уже не дубль;
  *   — окно: от сегодня до 31.12 следующего года;
  *   — insert без source_url, с чужим race_type или тегом, онлайн, детский,
- *     абонемент, кемп, велогонка отклоняются;
+ *     абонемент, кемп, велогонка и старты только с плаванием (X-WATERS, заплыв)
+ *     отклоняются; триатлон, акватлон, свимран — нет;
  *   — update только ручных строк и только разрешённых полей; status через
  *     update не меняется (убрать можно только командой remove с причиной);
  *   — реестр источников не принимает сайты, которые собирает робот;
@@ -52,6 +53,7 @@ import {
   nameSimilar,
   validateInsert,
   validateExpected,
+  SWIM_ONLY_REASON,
   findExpectedDuplicate,
   findAnnounced,
   EXPECTED_MAX_AGE_DAYS,
@@ -127,6 +129,14 @@ assert.ok(validateInsert({ ...good, race_type: "bike" }, TODAY).length);
 assert.ok(validateInsert({ ...good, tags: ["kids"] }, TODAY).length);
 for (const bad of ["Онлайн-забег", "Детский забег", "Беговой кемп", "Абонемент", "Велогонка"]) {
   assert.ok(validateInsert({ ...good, name: bad }, TODAY).length, `«${bad}» отклоняется`);
+}
+// Только плавание (15.10.2026: X-WATERS Урал и Руза попали в календарь ручными строками с типом tri).
+for (const swim of ["X-WATERS Урал 2027", "X-WATERS МСК Руза 2027", "Заплыв через Волгу", "Open Water Swim Cup"]) {
+  assert.ok(validateInsert({ ...good, name: swim, race_type: "tri" }, TODAY).includes(SWIM_ONLY_REASON), `«${swim}» отклоняется как только плавание`);
+}
+assert.ok(validateInsert({ ...good, name: "Кубок Байкала", distances: ["1 км заплыв"] }, TODAY).includes(SWIM_ONLY_REASON), "по дистанциям");
+for (const multi of ["Кижи Run&Swim 5.0", "SwimRun Карелия", "Акватлон «Волжский»", "Триатлон IRONSTAR Завидово"]) {
+  assert.deepEqual(validateInsert({ ...good, name: multi, race_type: "tri" }, TODAY), [], `«${multi}» — с бегом, проходит`);
 }
 
 // Update: только ручные, только разрешённые поля, status нельзя.
@@ -346,6 +356,7 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.match(validateExpected({ ...ok, reason: " " }, TODAY).join(";"), /нет причины/);
   assert.match(validateExpected({ ...ok, race_type: "ocr" }, TODAY).join(";"), /race_type/);
   assert.match(validateExpected({ ...ok, name: "Детский забег Олбово" }, TODAY).join(";"), /детский/);
+  assert.ok(validateExpected({ ...ok, name: "X-WATERS Волга" }, TODAY).includes(SWIM_ONLY_REASON), "в ожидаемые только плавание тоже не берём");
   assert.equal(manualId(ok.name, ok.last_date), "manual:treil-olbovo-2026", "id по году прошлого проведения");
   const known = [
     { id: "probeg:1", name: "Трейл «Олбово»", city: "Тверь", status: "expected" },

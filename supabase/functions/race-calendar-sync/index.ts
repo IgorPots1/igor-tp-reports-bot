@@ -4,7 +4,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
 import { buildExpected, findNextEdition, parsePastProbeg, probegPastUrl, weekWindows, type FutureRow, type PastRace } from "./expected.ts";
-import { findMatch } from "./match.ts";
+import { findMatch, isSwimOnly } from "./match.ts";
 import { textDayInRange } from "./dates.ts";
 import { fillRegion, type GeoSubjectRow } from "./geo.ts";
 
@@ -110,7 +110,8 @@ function classify(name: string, dists: string[], extra: string, probegTrail: boo
 // ---------- shared filters ----------
 const FOREIGN = /ереван|дилижан|енокаван|гюмри|цахкадзор|армени|грузи|тбилиси|батуми|кыргыз|киргиз|бишкек|каджи-сай|бостери|чолпон|иссык|issyk|kyrgyz|казахстан|алматы|астана|шымкент|минск|беларус|брест|гомель|гродн|могил[её]в|витебск|ташкент|узбекистан|самарканд|баку|азербайджан|душанбе|париж|египет|шарм|хургад|дубай|оаэ|турци|анталь|стамбул|сербия|белград|таиланд|пхукет|вьетнам|китай|абхаз|сухум|гагр|пицунд|черногор|кипр|мальдив|шри-ланк|бали|монголи|улан-батор|dilijan|yerevan|egypt|armenia|georgia/i;
 const JUNK = /абонемент|экскурс|fashion|рейв|стояни[ея] в воде|онлайн|online|виртуал|челлендж|тренировк|лагер[ья]|\bcamp\b|кемп|сборы|мастер-класс|трансфер|кубок акватлона.*дети|велогонк/i;
-const okRace = (name: string, city: string) => !FOREIGN.test(`${name} ${city}`) && !JUNK.test(name);
+// Только плавание (X-WATERS, заплывы) — не беговой старт: isSwimOnly в match.ts.
+const okRace = (name: string, city: string) => !FOREIGN.test(`${name} ${city}`) && !JUNK.test(name) && !isSwimOnly(name);
 
 // ---------- source: probeg.org (primary, richest) ----------
 async function probeg(from: Date, to: Date): Promise<Race[]> {
@@ -920,12 +921,19 @@ async function expectedStage(today: Date, stats: Record<string, unknown>) {
   }
   const future: FutureRow[] = [];
   for (let f = 0; ; f += 1000) {
-    const { data, error } = await sb.from("race_calendar").select("id,name,date_start,city,region").gte("date_start", iso(today)).range(f, f + 999);
+    const { data, error } = await sb.from("race_calendar").select("id,name,date_start,city,region,race_type").gte("date_start", iso(today)).range(f, f + 999);
     if (error) throw new Error(`calendar: ${error.message}`);
     future.push(...((data || []) as FutureRow[]));
     if (!data || data.length < 1000) break;
   }
-  const { data: existingRows, error: exErr } = await sb.from("race_expected").select("id,name,city,last_date,status");
+  // И старты последних 60 дней: view race_calendar прошедших не показывает, а стадия идёт раз в
+  // неделю. Было (до 15.10.2026): только с сегодняшнего дня, и «Хепо кросс-поход» 17.10.2026, попавший
+  // в календарь после прогона 12.10, к прогону 18.10 уже прошёл бы и не объявился никогда.
+  const { data: recent, error: rErr } = await sb.from("race_events").select("id,name,date_start,city,region,race_type")
+    .eq("status", "active").is("merged_into", null).gte("date_start", iso(new Date(today.getTime() - 60 * 864e5))).lt("date_start", iso(today));
+  if (rErr) throw new Error(`recent: ${rErr.message}`);
+  future.push(...((recent || []) as FutureRow[]));
+  const { data: existingRows, error: exErr } = await sb.from("race_expected").select("id,name,city,last_date,race_type,status");
   if (exErr) throw new Error(`race_expected: ${exErr.message}`);
   const existing = new Map((existingRows || []).map((r) => [r.id as string, r]));
   const { expected: built, announced } = buildExpected([...past.values()], future);
@@ -944,7 +952,7 @@ async function expectedStage(today: Date, stats: Record<string, unknown>) {
   const toAnnounce = new Map(announced.filter((a) => existing.get(a.id)?.status === "expected").map((a) => [a.id, a.race_id]));
   for (const r of existingRows || []) {
     if (r.status !== "expected" || toAnnounce.has(r.id as string)) continue;
-    const next = findNextEdition({ name: r.name as string, city: (r.city as string) || "", date: r.last_date as string }, future);
+    const next = findNextEdition({ name: r.name as string, city: (r.city as string) || "", date: r.last_date as string, race_type: r.race_type as string | null }, future);
     if (next) toAnnounce.set(r.id as string, next.id);
   }
   for (const [id, race_id] of toAnnounce) {

@@ -22,7 +22,7 @@
  *   npx tsx scripts/races-manual.ts list                     активные ручные старты с датой от сегодня
  *   npx tsx scripts/races-manual.ts read <url>               текст страницы из настоящего браузера
  *   npx tsx scripts/races-manual.ts dup <proposal.json>      проверка дублей для вставок
- *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке → removed
+ *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке, и только плавание → removed
  *   npx tsx scripts/races-manual.ts apply <proposal.json> [--apply]   итог недели пишется в ops-log
  *   npx tsx scripts/races-manual.ts sources [all]           реестр источников (active, или все)
  *   npx tsx scripts/races-manual.ts sources-seed [--apply]  стартовое наполнение реестра
@@ -56,6 +56,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 import { nameKey } from "../supabase/functions/race-calendar-sync/expected";
+import { isSwimOnly } from "../supabase/functions/race-calendar-sync/match";
 import { subjectFor, type GeoSubjectRow } from "../supabase/functions/race-calendar-sync/geo";
 
 export const MAX_INSERTS = 40;
@@ -350,8 +351,12 @@ export function validateInsert(r: RaceInsert, todayIso: string): string[] {
   if (/онлайн|online|виртуал|абонемент|кэмп|кемп|camp|тренировк|детск|kids|велогонк|заплыв без/i.test(r.name)) {
     e.push("по названию похоже на онлайн, абонемент, кемп, тренировку, детский старт или велогонку");
   }
+  if (isSwimOnly(r.name, r.distances)) e.push(SWIM_ONLY_REASON);
   return e;
 }
+
+/** Причина отказа и снятия для стартов только с плаванием (isSwimOnly, общий с роботом). */
+export const SWIM_ONLY_REASON = "только плавание (заплыв, X-WATERS, open water): не беговой старт";
 
 export function validateExpected(r: ExpectedInsert, todayIso: string): string[] {
   const e: string[] = [];
@@ -367,6 +372,7 @@ export function validateExpected(r: ExpectedInsert, todayIso: string): string[] 
   if (/онлайн|online|виртуал|абонемент|кэмп|кемп|camp|тренировк|детск|kids|велогонк/i.test(r.name)) {
     e.push("по названию похоже на онлайн, абонемент, кемп, тренировку, детский старт или велогонку");
   }
+  if (isSwimOnly(r.name, r.distances)) e.push(SWIM_ONLY_REASON);
   return e;
 }
 
@@ -842,7 +848,7 @@ async function cmdDup(file: string) {
 
 async function cmdDedupe(apply: boolean, quiet = false) {
   const sb = db();
-  const { data: manual, error } = await sb.from("race_events").select("id,name,date_start,city,region").eq("source", "manual").eq("status", "active");
+  const { data: manual, error } = await sb.from("race_events").select("id,name,date_start,city,region,distances").eq("source", "manual").eq("status", "active");
   if (error) throw error;
   // Двойник ищется во VIEW race_calendar, то есть среди того, что реально видно на
   // странице, а не в сырых строках race_events. 11.10.2026 пробный прогон снял «ОСЕНЬ
@@ -852,6 +858,11 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   const visible = (await calendarRows(sb)).filter((x) => !x.id.startsWith("manual:") && x.date_start >= todayBelgrade());
   const hits: { id: string; reason: string }[] = [];
   for (const m of manual || []) {
+    // Только плавание снимается тем же прогоном: так шлюз чистит и то, что вставлено до фильтра.
+    if (isSwimOnly(m.name, (m.distances as string[] | null) ?? [])) {
+      hits.push({ id: m.id, reason: `${SWIM_ONLY_REASON}: «${m.name}»` });
+      continue;
+    }
     const twin = findVisibleTwin(m, visible);
     if (twin) hits.push({ id: m.id, reason: `появился в основном потоке: ${twin.id} «${twin.name}»` });
   }
@@ -1191,7 +1202,7 @@ export function weeklySummary(a: {
 }): string {
   const n = (k: Outcome["kind"]) => a.out.filter((o) => o.kind === k).length;
   const tri = a.out.filter((o) => o.kind === "added" && o.tri).length;
-  const checked = (a.proposal.checked || []).length + n("fixed") + a.out.filter((o) => o.kind === "removed" && !o.text.startsWith("появился в основном потоке")).length;
+  const checked = (a.proposal.checked || []).length + n("fixed") + a.out.filter((o) => o.kind === "removed" && !o.text.startsWith("появился в основном потоке") && !o.text.startsWith(SWIM_ONLY_REASON)).length;
   const lines = [
     `Дата: ${a.today}`,
     `Задача: еженедельное обновление ручных стартов /races${a.apply ? "" : " (ХОЛОСТОЙ ПРОГОН, в базу ничего не записано)"}`,
