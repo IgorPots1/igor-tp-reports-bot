@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Ротация логов launchd-раннеров: файл больше 20 МБ → <файл>.1.gz, не больше 3 архивов.
+     Раннеры не перезапускаются (copytruncate с догонкой хвоста, см. scripts/rotate-runner-logs.sh).
+     Раз в день в 04:15. Если Мак спал — launchd докрутит пропущенный запуск при пробуждении.
+     Ставится:
+       cp .../com.igor.runner-log-rotation.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.runner-log-rotation.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.runner-log-rotation</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>"$HOME/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/rotate-runner-logs.sh"</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>15</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/Library/Logs/runner-log-rotation.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/Library/Logs/runner-log-rotation.log</string>
+</dict>
+</plist>
