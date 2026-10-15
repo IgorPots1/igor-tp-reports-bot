@@ -113,7 +113,7 @@ async function raskidat(): Promise<void> {
     const t = stateFor(ix, aid, week, L.races.filter((r) => r.trainingpeaks_athlete_id === aid), c.hasActiveIllness);
     const b = buildRepeatWeek(ix, t, Wt, cyc, c, L.names);
     if (!b) { m.refused.push({ aid, why: "не из чего собрать (нет своих недель и прецедента)" }); continue; }
-    if (b.refused) { m.refused.push({ aid, why: `жёсткое нарушение: ${b.warnings.filter((w) => w.startsWith("⛔")).join("; ")}` }); continue; }
+    if (b.refused) { m.refused.push({ aid, why: b.sessions.length ? `жёсткое нарушение: ${b.refusedWhy}` : (b.refusedWhy ?? "отказ") }); continue; }
     for (const s of b.sessions) m.items.push({ aid, date: addDays(week, s.dayIdx), dayIdx: s.dayIdx, title: s.title, minutes: s.minutes, description: s.description, warnings: b.warnings, source: b.source, why: b.why, workoutId: null, verified: false });
   }
   saveManifest(m);

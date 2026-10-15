@@ -48,8 +48,10 @@ async function main(): Promise<void> {
     for (const s of igor) { p(`\n**${DAY_RU[s.dayIdx]} · ${s.title} · ${s.minutes} мин** [${s.kind}]`); p(s.desc || "_(без описания)_"); }
     for (const s of t.sessions.filter((x) => x.race)) p(`\n_${DAY_RU[s.dayIdx]} · ${s.title} · ${s.minutes} мин — сам СТАРТ, в сравнение не входит_`);
     if (!b) p(`\n### 2. Повтор + дельта — НЕ СОБРАНА`);
+    else if (b.refused && b.sessions.length === 0) { p(`\n### 2. Повтор + дельта — ⛔ ОТКАЗ`); p(`_Причина:_ ${b.refusedWhy}`); }
     else {
-      p(`\n### 2. Повтор + дельта — ${sum(b.sessions)}${b.refused ? " · ⛔ ОТКАЗ ВАЛИДАТОРА" : ""}`);
+      p(`\n### 2. Повтор + дельта — ${sum(b.sessions)}${b.refused ? " · ⛔ ОТКАЗ ВАЛИДАТОРА (неделя собрана, но не выдаётся)" : ""}`);
+      if (b.refused) p(`_Причина отказа:_ ${b.refusedWhy}`);
       p(`_Откуда:_ ${b.source}`);
       p(`_Почему:_ ${b.why}`);
       for (const s of b.sessions) { p(`\n**${DAY_RU[s.dayIdx]} · ${s.title} · ${s.minutes} мин** [${s.kind}] · темп: ${s.paceMode}`); p(s.description || "_(без описания)_"); }
@@ -59,7 +61,7 @@ async function main(): Promise<void> {
     for (const s of rules) { p(`\n**${DAY_RU[s.dayIdx]} · ${s.title} · ${s.minutes} мин** [${s.kind}]`); p(s.description || "_(без описания)_"); }
     const tot = (ss: Array<{ minutes: number }>): number => ss.reduce((a, x) => a + x.minutes, 0);
     const q = (ss: Array<{ kind: string }>): number => ss.filter((x) => x.kind === "quality").length;
-    summary.push(`| ${nm} | ${tot(igor)} · ${q(igor)} | ${b ? `${tot(b.sessions)} · ${q(b.sessions)}${b.refused ? " ⛔" : ""}` : "—"} | ${tot(rules)} · ${q(rules)} | ${b ? b.source.split(":")[0].replace(/ × дельта.*/, "").slice(0, 70) : "—"} |`);
+    summary.push(`| ${nm} | ${tot(igor)} · ${q(igor)} | ${b ? (b.refused ? `⛔ ОТКАЗ${b.sessions.length ? ` (собрано ${tot(b.sessions)})` : ""}` : `${tot(b.sessions)} · ${q(b.sessions)}`) : "—"} | ${tot(rules)} · ${q(rules)} | ${b ? b.source.split(":")[0].replace(/ × дельта.*/, "").slice(0, 70) : "—"} |`);
   }
   const head = [`\n## Сводка (мин · качественных)`, `| атлет | Игорь | повтор + дельта | правила (main) | откуда новая неделя |`, `|---|---|---|---|---|`, ...summary];
   writeFileSync(path.join(OUT_DIR, "r6-three-columns.md"), [...out.slice(0, 4), ...head, ...out.slice(4)].join("\n") + "\n");

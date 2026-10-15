@@ -15,6 +15,8 @@
 import { ranges } from "../lib/tp-recompute.ts";
 import type { Envelope } from "../lib/autoplanner-context.ts";
 import { DUR } from "./adapt-text.ts";
+import { RACE_PACE_BLOCK_RE, TEMPO_TITLE_RE } from "../lib/practice-signals.ts";
+import { LEVEL_MAX_RATIO, type Recent } from "./recent-level.ts";
 
 export type VSess = { dayIdx: number; kind: "quality" | "long" | "easy"; title: string; minutes: number; work: number; description: string; written?: Array<{ fast: number; slow: number }> };
 export type Severity = "hard" | "warn";
@@ -27,12 +29,27 @@ export const HARD_GROWTH_VS_NORMAL = 2.3;
 export const PRE_RACE_ACTIVATION_MAX_MIN = 40;
 export const PRE_RACE_DAYS = 2;
 
+/**
+ * Есть ли в сессии КАЧЕСТВО по содержанию: ярлык quality, блок в темпе марафона/соревновательном темпе или темповый
+ * заголовок. Нужен там, где ярлыка мало: «24 км в темпе марафона» — для классификатора длительная, по сути работа.
+ */
+export function hasQualityContent(s: { kind: string; title: string; description: string }): boolean {
+  return s.kind === "quality" || RACE_PACE_BLOCK_RE.test(s.title) || RACE_PACE_BLOCK_RE.test(s.description) || TEMPO_TITLE_RE.test(s.title);
+}
+
+/** Недели после марафона (≥30 км), в которых качества и темпа марафона быть не должно. Решение Игоря 15.10. */
+export const POST_MARATHON_NO_QUALITY_WEEKS = 3;
+
 export type VOpts = {
   hasActiveIllness: boolean; checkText: boolean;
   /** медиана объёма 8 прошлых недель — база для жёсткой защиты от скачка */
   normalLevel?: number;
   /** день старта относительно понедельника недели (0..6; 7 = понедельник следующей); null — старта рядом нет */
   raceDayIdx?: number | null;
+  /** недавняя история и уровень (recent-level.ts) — жёсткая граница «не выше 1.5 × уровня» и «история есть» */
+  recent?: Recent | null;
+  /** номер недели после марафона (1..3), если последний старт ≥30 км; иначе null */
+  postMarathonWeek?: number | null;
   /** потолки-предупреждения по окну практики */
   windowCaps?: { weekly: number | null; long: number | null } | null;
 };
@@ -60,6 +77,14 @@ export function validateWeek(ss: VSess[], env: Envelope | null, o: VOpts): VResu
   if (total > 0 && q.length) add("ЖЁСТКО: доля работы не выше 0.85 недели", work / total <= HARD_WORK_SHARE, `${work} из ${total}`, "hard");
   add("ЖЁСТКО: ни одна лёгкая не короче 20 мин", e.every((x) => x.minutes >= HARD_EASY_MIN), `лёгкие ${e.map((x) => x.minutes)}`, "hard");
   if (o.normalLevel && o.normalLevel > 0) add("ЖЁСТКО: объём не выше 2.3 × обычного", total <= HARD_GROWTH_VS_NORMAL * o.normalLevel, `${total} при обычном ${o.normalLevel}`, "hard");
+  if (o.recent) {
+    add("ЖЁСТКО: есть недавняя история (иначе не масштабируем чужую неделю)", o.recent.ok, o.recent.why, "hard");
+    if (o.recent.level) add(`ЖЁСТКО: объём не выше ${LEVEL_MAX_RATIO} × недавнего уровня`, total <= LEVEL_MAX_RATIO * o.recent.level, `${total} при уровне ${Math.round(o.recent.level)} (порог ${Math.round(LEVEL_MAX_RATIO * o.recent.level)})`, "hard");
+  }
+  if (o.postMarathonWeek != null && o.postMarathonWeek >= 1 && o.postMarathonWeek <= POST_MARATHON_NO_QUALITY_WEEKS) {
+    const bad = ss.filter(hasQualityContent);
+    add(`ЖЁСТКО: ${o.postMarathonWeek}-я неделя после марафона без качества и темпа марафона`, bad.length === 0, bad.map((x) => `${x.title} ${x.minutes} мин`).join("; "), "hard");
+  }
   if (o.raceDayIdx != null) {
     const bad = ss.filter((s) => { const off = o.raceDayIdx! - s.dayIdx; return off >= 1 && off <= PRE_RACE_DAYS && heavyBeforeRace(s); });
     add("ЖЁСТКО: за 1–2 дня до старта ничего тяжелее короткой активации", bad.length === 0, bad.map((s) => `${s.title} ${s.minutes} мин`).join("; "), "hard");

@@ -9,12 +9,14 @@
 import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
-import { planRepeat, setRepeatParams } from "./repeat.ts";
+import { planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON } from "./repeat.ts";
+import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
 import { addedByCoach, diffPlaced, toPublish, type Placed } from "./plan-edits.ts";
-import { buildRepeatWeek } from "./build-week.ts";
+import { buildRepeatWeek, useExplicitParams } from "./build-week.ts";
 import { runProbeCycle } from "./hidden-flow.ts";
+import { hasQualityContent } from "./validate.ts";
 import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } from "./probe-hidden-via-client.ts";
 import { CONFIRM, GROUP12, hiddenProven, realGate } from "./week-ops.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -64,12 +66,35 @@ for (const aid of [7, 8]) { for (let k = 0; k < 6; k++) rows.push(...weekRows(ai
 // марафон через 3 недели после десятки: десятка — проходной старт на пути к марафону (за 19+ недель она сама была бы целью цикла)
 races.push({ trainingpeaks_athlete_id: 7, event_date: addDays(wk(9), 6), distance_km: 42.2, distance_raw: null });
 
+// атлеты 10 и 11: в образцовых неделях длительная «24 км в темпе марафона» (как у Богачёва — ярлык «длительная», по сути работа).
+// 10 — марафон (42.2 км) в вс недели 6, 11 — половинка (21.1 км) там же. Целевые недели 7 (+1), 8 (+2), 9 (+3).
+const MP: S[] = [{ d: 1, t: EASY, m: 50 }, { d: 3, t: EASY, m: 50 }, { d: 6, t: "24 км в темпе марафона", m: 170 }];
+for (const [aid, km] of [[10, 42.2], [11, 21.1]] as const) {
+  for (let k = 0; k < 6; k++) rows.push(...weekRows(aid, wk(k), MP));
+  rows.push(...weekRows(aid, wk(6), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Забег", m: 240 }]));
+  for (const k of [7, 8, 9]) rows.push(...weekRows(aid, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 40 }, { d: 6, t: EASY, m: 60 }]));
+  races.push({ trainingpeaks_athlete_id: aid, event_date: addDays(wk(6), 6), distance_km: km, distance_raw: null });
+}
+// атлет 12: пиковая неделя (400 при медиане 260) прямо перед целевой
+for (let k = 0; k < 6; k++) rows.push(...weekRows(12, wk(k), NORMAL));
+rows.push(...weekRows(12, wk(6), [{ d: 1, t: EASY, m: 80 }, { d: 3, t: Q, m: 60 }, { d: 4, t: EASY, m: 80 }, { d: 6, t: LONG, m: 180 }]));
+rows.push(...weekRows(12, wk(7), NORMAL));
+// атлет 13: четыре недели истории и пауза 5 недель; атлет 14: всего две недели истории
+for (let k = 0; k < 4; k++) rows.push(...weekRows(13, wk(k), NORMAL));
+rows.push(...weekRows(13, wk(9), NORMAL));
+for (let k = 0; k < 2; k++) rows.push(...weekRows(14, wk(k), NORMAL));
+rows.push(...weekRows(14, wk(2), NORMAL));
+
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
 const T = (aid: number, k: number): CWeek => corpus.find((w) => w.aid === aid && w.weekStart === wk(k))!;
+const hasQ = (s: { kind: string; title: string; src?: { desc?: string } }): boolean => hasQualityContent({ kind: s.kind, title: s.title, description: s.src?.desc ?? "" });
 const total_ = (ss: PSess[]): number => ss.reduce((s, x) => s + x.minutes, 0);
 const W8: Weights = { phase: 2.5, dist: 1.4, vol: 0.9, prev: 0.5, prevDays: 0.2, prevQ: 0.2, ill: 0.3, post: 0.3, gap: 1.8, own: 0.6, recency: 0.7 };
-setRepeatParams({ normal: 0.6, gap: 2, post: 0.67, skip: ["старт", "после старта", "подводка", "провал объёма"], applyPost: true });
+// БОЕВЫЕ УМОЛЧАНИЯ снимаются ДО того, как проверки зададут свои значения: именно они работают в «раскидать».
+const PROD = { peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON };
+setRepeatParams({ normal: 0.6, gap: 2, skip: ["старт", "после старта", "подводка", "пик", "провал объёма"], peak: 1.25, recovery: true });
+useExplicitParams();
 
 console.log("\n── форма: защита от наследования ──");
 {
@@ -86,11 +111,13 @@ console.log("\n── форма: защита от наследования ─
   check("неделя после старта: форма — последняя ОБЫЧНАЯ неделя до подводки; старт и обе недели подводки пропущены",
     p.kind === "repeat" && p.base.weekStart === wk(3) && p.skipped.some((s) => s.why === "старт") && p.skipped.filter((s) => s.why === "подводка").length === 2,
     JSON.stringify(p.kind === "repeat" ? { base: p.base.weekStart, skipped: p.skipped } : p));
-  // ×0.67 ниже порога 0.75 → одна лёгкая снимается; оставшиеся: лёгкая 50→35, длительная 100→65
-  check("неделя после старта: ×0.67 (замер), одна лёгкая снята, качественная не масштабируется",
-    p.kind === "repeat" && p.sessions.length === 3 && p.sessions.find((s) => s.kind === "easy")?.minutes === 35
-      && p.sessions.find((s) => s.kind === "long")?.minutes === 65 && p.sessions.find((s) => s.kind === "quality")?.minutes === 60,
-    JSON.stringify(p.kind === "repeat" ? p.sessions.map((s) => [s.kind, s.minutes]) : p));
+  // ПЕРЕПИСАНО 15.10 (правило 6a). Было: «неделя после старта ×0.67, одна лёгкая снята, качественная не масштабируется».
+  // Отменено решением Игоря: единый ×0.67 был усреднением. После МАРАФОНА неделя +1 = ×0.39 (замер по его неделям), и КАЧЕСТВА
+  // на ней нет вовсе (оно заменяется его же обычной лёгкой). Новое утверждение сильнее: и множитель по таблице, и отсутствие качества.
+  check("1-я неделя после марафона: ×0.39 по таблице (не ×0.67), качества нет, качественная заменена его обычной лёгкой",
+    p.kind === "repeat" && p.delta === 0.39 && !p.sessions.some((s) => s.kind === "quality") && p.sessions.length === 3
+      && p.sessions.every((s) => s.minutes <= 40) && p.deltaWhy.includes("качество снято"),
+    JSON.stringify(p.kind === "repeat" ? { d: p.delta, s: p.sessions.map((s) => [s.kind, s.title, s.minutes]), why: p.deltaWhy } : p));
 }
 
 console.log("\n── дельта цикла: объём меняется, форма нет ──");
@@ -183,9 +210,74 @@ console.log("\n── шаблонные названия и восстанов�
   const samp = buildCorpus([...weekRows(9, wk(0), [{ d: 1, t: "Long Run - Sample Workout", m: 60 }, { d: 3, t: EASY, m: 50 }])], [], [], [], "2027-01-01");
   check("шаблонная английская «Sample Workout» не попадает в корпус как тренировка Игоря", samp.length === 1 && samp[0].sessions.length === 1 && samp[0].sessions[0].title === EASY, JSON.stringify(samp[0]?.sessions.map((s) => s.title)));
   const b = buildRepeatWeek(ix, T(2, 7), W8, null, undefined, new Map());
-  check("1-я неделя после марафона: тренер получает предупреждение с типичной долей 0.39", !!b && b.warnings.some((w) => w.includes("после старта на 42.2 км") && w.includes("0.39")), JSON.stringify(b?.warnings.filter((w) => w.includes("старта"))));
+  // ПЕРЕПИСАНО 15.10 (правило 6a). Было: «1-я неделя после марафона: тренер получает ПРЕДУПРЕЖДЕНИЕ с долей 0.39» — неделя
+  // собиралась как обычная, а тренеру предлагали заметить. Отменено: теперь неделя собирается уже сниженной, без качества, и ЖЁСТКАЯ
+  // проверка гарантирует, что качества не осталось. Новое утверждение: сниженная неделя выдаётся, причина восстановления названа,
+  // жёсткая проверка «без качества» в ней есть и пройдена.
+  check("1-я неделя после марафона: неделя выдана сниженной, жёсткая проверка «без качества» есть и пройдена",
+    !!b && !b.refused && b.why.includes("восстановление") && b.validator.some((v) => v.severity === "hard" && v.ok && v.name.includes("после марафона")), JSON.stringify(b?.validator.filter((v) => v.name.includes("марафон"))));
   const none = buildRepeatWeek(ix, T(1, 7), W8, null, undefined, new Map());
   check("обычная неделя: предупреждения про восстановление нет", !!none && !none.warnings.some((w) => w.includes("после старта на")));
+}
+
+console.log("\n── восстановление после старта по дистанции и неделе ──");
+{
+  check("таблица: марафон 0.39 / 0.75 / 0.81", [1, 2, 3].map((k) => recoveryFactor(42.2, k)).join() === "0.39,0.75,0.81", [1, 2, 3].map((k) => recoveryFactor(42.2, k)).join());
+  check("таблица: половинка 0.76 / 0.99 / 0.99", [1, 2, 3].map((k) => recoveryFactor(21.1, k)).join() === "0.76,0.99,0.99");
+  check("таблица: до 15 км 0.86 / 1 / 1 (1.02 зажато до 1: восстановление не повышает нагрузку)", [1, 2, 3].map((k) => recoveryFactor(10, k)).join() === "0.86,1,1", [1, 2, 3].map((k) => recoveryFactor(10, k)).join());
+  check("таблица: вне недель +1…+3 и без дистанции множителя нет", recoveryFactor(42.2, 0) === null && recoveryFactor(42.2, 4) === null && recoveryFactor(null, 1) === null && recoveryFactor(42.2, null) === null);
+  const d = (aid: number, k: number): number | null => { const p = planRepeat(ix, T(aid, k), null); return p.kind === "repeat" ? p.delta : null; };
+  check("дельта по таблице: марафон +1 / +2 / +3 = 0.39 / 0.75 / 0.81", [d(10, 7), d(10, 8), d(10, 9)].join() === "0.39,0.75,0.81", [d(10, 7), d(10, 8), d(10, 9)].join());
+  check("дельта по таблице: половинка +1 = 0.76, +2 = 0.99 (дистанция меняет множитель)", d(11, 7) === 0.76 && d(11, 8) === 0.99, `${d(11, 7)} ${d(11, 8)}`);
+  const m2 = planRepeat(ix, T(10, 8), null);
+  check("2-я неделя после марафона: «24 км в темпе марафона» заменена его обычной лёгкой, день не потерян",
+    m2.kind === "repeat" && !m2.sessions.some((s) => hasQ(s)) && m2.sessions.some((s) => s.dayIdx === 6) && m2.deltaWhy.includes("качество снято"), JSON.stringify(m2.kind === "repeat" ? m2.sessions.map((s) => [s.dayIdx, s.title, s.minutes]) : m2));
+  const m3 = planRepeat(ix, T(10, 9), null);
+  check("3-я неделя после марафона: качества тоже нет", m3.kind === "repeat" && !m3.sessions.some((s) => hasQ(s)));
+  const h2 = planRepeat(ix, T(11, 8), null);
+  check("после ПОЛОВИНКИ правило «без качества» не действует: марафонский темп остаётся (оно только для марафона)", h2.kind === "repeat" && h2.sessions.some((s) => hasQ(s)), JSON.stringify(h2.kind === "repeat" ? h2.sessions.map((s) => s.title) : h2));
+  const bb = buildRepeatWeek(ix, T(10, 8), W8, null, undefined, new Map());
+  check("2-я неделя после марафона целиком: выдана, без отказа, качества в тексте нет", !!bb && !bb.refused && !bb.sessions.some((s) => hasQ({ kind: s.kind, title: s.title, src: { desc: s.description } as never } as never)), JSON.stringify(bb?.refusedWhy));
+  const hard = validateWeek([{ dayIdx: 6, kind: "long", title: "24 км в темпе марафона", minutes: 170, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, postMarathonWeek: 2 });
+  check("ЖЁСТКО: марафонский блок на 2-й неделе после марафона — отказ валидатора", hard.some((r) => r.severity === "hard" && !r.ok && r.name.includes("после марафона")));
+  const late = validateWeek([{ dayIdx: 6, kind: "long", title: "24 км в темпе марафона", minutes: 170, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, postMarathonWeek: 4 });
+  check("на 4-й неделе после марафона это правило уже не действует", !late.some((r) => r.name.includes("после марафона")));
+}
+
+console.log("\n── класс «пик» ──");
+{
+  check("боевые умолчания: пик >1.25 × медианы, восстановление включено", PROD.peak === 1.25 && PROD.recovery === true, JSON.stringify(PROD));
+  check("боевые умолчания: не-образцы — старт, после старта, подводка, пик, провал, сигнал, мало дней (решения Игоря)",
+    PROD.skip === ["старт", "после старта", "подводка", "пик", "сигнал здоровья", "провал объёма", "мало дней"].sort().join(), PROD.skip);
+  const pk = planRepeat(ix, T(12, 7), null);
+  check("пиковая неделя (400 при медиане 260, ×1.54) образцом не служит: берётся предыдущая обычная",
+    pk.kind === "repeat" && pk.base.weekStart === wk(5) && pk.skipped.some((x) => x.why === "пик") && total_(pk.sessions) === 260, JSON.stringify(pk.kind === "repeat" ? { b: pk.base.weekStart, sk: pk.skipped } : pk));
+  setRepeatParams({ peak: 0 });
+  const nopk = planRepeat(ix, T(12, 7), null);
+  check("без класса «пик» та же пиковая неделя была бы образцом (проверка различает)", nopk.kind === "repeat" && nopk.base.weekStart === wk(6) && total_(nopk.sessions) === 400);
+  setRepeatParams({ peak: 1.25 });
+  check("неделя ×1.15 медианы — не пик", planRepeat(ix, T(1, 5), null).kind === "repeat" && !(planRepeat(ix, T(1, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "пик"));
+}
+
+console.log("\n── жёсткая граница: отказ вместо предупреждения ──");
+{
+  const gap = planRepeat(ix, T(13, 9), null);
+  check("пауза 5 недель — ОТКАЗ без попытки взять чужую неделю", gap.kind === "refuse" && gap.why.includes("пауза"), JSON.stringify(gap));
+  check("пауза 3 недели (< порога) — не отказ", planRepeat(ix, T(5, 7), null).kind !== "refuse");
+  const few = planRepeat(ix, T(14, 2), null);
+  check("только две недели своей истории — ОТКАЗ (нужно ≥ 3)", few.kind === "refuse" && few.why.includes("своих недель"), JSON.stringify(few));
+  const bg = buildRepeatWeek(ix, T(13, 9), W8, null, undefined, new Map());
+  check("в сборке отказ приходит с причиной и без сессий", !!bg && bg.refused && bg.sessions.length === 0 && (bg.refusedWhy ?? "").includes("нет недавней истории"), JSON.stringify(bg?.refusedWhy));
+  check("порог паузы и минимум истории — измеренные значения (4 нед, 3 недели, 1.5×)", MAX_GAP_WEEKS === 4 && MIN_RECENT_WEEKS === 3 && LEVEL_MAX_RATIO === 1.5);
+  // уровень = p75 плана, а не медиана: пять недель 100..500 → p75 = 400, медиана 300
+  const lv = recent(indexCorpus(buildCorpus([100, 200, 300, 400, 500].flatMap((m, k) => weekRows(20, wk(k), [{ d: 1, t: EASY, m }])), [], [], [], "2027-01-01")), 20, wk(5));
+  check("недавний уровень = p75 плана за 8 недель (400), а не медиана (300)", lv.level === 400 && lv.ok, JSON.stringify(lv));
+  const lvl = { ok: true, level: 200, weeks: 6, gapWeeks: 0, why: "" };
+  const v = (m: number): ReturnType<typeof validateWeek> => validateWeek([{ dayIdx: 1, kind: "easy", title: "л", minutes: m, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, recent: lvl });
+  check("ЖЁСТКО: неделя 400 при уровне 200 (×2) — отказ", v(400).some((r) => r.severity === "hard" && !r.ok && r.name.includes("недавнего уровня")));
+  check("неделя 290 при уровне 200 (×1.45) — проходит", !v(290).some((r) => r.severity === "hard" && !r.ok));
+  const nohist = validateWeek([{ dayIdx: 1, kind: "easy", title: "л", minutes: 60, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, recent: { ok: false, level: null, weeks: 0, gapWeeks: null, why: "x" } });
+  check("ЖЁСТКО: нет недавней истории — отказ даже у короткой недели", nohist.some((r) => r.severity === "hard" && !r.ok && r.name.includes("недавняя история")));
 }
 
 console.log("\n── раскидать / публикуй / снести: правки тренера и ворота записи ──");

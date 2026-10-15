@@ -14,15 +14,13 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
 const MR = path.join(HERE, "main-race.ts");
-const BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts");
+const BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts"), RL = path.join(HERE, "recent-level.ts");
 const HF = path.join(HERE, "hidden-flow.ts"), PB = path.join(HERE, "probe-hidden-via-client.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
 type M = { id: string; file: string; find: string; replace: string; what: string };
 const MUT: M[] = [
   { id: "no-skip", file: R, find: "    if (!why || !SKIP_REASONS.has(why)) { base = own[i]; break; }", replace: "    if (true) { base = own[i]; break; }", what: "ненормальная неделя снова берётся формой" },
-  { id: "no-post-factor", file: R, find: "  if (postRace && APPLY_POST_FACTOR) {", replace: "  if (false) {", what: "после старта неделя не снижается" },
   { id: "quality-scaled", file: R, find: "    minutes: s.kind === \"quality\" ? s.minutes : round5(s.minutes * delta),", replace: "    minutes: round5(s.minutes * delta),", what: "дельта масштабирует и качественную" },
-  { id: "no-clamp", file: R, find: "  delta = Math.min(DELTA_MAX, Math.max(DELTA_MIN, delta));", replace: "", what: "дельта не зажата" },
   { id: "race-repeat", file: R, find: "  if (t.phase === \"race\") return { kind: \"precedent\", why: \"неделя старта\" };", replace: "", what: "неделю старта повторяем, а не берём прецедент" },
   { id: "gap-repeat", file: R, find: "  if (gap >= RETURN_GAP_WEEKS)", replace: "  if (false && gap >= RETURN_GAP_WEEKS)", what: "после паузы повторяем неделю до паузы" },
   { id: "no-drop-day", file: R, find: "  if (delta < DROP_DAY_BELOW) {", replace: "  if (false) {", what: "глубокая разгрузка не снимает день" },
@@ -43,7 +41,6 @@ const MUT: M[] = [
   { id: "ban-no-races", file: R, find: "  const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);", replace: "  const removed = enforcePreRace(sessions, null);", what: "запрет не действует и перед главными" },
   { id: "main-all", file: MR, find: "      if (pickTargetRace(races, m)?.id === r.id) { out.add(r.id); break; }", replace: "      out.add(r.id); break;", what: "любой старт считается главным" },
   { id: "main-none", file: MR, find: "      if (pickTargetRace(races, m)?.id === r.id) { out.add(r.id); break; }", replace: "      void m;", what: "ни один старт не главный" },
-  { id: "no-recovery-warning", file: BW, find: "t.lastRaceKm >= 30) {", replace: "t.lastRaceKm >= 9999) {", what: "предупреждение о восстановлении после марафона не выдаётся" },
   { id: "sample-in-corpus", file: CO, find: " && !/sample workout/i.test(String(r.title ?? \"\")))", replace: ")", what: "шаблонные английские тренировки снова попадают в корпус" },
   { id: "flow-no-assert", file: HF, find: "back.isHidden === hidden,", replace: "true,", what: "GET после PUT не сверяется с ожидаемым isHidden" },
   { id: "flow-no-fallback", file: HF, find: "await setHiddenVerified(tp, res, aid, created.workoutId, true, \"скрытие отдельным PUT\");", replace: "", what: "при игнорировании isHidden в POST не скрываем PUT-ом" },
@@ -58,6 +55,28 @@ const MUT: M[] = [
   { id: "proof-no-delete", file: O, find: " && pass(\"deleted_verify_pass\")", replace: "", what: "доказательство не требует подтверждённого удаления" },
   { id: "proof-hidden-only", file: O, find: " && pass(\"unhidden_verify_pass\")", replace: "", what: "доказательство не требует подтверждённого открытия" },
   { id: "proof-unanchored", file: O, find: "new RegExp(`^\\\\s*-?\\\\s*${k}:", replace: "new RegExp(`${k}:", what: "якорь снят: «hidden» находится внутри «unhidden»" },
+  { id: "rec-table-marathon2", file: R, find: "marathon: [0.39, 0.75, 0.81]", replace: "marathon: [0.39, 1.0, 0.81]", what: "таблица: марафон +2 = 1.0 вместо 0.75" },
+  { id: "rec-table-half1", file: R, find: "half: [0.76, 0.99, 0.99]", replace: "half: [0.39, 0.99, 0.99]", what: "таблица: половинка +1 берётся по марафону" },
+  { id: "rec-off", file: R, find: "  if (!RECOVERY_ON || lastRaceKm == null", replace: "  if (true || lastRaceKm == null", what: "восстановление после старта не действует" },
+  { id: "rec-nocap", file: R, find: "return Math.min(1, row[weeksSinceRace - 1]);", replace: "return row[weeksSinceRace - 1];", what: "множитель восстановления может поднять нагрузку выше 1" },
+  { id: "rec-bucket-km", file: R, find: "lastRaceKm >= 30 ? RECOVERY.marathon", replace: "lastRaceKm >= 15 ? RECOVERY.marathon", what: "половинка считается как марафон" },
+  { id: "strip-off", file: R, find: "  if (t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace != null && t.weeksSinceRace >= 1", replace: "  if (false && t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace != null && t.weeksSinceRace >= 1", what: "после марафона качество не снимается" },
+  { id: "strip-half", file: R, find: "  if (t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace != null && t.weeksSinceRace >= 1", replace: "  if (t.lastRaceKm != null && t.lastRaceKm >= 15 && t.weeksSinceRace != null && t.weeksSinceRace >= 1", what: "качество снимается и после половинки" },
+  { id: "strip-week3", file: V, find: "export const POST_MARATHON_NO_QUALITY_WEEKS = 3;", replace: "export const POST_MARATHON_NO_QUALITY_WEEKS = 1;", what: "запрет качества после марафона только на 1-й неделе" },
+  { id: "strip-content", file: V, find: "RACE_PACE_BLOCK_RE.test(s.title) || RACE_PACE_BLOCK_RE.test(s.description) || ", replace: "", what: "качеством считается только ярлык, блок в темпе марафона — нет" },
+  { id: "peak-off", file: R, find: "    if (PEAK_RATIO > 0 && w.total > PEAK_RATIO * med(prior.map((x) => x.total))) return \"пик\";", replace: "", what: "класс «пик» не работает" },
+  { id: "peak-ratio-2", file: R, find: "export let PEAK_RATIO = 1.25;", replace: "export let PEAK_RATIO = 2.5;", what: "порог пика 2.5 вместо 1.25" },
+  { id: "refuse-no-history", file: R, find: "  if (!rec.ok) return { kind: \"refuse\", why: `нет недавней истории: ${rec.why}` };", replace: "", what: "нет недавней истории — больше не отказ" },
+  { id: "gap-99", file: RL, find: "export let MAX_GAP_WEEKS = 4;", replace: "export let MAX_GAP_WEEKS = 99;", what: "пауза любой длины не лишает истории" },
+  { id: "min-weeks-1", file: RL, find: "export const MIN_RECENT_WEEKS = 3;", replace: "export const MIN_RECENT_WEEKS = 1;", what: "достаточно одной недели истории" },
+  { id: "level-ratio-99", file: RL, find: "export let LEVEL_MAX_RATIO = 1.5;", replace: "export let LEVEL_MAX_RATIO = 99;", what: "порог «выше уровня» снят" },
+  { id: "level-median", file: RL, find: "s[Math.floor(0.75 * (s.length - 1))]", replace: "s[Math.floor(0.5 * (s.length - 1))]", what: "уровень считается по медиане, а не по p75" },
+  { id: "hard-level-soft", file: V, find: "total <= LEVEL_MAX_RATIO * o.recent.level, `${total} при уровне ${Math.round(o.recent.level)} (порог ${Math.round(LEVEL_MAX_RATIO * o.recent.level)})`, \"hard\");", replace: "total <= LEVEL_MAX_RATIO * o.recent.level, `${total} при уровне ${Math.round(o.recent.level)} (порог ${Math.round(LEVEL_MAX_RATIO * o.recent.level)})`, \"warn\");", what: "граница по уровню — снова предупреждение" },
+  { id: "hard-history-soft", file: V, find: "o.recent.ok, o.recent.why, \"hard\");", replace: "o.recent.ok, o.recent.why, \"warn\");", what: "нет истории — снова предупреждение" },
+  { id: "hard-marathon-soft", file: V, find: "bad.map((x) => `${x.title} ${x.minutes} мин`).join(\"; \"), \"hard\");\n  }\n  if (o.raceDayIdx != null)", replace: "bad.map((x) => `${x.title} ${x.minutes} мин`).join(\"; \"), \"warn\");\n  }\n  if (o.raceDayIdx != null)", what: "качество после марафона — снова предупреждение" },
+  { id: "build-ignores-refuse", file: BW, find: "  if (plan.kind === \"refuse\") {", replace: "  if (false) {", what: "сборка не передаёт отказ планировщика" },
+  { id: "no-clamp", file: R, find: "delta = Math.min(DELTA_MAX, Math.max(DELTA_MIN, cycle.target / cycle.base));", replace: "delta = cycle.target / cycle.base;", what: "дельта цикла не зажата" },
+  { id: "skip-without-peak", file: R, find: 'new Set(["старт", "после старта", "подводка", "пик", "сигнал здоровья", "провал объёма", "мало дней"])', replace: 'new Set(["старт", "после старта", "подводка", "сигнал здоровья", "провал объёма", "мало дней"])', what: "«пик» выпал из боевого списка не-образцов" },
   { id: "publish-deleted", file: E, find: "  return placed.filter((p) => current.get(p.workoutId) != null)", replace: "  return placed.filter(() => true)", what: "публикуется и удалённое тренером" },
   { id: "no-minutes-diff", file: E, find: "  if (Math.round(c.minutes) !== Math.round(p.minutes))", replace: "  if (false)", what: "правка длительности не пишется" },
   { id: "gate-no-proof", file: O, find: "    if (!g.proof.ok) return", replace: "    if (false) return", what: "раскидать пишет без доказанного скрытия" },

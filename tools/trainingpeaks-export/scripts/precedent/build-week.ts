@@ -15,20 +15,30 @@ import { DATA_DIR } from "./load.ts";
 import { adapt, findPrecedent, type Index, type PSess, type Weights } from "./precedent.ts";
 import { adaptText } from "./adapt-text.ts";
 import { planRepeat, setRepeatParams, type Abnormal, type CycleDelta } from "./repeat.ts";
+import { recent } from "./recent-level.ts";
 import { validateWeek, weightedP90, type VResult, type VSess } from "./validate.ts";
 
 export type BuiltSession = VSess & { flags: string[]; paceMode: string; srcWorkoutId: number; srcDate: string };
 export type BuiltWeek = {
   aid: number; weekStart: string; sessions: BuiltSession[]; source: string; why: string;
   validator: VResult[]; refused: boolean; warnings: string[];
+  /** причина отказа, если неделя НЕ выдаётся: нет недавней истории или жёсткое нарушение */
+  refusedWhy: string | null;
 };
 
 let paramsLoaded = false;
+/**
+ * Файл repeat-params.json несёт ТОЛЬКО подобранные числа (порог провала, длина паузы). Классы «не образец» (старт, после старта,
+ * подводка, пик, провал) — решения Игоря и живут КОДОМ в repeat.ts: раньше файл перезаписывал и их, и устаревший файл молча
+ * выключал «пик» (поймано проверкой 15.10).
+ */
 export function loadRepeatParams(): void {
   if (paramsLoaded) return;
-  const p = JSON.parse(readFileSync(path.join(DATA_DIR, "repeat-params.json"), "utf8")) as { normal: number; gap: number; post: number; skip: Abnormal[]; applyPost: boolean };
-  setRepeatParams(p); paramsLoaded = true;
+  const p = JSON.parse(readFileSync(path.join(DATA_DIR, "repeat-params.json"), "utf8")) as { normal: number; gap: number };
+  setRepeatParams({ normal: p.normal, gap: p.gap }); paramsLoaded = true;
 }
+/** Тесты и бэктест задают параметры сами: файл читать не нужно. */
+export function useExplicitParams(): void { paramsLoaded = true; }
 
 const med = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 
@@ -49,7 +59,7 @@ export function stateFor(ix: Index, aid: number, weekStart: string, races: Array
   const km = next?.distance_km ?? null;
   const nextRaceIsMain = next ? mainRaceIds(races.map((r) => ({ id: r.event_date, event_date: r.event_date, distance_km: r.distance_km }))).has(next.event_date) : false;
   return {
-    aid, weekStart, sessions: [], other: 0, total: 0, aerobic: 0, quality: 0, days: 0, qCount: 0, longDay: null, longMin: 0, work: 0, roles: ".......",
+    aid, weekStart, sessions: [], other: 0, total: 0, aerobic: 0, quality: 0, days: 0, done: 0, qCount: 0, longDay: null, longMin: 0, work: 0, roles: ".......",
     prevTotal: prev && gap === 0 ? prev.total : 0, prevDays: prev && gap === 0 ? prev.days : 0, prevQ: prev && gap === 0 ? prev.qCount : 0,
     avg4: Math.round(last4.reduce((s, w) => s + w.total, 0) / 4), gapWeeks: gap,
     weeksToRace, raceKm: km, lastRaceKm: last?.distance_km ?? null, weeksSinceRace, raceDayIdx: off != null && off <= 13 ? off : null, nextRaceIsMain, ill, illAtStart: ill,
@@ -62,6 +72,9 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
   loadRepeatParams();
   const plan = planRepeat(ix, t, cycle);
   let ps: PSess[]; let source: string; let why: string;
+  if (plan.kind === "refuse") {
+    return { aid: t.aid, weekStart: t.weekStart, sessions: [], source: "ОТКАЗ", why: plan.why, validator: [], refused: true, warnings: [`⛔ ${plan.why}`], refusedWhy: plan.why };
+  }
   if (plan.kind === "repeat") {
     ps = plan.sessions;
     source = `ПОВТОР недели ${plan.base.weekStart} × дельта ${plan.delta}`;
@@ -84,18 +97,12 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
   const validator = validateWeek(sessions, c?.envelope ?? null, {
     hasActiveIllness: c?.hasActiveIllness ?? t.illAtStart, checkText: true,
     normalLevel: prior.length >= 4 ? med(prior) : undefined, raceDayIdx: t.nextRaceIsMain ? t.raceDayIdx : null,
+    recent: recent(ix, t.aid, t.weekStart),
+    postMarathonWeek: t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace != null ? t.weeksSinceRace : null,
     windowCaps: { weekly: weightedP90(hist.map((w) => ({ v: w.total, weekStart: w.weekStart })), t.weekStart), long: weightedP90(hist.map((w) => ({ v: w.longMin, weekStart: w.weekStart })), t.weekStart) },
   });
   const refused = validator.some((v) => v.severity === "hard" && !v.ok);
-  // ВОССТАНОВЛЕНИЕ ПОСЛЕ МАРАФОНА — предупреждение, не правило (замер 15.10 по неделям корпуса, нед+1/+2/+3 от обычной):
-  // марафон 0.39/0.75/0.81, половинка 0.76/0.99/0.99, ≤10к 0.86/1.00/1.02. Метод повторяет обычную неделю и этого не знает;
-  // единый множитель «после старта» ×0.67 действует только на первой неделе. Что делать со 2–3-й неделей — решение Игоря.
-  const recovery: string[] = [];
-  if (t.weeksSinceRace != null && t.weeksSinceRace >= 1 && t.weeksSinceRace <= 3 && t.lastRaceKm != null && t.lastRaceKm >= 30) {
-    const typ = [0.39, 0.75, 0.81][t.weeksSinceRace - 1];
-    const heavy = sessions.filter((s) => s.kind === "quality" || s.minutes > 90).map((s) => `${s.title} ${s.minutes} мин`);
-    recovery.push(`⚠ ${t.weeksSinceRace}-я неделя после старта на ${t.lastRaceKm} км: у тренера такая неделя ≈ ${typ} от обычной; здесь ${sessions.reduce((a, s) => a + s.minutes, 0)} мин${heavy.length ? `, тяжёлое: ${heavy.join("; ")}` : ""} — проверь`);
-  }
-  const warnings = [...recovery, ...validator.filter((v) => !v.ok).map((v) => `${v.severity === "hard" ? "⛔" : "⚠"} ${v.name}${v.detail ? ` (${v.detail})` : ""}`), ...sessions.flatMap((s) => s.flags.map((f) => `⚑ ${s.title}: ${f}`))];
-  return { aid: t.aid, weekStart: t.weekStart, sessions, source, why, validator, refused, warnings };
+  const warnings = [...validator.filter((v) => !v.ok).map((v) => `${v.severity === "hard" ? "⛔" : "⚠"} ${v.name}${v.detail ? ` (${v.detail})` : ""}`), ...sessions.flatMap((s) => s.flags.map((f) => `⚑ ${s.title}: ${f}`))];
+  const hard = validator.filter((v) => v.severity === "hard" && !v.ok).map((v) => `${v.name}${v.detail ? ` (${v.detail})` : ""}`);
+  return { aid: t.aid, weekStart: t.weekStart, sessions, source, why, validator, refused, warnings, refusedWhy: refused ? hard.join("; ") : null };
 }
