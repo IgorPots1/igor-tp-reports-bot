@@ -38,6 +38,8 @@ export type Phase = "race" | "taper" | "build" | "base" | "post" | "return";
 export type CWeek = {
   aid: number; weekStart: string; sessions: CSess[]; other: number;
   total: number; aerobic: number; quality: number; days: number;
+  /** ФАКТИЧЕСКИ выполненные минуты бега недели (completed_time_raw плановых строк, без самого старта) */
+  done: number;
   qCount: number; longDay: number | null; longMin: number; work: number;
   roles: string; // 7 символов Пн..Вс: Q / L / E / .
   prevTotal: number; prevDays: number; prevQ: number; avg4: number; gapWeeks: number;
@@ -157,6 +159,7 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
       const total = ts.reduce((s, x) => s + x.minutes, 0);
       const quality = ts.filter((x) => x.kind === "quality").reduce((s, x) => s + x.minutes, 0);
       const days = new Set(ts.map((s) => s.dayIdx)).size;
+      const done = Math.round(runs.reduce((a, r, i) => a + (isRace[i] ? 0 : (r.completed_time_raw ?? 0) * 60), 0));
       const roles = [".", ".", ".", ".", ".", ".", "."];
       for (const s of ts) { const c = s.kind === "quality" ? "Q" : s.kind === "long" ? "L" : "E"; if (roles[s.dayIdx] === "." || c === "Q" || (c === "L" && roles[s.dayIdx] === "E")) roles[s.dayIdx] = c; }
       const long = ts.find((s) => s.kind === "long");
@@ -188,7 +191,7 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
         : weeksToRace != null && weeksToRace <= 12 ? "build" : "base";
       built.push({
         aid, weekStart: wk, sessions, other: all.length - runs.length,
-        total, aerobic: total - quality, quality, days,
+        total, aerobic: total - quality, quality, days, done,
         qCount: ts.filter((s) => s.kind === "quality").length, longDay: long?.dayIdx ?? null, longMin: long?.minutes ?? 0,
         work: ts.reduce((s, x) => s + x.work, 0), roles: roles.join(""),
         prevTotal: prev?.total ?? 0, prevDays: prev?.days ?? 0, prevQ: prev?.q ?? 0, avg4, gapWeeks: gap,
