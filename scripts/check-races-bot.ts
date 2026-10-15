@@ -1038,6 +1038,16 @@ async function main() {
     RACES = saved;
   }
 
+  // ── «Важное» из выжимки по старту (15.10.2026): строка в карточке, если выжимка есть ──
+  {
+    const withImp = T.raceScreen(TRAIL, "Москва", false, null, null, "sz", false, "Важное: старт 9:00, номера сб 12:00–20:00, лимит 3 ч");
+    assert.match(withImp.text, /<b>Важное:<\/b> старт 9:00, номера сб 12:00–20:00, лимит 3 ч/);
+    const noImp = T.raceScreen(TRAIL, "Москва", false, null, null, "sz", false);
+    assert.doesNotMatch(noImp.text, /Важное/, "нет выжимки — нет блока");
+    const esc = T.raceScreen(TRAIL, "Москва", false, null, null, "sz", false, "Важное: номера в ТЦ <Галерея>");
+    assert.match(esc.text, /&lt;Галерея&gt;/, "текст организатора экранируется");
+  }
+
   // ── подпись ссылок /go/ ────────────────────────────────────────────────────
   process.env.RACES_BOT_TOKEN = "123456:TEST-token";
   const { goLink, goUser } = await import("@/features/races-bot/runtime");

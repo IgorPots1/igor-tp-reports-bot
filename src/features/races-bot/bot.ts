@@ -7,6 +7,7 @@
 
 import { norm } from "@/app/races/races-logic";
 import { courseList } from "@/features/race-course";
+import { importantLine, type DetailRow } from "@/features/race-details/important";
 
 import {
   consultAllowed,
@@ -129,6 +130,8 @@ export type BotDeps = {
   weather?: (city: string, dateIso: string) => Promise<T.Weather | null>;
   /** Ссылка через igorp.run/go/<код>: клик записывается и сразу 302 на сайт или регистрацию. */
   goLink?: (tgId: number, r: BotRace, kind: "r" | "s") => string;
+  /** Выжимка по старту (race_details): строка «Важное» в карточке. Нет — блока нет. */
+  details?: (raceId: string) => Promise<DetailRow[]>;
 };
 
 type TgUser = { id: number; first_name?: string; username?: string };
@@ -400,7 +403,9 @@ export function createBot(deps: BotDeps) {
     if (x.kind === "race") {
       const following = (await followingSet(u.tg_id)).has(x.race.id);
       const place = x.near ? T.placeLine(x.race, x.km) : x.race.city || T.placeLine(x.race, null);
-      return screen(u, T.raceScreen(x.race, place, following, regLink(u, x.race), siteLink(u, x.race), back, consult), origin);
+      // «Важное» из выжимки: сбой чтения не мешает карточке, просто без блока.
+      const important = deps.details ? importantLine(await deps.details(x.race.id).catch(() => [])) : null;
+      return screen(u, T.raceScreen(x.race, place, following, regLink(u, x.race), siteLink(u, x.race), back, consult, important), origin);
     }
     const watching = new Set(await store.listExpectedWatches(u.tg_id)).has(x.e.id);
     const place = x.e.city ? `${x.e.city}${x.km === null ? "" : `, ${x.km} км`}` : x.e.subject || "место уточняется";

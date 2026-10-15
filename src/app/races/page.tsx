@@ -6,7 +6,7 @@ import { jetbrains, onest } from "@/lib/fonts";
 
 import RacesCalendar from "./RacesCalendar";
 import { loadExpected } from "./expected";
-import { loadRaces } from "./load";
+import { loadImportant, loadRaces } from "./load";
 import "./races-page.css";
 import styles from "./races.module.css";
 
@@ -27,8 +27,8 @@ export const viewport: Viewport = {
 export const revalidate = 3600;
 
 export default async function RacesPage() {
-  const [loaded, expected] = await Promise.all([loadRaces(), loadExpected()]);
-  const races = loaded ?? [];
+  const [loaded, expected, important] = await Promise.all([loadRaces(), loadExpected(), loadImportant()]);
+  const races = (loaded ?? []).map((r) => ({ ...r, important: important.get(r.id) ?? null }));
 
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>

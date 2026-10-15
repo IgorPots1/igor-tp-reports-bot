@@ -43,6 +43,8 @@ export type RaceRow = {
 /** Старт в том виде, в каком он уходит в браузер: только нужные поля. */
 export type Race = {
   id: string;
+  /** Строка «Важное» из выжимки race_details (сервер считает при загрузке страницы); нет — блока нет. */
+  important?: string | null;
   name: string;
   ds: string;
   de: string;

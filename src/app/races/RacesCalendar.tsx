@@ -93,6 +93,12 @@ function RaceItem({ r, follow, away, onAct }: { r: Race; follow: FollowUi; away?
             </>
           )}
         </div>
+        {r.important ? (
+          <div className={styles.important}>
+            <b>Важное:</b>
+            {r.important.replace(/^Важное:/, "")}
+          </div>
+        ) : null}
         <div className={styles.meta}>
           {TYPE_LABEL[r.type] ? (
             <span className={`${styles.pill} ${styles[`type_${r.type}`] || ""}`}>{TYPE_LABEL[r.type]}</span>

@@ -399,6 +399,20 @@
   font-weight: 600;
 }
 
+/* «Важное» из выжимки по старту: старт, номера, лимит (наряд 15.10.2026) */
+.important {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.important b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;

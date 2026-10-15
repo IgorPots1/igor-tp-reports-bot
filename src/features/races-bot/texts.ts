@@ -814,6 +814,7 @@ export function raceScreen(
   siteUrl: string | null,
   back: string,
   consult: boolean,
+  important: string | null = null,
 ): Msg {
   const dist = distPills(r).join(" / ");
   const code = raceCode(r.id);
@@ -835,6 +836,7 @@ export function raceScreen(
     text:
       `<b>${esc(r.name)}</b>\n${cardDate(r)}\n📍 ${esc(place)}` +
       `${TYPE_LABEL[r.type] ? `\n${TYPE_LABEL[r.type]}` : ""}${dist ? ` · ${esc(dist)}` : ""}` +
+      (important ? `\n\n<b>Важное:</b>${esc(important.replace(/^Важное:/, ""))}` : "") +
       (courses.length ? "\n🗺 Есть разбор трассы" : "") +
       (following ? "\n\n⭐ Слежу: напомню за 12 недель, за неделю и накануне." : ""),
     reply_markup: { inline_keyboard: rows },

@@ -10,6 +10,7 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotTg, type BotUser } from "./bot";
 import { localParts, raceCode, type BotRace, type ExpectedItem, type GoCode } from "./core";
 import { loadGeoRows, toExpected, withGeo } from "@/app/races/expected";
+import type { DetailRow } from "@/features/race-details/important";
 import { computeBotStats, type StatEvent, type StatFollow, type StatPeriod, type StatUser } from "./stats";
 import type { Weather } from "./texts";
 
@@ -99,6 +100,27 @@ export async function loadBotRaces(): Promise<BotRace[]> {
   const races = prepare(rows, localParts(new Date(), "Europe/Moscow").date).map((r) => ({ ...r, firstSeen: firstSeen.get(r.id) ?? null }));
   racesCache = { at: Date.now(), races };
   return races;
+}
+
+// ── выжимка по стартам ─────────────────────────────────────────────────────────
+
+const detailsCache = new Map<string, { at: number; rows: DetailRow[] }>();
+let detailsBroken = false;
+
+/** Выжимка по старту из race_details (блок «Важное»). Кэш 10 минут на инстанс. Таблицы ещё нет или
+ *  чтение упало — пусто и одна строка в лог: карточка показывается без блока. */
+export async function loadRaceDetails(raceId: string): Promise<DetailRow[]> {
+  const hit = detailsCache.get(raceId);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.rows;
+  const { data, error } = await createSupabaseServerClient().from("race_details").select("distance,field,value").eq("race_id", raceId);
+  if (error) {
+    if (!detailsBroken) console.error(`[races-bot] race_details: ${error.message}`);
+    detailsBroken = true;
+    return [];
+  }
+  const rows = ((data ?? []) as { distance: number | string | null; field: string; value: string }[]).map((r) => ({ ...r, distance: r.distance == null ? null : Number(r.distance) }));
+  detailsCache.set(raceId, { at: Date.now(), rows });
+  return rows;
 }
 
 // ── хранилище ────────────────────────────────────────────────────────────────
@@ -360,6 +382,7 @@ export function productionBot() {
     store: supabaseStore,
     tg: tgApi,
     races: loadBotRaces,
+    details: loadRaceDetails,
     expected: loadBotExpected,
     coachUsername: coachUsername(),
     reverseGeocode: nominatimCity,
