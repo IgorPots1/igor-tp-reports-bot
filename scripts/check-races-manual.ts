@@ -130,7 +130,8 @@ assert.ok(validateInsert({ ...good, tags: ["kids"] }, TODAY).length);
 for (const bad of ["Онлайн-забег", "Детский забег", "Беговой кемп", "Абонемент", "Велогонка"]) {
   assert.ok(validateInsert({ ...good, name: bad }, TODAY).length, `«${bad}» отклоняется`);
 }
-// Только плавание (15.10.2026: X-WATERS Урал и Руза попали в календарь ручными строками с типом tri).
+// Только плавание отклоняется (15.10.2026). X-WATERS без дистанций — заплыв, отклоняется; с акватлоном в
+// дистанциях — бег есть, проходит (решение тренера 15.10.2026: Урал и Руза остаются как триатлон).
 for (const swim of ["X-WATERS Урал 2027", "X-WATERS МСК Руза 2027", "Заплыв через Волгу", "Open Water Swim Cup"]) {
   assert.ok(validateInsert({ ...good, name: swim, race_type: "tri" }, TODAY).includes(SWIM_ONLY_REASON), `«${swim}» отклоняется как только плавание`);
 }
@@ -138,6 +139,7 @@ assert.ok(validateInsert({ ...good, name: "Кубок Байкала", distances
 for (const multi of ["Кижи Run&Swim 5.0", "SwimRun Карелия", "Акватлон «Волжский»", "Триатлон IRONSTAR Завидово"]) {
   assert.deepEqual(validateInsert({ ...good, name: multi, race_type: "tri" }, TODAY), [], `«${multi}» — с бегом, проходит`);
 }
+assert.deepEqual(validateInsert({ ...good, name: "X-WATERS Урал 2027", race_type: "tri", distances: ["акватлон 2,5 + 1 + 2,5 км"] }, TODAY), [], "X-WATERS с акватлоном проходит");
 
 // Update: только ручные, только разрешённые поля, status нельзя.
 assert.deepEqual(validateUpdate({ id: "manual:x-2027", reason: "перенос", date_start: "2027-06-01" }, TODAY), []);

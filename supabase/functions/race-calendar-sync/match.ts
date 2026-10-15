@@ -185,16 +185,14 @@ export function findMatch<T extends MatchRow>(pool: T[], s: MatchRow): [T | unde
   return near ? [near, 2] : [undefined, 0];
 }
 
-// Только плавание (X-WATERS, заплывы, open water) — не беговой старт. Попадали в календарь ручными
-// строками (15.10.2026: X-WATERS Урал и Руза с типом tri). Триатлон, акватлон, свимран и всё, где в
-// названии есть бег, остаются: там бег есть. Общий фильтр сборщика (okRace) и шлюза races-manual.
-// Серия X-WATERS — заплывы на открытой воде: решает название, а не дистанции. У ручных строк Урала
-// и Рузы в дистанциях стояло «акватлон 2,5 + 1 + 2,5 км», и по дистанциям они бы прошли.
-const SWIM_BRAND = /[xх][- ]?waters/i;
-const SWIM = /заплыв|плаван|\bswim|open[- ]?water|открыт(ой|ая|ую) вод|на воде/i;
+// Только плавание (заплывы, open water, X-WATERS без бега) — не беговой старт. Общий фильтр
+// сборщика (okRace) и шлюза races-manual. Триатлон, акватлон, свимран и всё, где в названии или
+// дистанциях есть бег, остаются. Было (15.10.2026, первый вариант): серия X-WATERS снималась по
+// одному названию; отменено решением тренера: у X-WATERS Урал и Руза в дистанциях акватлон
+// (плавание + бег), это триатлонный старт и остаётся в календаре.
+const SWIM = /заплыв|плаван|\bswim|open[- ]?water|открыт(ой|ая|ую) вод|на воде|[xх][- ]?waters/i;
 const WITH_RUN = /бег|трейл|trail|кросс|\brun\b|swim ?run|свимран|триатлон|дуатлон|акватлон|(tri|aqua|du)athlon|ironstar|iron ?man|ironlady|manstar/i;
 export function isSwimOnly(name: string, distances: string[] = []): boolean {
-  if (SWIM_BRAND.test(name)) return !WITH_RUN.test(name);
   const text = `${name} ${distances.join(" ")}`;
   return SWIM.test(text) && !WITH_RUN.test(text);
 }

@@ -23,6 +23,8 @@
  *   npx tsx scripts/races-manual.ts read <url>               текст страницы из настоящего браузера
  *   npx tsx scripts/races-manual.ts dup <proposal.json>      проверка дублей для вставок
  *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке, и только плавание → removed
+ *   npx tsx scripts/races-manual.ts announce <exp_id>=<race_id>,… [--apply]   ожидаемые, чьё проведение уже в
+ *                                                            календаре, а робот не узнал (решение тренера) → announced
  *   npx tsx scripts/races-manual.ts apply <proposal.json> [--apply]   итог недели пишется в ops-log
  *   npx tsx scripts/races-manual.ts sources [all]           реестр источников (active, или все)
  *   npx tsx scripts/races-manual.ts sources-seed [--apply]  стартовое наполнение реестра
@@ -356,7 +358,7 @@ export function validateInsert(r: RaceInsert, todayIso: string): string[] {
 }
 
 /** Причина отказа и снятия для стартов только с плаванием (isSwimOnly, общий с роботом). */
-export const SWIM_ONLY_REASON = "только плавание (заплыв, X-WATERS, open water): не беговой старт";
+export const SWIM_ONLY_REASON = "только плавание (заплыв, open water, X-WATERS без бега): не беговой старт";
 
 export function validateExpected(r: ExpectedInsert, todayIso: string): string[] {
   const e: string[] = [];
@@ -874,6 +876,44 @@ async function cmdDedupe(apply: boolean, quiet = false) {
     }
   }
   return hits;
+}
+
+/**
+ * Ожидаемый старт → «объявлен» по решению тренера: робот (стадия expected) пару не узнал, а без
+ * этого в боте один старт виден дважды, ожидаемым и объявленным. Правила в коде, как у остальных
+ * команд: только строки со status = 'expected'; race_id обязан быть видимым стартом календаря;
+ * меняются только status, race_id, announced_at; не больше MAX_ANNOUNCE за прогон; по умолчанию
+ * холостой прогон. Обратимо: status = 'expected', race_id = null.
+ */
+const MAX_ANNOUNCE = 10;
+export async function cmdAnnounce(pairsArg: string, apply: boolean) {
+  const pairs = (pairsArg || "").split(",").map((p) => p.trim()).filter(Boolean).map((p) => p.split("="));
+  if (!pairs.length || pairs.some((p) => p.length !== 2 || !p[0] || !p[1])) throw new Error("announce <exp_id>=<race_id>,…");
+  if (pairs.length > MAX_ANNOUNCE) throw new Error(`не больше ${MAX_ANNOUNCE} за прогон`);
+  const sb = db();
+  const { data: exp, error } = await sb.from("race_expected").select("id,name,city,status,last_date").in("id", pairs.map((p) => p[0]));
+  if (error) throw error;
+  const visible = new Map((await calendarRows(sb)).map((r) => [r.id, r]));
+  const out: { id: string; race_id: string; ok: boolean; text: string }[] = [];
+  for (const [id, raceId] of pairs) {
+    const e = (exp || []).find((x) => x.id === id);
+    const r = visible.get(raceId);
+    if (!e) out.push({ id, race_id: raceId, ok: false, text: "нет в race_expected" });
+    else if (e.status !== "expected") out.push({ id, race_id: raceId, ok: false, text: `статус ${e.status}, не expected` });
+    else if (!r) out.push({ id, race_id: raceId, ok: false, text: "старта нет в календаре (race_calendar)" });
+    else if (r.date_start <= (e.last_date as string)) out.push({ id, race_id: raceId, ok: false, text: "дата старта не позже прошлого проведения" });
+    else out.push({ id, race_id: raceId, ok: true, text: `«${e.name}» (${e.city}, ${e.last_date}) → «${r.name}» ${r.date_start}` });
+  }
+  console.log(JSON.stringify(out, null, 2));
+  if (apply) {
+    for (const o of out.filter((x) => x.ok)) {
+      const { error: ue } = await sb.from("race_expected")
+        .update({ status: "announced", race_id: o.race_id, announced_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", o.id).eq("status", "expected");
+      if (ue) throw ue;
+    }
+  }
+  return out;
 }
 
 type Outcome = { kind: "fixed" | "removed" | "added" | "expected" | "skipped"; id: string; text: string; link?: string; tri?: boolean };
@@ -1577,6 +1617,7 @@ async function main() {
   if (cmd === "read" && arg) return cmdRead(arg);
   if (cmd === "dup" && arg) return cmdDup(arg);
   if (cmd === "dedupe") return void (await cmdDedupe(apply));
+  if (cmd === "announce" && arg) return void (await cmdAnnounce(arg, apply));
   if (cmd === "apply" && arg) return void (await cmdApply(arg, apply));
   if (cmd === "sources") return cmdSources(arg === "all");
   if (cmd === "sources-seed") return cmdSourcesSeed(apply);
@@ -1586,7 +1627,7 @@ async function main() {
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
   if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
-  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
+  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
 
