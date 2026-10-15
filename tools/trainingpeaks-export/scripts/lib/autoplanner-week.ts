@@ -938,7 +938,12 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // понижение тира меняет только режим контроля и объёма не касается. В таких случаях считаем
   // потолок ОТ ФАКТА. Два входа: активный health-сигнал и «не бегает» (выполнение ниже 40%
   // подряд 3 недели). Обычное недовыполнение (около 80%) объём НЕ режет — план и так с запасом.
-  const notTraining = hasActiveIllness || env.notRunningWeeks >= NOT_RUNNING_WEEKS;
+  // СИГНАЛ ЗДОРОВЬЯ БОЛЬШЕ НЕ ПОНИЖАЕТ НЕДЕЛЮ (правка 15.10, замер R4 по 498 неделям с сигналом:
+  // тренер держит объём — медиана 1.0 от обычного, p25 0.7; качество сохранено в 63%; дни те же).
+  // Было: hasActiveIllness → notTraining → объём от факта и роль цикла понижена; у Семешиной
+  // тренер дал 240 мин, сборщик 105. Понижение осталось только для «не бегает».
+  const notTraining = env.notRunningWeeks >= NOT_RUNNING_WEEKS;
+  if (hasActiveIllness) notes.push("⚠ ПРЕДУПРЕЖДЕНИЕ: активный health-сигнал — неделя собрана как обычная (у тренера в такие недели объём медиана 1.0 от обычного, качество сохраняется в 63%). Проверь самочувствие перед отдачей.");
 
   let weekly: number;
   // ── РЕЖИМ ЦИКЛА ──
@@ -956,9 +961,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   } else if (notTraining) {
     weekly = Math.min(env.rolling4wWeeklyMin || 0, env.capWeeklyMin ?? Infinity) || 30;
     if (env.lastWeekMinutes > 0) weekly = Math.min(weekly, Math.round(env.lastWeekMinutes * WEEKLY_GROWTH_MAX));
-    notes.push(hasActiveIllness
-      ? `потолок от ФАКТА (${weekly} мин): активный health-сигнал — план здорового периода не ориентир`
-      : `потолок от ФАКТА (${weekly} мин): выполнение ниже ${Math.round(NOT_RUNNING_RATIO * 100)}% ${env.notRunningWeeks} нед подряд — человек фактически не тренируется`);
+    notes.push(`потолок от ФАКТА (${weekly} мин): выполнение ниже ${Math.round(NOT_RUNNING_RATIO * 100)}% ${env.notRunningWeeks} нед подряд — человек фактически не тренируется`);
     if (cycle) {
       notes.push(`РОЛЬ НЕДЕЛИ ПОНИЖЕНА до разгрузочной: цикл просил «${cycle.role}» и ${cycle.aerobicMin + cycle.qualityMin} мин.`
         + ` Неделя потрачена, остальной план цикла НЕ сдвинут.`);
@@ -1187,8 +1190,9 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         // не делось, исчезло только расхождение между словом и делом.
         gateLiftedByCycle: qualityCap > gateCap,
         lastQualityWorkMinutes: env.lastQualityWorkMinutes,
-        hasActiveIllnessOrInjury: hasActiveIllness, hasRaceContext: false,
-        contextFlags: hasActiveIllness ? ["injury"] : [], rolling4wWeeklyMin: env.rolling4wWeeklyMin,
+        // сигнал здоровья качество не снимает (R4: тренер сохраняет его в 63% таких недель)
+        hasActiveIllnessOrInjury: false, hasRaceContext: false,
+        contextFlags: [], rolling4wWeeklyMin: env.rolling4wWeeklyMin,
         sessionBudgetMin: sessionBudget,
         // ЦЕЛЬ ЦИКЛА ПО МИНУТАМ РАБОТЫ ДЕЛИТСЯ МЕЖДУ СЕССИЯМИ: цикл задаёт объём работы НА НЕДЕЛЮ,
         // и целиться каждой сессией в недельное число значило бы удвоить работу.

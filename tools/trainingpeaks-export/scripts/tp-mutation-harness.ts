@@ -47,6 +47,10 @@ type Mutation = { id: string; file: string; find: string; replace: string; what:
  * Порядок — по модулям, чтобы читать матрицу было проще.
  */
 const MUTATIONS: Mutation[] = [
+  // ── сигнал здоровья не понижает неделю (15.10, замер R4) ──
+  { id: "sig-downgrades", file: W, find: "  const notTraining = env.notRunningWeeks >= NOT_RUNNING_WEEKS;", replace: "  const notTraining = hasActiveIllness || env.notRunningWeeks >= NOT_RUNNING_WEEKS;", what: "сигнал снова понижает роль недели" },
+  { id: "sig-blocks-quality", file: W, find: "        hasActiveIllnessOrInjury: false, hasRaceContext: false,", replace: "        hasActiveIllnessOrInjury: hasActiveIllness, hasRaceContext: false,", what: "сигнал снова снимает качество" },
+  { id: "sig-tier-t1", file: X, find: "    return { tier: base, tierNote: \"активный health-сигнал: тир не понижается (практика тренера), проверь самочувствие\" };", replace: "    return { tier: \"T1\", tierNote: \"активный health-сигнал: тир не понижается (практика тренера), проверь самочувствие\" };", what: "сигнал снова сбрасывает тир в T1" },
   // ── потолки baseline — предупреждения, не отсечки (15.10) ──
   { id: "cap-weekly-cuts", file: W, find: "    weekly = env.rolling4wPlannedMin || 150;", replace: "    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;", what: "недельный baseline снова режет конверт" },
   { id: "cap-freq-cuts", file: W, find: "    if (env.capFrequency != null && nWant > env.capFrequency) notes.push(", replace: "    if (env.capFrequency != null && nWant > env.capFrequency) nWant = Math.round(env.capFrequency); if (false) notes.push(", what: "потолок частоты снова режет дни молча" },

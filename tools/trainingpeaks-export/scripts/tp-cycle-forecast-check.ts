@@ -37,6 +37,7 @@ import {
   isQualityForPractice, isTempoForPractice, longDayOfWeek, longRunPractice,
 } from "./lib/practice-signals.ts";
 import { splitSessionVolume } from "./lib/quality-volume.ts";
+import { NOT_RUNNING_WEEKS, downgradeTier } from "./lib/autoplanner-context.ts";
 import { loadActiveCycles } from "./lib/cycle-reader.ts";
 import {
   DELOAD_AEROBIC_FACTOR, DELOAD_EVERY_N, DELOAD_QUALITY_FACTOR, MAX_SHARE_DEVIATION_PP,
@@ -361,9 +362,28 @@ async function main(): Promise<void> {
       `конверт ${envLowPlan.rolling4wPlannedMin}, цель цикла ${bigWant}, собрано ${wBig.plannedMinutes}`
       + ` (${Math.round(1000 * (wBig.plannedMinutes / bigWant - 1)) / 10}%)`);
 
-    // при активном health-сигнале роль понижается, объём считается от факта
-    const wIll = buildWeek(anchors, env, cat, MON, true, null, target);
-    check("реактивность: при активном сигнале роль понижена",
+    // ПЕРЕПИСАНО 15.10 (правило 6a). Было «реактивность: при активном сигнале роль понижена».
+    // Отменено замером R4 (498 недель с сигналом): тренер держит объём (медиана 1.0 от обычного)
+    // и качество (63%); у Семешиной он дал 240 мин, сборщик 105. Новое утверждение сильнее:
+    // сигнал НЕ понижает роль, неделя попадает в цель цикла ±10%, качество на месте, тренер предупреждён.
+    const wSig = buildWeek(anchors, env, cat, MON, true, null, target);
+    const sigWant = target.aerobicMin + target.qualityMin;
+    check("сигнал здоровья НЕ понижает неделю: цель цикла ±10%, качество на месте, тренер предупреждён",
+      !downgraded(wSig) && Math.abs(wSig.plannedMinutes / sigWant - 1) <= 0.1
+        && wSig.sessions.some((x) => x.role === "quality")
+        && wSig.notes.some((n) => n.includes("ПРЕДУПРЕЖДЕНИЕ") && n.includes("health-сигнал")),
+      `собрано ${wSig.plannedMinutes} из ${sigWant}, качественных ${wSig.sessions.filter((x) => x.role === "quality").length}; заметки: ${wSig.notes.join(" | ")}`);
+
+    // Было: активный сигнал → тир сразу T1 (темпы снимались, «по ощущениям»). Отменено тем же замером R4.
+    const tSig = downgradeTier("T3", { hasActiveIllness: true, lastWeekMinutes: 300, rolling4wWeeklyMin: 300 });
+    check("сигнал здоровья НЕ сбрасывает тир в T1 — тир по объёму, пометка есть",
+      tSig.tier === "T3" && (tSig.tierNote ?? "").includes("health-сигнал"), `тир ${tSig.tier}, пометка «${tSig.tierNote}»`);
+
+    // ПУТЬ ПОНИЖЕНИЯ ЖИВ — но теперь только для «не бегает» (выполнение < 40% три недели подряд).
+    // Проверки ниже прежде гоняли его через флаг болезни; переведены на «не бегает», утверждения те же.
+    const envNR = { ...env, notRunningWeeks: NOT_RUNNING_WEEKS };
+    const wIll = buildWeek(anchors, envNR, cat, MON, false, null, target);
+    check("реактивность: при «не бегает» роль понижена",
       downgraded(wIll), `заметки: ${wIll.notes.join(" | ")}`);
 
     // Понижённую неделю проверяем НА ПРАВИЛО ПОНИЖЕНИЯ, а не на цель цикла.
@@ -452,7 +472,7 @@ async function main(): Promise<void> {
 
     // (д) РЕАКТИВНОСТЬ ГЛАВНЕЕ: на понижённой сигналом неделе пола практики НЕТ.
     // Иначе длительная прыгала бы к медиане ровно тогда, когда человека надо разгрузить.
-    const wMedIll = buildWeek(anchors, envMed, cat, MON, true, null,
+    const wMedIll = buildWeek(anchors, { ...envMed, notRunningWeeks: NOT_RUNNING_WEEKS }, cat, MON, false, null,
       { weekIndex: 2, totalWeeks: 10, role: "рост", aerobicMin: 155, qualityMin: 25, days: 3 });
     check("понижённая неделя: пол практики НЕ применяется",
       wMedIll.refused != null || longestOf(wMedIll) < 90,
@@ -481,7 +501,7 @@ async function main(): Promise<void> {
     // первая версия этой проверки на такой заглушке падала не по делу.
     const envNoRace = { ...env, capLongRunMin: 180, longRunPracticeMaxMin: 160, longRunPracticeMedianMin: 160, typicalEasyMinutes: 85 };
     const tgtNoRace: CycleWeekTarget = { weekIndex: 2, totalWeeks: 8, role: "поддержание", aerobicMin: 280, qualityMin: 25, days: 3, baseWeekMin: 305, hasTargetRace: false };
-    const wIllLong = buildWeek(anchors, envNoRace, cat, MON, true, null, tgtNoRace);
+    const wIllLong = buildWeek(anchors, { ...envNoRace, notRunningWeeks: NOT_RUNNING_WEEKS }, cat, MON, false, null, tgtNoRace);
     check("понижённая неделя: длительная НЕ обнуляется",
       wIllLong.refused != null || longestOf(wIllLong) >= LONG_FLOOR,
       `длительная ${longestOf(wIllLong)} мин на понижённой неделе (пол ${LONG_FLOOR})`);
@@ -489,7 +509,7 @@ async function main(): Promise<void> {
     // (з) ЦЕЛЕВОЙ СТАРТ: длительная режется ПОСЛЕДНЕЙ. У кого старт есть, пол применяется
     // пропорционально понижению; у кого нет — пола нет. Разница обязана быть видна.
     const tgtRace: CycleWeekTarget = { ...tgtNoRace, hasTargetRace: true };
-    const wIllRace = buildWeek(anchors, envNoRace, cat, MON, true, null, tgtRace);
+    const wIllRace = buildWeek(anchors, { ...envNoRace, notRunningWeeks: NOT_RUNNING_WEEKS }, cat, MON, false, null, tgtRace);
     check("понижённая неделя: с целевым стартом длительная длиннее, чем без него",
       longestOf(wIllRace) > longestOf(wIllLong),
       `со стартом ${longestOf(wIllRace)}, без старта ${longestOf(wIllLong)}`);

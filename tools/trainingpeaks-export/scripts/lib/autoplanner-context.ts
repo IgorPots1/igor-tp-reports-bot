@@ -218,9 +218,12 @@ export function downgradeTier(
   base: Tier,
   ctx: { hasActiveIllness: boolean; lastWeekMinutes: number; rolling4wWeeklyMin: number },
 ): { tier: Tier; tierNote: string | null } {
+  // СИГНАЛ ЗДОРОВЬЯ ТИР БОЛЬШЕ НЕ ПОНИЖАЕТ (правка 15.10). Было: активный сигнал → сразу T1,
+  // контроль по ощущениям. Замер R4 (498 недель с сигналом): тренер в такие недели держит объём
+  // (медиана 1.0 от обычного) и качество (сохранено в 63%), дни не меняет — то есть темпы
+  // остаются. Сигнал теперь только пометка тренеру (buildWeek), тир — по объёму, как у всех.
   if (ctx.hasActiveIllness) {
-    return base === "T1" ? { tier: "T1", tierNote: null }
-      : { tier: "T1", tierNote: `тир ${base} → T1: активный health-сигнал, контроль по ощущениям` };
+    return { tier: base, tierNote: "активный health-сигнал: тир не понижается (практика тренера), проверь самочувствие" };
   }
   const drop = ctx.rolling4wWeeklyMin > 0 && ctx.lastWeekMinutes > 0
     && ctx.lastWeekMinutes < ctx.rolling4wWeeklyMin * TIER_DROP_VOLUME_RATIO;
