@@ -16,7 +16,7 @@ import { DAY_RU } from "../lib/autoplanner-week.ts";
 import { addDays, workMinutesFromTitle, type CWeek } from "./corpus.ts";
 import { sbc } from "./dump-corpus.ts";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
-import { adapt, adaptTransition, findPrecedent, indexCorpus, needsWholePrecedent, setTransitionBase, type Found, type PSess, type Weights } from "./precedent.ts";
+import { adapt, adaptTransition, findPrecedent, indexCorpus, needsWholePrecedent, setTransitionBase, TRANSITION_BASE, type TransitionBase, type Found, type PSess, type Weights } from "./precedent.ts";
 import { adaptText } from "./adapt-text.ts";
 import { validateWeek, type VResult, type VSess } from "./validate.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
@@ -32,10 +32,16 @@ export function buildPrecedentWeek(ix: ReturnType<typeof indexCorpus>, t: CWeek,
   const p = f.p; const pn = p.aid === t.aid ? "своя" : `чужая — ${names.get(p.aid) ?? p.aid}`;
   const parts = [...f.why.parts].sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 4).map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${Math.round(100 * v) / 100}`).join(", ");
   const state = (w: CWeek): string => `фаза ${w.phase}${w.weeksToRace != null ? `, до старта ${w.weeksToRace} нед (${w.distBucket})` : ""}, 4 нед ~${w.avg4} мин, прошлая ${w.prevTotal} мин/${w.prevDays} дн/${w.prevQ} кач${w.illAtStart ? ", сигнал здоровья" : ""}`;
+  const ownPrev = (ix.byAid.get(t.aid) ?? []).filter((w) => w.weekStart < t.weekStart).pop();
+  const repeat = !whole && TRANSITION_BASE === "none";
   const source = whole
-    ? `ЦЕЛАЯ НЕДЕЛЯ ПРЕЦЕДЕНТА: ${p.weekStart} (${pn}), масштаб ×${Math.round(100 * a.scale) / 100}, ${a.dayMap}`
-    : `ПЕРЕХОД: собственная прошлая неделя атлета × шаг тренера с недели ${p.weekStart} (${pn}): объём ×${Math.round(100 * a.scale) / 100}, качественных ${p.prevQ}→${p.qCount}, дней ${p.prevDays}→${p.days}`;
-  const why = `дистанция ${Math.round(100 * f.why.d) / 100} (${parts}). Цель: ${state(t)}. Прецедент: ${state(p)}`;
+    ? `ЦЕЛАЯ НЕДЕЛЯ ПРЕЦЕДЕНТА (неделя старта): ${p.weekStart} (${pn}), масштаб ×${Math.round(100 * a.scale) / 100}, ${a.dayMap}`
+    : repeat
+      ? `ПОВТОР СОБСТВЕННОЙ НЕДЕЛИ ${ownPrev?.weekStart ?? "?"} — заголовки и тексты Игоря, темпы пересчитаны по якорям атлета на ${t.weekStart}`
+      : `ПЕРЕХОД: собственная прошлая неделя атлета × шаг тренера с недели ${p.weekStart} (${pn}): объём ×${Math.round(100 * a.scale) / 100}, качественных ${p.prevQ}→${p.qCount}, дней ${p.prevDays}→${p.days}`;
+  const why = repeat
+    ? `фаза «${t.phase}» — вне недели старта прецедент на обучающем отрезке (2025-06…2026-03) проигрывает повтору во всех фазах. Ближайший прецедент для справки: ${p.weekStart} (${pn}), дистанция ${Math.round(100 * f.why.d) / 100}. Цель: ${state(t)}`
+    : `дистанция ${Math.round(100 * f.why.d) / 100} (${parts}). Цель: ${state(t)}. Прецедент: ${state(p)}`;
   const sessions = a.sessions.map((s: PSess) => {
     const tx = adaptText({ title: s.title, desc: s.src.desc, struct: s.src.struct, kind: s.kind, srcMinutes: s.src.minutes, minutes: s.minutes, a: c ?? null });
     return { dayIdx: s.dayIdx, kind: s.kind, title: tx.title, minutes: s.minutes, work: s.kind === "quality" ? workMinutesFromTitle(tx.title) : 0, description: tx.description, written: tx.written, flags: tx.flags, paceMode: tx.paceMode };
@@ -47,7 +53,7 @@ async function main(): Promise<void> {
   const L = load();
   const ix = indexCorpus(L.corpus);
   const TUNED = JSON.parse(readFileSync(path.join(DATA_DIR, "tuned-weights.json"), "utf8")) as Weights;
-  setTransitionBase(JSON.parse(readFileSync(path.join(DATA_DIR, "transition-base.json"), "utf8")) as "prev" | "level");
+  setTransitionBase(JSON.parse(readFileSync(path.join(DATA_DIR, "transition-base.json"), "utf8")) as TransitionBase);
   const W = addDays(L.thisMonday, -7);
   const ctx = await loadAthleteContexts(sbc(), W);
   const rules = (JSON.parse(readFileSync(path.join(DATA_DIR, "rules-weeks.json"), "utf8")) as RulesWeek[]).filter((r) => r.weekStart === W);

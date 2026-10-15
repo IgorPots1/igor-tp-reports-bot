@@ -17,8 +17,9 @@ import type { CSess, CWeek, Kind } from "./corpus.ts";
 import { weeksBetween } from "./corpus.ts";
 
 /** Выбрано по обучающему отрезку, см. step3-backtest.ts «база перехода». */
-export let TRANSITION_BASE: "prev" | "level" = "prev";
-export function setTransitionBase(b: "prev" | "level"): void { TRANSITION_BASE = b; }
+export type TransitionBase = "prev" | "level" | "none";
+export let TRANSITION_BASE: TransitionBase = "none";
+export function setTransitionBase(b: TransitionBase): void { TRANSITION_BASE = b; }
 
 export type Weights = {
   phase: number; dist: number; vol: number; prev: number; prevDays: number; prevQ: number;
@@ -140,9 +141,11 @@ export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
  * base="level": цель = средний объём атлета за 4 нед × (прецедент / его средний за 4 нед).
  * Второй вариант появился из разбора: «prev» накапливает пики — если прошлая неделя атлета
  * сама была пиком, шаг прецедента «+15%» ставит ещё выше (Пономарева: 419 → 560 при среднем 338).
- * Какой брать — решает балл на обучающем отрезке (step3-backtest.ts), а не тест.
+ * base="none": шаг прецедента НЕ применяется — собственная прошлая неделя как есть (повтор).
+ * Какой брать — решает балл на обучающем отрезке (step3-backtest.ts), а не тест. На отрезке
+ * 2025-06…2026-03 повтор обошёл оба варианта перехода во ВСЕХ фазах, кроме недели старта.
  */
-export function adaptTransition(ix: Index, t: CWeek, f: Found, base: "prev" | "level" = TRANSITION_BASE): Adapted | null {
+export function adaptTransition(ix: Index, t: CWeek, f: Found, base: TransitionBase = TRANSITION_BASE): Adapted | null {
   const own = (ix.byAid.get(t.aid) ?? []).filter((w) => w.weekStart < t.weekStart).pop();
   if (!own) return null;
   const p = f.p;
@@ -155,6 +158,7 @@ export function adaptTransition(ix: Index, t: CWeek, f: Found, base: "prev" | "l
   r = Math.min(1.6, Math.max(0.3, r));
   let sessions: PSess[] = ownRun.map((s) => ({ dayIdx: s.dayIdx, kind: s.kind, title: s.title, src: s, work: s.work,
     minutes: s.kind === "quality" ? s.minutes : round5(s.minutes * r) }));
+  if (base === "none") return { sessions, scale: 1, dayMap: "собственная прошлая неделя атлета (повтор)" };
   // качественные: прецедент убрал качество (разгрузка/старт) — убираем, превращая в лёгкую его же длины
   if (p.qCount < p.prevQ || (p.qCount === 0 && sessions.some((s) => s.kind === "quality"))) {
     const drop = Math.max(0, sessions.filter((s) => s.kind === "quality").length - p.qCount);
@@ -177,10 +181,12 @@ export function adaptTransition(ix: Index, t: CWeek, f: Found, base: "prev" | "l
 
 /**
  * Где повтор прошлой недели заведомо не работает — там нужна сама неделя прецедента.
- * ВЫБРАНО БЭКТЕСТОМ (последние 8 недель, 809 атлето-недель), сумма MAPE повтор → прецедент:
- *   неделя старта 92.7% → 48.5%, после старта 44% → 53% по сумме, но дни 36% → 53%;
- *   возврат после перерыва/болезни 33% → 43% — ХУЖЕ, поэтому туда целую неделю НЕ берём.
+ * ВЫБРАНО НА ОБУЧАЮЩЕМ ОТРЕЗКЕ (2025-06…2026-03), балл↓ повтор / целая неделя прецедента:
+ *   неделя старта 1.835 / 1.197 — прецедент; после старта 1.116 / 1.312 — ПОВТОР;
+ *   база, рост, подводка — повтор лучше везде; возврат 1.728 / 1.523, но n=29 — не берём.
+ * Первая версия включала и «после старта» — это было подобрано по ТЕСТОВОЙ таблице
+ * и на обучающем отрезке не подтвердилось; снято.
  */
 export function needsWholePrecedent(t: CWeek): boolean {
-  return t.phase === "race" || t.phase === "post";
+  return t.phase === "race";
 }

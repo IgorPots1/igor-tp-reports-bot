@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import type { CWeek } from "./corpus.ts";
-import { adapt, adaptTransition, needsWholePrecedent, setTransitionBase, DEFAULT_WEIGHTS, findPrecedent, indexCorpus, type Mode, type Weights } from "./precedent.ts";
+import { adapt, adaptTransition, needsWholePrecedent, setTransitionBase, type TransitionBase, DEFAULT_WEIGHTS, findPrecedent, indexCorpus, type Mode, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Agg, type Err, type Side } from "./metrics.ts";
 import { workMinutesFromTitle } from "./corpus.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
@@ -72,13 +72,15 @@ for (let i = 0; i < 40; i++) {
 const TUNED = best.w;
 
 // ── база перехода: от прошлой недели или от уровня 4 недель — по ОБУЧАЮЩЕМУ отрезку ──
-const baseScore: Record<"prev" | "level", number> = { prev: 0, level: 0 };
-for (const b of ["prev", "level"] as const) {
+const baseScore: Record<TransitionBase, number> = { prev: 0, level: 0, none: 0 };
+for (const b of ["prev", "level", "none"] as const) {
   setTransitionBase(b);
   baseScore[b] = evalSet(trainSub, (t) => predictTransition(t, TUNED, true)).agg.score;
 }
-const BASE: "prev" | "level" = baseScore.level < baseScore.prev ? "level" : "prev";
+const BASE = (Object.entries(baseScore) as Array<[TransitionBase, number]>).sort((a, b) => a[1] - b[1])[0][0];
 setTransitionBase(BASE);
+
+const withBase = <T,>(b: TransitionBase, f: () => T): T => { setTransitionBase(b); try { return f(); } finally { setTransitionBase(BASE); } };
 
 // ── оценка на тесте ──
 const out: string[] = [];
@@ -91,7 +93,7 @@ p(`# Шаг 3 · мера похожести и бэктест`);
 p();
 p(`Подбор весов: ${trainSub.length} недель (${TRAIN_FROM} … ${SPLIT}, каждая 3-я), 41 конфигурация. Оценка: ${test.length} недель действующих атлетов с ${SPLIT}.`);
 p(`Балл на подборе: стартовые веса ${tried[0].s}, лучшие ${best.s}.`);
-p(`База перехода по обучающему отрезку: prev ${baseScore.prev}, level ${baseScore.level} → взята «${BASE}».`);
+p(`База перехода по обучающему отрезку: prev ${baseScore.prev}, level ${baseScore.level}, none (повтор) ${baseScore.none} → взята «${BASE}».`);
 p(`Веса после подбора: ${keys.map((k) => `${k}=${TUNED[k]}`).join(", ")}`);
 p();
 p(`## A. Прецедент против «повтора прошлой недели» — ${test.length} недель (${SPLIT} … последняя завершённая)`);
@@ -100,8 +102,8 @@ const A: Array<[string, ReturnType<typeof evalSet>]> = [
   ["повтор прошлой недели", evalSet(test, predictPersistence)],
   ["прецедент (свои+чужие, подобранные веса)", evalSet(test, (t) => predictPrecedent(t, TUNED, "any"))],
   ["прецедент (свои+чужие, стартовые веса)", evalSet(test, (t) => predictPrecedent(t, DEFAULT_WEIGHTS, "any"))],
-  ["ПЕРЕХОД: прошлая неделя × шаг прецедента", evalSet(test, (t) => predictTransition(t, TUNED, false))],
-  ["ГИБРИД: переход, а в неделю старта и после — целая неделя", evalSet(test, (t) => predictTransition(t, TUNED, true))],
+  ["ПЕРЕХОД: прошлая неделя × шаг прецедента", withBase("prev", () => evalSet(test, (t) => predictTransition(t, TUNED, false)))],
+  [`ГИБРИД (итог): ${BASE === "none" ? "повтор" : "переход " + BASE}, а в неделю старта — целая неделя прецедента`, evalSet(test, (t) => predictTransition(t, TUNED, true))],
   ["прецедент только свои", evalSet(test, (t) => predictPrecedent(t, TUNED, "own"))],
   ["прецедент только чужие", evalSet(test, (t) => predictPrecedent(t, TUNED, "others"))],
 ];
@@ -124,8 +126,8 @@ const B: Array<[string, ReturnType<typeof evalSet>]> = [
   ["генератор по правилам (нынешний)", evalSet(bHist, (t) => { const r = rulesBy.get(`${t.aid}|${t.weekStart}`); return r ? rulesSide(r) : null; })],
   ["повтор прошлой недели", evalSet(bHist, predictPersistence)],
   ["прецедент (подобранные веса)", evalSet(bHist, (t) => predictPrecedent(t, TUNED, "any"))],
-  ["ПЕРЕХОД: прошлая неделя × шаг прецедента", evalSet(bHist, (t) => predictTransition(t, TUNED, false))],
-  ["ГИБРИД", evalSet(bHist, (t) => predictTransition(t, TUNED, true))],
+  ["ПЕРЕХОД: прошлая неделя × шаг прецедента", withBase("prev", () => evalSet(bHist, (t) => predictTransition(t, TUNED, false)))],
+  ["ГИБРИД (итог)", evalSet(bHist, (t) => predictTransition(t, TUNED, true))],
   ["прецедент только свои", evalSet(bHist, (t) => predictPrecedent(t, TUNED, "own"))],
   ["прецедент только чужие", evalSet(bHist, (t) => predictPrecedent(t, TUNED, "others"))],
 ];
