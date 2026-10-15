@@ -37,6 +37,8 @@ import { DATA_DIR, OUT_DIR, load } from "./load.ts";
 import { indexCorpus, type Weights } from "./precedent.ts";
 import { buildRepeatWeek, stateFor } from "./build-week.ts";
 import { addedByCoach, diffPlaced, toPublish, type Current, type EditRow, type Placed } from "./plan-edits.ts";
+import { createHiddenVerified, deleteVerified, emptyFlow, setHiddenVerified } from "./hidden-flow.ts";
+import { liveClient } from "./tp-live-client.ts";
 
 /** Первый прогон — ТОЛЬКО группа 12 (решение Игоря). Атлет вне списка не пишется ни в каком режиме. */
 export const GROUP12 = [5733446, 5475652, 5476215, 6009851, 5931798, 5905779, 5748681, 5475750, 5475968, 5461678, 5807145, 6290336];
@@ -58,9 +60,12 @@ export function hiddenProven(dir = PROOF_DIR): { ok: boolean; why: string } {
     const t = readFileSync(f, "utf8");
     // формат пробника: «- hidden_verify_pass: `true`». Якорь на начало строки обязателен: без него
     // «hidden_verify_pass» находится и внутри «unhidden_verify_pass» (поймано проверкой 15.10).
-    if (/^\s*-?\s*hidden_verify_pass:\s*`?true`?\s*$/m.test(t) && /^\s*-?\s*unhidden_verify_pass:\s*`?true`?\s*$/m.test(t)) return { ok: true, why: f };
+    // Доказательство засчитывается ТОЛЬКО от пробника на tp-api-client (тот же путь, что у «раскидать»), с тремя PASS:
+    // скрыто, открыто, удалено. Старый Playwright-пробник путь «раскидать» не доказывает.
+    const pass = (k: string): boolean => new RegExp(`^\\s*-?\\s*${k}:\\s*\`?true\`?\\s*$`, "m").test(t);
+    if (/^\s*-\s*path:\s*`tp-api-client`\s*$/m.test(t) && pass("hidden_verify_pass") && pass("unhidden_verify_pass") && pass("deleted_verify_pass")) return { ok: true, why: f };
   }
-  return { ok: false, why: "ни одного живого прогона tp-probe-workout-hidden-field.ts с hidden_verify_pass и unhidden_verify_pass = true" };
+  return { ok: false, why: "ни одного живого прогона probe-hidden-via-client.ts (path tp-api-client) с hidden/unhidden/deleted_verify_pass = true" };
 }
 
 export type GateInput = { executeReal: boolean; confirm: string | null; realEnv: string | undefined; proof: { ok: boolean; why: string }; corpusAgeMin: number };
@@ -116,19 +121,23 @@ async function raskidat(): Promise<void> {
   report(m, gate, L.names);
 }
 
-/** Реальная запись. Не вызывается, пока realGate не вернул null. Клиент TP подгружается только здесь. */
+/**
+ * Реальная запись. Не вызывается, пока realGate не вернул null. Тот же поток, что в пробнике (hidden-flow.ts):
+ * создать СКРЫТОЙ в POST, прочитать, при расхождении скрыть PUT-ом (расхождение уходит в манифест).
+ * Манифест пишется ДО проверки; при провале созданное удаляется, прогон останавливается.
+ */
 async function realCreate(m: Manifest): Promise<void> {
-  const tp = await import("../../../../src/features/trainingpeaks/tp-api-client.ts");
+  const tp = await liveClient();
   for (const it of m.items) {
-    const { workoutId } = await tp.createWorkout({ athleteId: it.aid, workoutDay: `${it.date}T00:00:00`, title: it.title, workoutTypeValueId: 3, workoutSubTypeId: null,
-      description: it.description, coachComments: null, distancePlanned: null, totalTimePlanned: it.minutes / 60, structure: null } as never);
-    it.workoutId = workoutId; saveManifest(m); // до проверки: если упадём — snesti знает, что убирать
-    const cur = await tp.getWorkoutDetail(it.aid, workoutId);
-    const hidden = await tp.putWorkout(it.aid, workoutId, { ...cur, isHidden: true });
-    const back = await tp.getWorkoutDetail(it.aid, workoutId);
-    it.verified = back.isHidden === true && String(back.title) === it.title && String(back.workoutDay).slice(0, 10) === it.date;
-    saveManifest(m);
-    if (!it.verified) { await tp.deleteWorkout("tpapi", it.aid, workoutId); throw new Error(`проверка GET не прошла для ${it.aid}/${workoutId} (isHidden=${String(back.isHidden)}) — тренировка удалена, прогон остановлен; ${JSON.stringify(hidden).slice(0, 80)}`); }
+    const res = emptyFlow();
+    const body = { athleteId: it.aid, workoutDay: `${it.date}T00:00:00`, title: it.title, workoutTypeValueId: 3, workoutSubTypeId: null, description: it.description, coachComments: null, distancePlanned: null, totalTimePlanned: it.minutes / 60, structure: null };
+    try {
+      it.workoutId = await createHiddenVerified(tp, res, it.aid, body); it.verified = true; saveManifest(m);
+    } catch (e) {
+      if (res.workoutId != null) { it.workoutId = res.workoutId; saveManifest(m); try { await deleteVerified(tp, emptyFlow(), it.aid, res.workoutId); } catch { /* manifest знает id — «снести» добьёт */ } }
+      throw new Error(`запись остановлена на ${it.aid} ${it.date}: ${e instanceof Error ? e.message : String(e)}${res.discrepancies.length ? ` | ${res.discrepancies.join(" ")}` : ""}`);
+    }
+    if (res.discrepancies.length) it.warnings.push(...res.discrepancies);
   }
 }
 
@@ -144,6 +153,7 @@ async function publikuy(): Promise<void> {
     console.log(out.join("\n")); return;
   }
   const tp = await import("../../../../src/features/trainingpeaks/tp-api-client.ts");
+  const live = await liveClient();
   const cur = new Map<number, Current>(); const edits: EditRow[] = [];
   for (const p of placedAll) {
     try { const w = await tp.getWorkoutDetail(p.aid, p.workoutId); cur.set(p.workoutId, { workoutId: p.workoutId, date: String(w.workoutDay), title: String(w.title ?? ""), description: String(w.description ?? ""), minutes: Number(w.totalTimePlanned ?? 0) * 60, isHidden: (w.isHidden as boolean) ?? null }); }
@@ -157,10 +167,8 @@ async function publikuy(): Promise<void> {
   const sb = sbc();
   if (edits.length) { const { error } = await sb.from("coach_plan_edits").insert(edits.map((e) => ({ run_id: m.runId, trainingpeaks_athlete_id: e.aid, week_start: e.weekStart, workout_date: e.date, trainingpeaks_workout_id: e.workoutId, field: e.field, before_value: e.before, after_value: e.after }))); if (error) throw error; }
   for (const x of toPublish(placedAll, cur)) {
-    const w = await tp.getWorkoutDetail(x.aid, x.workoutId); // ЕГО текущая версия — её и открываем
-    await tp.putWorkout(x.aid, x.workoutId, { ...w, isHidden: false });
-    const back = await tp.getWorkoutDetail(x.aid, x.workoutId);
-    if (back.isHidden !== false) throw new Error(`после публикации ${x.aid}/${x.workoutId} всё ещё скрыта — остановка`);
+    // ЕГО текущая версия: setHiddenVerified читает тренировку из TP заново и пишет её же с isHidden:false
+    await setHiddenVerified(live, emptyFlow(), x.aid, x.workoutId, false, `открытие ${x.aid}/${x.workoutId}`);
     m.published.push(x.workoutId); saveManifest(m);
   }
   out.push("", `Правок тренера: ${edits.length}`, "| атлет | день | что | было | стало |", "|---|---|---|---|---|", ...edits.map((e) => `| ${e.aid} | ${e.date} | ${e.field} | ${e.before ?? "—"} | ${e.after ?? "—"} |`));
@@ -172,11 +180,9 @@ async function snesti(): Promise<void> {
   const ids = m.items.filter((i) => i.workoutId != null && !m.deleted.includes(i.workoutId!));
   const gate = gateFromCli("snesti", [...new Set(ids.map((i) => i.aid))]);
   if (gate) { console.log(`СУХОЙ ПРОГОН (${gate}). Удалилось бы тренировок: ${ids.length}${ids.length ? `: ${ids.map((i) => `${i.aid}/${i.workoutId}`).join(", ")}` : " — прогон ничего не ставил"}.`); return; }
-  const tp = await import("../../../../src/features/trainingpeaks/tp-api-client.ts");
+  const tp = await liveClient();
   for (const i of ids) {
-    await tp.deleteWorkout("tpapi", i.aid, i.workoutId!);
-    let gone = false; try { await tp.getWorkoutDetail(i.aid, i.workoutId!); } catch { gone = true; }
-    if (!gone) throw new Error(`после удаления ${i.aid}/${i.workoutId} тренировка всё ещё читается — остановка`);
+    await deleteVerified(tp, emptyFlow(), i.aid, i.workoutId!);
     m.deleted.push(i.workoutId!); saveManifest(m);
   }
   console.log(`Снесено: ${m.deleted.length}`);

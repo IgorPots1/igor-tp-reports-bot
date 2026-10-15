@@ -14,6 +14,8 @@ import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
 import { addedByCoach, diffPlaced, toPublish, type Placed } from "./plan-edits.ts";
 import { buildRepeatWeek } from "./build-week.ts";
+import { runProbeCycle } from "./hidden-flow.ts";
+import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } from "./probe-hidden-via-client.ts";
 import { CONFIRM, GROUP12, hiddenProven, realGate } from "./week-ops.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -198,14 +200,26 @@ console.log("\n── раскидать / публикуй / снести: пр
   const pub = toPublish([pl, { ...pl, workoutId: 12 }], new Map([[11, { workoutId: 11, date: "", title: "", description: "", minutes: 0, isHidden: true }], [12, null]]));
   check("публикуется только живое: удалённая тренером назад не возвращается", pub.length === 1 && pub[0].workoutId === 11);
 
+  // ПЕРЕПИСАНО 15.10 (правило 6a). Было: доказательством считался отчёт с hidden/unhidden PASS в любом формате,
+  // в том числе от старого Playwright-пробника. Отменено: тот путь «раскидать» не доказывает. Теперь нужен отчёт
+  // пробника на tp-api-client (`- path: tp-api-client`) и ТРИ PASS: скрыто, открыто, удалено.
   const dir = mkdtempSync(path.join(tmpdir(), "proof-"));
+  const rep = (name: string, lines: string[]): void => { mkdirSync(path.join(dir, name)); writeFileSync(path.join(dir, name, "summary.md"), lines.join("\n") + "\n"); };
   check("скрытие не доказано, пока нет живого отчёта пробника", hiddenProven(dir).ok === false);
-  mkdirSync(path.join(dir, "a")); writeFileSync(path.join(dir, "a", "summary.md"), "hidden_verify_pass: true\nunhidden_verify_pass: null\n");
-  check("доказано только скрытие, открытие нет — всё ещё не доказано", hiddenProven(dir).ok === false);
-  mkdirSync(path.join(dir, "b")); writeFileSync(path.join(dir, "b", "summary.md"), "- hidden_verify_pass: `null`\n- unhidden_verify_pass: `true`\n");
+  rep("a", ["- hidden_verify_pass: `true`", "- unhidden_verify_pass: `null`"]);
+  check("доказано только скрытие — не доказано", hiddenProven(dir).ok === false);
+  rep("b", ["- hidden_verify_pass: `null`", "- unhidden_verify_pass: `true`", "- deleted_verify_pass: `true`", "- path: `tp-api-client`"]);
   check("скрыть не удалось, открыть удалось — НЕ доказано (имя одного поля внутри другого)", hiddenProven(dir).ok === false);
-  mkdirSync(path.join(dir, "c")); writeFileSync(path.join(dir, "c", "summary.md"), "- hidden_verify_pass: `true`\n- unhidden_verify_pass: `true`\n");
-  check("оба PASS в формате пробника — доказано", hiddenProven(dir).ok === true);
+  rep("c", ["- hidden_verify_pass: `true`", "- unhidden_verify_pass: `true`"]);
+  check("два PASS от старого пробника (Playwright, без path и без удаления) — НЕ доказательство для «раскидать»", hiddenProven(dir).ok === false);
+  rep("d", ["- path: `tp-api-client`", "- hidden_verify_pass: `true`", "- unhidden_verify_pass: `true`", "- deleted_verify_pass: `null`"]);
+  check("tp-api-client, но удаление не подтверждено — НЕ доказано", hiddenProven(dir).ok === false);
+  rep("f", ["- hidden_verify_pass: `true`", "- unhidden_verify_pass: `true`", "- deleted_verify_pass: `true`"]);
+  check("три PASS, но без path tp-api-client (отчёт не от нашего пути) — НЕ доказано", hiddenProven(dir).ok === false);
+  rep("g", ["- path: `tp-api-client`", "- hidden_verify_pass: `true`", "- unhidden_verify_pass: `null`", "- deleted_verify_pass: `true`"]);
+  check("tp-api-client, скрыто и удалено, но открытие не подтверждено — НЕ доказано", hiddenProven(dir).ok === false);
+  rep("e", ["- path: `tp-api-client`", "- hidden_verify_pass: `true`", "- unhidden_verify_pass: `true`", "- deleted_verify_pass: `true`"]);
+  check("tp-api-client и три PASS (скрыто, открыто, удалено) — доказано", hiddenProven(dir).ok === true);
   const ok = { executeReal: true, confirm: CONFIRM.raskidat, realEnv: "true", proof: { ok: true, why: "" }, corpusAgeMin: 5 };
   check("ворота открыты только при всех условиях", realGate("raskidat", [GROUP12[0]], ok) === null);
   check("без --execute-real — сухой прогон", realGate("raskidat", [GROUP12[0]], { ...ok, executeReal: false }) != null);
@@ -214,6 +228,30 @@ console.log("\n── раскидать / публикуй / снести: пр
   check("атлет вне группы 12 — отказ", realGate("raskidat", [5058370], ok)?.includes("вне группы 12") === true);
   check("скрытие не доказано — отказ раскидать", realGate("raskidat", [GROUP12[0]], { ...ok, proof: { ok: false, why: "нет" } })?.includes("скрытие") === true);
   check("выгрузка кэша старше часа — отказ раскидать", realGate("raskidat", [GROUP12[0]], { ...ok, corpusAgeMin: 90 }) != null);
+}
+
+console.log("\n── пробник скрытия: поток на подставном клиенте (сети нет) ──");
+{
+  const D = "2026-10-29"; const body = probeBody(D);
+  const ok = fakeClient({}); const r1 = await runProbeCycle(ok, PROBE_ATHLETE_ID, D, body);
+  check("нормальный цикл: скрыто, открыто, удалено — три PASS, без расхождений, ничего не осталось",
+    r1.stopped === null && r1.hiddenVerifyPass === true && r1.unhiddenVerifyPass === true && r1.deletedVerifyPass === true && r1.discrepancies.length === 0 && ok.store.size === 0 && r1.hiddenInPost === true, JSON.stringify(r1));
+  check("в POST ушёл isHidden:true", ok.log[0].includes('"isHidden":true'));
+  const ign = fakeClient({ ignoreHiddenInPost: true }); const r2 = await runProbeCycle(ign, PROBE_ATHLETE_ID, D, body);
+  check("TP игнорирует isHidden в POST: расхождение записано, скрыто отдельным PUT, цикл пройден", r2.stopped === null && r2.hiddenInPost === false && r2.discrepancies.length === 1 && r2.discrepancies[0].includes("ИГНОРИРУЕТ") && ign.log.some((l) => l === "PUT isHidden=true") && ign.store.size === 0, JSON.stringify(r2.discrepancies));
+  const stub = fakeClient({ ignoreHiddenInPost: true, putIgnoresHidden: true }); const r3 = await runProbeCycle(stub, PROBE_ATHLETE_ID, D, body);
+  check("TP не скрывает даже PUT-ом: СТОП, созданное удалено и проверено, у атлета ничего не осталось", r3.stopped !== null && r3.hiddenVerifyPass === null && r3.cleanedUp === true && stub.store.size === 0, JSON.stringify({ s: r3.stopped, c: r3.cleanedUp, left: stub.store.size }));
+  const pre = fakeClient({ preExisting: true }); const r4 = await runProbeCycle(pre, PROBE_ATHLETE_ID, D, body);
+  check("на дате уже есть чужая тренировка: СТОП до записи, ничего не создано и чужое не тронуто", r4.stopped !== null && pre.created() === 0 && pre.store.size === 1, JSON.stringify({ c: pre.created(), left: pre.store.size }));
+  const nodel = fakeClient({ deleteNoop: true }); const r5 = await runProbeCycle(nodel, PROBE_ATHLETE_ID, D, body);
+  check("DELETE не удалил: СТОП, и отчёт честно говорит, что уборка не удалась", r5.stopped !== null && r5.deletedVerifyPass === null && r5.cleanedUp === false && r5.stopped.includes("УБОРКА НЕ УДАЛАСЬ"), JSON.stringify(r5.stopped));
+  const today = "2026-10-15"; const g0 = { apply: true, confirm: PROBE_CONFIRM, realEnv: "true", athleteId: PROBE_ATHLETE_ID, date: "2026-10-29", today };
+  check("ворота пробника открыты только при всех условиях", probeGate(g0) === null);
+  check("не тестовый атлет — отказ", probeGate({ ...g0, athleteId: 5475968 })?.includes("не тестовый") === true);
+  check("дата ближе 7 дней — отказ (пишем только в будущее)", probeGate({ ...g0, date: "2026-10-20" }) != null);
+  check("без --apply — сухой прогон", probeGate({ ...g0, apply: false }) != null);
+  check("не та фраза — отказ", probeGate({ ...g0, confirm: "да" }) != null);
+  check("без TP_ACTIONS_REAL_EXECUTION — отказ", probeGate({ ...g0, realEnv: undefined }) != null);
 }
 
 console.log(`\nИТОГ: ${failures === 0 ? `все ${total} проверок прошли` : `ПАДЕНИЙ ${failures} из ${total}`}`);

@@ -15,6 +15,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
 const MR = path.join(HERE, "main-race.ts");
 const BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts");
+const HF = path.join(HERE, "hidden-flow.ts"), PB = path.join(HERE, "probe-hidden-via-client.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
 type M = { id: string; file: string; find: string; replace: string; what: string };
 const MUT: M[] = [
@@ -44,12 +45,23 @@ const MUT: M[] = [
   { id: "main-none", file: MR, find: "      if (pickTargetRace(races, m)?.id === r.id) { out.add(r.id); break; }", replace: "      void m;", what: "ни один старт не главный" },
   { id: "no-recovery-warning", file: BW, find: "t.lastRaceKm >= 30) {", replace: "t.lastRaceKm >= 9999) {", what: "предупреждение о восстановлении после марафона не выдаётся" },
   { id: "sample-in-corpus", file: CO, find: " && !/sample workout/i.test(String(r.title ?? \"\")))", replace: ")", what: "шаблонные английские тренировки снова попадают в корпус" },
+  { id: "flow-no-assert", file: HF, find: "back.isHidden === hidden,", replace: "true,", what: "GET после PUT не сверяется с ожидаемым isHidden" },
+  { id: "flow-no-fallback", file: HF, find: "await setHiddenVerified(tp, res, aid, created.workoutId, true, \"скрытие отдельным PUT\");", replace: "", what: "при игнорировании isHidden в POST не скрываем PUT-ом" },
+  { id: "flow-no-cleanup", file: HF, find: "try { await deleteVerified(tp, { ...res, steps: res.steps }, aid, res.workoutId); res.cleanedUp = true; }", replace: "try { res.cleanedUp = true; }", what: "при стопе созданное не удаляется" },
+  { id: "flow-no-preexisting", file: HF, find: "before.length === 0,", replace: "true,", what: "чужая тренировка на дате не останавливает прогон" },
+  { id: "flow-no-gone", file: HF, find: "del.status === 200 && gone,", replace: "del.status === 200,", what: "удаление не проверяется чтением" },
+  { id: "flow-silent-discrepancy", file: HF, find: "res.discrepancies.push(", replace: "void (", what: "расхождение «POST игнорирует isHidden» не записывается" },
+  { id: "flow-no-post-hidden", file: HF, find: "createWorkout({ ...body, isHidden: true })", replace: "createWorkout({ ...body })", what: "в POST не уходит isHidden:true" },
+  { id: "probe-gate-athlete", file: PB, find: "if (g.athleteId !== PROBE_ATHLETE_ID) return", replace: "if (false) return", what: "пробник пишет не только тестовому атлету" },
+  { id: "probe-gate-date", file: PB, find: "if (g.date < addDays(g.today, PROBE_MIN_DAYS_AHEAD)) return", replace: "if (false) return", what: "пробник пишет на ближайшие дни" },
+  { id: "proof-no-path", file: O, find: "/^\\s*-\\s*path:\\s*`tp-api-client`\\s*$/m.test(t) && ", replace: "", what: "доказательством считается и отчёт старого Playwright-пробника" },
+  { id: "proof-no-delete", file: O, find: " && pass(\"deleted_verify_pass\")", replace: "", what: "доказательство не требует подтверждённого удаления" },
+  { id: "proof-hidden-only", file: O, find: " && pass(\"unhidden_verify_pass\")", replace: "", what: "доказательство не требует подтверждённого открытия" },
+  { id: "proof-unanchored", file: O, find: "new RegExp(`^\\\\s*-?\\\\s*${k}:", replace: "new RegExp(`${k}:", what: "якорь снят: «hidden» находится внутри «unhidden»" },
   { id: "publish-deleted", file: E, find: "  return placed.filter((p) => current.get(p.workoutId) != null)", replace: "  return placed.filter(() => true)", what: "публикуется и удалённое тренером" },
   { id: "no-minutes-diff", file: E, find: "  if (Math.round(c.minutes) !== Math.round(p.minutes))", replace: "  if (false)", what: "правка длительности не пишется" },
   { id: "gate-no-proof", file: O, find: "    if (!g.proof.ok) return", replace: "    if (false) return", what: "раскидать пишет без доказанного скрытия" },
   { id: "gate-no-group", file: O, find: "  const out = aids.filter((a) => !GROUP12.includes(a)); if (out.length) return", replace: "  const out = aids.filter((a) => !GROUP12.includes(a)); if (false) return", what: "пишет атлетам вне группы 12" },
-  { id: "proof-hidden-only", file: O, find: " && /^\\s*-?\\s*unhidden_verify_pass:\\s*`?true`?\\s*$/m.test(t)", replace: "", what: "доказательством считается одно скрытие без открытия" },
-  { id: "proof-unanchored", file: O, find: "/^\\s*-?\\s*hidden_verify_pass:", replace: "/hidden_verify_pass:", what: "якорь снят: «hidden» находится внутри «unhidden»" },
 ];
 
 const run = (): string[] => {

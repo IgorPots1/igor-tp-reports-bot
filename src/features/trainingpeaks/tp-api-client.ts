@@ -678,6 +678,12 @@ export type CreateWorkoutRequestBody = {
   distancePlanned: number | null;
   totalTimePlanned: number | null;
   structure: unknown | null;
+  /**
+   * Optional. `true` asks TP to create the workout HIDDEN from the athlete. NOT proven live through this
+   * client as of 2026-10-15: precedent/probe-hidden-via-client.ts exists to prove (or refute) it. Omitted by
+   * every existing caller, so their request bodies are unchanged.
+   */
+  isHidden?: boolean;
 };
 
 /**
