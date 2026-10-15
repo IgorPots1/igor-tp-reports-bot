@@ -14,13 +14,19 @@
 import type { CSess, CWeek, Kind } from "./corpus.ts";
 import type { Index, PSess } from "./precedent.ts";
 import { hasQualityContent } from "./validate.ts";
+import { WARMUP_TITLE_RE } from "../lib/practice-signals.ts";
 
-export function ownTemplateNear(ix: Index, aid: number, before: string, kinds: Kind[], minutes: number): CSess | null {
+/**
+ * wantWarmup: донорская сессия сама разминка/активация — тогда и шаблон ищется среди таких; иначе разминки в шаблоны НЕ берутся
+ * (поймано сухим прогоном 15.10: у Паниной «Легкий бег» 30 мин получил заголовок «Разминка» — в её истории есть отдельные тренировки «Разминка»).
+ */
+export function ownTemplateNear(ix: Index, aid: number, before: string, kinds: Kind[], minutes: number, wantWarmup = false): CSess | null {
   const own = (ix.byAid.get(aid) ?? []).filter((w) => w.weekStart < before).slice(-12);
   for (const k of kinds) {
     let best: CSess | null = null; let bestD = Infinity;
     for (const w of own) for (const s of w.sessions) {
       if (s.race || s.kind !== k || hasQualityContent({ kind: s.kind, title: s.title, description: s.desc })) continue;
+      if (WARMUP_TITLE_RE.test(s.title) !== wantWarmup) continue;
       const d = Math.abs(s.minutes - minutes);
       if (d <= bestD) { best = s; bestD = d; } // «<=»: при равенстве берётся более поздняя (недели идут по возрастанию)
     }
@@ -37,7 +43,7 @@ export function substituteDonorStyle(ix: Index, t: CWeek, sessions: PSess[], don
   const out = sessions.map((s) => {
     if (s.kind === "quality" || hasQualityContent({ kind: s.kind, title: s.title, description: s.src.desc })) return s;
     considered++;
-    const tpl = ownTemplateNear(ix, t.aid, t.weekStart, s.kind === "long" ? ["long", "easy"] : ["easy"], s.minutes);
+    const tpl = ownTemplateNear(ix, t.aid, t.weekStart, s.kind === "long" ? ["long", "easy"] : ["easy"], s.minutes, WARMUP_TITLE_RE.test(s.title));
     if (!tpl) return s;
     replaced++; if (tpl.title !== s.title) shown.push(`«${s.title}» → «${tpl.title}»`);
     return { ...s, title: tpl.title, src: tpl } as PSess;

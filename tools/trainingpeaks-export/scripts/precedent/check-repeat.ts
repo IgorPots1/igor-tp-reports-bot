@@ -10,7 +10,7 @@ import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
 import { donorExcluded, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
-import { postRaceAdjust, setRecovery } from "./post-race.ts";
+import { plainTemplate, postRaceAdjust, setRecovery } from "./post-race.ts";
 import { substituteDonorStyle } from "./donor-style.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
 import { validateWeek, type VSess } from "./validate.ts";
@@ -91,6 +91,10 @@ const PUL: S[] = [{ d: 1, t: "Легкий бег по пульсу", m: 50 }, {
 const TMP: S[] = [{ d: 1, t: "Лёгкий кросс", m: 40 }, { d: 3, t: Q, m: 60 }, { d: 4, t: "Легкий бег по темпу", m: 90 }, { d: 6, t: "Длительный бег по темпу", m: 100 }];
 for (let k = 0; k < 6; k++) { rows.push(...weekRows(21, wk(k), PUL)); rows.push(...weekRows(22, wk(k), TMP)); }
 rows.push(...weekRows(22, wk(6), TMP));
+// атлет 23: в истории есть отдельные тренировки «Разминка» (23 мин) рядом с обычными лёгкими — в шаблоны они не годятся
+const WU: S[] = [{ d: 1, t: "Разминка", m: 25 }, { d: 2, t: "Легкий бег по темпу", m: 50 }, { d: 4, t: "Легкий бег по темпу", m: 45 }, { d: 6, t: "Длительный бег по темпу", m: 100 }];
+for (let k = 0; k < 6; k++) rows.push(...weekRows(23, wk(k), WU));
+rows.push(...weekRows(23, wk(6), WU));
 // атлет 12: пиковая неделя (400 при медиане 260) прямо перед целевой
 for (let k = 0; k < 6; k++) rows.push(...weekRows(12, wk(k), NORMAL));
 rows.push(...weekRows(12, wk(6), [{ d: 1, t: EASY, m: 80 }, { d: 3, t: Q, m: 60 }, { d: 4, t: EASY, m: 80 }, { d: 6, t: LONG, m: 180 }]));
@@ -252,7 +256,9 @@ console.log("\n── восстановление после старта по 
   const row = (km: number, n: number): string => Array.from({ length: n }, (_, i) => recoveryFactor(km, i + 1)).join();
   check("таблица (обучающая): марафон +1…+7 = 0.39 / 0.71 / 0.77 / 0.81 / 0.82 / 0.82 / 0.94", row(42.2, 7) === "0.39,0.71,0.77,0.81,0.82,0.82,0.94", row(42.2, 7));
   check("таблица (обучающая): половинка +1…+3 = 0.59 / 0.99 / 0.99", row(21.1, 3) === "0.59,0.99,0.99", row(21.1, 3));
-  check("таблица (обучающая): до 15 км +1…+3 = 0.74 / 0.76 / 0.94", row(10, 3) === "0.74,0.76,0.94", row(10, 3));
+  // ПЕРЕПИСАНО 15.10 (правило 6a). Было: «до 15 км +1…+3 = 0.74 / 0.76 / 0.94». Отменено решением по разбросу (r12): на +2 и +3 p75 > 1,
+  // надёжного числа нет — не понижаем. Новое утверждение сильнее: понижается только +1, а +2/+3 дают ровно 1 (нет снижения).
+  check("таблица (обучающая): до 15 км понижается только +1 = 0.74; +2 и +3 = 1 (разброс накрывает единицу — не понижаем наугад)", row(10, 3) === "0.74,1,1", row(10, 3));
   check("за краем строки множителя нет: марафон +8, половинка +4, до 15 км +4, без дистанции, неделя 0", recoveryFactor(42.2, 8) === null && recoveryFactor(21.1, 4) === null && recoveryFactor(10, 4) === null && recoveryFactor(null, 1) === null && recoveryFactor(42.2, 0) === null && recoveryFactor(42.2, null) === null);
   setRecovery({ table: "all" });
   check("множитель зажат сверху единицей: в измеренной таблице до 15 км +3 = 1.02, выдаётся 1", recoveryFactor(10, 3) === 1, String(recoveryFactor(10, 3)));
@@ -353,6 +359,18 @@ console.log("\n── названия донора → обычные сесс�
   check("шаблон не бывает блоком «в темпе марафона»: у атлета 10 такие длительные — берётся его обычная лёгкая", !mp.sessions.some((x) => /марафон/i.test(x.title)), JSON.stringify(mp.sessions.map((x) => x.title)));
   const keepMp = adapt(ix, T(22, 6), don(T(10, 5)), true);
   check("донорская сессия с блоком «в темпе марафона» (качество по содержанию) остаётся как есть, лёгкие подменены", keepMp.sessions.some((x) => /темпе марафона/.test(x.title)) && keepMp.sessions.filter((x) => x.kind === "easy").every((x) => own.has(x.title)), JSON.stringify(keepMp.sessions.map((x) => x.title)));
+  const tw = T(23, 6);
+  const warmDonor = { p: T(21, 5), why: { d: 0, parts: [] as Array<[string, number]> }, ownAvailable: 0 };
+  const w1 = adapt(ix, tw, warmDonor, true).sessions.filter((x) => x.kind === "easy");
+  check("разминка не становится шаблоном: у атлета с отдельными «Разминка» 25 мин заголовки лёгких — только настоящие лёгкие", w1.length > 0 && w1.every((x) => !/разминк/i.test(x.title)), JSON.stringify(w1.map((x) => x.title)));
+  const short25: PSess[] = [{ dayIdx: 2, kind: "easy", title: "Легкий бег по пульсу", minutes: 25, work: 0, src: { ...corpus[0].sessions[0], title: "Легкий бег по пульсу", desc: "" } }];
+  const s25 = substituteDonorStyle(ix, tw, short25, 21);
+  check("донорская лёгкая в 25 мин (ровно как «Разминка» атлета по минутам) всё равно получает настоящую лёгкую, а не разминку", s25.sessions[0].title === "Легкий бег по темпу", s25.sessions[0].title);
+  const plain = plainTemplate(ix, 23, wk(6), ["easy"]);
+  check("замена снятого качества тоже не берёт разминку: у атлета 23 это «Легкий бег по темпу», а не «Разминка»", plain != null && plain.title === "Легкий бег по темпу", JSON.stringify(plain?.title));
+  const wuSess: PSess[] = [{ dayIdx: 1, kind: "easy", title: "Разминка", minutes: 25, work: 0, src: { ...corpus[0].sessions[0], title: "Разминка", desc: "" } }];
+  const wu = substituteDonorStyle(ix, tw, wuSess, 21);
+  check("сама донорская «Разминка» получает его собственную разминку, а не лёгкий бег", wu.sessions[0].title === "Разминка", wu.sessions[0].title);
   const none = substituteDonorStyle(ix, T(18, 0), adapt(ix, T(18, 0), don(T(21, 5)), false).sessions, 21);
   check("у атлета нет своей истории (шаблонов нет): донорские сессии остаются, подмены 0", none.replaced === 0 && none.considered > 0, JSON.stringify({ r: none.replaced, c: none.considered }));
 }

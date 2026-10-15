@@ -11,12 +11,15 @@
 import type { CSess, CWeek, Kind } from "./corpus.ts";
 import type { Index, PSess } from "./precedent.ts";
 import { hasQualityContent, POST_MARATHON_NO_QUALITY_WEEKS } from "./validate.ts";
+import { WARMUP_TITLE_RE } from "../lib/practice-signals.ts";
 
 type Row = number[];
 export const RECOVERY_TRAIN: Record<"marathon" | "half" | "short", Row> = {
   marathon: [0.39, 0.71, 0.77, 0.81, 0.82, 0.82, 0.94],
   half: [0.59, 0.99, 0.99],
-  short: [0.74, 0.76, 0.94],
+  // до 15 км: понижаем ТОЛЬКО +1. На +2 (медиана 0.76) p75 = 1.04, на +3 (0.94) p75 = 1.09 — разброс накрывает единицу, надёжного
+  // числа нет, «лучше не понижать вовсе, чем понижать наугад» (решение Игоря 15.10; r12-spread.ts, правило записано до замера).
+  short: [0.74, 1.0, 1.0],
 };
 /** Прежняя таблица по ВСЕМУ корпусу (включая тест) — только для диагностики в бэктесте. */
 export const RECOVERY_ALL: Record<"marathon" | "half" | "short", Row> = {
@@ -48,7 +51,7 @@ const round5 = (m: number): number => Math.max(20, Math.round(m / 5) * 5);
 /** Последняя «чистая» (без качества по содержанию) сессия атлета нужного вида за 12 недель — замена, а не выдумка. */
 export function plainTemplate(ix: Index, aid: number, before: string, kinds: Kind[]): CSess | null {
   const own = (ix.byAid.get(aid) ?? []).filter((w) => w.weekStart < before).slice(-12).reverse();
-  for (const k of kinds) for (const w of own) for (const s of w.sessions) if (!s.race && s.kind === k && !hasQualityContent({ kind: s.kind, title: s.title, description: s.desc })) return s;
+  for (const k of kinds) for (const w of own) for (const s of w.sessions) if (!s.race && s.kind === k && !WARMUP_TITLE_RE.test(s.title) && !hasQualityContent({ kind: s.kind, title: s.title, description: s.desc })) return s;
   return null;
 }
 
