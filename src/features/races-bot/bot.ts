@@ -132,6 +132,8 @@ export type BotDeps = {
   goLink?: (tgId: number, r: BotRace, kind: "r" | "s") => string;
   /** Выжимка по старту (race_details): строка «Важное» в карточке. Нет — блока нет. */
   details?: (raceId: string) => Promise<DetailRow[]>;
+  /** Отменённые вручную старты (race_overrides.status = cancelled): в «Моих стартах» с пометкой. */
+  cancelled?: () => Promise<Set<string>>;
 };
 
 type TgUser = { id: number; first_name?: string; username?: string };
@@ -464,11 +466,20 @@ export function createBot(deps: BotDeps) {
   async function showMy(u: BotUser, page = 0, origin?: TgMessage) {
     const races = await deps.races();
     const byId = new Map(races.map((r) => [r.id, r]));
-    const items = (await store.listFollows(u.tg_id))
-      .map((f) => byId.get(f.race_id))
-      .filter((r): r is BotRace => !!r)
-      .sort((a, b) => a.ds.localeCompare(b.ds))
-      .map((race) => ({ race, code: raceCode(race.id), site: siteLink(u, race) }));
+    const cancelled = deps.cancelled ? await deps.cancelled().catch(() => new Set<string>()) : new Set<string>();
+    const items: (T.MyItem & { at: string })[] = [];
+    for (const f of await store.listFollows(u.tg_id)) {
+      const race = byId.get(f.race_id);
+      if (race) items.push({ race, code: raceCode(race.id), site: siteLink(u, race), at: race.ds });
+      else if (cancelled.has(f.race_id)) {
+        items.push({
+          gone: { name: f.race_name || "без названия", date: f.race_date, end: f.race_end, city: f.race_city },
+          code: raceCode(f.race_id),
+          at: f.race_date ?? "9999",
+        });
+      }
+    }
+    items.sort((a, b) => a.at.localeCompare(b.at));
     const pages = Math.max(1, Math.ceil(items.length / T.MY_PAGE));
     await screen(u, T.myRaces(items, today(u), Math.min(Math.max(page, 0), pages - 1), u.city), origin);
   }
@@ -922,6 +933,7 @@ export function createBot(deps: BotDeps) {
       deps.races(),
     ]);
     const racesById = new Map(races.map((r) => [r.id, r]));
+    const cancelled = deps.cancelled ? await deps.cancelled().catch(() => new Set<string>()) : new Set<string>();
     const byUser = new Map<number, BotFollow[]>();
     for (const f of follows) {
       if (!byUser.has(f.tg_id)) byUser.set(f.tg_id, []);
@@ -968,7 +980,7 @@ export function createBot(deps: BotDeps) {
     }
     for (const u of users) {
       const mine = byUser.get(u.tg_id) ?? [];
-      const actions = planUser({ now: t, user: u, follows: mine, racesById, races, sent: sentByUser.get(u.tg_id) ?? new Set() });
+      const actions = planUser({ now: t, user: u, follows: mine, racesById, races, sent: sentByUser.get(u.tg_id) ?? new Set(), cancelled });
       for (const a of actions) {
         try {
           if (a.kind === "drop") {
@@ -1002,6 +1014,8 @@ export function createBot(deps: BotDeps) {
             } else if (a.kind === "after") {
               await send(u.tg_id, T.afterFinish(a.follow));
               await store.removeFollow(u.tg_id, a.follow.race_id);
+            } else if (a.kind === "cancelled" && a.confirmed) {
+              await send(u.tg_id, T.cancelledConfirmed(a.follow));
             } else if (a.kind === "cancelled") {
               await send(u.tg_id, T.cancelled(a.follow));
               await store.removeFollow(u.tg_id, a.follow.race_id);

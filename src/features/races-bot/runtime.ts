@@ -112,15 +112,31 @@ let detailsBroken = false;
 export async function loadRaceDetails(raceId: string): Promise<DetailRow[]> {
   const hit = detailsCache.get(raceId);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.rows;
-  const { data, error } = await createSupabaseServerClient().from("race_details").select("distance,field,value").eq("race_id", raceId);
+  const { data, error } = await createSupabaseServerClient().from("race_details").select("distance,field,value,checked_at").eq("race_id", raceId);
   if (error) {
     if (!detailsBroken) console.error(`[races-bot] race_details: ${error.message}`);
     detailsBroken = true;
     return [];
   }
-  const rows = ((data ?? []) as { distance: number | string | null; field: string; value: string }[]).map((r) => ({ ...r, distance: r.distance == null ? null : Number(r.distance) }));
+  const rows = ((data ?? []) as { distance: number | string | null; field: string; value: string; checked_at: string | null }[]).map((r) => ({ ...r, distance: r.distance == null ? null : Number(r.distance) }));
   detailsCache.set(raceId, { at: Date.now(), rows });
   return rows;
+}
+
+let cancelledCache: { at: number; ids: Set<string> } | null = null;
+
+/** Отменённые вручную старты (race_overrides.status = cancelled): в «Моих стартах» с пометкой «отменён».
+ *  Кэш 10 минут. Чтение упало — пусто и строка в лог (как до 15.10.2026: старт пропадает). */
+export async function loadCancelledRaceIds(): Promise<Set<string>> {
+  if (cancelledCache && Date.now() - cancelledCache.at < 10 * 60 * 1000) return cancelledCache.ids;
+  const { data, error } = await createSupabaseServerClient().from("race_overrides").select("id").eq("status", "cancelled");
+  if (error) {
+    console.error(`[races-bot] race_overrides cancelled: ${error.message}`);
+    return new Set();
+  }
+  const ids = new Set(((data ?? []) as { id: string }[]).map((r) => r.id));
+  cancelledCache = { at: Date.now(), ids };
+  return ids;
 }
 
 // ── хранилище ────────────────────────────────────────────────────────────────
@@ -383,6 +399,7 @@ export function productionBot() {
     tg: tgApi,
     races: loadBotRaces,
     details: loadRaceDetails,
+    cancelled: loadCancelledRaceIds,
     expected: loadBotExpected,
     coachUsername: coachUsername(),
     reverseGeocode: nominatimCity,

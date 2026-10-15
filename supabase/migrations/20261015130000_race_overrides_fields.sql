@@ -63,3 +63,10 @@ create or replace view public.race_calendar with (security_invoker = true) as
     and coalesce(o.date_end, o.date_start, e.date_end) >= current_date
     and not coalesce(o.hidden, false)
     and coalesce(o.status, '') <> 'cancelled';
+
+-- Права заново (условие Игоря 15.10.2026): create or replace view их сохраняет, но не полагаемся на это.
+-- Как в базе до миграции: чтение представления и источников для anon/authenticated, функция геоточки.
+grant select on public.race_calendar to anon, authenticated, service_role;
+grant select on public.race_overrides to anon, authenticated;
+grant select on public.race_events to anon, authenticated;
+grant execute on function public.race_geo_point(text, text) to anon, authenticated, service_role;

@@ -399,6 +399,18 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.ok(plan.lines.some((l) => /агент не проверил: «O-TRAIL Karras»/.test(l)));
   assert.match(plan.lines[0], /следующей — 2026-10-29/);
   assert.deepEqual(recheckPlan([], [], "2026-10-22").lines, [], "нечего проверять — строки в итоге нет");
+  // Расходящиеся данные (kind = data, 15.10.2026): отдельные строки, значение правит тренер.
+  const data = recheckPlan([
+    { id: "probeg:80736", name: "Горячий Шоколад", date_start: "2026-12-13", note: "orgeo 5/13/25, RR 5/10/21", site_url: null, reg_url: null, recheck_after: "2026-10-22", kind: "data" },
+    { id: "probeg:82233", name: "Дмитров трейл", date_start: "2026-11-08", note: "перенос, новой даты нет", site_url: null, reg_url: null, recheck_after: "2026-10-22", kind: "data" },
+  ], [
+    { id: "probeg:80736", verdict: "confirmed", note: "положение: 5/13/25 км", source_url: "https://orgeo.ru" },
+    { id: "probeg:82233", verdict: "questionable", note: "новой даты нет" },
+  ], "2026-10-22");
+  assert.deepEqual(data.bump, ["probeg:80736", "probeg:82233"]);
+  assert.ok(data.lines.some((l) => /РЕШИТЬ — данные, источник нашёлся: «Горячий Шоколад».*5\/13\/25/.test(l)), "какой источник прав — решает тренер");
+  assert.ok(data.lines.some((l) => /данные по-прежнему расходятся: «Дмитров трейл»/.test(l)));
+  assert.ok(!data.lines.some((l) => /под вопросом: «/.test(l)), "данные не смешиваются со стартами под вопросом");
 }
 
 console.log("check:races-manual ok");

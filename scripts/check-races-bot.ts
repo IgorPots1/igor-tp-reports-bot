@@ -71,6 +71,8 @@ const EXTRA = Array.from({ length: 6 }, (_, i) =>
 );
 
 let RACES: BotRace[] = [HALF, TRAIL, KAZAN, SHORT, ...EXTRA];
+/** race_overrides.status = cancelled — старты, отменённые вручную. */
+const CANCELLED = new Set<string>();
 
 // Ожидаемые: прошлогодние без даты. ANNOUNCED — какие уже объявили дату (id ожидаемого → race_id).
 const EXP_NIGHT: ExpectedItem = { id: "probeg:2", name: "Ночной забег", city: "Москва", region: "Москва", type: "road", distances: ["10 км"], km: [10], lastMonth: 6, lastDate: "2026-06-20", lastUrl: "https://probeg.org/event/2/", site: "" };
@@ -114,6 +116,7 @@ const bot = createBot({
   reverseGeocode: async () => "Казань",
   weather: async () => ({ tMax: 14.4, tMin: 6.2, rainProb: 30, windMax: 4.1 }),
   goLink: (tg, r, kind) => `https://igorp.run/go/${kind}${raceCode(r.id)}-${tg.toString(36)}-0123456789`,
+  cancelled: async () => CANCELLED,
 });
 
 const USER = { id: 501, first_name: "Анна", username: "anna_runs" };
@@ -496,6 +499,53 @@ async function main() {
   await bot.runTick();
   assert.ok(!texts(501).some((t) => t.includes("пропал из календаря")), "об отмене один раз");
   RACES = [...RACES, KAZAN];
+
+  // Отмена ПОДТВЕРЖДЕНА (race_overrides.status = cancelled, решение Игоря 15.10.2026). Выше —
+  // старт просто пропал: «снял с отслеживания» остаётся. Подтверждённая отмена иначе: старт НЕ
+  // исчезает из «Моих стартов», а помечен «отменён»; сообщение одно; после даты — тихо снять,
+  // без «С финишем!»: забега не было.
+  {
+    NOW = new Date("2026-10-12T10:00:00Z");
+    // отметка «cancelled» от прошлого случая (тот же старт пропадал выше) — сбросить, это другой сценарий
+    for (let i = store.sends.length - 1; i >= 0; i--) if (store.sends[i].race_id === KAZAN.id) store.sends.splice(i, 1);
+    await bot.handleUpdate(cb(USER, `f:${raceCode(KAZAN.id)}`));
+    RACES = RACES.filter((r) => r.id !== KAZAN.id);
+    CANCELLED.add(KAZAN.id);
+    reset();
+    await bot.runTick();
+    const note = texts(501).find((t) => t.includes("Казанский трейл"));
+    assert.ok(note && note.includes("отменён") && note.includes("останется в «Моих стартах»"), `сообщение об отмене: ${note}`);
+    assert.ok(!texts(501).some((t) => t.includes("пропал из календаря")), "не «пропал»: отмена подтверждена");
+    assert.ok(store.follows.some((f) => f.race_id === KAZAN.id), "подтверждённая отмена не снимает отслеживание");
+    await bot.handleUpdate(cb(USER, `f:${raceCode(SHORT.id)}`)); // живой старт рядом с отменённым
+    reset();
+    await bot.handleUpdate(msg(USER, "/races"));
+    const myText = String(sent(501)[0].params.text);
+    assert.match(myText, /Казанский трейл<\/b> · отменён\n20 мая, чт · Казань/, `отменённый в списке с пометкой: ${myText}`);
+    const live = myText.indexOf(`${T.esc(SHORT.name)}</b> · `), dead = myText.indexOf("Казанский трейл</b> · отменён");
+    assert.ok(live >= 0 && live < dead, `живой старт на месте и по дате раньше отменённого: ${myText}`);
+    assert.ok(buttons(sent(501)[0]).some((b) => b.text.startsWith("Сайт старта") && b.url), "у живого кнопки прежние");
+    await bot.handleUpdate(cb(USER, `u:${raceCode(SHORT.id)}`));
+    const gone = buttons(sent(501)[0]).find((b) => b.text.startsWith("Убрать отменённый"));
+    assert.equal(gone?.callback_data, `u:${raceCode(KAZAN.id)}`, "у отменённого кнопка «Убрать», без ссылки на сайт");
+    reset();
+    await bot.runTick();
+    assert.ok(!texts(501).some((t) => t.includes("Казанский трейл")), "об отмене один раз");
+    reset();
+    NOW = new Date("2027-05-22T10:00:00Z");
+    await bot.runTick();
+    assert.ok(!texts(501).some((t) => t.includes("Казанский трейл")), "после даты отменённого — ни «С финишем», ни чего-либо");
+    assert.ok(!store.follows.some((f) => f.race_id === KAZAN.id), "после даты отменённый снят тихо");
+    // кнопка «Убрать отменённый» снимает его до даты
+    NOW = new Date("2026-10-12T10:00:00Z");
+    RACES = [...RACES, KAZAN];
+    await bot.handleUpdate(cb(USER, `f:${raceCode(KAZAN.id)}`));
+    RACES = RACES.filter((r) => r.id !== KAZAN.id);
+    await bot.handleUpdate(cb(USER, `u:${raceCode(KAZAN.id)}`));
+    assert.ok(!store.follows.some((f) => f.race_id === KAZAN.id), "отменённый убран кнопкой");
+    CANCELLED.clear();
+    RACES = [...RACES, KAZAN];
+  }
 
   // пауза глушит всё
   await bot.handleUpdate(cb(USER, `f:${raceCode(SHORT.id)}`));

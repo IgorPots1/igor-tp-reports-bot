@@ -52,7 +52,7 @@ export async function loadImportant(): Promise<Map<string, string>> {
   const byRace = new Map<string, DetailRow[]>();
   try {
     for (let from = 0; ; from += PAGE) {
-      const res = await fetch(`${url}/rest/v1/race_details?select=race_id,distance,field,value&order=race_id.asc,id.asc`, {
+      const res = await fetch(`${url}/rest/v1/race_details?select=race_id,distance,field,value,checked_at&order=race_id.asc,id.asc`, {
         headers: { apikey: key, Authorization: `Bearer ${key}`, Range: `${from}-${from + PAGE - 1}` },
         next: { revalidate: 3600 },
       });

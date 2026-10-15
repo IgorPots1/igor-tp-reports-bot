@@ -4,11 +4,13 @@
  *   — волны: короткая фраза организатора или «старт волнами»;
  *   — номера: когда и где, коротко;
  *   — лимит: только самой длинной дистанции и только если это длительность («4,5 ч», «2:30»);
- *   — регистрация: только «регистрация закрыта» / «мест нет».
+ *   — регистрация: только «регистрация закрыта» / «мест нет», и всегда с датой проверки: «мест нет (на 15.10)».
+ *     Статус регистрации меняется, а еженедельного обновления этих полей пока нет (условие Игоря 15.10.2026):
+ *     без даты он выглядел бы как сегодняшний факт. Нет даты проверки — статус не показываем вовсе.
  * Пояснения после « — », скобки и хвосты после «;» отбрасываются; длинное тире в строку не попадает.
  * Строка длиннее MAX_LINE — части отбрасываются с конца. Чистая функция, её стережёт check:race-details. */
 
-export type DetailRow = { distance: number | null; field: string; value: string };
+export type DetailRow = { distance: number | null; field: string; value: string; checked_at?: string | null };
 
 const NO_DATA = /^нет данных/i;
 const MAX_PART = 48;
@@ -67,10 +69,17 @@ function cutoffPart(rows: DetailRow[]): string | null {
   return `лимит ${v}${many && longest.distance != null ? ` на ${kmText(longest.distance)} км` : ""}`;
 }
 
+const REG = /^(мест нет|регистрация закрыта) \(на \d{2}\.\d{2}\)$/;
+
 function registrationPart(rows: DetailRow[]): string | null {
-  const v = has(rows, "registration_status").map((r) => r.value).join(" ");
-  if (/исчерпан|нет мест|sold ?out|мест не осталось/i.test(v)) return "мест нет";
-  if (/^закрыт|регистрация закрыта|онлайн-регистрация закрыта/i.test(v)) return "регистрация закрыта";
+  const own = has(rows, "registration_status");
+  const v = own.map((r) => r.value).join(" ");
+  // Дата проверки: самая поздняя из строк статуса. Нет её — не показываем (см. шапку).
+  const checked = own.map((r) => r.checked_at ?? "").filter((x) => /^\d{4}-\d{2}-\d{2}/.test(x)).sort().at(-1);
+  if (!checked) return null;
+  const on = ` (на ${checked.slice(8, 10)}.${checked.slice(5, 7)})`;
+  if (/исчерпан|нет мест|sold ?out|мест не осталось/i.test(v)) return `мест нет${on}`;
+  if (/^закрыт|регистрация закрыта|онлайн-регистрация закрыта/i.test(v)) return `регистрация закрыта${on}`;
   return null;
 }
 
@@ -79,12 +88,12 @@ export function importantParts(rows: DetailRow[]): string[] {
   return [startPart(rows), wavesPart(rows), pickupPart(rows), cutoffPart(rows), registrationPart(rows)].filter((x): x is string => !!x);
 }
 
-/** «Важное: старт 9:00, номера сб 12:00–20:00, лимит 3 ч» или null. Длиннее MAX_LINE — части с конца
+/** «Важное: старт 9:00, номера сб 12:00–20:00, лимит 3 ч, мест нет (на 15.10)» или null. Длиннее MAX_LINE — части с конца
  *  отбрасываются, но «регистрация закрыта / мест нет» остаётся всегда: это главное. */
 export function importantLine(rows: DetailRow[]): string | null {
   const parts = importantParts(rows);
   if (!parts.length) return null;
-  const reg = parts.find((p) => p === "мест нет" || p === "регистрация закрыта");
+  const reg = parts.find((p) => REG.test(p));
   const rest = parts.filter((p) => p !== reg);
   const build = (xs: string[]) => `Важное: ${[...xs, ...(reg ? [reg] : [])].join(", ")}`;
   while (rest.length > 1 && build(rest).length > MAX_LINE) rest.pop();

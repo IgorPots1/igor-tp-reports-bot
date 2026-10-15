@@ -183,29 +183,42 @@ export type Proposal = {
  * Старты «под вопросом» (race_overrides.status = 'questionable', наряд 15.10.2026): раз в неделю агент
  * смотрит их снова. Шлюз сам статус НЕ меняет (отменить или вернуть старт — решение тренера):
  * только сдвигает recheck_after на неделю и пишет вердикты в итог недели.
+ *
+ * Вторая группа — перепроверка ДАННЫХ (status пуст, recheck_after задан; 15.10.2026): источники
+ * расходятся в дистанциях или дате, правки нет. В календаре старт без пометки, в reason — что сверить.
+ * Вердикт: confirmed — какой источник прав (в note), questionable — по-прежнему расходятся,
+ * cancelled — отменён. Значение правит тренер, шлюз ничего не исправляет.
  */
 export type RecheckVerdict = { id: string; verdict: "confirmed" | "questionable" | "cancelled"; note: string; source_url?: string };
-export type RecheckRow = { id: string; name: string; date_start: string; note: string | null; site_url: string | null; reg_url: string | null; recheck_after: string | null };
+export type RecheckRow = {
+  id: string; name: string; date_start: string; note: string | null; site_url: string | null; reg_url: string | null; recheck_after: string | null;
+  /** questionable — под вопросом сам старт; data — расходятся источники (что сверить — в note). */
+  kind?: "questionable" | "data";
+};
 
 export function recheckPlan(due: RecheckRow[], verdicts: RecheckVerdict[], today: string): { bump: string[]; lines: string[]; rejected: string[] } {
   const byId = new Map(due.map((r) => [r.id, r]));
   const bump: string[] = [], rejected: string[] = [];
   const group: Record<RecheckVerdict["verdict"], string[]> = { confirmed: [], questionable: [], cancelled: [] };
+  const data: Record<RecheckVerdict["verdict"], string[]> = { confirmed: [], questionable: [], cancelled: [] };
   for (const v of verdicts) {
     const r = byId.get(v.id);
     if (!r) { rejected.push(`${v.id}: не в списке перепроверки`); continue; }
     if (!["confirmed", "questionable", "cancelled"].includes(v.verdict)) { rejected.push(`${v.id}: вердикт «${v.verdict}»`); continue; }
     if (!v.note?.trim()) { rejected.push(`${v.id}: нет пояснения`); continue; }
     bump.push(v.id);
-    group[v.verdict].push(`«${r.name}» ${r.date_start}: ${v.note.trim()}${v.source_url ? ` (${v.source_url})` : ""}`);
+    (r.kind === "data" ? data : group)[v.verdict].push(`«${r.name}» ${r.date_start}: ${v.note.trim()}${v.source_url ? ` (${v.source_url})` : ""}`);
     byId.delete(v.id);
   }
   const lines: string[] = [];
   if (due.length) {
-    lines.push(`Под вопросом: к перепроверке ${due.length}, проверено ${bump.length}; срок следующей — ${addDays(today, 7)}`);
+    lines.push(`Перепроверка (под вопросом и расходящиеся данные): ${due.length}, проверено ${bump.length}; срок следующей — ${addDays(today, 7)}`);
     if (group.confirmed.length) lines.push(`  РЕШИТЬ — организатор подтвердил: ${group.confirmed.join("; ")}`);
     if (group.cancelled.length) lines.push(`  РЕШИТЬ — похоже, отменён: ${group.cancelled.join("; ")}`);
     if (group.questionable.length) lines.push(`  по-прежнему под вопросом: ${group.questionable.join("; ")}`);
+    if (data.confirmed.length) lines.push(`  РЕШИТЬ — данные, источник нашёлся: ${data.confirmed.join("; ")}`);
+    if (data.cancelled.length) lines.push(`  РЕШИТЬ — данные, похоже, отменён: ${data.cancelled.join("; ")}`);
+    if (data.questionable.length) lines.push(`  данные по-прежнему расходятся: ${data.questionable.join("; ")}`);
     if (byId.size) lines.push(`  агент не проверил: ${[...byId.values()].map((r) => `«${r.name}»`).join(", ")}`);
   }
   return { bump, lines, rejected };
@@ -916,9 +929,10 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   return hits;
 }
 
-/** Старты «под вопросом», у которых подошла перепроверка (или срок не задан). */
+/** Старты «под вопросом» и с расходящимися данными, у которых подошла перепроверка. */
 async function recheckDue(sb: SupabaseClient, today: string): Promise<RecheckRow[]> {
-  const { data: ov, error } = await sb.from("race_overrides").select("id,note,recheck_after").eq("status", "questionable");
+  const { data: ov, error } = await sb.from("race_overrides").select("id,status,note,reason,recheck_after")
+    .or("status.eq.questionable,and(status.is.null,recheck_after.not.is.null)");
   if (error) throw error;
   const due = (ov || []).filter((o) => !o.recheck_after || (o.recheck_after as string) <= today);
   if (!due.length) return [];
@@ -927,7 +941,8 @@ async function recheckDue(sb: SupabaseClient, today: string): Promise<RecheckRow
   const byId = new Map((cal || []).map((c) => [c.id as string, c]));
   return due.filter((o) => byId.has(o.id as string)).map((o) => {
     const c = byId.get(o.id as string)!;
-    return { id: o.id as string, name: c.name as string, date_start: c.date_start as string, note: o.note as string | null, site_url: c.site_url as string | null, reg_url: c.reg_url as string | null, recheck_after: o.recheck_after as string | null };
+    const kind = o.status === "questionable" ? "questionable" as const : "data" as const;
+    return { id: o.id as string, name: c.name as string, date_start: c.date_start as string, note: (kind === "data" ? o.reason : o.note) as string | null, site_url: c.site_url as string | null, reg_url: c.reg_url as string | null, recheck_after: o.recheck_after as string | null, kind };
   });
 }
 
@@ -1182,14 +1197,14 @@ async function cmdApply(file: string, apply: boolean) {
   const tiers = await tierStats(sb, merged.reg, p, addedRows, today);
   if (apply) writeRegistry(merged.reg);
 
-  // Под вопросом: шлюз только сдвигает срок перепроверки; статус меняет тренер.
+  // Под вопросом и расходящиеся данные: шлюз только сдвигает срок перепроверки; статус и значения меняет тренер.
   const due = await recheckDue(sb, today);
   const recheck = recheckPlan(due, p.recheck || [], today);
   for (const r of recheck.rejected) out.push({ kind: "skipped", id: r.split(":")[0], text: `перепроверка: ${r}` });
   if (apply) {
     for (const id of recheck.bump) {
       const { error: re } = await sb.from("race_overrides").update({ recheck_after: addDays(today, 7), updated_at: new Date().toISOString() })
-        .eq("id", id).eq("status", "questionable");
+        .eq("id", id).or("status.eq.questionable,status.is.null");
       if (re) throw re;
     }
   }

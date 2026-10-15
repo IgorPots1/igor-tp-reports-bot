@@ -412,7 +412,12 @@ export const NO_CONSULT: Msg = { text: "Хорошо. Если понадоби�
 
 export const MY_PAGE = 10;
 
-export function myRaces(all: { race: Race; code: string; site?: string }[], today: string, page = 0, city?: string | null): Msg {
+/** Старт в «Моих стартах»: живой из календаря или отменённый (по снимку подписки, с пометкой «отменён»). */
+export type MyItem =
+  | { race: Race; code: string; site?: string }
+  | { gone: { name: string; date: string | null; end: string | null; city: string | null }; code: string };
+
+export function myRaces(all: MyItem[], today: string, page = 0, city?: string | null): Msg {
   const items = all.slice(page * MY_PAGE, (page + 1) * MY_PAGE);
   if (!all.length) {
     return {
@@ -420,7 +425,14 @@ export function myRaces(all: { race: Race; code: string; site?: string }[], toda
       reply_markup: { inline_keyboard: [[calendarButton(CALENDAR_LABEL, city ?? undefined, "my")]] },
     };
   }
-  const lines = items.map(({ race }) => {
+  const lines = items.map((it) => {
+    if ("gone" in it) {
+      // Отменён (race_overrides.status = cancelled): не исчезает из списка, а помечен (15.10.2026).
+      const g = it.gone;
+      const when = g.date ? shortDate({ ds: g.date, de: g.end || g.date }) : "дата неизвестна";
+      return `<b>${esc(g.name)}</b> · отменён\n${when}${g.city ? ` · ${esc(g.city)}` : ""}`;
+    }
+    const { race } = it;
     const left = daysBetween(today, race.ds);
     return `<b>${esc(race.name)}</b> · ${countdown(left)}\n${shortDate(race)} · ${esc(raceMeta(race))}`;
   });
@@ -434,10 +446,14 @@ export function myRaces(all: { race: Race; code: string; site?: string }[], toda
     text: `${head}\n\n${lines.join("\n\n")}`.slice(0, 4000),
     reply_markup: {
       inline_keyboard: [
-        ...items.map(({ race, code, site }) => [
-          { text: `Сайт старта · ${race.name.slice(0, 24)}`, url: site ?? raceUrl(race) },
-          { text: "Убрать старт", callback_data: `u:${code}` },
-        ]),
+        ...items.map((it): Button[] =>
+          "gone" in it
+            ? [{ text: `Убрать отменённый · ${it.gone.name.slice(0, 20)}`, callback_data: `u:${it.code}` }]
+            : [
+                { text: `Сайт старта · ${it.race.name.slice(0, 24)}`, url: it.site ?? raceUrl(it.race) },
+                { text: "Убрать старт", callback_data: `u:${it.code}` },
+              ],
+        ),
         ...(nav.length ? [nav] : []),
         [calendarButton(CALENDAR_LABEL, city ?? undefined, "my")],
       ],
@@ -599,6 +615,16 @@ export function cancelled(f: PlanFollow): Msg {
     text:
       `Забег «${esc(f.race_name || "без названия")}»${f.race_date ? ` (${longDate(f.race_date)})` : ""} пропал из календаря: ` +
       "похоже, его отменили или перенесли. Я снял его с отслеживания. Проверь новости на сайте организатора.",
+    reply_markup: { inline_keyboard: [[calendarButton("Найти другой забег", f.race_city || undefined)]] },
+  };
+}
+
+/** Отмена подтверждена (race_overrides.status = cancelled): старт остаётся в «Моих стартах» с пометкой. */
+export function cancelledConfirmed(f: PlanFollow): Msg {
+  return {
+    text:
+      `Забег «${esc(f.race_name || "без названия")}»${f.race_date ? ` (${longDate(f.race_date)})` : ""} отменён. ` +
+      "Он останется в «Моих стартах» с пометкой «отменён». Проверь новости на сайте организатора.",
     reply_markup: { inline_keyboard: [[calendarButton("Найти другой забег", f.race_city || undefined)]] },
   };
 }

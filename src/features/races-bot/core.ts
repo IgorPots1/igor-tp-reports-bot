@@ -446,7 +446,9 @@ export type PlanFollow = {
 export type PlanAction =
   | { kind: "digest"; races: BotRace[]; area: AreaItem[]; subject: string }
   | { kind: "w12" | "d7" | "d1"; race: BotRace }
-  | { kind: "after" | "cancelled"; follow: PlanFollow }
+  | { kind: "after"; follow: PlanFollow }
+  /** confirmed — отмена подтверждена (race_overrides.status = cancelled): отслеживание не снимается. */
+  | { kind: "cancelled"; follow: PlanFollow; confirmed?: boolean }
   | { kind: "drop"; follow: PlanFollow };
 
 export const CONSULT_COOLDOWN_DAYS = 30;
@@ -467,6 +469,8 @@ export function planUser(input: {
   racesById: Map<string, BotRace>;
   races: BotRace[];
   sent: Set<string>;
+  /** Старты, отменённые вручную (race_overrides.status = cancelled). */
+  cancelled?: Set<string>;
 }): PlanAction[] {
   const { now, user, follows, racesById, races, sent } = input;
   if (user.blocked) return [];
@@ -493,6 +497,16 @@ export function planUser(input: {
   for (const f of follows) {
     const r = racesById.get(f.race_id);
     const once = (k: string) => !sent.has(`${k}:${f.race_id}`);
+    if (!r && input.cancelled?.has(f.race_id)) {
+      // Отмена подтверждена (решение Игоря 15.10.2026): старт остаётся в «Моих стартах» с пометкой
+      // «отменён» до своей даты — одно сообщение, отслеживание не снимаем. Дата прошла — тихо снять,
+      // без «С финишем!»: забега не было.
+      const end = f.race_end || f.race_date;
+      if (end && end >= today) {
+        if (once("cancelled")) out.push({ kind: "cancelled", follow: f, confirmed: true });
+      } else out.push({ kind: "drop", follow: f });
+      continue;
+    }
     if (!r) {
       // view race_calendar держит только предстоящие старты. Пропал старт, который ещё не
       // прошёл, — его отменили или убрали: одно сообщение и снять. Прошёл вчера — «С финишем!»
