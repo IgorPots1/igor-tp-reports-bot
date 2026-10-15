@@ -12,6 +12,11 @@ import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Wei
 import { planRepeat, setRepeatParams } from "./repeat.ts";
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
+import { addedByCoach, diffPlaced, toPublish, type Placed } from "./plan-edits.ts";
+import { CONFIRM, GROUP12, hiddenProven, realGate } from "./week-ops.ts";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 let failures = 0, total = 0;
 function check(name: string, ok: boolean, detail = ""): void { total++; if (!ok) failures++; console.log(`  ${ok ? "ok  " : "FAIL"}  ${name}${ok ? "" : `  — ${detail}`}`); }
@@ -143,6 +148,36 @@ console.log("\n── сигналы: закрытие для планирова
       && staleReason({ type: "pain_injury", start: "2026-09-01", validUntil: null, races: [], today: "2026-09-26" })?.startsWith("срок") === true);
   const w = signalWindow({ type: "pain_injury", start: "2026-09-01", validUntil: null, resolvedAt: null, races: ["2026-09-10"] });
   check("окно сигнала для плана обрывается днём старта", w.to === "2026-09-10", JSON.stringify(w));
+}
+
+console.log("\n── раскидать / публикуй / снести: правки тренера и ворота записи ──");
+{
+  const pl: Placed = { aid: 1, weekStart: "2026-10-19", workoutId: 11, date: "2026-10-21", title: "6 х 4 мин", description: "текст", minutes: 60 };
+  check("без правок — пусто", diffPlaced(pl, { workoutId: 11, date: "2026-10-21T00:00:00", title: "6 х 4 мин", description: "текст", minutes: 60, isHidden: true }).length === 0);
+  const ch = diffPlaced(pl, { workoutId: 11, date: "2026-10-22T00:00:00", title: "5 х 5 мин", description: "текст", minutes: 70, isHidden: true });
+  check("правка дня, длительности и формата — три строки с было/стало",
+    ch.length === 3 && ch.some((r) => r.field === "день недели" && r.before === "2026-10-21" && r.after === "2026-10-22") && ch.some((r) => r.field === "длительность" && r.after === "70") && ch.some((r) => r.field === "формат" && r.after === "5 х 5 мин"), JSON.stringify(ch));
+  check("удалённая тренером — строка «удаление»", diffPlaced(pl, null).map((r) => r.field).join() === "удаление");
+  check("добавленная тренером — строка «добавление»", addedByCoach(1, "2026-10-19", new Set([11]), [{ workoutId: 11, date: "2026-10-21", title: "x", minutes: 60 }, { workoutId: 99, date: "2026-10-23", title: "Свой бег", minutes: 45 }]).map((r) => `${r.field}:${r.workoutId}`).join() === "добавление:99");
+  const pub = toPublish([pl, { ...pl, workoutId: 12 }], new Map([[11, { workoutId: 11, date: "", title: "", description: "", minutes: 0, isHidden: true }], [12, null]]));
+  check("публикуется только живое: удалённая тренером назад не возвращается", pub.length === 1 && pub[0].workoutId === 11);
+
+  const dir = mkdtempSync(path.join(tmpdir(), "proof-"));
+  check("скрытие не доказано, пока нет живого отчёта пробника", hiddenProven(dir).ok === false);
+  mkdirSync(path.join(dir, "a")); writeFileSync(path.join(dir, "a", "summary.md"), "hidden_verify_pass: true\nunhidden_verify_pass: null\n");
+  check("доказано только скрытие, открытие нет — всё ещё не доказано", hiddenProven(dir).ok === false);
+  mkdirSync(path.join(dir, "b")); writeFileSync(path.join(dir, "b", "summary.md"), "- hidden_verify_pass: `null`\n- unhidden_verify_pass: `true`\n");
+  check("скрыть не удалось, открыть удалось — НЕ доказано (имя одного поля внутри другого)", hiddenProven(dir).ok === false);
+  mkdirSync(path.join(dir, "c")); writeFileSync(path.join(dir, "c", "summary.md"), "- hidden_verify_pass: `true`\n- unhidden_verify_pass: `true`\n");
+  check("оба PASS в формате пробника — доказано", hiddenProven(dir).ok === true);
+  const ok = { executeReal: true, confirm: CONFIRM.raskidat, realEnv: "true", proof: { ok: true, why: "" }, corpusAgeMin: 5 };
+  check("ворота открыты только при всех условиях", realGate("raskidat", [GROUP12[0]], ok) === null);
+  check("без --execute-real — сухой прогон", realGate("raskidat", [GROUP12[0]], { ...ok, executeReal: false }) != null);
+  check("не та фраза подтверждения — отказ", realGate("raskidat", [GROUP12[0]], { ...ok, confirm: "да" }) != null);
+  check("без TP_ACTIONS_REAL_EXECUTION — отказ", realGate("raskidat", [GROUP12[0]], { ...ok, realEnv: undefined }) != null);
+  check("атлет вне группы 12 — отказ", realGate("raskidat", [5058370], ok)?.includes("вне группы 12") === true);
+  check("скрытие не доказано — отказ раскидать", realGate("raskidat", [GROUP12[0]], { ...ok, proof: { ok: false, why: "нет" } })?.includes("скрытие") === true);
+  check("выгрузка кэша старше часа — отказ раскидать", realGate("raskidat", [GROUP12[0]], { ...ok, corpusAgeMin: 90 }) != null);
 }
 
 console.log(`\nИТОГ: ${failures === 0 ? `все ${total} проверок прошли` : `ПАДЕНИЙ ${failures} из ${total}`}`);

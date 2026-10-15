@@ -12,6 +12,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
 type M = { id: string; file: string; find: string; replace: string; what: string };
 const MUT: M[] = [
@@ -32,6 +33,12 @@ const MUT: M[] = [
   { id: "sig-no-race", file: S, find: "  if (raced.length) return", replace: "  if (false) return", what: "прошедший старт сигнал не закрывает" },
   { id: "sig-ttl-7", file: S, find: "pain_injury: 24,", replace: "pain_injury: 7,", what: "срок pain_injury 7 вместо 24" },
   { id: "sig-window-race", file: S, find: "  if (race && race < to) to = race;", replace: "", what: "окно сигнала не обрывается стартом" },
+  { id: "publish-deleted", file: E, find: "  return placed.filter((p) => current.get(p.workoutId) != null)", replace: "  return placed.filter(() => true)", what: "публикуется и удалённое тренером" },
+  { id: "no-minutes-diff", file: E, find: "  if (Math.round(c.minutes) !== Math.round(p.minutes))", replace: "  if (false)", what: "правка длительности не пишется" },
+  { id: "gate-no-proof", file: O, find: "    if (!g.proof.ok) return", replace: "    if (false) return", what: "раскидать пишет без доказанного скрытия" },
+  { id: "gate-no-group", file: O, find: "  const out = aids.filter((a) => !GROUP12.includes(a)); if (out.length) return", replace: "  const out = aids.filter((a) => !GROUP12.includes(a)); if (false) return", what: "пишет атлетам вне группы 12" },
+  { id: "proof-hidden-only", file: O, find: " && /^\\s*-?\\s*unhidden_verify_pass:\\s*`?true`?\\s*$/m.test(t)", replace: "", what: "доказательством считается одно скрытие без открытия" },
+  { id: "proof-unanchored", file: O, find: "/^\\s*-?\\s*hidden_verify_pass:", replace: "/hidden_verify_pass:", what: "якорь снят: «hidden» находится внутри «unhidden»" },
 ];
 
 const run = (): string[] => {
