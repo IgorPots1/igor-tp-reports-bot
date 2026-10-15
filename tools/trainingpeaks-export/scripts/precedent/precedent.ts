@@ -16,6 +16,7 @@
 import type { CSess, CWeek, Kind } from "./corpus.ts";
 import { weeksBetween } from "./corpus.ts";
 import { heavyBeforeRace, PRE_RACE_DAYS } from "./validate.ts";
+import { postRaceAdjust, recoveryFactor } from "./post-race.ts";
 
 /** Выбрано по обучающему отрезку, см. step3-backtest.ts «база перехода». */
 export type TransitionBase = "prev" | "level" | "none";
@@ -99,7 +100,7 @@ export function dayHabit(ix: Index, aid: number, before: string): Record<Kind, n
  * Качественная НЕ масштабируется: её заголовок — рецепт работы («6 х 4 мин»), и минуты сессии
  * следуют из него. Масштабируются лёгкие и длительная.
  */
-export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
+export function adapt(ix: Index, t: CWeek, f: Found, postRace = false): Adapted {
   const p = f.p;
   const lvlT = t.avg4 > 0 ? t.avg4 : t.prevTotal;
   const lvlP = p.avg4 > 0 ? p.avg4 : p.prevTotal > 0 ? p.prevTotal : p.total;
@@ -135,6 +136,13 @@ export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
       sessions.sort((a, b) => a.dayIdx - b.dayIdx);
       dayMap = "дни по привычке атлета";
     }
+  }
+  // ПОСЛЕ СТАРТА — то же правило, что в «повторе» (post-race.ts): восстановление по таблице и снятие качества после марафона.
+  // Только для боевого пути (postRace=true); базовые методы бэктеста (3, 4) остаются как были. Если донор сам был неделей
+  // восстановления, его множитель уже в сессиях — масштабируем на разницу.
+  if (postRace) {
+    const adj = postRaceAdjust(ix, t, sessions, recoveryFactor(p.lastRaceKm, p.weeksSinceRace) ?? 1);
+    if (adj.rel != null) { sessions.splice(0, sessions.length, ...adj.sessions); dayMap += `; ${adj.notes.join("; ")}`; }
   }
   // запрет — только перед ГЛАВНЫМ стартом (решение Игоря 15.10): к проходным он не подводит
   const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);

@@ -10,6 +10,7 @@ import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
 import { planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
+import { postRaceAdjust, setRecovery } from "./post-race.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
@@ -75,6 +76,15 @@ for (const [aid, km] of [[10, 42.2], [11, 21.1]] as const) {
   for (const k of [7, 8, 9]) rows.push(...weekRows(aid, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 40 }, { d: 6, t: EASY, m: 60 }]));
   races.push({ trainingpeaks_athlete_id: aid, event_date: addDays(wk(6), 6), distance_km: km, distance_raw: null });
 }
+for (const k of [10, 11, 12, 13, 14]) rows.push(...weekRows(10, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 40 }, { d: 6, t: EASY, m: 60 }]));
+// атлет 16: марафон в вс недели 6, потом пауза две недели (нет недель 7 и 8) и целевая неделя 9 = +3 после марафона — ветка ПРЕЦЕДЕНТА
+for (let k = 0; k < 6; k++) rows.push(...weekRows(16, wk(k), MP));
+rows.push(...weekRows(16, wk(6), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Забег", m: 240 }]), ...weekRows(16, wk(9), [{ d: 1, t: EASY, m: 40 }]));
+races.push({ trainingpeaks_athlete_id: 16, event_date: addDays(wk(6), 6), distance_km: 42.2, distance_raw: null });
+// атлет 18: две недели истории и сразу неделя старта — прецедент невозможен без истории
+for (let k = 0; k < 2; k++) rows.push(...weekRows(18, wk(k), NORMAL));
+rows.push(...weekRows(18, wk(2), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Забег", m: 200 }]));
+races.push({ trainingpeaks_athlete_id: 18, event_date: addDays(wk(2), 6), distance_km: 10, distance_raw: null });
 // атлет 12: пиковая неделя (400 при медиане 260) прямо перед целевой
 for (let k = 0; k < 6; k++) rows.push(...weekRows(12, wk(k), NORMAL));
 rows.push(...weekRows(12, wk(6), [{ d: 1, t: EASY, m: 80 }, { d: 3, t: Q, m: 60 }, { d: 4, t: EASY, m: 80 }, { d: 6, t: LONG, m: 180 }]));
@@ -229,13 +239,27 @@ console.log("\n── шаблонные названия и восстанов�
 
 console.log("\n── восстановление после старта по дистанции и неделе ──");
 {
-  check("таблица: марафон 0.39 / 0.75 / 0.81", [1, 2, 3].map((k) => recoveryFactor(42.2, k)).join() === "0.39,0.75,0.81", [1, 2, 3].map((k) => recoveryFactor(42.2, k)).join());
-  check("таблица: половинка 0.76 / 0.99 / 0.99", [1, 2, 3].map((k) => recoveryFactor(21.1, k)).join() === "0.76,0.99,0.99");
-  check("таблица: до 15 км 0.86 / 1 / 1 (1.02 зажато до 1: восстановление не повышает нагрузку)", [1, 2, 3].map((k) => recoveryFactor(10, k)).join() === "0.86,1,1", [1, 2, 3].map((k) => recoveryFactor(10, k)).join());
-  check("таблица: вне недель +1…+3 и без дистанции множителя нет", recoveryFactor(42.2, 0) === null && recoveryFactor(42.2, 4) === null && recoveryFactor(null, 1) === null && recoveryFactor(42.2, null) === null);
+  // ПЕРЕПИСАНО 15.10 (правило 6a). Было: таблица по ВСЕМУ корпусу (марафон 0.39/0.75/0.81 до +3; половинка 0.76/0.99/0.99; до 15 км
+  // 0.86/1/1). Отменено решением Игоря: продлить до +7 и взять ОБУЧАЮЩИЕ числа, если полный корпус с ними сильно расходится
+  // (r9-recovery.ts: до 0.19 по марафону, до 0.24 по коротким). Новые утверждения: точные обучающие значения, длина строки по
+  // дистанции и то, что за краем строки множителя нет.
+  const row = (km: number, n: number): string => Array.from({ length: n }, (_, i) => recoveryFactor(km, i + 1)).join();
+  check("таблица (обучающая): марафон +1…+7 = 0.39 / 0.71 / 0.77 / 0.81 / 0.82 / 0.82 / 0.94", row(42.2, 7) === "0.39,0.71,0.77,0.81,0.82,0.82,0.94", row(42.2, 7));
+  check("таблица (обучающая): половинка +1…+3 = 0.59 / 0.99 / 0.99", row(21.1, 3) === "0.59,0.99,0.99", row(21.1, 3));
+  check("таблица (обучающая): до 15 км +1…+3 = 0.74 / 0.76 / 0.94", row(10, 3) === "0.74,0.76,0.94", row(10, 3));
+  check("за краем строки множителя нет: марафон +8, половинка +4, до 15 км +4, без дистанции, неделя 0", recoveryFactor(42.2, 8) === null && recoveryFactor(21.1, 4) === null && recoveryFactor(10, 4) === null && recoveryFactor(null, 1) === null && recoveryFactor(42.2, 0) === null && recoveryFactor(42.2, null) === null);
+  setRecovery({ table: "all" });
+  check("множитель зажат сверху единицей: в измеренной таблице до 15 км +3 = 1.02, выдаётся 1", recoveryFactor(10, 3) === 1, String(recoveryFactor(10, 3)));
+  setRecovery({ table: "train" });
   const d = (aid: number, k: number): number | null => { const p = planRepeat(ix, T(aid, k), null); return p.kind === "repeat" ? p.delta : null; };
-  check("дельта по таблице: марафон +1 / +2 / +3 = 0.39 / 0.75 / 0.81", [d(10, 7), d(10, 8), d(10, 9)].join() === "0.39,0.75,0.81", [d(10, 7), d(10, 8), d(10, 9)].join());
-  check("дельта по таблице: половинка +1 = 0.76, +2 = 0.99 (дистанция меняет множитель)", d(11, 7) === 0.76 && d(11, 8) === 0.99, `${d(11, 7)} ${d(11, 8)}`);
+  check("дельта по таблице: марафон +1…+7", [d(10, 7), d(10, 8), d(10, 9), d(10, 10), d(10, 11), d(10, 12), d(10, 13)].join() === "0.39,0.71,0.77,0.81,0.82,0.82,0.94", [d(10, 7), d(10, 8), d(10, 9), d(10, 10), d(10, 11), d(10, 12), d(10, 13)].join());
+  check("на +8 после марафона восстановления нет: нагрузка 100% (дельта 1)", d(10, 14) === 1, String(d(10, 14)));
+  check("половинка +1 = 0.59, +2 = 0.99 (дистанция меняет множитель)", d(11, 7) === 0.59 && d(11, 8) === 0.99, `${d(11, 7)} ${d(11, 8)}`);
+  const m4 = planRepeat(ix, T(10, 10), null);
+  check("марафон +4 (как у Семешиной): нагрузка ×0.81 от обычной, а не 100%; правило «без качества» уже не действует (только +1…+3)",
+    m4.kind === "repeat" && m4.delta === 0.81 && m4.sessions.some((s) => hasQ(s)), JSON.stringify(m4.kind === "repeat" ? { d: m4.delta, s: m4.sessions.map((s) => [s.title, s.minutes]) } : m4));
+  const m7 = planRepeat(ix, T(10, 13), null);
+  check("марафон +7: образец найден на пределе окна (10 недель назад: подводка 2 + старт + 7 недель восстановления)", m7.kind === "repeat" && m7.base.weekStart === wk(3), JSON.stringify(m7.kind === "repeat" ? m7.base.weekStart : m7));
   const m2 = planRepeat(ix, T(10, 8), null);
   check("2-я неделя после марафона: «24 км в темпе марафона» заменена его обычной лёгкой, день не потерян",
     m2.kind === "repeat" && !m2.sessions.some((s) => hasQ(s)) && m2.sessions.some((s) => s.dayIdx === 6) && m2.deltaWhy.includes("качество снято"), JSON.stringify(m2.kind === "repeat" ? m2.sessions.map((s) => [s.dayIdx, s.title, s.minutes]) : m2));
@@ -264,6 +288,38 @@ console.log("\n── класс «пик» ──");
   check("без класса «пик» та же пиковая неделя была бы образцом (проверка различает)", nopk.kind === "repeat" && nopk.base.weekStart === wk(6) && total_(nopk.sessions) === 400);
   setRepeatParams({ peak: 1.25 });
   check("неделя ×1.15 медианы — не пик", planRepeat(ix, T(1, 5), null).kind === "repeat" && !(planRepeat(ix, T(1, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "пик"));
+}
+
+console.log("\n── после старта: ОБЕ ветки (повтор и прецедент) ──");
+{
+  const tgt = T(16, 9);
+  const pl = planRepeat(ix, tgt, null);
+  check("контроль сценария: неделя +3 после марафона у атлета 16 идёт ветка ПРЕЦЕДЕНТА (пауза 2 недели)", tgt.weeksSinceRace === 3 && tgt.lastRaceKm === 42.2 && pl.kind === "precedent", JSON.stringify({ k: pl.kind, w: tgt.weeksSinceRace }));
+  const bp = buildRepeatWeek(ix, tgt, W8, null, undefined, new Map());
+  const qContent = (x: { kind: string; title: string; description: string }): boolean => hasQualityContent(x);
+  // ПЕРЕПИСАНО 15.10 (правило 6a). Было: в ветке прецедента «после старта» не обрабатывалось, а остаток качества ловился жёстким ОТКАЗОМ
+  // (3 недели из 809). Отменено решением Игоря: правило живёт в обеих ветках, качество ЗАМЕНЯЕТСЯ, отказа нет.
+  check("прецедент, +3 после марафона: неделя выдана (НЕ отказ), восстановление названо, качества нет", !!bp && !bp.refused && bp.source.includes("ПРЕЦЕДЕНТ") && bp.source.includes("восстановление: неделя +3") && !bp.sessions.some(qContent), JSON.stringify({ r: bp?.refusedWhy, src: bp?.source, s: bp?.sessions.map((x) => [x.title, x.minutes]) }));
+  check("в обеих ветках жёсткая проверка «без качества после марафона» есть и пройдена", !!bp && bp.validator.some((v) => v.severity === "hard" && v.ok && v.name.includes("после марафона")));
+  // донор сам был неделей восстановления — его множитель уже в сессиях, второй раз не применяется и нагрузку не повышаем
+  const t2 = T(10, 8); // +2 после марафона: 0.71
+  const sess: PSess[] = [{ dayIdx: 1, kind: "easy", title: "Лёгкий", minutes: 100, work: 0, src: corpus[0].sessions[0] }];
+  check("донор — не неделя восстановления: ×0.71", postRaceAdjust(ix, t2, sess, 1).sessions[0].minutes === 70);
+  check("донор уже был на 0.71 (та же неделя): повторно не снижаем", postRaceAdjust(ix, t2, sess, 0.71).sessions[0].minutes === 100);
+  const lower = postRaceAdjust(ix, t2, sess, 0.5);
+  check("донор был ещё ниже (0.5): нагрузку НЕ повышаем — ни минуты, ни возвращаемый множитель не выше 1", lower.sessions[0].minutes === 100 && lower.rel === 1, JSON.stringify({ m: lower.sessions[0].minutes, r: lower.rel }));
+  // через adapt: донор — неделя того же восстановления (+3 после марафона у атлета 10), цель — +3 после марафона у атлета 16
+  const donor = { p: T(10, 9), why: { d: 0, parts: [] as Array<[string, number]> }, ownAvailable: 0 };
+  const aOn = adapt(ix, T(16, 9), donor, true).sessions.map((x) => x.minutes).join();
+  const aOff = adapt(ix, T(16, 9), donor, false).sessions.map((x) => x.minutes).join();
+  check("прецедент через adapt: донор сам неделя +3 после марафона — второй раз множитель не применяется", aOn === aOff, `${aOn} против ${aOff}`);
+  const donorN = { p: T(1, 5), why: { d: 0, parts: [] as Array<[string, number]> }, ownAvailable: 0 };
+  const bOn = adapt(ix, T(16, 9), donorN, true).sessions.map((x) => x.minutes).reduce((a, b) => a + b, 0);
+  const bOff = adapt(ix, T(16, 9), donorN, false).sessions.map((x) => x.minutes).reduce((a, b) => a + b, 0);
+  check("прецедент через adapt: донор — обычная неделя, цель +3 после марафона — нагрузка снижена", bOn < bOff, `${bOn} против ${bOff}`);
+  const t18 = T(18, 2);
+  check("неделя старта без истории (2 недели): ОТКАЗ и в ветке прецедента", t18.phase === "race" && planRepeat(ix, t18, null).kind === "refuse");
+  check("неделя старта с историей: прецедент (не отказ)", planRepeat(ix, T(4, 8), null).kind === "precedent");
 }
 
 console.log("\n── окно поиска образца ──");

@@ -22,36 +22,21 @@
 import type { CSess, CWeek, Kind } from "./corpus.ts";
 import { weeksBetween } from "./corpus.ts";
 import { enforcePreRace, type Index, type PSess } from "./precedent.ts";
-import { hasQualityContent, POST_MARATHON_NO_QUALITY_WEEKS } from "./validate.ts";
+import { DROP_DAY_BELOW, postRaceAdjust, recoveryFactor, setRecovery } from "./post-race.ts";
 import { recent } from "./recent-level.ts";
 
 /** Неделя нормальна, если её объём не ниже этой доли медианы 8 недель до неё (выбрано в r2). */
 export let NORMAL_MIN_RATIO = 0.8;
 /** Пауза от стольких недель (но < MAX_GAP_WEEKS из recent-level.ts) — повторять нечего, нужен прецедент (выбрано в r2). */
 export let RETURN_GAP_WEEKS = 2;
-/**
- * ВОССТАНОВЛЕНИЕ ПОСЛЕ СТАРТА ПО ДИСТАНЦИИ И НОМЕРУ НЕДЕЛИ (решение Игоря 15.10; замер по неделям корпуса:
- * неделя +k / обычная неделя до старта). Заменяет единый ×0.67, который был усреднением и действовал только на +1.
- *   марафон (≥30 км): 0.39 / 0.75 / 0.81 · половинка (15–30): 0.76 / 0.99 / 0.99 · до 15 км: 0.86 / 1.00 / 1.02.
- * ОГРАНИЧЕНИЕ: таблица измерена на ВСЕХ неделях корпуса, включая проверочный и тестовый отрезки — в бэктесте это
- * слегка оптимистично. Числа заданы решением, не подбирались по баллу.
- */
-export const RECOVERY: Record<"marathon" | "half" | "short", [number, number, number]> = { marathon: [0.39, 0.75, 0.81], half: [0.76, 0.99, 0.99], short: [0.86, 1.0, 1.02] };
-export let RECOVERY_ON = true;
-export function recoveryFactor(lastRaceKm: number | null, weeksSinceRace: number | null): number | null {
-  if (!RECOVERY_ON || lastRaceKm == null || weeksSinceRace == null || weeksSinceRace < 1 || weeksSinceRace > 3) return null;
-  const row = lastRaceKm >= 30 ? RECOVERY.marathon : lastRaceKm >= 15 ? RECOVERY.half : RECOVERY.short;
-  return Math.min(1, row[weeksSinceRace - 1]);
-}
+/** ТАБЛИЦА ВОССТАНОВЛЕНИЯ и снятие качества после марафона — post-race.ts (одна реализация для повтора и прецедента). */
+export { RECOVERY, RECOVERY_ON, recoveryFactor, setRecovery } from "./post-race.ts";
 /** Неделя восстановления не годится образцом, если тренер сам ставит её ниже этой доли обычной. */
 export const RECOVERY_NOT_A_SAMPLE_BELOW = 0.9;
 /** ПИК: неделя выше стольких медиан 8 недель образцом не служит (решение Игоря 15.10: Семешина 430 мин через 2 недели после марафона). */
 export let PEAK_RATIO = 1.25;
-export const DROP_DAY_BELOW = 0.75;
 export const DELTA_MIN = 0.5;
 export const DELTA_MAX = 1.25;
-/** Нижняя граница восстановительного множителя: 0.39 после марафона — это не зажим, а замер. */
-export const RECOVERY_DELTA_MIN = 0.35;
 /** Сколько недель назад искать образец. Блок «подводка 2 + старт + восстановление 3» сам занимает 6 недель, поэтому 6 не хватает (выбор — r8 по проверке). */
 export let LOOKBACK_WEEKS = 10;
 
@@ -60,13 +45,14 @@ export let LOOKBACK_WEEKS = 10;
  * сюда НЕ входят: замер R4 (498 недель) — неделя с сигналом у Игоря обычная (объём ×1.0). Раньше список в коде был шире проверенного.
  */
 export let SKIP_REASONS: Set<Abnormal> = new Set(["старт", "после старта", "подводка", "пик", "провал объёма"]);
-export function setRepeatParams(p: { normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean; lookback?: number }): void {
+export function setRepeatParams(p: { normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean; recoveryTable?: "train" | "all"; lookback?: number }): void {
   if (p.lookback != null) LOOKBACK_WEEKS = p.lookback;
   if (p.peak != null) PEAK_RATIO = p.peak;
   if (p.skip) SKIP_REASONS = new Set(p.skip);
   if (p.normal != null) NORMAL_MIN_RATIO = p.normal;
   if (p.gap != null) RETURN_GAP_WEEKS = p.gap;
-  if (p.recovery != null) RECOVERY_ON = p.recovery;
+  if (p.recovery != null) setRecovery({ on: p.recovery });
+  if (p.recoveryTable) setRecovery({ table: p.recoveryTable });
 }
 
 const med = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
@@ -99,16 +85,6 @@ export type RepeatPlan =
   | { kind: "precedent"; why: string }
   | { kind: "refuse"; why: string };
 
-/**
- * Плановая сессия-замена: последняя «чистая» (без качества по содержанию) сессия атлета нужного вида за 12 недель.
- * Нужна, чтобы убрать качество из недели, не выдумывая тренировку: берём его собственную обычную.
- */
-function plainTemplate(ix: Index, aid: number, before: string, kinds: Kind[]): CSess | null {
-  const own = (ix.byAid.get(aid) ?? []).filter((w) => w.weekStart < before).slice(-12).reverse();
-  for (const k of kinds) for (const w of own) for (const s of w.sessions) if (!s.race && s.kind === k && !hasQualityContent({ kind: s.kind, title: s.title, description: s.desc })) return s;
-  return null;
-}
-
 export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
   // ЖЁСТКО: нет недавней истории → ОТКАЗ без попытки масштабировать чужую неделю (решение Игоря 15.10, Расницова).
   // Касается и нового ученика, и возврата после паузы ≥ MAX_GAP_WEEKS, и недели старта без истории.
@@ -131,10 +107,8 @@ export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
   let delta = 1; let deltaWhy = "удержание (цели цикла нет)";
   const rf = recoveryFactor(t.lastRaceKm, t.weeksSinceRace);
   const recoveryWeek = rf != null && rf < 1;
-  if (recoveryWeek) {
-    delta = Math.max(RECOVERY_DELTA_MIN, rf!);
-    deltaWhy = `восстановление: неделя +${t.weeksSinceRace} после старта на ${t.lastRaceKm} км ×${rf} (замер по неделям Игоря)`;
-  } else if (cycle && cycle.base > 0 && cycle.target > 0) {
+  // Неделя восстановления: цикл не участвует, нагрузку задаёт ТАБЛИЦА (post-race.ts, общая с прецедентом).
+  if (!recoveryWeek && cycle && cycle.base > 0 && cycle.target > 0) {
     delta = Math.min(DELTA_MAX, Math.max(DELTA_MIN, cycle.target / cycle.base)); deltaWhy = `цикл «${cycle.role}»: ${cycle.target} / база ${cycle.base}`;
   }
 
@@ -143,20 +117,10 @@ export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
     dayIdx: s.dayIdx, kind: s.kind as Kind, title: s.title, src: s, work: s.work,
     minutes: s.kind === "quality" ? s.minutes : round5(s.minutes * delta),
   }));
-  // ПОСЛЕ МАРАФОНА (недели +1…+3) качество и темп марафона НЕ повторяются (решение Игоря 15.10, Богачёв: «24 км в темпе
-  // марафона» на второй неделе после марафона). Заменяется собственной «чистой» сессией атлета того же вида; нет такой — день снят.
-  if (t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace != null && t.weeksSinceRace >= 1 && t.weeksSinceRace <= POST_MARATHON_NO_QUALITY_WEEKS) {
-    const changed: string[] = [];
-    sessions = sessions.flatMap((s) => {
-      if (!hasQualityContent({ kind: s.kind, title: s.title, description: s.src.desc })) return [s];
-      const tpl = plainTemplate(ix, t.aid, t.weekStart, s.kind === "long" ? ["long", "easy"] : ["easy"]);
-      if (!tpl) { changed.push(`${s.title} ${s.minutes} мин — снята`); return []; }
-      changed.push(`${s.title} ${s.minutes} мин → «${tpl.title}»`);
-      return [{ dayIdx: s.dayIdx, kind: s.kind === "quality" ? "easy" : s.kind, title: tpl.title, src: tpl, work: 0, minutes: round5(tpl.minutes * delta) } as PSess];
-    });
-    if (changed.length) deltaWhy += `; качество снято: ${changed.join("; ")}`;
-  }
-  if (delta < DROP_DAY_BELOW) {
+  if (recoveryWeek) {
+    const adj = postRaceAdjust(ix, t, sessions, 1);
+    sessions = adj.sessions; delta = adj.rel ?? 1; deltaWhy = adj.notes.join("; ");
+  } else if (delta < DROP_DAY_BELOW) {
     const easy = sessions.filter((s) => s.kind === "easy").sort((a, b) => a.minutes - b.minutes);
     if (easy.length > 1 || (easy.length === 1 && sessions.length > 2)) sessions = sessions.filter((s) => s !== easy[0]);
   }

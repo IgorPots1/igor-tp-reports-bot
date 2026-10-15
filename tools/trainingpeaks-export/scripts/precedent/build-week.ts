@@ -81,7 +81,7 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
     why = `${plan.deltaWhy}${plan.skipped.length ? `; пропущены как образец: ${plan.skipped.map((s) => `${s.week} (${s.why})`).join(", ")}` : ""}`;
   } else {
     const f = findPrecedent(ix, t, W, "any"); if (!f) return null;
-    const a = adapt(ix, t, f);
+    const a = adapt(ix, t, f, true);
     ps = a.sessions;
     const pn = f.p.aid === t.aid ? "своя" : `чужая — ${names.get(f.p.aid) ?? f.p.aid}`;
     source = `ПРЕЦЕДЕНТ (${plan.why}): неделя ${f.p.weekStart} (${pn}), масштаб ×${Math.round(100 * a.scale) / 100}, ${a.dayMap}`;
