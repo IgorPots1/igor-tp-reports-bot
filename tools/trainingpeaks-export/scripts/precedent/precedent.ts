@@ -16,6 +16,10 @@
 import type { CSess, CWeek, Kind } from "./corpus.ts";
 import { weeksBetween } from "./corpus.ts";
 
+/** Выбрано по обучающему отрезку, см. step3-backtest.ts «база перехода». */
+export let TRANSITION_BASE: "prev" | "level" = "prev";
+export function setTransitionBase(b: "prev" | "level"): void { TRANSITION_BASE = b; }
+
 export type Weights = {
   phase: number; dist: number; vol: number; prev: number; prevDays: number; prevQ: number;
   ill: number; post: number; gap: number; own: number; recency: number;
@@ -98,7 +102,7 @@ export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
   const lvlT = t.avg4 > 0 ? t.avg4 : t.prevTotal;
   const lvlP = p.avg4 > 0 ? p.avg4 : p.prevTotal > 0 ? p.prevTotal : p.total;
   const scale = lvlT > 0 && lvlP > 0 ? Math.min(2, Math.max(0.5, lvlT / lvlP)) : 1;
-  const sessions: PSess[] = p.sessions.map((s) => ({
+  const sessions: PSess[] = p.sessions.filter((s) => !s.race).map((s) => ({
     dayIdx: s.dayIdx, kind: s.kind, title: s.title, src: s, work: s.work,
     minutes: s.kind === "quality" ? s.minutes : round5(s.minutes * scale),
   }));
@@ -131,12 +135,25 @@ export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
  * (объём ×r, число качественных), и применяется к СОБСТВЕННОЙ прошлой неделе атлета: его дни,
  * его названия, его рисунок. Ни одна сессия не выдумывается — все из его прошлой недели.
  */
-export function adaptTransition(ix: Index, t: CWeek, f: Found): Adapted | null {
+/**
+ * base="prev": цель = прошлая неделя атлета × (прецедент / его прошлая).
+ * base="level": цель = средний объём атлета за 4 нед × (прецедент / его средний за 4 нед).
+ * Второй вариант появился из разбора: «prev» накапливает пики — если прошлая неделя атлета
+ * сама была пиком, шаг прецедента «+15%» ставит ещё выше (Пономарева: 419 → 560 при среднем 338).
+ * Какой брать — решает балл на обучающем отрезке (step3-backtest.ts), а не тест.
+ */
+export function adaptTransition(ix: Index, t: CWeek, f: Found, base: "prev" | "level" = TRANSITION_BASE): Adapted | null {
   const own = (ix.byAid.get(t.aid) ?? []).filter((w) => w.weekStart < t.weekStart).pop();
   if (!own) return null;
   const p = f.p;
-  const r = p.prevTotal > 0 ? Math.min(1.6, Math.max(0.3, p.total / p.prevTotal)) : 1;
-  let sessions: PSess[] = own.sessions.map((s) => ({ dayIdx: s.dayIdx, kind: s.kind, title: s.title, src: s, work: s.work,
+  const ownRun = own.sessions.filter((s) => !s.race);
+  const ownTotal = ownRun.reduce((a, s) => a + s.minutes, 0);
+  const pTotal = p.sessions.filter((s) => !s.race).reduce((a, s) => a + s.minutes, 0);
+  let r = 1;
+  if (base === "prev" && p.prevTotal > 0) r = pTotal / p.prevTotal;
+  if (base === "level" && p.avg4 > 0 && t.avg4 > 0 && ownTotal > 0) r = (t.avg4 * pTotal / p.avg4) / ownTotal;
+  r = Math.min(1.6, Math.max(0.3, r));
+  let sessions: PSess[] = ownRun.map((s) => ({ dayIdx: s.dayIdx, kind: s.kind, title: s.title, src: s, work: s.work,
     minutes: s.kind === "quality" ? s.minutes : round5(s.minutes * r) }));
   // качественные: прецедент убрал качество (разгрузка/старт) — убираем, превращая в лёгкую его же длины
   if (p.qCount < p.prevQ || (p.qCount === 0 && sessions.some((s) => s.kind === "quality"))) {
@@ -145,7 +162,7 @@ export function adaptTransition(ix: Index, t: CWeek, f: Found): Adapted | null {
     sessions = sessions.map((s) => {
       if (s.kind !== "quality" || k >= drop) return s;
       k++;
-      const easy = own.sessions.filter((x) => x.kind === "easy").sort((a, b) => b.minutes - a.minutes)[0];
+      const easy = ownRun.filter((x) => x.kind === "easy").sort((a, b) => b.minutes - a.minutes)[0];
       return easy ? { dayIdx: s.dayIdx, kind: "easy", title: easy.title, src: easy, work: 0, minutes: round5(easy.minutes * r) } : s;
     });
   }

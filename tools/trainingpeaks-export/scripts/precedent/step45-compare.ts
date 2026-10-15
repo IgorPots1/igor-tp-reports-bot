@@ -16,7 +16,7 @@ import { DAY_RU } from "../lib/autoplanner-week.ts";
 import { addDays, workMinutesFromTitle, type CWeek } from "./corpus.ts";
 import { sbc } from "./dump-corpus.ts";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
-import { adapt, adaptTransition, findPrecedent, indexCorpus, needsWholePrecedent, type Found, type PSess, type Weights } from "./precedent.ts";
+import { adapt, adaptTransition, findPrecedent, indexCorpus, needsWholePrecedent, setTransitionBase, type Found, type PSess, type Weights } from "./precedent.ts";
 import { adaptText } from "./adapt-text.ts";
 import { validateWeek, type VResult, type VSess } from "./validate.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
@@ -47,6 +47,7 @@ async function main(): Promise<void> {
   const L = load();
   const ix = indexCorpus(L.corpus);
   const TUNED = JSON.parse(readFileSync(path.join(DATA_DIR, "tuned-weights.json"), "utf8")) as Weights;
+  setTransitionBase(JSON.parse(readFileSync(path.join(DATA_DIR, "transition-base.json"), "utf8")) as "prev" | "level");
   const W = addDays(L.thisMonday, -7);
   const ctx = await loadAthleteContexts(sbc(), W);
   const rules = (JSON.parse(readFileSync(path.join(DATA_DIR, "rules-weeks.json"), "utf8")) as RulesWeek[]).filter((r) => r.weekStart === W);
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
 
   for (const t of targets) {
     const c = ctx.get(t.aid)!;
-    const igorV: VSess[] = t.sessions.map((s) => ({ dayIdx: s.dayIdx, kind: s.kind, title: s.title, minutes: s.minutes, work: s.work, description: s.desc }));
+    const igorV: VSess[] = t.sessions.filter((s) => !s.race).map((s) => ({ dayIdx: s.dayIdx, kind: s.kind, title: s.title, minutes: s.minutes, work: s.work, description: s.desc }));
     const r = rulesBy.get(t.aid);
     const rulesV: VSess[] = (r?.sessions ?? []).filter((s) => !s.deferred).map((s) => ({ dayIdx: s.dayIdx, kind: s.role === "quality" ? "quality" : s.role === "long" ? "long" : "easy", title: s.title, minutes: s.minutes, work: s.role === "quality" ? workMinutesFromTitle(s.title) : 0, description: s.description }));
     const b = buildPrecedentWeek(ix, t, TUNED, c, L.names);
@@ -88,6 +89,7 @@ async function main(): Promise<void> {
     p(`${"═".repeat(100)}`);
     p(`\n### 1. Неделя Игоря — ${sum(igorV)}`);
     for (const s of igorV) { p(`\n**${DAY_RU[s.dayIdx]} · ${s.title} · ${s.minutes} мин** [${s.kind}]`); p(s.description || "_(без описания)_"); }
+    for (const s of t.sessions.filter((x) => x.race)) p(`\n_${DAY_RU[s.dayIdx]} · ${s.title} · ${s.minutes} мин — сам СТАРТ (день из race_events), в сравнение не входит_`);
     p(`\n### 2. Сборщик по правилам — ${sum(rulesV)}${r?.withCycle ? " · с целью цикла" : " · без цикла"}${r?.refused ? " · ОТКАЗ" : ""}`);
     for (const s of rulesV) { p(`\n**${DAY_RU[s.dayIdx]} · ${s.title} · ${s.minutes} мин** [${s.kind}]`); p(s.description || "_(без описания)_"); }
     if (r?.studentNotes.length) p(`\n_Заметки ученице:_ ${r.studentNotes.join(" · ")}`);

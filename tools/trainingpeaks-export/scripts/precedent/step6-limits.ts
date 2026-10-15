@@ -7,15 +7,16 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import { addDays, type CWeek } from "./corpus.ts";
-import { adapt, adaptTransition, findPrecedent, indexCorpus, needsWholePrecedent, type Weights } from "./precedent.ts";
+import { adapt, adaptTransition, findPrecedent, indexCorpus, needsWholePrecedent, setTransitionBase, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Err, type Side } from "./metrics.ts";
 
 const L = load();
 const ix = indexCorpus(L.corpus);
 const TUNED = JSON.parse(readFileSync(path.join(DATA_DIR, "tuned-weights.json"), "utf8")) as Weights;
+setTransitionBase(JSON.parse(readFileSync(path.join(DATA_DIR, "transition-base.json"), "utf8")) as "prev" | "level");
 const roster = [...new Set(L.rosterActive)];
 const out: string[] = []; const p = (s = ""): void => { out.push(s); };
-const side = (w: CWeek): Side => summarise(w.sessions.map((s) => ({ minutes: s.minutes, kind: s.kind, dayIdx: s.dayIdx, work: s.work })));
+const side = (w: CWeek): Side => summarise(w.sessions.filter((s) => !s.race).map((s) => ({ minutes: s.minutes, kind: s.kind, dayIdx: s.dayIdx, work: s.work })));
 const yearAgo = addDays(L.thisMonday, -364);
 const halfYear = addDays(L.thisMonday, -182);
 

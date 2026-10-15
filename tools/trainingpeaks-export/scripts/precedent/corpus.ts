@@ -30,6 +30,8 @@ export type Kind = "quality" | "long" | "easy";
 export type CSess = {
   wid: number; date: string; dayIdx: number; title: string; minutes: number; distKm: number | null;
   kind: Kind; tempo: boolean; work: number; desc: string; struct: unknown;
+  /** сессия в день старта из race_events — это сам старт, а не тренировка: не копируется и не сравнивается */
+  race: boolean;
 };
 export type Phase = "race" | "taper" | "build" | "base" | "post" | "return";
 export type CWeek = {
@@ -125,22 +127,31 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
         .sort((a, b) => a.workout_date.localeCompare(b.workout_date) || (a.order_on_day ?? 0) - (b.order_on_day ?? 0));
       if (runs.length === 0) continue;
       const base = runs.map((r) => ({ title: String(r.title ?? "").trim(), minutes: Math.round((r.planned_time_raw ?? 0) * 60), dayIdx: dayIdx(r.workout_date) }));
-      const kinds = classify(base);
+      const raceDates = new Set((raceBy.get(aid) ?? []).map((x) => x.event_date));
+      const isRace = runs.map((r, i) => raceDates.has(r.workout_date) && base[i].minutes >= 20);
+      // роли — только среди тренировочных: сам старт не должен забирать роль длительной
+      const trainIdx = base.map((_, i) => i).filter((i) => !isRace[i]);
+      const kTrain = classify(trainIdx.map((i) => base[i]));
+      const kinds: Kind[] = base.map(() => "easy");
+      trainIdx.forEach((i, k) => { kinds[i] = kTrain[k]; });
       const sessions: CSess[] = runs.map((r, i) => ({
         wid: r.trainingpeaks_workout_id, date: r.workout_date, dayIdx: base[i].dayIdx, title: base[i].title, minutes: base[i].minutes,
         distKm: r.planned_distance_raw ? Math.round(r.planned_distance_raw / 100) / 10 : null,
         kind: kinds[i], tempo: isTempoForPractice(base[i].title, QUALITY_RE),
         work: kinds[i] === "quality" ? workMinutesFromTitle(base[i].title) : 0,
-        desc: String(r.src ?? "").trim(), struct: r.struct,
+        desc: String(r.src ?? "").trim(), struct: r.struct, race: isRace[i],
       }));
-      const total = sessions.reduce((s, x) => s + x.minutes, 0);
-      const quality = sessions.filter((x) => x.kind === "quality").reduce((s, x) => s + x.minutes, 0);
-      const days = new Set(sessions.map((s) => s.dayIdx)).size;
+      // признаки недели — БЕЗ сессии самого старта: это не тренировочный объём, и тренер то вписывает старт в план, то нет
+      const ts = sessions.filter((s) => !s.race);
+      if (ts.length === 0) continue; // в плане только сам старт — тренировочной недели нет
+      const total = ts.reduce((s, x) => s + x.minutes, 0);
+      const quality = ts.filter((x) => x.kind === "quality").reduce((s, x) => s + x.minutes, 0);
+      const days = new Set(ts.map((s) => s.dayIdx)).size;
       const roles = [".", ".", ".", ".", ".", ".", "."];
-      for (const s of sessions) { const c = s.kind === "quality" ? "Q" : s.kind === "long" ? "L" : "E"; if (roles[s.dayIdx] === "." || c === "Q" || (c === "L" && roles[s.dayIdx] === "E")) roles[s.dayIdx] = c; }
-      const long = sessions.find((s) => s.kind === "long");
-      const sigStr = sessions.map((s) => `${s.dayIdx}${s.kind[0]}${s.minutes}`).join("|");
-      totals.set(wk, { total, days, q: sessions.filter((s) => s.kind === "quality").length, sig: sigStr });
+      for (const s of ts) { const c = s.kind === "quality" ? "Q" : s.kind === "long" ? "L" : "E"; if (roles[s.dayIdx] === "." || c === "Q" || (c === "L" && roles[s.dayIdx] === "E")) roles[s.dayIdx] = c; }
+      const long = ts.find((s) => s.kind === "long");
+      const sigStr = ts.map((s) => `${s.dayIdx}${s.kind[0]}${s.minutes}`).join("|");
+      totals.set(wk, { total, days, q: ts.filter((s) => s.kind === "quality").length, sig: sigStr });
 
       const prevWk = addDays(wk, -7);
       const prev = totals.get(prevWk);
@@ -165,8 +176,8 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
       built.push({
         aid, weekStart: wk, sessions, other: all.length - runs.length,
         total, aerobic: total - quality, quality, days,
-        qCount: sessions.filter((s) => s.kind === "quality").length, longDay: long?.dayIdx ?? null, longMin: long?.minutes ?? 0,
-        work: sessions.reduce((s, x) => s + x.work, 0), roles: roles.join(""),
+        qCount: ts.filter((s) => s.kind === "quality").length, longDay: long?.dayIdx ?? null, longMin: long?.minutes ?? 0,
+        work: ts.reduce((s, x) => s + x.work, 0), roles: roles.join(""),
         prevTotal: prev?.total ?? 0, prevDays: prev?.days ?? 0, prevQ: prev?.q ?? 0, avg4, gapWeeks: gap,
         weeksToRace, raceKm: next?.distance_km ?? null, weeksSinceRace, ill: isIll, illAtStart,
         tier: tierOf(avg4 > 0 ? avg4 : total), phase, distBucket: distBucket(next?.distance_km ?? null), volBand: volBand(total),

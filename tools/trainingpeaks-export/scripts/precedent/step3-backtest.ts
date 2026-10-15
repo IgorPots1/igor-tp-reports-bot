@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import type { CWeek } from "./corpus.ts";
-import { adapt, adaptTransition, needsWholePrecedent, DEFAULT_WEIGHTS, findPrecedent, indexCorpus, type Mode, type Weights } from "./precedent.ts";
+import { adapt, adaptTransition, needsWholePrecedent, setTransitionBase, DEFAULT_WEIGHTS, findPrecedent, indexCorpus, type Mode, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Agg, type Err, type Side } from "./metrics.ts";
 import { workMinutesFromTitle } from "./corpus.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
@@ -26,7 +26,7 @@ const TRAIN_FROM = "2025-06-02";
 const L = load();
 const ix = indexCorpus(L.corpus);
 const roster = new Set(L.rosterActive);
-const actualSide = (w: CWeek): Side => summarise(w.sessions.map((s) => ({ minutes: s.minutes, kind: s.kind, dayIdx: s.dayIdx, work: s.work })));
+const actualSide = (w: CWeek): Side => summarise(w.sessions.filter((s) => !s.race).map((s) => ({ minutes: s.minutes, kind: s.kind, dayIdx: s.dayIdx, work: s.work })));
 
 function predictPrecedent(t: CWeek, W: Weights, mode: Mode): Side | null {
   const f = findPrecedent(ix, t, W, mode); if (!f) return null;
@@ -71,6 +71,15 @@ for (let i = 0; i < 40; i++) {
 }
 const TUNED = best.w;
 
+// ── база перехода: от прошлой недели или от уровня 4 недель — по ОБУЧАЮЩЕМУ отрезку ──
+const baseScore: Record<"prev" | "level", number> = { prev: 0, level: 0 };
+for (const b of ["prev", "level"] as const) {
+  setTransitionBase(b);
+  baseScore[b] = evalSet(trainSub, (t) => predictTransition(t, TUNED, true)).agg.score;
+}
+const BASE: "prev" | "level" = baseScore.level < baseScore.prev ? "level" : "prev";
+setTransitionBase(BASE);
+
 // ── оценка на тесте ──
 const out: string[] = [];
 const p = (s = ""): void => { out.push(s); };
@@ -82,6 +91,7 @@ p(`# Шаг 3 · мера похожести и бэктест`);
 p();
 p(`Подбор весов: ${trainSub.length} недель (${TRAIN_FROM} … ${SPLIT}, каждая 3-я), 41 конфигурация. Оценка: ${test.length} недель действующих атлетов с ${SPLIT}.`);
 p(`Балл на подборе: стартовые веса ${tried[0].s}, лучшие ${best.s}.`);
+p(`База перехода по обучающему отрезку: prev ${baseScore.prev}, level ${baseScore.level} → взята «${BASE}».`);
 p(`Веса после подбора: ${keys.map((k) => `${k}=${TUNED[k]}`).join(", ")}`);
 p();
 p(`## A. Прецедент против «повтора прошлой недели» — ${test.length} недель (${SPLIT} … последняя завершённая)`);
@@ -150,4 +160,5 @@ for (const t of [...tried].sort((a, b) => a.s - b.s).slice(0, 10)) p(`- ${t.s} �
 
 writeFileSync(path.join(OUT_DIR, "step3-backtest.md"), out.join("\n") + "\n");
 writeFileSync(path.join(DATA_DIR, "tuned-weights.json"), JSON.stringify(TUNED));
+writeFileSync(path.join(DATA_DIR, "transition-base.json"), JSON.stringify(BASE));
 console.log(out.join("\n"));
