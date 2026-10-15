@@ -49,6 +49,7 @@ import { computeBotStats, dailyMessage, statsMessage, weeklyMessage, type StatEv
 
 import { memStore } from "./lib/races-bot-memstore";
 import * as T from "@/features/races-bot/texts";
+import { courseList } from "@/features/race-course";
 
 // ── данные ───────────────────────────────────────────────────────────────────
 
@@ -1086,6 +1087,28 @@ async function main() {
     assert.ok(v.btns.some((b) => b.text === "Полный разбор с картой"));
     assert.ok(!v.btns.some((b) => b.text === "Другая дистанция"));
     RACES = saved;
+  }
+
+  // ── урезанный разбор (без эталона набора, 15.10.2026) ──────────────────────────
+  // Было: без эталона набора разбора не было вовсе. Стало: урезанный, и стережём, что бот нигде не
+  // называет цифру набора и не показывает мини-профиль; кнопка не обещает подъёмы, если все урезанные.
+  {
+    const arch = race("probeg:83333", "Archeda Desert Trail", "2026-11-14", "Фролово", "trail", [50, 28, 14, 5]);
+    const zm = race("probeg:74251", "Змейка Трейл", "2026-11-07", "Минеральные Воды", "trail", [12, 7, 3.5]);
+    const btn = (r: BotRace) => buttons({ params: T.raceScreen(r, "x", false, null, null, "sz", false) as unknown as Record<string, unknown> } as Call).find((b) => b.text.startsWith("Разбор трассы"))!;
+    assert.equal(btn(arch).text, "Разбор трассы: повороты, покрытие, ветер", "все урезанные — без обещания подъёмов");
+    assert.equal(btn(zm).text, "Разбор трассы: подъёмы, спуски, ветер", "есть полный — как было");
+    const all = courseList(arch.id);
+    assert.ok(all.length >= 1 && all.every((c) => c.lite && c.gain === null && c.loss === null && c.mini === null));
+    const choice = T.courseChoice(arch, all, "c", "sz");
+    assert.match(choice.text, /набор высоты уточняется/);
+    assert.doesNotMatch(choice.text, /набор \d+ м/);
+    const short = T.courseShort(arch, all[0], all.length > 1, false, "c", "sz");
+    assert.match(short.text, /набор высоты уточняется/);
+    assert.doesNotMatch(short.text, /набор \d+|сброс \d+/);
+    assert.equal((short as { preview?: string }).preview, undefined, "мини-профиля нет");
+    const zch = T.courseChoice(zm, courseList(zm.id), "c", "sz");
+    assert.match(zch.text, /набор \d+ м[\s\S]*набор высоты уточняется|набор высоты уточняется[\s\S]*набор \d+ м/, "у Змейки полные с цифрой и урезанный 3,5 км без неё");
   }
 
   // ── «Важное» из выжимки по старту (15.10.2026): строка в карточке, если выжимка есть ──
