@@ -9,6 +9,8 @@
     "start": "next start",
     "lint": "eslint .",
     "check:cycle-forecast": "npx tsx tools/trainingpeaks-export/scripts/tp-cycle-forecast-check.ts",
+    "check:precedent-repeat": "npx tsx tools/trainingpeaks-export/scripts/precedent/check-repeat.ts",
+    "check:precedent-repeat-mutations": "npx tsx tools/trainingpeaks-export/scripts/precedent/check-repeat-mutations.ts",
     "typecheck:autoplanner": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.autoplanner.json",
     "typecheck:tools": "tsc --noEmit -p tools/trainingpeaks-export/tsconfig.json",
     "typecheck:shoes-pipeline": "tsc --noEmit -p tools/shoes-pipeline/tsconfig.json",
