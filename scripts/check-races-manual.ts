@@ -64,6 +64,7 @@ import {
   type RaceInsert,
   type Source,
   recheckPlan,
+  tracksPlan,
 } from "./races-manual";
 
 const TODAY = "2026-10-11";
@@ -411,6 +412,34 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.ok(data.lines.some((l) => /РЕШИТЬ — данные, источник нашёлся: «Горячий Шоколад».*5\/13\/25/.test(l)), "какой источник прав — решает тренер");
   assert.ok(data.lines.some((l) => /данные по-прежнему расходятся: «Дмитров трейл»/.test(l)));
   assert.ok(!data.lines.some((l) => /под вопросом: «/.test(l)), "данные не смешиваются со стартами под вопросом");
+}
+
+// Повторный поиск треков (15.10.2026): только старты из списка, только страница организатора,
+// дистанция должна быть у старта; итог недели — «новый трек: старт, дистанция, источник».
+{
+  const due = [
+    { id: "probeg:1", name: "Осенний трейл", date_start: "2026-10-25", site_url: null, reg_url: null, vk_url: null, dist_km: [21.1, 10] },
+    { id: "probeg:2", name: "Кросс", date_start: "2026-11-01", site_url: null, reg_url: null, vk_url: null, dist_km: [5] },
+  ];
+  const plan = tracksPlan(due, [
+    { race_id: "probeg:1", distance: 21.1, value: "GPX 21 км на странице старта", source_url: "https://trail.ru/2026" },
+    { race_id: "probeg:1", distance: 42, value: "GPX 42 км", source_url: "https://trail.ru/2026" },
+    { race_id: "probeg:2", distance: null, value: "нет данных", source_url: "https://x.ru" },
+    { race_id: "probeg:2", distance: null, value: "трек nakarte", source_url: "https://yandex.ru/search/?text=кросс+трек" },
+    { race_id: "probeg:9", distance: null, value: "GPX", source_url: "https://x.ru" },
+  ], "2026-10-18");
+  assert.deepEqual(plan.rows.map((r) => [r.race_id, r.distance, r.value]), [
+    ["probeg:1", 21.1, "GPX 21 км на странице старта"],
+    ["probeg:1", null, "трек есть по дистанциям: 21,1 км"],
+  ], "найденный трек и строка старта целиком вместо «нет данных»");
+  assert.ok(plan.rows.every((r) => r.field === "track" && r.checked_at === "2026-10-18"));
+  assert.ok(plan.lines.includes("новый трек: «Осенний трейл» 2026-10-25, 21,1 км, https://trail.ru/2026"), plan.lines.join("\n"));
+  assert.match(plan.lines[0], /искали 2, нашли 1/);
+  assert.ok(plan.rejected.some((r) => /42 км у старта нет/.test(r)), "чужая дистанция");
+  assert.ok(plan.rejected.some((r) => /пустое значение/.test(r)), "«нет данных» не пишем");
+  assert.ok(plan.rejected.some((r) => /поисковая выдача/.test(r)), "источник — поиск, а не организатор");
+  assert.ok(plan.rejected.some((r) => /probeg:9: не в списке/.test(r)), "только старты из списка");
+  assert.deepEqual(tracksPlan([], [], "2026-10-18").lines, [], "искать нечего — строки нет");
 }
 
 console.log("check:races-manual ok");

@@ -24,6 +24,7 @@
  *   npx tsx scripts/races-manual.ts dup <proposal.json>      проверка дублей для вставок
  *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке, и только плавание → removed
  *   npx tsx scripts/races-manual.ts recheck                  старты «под вопросом» (race_overrides), у которых подошла перепроверка
+ *   npx tsx scripts/races-manual.ts tracks-due               старты в ближайшие 21 день без трека (race_details track = «нет данных»)
  *   npx tsx scripts/races-manual.ts announce <exp_id>=<race_id>,… [--apply]   ожидаемые, чьё проведение уже в
  *                                                            календаре, а робот не узнал (решение тренера) → announced
  *   npx tsx scripts/races-manual.ts apply <proposal.json> [--apply]   итог недели пишется в ops-log
@@ -177,7 +178,53 @@ export type Proposal = {
   expected?: ExpectedInsert[];
   /** Перепроверка стартов «под вопросом» из recheck.json: вердикт агента, решает тренер. */
   recheck?: RecheckVerdict[];
+  /** Найденные треки для стартов из tracks-due.json (ближайшие 21 день, трека «нет данных»). */
+  tracks?: TrackFind[];
 };
+
+/**
+ * Повторный поиск треков (наряд 15.10.2026): у стартов в ближайшие 21 день с track = «нет данных»
+ * агент раз в неделю заново смотрит сайт организатора, положение и ВК (только через шлюз: read
+ * и vk, robots.txt соблюдается). Найденное — в race_details (поле track) и строкой в итог недели
+ * «новый трек: старт, дистанция, источник». Фрагменты поисковой выдачи значением не бывают.
+ */
+export type TrackFind = { race_id: string; distance: number | null; value: string; source_url: string };
+export type TrackDue = { id: string; name: string; date_start: string; site_url: string | null; reg_url: string | null; vk_url: string | null; dist_km: number[] | null };
+export type TrackRow = { race_id: string; distance: number | null; field: "track"; value: string; source_url: string; checked_at: string };
+export const TRACK_WINDOW_DAYS = 21;
+
+const kmRu = (x: number) => String(Math.round(x * 100) / 100).replace(".", ",");
+
+export function tracksPlan(due: TrackDue[], finds: TrackFind[], today: string): { rows: TrackRow[]; lines: string[]; rejected: string[] } {
+  const byId = new Map(due.map((r) => [r.id, r]));
+  const rows: TrackRow[] = [], lines: string[] = [], rejected: string[] = [];
+  const perDistance = new Map<string, number[]>();
+  for (const f of finds) {
+    const r = byId.get(f.race_id);
+    const value = (f.value ?? "").replace(/\s+/g, " ").trim();
+    if (!r) { rejected.push(`${f.race_id}: не в списке поиска треков`); continue; }
+    if (!value || /^нет данных/i.test(value)) { rejected.push(`${f.race_id}: пустое значение`); continue; }
+    if (!/^https?:\/\/\S+$/.test(f.source_url ?? "")) { rejected.push(`${f.race_id}: нет ссылки на источник`); continue; }
+    if (/(yandex\.ru|ya\.ru|google\.[a-z]+)\/search|[?&](text|q)=/.test(f.source_url)) { rejected.push(`${f.race_id}: источник — поисковая выдача, а не страница организатора`); continue; }
+    const d = f.distance == null ? null : Number(f.distance);
+    if (d !== null && !(d > 0)) { rejected.push(`${f.race_id}: дистанция «${f.distance}»`); continue; }
+    if (d !== null && r.dist_km?.length && !r.dist_km.some((k) => Math.abs(k - d) <= Math.max(0.5, k * 0.1))) {
+      rejected.push(`${f.race_id}: дистанции ${kmRu(d)} км у старта нет (${r.dist_km.map(kmRu).join("/")})`);
+      continue;
+    }
+    rows.push({ race_id: r.id, distance: d, field: "track", value: value.slice(0, 400), source_url: f.source_url, checked_at: today });
+    if (d !== null) perDistance.set(r.id, [...(perDistance.get(r.id) ?? []), d]);
+    lines.push(`новый трек: «${r.name}» ${r.date_start}, ${d === null ? "все дистанции" : `${kmRu(d)} км`}, ${f.source_url}`);
+  }
+  // Трек нашёлся только по дистанциям — строка старта целиком больше не «нет данных».
+  for (const [id, ds] of perDistance) {
+    if (rows.some((x) => x.race_id === id && x.distance === null)) continue;
+    const first = rows.find((x) => x.race_id === id)!;
+    rows.push({ race_id: id, distance: null, field: "track", value: `трек есть по дистанциям: ${[...new Set(ds)].sort((a, b) => b - a).map((x) => `${kmRu(x)} км`).join(", ")}`, source_url: first.source_url, checked_at: today });
+  }
+  if (due.length) lines.unshift(`Треки (старты в ближайшие ${TRACK_WINDOW_DAYS} дней без трека): искали ${due.length}, нашли ${new Set(rows.map((x) => x.race_id)).size}`);
+  return { rows, lines, rejected };
+}
 
 /**
  * Старты «под вопросом» (race_overrides.status = 'questionable', наряд 15.10.2026): раз в неделю агент
@@ -929,6 +976,26 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   return hits;
 }
 
+/** Старты в ближайшие 21 день, у которых в выжимке трек «нет данных». */
+async function tracksDue(sb: SupabaseClient, today: string): Promise<TrackDue[]> {
+  const { data: det, error } = await sb.from("race_details").select("race_id").eq("field", "track").is("distance", null).ilike("value", "нет данных%");
+  if (error) throw error;
+  const ids = [...new Set((det || []).map((d) => d.race_id as string))];
+  if (!ids.length) return [];
+  const out: TrackDue[] = [];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data: cal, error: ce } = await sb.from("race_calendar").select("id,name,date_start,site_url,reg_url,vk_url,dist_km")
+      .in("id", ids.slice(i, i + 200)).gte("date_start", today).lte("date_start", addDays(today, TRACK_WINDOW_DAYS));
+    if (ce) throw ce;
+    out.push(...((cal || []) as TrackDue[]));
+  }
+  return out.sort((a, b) => a.date_start.localeCompare(b.date_start));
+}
+
+async function cmdTracksDue() {
+  console.log(JSON.stringify(await tracksDue(db(), todayBelgrade()), null, 2));
+}
+
 /** Старты «под вопросом» и с расходящимися данными, у которых подошла перепроверка. */
 async function recheckDue(sb: SupabaseClient, today: string): Promise<RecheckRow[]> {
   const { data: ov, error } = await sb.from("race_overrides").select("id,status,note,reason,recheck_after")
@@ -1209,6 +1276,15 @@ async function cmdApply(file: string, apply: boolean) {
     }
   }
 
+  // Треки: найденное агентом пишется в race_details; срок и окно — у шлюза, не у агента.
+  const trackDue = await tracksDue(sb, today);
+  const tracks = tracksPlan(trackDue, p.tracks || [], today);
+  for (const r of tracks.rejected) out.push({ kind: "skipped", id: r.split(":")[0], text: `трек: ${r}` });
+  if (apply && tracks.rows.length) {
+    const { error: te } = await sb.from("race_details").upsert(tracks.rows.map((r) => ({ ...r, updated_at: new Date().toISOString() })), { onConflict: "race_id,distance,field" });
+    if (te) throw te;
+  }
+
   // Точки обхода: у проверенных на этой неделе обновится last_searched.
   const cityList = readCities();
   const citiesMarked = markCities(cityList, p.cities_searched || [], today);
@@ -1226,6 +1302,7 @@ async function cmdApply(file: string, apply: boolean) {
     citiesTotal: cityList.length,
     tiers,
     recheckLines: recheck.lines,
+    trackLines: tracks.lines,
   });
   console.log(summary);
   // Игорю сразу, а не только в ops-log: сбой робота, повышение уровня, кандидат в робота.
@@ -1325,6 +1402,7 @@ export function weeklySummary(a: {
   citiesTotal?: number;
   tiers?: TierStats;
   recheckLines?: string[];
+  trackLines?: string[];
 }): string {
   const n = (k: Outcome["kind"]) => a.out.filter((o) => o.kind === k).length;
   const tri = a.out.filter((o) => o.kind === "added" && o.tri).length;
@@ -1351,6 +1429,7 @@ export function weeklySummary(a: {
   const sgn = (st: string) => sg.filter((x) => x.status === st).length;
   lines.push(`Заявки с сайта: разобрано ${sg.length - sgn("skipped")} (добавлено ${sgn("added")}, дубль ${sgn("duplicate")}, отклонено ${sgn("rejected")})${sgn("skipped") ? `, не принято шлюзом ${sgn("skipped")}` : ""}`);
   if (a.recheckLines?.length) lines.push(...a.recheckLines);
+  if (a.trackLines?.length) lines.push(...a.trackLines);
   lines.push(`Обход по городам: ${a.citiesMarked ?? 0} точек на этой неделе из ${a.citiesTotal ?? 0}; ВК: ${a.proposal.vk_queries?.length ? `${a.proposal.vk_queries.length} запросов` : "не искали"}`);
   const cands = a.proposal.candidates || [];
   lines.push(cands.length ? "Кандидаты в автосбор:" : "Кандидаты в автосбор: нет");
@@ -1706,6 +1785,7 @@ async function main() {
   if (cmd === "dedupe") return void (await cmdDedupe(apply));
   if (cmd === "announce" && arg) return void (await cmdAnnounce(arg, apply));
   if (cmd === "recheck") return cmdRecheck();
+  if (cmd === "tracks-due") return cmdTracksDue();
   if (cmd === "apply" && arg) return void (await cmdApply(arg, apply));
   if (cmd === "sources") return cmdSources(arg === "all");
   if (cmd === "sources-seed") return cmdSourcesSeed(apply);
@@ -1715,7 +1795,7 @@ async function main() {
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
   if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
-  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | recheck | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
+  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | recheck | tracks-due | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
 
