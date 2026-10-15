@@ -46,6 +46,8 @@ export type CWeek = {
   raceDayIdx: number | null;
   /** ближайший старт (до 26 нед) — ГЛАВНЫЙ (цель цикла по pickTargetRace); проходному предстартовый запрет не нужен */
   nextRaceIsMain: boolean;
+  /** дистанция последнего старта до этой недели, км (null — старта не было или без дистанции) */
+  lastRaceKm: number | null;
   ill: boolean;
   /** сигнал болезни уже открыт на понедельник недели (знание на момент планирования, без подглядывания) */
   illAtStart: boolean;
@@ -130,7 +132,8 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
     const built: CWeek[] = [];
     for (const wk of keys) {
       const all = weeks.get(wk)!;
-      const runs = all.filter((r) => r.workout_type_value_id === RUN && (r.planned_time_raw ?? 0) > 0)
+      // шаблонные английские тренировки TP («Long Run - Sample Workout», 12 из 19436) — не слова Игоря
+      const runs = all.filter((r) => r.workout_type_value_id === RUN && (r.planned_time_raw ?? 0) > 0 && !/sample workout/i.test(String(r.title ?? "")))
         .sort((a, b) => a.workout_date.localeCompare(b.workout_date) || (a.order_on_day ?? 0) - (b.order_on_day ?? 0));
       if (runs.length === 0) continue;
       const base = runs.map((r) => ({ title: String(r.title ?? "").trim(), minutes: Math.round((r.planned_time_raw ?? 0) * 60), dayIdx: dayIdx(r.workout_date) }));
@@ -189,7 +192,7 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
         qCount: ts.filter((s) => s.kind === "quality").length, longDay: long?.dayIdx ?? null, longMin: long?.minutes ?? 0,
         work: ts.reduce((s, x) => s + x.work, 0), roles: roles.join(""),
         prevTotal: prev?.total ?? 0, prevDays: prev?.days ?? 0, prevQ: prev?.q ?? 0, avg4, gapWeeks: gap,
-        weeksToRace, raceKm: next?.distance_km ?? null, weeksSinceRace, raceDayIdx, nextRaceIsMain, ill: isIll, illAtStart,
+        weeksToRace, raceKm: next?.distance_km ?? null, weeksSinceRace, raceDayIdx, nextRaceIsMain, lastRaceKm: lastR?.distance_km ?? null, ill: isIll, illAtStart,
         tier: tierOf(avg4 > 0 ? avg4 : total), phase, distBucket: distBucket(next?.distance_km ?? null), volBand: volBand(total),
         repeatOfPrev: prev?.sig === sigStr,
       });

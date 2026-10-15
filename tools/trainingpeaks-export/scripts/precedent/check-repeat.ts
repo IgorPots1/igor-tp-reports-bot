@@ -13,6 +13,7 @@ import { planRepeat, setRepeatParams } from "./repeat.ts";
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
 import { addedByCoach, diffPlaced, toPublish, type Placed } from "./plan-edits.ts";
+import { buildRepeatWeek } from "./build-week.ts";
 import { CONFIRM, GROUP12, hiddenProven, realGate } from "./week-ops.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -173,6 +174,16 @@ console.log("\n── главный старт против проходног�
   check("перед ГЛАВНЫМ стартом (пн) воскресная длительная снимается", !heavySun(planRepeat(ix, T(8, 5), null)));
   check("предстартовая неделя перед главным стартом — не образец (подводка)", planRepeat(ix, T(8, 5), null).kind === "repeat" && (planRepeat(ix, T(8, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "подводка"));
   check("предстартовая неделя перед проходным стартом — образец (подводка не пропускается)", planRepeat(ix, T(7, 5), null).kind === "repeat" && !(planRepeat(ix, T(7, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "подводка"));
+}
+
+console.log("\n── шаблонные названия и восстановление после марафона ──");
+{
+  const samp = buildCorpus([...weekRows(9, wk(0), [{ d: 1, t: "Long Run - Sample Workout", m: 60 }, { d: 3, t: EASY, m: 50 }])], [], [], [], "2027-01-01");
+  check("шаблонная английская «Sample Workout» не попадает в корпус как тренировка Игоря", samp.length === 1 && samp[0].sessions.length === 1 && samp[0].sessions[0].title === EASY, JSON.stringify(samp[0]?.sessions.map((s) => s.title)));
+  const b = buildRepeatWeek(ix, T(2, 7), W8, null, undefined, new Map());
+  check("1-я неделя после марафона: тренер получает предупреждение с типичной долей 0.39", !!b && b.warnings.some((w) => w.includes("после старта на 42.2 км") && w.includes("0.39")), JSON.stringify(b?.warnings.filter((w) => w.includes("старта"))));
+  const none = buildRepeatWeek(ix, T(1, 7), W8, null, undefined, new Map());
+  check("обычная неделя: предупреждения про восстановление нет", !!none && !none.warnings.some((w) => w.includes("после старта на")));
 }
 
 console.log("\n── раскидать / публикуй / снести: правки тренера и ворота записи ──");

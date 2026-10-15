@@ -21,13 +21,14 @@ export function sbc(): SupabaseClient {
   return createClient(process.env.SUPABASE_URL!.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY!.trim(), { auth: { persistSession: false } });
 }
 
+const PAGE = 300; // 1000 упирается в statement timeout на выборке JSON-полей (15.10)
 async function all(sb: SupabaseClient, t: string, sel: string, order: string, f?: (q: any) => any): Promise<any[]> { // eslint-disable-line @typescript-eslint/no-explicit-any
   const out: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
-  for (let i = 0; ; i += 1000) {
-    let q = sb.from(t).select(sel).order(order).range(i, i + 999);
+  for (let i = 0; ; i += PAGE) {
+    let q = sb.from(t).select(sel).order(order).range(i, i + PAGE - 1);
     if (f) q = f(q);
     const { data, error } = await q; if (error) throw error;
-    out.push(...(data ?? [])); if (!data || data.length < 1000) break;
+    out.push(...(data ?? [])); if (!data || data.length < PAGE) break;
   }
   return out;
 }

@@ -52,7 +52,7 @@ export function stateFor(ix: Index, aid: number, weekStart: string, races: Array
     aid, weekStart, sessions: [], other: 0, total: 0, aerobic: 0, quality: 0, days: 0, qCount: 0, longDay: null, longMin: 0, work: 0, roles: ".......",
     prevTotal: prev && gap === 0 ? prev.total : 0, prevDays: prev && gap === 0 ? prev.days : 0, prevQ: prev && gap === 0 ? prev.qCount : 0,
     avg4: Math.round(last4.reduce((s, w) => s + w.total, 0) / 4), gapWeeks: gap,
-    weeksToRace, raceKm: km, weeksSinceRace, raceDayIdx: off != null && off <= 13 ? off : null, nextRaceIsMain, ill, illAtStart: ill,
+    weeksToRace, raceKm: km, lastRaceKm: last?.distance_km ?? null, weeksSinceRace, raceDayIdx: off != null && off <= 13 ? off : null, nextRaceIsMain, ill, illAtStart: ill,
     tier: "T2", phase, distBucket: km == null ? "—" : km <= 6 ? "5к" : km <= 12 ? "10к" : km <= 25 ? "21к" : km <= 43 ? "42к" : "ультра",
     volBand: "", repeatOfPrev: false,
   };
@@ -87,6 +87,15 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
     windowCaps: { weekly: weightedP90(hist.map((w) => ({ v: w.total, weekStart: w.weekStart })), t.weekStart), long: weightedP90(hist.map((w) => ({ v: w.longMin, weekStart: w.weekStart })), t.weekStart) },
   });
   const refused = validator.some((v) => v.severity === "hard" && !v.ok);
-  const warnings = [...validator.filter((v) => !v.ok).map((v) => `${v.severity === "hard" ? "⛔" : "⚠"} ${v.name}${v.detail ? ` (${v.detail})` : ""}`), ...sessions.flatMap((s) => s.flags.map((f) => `⚑ ${s.title}: ${f}`))];
+  // ВОССТАНОВЛЕНИЕ ПОСЛЕ МАРАФОНА — предупреждение, не правило (замер 15.10 по неделям корпуса, нед+1/+2/+3 от обычной):
+  // марафон 0.39/0.75/0.81, половинка 0.76/0.99/0.99, ≤10к 0.86/1.00/1.02. Метод повторяет обычную неделю и этого не знает;
+  // единый множитель «после старта» ×0.67 действует только на первой неделе. Что делать со 2–3-й неделей — решение Игоря.
+  const recovery: string[] = [];
+  if (t.weeksSinceRace != null && t.weeksSinceRace >= 1 && t.weeksSinceRace <= 3 && t.lastRaceKm != null && t.lastRaceKm >= 30) {
+    const typ = [0.39, 0.75, 0.81][t.weeksSinceRace - 1];
+    const heavy = sessions.filter((s) => s.kind === "quality" || s.minutes > 90).map((s) => `${s.title} ${s.minutes} мин`);
+    recovery.push(`⚠ ${t.weeksSinceRace}-я неделя после старта на ${t.lastRaceKm} км: у тренера такая неделя ≈ ${typ} от обычной; здесь ${sessions.reduce((a, s) => a + s.minutes, 0)} мин${heavy.length ? `, тяжёлое: ${heavy.join("; ")}` : ""} — проверь`);
+  }
+  const warnings = [...recovery, ...validator.filter((v) => !v.ok).map((v) => `${v.severity === "hard" ? "⛔" : "⚠"} ${v.name}${v.detail ? ` (${v.detail})` : ""}`), ...sessions.flatMap((s) => s.flags.map((f) => `⚑ ${s.title}: ${f}`))];
   return { aid: t.aid, weekStart: t.weekStart, sessions, source, why, validator, refused, warnings };
 }

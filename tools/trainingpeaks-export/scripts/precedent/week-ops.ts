@@ -44,7 +44,7 @@ export const CONFIRM = { raskidat: "РАСКИДАТЬ СКРЫТО ГРУППЕ
 const RUNS = path.join(OUT_DIR, "runs");
 const PROOF_DIR = "/Users/igor/igor-tp-reports-bot/reports/hidden-workout-proof";
 
-type Item = { aid: number; date: string; dayIdx: number; title: string; minutes: number; description: string; warnings: string[]; workoutId: number | null; verified: boolean };
+type Item = { aid: number; date: string; dayIdx: number; title: string; minutes: number; description: string; warnings: string[]; source: string; why: string; workoutId: number | null; verified: boolean };
 type Manifest = { runId: string; createdAt: string; mode: "dry_run" | "real"; week: string; items: Item[]; refused: Array<{ aid: number; why: string }>; published: number[]; deleted: number[] };
 
 function arg(name: string): string | null { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] ?? null : null; }
@@ -109,7 +109,7 @@ async function raskidat(): Promise<void> {
     const b = buildRepeatWeek(ix, t, Wt, cyc, c, L.names);
     if (!b) { m.refused.push({ aid, why: "не из чего собрать (нет своих недель и прецедента)" }); continue; }
     if (b.refused) { m.refused.push({ aid, why: `жёсткое нарушение: ${b.warnings.filter((w) => w.startsWith("⛔")).join("; ")}` }); continue; }
-    for (const s of b.sessions) m.items.push({ aid, date: addDays(week, s.dayIdx), dayIdx: s.dayIdx, title: s.title, minutes: s.minutes, description: s.description, warnings: b.warnings, workoutId: null, verified: false });
+    for (const s of b.sessions) m.items.push({ aid, date: addDays(week, s.dayIdx), dayIdx: s.dayIdx, title: s.title, minutes: s.minutes, description: s.description, warnings: b.warnings, source: b.source, why: b.why, workoutId: null, verified: false });
   }
   saveManifest(m);
   if (gate == null) await realCreate(m); // реальный путь — только если ворота открыты (сейчас закрыты: скрытие не доказано)
@@ -193,11 +193,12 @@ function report(m: Manifest, gate: string | null, names: Map<number, string>): v
   for (const r of m.refused) out.push(`| ${names.get(r.aid) ?? r.aid} | ОТКАЗ: ${r.why} | — | — | — |`);
   for (const [aid, its] of byAid) {
     out.push("", `## ${names.get(aid) ?? aid}`);
+    out.push(`_Откуда:_ ${its[0].source}`, `_Почему:_ ${its[0].why}`);
     for (const i of its) out.push(`- ${DAY_RU[i.dayIdx]} ${i.date} · ${i.title} · ${i.minutes} мин`);
     for (const w of its[0].warnings) out.push(`  - ${w}`);
   }
   writeFileSync(path.join(OUT_DIR, `${m.runId}.md`), out.join("\n") + "\n");
-  console.log(out.slice(0, 20 + m.refused.length + byAid.size).join("\n"));
+  console.log(out.slice(0, 8 + byAid.size + m.refused.length).join("\n"));
 }
 
 if (process.argv[1]?.endsWith("week-ops.ts")) main();

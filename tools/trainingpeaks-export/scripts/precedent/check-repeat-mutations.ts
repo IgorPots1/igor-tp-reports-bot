@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
 const MR = path.join(HERE, "main-race.ts");
+const BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
 type M = { id: string; file: string; find: string; replace: string; what: string };
 const MUT: M[] = [
@@ -41,6 +42,8 @@ const MUT: M[] = [
   { id: "ban-no-races", file: R, find: "  const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);", replace: "  const removed = enforcePreRace(sessions, null);", what: "запрет не действует и перед главными" },
   { id: "main-all", file: MR, find: "      if (pickTargetRace(races, m)?.id === r.id) { out.add(r.id); break; }", replace: "      out.add(r.id); break;", what: "любой старт считается главным" },
   { id: "main-none", file: MR, find: "      if (pickTargetRace(races, m)?.id === r.id) { out.add(r.id); break; }", replace: "      void m;", what: "ни один старт не главный" },
+  { id: "no-recovery-warning", file: BW, find: "t.lastRaceKm >= 30) {", replace: "t.lastRaceKm >= 9999) {", what: "предупреждение о восстановлении после марафона не выдаётся" },
+  { id: "sample-in-corpus", file: CO, find: " && !/sample workout/i.test(String(r.title ?? \"\")))", replace: ")", what: "шаблонные английские тренировки снова попадают в корпус" },
   { id: "publish-deleted", file: E, find: "  return placed.filter((p) => current.get(p.workoutId) != null)", replace: "  return placed.filter(() => true)", what: "публикуется и удалённое тренером" },
   { id: "no-minutes-diff", file: E, find: "  if (Math.round(c.minutes) !== Math.round(p.minutes))", replace: "  if (false)", what: "правка длительности не пишется" },
   { id: "gate-no-proof", file: O, find: "    if (!g.proof.ok) return", replace: "    if (false) return", what: "раскидать пишет без доказанного скрытия" },
