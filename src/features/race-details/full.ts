@@ -157,7 +157,7 @@ function onsiteSection(rows: FullRow[]): Section | null {
     if (!v) return;
     const s = sentences(v);
     // подпись нужна, если текст сам не начинается с неё: «10 км: 4 и 7 км…» → «Питание: 10 км: …»
-    lines.push(kw.test(v.trim().slice(0, 14)) ? s : `${label}: ${s[0].toLowerCase()}${s.slice(1)}`);
+    lines.push(kw.test(v.trim().slice(0, 24)) ? s : `${label}: ${s[0].toLowerCase()}${s.slice(1)}`);
   };
   add("aid_stations", /питан|пункт|вод[аыу]|чай/i, "Питание");
   add("changing_rooms", /раздевал/i, "Раздевалки");
