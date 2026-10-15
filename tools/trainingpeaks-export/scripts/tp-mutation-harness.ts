@@ -47,6 +47,10 @@ type Mutation = { id: string; file: string; find: string; replace: string; what:
  * Порядок — по модулям, чтобы читать матрицу было проще.
  */
 const MUTATIONS: Mutation[] = [
+  // ── потолки baseline — предупреждения, не отсечки (15.10) ──
+  { id: "cap-weekly-cuts", file: W, find: "    weekly = env.rolling4wPlannedMin || 150;", replace: "    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;", what: "недельный baseline снова режет конверт" },
+  { id: "cap-freq-cuts", file: W, find: "    if (env.capFrequency != null && nWant > env.capFrequency) notes.push(", replace: "    if (env.capFrequency != null && nWant > env.capFrequency) nWant = Math.round(env.capFrequency); if (false) notes.push(", what: "потолок частоты снова режет дни молча" },
+  { id: "cap-long-baseline-first", file: W, find: "  const longCapSource = practiceLong ?? baselineLong;", replace: "  const longCapSource = cycle ? (practiceLong ?? baselineLong) : (baselineLong ?? practiceLong);", what: "без цикла длительную снова режет baseline" },
   // ── прогноз цикла ──
   { id: "step-aerobic", file: C, find: "export const STEP_AEROBIC = 1.06;", replace: "export const STEP_AEROBIC = 1.30;", what: "шаг роста аэробного 1.06 → 1.30" },
   // ── ФОРМУЛЫ, А НЕ КОНСТАНТЫ ──

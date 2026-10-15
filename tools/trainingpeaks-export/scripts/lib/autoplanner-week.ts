@@ -905,7 +905,9 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   } else {
     nWant = Math.round(env.rolling4wFrequency || 0);
     if (nWant <= 0) nWant = Math.min(3, Math.round(env.capFrequency ?? 3));
-    if (env.capFrequency != null && nWant > env.capFrequency) { nWant = Math.round(env.capFrequency); notes.push("частота подрезана потолком baseline"); }
+    // ПОТОЛОК BASELINE — ПРЕДУПРЕЖДЕНИЕ, А НЕ ОТСЕЧКА (решение Игоря 15.10). baseline заморожен на
+    // окне 11.03–03.06, а тренер сам выходит за свои «потолки» в 19–40% недель (замер r1-caps.ts).
+    if (env.capFrequency != null && nWant > env.capFrequency) notes.push(`⚠ ПРЕДУПРЕЖДЕНИЕ: ${nWant} беговых дней выше потолка baseline ${env.capFrequency} (весеннее окно) — не режу, проверь`);
     nWant = clamp(nWant, 1, 7);
   }
   // ПОТОЛОК ДНЕЙ ОТ ПОЖЕЛАНИЯ. Он ЖЁСТЧЕ и цикла, и истории: «могу бегать три раза
@@ -962,7 +964,9 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
         + ` Неделя потрачена, остальной план цикла НЕ сдвинут.`);
     }
   } else {
-    weekly = Math.min(env.rolling4wPlannedMin || 0, env.capWeeklyMin ?? Infinity) || 150;
+    // Недельный baseline больше НЕ режет конверт (было Math.min(rolling4w, capWeeklyMin)): только помечает.
+    weekly = env.rolling4wPlannedMin || 150;
+    if (env.capWeeklyMin != null && weekly > env.capWeeklyMin) notes.push(`⚠ ПРЕДУПРЕЖДЕНИЕ: объём ${weekly} мин выше потолка baseline ${env.capWeeklyMin} (весеннее окно) — не режу, проверь`);
     // ПРИРОСТ МЕРЯЕТСЯ ОТ НОРМЫ, А НЕ ОТ ПРОВАЛА (замер 16.08).
     // Прежде базой безусловно была прошлая плановая неделя. Если она оказывалась провальной
     // (болезнь, отпуск, недописанный план), «+процент к прошлой неделе» запирал человека в
@@ -1373,7 +1377,10 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // Без цикла порядок прежний: baseline главный, практика — только подмена нуля/пропуска.
   const baselineLong = (env.capLongRunMin ?? 0) > 0 ? (env.capLongRunMin as number) : null;
   const practiceLong = env.longRunPracticeMaxMin > 0 ? env.longRunPracticeMaxMin : null;
-  const longCapSource = cycle ? (practiceLong ?? baselineLong) : (baselineLong ?? practiceLong);
+  // Практика главнее замороженного baseline теперь и БЕЗ цикла (было: без цикла baseline главный).
+  // Превышение baseline — предупреждение тренеру, ниже по коду.
+  const longCapSource = practiceLong ?? baselineLong;
+  if (baselineLong != null && practiceLong != null && practiceLong > baselineLong) notes.push(`⚠ ПРЕДУПРЕЖДЕНИЕ: потолок длительной из практики ${practiceLong} мин выше baseline ${baselineLong} (весеннее окно) — беру практику, проверь`);
 
   // ── МЕДИАНА ПРАКТИКИ — ЦЕЛЬ, А НЕ ЖЕРТВА ОГРАНИЧИТЕЛЕЙ (правка 12.08, третий заход) ──
   // Игорь третий раз говорит «мало объёма, особенно длительные». После починки потолка

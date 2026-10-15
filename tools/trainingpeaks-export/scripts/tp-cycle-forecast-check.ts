@@ -422,9 +422,22 @@ async function main(): Promise<void> {
     const wFrozenNo = buildWeek(anchors, envFrozenMed, cat, MON, false, null);
     check("цикл: потолок длительной из ПРАКТИКИ, а не из замороженного baseline",
       longestOf(wFrozenCyc) > 65, `с циклом ${longestOf(wFrozenCyc)} мин при baseline 65 и практике 120`);
-    check("без цикла: потолок длительной по-прежнему из baseline",
-      longestOf(wFrozenNo) > 0 && longestOf(wFrozenNo) <= 65,
-      `без цикла ${longestOf(wFrozenNo)} мин при baseline 65, практике 120 и медиане 110`);
+    // ПЕРЕПИСАНО 15.10 (правило 6a). Было «без цикла: потолок длительной по-прежнему из baseline»
+    // (длительная ≤ 65). Отменено решением Игоря: замороженный baseline (11.03–03.06) больше не режет,
+    // а предупреждает — тренер сам выходит за него в 17% недель (r1-caps.ts). Новое утверждение
+    // сильнее: длительная ВЫШЕ baseline И тренер об этом предупреждён.
+    check("без цикла: baseline длительной НЕ режет — длительная выше него, и тренер предупреждён",
+      longestOf(wFrozenNo) > 65 && wFrozenNo.notes.some((n) => n.includes("ПРЕДУПРЕЖДЕНИЕ") && n.includes("baseline 65")),
+      `без цикла ${longestOf(wFrozenNo)} мин при baseline 65, практике 120; заметки: ${wFrozenNo.notes.filter((n) => n.includes("⚠")).join(" | ") || "нет предупреждения"}`);
+    // То же для недельного объёма и частоты: baseline ниже конверта — неделя НЕ урезается, пометка есть.
+    const envCapLow = { ...env, capWeeklyMin: 90, capFrequency: 2, rolling4wPlannedMin: 200, rolling4wFrequency: 4 };
+    const wCapLow = buildWeek(anchors, envCapLow, cat, MON, false, null);
+    check("без цикла: недельный baseline НЕ режет объём, а предупреждает",
+      wCapLow.weeklyCap > 90 && wCapLow.notes.some((n) => n.includes("ПРЕДУПРЕЖДЕНИЕ") && n.includes("baseline 90")),
+      `потолок недели ${wCapLow.weeklyCap} при baseline 90; заметки: ${wCapLow.notes.filter((n) => n.includes("⚠")).join(" | ") || "нет"}`);
+    check("без цикла: потолок частоты baseline НЕ режет дни, а предупреждает",
+      wCapLow.sessions.length > 2 && wCapLow.notes.some((n) => n.includes("ПРЕДУПРЕЖДЕНИЕ") && n.includes("baseline 2")),
+      `дней ${wCapLow.sessions.length} при baseline 2`);
 
     // (г) МЕДИАНА ПРАКТИКИ — ПОЛ ЦЕЛИ, А НЕ ЖЕРТВА ОГРАНИЧИТЕЛЕЙ.
     // Доля недели x0.45 и пропорция длительная/лёгкий — оба числа выведены из практики,
