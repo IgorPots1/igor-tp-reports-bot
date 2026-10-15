@@ -11,6 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { buildAnchor, extractEasySample, tierOf, type EasySample, type DateWindow } from "./easy-anchor.ts";
+import { signalStart, signalWindow } from "./signal-closure.ts";
 import { buildQualityAnchor, extractQualitySample, type QualitySample } from "./quality-anchor.ts";
 import { anchorConfidence } from "./easy-anchor.ts";
 import { loadRoster } from "./autoplanner-roster.ts";
@@ -42,7 +43,7 @@ const ILLNESS_TAIL_DAYS = 3;
  * Незакрытых сигналов почти нет (199 из 200 «недомоганий» закрыты), так что дефолт срабатывает
  * редко — но 21 день был втрое выше реальной медианы.
  */
-const ILLNESS_DEFAULT_DAYS = 7;
+// ILLNESS_DEFAULT_DAYS (7 для всех типов) заменён сроком по типу — SIGNAL_TTL_DAYS в lib/signal-closure.ts.
 /** §1.6: аварийный путь, когда нет ни своего якоря, ни зоны 2. Ground truth n=53. */
 export const K_COHORT = 1.231;
 /** Полоса вокруг когортной середины, чтобы получить пару краёв (узкая — доверие и так low). */
@@ -315,20 +316,40 @@ async function pullBaselines(sb: SupabaseClient): Promise<Map<number, { wk: numb
   return m;
 }
 
+/**
+ * ОКНО СИГНАЛА ЗДОРОВЬЯ (правка 15.10, разбор Хоффман). Прежде: без даты окончания окно было
+ * created_at + ILLNESS_DEFAULT_DAYS одинаково для всех типов, и прошедший старт сигнал не закрывал.
+ * Теперь окно — lib/signal-closure.ts: срок по типу (p90 закрытых тренером) и закрытие ПРОШЕДШИМ
+ * СТАРТОМ (человек пробежал гонку — сигнал до неё больше не описывает его состояние).
+ * Статус сигнала в базе НЕ меняется: это решение только для планирования.
+ */
 async function pullIllness(sb: SupabaseClient): Promise<Map<string, DateWindow[]>> {
   const { data, error } = await sb.from("trainingpeaks_student_operational_signals")
     .select("student_id, signal_type, valid_from, valid_until, source_date, target_date, created_at, resolved_at")
     .in("signal_type", ILLNESS_TYPES);
   if (error) throw error;
+  const { data: st, error: e2 } = await sb.from("trainingpeaks_students").select("id, trainingpeaks_athlete_url");
+  if (e2) throw e2;
+  const aidBySid = new Map<string, number>();
+  for (const r of (st ?? []) as Array<{ id: string; trainingpeaks_athlete_url: string | null }>) {
+    const hit = /athletes?\/(\d+)/.exec(r.trainingpeaks_athlete_url ?? ""); if (hit) aidBySid.set(r.id, Number(hit[1]));
+  }
+  const racesByAid = new Map<number, string[]>();
+  for (let f = 0; ; f += 1000) {
+    const { data: rs, error: e3 } = await sb.from("trainingpeaks_race_events").select("trainingpeaks_athlete_id, event_date").order("event_date").range(f, f + 999);
+    if (e3) throw e3;
+    for (const r of (rs ?? []) as Array<{ trainingpeaks_athlete_id: number; event_date: string }>) (racesByAid.get(r.trainingpeaks_athlete_id) ?? racesByAid.set(r.trainingpeaks_athlete_id, []).get(r.trainingpeaks_athlete_id)!).push(r.event_date);
+    if (!rs || rs.length < 1000) break;
+  }
   const m = new Map<string, DateWindow[]>();
   for (const s of (data ?? []) as Array<Record<string, unknown>>) {
     const sid = s.student_id as string | null; if (!sid) continue;
-    const from = (s.valid_from ?? s.source_date ?? s.target_date ?? (typeof s.created_at === "string" ? (s.created_at as string).slice(0, 10) : null)) as string | null;
+    const from = signalStart(s);
     if (!from) continue;
-    let to = (s.valid_until ?? (typeof s.resolved_at === "string" ? (s.resolved_at as string).slice(0, 10) : null)) as string | null;
-    if (!to || to < from) to = addDays(from, ILLNESS_DEFAULT_DAYS);
-    to = addDays(to, ILLNESS_TAIL_DAYS);
-    (m.get(sid) ?? m.set(sid, []).get(sid)!).push({ from, to });
+    const aid = aidBySid.get(sid);
+    const w = signalWindow({ type: String(s.signal_type), start: from, validUntil: (s.valid_until as string | null) ?? null,
+      resolvedAt: typeof s.resolved_at === "string" ? (s.resolved_at as string).slice(0, 10) : null, races: aid ? racesByAid.get(aid) ?? [] : [] });
+    (m.get(sid) ?? m.set(sid, []).get(sid)!).push({ from: w.from, to: addDays(w.to, ILLNESS_TAIL_DAYS) });
   }
   return m;
 }
