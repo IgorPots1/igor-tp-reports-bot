@@ -243,6 +243,7 @@ export function keyPointsTrail(input: Parameters<typeof keyPoints>[0] & {
   }
 
   // Ветер: только длинный встречный отрезок, и без «держитесь в группе»: на тропе группы нет.
+  // Ниже спуска по приоритету: на одном км с вершиной ветер вытеснял главный спуск (FerrumFest 19, 15.10).
   if (wind && wind.medianMs >= WIND_WORTH_MS) {
     let best: [number, number] | null = null;
     let runStart = -1;
@@ -254,7 +255,7 @@ export function keyPointsTrail(input: Parameters<typeof keyPoints>[0] & {
     const head = best as [number, number] | null;
     if (head && head[1] - head[0] + 1 >= MIN_HEAD_RUN_KM) {
       const a = perKm[head[0]].km, z = perKm[head[1]].km;
-      c.push({ km: a - 0.5, type: "wind", text: `С ${a}-го по ${z}-й км ветер чаще в лицо (обычно дует ${windFrom(wind.dirLabel)}): на открытых участках держи усилие, а не темп.`, prio: 75 });
+      c.push({ km: a - 0.5, type: "wind", text: `С ${a}-го по ${z}-й км ветер чаще в лицо (обычно дует ${windFrom(wind.dirLabel)}): на открытых участках держи усилие, а не темп.`, prio: 65 });
     }
   }
 
@@ -299,8 +300,8 @@ export function courseSummary(segments: Segment[], finish?: { gain: number; loss
   return parts.join(", ");
 }
 
-/** До 4 точек для короткого разбора в боте: подъёмы, спуск, фонарь и питание, по порядку км. */
+/** До 4 точек для короткого разбора в боте: подъёмы, затем спуск, фонарь, питание; выводятся по порядку км. */
 export function shortPoints(points: KeyPoint[], max = 4): KeyPoint[] {
-  const rank = (p: KeyPoint) => (p.type === "climb" ? 3 : p.type === "descent" ? 2 : /фонарь|пункт|воду/i.test(p.text) ? 2.5 : p.type === "wind" ? 1 : 0);
+  const rank = (p: KeyPoint) => (p.type === "climb" ? 3 : p.type === "descent" ? 2.8 : /фонарь/i.test(p.text) ? 2.6 : /пункт|воду/i.test(p.text) ? 2.5 : p.type === "wind" ? 1 : 0);
   return [...points].filter((p) => rank(p) > 0).sort((a, b) => rank(b) - rank(a)).slice(0, max).sort((a, b) => a.km - b.km);
 }

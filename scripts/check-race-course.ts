@@ -263,6 +263,22 @@ ok("трейл: питание по положению; пунктов не зн
   assert.ok(!short.some((p) => /пункт/i.test(p.text)), "короткая дистанция: про питание молчим");
 });
 
+ok("трейл: главный спуск не вытесняется ветром на том же километре", () => {
+  // Вершина на 6,2 км, встречный ветер с 7-го по 10-й (точка ветра на 6,5 км, ближе 0,5 км к спуску):
+  // спуск важнее (FerrumFest 19, 15.10.2026: ветер на 11,5 км вытеснял спуск с вершины).
+  const total = 12;
+  const pts = north(total);
+  const dist = pts.map((_, i) => i * 50);
+  const elev = dist.map((d) => (d < 3000 ? 300 : d < 6200 ? 300 + (d - 3000) * 0.1 : d < 9200 ? 620 - (d - 6200) * 0.1 : 320));
+  const sides: ("head" | "cross")[] = Array.from({ length: total }, (_, i) => (i >= 6 && i <= 9 ? "head" : "cross"));
+  const km = perKm(dist, elev, pts).map((k, i) => ({ ...k, wind: sides[i] }));
+  const kp = keyPointsTrail({
+    totalM: total * 1000, segments: segments(dist, elev, 3), perKm: km, wind: { dirLabel: "В", medianMs: 5 },
+    distanceKm: total, startMin: 9 * 60, cutoffMin: null, sun: null, aid: null,
+  });
+  assert.ok(kp.some((p) => p.type === "descent" && p.km >= 6.1 && p.km <= 6.3), kp.map((p) => `${p.km} ${p.type}`).join(", "));
+});
+
 ok("шоссе: у ультра и малых стартов без «толпы», у массовых как было", () => {
   const pts = north(10);
   const dist = pts.map((_, i) => i * 50);
