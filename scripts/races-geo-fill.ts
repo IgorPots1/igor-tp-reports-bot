@@ -18,6 +18,7 @@
 import { areaRaces, geoKey, NEARBY_KM } from "@/features/races-bot/core";
 import { canonicalSubject, subjectFromDisplay } from "@/app/races/subjects";
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { politeFetch } from "./lib/polite-fetch";
 
 const UA = "igorp.run races calendar geo-fill (+https://igorp.run/races)";
 const PAUSE_MS = 1100;
@@ -58,7 +59,7 @@ function cleanName(s: string): string {
 async function nominatim(q: string, ua = false): Promise<Place[]> {
   const cc = ua ? "ru,ua" : "ru";
   const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&countrycodes=${cc}&accept-language=ru&q=${encodeURIComponent(q)}`;
-  const res = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ru" } });
+  const res = await politeFetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ru" } });
   await sleep(PAUSE_MS);
   if (res.status === 429 || res.status === 403) throw new Error(`Nominatim ${res.status}: стоп, лимит`);
   if (!res.ok) return [];
@@ -106,7 +107,7 @@ async function geocode({ city: rawCity, region }: Pair): Promise<{ lat: number |
 }
 
 async function reverseSubject(lat: number, lon: number): Promise<string | null> {
-  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=5&accept-language=ru&lat=${lat}&lon=${lon}`, { headers: { "User-Agent": UA } });
+  const res = await politeFetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=5&accept-language=ru&lat=${lat}&lon=${lon}`, { headers: { "User-Agent": UA } });
   await sleep(PAUSE_MS);
   if (!res.ok) return null;
   const j = (await res.json()) as { display_name?: string; address?: Record<string, string> };

@@ -17,6 +17,7 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 
 import { keyTokens } from "../supabase/functions/race-calendar-sync/expected";
 import { geoKey } from "../supabase/functions/race-calendar-sync/geo";
+import { politeFetch } from "./lib/polite-fetch";
 
 type Row = {
   id: string; source: string; name: string; date_start: string; date_end: string; city: string | null; region: string | null;
@@ -43,7 +44,8 @@ const MONTHS = ["января", "февраля", "марта", "апреля", 
 /** Есть ли на странице организатора дата в виде «24 октября» или «24.10». */
 async function siteHasDate(url: string, iso: string): Promise<boolean | null> {
   try {
-    const res = await fetch(url, { headers: { "User-Agent": "igorp.run races-audit (+https://igorp.run)" }, signal: AbortSignal.timeout(20000) });
+    // robots.txt сайта проверяет politeFetch: закрытый сайт — исключение, тут же «не знаем» (null)
+    const res = await politeFetch(url, { headers: { "User-Agent": "igorp.run races-audit (+https://igorp.run)" }, signal: AbortSignal.timeout(20000) });
     if (!res.ok) return null;
     const t = (await res.text()).replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
     const [, m, d] = iso.split("-").map(Number);

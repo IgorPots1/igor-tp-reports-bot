@@ -19,13 +19,14 @@ import {
   type FutureRow,
   type PastRace,
 } from "../supabase/functions/race-calendar-sync/expected";
+import { politeFetch } from "./lib/polite-fetch";
 
 const UA = "igorp.run race calendar (+https://igorp.run)";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchWindow(from: string, to: string): Promise<PastRace[]> {
   for (let i = 0; i < 3; i++) {
-    const r = await fetch(probegPastUrl(from, to), { headers: { "User-Agent": UA, "Accept-Language": "ru" } });
+    const r = await politeFetch(probegPastUrl(from, to), { headers: { "User-Agent": UA, "Accept-Language": "ru" } });
     if (r.ok) return parsePastProbeg(await r.text());
     await sleep(3000 * (i + 1));
   }

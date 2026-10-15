@@ -19,6 +19,7 @@
 import { writeFileSync, readFileSync } from "node:fs";
 
 import { cumulative, type LatLon } from "./geo";
+import { politeFetch } from "../lib/polite-fetch";
 
 const OSRM = "https://routing.openstreetmap.de/routed-foot/route/v1/foot";
 const UA = "igorp.run race-course check (potseluevigoralexeevich@gmail.com)";
@@ -39,7 +40,7 @@ export async function routeFoot(waypoints: LatLon[]): Promise<LatLon[]> {
   const coords = waypoints.map(([la, lo]) => `${lo.toFixed(6)},${la.toFixed(6)}`).join(";");
   // continue_straight=false: на развороте посреди улицы разрешаем развернуться, а не обходить квартал
   const url = `${OSRM}/${coords}?overview=full&geometries=geojson&continue_straight=false`;
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  const res = await politeFetch(url, { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`OSRM: HTTP ${res.status}`);
   const j = (await res.json()) as { code: string; routes?: { geometry: { coordinates: [number, number][] } }[] };
   if (j.code !== "Ok" || !j.routes?.length) throw new Error(`OSRM: ${j.code}`);

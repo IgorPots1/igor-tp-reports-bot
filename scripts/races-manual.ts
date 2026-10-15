@@ -60,6 +60,7 @@ import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
 import { nameKey } from "../supabase/functions/race-calendar-sync/expected";
 import { isSwimOnly } from "../supabase/functions/race-calendar-sync/match";
 import { subjectFor, type GeoSubjectRow } from "../supabase/functions/race-calendar-sync/geo";
+import { assertRobotsAllowed, politeFetch } from "./lib/polite-fetch";
 
 export const MAX_INSERTS = 40;
 export const MAX_UPDATES = 60;
@@ -825,6 +826,8 @@ async function cmdRead(url: string) {
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ locale: "ru-RU" });
+    // robots.txt сайта — до перехода браузера (браузер ходит мимо politeFetch)
+    await assertRobotsAllowed(url);
     const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForTimeout(6000);
     const text = (await page.evaluate(() => document.body.innerText)).replace(/\n{3,}/g, "\n\n");
@@ -1442,7 +1445,7 @@ async function vkCall(method: string, params: Record<string, string>, token: str
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     vkLastCallAt = Date.now();
     // Ключ в теле POST, не в адресе: не оседает в логах прокси и в истории.
-    const res = await fetch(`https://api.vk.com/method/${method}`, {
+    const res = await politeFetch(`https://api.vk.com/method/${method}`, {
       method: "POST",
       body: new URLSearchParams({ ...params, v: "5.199", access_token: token }),
     });

@@ -45,7 +45,7 @@ assert.ok(rejected.some((x) => /probeg:999: старта нет/.test(x)));
 assert.ok(rejected.some((x) => /probeg:2: дата проверки/.test(x)));
 
 // Список полей совпадает с check-констрейнтом миграции: иначе upsert упадёт на живой базе.
-const sql = readFileSync("supabase/migrations/20261106000000_race_details.sql", "utf8");
+const sql = readFileSync("supabase/migrations/20261015120000_race_details.sql", "utf8");
 const inSql = [...(sql.match(/field in \(([\s\S]*?)\)\)/)?.[1] ?? "").matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
 assert.deepEqual(inSql, [...DETAIL_FIELDS]);
 

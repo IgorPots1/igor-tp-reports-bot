@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { LatLon } from "./geo";
+import { politeFetch } from "../lib/polite-fetch";
 
 const TILE = 256;
 const UA = "igorp.run race-course check (potseluevigoralexeevich@gmail.com)";
@@ -24,7 +25,7 @@ async function tile(z: number, x: number, y: number): Promise<Buffer> {
   if (existsSync(f)) return readFileSync(f);
   mkdirSync(CACHE, { recursive: true });
   await new Promise((r) => setTimeout(r, 300));
-  const res = await fetch(`https://tile.openstreetmap.org/${z}/${x}/${y}.png`, { headers: { "User-Agent": UA } });
+  const res = await politeFetch(`https://tile.openstreetmap.org/${z}/${x}/${y}.png`, { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`тайл ${z}/${x}/${y}: HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   writeFileSync(f, buf);

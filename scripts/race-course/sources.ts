@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import type { LatLon } from "./geo";
 import type { WindObs } from "./wind";
+import { politeFetch } from "../lib/polite-fetch";
 
 const PAUSE_MS = 1100;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -40,7 +41,7 @@ async function getJson(url: string): Promise<unknown> {
   for (let attempt = 1; ; attempt++) {
     let res: Response;
     try {
-      res = await fetch(url, { headers: { "User-Agent": "igorp.run race-course pilot (+https://igorp.run)" } });
+      res = await politeFetch(url, { headers: { "User-Agent": "igorp.run race-course pilot (+https://igorp.run)" } });
     } catch (e) {
       if (attempt >= 3) throw new Error(`сеть: ${(e as Error).message} ${url.slice(0, 120)}`);
       await sleep(PAUSE_MS * attempt * 5);

@@ -13,6 +13,7 @@
 import { writeFileSync } from "node:fs";
 
 import type { LatLon } from "./geo";
+import { politeFetch } from "../lib/polite-fetch";
 
 const ARC_UNIT = ((1 << 24) - 1) / 360;
 
@@ -94,7 +95,7 @@ export function parseNktk(text: string): NakarteTrack[] {
 
 export async function fetchNakarte(id: string): Promise<NakarteTrack[]> {
   if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`nakarte: странный id ${id}`);
-  const res = await fetch(`https://tracks.nakarte.me/track/${id}`, { headers: { "User-Agent": "igorp.run race-course (+https://igorp.run)" } });
+  const res = await politeFetch(`https://tracks.nakarte.me/track/${id}`, { headers: { "User-Agent": "igorp.run race-course (+https://igorp.run)" } });
   if (!res.ok) throw new Error(`nakarte ${id}: HTTP ${res.status}`);
   return parseNktk(await res.text());
 }
