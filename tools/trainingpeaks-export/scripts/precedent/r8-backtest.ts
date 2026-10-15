@@ -60,7 +60,7 @@ const train = ix.all.filter((w) => w.weekStart >= TRAIN_FROM && w.weekStart < SP
 const valid = ix.all.filter((w) => w.weekStart >= SPLIT && w.weekStart < VALID_TO && roster.has(w.aid) && w.avg4 > 0);
 const CLASSES: Abnormal[] = ["старт", "после старта", "подводка", "пик", "провал объёма"]; // решение Игоря: фиксировано
 const grid: Array<{ normal: number; gap: number; lookback: number; train: number; valid: number }> = [];
-for (const normal of [0.6, 0.8]) for (const gap of [2, 3, 99]) for (const lookback of [6, 10, 14]) {
+for (const normal of [0.6, 0.8]) for (const gap of [2, 3, 99]) for (const lookback of [10]) { // окно = 10 недель — РЕШЕНИЕ Игоря 15.10 («отказ хуже завышенной недели»), не свободный параметр
   cacheTag = `g${normal}-${gap}-${lookback}`; setRepeatParams({ skip: CLASSES, normal, gap, lookback });
   grid.push({ normal, gap, lookback, train: evalSet(train, mNew(false)).agg.score, valid: evalSet(valid, mNew(false)).agg.score });
 }

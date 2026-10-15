@@ -40,6 +40,7 @@ export function recoveryFactor(lastRaceKm: number | null, weeksSinceRace: number
 
 /** Нижняя граница восстановительного множителя: 0.39 после марафона — это не зажим, а замер. */
 export const RECOVERY_DELTA_MIN = 0.35;
+/** Снятие дня по глубине снижения — только для дельты цикла (repeat.ts); восстановление после старта решает измеренная неделя +1 после марафона. */
 export const DROP_DAY_BELOW = 0.75;
 
 const round5 = (m: number): number => Math.max(20, Math.round(m / 5) * 5);
@@ -76,7 +77,10 @@ export function postRaceAdjust(ix: Index, t: CWeek, sessions: PSess[], alreadyFa
     });
     if (changed.length) notes.push(`качество снято: ${changed.join("; ")}`);
   }
-  if (rel < DROP_DAY_BELOW) {
+  // ДЕНЬ СНИМАЕТСЯ ТОЛЬКО НА 1-Й НЕДЕЛЕ ПОСЛЕ МАРАФОНА. Замер по неделям Игоря (n=15–20): дней относительно обычных на +1 — 0.67
+  // (≈3 из 4), на +2, +3, +4 — 1.00; объём режется ВНУТРИ сессий. Раньше день снимался по порогу множителя (<0.75), и таблица,
+  // которая уже описывает общий объём недели, применялась дважды: Семешина на +2 (×0.71) теряла день и получала 185 вместо ~240.
+  if (t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace === 1) {
     const easy = out.filter((s) => s.kind === "easy").sort((a, b) => a.minutes - b.minutes);
     if (easy.length > 1 || (easy.length === 1 && out.length > 2)) { out = out.filter((s) => s !== easy[0]); notes.push(`снята самая короткая лёгкая (${easy[0].minutes} мин)`); }
   }

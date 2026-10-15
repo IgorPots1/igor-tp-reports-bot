@@ -255,6 +255,11 @@ console.log("\n── восстановление после старта по 
   check("дельта по таблице: марафон +1…+7", [d(10, 7), d(10, 8), d(10, 9), d(10, 10), d(10, 11), d(10, 12), d(10, 13)].join() === "0.39,0.71,0.77,0.81,0.82,0.82,0.94", [d(10, 7), d(10, 8), d(10, 9), d(10, 10), d(10, 11), d(10, 12), d(10, 13)].join());
   check("на +8 после марафона восстановления нет: нагрузка 100% (дельта 1)", d(10, 14) === 1, String(d(10, 14)));
   check("половинка +1 = 0.59, +2 = 0.99 (дистанция меняет множитель)", d(11, 7) === 0.59 && d(11, 8) === 0.99, `${d(11, 7)} ${d(11, 8)}`);
+  const keep2 = planRepeat(ix, T(10, 8), null);
+  check("марафон +2 (×0.71 — ниже порога 0.75): день НЕ снимается, объём режется внутри сессий (измерено: дни +2…+4 = 1.00 обычных)",
+    keep2.kind === "repeat" && keep2.sessions.length === 3, JSON.stringify(keep2.kind === "repeat" ? keep2.sessions.map((x) => [x.dayIdx, x.minutes]) : keep2));
+  const keepH = planRepeat(ix, T(11, 7), null);
+  check("половинка +1 (×0.59): день тоже не снимается — по дням замер только для марафона", keepH.kind === "repeat" && keepH.sessions.length === 3, JSON.stringify(keepH.kind === "repeat" ? keepH.sessions.length : keepH));
   const m4 = planRepeat(ix, T(10, 10), null);
   check("марафон +4 (как у Семешиной): нагрузка ×0.81 от обычной, а не 100%; правило «без качества» уже не действует (только +1…+3)",
     m4.kind === "repeat" && m4.delta === 0.81 && m4.sessions.some((s) => hasQ(s)), JSON.stringify(m4.kind === "repeat" ? { d: m4.delta, s: m4.sessions.map((s) => [s.title, s.minutes]) } : m4));
