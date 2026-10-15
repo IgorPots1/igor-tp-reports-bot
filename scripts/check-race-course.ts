@@ -15,13 +15,17 @@
  *   — трейловый шаблон (15.10.2026): без «толпы», шаг на крутом, спуск «3-5 м вперёд», фонарь до
  *     рассвета и после заката по контрольному времени, питание от 20 км; без длинного тире;
  *   — шоссе без «толпы» у ультра и малых стартов; восход и закат по формуле;
- *   — высоты из GPX организатора (эталон набора, когда цифры в тексте нет): точки без <ele> пропускаются.
+ *   — высоты из GPX организатора (эталон набора, когда цифры в тексте нет): точки без <ele> пропускаются;
+ *   — урезанный разбор (15.10.2026): только когда ЕДИНСТВЕННАЯ причина — нет эталона набора; не прошедшие
+ *     сверку, без трека и по схемам не публикуются вовсе; у урезанного нет профиля, набора, сброса
+ *     (и по км), мини-профиля, а в точках и сути ни слова о подъёмах, спусках и наборе; точки — по
+ *     поворотам, покрытию, ветру. Последний тест держит это на настоящих данных src/data/race-courses.
  *
  *   npm run check:race-course
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -30,6 +34,7 @@ import { bearing, haversine, resample, simplifyTo, type LatLon } from "./race-co
 import { keyPoints, keyPointsTrail } from "./race-course/key-points";
 import { gainLoss, perKm, profileSeries, segments, smoothByDistance } from "./race-course/profile";
 import { readGpxEle } from "./race-course/sources";
+import { findTurns, keyPointsLite, liteEligible, liteSummary, makeLite, NO_REF_REASON, surfaceOf, surfaceRuns, type OsmWay } from "./race-course/lite";
 import { sunTimes } from "./race-course/sun";
 import { angleBetween, percentile, prevailing, windSide, windStats } from "./race-course/wind";
 
@@ -305,6 +310,105 @@ ok("высоты из GPX: с <ele> берутся, без — пропуска�
   const g = readGpxEle(file);
   assert.deepEqual(g.ele, [120.5, 131]);
   assert.deepEqual(g.points, [[55, 37], [55.002, 37]]);
+});
+
+// ── урезанный разбор ─────────────────────────────────────────────────────────
+// Слова про высоту, которых в урезанном разборе быть не должно ни в точках, ни в сути.
+const HEIGHT_WORDS = /подъ[её]м|спуск|набор \d|сброс \d|в горку|под уклон|перепад/i;
+
+ok("урезанный: кто публикуется урезанным, а кто никак", () => {
+  const base = { track: [[55, 37], [55.01, 37]] as [number, number][], source: { kind: "gpx_organizer", url: null, note: null } };
+  const no = (reason: string | null, publish = false, kind = "gpx_organizer", track = base.track) =>
+    liteEligible({ ...base, track, source: { ...base.source, kind }, checks: { ours: 1, organizer: null, student: null, publish, reason } });
+  assert.equal(no(NO_REF_REASON), true, "единственная причина — нет эталона");
+  assert.equal(no("набор по DEM 234 м расходится с цифрой организатора (450 м) на 48%, допуск 30%"), false, "сверка не пройдена (Drift Cross)");
+  assert.equal(no("набор по DEM 132 м расходится с цифрой организатора (31 м) на 327%, допуск 30%"), false, "Hard Trail");
+  assert.equal(no(`длина трека 12.2 км против дистанции 10 км (22%); ${NO_REF_REASON}`), false, "и длина не та");
+  assert.equal(no(NO_REF_REASON, false, "scheme_reconstructed"), false, "по схеме — никогда");
+  assert.equal(no(NO_REF_REASON, false, "gpx_organizer", []), false, "без трека");
+  assert.equal(no(null, true), false, "полный разбор уже опубликован — урезанным не становится");
+});
+
+ok("урезанный: разворот на «туда-обратно», серпантин, прямая без поворотов", () => {
+  // 2 км на север и обратно: один разворот на 2 км
+  const out: LatLon[] = Array.from({ length: 21 }, (_, i) => [55 + i * 0.0009, 37] as LatLon);
+  const turns = findTurns([...out, ...out.slice(0, -1).reverse()]);
+  assert.equal(turns.length, 1);
+  assert.ok(turns[0].deg >= 150 && Math.abs(turns[0].m - 2000) < 100, JSON.stringify(turns));
+  assert.deepEqual(findTurns(out), [], "прямая — без поворотов");
+  // серпантин: колена по 150 м, направление попеременно 60° и 300° — поворот 120° на каждом колене
+  const zig: LatLon[] = [[55, 37]];
+  for (let i = 1; i < 12; i++) zig.push([zig[i - 1][0] + 0.000675, zig[i - 1][1] + (i % 2 ? 0.00203 : -0.00203)]);
+  const z = findTurns(zig);
+  assert.ok(z.length >= 3, `серпантин: ${z.length}`);
+  const pts = keyPointsLite({ totalM: 3000, trail: true, turns: z, runs: [], perKm: [], wind: null });
+  assert.ok(pts.some((p) => /серпантин/.test(p.text)), JSON.stringify(pts));
+});
+
+ok("урезанный: покрытие по тегам OSM и участки от 500 м", () => {
+  assert.equal(surfaceOf({ highway: "residential" }), "асфальт");
+  assert.equal(surfaceOf({ highway: "track" }), "грунт");
+  assert.equal(surfaceOf({ highway: "path" }), "тропа");
+  assert.equal(surfaceOf({ highway: "path", surface: "asphalt" }), "асфальт");
+  assert.equal(surfaceOf({ highway: "footway" }), null, "тротуар без surface — не гадаем");
+  const runs = surfaceRuns([
+    ...Array.from({ length: 10 }, (_, i) => ({ m: i * 100, s: "асфальт" as const })),
+    { m: 1000, s: null }, { m: 1100, s: "тропа" as const },
+    ...Array.from({ length: 10 }, (_, i) => ({ m: 1200 + i * 100, s: "грунт" as const })),
+  ]);
+  assert.deepEqual(runs.map((r) => r.s), ["асфальт", "грунт"], "короткая вставка и неизвестное поглощены");
+  const pts = keyPointsLite({ totalM: 2200, trail: false, turns: [], runs, perKm: [], wind: null });
+  assert.ok(pts.some((p) => p.type === "surface" && /асфальт кончается, дальше грунт/.test(p.text)), JSON.stringify(pts));
+  assert.equal(liteSummary({ асфальт: 48, грунт: 52 }, 90, []), "грунт 52%, асфальт 48%");
+  assert.equal(liteSummary({ асфальт: 60, грунт: 40 }, 30, []), "", "покрытие определено меньше чем на половине — не говорим");
+});
+
+ok("урезанный: makeLite убирает профиль, набор и сброс везде, точки без слов о высоте", () => {
+  const track: LatLon[] = Array.from({ length: 41 }, (_, i) => [55 + (i <= 20 ? i : 40 - i) * 0.0009, 37] as LatLon);
+  const ways: OsmWay[] = [{ tags: { highway: "track" }, geometry: [{ lat: 54.999, lon: 37 }, { lat: 55.02, lon: 37 }] }];
+  const full = {
+    raceId: "x:1", name: "Трейл", date: "2026-11-01", distanceKm: 4, source: { kind: "gpx_organizer", url: null, note: null },
+    summary: "2 подъёма до 120 м", track, elevation: [[0, 100], [4, 140]] as [number, number][], gain: 230, loss: 228,
+    perKm: [1, 2, 3, 4].map((km) => ({ km, gain: 50, loss: 50, bearing: 0, wind: "head" as const })),
+    checks: { ours: 230, organizer: null, student: null, publish: false, reason: NO_REF_REASON },
+    wind: { dir: 0, dirLabel: "С", medianMs: 4, p75Ms: 6, gustP75Ms: 9, years: 5, sample: 100 }, forecast: null,
+    keyPoints: [{ km: 1, type: "climb" as const, text: "Подъём 120 м" }],
+  };
+  const l = makeLite(full, ways, true);
+  assert.equal(l.checks.publish, true);
+  assert.equal(l.checks.lite, true);
+  assert.deepEqual(l.elevation, []);
+  assert.equal(l.gain + l.loss + l.checks.ours, 0);
+  assert.ok(l.perKm.every((k) => k.gain === 0 && k.loss === 0), "и по км");
+  assert.ok(!l.keyPoints.some((p) => p.type === "climb" || p.type === "descent" || HEIGHT_WORDS.test(p.text)), JSON.stringify(l.keyPoints));
+  assert.doesNotMatch(l.summary ?? "", HEIGHT_WORDS);
+  assert.ok(l.keyPoints.some((p) => /^Разворот/.test(p.text)), "разворот найден");
+});
+
+// Было до 15.10.2026: без эталона разбор не публиковался вовсе (index.json — только полные). Теперь
+// он публикуется урезанным; стережём на настоящих данных, что урезанный ни в одном месте не выдаёт
+// высоту, а не прошедшие сверку, без трека и по схемам в index.json не попали.
+ok("данные: урезанные без высот, не прошедшие сверку не опубликованы", () => {
+  const dir = path.join(process.cwd(), "src", "data", "race-courses");
+  const index = JSON.parse(readFileSync(path.join(dir, "index.json"), "utf8")) as { slug: string; lite?: boolean; gain?: number | null; loss?: number | null; mini?: string; summary?: string; points?: { text: string }[] }[];
+  const published = new Set(index.map((x) => x.slug));
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".json") && x !== "index.json")) {
+    const slug = f.replace(/\.json$/, "");
+    const c = JSON.parse(readFileSync(path.join(dir, f), "utf8"));
+    if (!c.checks.publish) { assert.ok(!published.has(slug), `${slug}: не публикуется, а в index.json`); continue; }
+    assert.ok(!/scheme|схем/i.test(c.source.kind), `${slug}: трасса по схеме опубликована`);
+    if (!c.checks.lite) continue;
+    assert.equal(c.checks.reason, NO_REF_REASON, `${slug}: урезанным — только «нет эталона»`);
+    assert.ok(c.elevation.length === 0 && c.gain === 0 && c.loss === 0, `${slug}: профиль или набор`);
+    assert.ok(!c.keyPoints.some((p: { text: string }) => HEIGHT_WORDS.test(p.text)), `${slug}: слова о высоте в точках`);
+    assert.doesNotMatch(c.summary ?? "", HEIGHT_WORDS, slug);
+    const e = index.find((x) => x.slug === slug)!;
+    assert.ok(e.lite === true && e.gain === null && e.loss === null && !e.mini, `${slug}: в index.json цифры или мини-профиль`);
+    assert.ok(!(e.points ?? []).some((p) => HEIGHT_WORDS.test(p.text)), slug);
+  }
+  for (const s of ["probeg_78437-9k", "probeg_73615-7k", "probeg_78465", "probeg_84558", "probeg_85642-10k"]) {
+    assert.ok(!published.has(s), `${s} не прошёл сверку — не публикуем`);
+  }
 });
 
 console.log(`\ncheck:race-course: ${n} ok`);

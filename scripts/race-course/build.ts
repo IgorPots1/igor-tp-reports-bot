@@ -30,17 +30,20 @@
  * База только на чтение.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
 
 import { checkGain } from "./checks";
+import { updateIndex as writeIndex, type IndexExtra } from "./course-index";
+import type { CourseData } from "@/features/race-course/types";
 import { cumulative, resample, simplifyTo, type LatLon } from "./geo";
 import { courseSummary, keyPoints, keyPointsTrail, shortPoints, type AidInfo } from "./key-points";
 import { gainLoss, perKm, profileSeries, segments, smoothByDistance } from "./profile";
 import { miniProfileSvg, profileSvg, writeProfileImage } from "./render";
 import { fetchElevations, fetchForecast, fetchWindHistory, readGpx, readGpxEle } from "./sources";
+import { fetchSurface, isScheme, liteEligible, liteShortPoints, makeLite, SCHEME_REASON } from "./lite";
 import { sunTimes } from "./sun";
 import { windSide, windStats } from "./wind";
 
@@ -184,6 +187,8 @@ async function main() {
   const lenDiff = Math.abs(lengthKm - distanceKm) / distanceKm;
   if (lenDiff > LENGTH_TOLERANCE) extra.push(`длина трека ${lengthKm.toFixed(1)} км против дистанции ${distanceKm} км (${Math.round(lenDiff * 100)}%)`);
   if (flag("require-ref") && organizerGain == null && studentGain == null) extra.push("нет эталона набора: ни цифры организатора, ни высот в его GPX, ни трека ученика");
+  // Трасса по схеме организатора не публикуется ни полным, ни урезанным разбором (решение 15.10.2026).
+  if (isScheme(source.kind)) extra.push(SCHEME_REASON);
   const checks = checkGain(gain, organizerGain, studentGain != null ? Math.round(studentGain) : null, extra);
   if (organizerGainFrom === "gpx") source.note = `${source.note ? `${source.note}; ` : ""}набор организатора ${organizerGain} м по высотам его GPX`;
 
@@ -200,7 +205,7 @@ async function main() {
     : keyPoints({ ...base, crowd: !(distanceKm > 42.2 || (finishers != null && finishers < 300)) });
 
   const summary = courseSummary(segs, stretch(totalM - 1000, totalM));
-  const course = {
+  let course: CourseData = {
     raceId,
     name,
     date,
@@ -217,6 +222,16 @@ async function main() {
     forecast,
     keyPoints: points,
   };
+  // Эталона набора нет, а больше претензий нет — урезанный разбор: без профиля и цифры набора,
+  // точки по поворотам, покрытию и ветру (решение Игоря 15.10.2026).
+  if (liteEligible(course)) {
+    course = makeLite(course, await fetchSurface(course.track), trail);
+    writeFileSync(outFile, JSON.stringify(course, null, 1) + "\n");
+    const short = liteShortPoints(course.keyPoints).map((p, i) => ({ n: i + 1, km: p.km, text: p.text }));
+    updateIndex(raceId, true, { km: distanceKm, label: label ?? null, gain: null, loss: null, summary: course.summary ?? "", points: short, lite: true });
+    console.log(JSON.stringify({ raceId, file: outFile, lite: true, summary: course.summary, keyPoints: course.keyPoints }, null, 2));
+    return;
+  }
   writeFileSync(outFile, JSON.stringify(course, null, 1) + "\n");
   // Короткий разбор в боте: до 4 точек и мини-профиль с их номерами (картинка в public, бот
   // показывает её предпросмотром ссылки над текстом).
@@ -243,22 +258,9 @@ async function main() {
   }, null, 2));
 }
 
-/** index.json: какие разборы опубликованы (его читает бот). Ключ — slug: у старта с несколькими
- *  дистанциями их может быть несколько, бот берёт первый. */
-type IndexExtra = { km: number; label: string | null; gain: number; loss: number; summary: string; points: { n: number; km: number; text: string }[]; mini: string };
+/** index.json — общий модуль course-index.ts (его же пишет relite.ts). */
 function updateIndex(id: string, publish: boolean, extra?: IndexExtra) {
-  const file = path.join(DATA_DIR, "index.json");
-  let list: ({ raceId: string; slug: string } & Partial<IndexExtra>)[] = [];
-  try {
-    list = JSON.parse(readFileSync(file, "utf8"));
-  } catch {
-    list = [];
-  }
-  list = list.filter((x) => x.slug !== slug(id));
-  // km и label — для кнопок выбора дистанции в боте, когда у старта разборов несколько
-  if (publish) list.push({ raceId: id, slug: slug(id), ...(extra ?? {}) });
-  list.sort((a, b) => a.raceId.localeCompare(b.raceId));
-  writeFileSync(file, JSON.stringify(list, null, 1) + "\n");
+  writeIndex(DATA_DIR, id, slug(id), publish, extra);
 }
 
 main().catch((e) => {

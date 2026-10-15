@@ -6,14 +6,16 @@ import index from "@/data/race-courses/index.json";
 import { SITE_URL } from "@/lib/site";
 
 type Entry = {
-  raceId: string; slug: string; km?: number; label?: string | null; gain?: number; loss?: number;
-  summary?: string; points?: { n: number; km: number; text: string }[]; mini?: string;
+  raceId: string; slug: string; km?: number; label?: string | null; gain?: number | null; loss?: number | null;
+  summary?: string; points?: { n: number; km: number; text: string }[]; mini?: string; lite?: boolean;
 };
 
 /** Разбор для бота: адрес страницы, цифры, суть и до 4 точек короткого разбора с мини-профилем. */
 export type CourseLink = {
   url: string; km: number | null; label: string | null; gain: number | null; loss: number | null;
   summary: string | null; points: { n: number; km: number; text: string }[]; mini: string | null;
+  /** Урезанный разбор (эталона набора нет, 15.10.2026): набора, сброса и мини-профиля нет. */
+  lite: boolean;
 };
 
 const BY_ID = new Map<string, CourseLink[]>();
@@ -21,7 +23,9 @@ for (const x of index as Entry[]) {
   const list = BY_ID.get(x.raceId) ?? [];
   list.push({
     url: `${SITE_URL}/races/${x.slug}/trassa`, km: x.km ?? null, label: x.label ?? null, gain: x.gain ?? null, loss: x.loss ?? null,
-    summary: x.summary ?? null, points: x.points ?? [], mini: x.mini ? `${SITE_URL}${x.mini}` : null,
+    summary: x.summary ?? null, points: x.points ?? [],
+    // у урезанного ни цифр, ни картинки профиля, даже если в index что-то осталось
+    mini: x.mini && !x.lite ? `${SITE_URL}${x.mini}` : null, ...(x.lite ? { gain: null, loss: null } : {}), lite: x.lite === true,
   });
   BY_ID.set(x.raceId, list);
 }

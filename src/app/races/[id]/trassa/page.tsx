@@ -39,7 +39,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return publicPageMetadata({
     path: `/races/${id}/trassa`,
     title: `${c.name}: разбор трассы | igorp.run`,
-    description: `Профиль высот, подъёмы и спуски, ветер в эти дни и тактика по участкам: ${c.name}, ${longDate(c.date)}.`,
+    description: c.checks.lite
+      ? `Карта, повороты и покрытие, ветер в эти дни и тактика по участкам: ${c.name}, ${longDate(c.date)}.`
+      : `Профиль высот, подъёмы и спуски, ветер в эти дни и тактика по участкам: ${c.name}, ${longDate(c.date)}.`,
   });
 }
 
@@ -53,6 +55,11 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
   const consult = `https://t.me/${COACH}?text=${encodeURIComponent(`Привет! Хочу консультацию по подготовке к ${c.name}`)}`;
   const heads = c.perKm.filter((k) => k.wind === "head").length;
   const fresh = trackFreshness(c);
+  // Урезанный разбор (эталона набора нет, 15.10.2026): ни профиля, ни цифр набора и сброса нигде на странице.
+  const lite = c.checks.lite === true;
+  const surface = lite && c.surface && c.surface.known >= 50
+    ? (Object.entries(c.surface.share) as [string, number][]).filter(([, v]) => v >= 5).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}%`).join(", ")
+    : null;
   // «Следить в Telegram»: та же ссылка r_<код>, что у звёздочки в календаре на сайте.
   const follow = `https://t.me/${BOT}?start=r_${raceCode(c.raceId)}`;
   return (
@@ -67,13 +74,20 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
           {longDate(c.date)} · {ru(c.distanceKm)} км · разбор трассы
         </p>
         {fresh ? <p className={styles.fresh}>{fresh}</p> : null}
-        <p className={styles.facts}>
-          Набор {c.gain} м · сброс {c.loss} м{c.checks.organizer !== null ? ` · у организатора ${c.checks.organizer} м` : ""}
-        </p>
+        {lite ? (
+          <p className={styles.facts}>
+            Набор высоты уточняется{surface ? ` · покрытие: ${surface}` : ""}
+          </p>
+        ) : (
+          <p className={styles.facts}>
+            Набор {c.gain} м · сброс {c.loss} м{c.checks.organizer !== null ? ` · у организатора ${c.checks.organizer} м` : ""}
+          </p>
+        )}
         <a className={styles.follow} href={follow}>
           ⭐ Следить в Telegram
         </a>
 
+        {lite ? null : (
         <section className={styles.block}>
           <h2 className={styles.h2}>Профиль высот</h2>
           {c.checks.publish ? (
@@ -88,6 +102,7 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
             <p className={styles.note}>Профиль высот не публикуем: {c.checks.reason}</p>
           )}
         </section>
+        )}
 
         <section className={styles.block}>
           <h2 className={styles.h2}>Карта трассы</h2>

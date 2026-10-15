@@ -798,12 +798,15 @@ export function seasonList(
 }
 
 const kmText = (x: number) => String(Math.round(x * 10) / 10).replace(".", ",");
+const LITE_GAIN = "набор высоты уточняется";
 const courseTitle = (c: CourseLink) => (c.km != null ? `${kmText(c.km)} км${c.label ? ` · ${c.label}` : ""}` : c.label ?? "Разбор трассы");
 
 /** Выбор дистанции (экран 2): в тексте под каждой суть одной строкой и набор, кнопка на каждую.
  *  code/tail — как у карточки: tv:<code>:<номер>:<tail>, назад tb:<code>:<tail>. */
 export function courseChoice(r: BotRace, courses: CourseLink[], code: string, tail: string): Msg {
-  const lines = courses.map((c) => `<b>${esc(courseTitle(c))}</b>\n${esc(c.summary ?? "")}${c.gain != null ? `${c.summary ? " · " : ""}набор ${c.gain} м` : ""}`);
+  // урезанный разбор (без эталона набора): вместо цифры «набор высоты уточняется»
+  const gainText = (c: CourseLink) => (c.lite ? LITE_GAIN : c.gain != null ? `набор ${c.gain} м` : "");
+  const lines = courses.map((c) => `<b>${esc(courseTitle(c))}</b>\n${esc([c.summary, gainText(c)].filter(Boolean).join(" · "))}`);
   return {
     text: `<b>${esc(r.name)}</b>\nРазбор трассы: выбери дистанцию.\n\n${lines.join("\n\n")}`,
     reply_markup: {
@@ -818,7 +821,9 @@ export function courseChoice(r: BotRace, courses: CourseLink[], code: string, ta
 /** Короткий разбор в том же сообщении (экран 3): мини-профиль предпросмотром, до 4 точек с теми же
  *  номерами, что на картинке, и кнопки «Полный разбор с картой», «Другая дистанция», «Следить». */
 export function courseShort(r: BotRace, c: CourseLink, multi: boolean, following: boolean, code: string, tail: string): Msg {
-  const facts = [c.km != null ? `${kmText(c.km)} км` : null, c.label, c.gain != null ? `набор ${c.gain} м` : null, c.loss != null ? `сброс ${c.loss} м` : null].filter(Boolean).join(" · ");
+  const facts = c.lite
+    ? [c.km != null ? `${kmText(c.km)} км` : null, c.label, c.summary, LITE_GAIN].filter(Boolean).join(" · ")
+    : [c.km != null ? `${kmText(c.km)} км` : null, c.label, c.gain != null ? `набор ${c.gain} м` : null, c.loss != null ? `сброс ${c.loss} м` : null].filter(Boolean).join(" · ");
   const pts = c.points.map((p) => `<b>${p.n}. ${kmText(p.km)} км.</b> ${esc(p.text)}`);
   const rows: Button[][] = [[{ text: "Полный разбор с картой", url: c.url }]];
   if (multi) rows.push([{ text: "Другая дистанция", callback_data: `tc:${code}:${tail}` }]);
@@ -855,7 +860,8 @@ export function raceScreen(
   // Разбор трассы (наряд 15.10.2026): метка в карточке и кнопка; одна дистанция — сразу короткий
   // разбор в этом сообщении, несколько — выбор по км.
   const courses = courseList(r.id);
-  if (courses.length) rows.push([{ text: "Разбор трассы: подъёмы, спуски, ветер", callback_data: `tc:${code}:${tail}` }]);
+  // все разборы урезанные — про подъёмы не обещаем: там только повороты, покрытие и ветер
+  if (courses.length) rows.push([{ text: courses.every((c) => c.lite) ? "Разбор трассы: повороты, покрытие, ветер" : "Разбор трассы: подъёмы, спуски, ветер", callback_data: `tc:${code}:${tail}` }]);
   if (consult) rows.push([{ text: "Бесплатная консультация", callback_data: `consult:${code}` }]);
   rows.push([{ text: "← К списку", callback_data: back }]);
   return {

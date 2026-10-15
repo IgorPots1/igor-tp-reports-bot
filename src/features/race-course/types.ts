@@ -4,7 +4,8 @@
 
 export type WindSide = "head" | "tail" | "cross";
 
-export type CourseKeyPoint = { km: number; type: "climb" | "descent" | "wind" | "other"; text: string };
+/** turn и surface — точки урезанного разбора (без эталона набора, 15.10.2026): повороты и покрытие. */
+export type CourseKeyPoint = { km: number; type: "climb" | "descent" | "wind" | "other" | "turn" | "surface"; text: string };
 
 export type CourseData = {
   raceId: string;
@@ -22,10 +23,13 @@ export type CourseData = {
   gain: number;
   loss: number;
   perKm: { km: number; gain: number; loss: number; bearing: number; wind: WindSide }[];
-  checks: { ours: number; organizer: number | null; student: number | null; publish: boolean; reason: string | null };
+  /** lite — урезанный разбор: эталона набора нет, профиль и цифру набора не показываем (15.10.2026). */
+  checks: { ours: number; organizer: number | null; student: number | null; publish: boolean; reason: string | null; lite?: boolean };
   wind: { dir: number; dirLabel: string; medianMs: number; p75Ms: number; gustP75Ms: number; years: number; sample: number } | null;
   forecast: { speedMs: number; dir: number; dirLabel: string; gustMs?: number | null } | null;
   keyPoints: CourseKeyPoint[];
+  /** Покрытие по OSM у урезанного разбора: доли, % от определённой части; known — сколько трассы определено, %. */
+  surface?: { share: Partial<Record<"асфальт" | "грунт" | "тропа", number>>; known: number };
 };
 
 const FROM: Record<string, string> = {
