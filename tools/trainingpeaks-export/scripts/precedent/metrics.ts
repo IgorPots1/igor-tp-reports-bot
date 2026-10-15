@@ -28,13 +28,13 @@ export function summarise(sessions: MSess[]): Side {
 }
 
 export type Err = {
-  totalAbs: number; totalApe: number; daysAbs: number; daysExact: boolean; longestAbs: number; longestEasyAbs: number;
+  totalAbs: number; totalSigned: number; totalApe: number; daysAbs: number; daysExact: boolean; longestAbs: number; longestEasyAbs: number;
   easiesAbs: number; workAbs: number; shortestAbs: number; underAbs: number; qExact: boolean; qAbs: number;
   longDayHit: boolean | null; qDayHit: boolean | null;
 };
 export function err(actual: Side, pred: Side): Err {
   return {
-    totalAbs: Math.abs(pred.total - actual.total), totalApe: Math.abs(pred.total - actual.total) / Math.max(30, actual.total),
+    totalAbs: Math.abs(pred.total - actual.total), totalSigned: pred.total - actual.total, totalApe: Math.abs(pred.total - actual.total) / Math.max(30, actual.total),
     daysAbs: Math.abs(pred.days - actual.days), daysExact: pred.days === actual.days,
     longestAbs: Math.abs(pred.longest - actual.longest), longestEasyAbs: Math.abs(pred.longestEasy - actual.longestEasy),
     easiesAbs: Math.abs(pred.easies - actual.easies), workAbs: Math.abs(pred.work - actual.work),
@@ -50,7 +50,7 @@ export function score(e: Err): number {
   return e.totalApe + 0.4 * e.daysAbs + 0.4 * e.qAbs + 0.3 * (e.longDayHit === false ? 1 : 0) + 0.004 * e.longestAbs;
 }
 
-export type Agg = { n: number; totalMae: number; totalMape: number; within15: number; daysExact: number; daysMae: number; longestMae: number; longestEasyMae: number;
+export type Agg = { n: number; bias: number; under: number; totalMae: number; totalMape: number; within15: number; daysExact: number; daysMae: number; longestMae: number; longestEasyMae: number;
   easiesMae: number; workMae: number; shortestMae: number; underMae: number; qExact: number; longDayHit: number; longDayN: number; qDayHit: number; qDayN: number; score: number };
 export function aggregate(es: Err[]): Agg {
   const n = Math.max(1, es.length);
@@ -58,7 +58,7 @@ export function aggregate(es: Err[]): Agg {
   const rate = (f: (e: Err) => boolean): number => Math.round(1000 * es.filter(f).length / n) / 10;
   const ld = es.filter((e) => e.longDayHit != null); const qd = es.filter((e) => e.qDayHit != null);
   return {
-    n: es.length, totalMae: mean((e) => e.totalAbs), totalMape: mean((e) => 100 * e.totalApe), within15: rate((e) => e.totalApe <= 0.15),
+    n: es.length, bias: mean((e) => e.totalSigned), under: rate((e) => e.totalSigned < 0 && e.totalApe > 0.15), totalMae: mean((e) => e.totalAbs), totalMape: mean((e) => 100 * e.totalApe), within15: rate((e) => e.totalApe <= 0.15),
     daysExact: rate((e) => e.daysExact), daysMae: Math.round(100 * es.reduce((s, e) => s + e.daysAbs, 0) / n) / 100,
     longestMae: mean((e) => e.longestAbs), longestEasyMae: mean((e) => e.longestEasyAbs), easiesMae: Math.round(100 * es.reduce((s, e) => s + e.easiesAbs, 0) / n) / 100,
     workMae: mean((e) => e.workAbs), shortestMae: mean((e) => e.shortestAbs), underMae: Math.round(100 * es.reduce((s, e) => s + e.underAbs, 0) / n) / 100,

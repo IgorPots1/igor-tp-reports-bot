@@ -75,8 +75,8 @@ const TUNED = best.w;
 const out: string[] = [];
 const p = (s = ""): void => { out.push(s); };
 const row = (name: string, a: Agg, miss = 0): string =>
-  `| ${name} | ${a.n}${miss ? ` (−${miss})` : ""} | ${a.totalMae} | ${a.totalMape}% | ${a.within15}% | ${a.daysExact}% | ${a.qExact}% | ${a.longDayHit}% | ${a.qDayHit}% | ${a.longestMae} | ${a.longestEasyMae} | ${a.workMae} | ${a.shortestMae} | ${a.underMae} | ${a.score} |`;
-const HDR = `| метод | недель | сумма MAE, мин | сумма MAPE | сумма ±15% | дни точно | кач-х точно | день длит. | день кач. | длит. MAE | дл.лёгк MAE | работа MAE | кратч. MAE | <45 MAE | балл↓ |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|`;
+  `| ${name} | ${a.n}${miss ? ` (−${miss})` : ""} | ${a.bias > 0 ? "+" : ""}${a.bias} | ${a.under}% | ${a.totalMae} | ${a.totalMape}% | ${a.within15}% | ${a.daysExact}% | ${a.qExact}% | ${a.longDayHit}% | ${a.qDayHit}% | ${a.longestMae} | ${a.longestEasyMae} | ${a.workMae} | ${a.shortestMae} | ${a.underMae} | ${a.score} |`;
+const HDR = `| метод | недель | смещение суммы, мин | недодано >15% | сумма MAE, мин | сумма MAPE | сумма ±15% | дни точно | кач-х точно | день длит. | день кач. | длит. MAE | дл.лёгк MAE | работа MAE | кратч. MAE | <45 MAE | балл↓ |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|`;
 
 p(`# Шаг 3 · мера похожести и бэктест`);
 p();
