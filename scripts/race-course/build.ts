@@ -19,6 +19,8 @@
  *   --aid-count <n>          пунктов питания по положению; --aid "15:Иноземцево,51:Феррум" — известные по км
  *   --finishers <n>          финишёров прошлого проведения: меньше 300, значит без «старт в толпе»
  *   --track-year <YYYY>      какого года трек: метка свежести на странице («Трасса 2026, трек организатора»)
+ *   --require-ref            публиковать только со сверкой: без цифры организатора, высот в GPX и трека
+ *                            ученика разбор собирается, но publish=false («нет эталона набора»)
  *   --variant <slug>         дистанция многодистанционного старта (например 30k): файл <safe_id>-<slug>.json,
  *                            свой профиль; без него один разбор на старт, как раньше
  *
@@ -38,7 +40,7 @@ import { cumulative, resample, simplifyTo, type LatLon } from "./geo";
 import { courseSummary, keyPoints, keyPointsTrail, shortPoints, type AidInfo } from "./key-points";
 import { gainLoss, perKm, profileSeries, segments, smoothByDistance } from "./profile";
 import { miniProfileSvg, profileSvg, writeProfileImage } from "./render";
-import { fetchElevations, fetchForecast, fetchWindHistory, readGpx } from "./sources";
+import { fetchElevations, fetchForecast, fetchWindHistory, readGpx, readGpxEle } from "./sources";
 import { sunTimes } from "./sun";
 import { windSide, windStats } from "./wind";
 
@@ -94,7 +96,8 @@ async function main() {
   const trail = race.race_type === "trail";
   const label = opt("label");
   const name = label ? `${race.name}, ${label}` : (race.name as string);
-  const organizerGain = opt("organizer-gain") != null ? Number(opt("organizer-gain")) : null;
+  let organizerGain = opt("organizer-gain") != null ? Number(opt("organizer-gain")) : null;
+  let organizerGainFrom: "text" | "gpx" | null = organizerGain != null ? "text" : null;
 
   // Трек ученика: эталон набора и, без GPX, форма трассы. Наружу только линия.
   let studentLine: LatLon[] | null = null;
@@ -162,11 +165,27 @@ async function main() {
     studentGain = Math.round(gainLoss(smoothByDistance(s.distM, await fetchElevations(s.points), SMOOTH_M)).gain);
   }
 
+  // Высоты в GPX организатора — эталон набора, если цифры в тексте нет (то же сглаживание, что у DEM).
+  if (organizerGain == null && gpxPath) {
+    const g = readGpxEle(gpxPath);
+    if (g.points.length >= 0.8 * line.length && g.points.length > 10) {
+      const rg = resample(g.points, STEP_M);
+      // высоту ресемплированной точки берём у ближайшей исходной по дистанции
+      const cum = cumulative(g.points);
+      let j = 0;
+      const eleAt = rg.distM.map((d) => { while (j < cum.length - 1 && Math.abs(cum[j + 1] - d) <= Math.abs(cum[j] - d)) j++; return g.ele[j]; });
+      organizerGain = Math.round(gainLoss(smoothByDistance(rg.distM, eleAt, SMOOTH_M)).gain);
+      organizerGainFrom = "gpx";
+    }
+  }
+
   const lengthKm = totalM / 1000;
   const extra: string[] = [];
   const lenDiff = Math.abs(lengthKm - distanceKm) / distanceKm;
   if (lenDiff > LENGTH_TOLERANCE) extra.push(`длина трека ${lengthKm.toFixed(1)} км против дистанции ${distanceKm} км (${Math.round(lenDiff * 100)}%)`);
+  if (flag("require-ref") && organizerGain == null && studentGain == null) extra.push("нет эталона набора: ни цифры организатора, ни высот в его GPX, ни трека ученика");
   const checks = checkGain(gain, organizerGain, studentGain != null ? Math.round(studentGain) : null, extra);
+  if (organizerGainFrom === "gpx") source.note = `${source.note ? `${source.note}; ` : ""}набор организатора ${organizerGain} м по высотам его GPX`;
 
   const segs = segments(rs.distM, elev, 3);
   const stretch = (from: number, to: number) => gainLoss(elev.filter((_, i) => rs.distM[i] >= from && rs.distM[i] <= to));

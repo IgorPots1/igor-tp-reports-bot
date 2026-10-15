@@ -14,17 +14,22 @@
  *   — тактика: без цифр темпа, не больше 6 точек, есть финиш и старт;
  *   — трейловый шаблон (15.10.2026): без «толпы», шаг на крутом, спуск «3-5 м вперёд», фонарь до
  *     рассвета и после заката по контрольному времени, питание от 20 км; без длинного тире;
- *   — шоссе без «толпы» у ультра и малых стартов; восход и закат по формуле.
+ *   — шоссе без «толпы» у ультра и малых стартов; восход и закат по формуле;
+ *   — высоты из GPX организатора (эталон набора, когда цифры в тексте нет): точки без <ele> пропускаются.
  *
  *   npm run check:race-course
  */
 
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { checkGain } from "./race-course/checks";
 import { bearing, haversine, resample, simplifyTo, type LatLon } from "./race-course/geo";
 import { keyPoints, keyPointsTrail } from "./race-course/key-points";
 import { gainLoss, perKm, profileSeries, segments, smoothByDistance } from "./race-course/profile";
+import { readGpxEle } from "./race-course/sources";
 import { sunTimes } from "./race-course/sun";
 import { angleBetween, percentile, prevailing, windSide, windStats } from "./race-course/wind";
 
@@ -287,6 +292,19 @@ ok("шоссе: у ультра и малых стартов без «толпы
   assert.match(crowd[0].text, /в толпе/, "по умолчанию массовый старт: толпа есть, как раньше");
   const small = keyPoints({ totalM: 10000, segments: [], perKm: km, wind: null, crowd: false });
   assert.doesNotMatch(small.map((p) => p.text).join(" "), /толп/i);
+});
+
+ok("высоты из GPX: с <ele> берутся, без — пропускаются", () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "gpx-ele-"));
+  const file = path.join(dir, "t.gpx");
+  writeFileSync(file, `<gpx><trk><trkseg>
+<trkpt lat="55.0" lon="37.0"><ele>120.5</ele><time>x</time></trkpt>
+<trkpt lat="55.001" lon="37.0"></trkpt>
+<trkpt lat="55.002" lon="37.0"><ele>131</ele></trkpt>
+</trkseg></trk></gpx>`);
+  const g = readGpxEle(file);
+  assert.deepEqual(g.ele, [120.5, 131]);
+  assert.deepEqual(g.points, [[55, 37], [55.002, 37]]);
 });
 
 console.log(`\ncheck:race-course: ${n} ok`);

@@ -24,6 +24,18 @@ export function readGpx(path: string): LatLon[] {
   return trk.length ? trk : pick("rtept");
 }
 
+/** Высоты из GPX (<ele> внутри <trkpt>/<rtept>); точки без высоты пропускаются. Для эталона набора,
+ *  когда организатор цифры не пишет, а его трек несёт высоты. */
+export function readGpxEle(path: string): { points: LatLon[]; ele: number[] } {
+  const xml = readFileSync(path, "utf8");
+  const points: LatLon[] = [], ele: number[] = [];
+  for (const m of xml.matchAll(/<(?:trkpt|rtept)\b([^>]*)>([\s\S]*?)<\/(?:trkpt|rtept)>/g)) {
+    const lat = /lat="([-\d.]+)"/.exec(m[1]), lon = /lon="([-\d.]+)"/.exec(m[1]), e = /<ele>([-\d.]+)<\/ele>/.exec(m[2]);
+    if (lat && lon && e) { points.push([Number(lat[1]), Number(lon[1])]); ele.push(Number(e[1])); }
+  }
+  return { points, ele };
+}
+
 async function getJson(url: string): Promise<unknown> {
   for (let attempt = 1; ; attempt++) {
     let res: Response;
