@@ -52,11 +52,16 @@ export const DELTA_MIN = 0.5;
 export const DELTA_MAX = 1.25;
 /** Нижняя граница восстановительного множителя: 0.39 после марафона — это не зажим, а замер. */
 export const RECOVERY_DELTA_MIN = 0.35;
-export const LOOKBACK_WEEKS = 6;
+/** Сколько недель назад искать образец. Блок «подводка 2 + старт + восстановление 3» сам занимает 6 недель, поэтому 6 не хватает (выбор — r8 по проверке). */
+export let LOOKBACK_WEEKS = 10;
 
-/** Какие причины делают неделю непригодной формой. */
-export let SKIP_REASONS: Set<Abnormal> = new Set(["старт", "после старта", "подводка", "пик", "сигнал здоровья", "провал объёма", "мало дней"]);
-export function setRepeatParams(p: { normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean }): void {
+/**
+ * Какие причины делают неделю непригодной формой. ТОЛЬКО эти пять — ровно то, что проверено бэктестом r8. «Сигнал здоровья» и «мало дней»
+ * сюда НЕ входят: замер R4 (498 недель) — неделя с сигналом у Игоря обычная (объём ×1.0). Раньше список в коде был шире проверенного.
+ */
+export let SKIP_REASONS: Set<Abnormal> = new Set(["старт", "после старта", "подводка", "пик", "провал объёма"]);
+export function setRepeatParams(p: { normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean; lookback?: number }): void {
+  if (p.lookback != null) LOOKBACK_WEEKS = p.lookback;
   if (p.peak != null) PEAK_RATIO = p.peak;
   if (p.skip) SKIP_REASONS = new Set(p.skip);
   if (p.normal != null) NORMAL_MIN_RATIO = p.normal;

@@ -34,8 +34,8 @@ let paramsLoaded = false;
  */
 export function loadRepeatParams(): void {
   if (paramsLoaded) return;
-  const p = JSON.parse(readFileSync(path.join(DATA_DIR, "repeat-params.json"), "utf8")) as { normal: number; gap: number };
-  setRepeatParams({ normal: p.normal, gap: p.gap }); paramsLoaded = true;
+  const p = JSON.parse(readFileSync(path.join(DATA_DIR, "repeat-params.json"), "utf8")) as { normal: number; gap: number; lookback?: number };
+  setRepeatParams({ normal: p.normal, gap: p.gap, lookback: p.lookback }); paramsLoaded = true;
 }
 /** Тесты и бэктест задают параметры сами: файл читать не нужно. */
 export function useExplicitParams(): void { paramsLoaded = true; }

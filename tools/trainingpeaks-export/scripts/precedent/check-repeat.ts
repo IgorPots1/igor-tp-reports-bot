@@ -9,7 +9,7 @@
 import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
-import { planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON } from "./repeat.ts";
+import { planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
@@ -85,6 +85,13 @@ rows.push(...weekRows(13, wk(9), NORMAL));
 for (let k = 0; k < 2; k++) rows.push(...weekRows(14, wk(k), NORMAL));
 rows.push(...weekRows(14, wk(2), NORMAL));
 
+// атлет 15: после марафона подряд шесть не-образцов (подводка 2, старт, +1…+3), обычная неделя — седьмая назад: окно 6 её не видит
+for (let k = 0; k < 8; k++) rows.push(...weekRows(15, wk(k), NORMAL));
+rows.push(...weekRows(15, wk(8), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 40 }]), ...weekRows(15, wk(9), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Марафон", m: 240 }]));
+for (const k of [10, 11, 12]) rows.push(...weekRows(15, wk(k), [{ d: 1, t: EASY, m: 30 }, { d: 3, t: EASY, m: 30 }]));
+rows.push(...weekRows(15, wk(13), NORMAL));
+races.push({ trainingpeaks_athlete_id: 15, event_date: addDays(wk(9), 6), distance_km: 42.2, distance_raw: null });
+
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
 const T = (aid: number, k: number): CWeek => corpus.find((w) => w.aid === aid && w.weekStart === wk(k))!;
@@ -92,7 +99,7 @@ const hasQ = (s: { kind: string; title: string; src?: { desc?: string } }): bool
 const total_ = (ss: PSess[]): number => ss.reduce((s, x) => s + x.minutes, 0);
 const W8: Weights = { phase: 2.5, dist: 1.4, vol: 0.9, prev: 0.5, prevDays: 0.2, prevQ: 0.2, ill: 0.3, post: 0.3, gap: 1.8, own: 0.6, recency: 0.7 };
 // БОЕВЫЕ УМОЛЧАНИЯ снимаются ДО того, как проверки зададут свои значения: именно они работают в «раскидать».
-const PROD = { peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON };
+const PROD = { lookback: LOOKBACK_WEEKS, peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON };
 setRepeatParams({ normal: 0.6, gap: 2, skip: ["старт", "после старта", "подводка", "пик", "провал объёма"], peak: 1.25, recovery: true });
 useExplicitParams();
 
@@ -246,9 +253,9 @@ console.log("\n── восстановление после старта по 
 
 console.log("\n── класс «пик» ──");
 {
-  check("боевые умолчания: пик >1.25 × медианы, восстановление включено", PROD.peak === 1.25 && PROD.recovery === true, JSON.stringify(PROD));
-  check("боевые умолчания: не-образцы — старт, после старта, подводка, пик, провал, сигнал, мало дней (решения Игоря)",
-    PROD.skip === ["старт", "после старта", "подводка", "пик", "сигнал здоровья", "провал объёма", "мало дней"].sort().join(), PROD.skip);
+  check("боевые умолчания: пик >1.25 × медианы, восстановление включено, окно поиска образца 10 нед (подводка+старт+восстановление занимают 6)", PROD.peak === 1.25 && PROD.recovery === true && PROD.lookback === 10, JSON.stringify(PROD));
+  check("боевые умолчания: не-образцы — ровно пять проверенных классов: старт, после старта, подводка, пик, провал (сигнал здоровья — НЕ класс, замер R4)",
+    PROD.skip === ["старт", "после старта", "подводка", "пик", "провал объёма"].sort().join(), PROD.skip);
   const pk = planRepeat(ix, T(12, 7), null);
   check("пиковая неделя (400 при медиане 260, ×1.54) образцом не служит: берётся предыдущая обычная",
     pk.kind === "repeat" && pk.base.weekStart === wk(5) && pk.skipped.some((x) => x.why === "пик") && total_(pk.sessions) === 260, JSON.stringify(pk.kind === "repeat" ? { b: pk.base.weekStart, sk: pk.skipped } : pk));
@@ -257,6 +264,13 @@ console.log("\n── класс «пик» ──");
   check("без класса «пик» та же пиковая неделя была бы образцом (проверка различает)", nopk.kind === "repeat" && nopk.base.weekStart === wk(6) && total_(nopk.sessions) === 400);
   setRepeatParams({ peak: 1.25 });
   check("неделя ×1.15 медианы — не пик", planRepeat(ix, T(1, 5), null).kind === "repeat" && !(planRepeat(ix, T(1, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "пик"));
+}
+
+console.log("\n── окно поиска образца ──");
+{
+  const w = planRepeat(ix, T(15, 13), null);
+  check("после марафонного блока образец найден за окном в 6 недель: берётся последняя обычная неделя (wk6, шесть не-образцов позади), а не чужой прецедент",
+    w.kind === "repeat" && w.base.weekStart === wk(6) && w.skipped.length === 6, JSON.stringify(w.kind === "repeat" ? { b: w.base.weekStart, sk: w.skipped.map((x) => x.why) } : w));
 }
 
 console.log("\n── жёсткая граница: отказ вместо предупреждения ──");

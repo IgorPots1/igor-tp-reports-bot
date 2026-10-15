@@ -16,7 +16,7 @@ import { workMinutesFromTitle, type CWeek } from "./corpus.ts";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import { adapt, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Agg, type Err, type Side } from "./metrics.ts";
-import { setRepeatParams, NORMAL_MIN_RATIO, RETURN_GAP_WEEKS, type Abnormal, type CycleDelta } from "./repeat.ts";
+import { setRepeatParams, NORMAL_MIN_RATIO, RETURN_GAP_WEEKS, LOOKBACK_WEEKS, type Abnormal, type CycleDelta } from "./repeat.ts";
 import { buildRepeatWeek, useExplicitParams, type BuiltWeek } from "./build-week.ts";
 import { setGuardParams } from "./recent-level.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
@@ -59,14 +59,14 @@ function evalSet(ts: CWeek[], f: (t: CWeek) => Side | null): { agg: Agg; miss: n
 const train = ix.all.filter((w) => w.weekStart >= TRAIN_FROM && w.weekStart < SPLIT && w.avg4 > 0);
 const valid = ix.all.filter((w) => w.weekStart >= SPLIT && w.weekStart < VALID_TO && roster.has(w.aid) && w.avg4 > 0);
 const CLASSES: Abnormal[] = ["старт", "после старта", "подводка", "пик", "провал объёма"]; // решение Игоря: фиксировано
-const grid: Array<{ normal: number; gap: number; train: number; valid: number }> = [];
-for (const normal of [0.6, 0.8]) for (const gap of [2, 3, 99]) {
-  cacheTag = `g${normal}-${gap}`; setRepeatParams({ skip: CLASSES, normal, gap });
-  grid.push({ normal, gap, train: evalSet(train, mNew(false)).agg.score, valid: evalSet(valid, mNew(false)).agg.score });
+const grid: Array<{ normal: number; gap: number; lookback: number; train: number; valid: number }> = [];
+for (const normal of [0.6, 0.8]) for (const gap of [2, 3, 99]) for (const lookback of [6, 10, 14]) {
+  cacheTag = `g${normal}-${gap}-${lookback}`; setRepeatParams({ skip: CLASSES, normal, gap, lookback });
+  grid.push({ normal, gap, lookback, train: evalSet(train, mNew(false)).agg.score, valid: evalSet(valid, mNew(false)).agg.score });
 }
 grid.sort((a, b) => a.valid - b.valid || a.train - b.train);
 const CHOSEN = grid[0];
-cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, peak: 1.25, recovery: true }); setGuardParams({ gap: 4, ratio: 1.5 });
+cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, lookback: CHOSEN.lookback, peak: 1.25, recovery: true }); setGuardParams({ gap: 4, ratio: 1.5 });
 
 // ── вывод ──
 const out: string[] = []; const p = (s = ""): void => { out.push(s); };
@@ -76,7 +76,8 @@ const row = (n: string, r: { agg: Agg; miss: number }): string => { const a = r.
 
 p(`# R8 · бэктест после границ безопасности`);
 p();
-p(`Свободные параметры выбраны по ПРОВЕРКЕ 02.03–16.08 (${valid.length} недель), без пересечения с тестом: порог провала ${CHOSEN.normal}, прецедент при паузе ≥ ${CHOSEN.gap === 99 ? "∞ (не включается)" : CHOSEN.gap + " нед"}.`);
+p(`Свободные параметры выбраны по ПРОВЕРКЕ 02.03–16.08 (${valid.length} недель), без пересечения с тестом: порог провала ${CHOSEN.normal}, прецедент при паузе ≥ ${CHOSEN.gap === 99 ? "∞ (не включается)" : CHOSEN.gap + " нед"}, окно поиска образца ${CHOSEN.lookback} нед.`);
+p(`Перебор (балл на проверке): ${grid.slice(0, 6).map((g) => `порог ${g.normal}/пауза ${g.gap === 99 ? "∞" : g.gap}/окно ${g.lookback} → ${g.valid}`).join("; ")} … худший ${grid[grid.length - 1].valid}`);
 p(`Решения Игоря (не выбирались по баллу): образцом не служат старт, неделя после старта (по таблице), подводка перед главным стартом, ПИК (>1.25 × медианы 8 недель), провал; восстановление по дистанции; отказ без недавней истории (пауза ≥4 нед или <3 своих недель за 8); отказ при неделе >1.5 × p75 недавнего плана; на 1–3-й неделе после марафона качества нет.`);
 p();
 const bSet = ix.all.filter((w) => rulesNow.has(`${w.aid}|${w.weekStart}`) && w.avg4 > 0);
@@ -100,7 +101,7 @@ p();
 // ── цена решений ──
 p(`## Цена решений Игоря (метод 5, те же ${bSet.length} недель; отказы не входят в балл, число отказов в скобках)`);
 p(HDR);
-const diag = (name: string, fn: () => void): void => { cacheTag = `d-${name}`; fn(); const r = evalSet(bSet, mNew(true)); p(row(name, r)); cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, peak: 1.25, recovery: true }); setGuardParams({ gap: 4, ratio: 1.5 }); };
+const diag = (name: string, fn: () => void): void => { cacheTag = `d-${name}`; fn(); const r = evalSet(bSet, mNew(true)); p(row(name, r)); cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, lookback: CHOSEN.lookback, peak: 1.25, recovery: true }); setGuardParams({ gap: 4, ratio: 1.5 }); };
 p(row("5. как выше (все решения включены)", evalSet(bSet, mNew(true))));
 diag("(разбор) без класса «пик»", () => setRepeatParams({ skip: CLASSES.filter((c) => c !== "пик") }));
 diag("(разбор) без подводки в не-образцах", () => setRepeatParams({ skip: CLASSES.filter((c) => c !== "подводка") }));
@@ -128,5 +129,5 @@ p(HDR);
 for (const [n, f] of [["2. повтор прошлой недели", mPersist], ["3. прецедент целиком", mWhole], ["4. прежний гибрид", mOldHybrid], ["5′. метод 5 без цикла, с границами", mNew(false)]] as Array<[string, (t: CWeek) => Side | null]>) p(row(n, evalSet(aSet, f)));
 
 writeFileSync(path.join(OUT_DIR, "r8-backtest.md"), out.join("\n") + "\n");
-writeFileSync(path.join(DATA_DIR, "repeat-params.json"), JSON.stringify({ normal: NORMAL_MIN_RATIO, gap: RETURN_GAP_WEEKS }));
+writeFileSync(path.join(DATA_DIR, "repeat-params.json"), JSON.stringify({ normal: NORMAL_MIN_RATIO, gap: RETURN_GAP_WEEKS, lookback: LOOKBACK_WEEKS }));
 console.log(out.join("\n"));
