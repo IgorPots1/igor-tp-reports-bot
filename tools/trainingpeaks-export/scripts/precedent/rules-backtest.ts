@@ -23,7 +23,8 @@ import { sbc } from "./dump-corpus.ts";
 import { DATA_DIR } from "./load.ts";
 
 export type RulesSession = { dayIdx: number; role: string; title: string; minutes: number; description: string; deferred: boolean };
-export type RulesWeek = { aid: number; weekStart: string; tier: string; refused: boolean; withCycle: boolean; sessions: RulesSession[]; notes: string[]; studentNotes: string[] };
+export type CycleInfo = { role: string; target: number; base: number; weekIndex: number; totalWeeks: number; hasTargetRace: boolean };
+export type RulesWeek = { aid: number; weekStart: string; tier: string; refused: boolean; withCycle: boolean; cycle: CycleInfo | null; sessions: RulesSession[]; notes: string[]; studentNotes: string[] };
 
 async function main(): Promise<void> {
   const n = Number(process.argv[2] ?? 8);
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
     let built = 0;
     for (const [aid, c] of ctx) {
       const d = drafts.get(aid);
-      let w: Week | null = null; let withCycle = false;
+      let w: Week | null = null; let withCycle = false; let cycle: CycleInfo | null = null;
       try {
         if (d) {
           const w2r = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(W)) / (7 * 86400000)) + 1 : 8;
@@ -47,12 +48,13 @@ async function main(): Promise<void> {
             const t: CycleWeekTarget = { weekIndex: 1, totalWeeks: Math.max(1, w2r), role: f.role, aerobicMin: f.aerobicMin, qualityMin: f.qualityMin, days: f.days,
               baseWeekMin: d.baseAerobicMin + d.baseQualityMin, hasTargetRace: d.targetDate != null, intent: d.intent };
             w = buildWeek(c, c.envelope, cat, W, c.hasActiveIllness, c.tierNote, t); withCycle = true;
+            cycle = { role: f.role, target: f.aerobicMin + f.qualityMin, base: d.baseAerobicMin + d.baseQualityMin, weekIndex: 1, totalWeeks: Math.max(1, w2r), hasTargetRace: d.targetDate != null };
           }
         }
         if (!w) w = buildWeek(c, c.envelope, cat, W, c.hasActiveIllness, c.tierNote);
       } catch (e) { console.error(`[rules] ${aid} ${W}: ${e instanceof Error ? e.message : String(e)}`); continue; }
       out.push({
-        aid, weekStart: W, tier: w.tier, refused: Boolean(w.refused), withCycle,
+        aid, weekStart: W, tier: w.tier, refused: Boolean(w.refused), withCycle, cycle,
         sessions: (w.sessions ?? []).map((s) => ({ dayIdx: s.dayIdx, role: s.role, title: s.title, minutes: s.minutes, description: s.description, deferred: Boolean(s.deferred) })),
         notes: w.notes ?? [], studentNotes: w.studentNotes ?? [],
       });

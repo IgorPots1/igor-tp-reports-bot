@@ -41,6 +41,8 @@ export type CWeek = {
   roles: string; // 7 символов Пн..Вс: Q / L / E / .
   prevTotal: number; prevDays: number; prevQ: number; avg4: number; gapWeeks: number;
   weeksToRace: number | null; raceKm: number | null; weeksSinceRace: number | null;
+  /** день ближайшего старта от понедельника этой недели (0..13), null — в ближайшие 2 недели старта нет */
+  raceDayIdx: number | null;
   ill: boolean;
   /** сигнал болезни уже открыт на понедельник недели (знание на момент планирования, без подглядывания) */
   illAtStart: boolean;
@@ -163,6 +165,8 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
       const next = rs.find((r) => r.event_date >= wk && weeksBetween(wk, mondayOf(r.event_date)) <= 26);
       const lastR = [...rs].reverse().find((r) => r.event_date < wk);
       const weeksToRace = next ? weeksBetween(wk, mondayOf(next.event_date)) : null;
+      const raceOff = next ? Math.round((Date.parse(next.event_date) - Date.parse(wk)) / DAY) : null;
+      const raceDayIdx = raceOff != null && raceOff <= 13 ? raceOff : null;
       const weeksSinceRace = lastR ? weeksBetween(mondayOf(lastR.event_date), wk) : null;
       const sid = sidByAid.get(aid);
       const end = addDays(wk, 6);
@@ -179,7 +183,7 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
         qCount: ts.filter((s) => s.kind === "quality").length, longDay: long?.dayIdx ?? null, longMin: long?.minutes ?? 0,
         work: ts.reduce((s, x) => s + x.work, 0), roles: roles.join(""),
         prevTotal: prev?.total ?? 0, prevDays: prev?.days ?? 0, prevQ: prev?.q ?? 0, avg4, gapWeeks: gap,
-        weeksToRace, raceKm: next?.distance_km ?? null, weeksSinceRace, ill: isIll, illAtStart,
+        weeksToRace, raceKm: next?.distance_km ?? null, weeksSinceRace, raceDayIdx, ill: isIll, illAtStart,
         tier: tierOf(avg4 > 0 ? avg4 : total), phase, distBucket: distBucket(next?.distance_km ?? null), volBand: volBand(total),
         repeatOfPrev: prev?.sig === sigStr,
       });

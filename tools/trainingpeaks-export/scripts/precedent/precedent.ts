@@ -15,6 +15,7 @@
  */
 import type { CSess, CWeek, Kind } from "./corpus.ts";
 import { weeksBetween } from "./corpus.ts";
+import { heavyBeforeRace, PRE_RACE_DAYS } from "./validate.ts";
 
 /** Выбрано по обучающему отрезку, см. step3-backtest.ts «база перехода». */
 export type TransitionBase = "prev" | "level" | "none";
@@ -108,7 +109,16 @@ export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
     minutes: s.kind === "quality" ? s.minutes : round5(s.minutes * scale),
   }));
   let dayMap = "дни прецедента";
-  if (p.aid !== t.aid) {
+  // НЕДЕЛЯ СТАРТА ВЫРАВНИВАЕТСЯ ПО ДНЮ ГОНКИ, а не по дням недели (разбор 15.10: Богачёву чужая
+  // неделя поставила 60 мин в марафонском темпе накануне марафона — у прецедента старт был в
+  // другой день). Сдвиг = день старта цели − день старта прецедента; что уехало за неделю — снято.
+  if (t.raceDayIdx != null && p.raceDayIdx != null && t.phase === "race") {
+    const shift = t.raceDayIdx - p.raceDayIdx;
+    for (const s of sessions) s.dayIdx += shift;
+    const kept = sessions.filter((s) => s.dayIdx >= 0 && s.dayIdx <= 6 && s.dayIdx !== t.raceDayIdx);
+    sessions.splice(0, sessions.length, ...kept);
+    dayMap = `выровнено по дню старта (сдвиг ${shift > 0 ? "+" : ""}${shift} дн)`;
+  } else if (p.aid !== t.aid) {
     const h = dayHabit(ix, t.aid, t.weekStart);
     const total = h.easy.reduce((a, b) => a + b, 0) + h.long.reduce((a, b) => a + b, 0) + h.quality.reduce((a, b) => a + b, 0);
     if (total >= 6) {
@@ -126,7 +136,24 @@ export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
       dayMap = "дни по привычке атлета";
     }
   }
+  const removed = enforcePreRace(sessions, t.raceDayIdx);
+  if (removed.length) dayMap += `; снято перед стартом: ${removed.join(", ")}`;
   return { sessions, scale, dayMap };
+}
+
+/**
+ * ЖЁСТКИЙ ЗАПРЕТ: за 1–2 дня до старта ничего тяжелее короткой активации. Тяжёлая сессия там
+ * не переносится и не укорачивается — снимается целиком: правило про безопасность, а не про объём.
+ * Возвращает, что снято. Порог «тяжёлого» — validate.ts heavyBeforeRace (одна точка правды).
+ */
+export function enforcePreRace(sessions: PSess[], raceDayIdx: number | null): string[] {
+  if (raceDayIdx == null) return [];
+  const out: string[] = [];
+  for (let i = sessions.length - 1; i >= 0; i--) {
+    const s = sessions[i]; const off = raceDayIdx - s.dayIdx;
+    if (off >= 1 && off <= PRE_RACE_DAYS && heavyBeforeRace(s)) { out.push(`${s.title} ${s.minutes} мин`); sessions.splice(i, 1); }
+  }
+  return out;
 }
 
 /**
