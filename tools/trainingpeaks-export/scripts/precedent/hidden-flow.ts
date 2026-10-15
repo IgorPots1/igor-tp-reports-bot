@@ -12,7 +12,7 @@ export type TpLike = {
   getWorkoutDetail(athleteId: number, workoutId: number): Promise<Record<string, unknown>>;
   putWorkout(athleteId: number, workoutId: number, fullBody: Record<string, unknown>): Promise<Record<string, unknown>>;
   deleteWorkout(athleteId: number, workoutId: number): Promise<{ status: number; body: unknown }>;
-  listDay(athleteId: number, date: string): Promise<Array<{ workoutId: number; title: string }>>;
+  listDay(athleteId: number, date: string): Promise<Array<{ workoutId: number; title: string; date: string; minutes: number }>>;
   /** Ошибка чтения означает «тренировки нет» (TP отвечает 400 «Invalid workoutId», а не 404). */
   isGone(err: unknown): boolean;
 };

@@ -47,17 +47,47 @@ export function probeGate(g: ProbeGate): string | null {
 }
 
 /** Подставной клиент: ведёт себя как TP. Опции имитируют отказы: POST игнорирует isHidden, PUT не скрывает, DELETE не удаляет, на дате уже есть чужая тренировка. */
-export type FakeOpts = { ignoreHiddenInPost?: boolean; putIgnoresHidden?: boolean; deleteNoop?: boolean; preExisting?: boolean };
-export function fakeClient(opts: FakeOpts): TpLike & { log: string[]; store: Map<number, Record<string, unknown>>; created: () => number } {
-  const store = new Map<number, Record<string, unknown>>(); let next = 9000001; let creates = 0; const log: string[] = [];
+export type FakeOpts = {
+  ignoreHiddenInPost?: boolean; putIgnoresHidden?: boolean; deleteNoop?: boolean; preExisting?: boolean;
+  /** начиная с n-го создания TP «не скрывает» ни в POST, ни PUT-ом (имитация отказа посреди постановки) */
+  failFromCreate?: number;
+  /** n-я тренировка сохраняется на следующий день (имитация сдвига даты) */
+  wrongDayAt?: number;
+  /** при DELETE заодно пропадает ещё одна тренировка (имитация сноса чужого) */
+  deleteAlsoRemoves?: number;
+};
+export type Fake = TpLike & {
+  log: string[]; store: Map<number, Record<string, unknown>>; created: () => number;
+  /** положить «тренерскую» тренировку (видимая, чужая для прогона) */
+  seed: (rec: { workoutId: number; athleteId: number; workoutDay: string; title: string; minutes: number; description?: string }) => void;
+  /** тренер правит тренировку в TP */
+  edit: (id: number, patch: Record<string, unknown>) => void;
+  /** тренер удаляет тренировку в TP */
+  remove: (id: number) => void;
+  count: (prefix: string) => number;
+};
+export function fakeClient(opts: FakeOpts): Fake {
+  const store = new Map<number, Record<string, unknown>>(); const nth = new Map<number, number>(); let next = 9000001; let creates = 0; const log: string[] = [];
+  const failing = (id: number): boolean => opts.failFromCreate != null && (nth.get(id) ?? 0) >= opts.failFromCreate;
+  const nextDay = (d: unknown): string => new Date(Date.parse(String(d).slice(0, 10)) + 86400000).toISOString().slice(0, 10) + "T00:00:00";
   if (opts.preExisting) store.set(1, { workoutId: 1, athleteId: PROBE_ATHLETE_ID, title: "чужая тренировка", isHidden: false });
   return {
-    log, store, created: () => creates,
-    async createWorkout(b) { const id = next++; creates++; const rec = { ...b, workoutId: id, isHidden: opts.ignoreHiddenInPost ? false : (b.isHidden ?? false) }; store.set(id, rec); log.push(`POST ${JSON.stringify(b)}`); return { workoutId: id, raw: rec }; },
-    async getWorkoutDetail(_a, id) { const r = store.get(id); if (!r) throw Object.assign(new Error('HTTP 400 "Invalid workoutId"'), { gone: true }); return { ...r }; },
-    async putWorkout(_a, id, b) { const prev = store.get(id) ?? {}; const next2 = { ...b, isHidden: opts.putIgnoresHidden ? prev.isHidden : b.isHidden }; store.set(id, next2); log.push(`PUT isHidden=${String(b.isHidden)}`); return { ...next2 }; },
-    async deleteWorkout(_a, id) { if (!opts.deleteNoop) store.delete(id); log.push(`DELETE ${id}`); return { status: 200, body: true }; },
-    async listDay() { return [...store.values()].map((r) => ({ workoutId: Number(r.workoutId), title: String(r.title) })); },
+    log, store, created: () => creates, count: (prefix) => log.filter((l) => l.startsWith(prefix)).length,
+    seed: (r) => { store.set(r.workoutId, { workoutId: r.workoutId, athleteId: r.athleteId, workoutDay: r.workoutDay, title: r.title, totalTimePlanned: r.minutes / 60, description: r.description ?? "", isHidden: false }); },
+    edit: (id, patch) => { store.set(id, { ...store.get(id)!, ...patch }); },
+    remove: (id) => { store.delete(id); },
+    async createWorkout(b) {
+      const id = next++; creates++; nth.set(id, creates); log.push(`POST ${JSON.stringify(b)}`);
+      const rec = { ...b, workoutId: id, workoutDay: opts.wrongDayAt === creates ? nextDay(b.workoutDay) : b.workoutDay, isHidden: opts.ignoreHiddenInPost || failing(id) ? false : (b.isHidden ?? false) };
+      store.set(id, rec); return { workoutId: id, raw: rec };
+    },
+    async getWorkoutDetail(a, id) { const r = store.get(id); if (!r || (r.athleteId != null && Number(r.athleteId) !== a)) throw Object.assign(new Error('HTTP 400 "Invalid workoutId"'), { gone: true }); return { ...r }; },
+    async putWorkout(_a, id, b) { const prev = store.get(id) ?? {}; const stay = opts.putIgnoresHidden || failing(id); const next2 = { ...b, isHidden: stay ? prev.isHidden : b.isHidden }; store.set(id, next2); log.push(`PUT ${id} isHidden=${String(b.isHidden)}`); return { ...next2 }; },
+    async deleteWorkout(a, id) { log.push(`DELETE ${id}`); const r = store.get(id); if (r && (r.athleteId == null || Number(r.athleteId) === a) && !opts.deleteNoop) { store.delete(id); if (opts.deleteAlsoRemoves != null) store.delete(opts.deleteAlsoRemoves); } return { status: 200, body: true }; },
+    async listDay(a, d) {
+      return [...store.values()].filter((r) => (r.athleteId == null || Number(r.athleteId) === a) && (!r.workoutDay || String(r.workoutDay).slice(0, 10) === d))
+        .map((r) => ({ workoutId: Number(r.workoutId), title: String(r.title), date: String(r.workoutDay ?? d).slice(0, 10), minutes: Math.round(Number(r.totalTimePlanned ?? 0) * 60) }));
+    },
     isGone: (e) => (e as { gone?: boolean }).gone === true,
   };
 }

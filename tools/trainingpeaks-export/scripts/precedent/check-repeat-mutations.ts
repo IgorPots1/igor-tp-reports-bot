@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
 const MR = path.join(HERE, "main-race.ts");
-const DS = path.join(HERE, "donor-style.ts"), PC = path.join(HERE, "precedent.ts"), BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts"), RL = path.join(HERE, "recent-level.ts");
+const WC = path.join(HERE, "week-core.ts"), WO = path.join(HERE, "week-ops.ts"), DS = path.join(HERE, "donor-style.ts"), PC = path.join(HERE, "precedent.ts"), BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts"), RL = path.join(HERE, "recent-level.ts");
 const HF = path.join(HERE, "hidden-flow.ts"), PB = path.join(HERE, "probe-hidden-via-client.ts");
 const PR = path.join(HERE, "post-race.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
@@ -102,6 +102,21 @@ const MUT: M[] = [
   { id: "rec-table-short2", file: PR, find: "short: [0.74, 1.0, 1.0],", replace: "short: [0.74, 0.76, 0.94],", what: "до 15 км снова понижается на +2 и +3 (разброс накрывает единицу)" },
   { id: "style-warmup-tpl", file: DS, find: "      if (WARMUP_TITLE_RE.test(s.title) !== wantWarmup) continue;\n", replace: "", what: "разминка может стать шаблоном лёгкого бега" },
   { id: "plain-warmup-tpl", file: PR, find: "!s.race && s.kind === k && !WARMUP_TITLE_RE.test(s.title) && !hasQualityContent", replace: "!s.race && s.kind === k && !hasQualityContent", what: "разминка может заменить снятое качество" },
+  { id: "place-no-precheck", file: WC, find: "    if (exist.length) return { ok: false, stopped:", replace: "    if (false) return { ok: false, stopped:", what: "постановка не проверяет, что неделя у атлета пуста" },
+  { id: "rollback-only-last", file: WC, find: "for (const it of m.items.filter((x) => x.workoutId != null && !m.deleted.includes(x.workoutId!))) {\n      try { await deleteVerified(tp, emptyFlow(), it.aid, it.workoutId!); m.deleted.push(it.workoutId!); save(m); lines.push(`откат", replace: "for (const it of m.items.filter((x) => x.workoutId != null && !m.deleted.includes(x.workoutId!)).slice(-1)) {\n      try { await deleteVerified(tp, emptyFlow(), it.aid, it.workoutId!); m.deleted.push(it.workoutId!); save(m); lines.push(`откат", what: "откат убирает только последнюю тренировку, а не всю постановку" },
+  { id: "verify-no-hidden", file: WC, find: "if (d.isHidden !== true) bad.push(", replace: "if (false) bad.push(", what: "итоговая проверка не смотрит на isHidden" },
+  { id: "verify-no-day", file: WC, find: "if (String(d.workoutDay).slice(0, 10) !== it.date) bad.push(", replace: "if (false) bad.push(", what: "итоговая проверка не смотрит на день" },
+  { id: "verify-no-extra", file: WC, find: "    if (extra.length) problems.push(", replace: "    if (false) problems.push(", what: "итоговая проверка не видит лишнего в календаре" },
+  { id: "verify-not-enforced", file: WC, find: "    if (!v.ok) throw new FlowStop(", replace: "    if (false) throw new FlowStop(", what: "провал итоговой проверки не останавливает постановку" },
+  { id: "snesti-dry-writes", file: WC, find: "  if (o.dryRun) return { lines, wouldDelete, deleted: [],", replace: "  if (false) return { lines, wouldDelete, deleted: [],", what: "сухое «снести» удаляет" },
+  { id: "snesti-published", file: WC, find: "    if (visible && !o.includePublished) {", replace: "    if (false) {", what: "«снести» удаляет и открытые ученику" },
+  { id: "snesti-others-blind", file: WC, find: "const same = before.length === after.length && before.every((id) => after.includes(id));", replace: "const same = true;", what: "«снести» не проверяет, что чужое осталось" },
+  { id: "pub-dry-writes", file: WC, find: "  if (o.dryRun) return { edits, wouldPublish: pub.map((x) => x.workoutId), published: [], goneByCoach, lines };", replace: "", what: "сухое «публикуй» пишет и публикует" },
+  { id: "pub-republish-visible", file: WC, find: "  const pub = toPublish(placed, cur).filter((x) => cur.get(x.workoutId)?.isHidden !== false);", replace: "  const pub = toPublish(placed, cur);", what: "«публикуй» трогает уже открытые" },
+  { id: "pub-no-edits", file: WC, find: "  if (edits.length && o.insertEdits) await o.insertEdits(edits);", replace: "", what: "правки тренера не пишутся в базу" },
+  { id: "gate-many", file: WO, find: "export const MAX_REAL_ATHLETES = 1;", replace: "export const MAX_REAL_ATHLETES = 12;", what: "первая живая постановка уже не ограничена одним человеком" },
+  { id: "isdry-off", file: WO, find: "export const isDry = (gate: string | null): boolean => gate !== null;", replace: "export const isDry = (gate: string | null): boolean => false;", what: "ворота закрыты, а прогон считается реальным" },
+  { id: "mayplace-open", file: WO, find: "export const mayPlace = (gate: string | null, nItems: number): boolean => gate === null && nItems > 0;", replace: "export const mayPlace = (gate: string | null, nItems: number): boolean => nItems > 0;", what: "пишем в TP при закрытых воротах" },
   { id: "publish-deleted", file: E, find: "  return placed.filter((p) => current.get(p.workoutId) != null)", replace: "  return placed.filter(() => true)", what: "публикуется и удалённое тренером" },
   { id: "no-minutes-diff", file: E, find: "  if (Math.round(c.minutes) !== Math.round(p.minutes))", replace: "  if (false)", what: "правка длительности не пишется" },
   { id: "gate-no-proof", file: O, find: "    if (!g.proof.ok) return", replace: "    if (false) return", what: "раскидать пишет без доказанного скрытия" },

@@ -20,7 +20,8 @@ import { buildRepeatWeek, selectDonor, useExplicitParams } from "./build-week.ts
 import { runProbeCycle } from "./hidden-flow.ts";
 import { hasQualityContent } from "./validate.ts";
 import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } from "./probe-hidden-via-client.ts";
-import { CONFIRM, GROUP12, hiddenProven, realGate } from "./week-ops.ts";
+import { placeWeek, runPublikuy, runSnesti, verifyPlaced, type Manifest } from "./week-core.ts";
+import { CONFIRM, GROUP12, MAX_REAL_ATHLETES, hiddenProven, isDry, mayPlace, realGate } from "./week-ops.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -467,7 +468,7 @@ console.log("\n── пробник скрытия: поток на подст�
     r1.stopped === null && r1.hiddenVerifyPass === true && r1.unhiddenVerifyPass === true && r1.deletedVerifyPass === true && r1.discrepancies.length === 0 && ok.store.size === 0 && r1.hiddenInPost === true, JSON.stringify(r1));
   check("в POST ушёл isHidden:true", ok.log[0].includes('"isHidden":true'));
   const ign = fakeClient({ ignoreHiddenInPost: true }); const r2 = await runProbeCycle(ign, PROBE_ATHLETE_ID, D, body);
-  check("TP игнорирует isHidden в POST: расхождение записано, скрыто отдельным PUT, цикл пройден", r2.stopped === null && r2.hiddenInPost === false && r2.discrepancies.length === 1 && r2.discrepancies[0].includes("ИГНОРИРУЕТ") && ign.log.some((l) => l === "PUT isHidden=true") && ign.store.size === 0, JSON.stringify(r2.discrepancies));
+  check("TP игнорирует isHidden в POST: расхождение записано, скрыто отдельным PUT, цикл пройден", r2.stopped === null && r2.hiddenInPost === false && r2.discrepancies.length === 1 && r2.discrepancies[0].includes("ИГНОРИРУЕТ") && ign.log.some((l) => /^PUT \d+ isHidden=true$/.test(l)) && ign.store.size === 0, JSON.stringify(r2.discrepancies));
   const stub = fakeClient({ ignoreHiddenInPost: true, putIgnoresHidden: true }); const r3 = await runProbeCycle(stub, PROBE_ATHLETE_ID, D, body);
   check("TP не скрывает даже PUT-ом: СТОП, созданное удалено и проверено, у атлета ничего не осталось", r3.stopped !== null && r3.hiddenVerifyPass === null && r3.cleanedUp === true && stub.store.size === 0, JSON.stringify({ s: r3.stopped, c: r3.cleanedUp, left: stub.store.size }));
   const pre = fakeClient({ preExisting: true }); const r4 = await runProbeCycle(pre, PROBE_ATHLETE_ID, D, body);
@@ -481,6 +482,109 @@ console.log("\n── пробник скрытия: поток на подст�
   check("без --apply — сухой прогон", probeGate({ ...g0, apply: false }) != null);
   check("не та фраза — отказ", probeGate({ ...g0, confirm: "да" }) != null);
   check("без TP_ACTIONS_REAL_EXECUTION — отказ", probeGate({ ...g0, realEnv: undefined }) != null);
+}
+
+console.log("\n── ядро «раскидать / снести / публикуй» на подставном клиенте (сети нет) ──");
+{
+  const A = 6009851; const WEEK = "2026-10-19";
+  const mkM = (aid = A): Manifest => ({ runId: "t", createdAt: "", mode: "real", week: WEEK, refused: [], published: [], deleted: [], items: [
+    { aid, date: "2026-10-21", dayIdx: 2, title: "Бег по темпу", minutes: 40, description: "40 минут равномерного бега в темпе 06:28-06:50 /км.", warnings: [], source: "t", why: "t", workoutId: null, verified: false },
+    { aid, date: "2026-10-23", dayIdx: 4, title: "Бег по темпу", minutes: 40, description: "40 минут равномерного бега в темпе 06:28-06:50 /км.", warnings: [], source: "t", why: "t", workoutId: null, verified: false },
+    { aid, date: "2026-10-25", dayIdx: 6, title: "Бег по темпу", minutes: 90, description: "90 минут равномерного бега в темпе 06:28-06:50 /км.", warnings: [], source: "t", why: "t", workoutId: null, verified: false }] });
+  const saves: number[] = []; const save = (m: Manifest): void => { saves.push(m.items.filter((i) => i.workoutId != null).length); };
+  const placedOk = async (): Promise<{ fc: ReturnType<typeof fakeClient>; m: Manifest }> => { const fc = fakeClient({}); const m = mkM(); const r = await placeWeek(fc, m, save); if (!r.ok) throw new Error(`постановка не прошла: ${r.stopped}`); return { fc, m }; };
+
+  // — постановка —
+  const { fc: f1, m: m1 } = await placedOk();
+  check("постановка: 3 тренировки, все скрыты, на нужных днях, с нужными названиями и длительностью", [...f1.store.values()].length === 3 && [...f1.store.values()].every((r) => r.isHidden === true) && m1.items.map((i) => String((f1.store.get(i.workoutId!) as Record<string, unknown>).workoutDay).slice(0, 10)).join() === "2026-10-21,2026-10-23,2026-10-25", JSON.stringify([...f1.store.values()].map((r) => [r.workoutDay, r.isHidden])));
+  check("постановка: id записаны в манифест после КАЖДОЙ сессии (сохранений 6: 3 создания + возможные), и все три в конце", m1.items.every((i) => i.workoutId != null && i.verified) && Math.max(...saves) === 3, String(saves));
+  check("постановка: ни одного лишнего PUT (TP принял isHidden в POST), удалений нет", f1.count("PUT") === 0 && f1.count("DELETE") === 0, JSON.stringify(f1.log.filter((l) => !l.startsWith("POST"))));
+  const v1 = await verifyPlaced(f1, m1);
+  check("итоговая проверка: ok, в календаре недели ровно наши три", v1.ok && v1.lines.some((l) => l.includes("ровно наши")), JSON.stringify(v1.problems));
+
+  const f2 = fakeClient({}); f2.seed({ workoutId: 77, athleteId: A, workoutDay: "2026-10-22T00:00:00", title: "тренировка Игоря", minutes: 50 });
+  const r2 = await placeWeek(f2, mkM(), save);
+  check("на неделе у атлета уже есть тренировка Игоря: ничего не пишем (ни одного POST), чужая цела", !r2.ok && f2.count("POST") === 0 && f2.store.has(77) && r2.rolledBack === null, JSON.stringify({ s: r2.stopped, p: f2.count("POST") }));
+
+  const f3 = fakeClient({ failFromCreate: 3 }); f3.seed({ workoutId: 88, athleteId: A, workoutDay: "2026-10-12T00:00:00", title: "прошлая неделя Игоря", minutes: 60 });
+  const m3 = mkM(); const r3 = await placeWeek(f3, m3, save);
+  check("отказ TP скрывать на 3-й сессии: СТОП и откат ВСЕЙ постановки — не только последней (все три убраны, проверено)", !r3.ok && r3.rolledBack === true && [...f3.store.keys()].every((id) => id === 88) && m3.deleted.length === 3, JSON.stringify({ s: r3.stopped, rb: r3.rolledBack, left: [...f3.store.keys()] }));
+  check("откат не трогает чужое: тренировка Игоря на прошлой неделе осталась", f3.store.has(88));
+
+  const f4 = fakeClient({ wrongDayAt: 2 }); const m4 = mkM(); const r4 = await placeWeek(f4, m4, save);
+  check("TP сохранил вторую сессию не на тот день: итоговая проверка ловит, откат всей постановки", !r4.ok && (r4.stopped ?? "").includes("день") && r4.rolledBack === true && f4.store.size === 0, JSON.stringify({ s: r4.stopped, left: f4.store.size }));
+
+  const f5 = fakeClient({ failFromCreate: 2, deleteNoop: true }); const r5 = await placeWeek(f5, mkM(), save);
+  check("откат сам не удался (DELETE не удаляет): rolledBack=false и названы оставшиеся id для ручной уборки", !r5.ok && r5.rolledBack === false && r5.leftover.length >= 1, JSON.stringify({ rb: r5.rolledBack, left: r5.leftover }));
+
+  const f6 = fakeClient({}); const m6 = mkM(); await placeWeek(f6, m6, save);
+  f6.edit(m6.items[0].workoutId!, { isHidden: false });
+  const v6 = await verifyPlaced(f6, m6);
+  check("итоговая проверка видит открытую ученику тренировку", !v6.ok && v6.problems.some((x) => x.includes("ученику видна")), JSON.stringify(v6.problems));
+  const f7 = fakeClient({}); const m7 = mkM(); await placeWeek(f7, m7, save); f7.seed({ workoutId: 99, athleteId: A, workoutDay: "2026-10-24T00:00:00", title: "лишнее", minutes: 30 });
+  const v7 = await verifyPlaced(f7, m7);
+  check("итоговая проверка видит лишнее в календаре недели", !v7.ok && v7.problems.some((x) => x.includes("чужое")));
+
+  // — снести —
+  const { fc: s1, m: sm1 } = await placedOk(); s1.seed({ workoutId: 55, athleteId: A, workoutDay: "2026-10-22T00:00:00", title: "добавил Игорь", minutes: 45 });
+  const before = s1.store.size; const dry = await runSnesti(s1, sm1, { dryRun: true });
+  check("сухое «снести»: ТОЛЬКО чтение — ни одного DELETE/PUT/POST, в хранилище всё как было", s1.count("DELETE") === 0 && s1.count("PUT") === 0 && s1.store.size === before && dry.wouldDelete.length === 3, JSON.stringify({ d: s1.count("DELETE"), n: dry.wouldDelete.length }));
+  check("сухое «снести» называет, что останется нетронутым (тренировка Игоря на неделе)", dry.othersBefore.join() === "55" && dry.lines.some((l) => l.includes("(останутся нетронутыми): 1")), JSON.stringify(dry.othersBefore));
+  const real = await runSnesti(s1, sm1, { dryRun: false });
+  check("реальное «снести»: удалены ровно три из манифеста, тренировка Игоря на месте, доказано повторным чтением", real.deleted.length === 3 && real.ok && s1.store.size === 1 && s1.store.has(55) && real.othersAfter?.join() === "55", JSON.stringify({ d: real.deleted, left: [...s1.store.keys()] }));
+  const { fc: s2, m: sm2 } = await placedOk(); s2.edit(sm2.items[0].workoutId!, { isHidden: false }); sm2.published.push(sm2.items[1].workoutId!);
+  const r_s2 = await runSnesti(s2, sm2, { dryRun: false });
+  check("открытые ученику (по манифесту и по isHidden=false) НЕ удаляются без --include-published", r_s2.skippedPublished.length === 2 && r_s2.deleted.length === 1 && s2.store.size === 2, JSON.stringify({ sk: r_s2.skippedPublished, del: r_s2.deleted }));
+  const { fc: s3, m: sm3 } = await placedOk(); s3.edit(sm3.items[2].workoutId!, { totalTimePlanned: 100 / 60, title: "Игорь переименовал" });
+  const d3 = await runSnesti(s3, sm3, { dryRun: true });
+  check("«снести» показывает, что тренер изменил поставленное (название, длительность)", d3.changedByCoach.length === 1 && d3.changedByCoach[0].includes("название") && d3.changedByCoach[0].includes("длительность"), JSON.stringify(d3.changedByCoach));
+  const { fc: s4, m: sm4 } = await placedOk(); const otherAth = fakeClient({}); void otherAth;
+  s4.seed({ workoutId: 66, athleteId: 5475652, workoutDay: "2026-10-23T00:00:00", title: "другой атлет", minutes: 50 });
+  await runSnesti(s4, sm4, { dryRun: false });
+  check("«снести» не трогает тренировки другого атлета", s4.store.has(66));
+
+  // — публикуй —
+  const prep = async (): Promise<{ fc: ReturnType<typeof fakeClient>; m: Manifest }> => {
+    const { fc, m } = await placedOk();
+    fc.edit(m.items[0].workoutId!, { totalTimePlanned: 55 / 60, title: "Бег по темпу (Игорь поправил)" }); // тренер изменил длительность и название
+    fc.remove(m.items[1].workoutId!);                                                                         // тренер удалил
+    fc.seed({ workoutId: 31, athleteId: A, workoutDay: "2026-10-22T00:00:00", title: "добавил Игорь", minutes: 45 }); // и добавил свою
+    return { fc, m };
+  };
+  const { fc: p1, m: pm1 } = await prep(); let inserted = 0; const p1logLen = p1.log.length;
+  const pd = await runPublikuy(p1, pm1, { dryRun: true, insertEdits: async (rows) => { inserted += rows.length; } });
+  check("сухое «публикуй»: ТОЛЬКО чтение — ни PUT, ни DELETE, ни POST, ни вставки правок в базу", p1.log.length === p1logLen && inserted === 0 && pm1.published.length === 0, JSON.stringify({ log: p1.log.slice(p1logLen), ins: inserted }));
+  const fields = pd.edits.map((e) => e.field).sort().join();
+  check("сухое «публикуй» показывает правки Игоря: длительность и формат (название), удаление, добавление", fields === "длительность,добавление,удаление,формат", fields);
+  check("в плане публикации — только живые: удалённая Игорем в список не попала, откроются две", pd.wouldPublish.length === 2 && pd.goneByCoach.length === 1, JSON.stringify({ w: pd.wouldPublish, g: pd.goneByCoach }));
+  const postsBefore = p1.count("POST");
+  const pr = await runPublikuy(p1, pm1, { dryRun: false, insertEdits: async (rows) => { inserted += rows.length; }, save });
+  const edited = p1.store.get(pm1.items[0].workoutId!)!;
+  check("реальное «публикуй»: открыта ЕГО версия — правки названия и длительности сохранены, isHidden=false", pr.published.length === 2 && edited.isHidden === false && edited.title === "Бег по темпу (Игорь поправил)" && Math.round(Number(edited.totalTimePlanned) * 60) === 55, JSON.stringify(edited));
+  check("удалённая Игорем тренировка не возвращена (новых POST нет, её нет в хранилище)", p1.count("POST") === postsBefore && !p1.store.has(pm1.items[1].workoutId!));
+  check("правки записаны в базу построчно (4) и тренировка Игоря (добавленная) не тронута", inserted === 4 && p1.store.get(31)!.isHidden === false && p1.store.get(31)!.title === "добавил Игорь", String(inserted));
+  const putsBefore = p1.count("PUT"); await runPublikuy(p1, pm1, { dryRun: false, insertEdits: async () => {}, save });
+  check("повторное «публикуй» уже открытое не трогает (идемпотентно)", p1.count("PUT") === putsBefore);
+
+  const { fc: s5, m: sm5 } = await placedOk(); s5.seed({ workoutId: 55, athleteId: A, workoutDay: "2026-10-22T00:00:00", title: "добавил Игорь", minutes: 45 });
+  const fcBad = fakeClient({ deleteAlsoRemoves: 55 }); void fcBad;
+  const s6 = fakeClient({ deleteAlsoRemoves: 55 }); const sm6 = mkM(); await placeWeek(s6, sm6, save); s6.seed({ workoutId: 55, athleteId: A, workoutDay: "2026-10-22T00:00:00", title: "добавил Игорь", minutes: 45 });
+  const r6 = await runSnesti(s6, sm6, { dryRun: false });
+  check("если при сносе пропало что-то ЧУЖОЕ, итог это показывает (ok=false) — «чужое не тронуто» не берётся на веру", r6.ok === false && (r6.othersAfter ?? []).length === 0, JSON.stringify({ ok: r6.ok, after: r6.othersAfter }));
+  void s5; void sm5;
+
+  const { fc: o1, m: om1 } = await placedOk(); o1.edit(om1.items[0].workoutId!, { isHidden: false }); // Игорь сам открыл одну в TP
+  const pOpen = await runPublikuy(o1, om1, { dryRun: false, insertEdits: async () => {}, save });
+  check("тренировку, которую Игорь сам открыл в TP, «публикуй» не трогает повторно (нет PUT на неё), остальные две открывает", !o1.log.some((l) => l.startsWith(`PUT ${om1.items[0].workoutId} `)) && pOpen.published.length === 2, JSON.stringify({ pub: pOpen.published.length, puts: o1.log.filter((l) => l.startsWith("PUT")) }));
+
+  // — решение «писать или нет» —
+  check("isDry: любые закрытые ворота → сухой прогон; открытые → нет", isDry("нет --execute-real") === true && isDry(null) === false);
+  check("mayPlace: пишем только при открытых воротах и непустом списке", mayPlace(null, 3) === true && mayPlace("закрыто", 3) === false && mayPlace(null, 0) === false);
+
+  // — ворота: первая живая постановка — один человек —
+  const okG = { executeReal: true, confirm: CONFIRM.raskidat, realEnv: "true", proof: { ok: true, why: "" }, corpusAgeMin: 5 };
+  check("ворота: один человек разрешён, группа из двух — отказ (MAX_REAL_ATHLETES)", realGate("raskidat", [GROUP12[0]], okG) === null && realGate("raskidat", [GROUP12[0], GROUP12[1]], okG)?.includes("не больше") === true && MAX_REAL_ATHLETES === 1);
+  check("ворота: все двенадцать без --athletes — отказ", realGate("raskidat", GROUP12, okG) != null);
 }
 
 console.log(`\nИТОГ: ${failures === 0 ? `все ${total} проверок прошли` : `ПАДЕНИЙ ${failures} из ${total}`}`);

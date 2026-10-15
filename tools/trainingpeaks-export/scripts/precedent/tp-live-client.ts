@@ -11,7 +11,7 @@ export async function liveClient(): Promise<TpLike> {
     getWorkoutDetail: (a, i) => tp.getWorkoutDetail(a, i),
     putWorkout: (a, i, b) => tp.putWorkout(a, i, b),
     deleteWorkout: (a, i) => tp.deleteWorkout("tpapi", a, i),
-    listDay: async (a, d) => (await tp.getWorkoutsByDateRange(a, d, d)).map((w) => ({ workoutId: w.workoutId, title: String(w.title ?? "") })),
+    listDay: async (a, d) => (await tp.getWorkoutsByDateRange(a, d, d)).map((w) => ({ workoutId: w.workoutId, title: String(w.title ?? ""), date: String(w.workoutDay).slice(0, 10), minutes: Math.round(Number((w.raw as Record<string, unknown>).totalTimePlanned ?? 0) * 60) })),
     isGone: (e) => e instanceof tp.TpApiHttpError && tp.isWorkoutGone(e.status, e.body),
   };
 }
