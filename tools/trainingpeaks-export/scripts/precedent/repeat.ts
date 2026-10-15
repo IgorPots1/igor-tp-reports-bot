@@ -78,6 +78,13 @@ export function abnormalReason(ix: Index, w: CWeek): Abnormal | null {
   return null;
 }
 
+/**
+ * ДОНОР-ПИК (аудит r10): правило «пик не образец» раньше жило только в ветке повтора, а прецедент брал донором любую неделю
+ * по близости состояния — в тестовых неделях 6 из 139 доноров оказались пиками. Тот же вред, что у Семешиной (430 мин), через другую ветку.
+ * «Провал» донором остаётся допустимым: у возврата после паузы низкая неделя — норма; «старт»/«подводка»/«после старта» — донор по замыслу.
+ */
+export function donorExcluded(ix: Index, p: CWeek): boolean { return abnormalReason(ix, p) === "пик"; }
+
 export type CycleDelta = { role: string; target: number; base: number } | null;
 
 export type RepeatPlan =

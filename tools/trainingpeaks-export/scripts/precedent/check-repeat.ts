@@ -9,13 +9,13 @@
 import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
-import { planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
+import { donorExcluded, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
 import { postRaceAdjust, setRecovery } from "./post-race.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
 import { addedByCoach, diffPlaced, toPublish, type Placed } from "./plan-edits.ts";
-import { buildRepeatWeek, useExplicitParams } from "./build-week.ts";
+import { buildRepeatWeek, selectDonor, useExplicitParams } from "./build-week.ts";
 import { runProbeCycle } from "./hidden-flow.ts";
 import { hasQualityContent } from "./validate.ts";
 import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } from "./probe-hidden-via-client.ts";
@@ -320,6 +320,20 @@ console.log("\n── после старта: ОБЕ ветки (повтор �
   const t18 = T(18, 2);
   check("неделя старта без истории (2 недели): ОТКАЗ и в ветке прецедента", t18.phase === "race" && planRepeat(ix, t18, null).kind === "refuse");
   check("неделя старта с историей: прецедент (не отказ)", planRepeat(ix, T(4, 8), null).kind === "precedent");
+}
+
+console.log("\n── донор прецедента: пик не донор (правило из повтора выровнено) ──");
+{
+  check("донор-пик определяется так же, как образец-пик: неделя 400 при медиане 260 — исключена, обычная — нет", donorExcluded(ix, T(12, 6)) === true && donorExcluded(ix, T(12, 5)) === false);
+  let peakBest = 0, replaced = 0, leaks = 0;
+  for (const t of corpus) {
+    const f0 = findPrecedent(ix, t, W8, "any"); if (!f0) continue;
+    const f1 = selectDonor(ix, t, W8, "any");
+    if (f1 && donorExcluded(ix, f1.p)) leaks++;
+    if (donorExcluded(ix, f0.p)) { peakBest++; if (f1 && f1.p !== f0.p) replaced++; }
+  }
+  check("боевой выбор донора НИКОГДА не возвращает пик (по всем целям синтетики)", leaks === 0, `утечек ${leaks}`);
+  check("сценарий содержит случаи, где ближайший донор — пик, и боевой выбор его заменяет (проверка не пустая)", peakBest >= 1 && replaced === peakBest, `пиков-ближайших ${peakBest}, заменено ${replaced}`);
 }
 
 console.log("\n── окно поиска образца ──");

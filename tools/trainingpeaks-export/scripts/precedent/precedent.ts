@@ -64,13 +64,14 @@ export type Mode = "any" | "own" | "others";
 export type Found = { p: CWeek; why: Why; ownAvailable: number };
 
 /** Ближайший прецедент среди недель СТРОГО раньше целевой (честное время). */
-export function findPrecedent(ix: Index, t: CWeek, W: Weights, mode: Mode = "any"): Found | null {
+export function findPrecedent(ix: Index, t: CWeek, W: Weights, mode: Mode = "any", exclude?: (p: CWeek) => boolean): Found | null {
   let best: Found | null = null;
   const ownAvailable = (ix.byAid.get(t.aid) ?? []).filter((w) => w.weekStart < t.weekStart).length;
   for (const p of ix.all) {
     if (p.weekStart >= t.weekStart) break;
     if (mode === "own" && p.aid !== t.aid) continue;
     if (mode === "others" && p.aid === t.aid) continue;
+    if (exclude?.(p)) continue;
     const why = distance(t, p, W);
     if (!best || why.d < best.why.d) best = { p, why, ownAvailable };
   }

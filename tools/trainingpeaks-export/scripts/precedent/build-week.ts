@@ -12,9 +12,9 @@ import type { AthleteContext } from "../lib/autoplanner-context.ts";
 import { workMinutesFromTitle, type CWeek } from "./corpus.ts";
 import { mainRaceIds } from "./main-race.ts";
 import { DATA_DIR } from "./load.ts";
-import { adapt, findPrecedent, type Index, type PSess, type Weights } from "./precedent.ts";
+import { adapt, findPrecedent, type Found, type Index, type Mode, type PSess, type Weights } from "./precedent.ts";
 import { adaptText } from "./adapt-text.ts";
-import { planRepeat, setRepeatParams, type Abnormal, type CycleDelta } from "./repeat.ts";
+import { donorExcluded, planRepeat, setRepeatParams, type Abnormal, type CycleDelta } from "./repeat.ts";
 import { recent } from "./recent-level.ts";
 import { validateWeek, weightedP90, type VResult, type VSess } from "./validate.ts";
 
@@ -68,6 +68,13 @@ export function stateFor(ix: Index, aid: number, weekStart: string, races: Array
   };
 }
 
+/** Донор для боевого пути: ближайшая неделя по состоянию, кроме пиков (donorExcluded). */
+export let DONOR_PEAK_FILTER = true;
+export function setDonorPeakFilter(on: boolean): void { DONOR_PEAK_FILTER = on; }
+export function selectDonor(ix: Index, t: CWeek, W: Weights, mode: Mode = "any"): Found | null {
+  return findPrecedent(ix, t, W, mode, DONOR_PEAK_FILTER ? (p) => donorExcluded(ix, p) : undefined);
+}
+
 export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDelta, c: AthleteContext | undefined, names: Map<number, string>): BuiltWeek | null {
   loadRepeatParams();
   const plan = planRepeat(ix, t, cycle);
@@ -80,7 +87,7 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
     source = `ПОВТОР недели ${plan.base.weekStart} × дельта ${plan.delta}`;
     why = `${plan.deltaWhy}${plan.skipped.length ? `; пропущены как образец: ${plan.skipped.map((s) => `${s.week} (${s.why})`).join(", ")}` : ""}`;
   } else {
-    const f = findPrecedent(ix, t, W, "any"); if (!f) return null;
+    const f = selectDonor(ix, t, W); if (!f) return null;
     const a = adapt(ix, t, f, true);
     ps = a.sessions;
     const pn = f.p.aid === t.aid ? "своя" : `чужая — ${names.get(f.p.aid) ?? f.p.aid}`;

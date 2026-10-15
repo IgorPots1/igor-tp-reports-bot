@@ -17,7 +17,7 @@ import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import { adapt, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Agg, type Err, type Side } from "./metrics.ts";
 import { setRepeatParams, NORMAL_MIN_RATIO, RETURN_GAP_WEEKS, LOOKBACK_WEEKS, type Abnormal, type CycleDelta } from "./repeat.ts";
-import { buildRepeatWeek, useExplicitParams, type BuiltWeek } from "./build-week.ts";
+import { buildRepeatWeek, setDonorPeakFilter, useExplicitParams, type BuiltWeek } from "./build-week.ts";
 import { setGuardParams } from "./recent-level.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
 
@@ -66,7 +66,7 @@ for (const normal of [0.6, 0.8]) for (const gap of [2, 3, 99]) for (const lookba
 }
 grid.sort((a, b) => a.valid - b.valid || a.train - b.train);
 const CHOSEN = grid[0];
-cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, lookback: CHOSEN.lookback, peak: 1.25, recovery: true }); setGuardParams({ gap: 4, ratio: 1.5 });
+cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, lookback: CHOSEN.lookback, peak: 1.25, recovery: true, recoveryTable: "train" }); setGuardParams({ gap: 4, ratio: 1.5 }); setDonorPeakFilter(true);
 
 // ── вывод ──
 const out: string[] = []; const p = (s = ""): void => { out.push(s); };
@@ -101,11 +101,13 @@ p();
 // ── цена решений ──
 p(`## Цена решений Игоря (метод 5, те же ${bSet.length} недель; отказы не входят в балл, число отказов в скобках)`);
 p(HDR);
-const diag = (name: string, fn: () => void): void => { cacheTag = `d-${name}`; fn(); const r = evalSet(bSet, mNew(true)); p(row(name, r)); cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, lookback: CHOSEN.lookback, peak: 1.25, recovery: true }); setGuardParams({ gap: 4, ratio: 1.5 }); };
+const diag = (name: string, fn: () => void): void => { cacheTag = `d-${name}`; fn(); const r = evalSet(bSet, mNew(true)); p(row(name, r)); cacheTag = "final"; setRepeatParams({ skip: CLASSES, normal: CHOSEN.normal, gap: CHOSEN.gap, lookback: CHOSEN.lookback, peak: 1.25, recovery: true, recoveryTable: "train" }); setGuardParams({ gap: 4, ratio: 1.5 }); setDonorPeakFilter(true); };
 p(row("5. как выше (все решения включены)", evalSet(bSet, mNew(true))));
 diag("(разбор) без класса «пик»", () => setRepeatParams({ skip: CLASSES.filter((c) => c !== "пик") }));
 diag("(разбор) без подводки в не-образцах", () => setRepeatParams({ skip: CLASSES.filter((c) => c !== "подводка") }));
 diag("(разбор) без таблицы восстановления", () => setRepeatParams({ recovery: false }));
+diag("(разбор) таблица по ВСЕМУ корпусу (включая тест; прежняя, до +7)", () => setRepeatParams({ recoveryTable: "all" }));
+diag("(разбор) без исключения доноров-пиков", () => setDonorPeakFilter(false));
 diag("(разбор) без жёстких отказов (граница ослаблена)", () => setGuardParams({ gap: 99999, ratio: 1e9 }));
 p();
 // ── отказы по причинам и по фазам ──
