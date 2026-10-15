@@ -39,6 +39,8 @@ fi
 # Заявки с сайта (разбираются первыми) и точки обхода недели.
 "${GATE[@]}" suggestions > "$WORK/suggestions.json" || echo "[]" > "$WORK/suggestions.json"
 "${GATE[@]}" cities > "$WORK/cities.json" || echo "[]" > "$WORK/cities.json"
+# Старты «под вопросом» (race_overrides.status = questionable), у которых подошла перепроверка.
+"${GATE[@]}" recheck > "$WORK/recheck.json" || echo "[]" > "$WORK/recheck.json"
 # Поиск во ВКонтакте только при сервисном ключе в .env.local основной папки.
 if grep -q '^VK_SERVICE_TOKEN=.' "$REPO/.env.local" 2>/dev/null; then VK_MODE="есть"; else VK_MODE="нет"; fi
 # ВК — по ВСЕМ точкам каждую неделю (1664 поиска), детерминированно, до агента: шлюз сам ищет,

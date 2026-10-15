@@ -63,6 +63,7 @@ import {
   type CalendarRow,
   type RaceInsert,
   type Source,
+  recheckPlan,
 } from "./races-manual";
 
 const TODAY = "2026-10-11";
@@ -378,6 +379,26 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.equal(findExpectedDuplicate({ ...ok, name: "Тверской бег. Весенний кросс на Дорошихе" }, tver), null, "«тверской» — не основание для дубля");
   assert.equal(findExpectedDuplicate({ ...ok, name: "Трейл «Завидово»", city: "Завидово" }, tver), null, "«завидово» — не основание для дубля");
   assert.equal(findExpectedDuplicate({ ...ok, name: "Тверской полумарафон" }, tver)?.id, "probeg:79950", "то же название — дубль");
+}
+
+// Перепроверка «под вопросом» (15.10.2026): шлюз статус не меняет, только срок и итог тренеру.
+{
+  const due = [
+    { id: "probeg:73904", name: "Crimea Winter Trail", date_start: "2026-12-12", note: "под вопросом", site_url: null, reg_url: null, recheck_after: "2026-10-22" },
+    { id: "probeg:73996", name: "O-TRAIL Karras", date_start: "2026-10-31", note: "под вопросом", site_url: null, reg_url: null, recheck_after: null },
+  ];
+  const plan = recheckPlan(due, [
+    { id: "probeg:73904", verdict: "cancelled", note: "на сайте старта 12.12 нет", source_url: "https://crimeatrail.com" },
+    { id: "probeg:1", verdict: "confirmed", note: "чужой" },
+    { id: "probeg:73996", verdict: "maybe" as never, note: "x" },
+  ], "2026-10-22");
+  assert.deepEqual(plan.bump, ["probeg:73904"], "срок сдвигается только у проверенных из списка");
+  assert.ok(plan.rejected.some((r) => /probeg:1: не в списке/.test(r)));
+  assert.ok(plan.rejected.some((r) => /вердикт «maybe»/.test(r)));
+  assert.ok(plan.lines.some((l) => /РЕШИТЬ — похоже, отменён: «Crimea Winter Trail»/.test(l)), "отмену решает тренер");
+  assert.ok(plan.lines.some((l) => /агент не проверил: «O-TRAIL Karras»/.test(l)));
+  assert.match(plan.lines[0], /следующей — 2026-10-29/);
+  assert.deepEqual(recheckPlan([], [], "2026-10-22").lines, [], "нечего проверять — строки в итоге нет");
 }
 
 console.log("check:races-manual ok");

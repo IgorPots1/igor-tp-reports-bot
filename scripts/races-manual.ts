@@ -23,6 +23,7 @@
  *   npx tsx scripts/races-manual.ts read <url>               текст страницы из настоящего браузера
  *   npx tsx scripts/races-manual.ts dup <proposal.json>      проверка дублей для вставок
  *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке, и только плавание → removed
+ *   npx tsx scripts/races-manual.ts recheck                  старты «под вопросом» (race_overrides), у которых подошла перепроверка
  *   npx tsx scripts/races-manual.ts announce <exp_id>=<race_id>,… [--apply]   ожидаемые, чьё проведение уже в
  *                                                            календаре, а робот не узнал (решение тренера) → announced
  *   npx tsx scripts/races-manual.ts apply <proposal.json> [--apply]   итог недели пишется в ops-log
@@ -174,7 +175,41 @@ export type Proposal = {
   remove?: { id: string; reason: string }[];
   insert?: RaceInsert[];
   expected?: ExpectedInsert[];
+  /** Перепроверка стартов «под вопросом» из recheck.json: вердикт агента, решает тренер. */
+  recheck?: RecheckVerdict[];
 };
+
+/**
+ * Старты «под вопросом» (race_overrides.status = 'questionable', наряд 15.10.2026): раз в неделю агент
+ * смотрит их снова. Шлюз сам статус НЕ меняет (отменить или вернуть старт — решение тренера):
+ * только сдвигает recheck_after на неделю и пишет вердикты в итог недели.
+ */
+export type RecheckVerdict = { id: string; verdict: "confirmed" | "questionable" | "cancelled"; note: string; source_url?: string };
+export type RecheckRow = { id: string; name: string; date_start: string; note: string | null; site_url: string | null; reg_url: string | null; recheck_after: string | null };
+
+export function recheckPlan(due: RecheckRow[], verdicts: RecheckVerdict[], today: string): { bump: string[]; lines: string[]; rejected: string[] } {
+  const byId = new Map(due.map((r) => [r.id, r]));
+  const bump: string[] = [], rejected: string[] = [];
+  const group: Record<RecheckVerdict["verdict"], string[]> = { confirmed: [], questionable: [], cancelled: [] };
+  for (const v of verdicts) {
+    const r = byId.get(v.id);
+    if (!r) { rejected.push(`${v.id}: не в списке перепроверки`); continue; }
+    if (!["confirmed", "questionable", "cancelled"].includes(v.verdict)) { rejected.push(`${v.id}: вердикт «${v.verdict}»`); continue; }
+    if (!v.note?.trim()) { rejected.push(`${v.id}: нет пояснения`); continue; }
+    bump.push(v.id);
+    group[v.verdict].push(`«${r.name}» ${r.date_start}: ${v.note.trim()}${v.source_url ? ` (${v.source_url})` : ""}`);
+    byId.delete(v.id);
+  }
+  const lines: string[] = [];
+  if (due.length) {
+    lines.push(`Под вопросом: к перепроверке ${due.length}, проверено ${bump.length}; срок следующей — ${addDays(today, 7)}`);
+    if (group.confirmed.length) lines.push(`  РЕШИТЬ — организатор подтвердил: ${group.confirmed.join("; ")}`);
+    if (group.cancelled.length) lines.push(`  РЕШИТЬ — похоже, отменён: ${group.cancelled.join("; ")}`);
+    if (group.questionable.length) lines.push(`  по-прежнему под вопросом: ${group.questionable.join("; ")}`);
+    if (byId.size) lines.push(`  агент не проверил: ${[...byId.values()].map((r) => `«${r.name}»`).join(", ")}`);
+  }
+  return { bump, lines, rejected };
+}
 export type CalendarRow = { id: string; name: string; date_start: string; date_end: string | null; city: string | null; region?: string | null; race_type: string | null };
 
 // ── чистая логика (её держит check:races-manual) ─────────────────────────────
@@ -881,6 +916,25 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   return hits;
 }
 
+/** Старты «под вопросом», у которых подошла перепроверка (или срок не задан). */
+async function recheckDue(sb: SupabaseClient, today: string): Promise<RecheckRow[]> {
+  const { data: ov, error } = await sb.from("race_overrides").select("id,note,recheck_after").eq("status", "questionable");
+  if (error) throw error;
+  const due = (ov || []).filter((o) => !o.recheck_after || (o.recheck_after as string) <= today);
+  if (!due.length) return [];
+  const { data: cal, error: ce } = await sb.from("race_calendar").select("id,name,date_start,site_url,reg_url").in("id", due.map((o) => o.id as string));
+  if (ce) throw ce;
+  const byId = new Map((cal || []).map((c) => [c.id as string, c]));
+  return due.filter((o) => byId.has(o.id as string)).map((o) => {
+    const c = byId.get(o.id as string)!;
+    return { id: o.id as string, name: c.name as string, date_start: c.date_start as string, note: o.note as string | null, site_url: c.site_url as string | null, reg_url: c.reg_url as string | null, recheck_after: o.recheck_after as string | null };
+  });
+}
+
+async function cmdRecheck() {
+  console.log(JSON.stringify(await recheckDue(db(), todayBelgrade()), null, 2));
+}
+
 /**
  * Ожидаемый старт → «объявлен» по решению тренера: робот (стадия expected) пару не узнал, а без
  * этого в боте один старт виден дважды, ожидаемым и объявленным. Правила в коде, как у остальных
@@ -1128,6 +1182,18 @@ async function cmdApply(file: string, apply: boolean) {
   const tiers = await tierStats(sb, merged.reg, p, addedRows, today);
   if (apply) writeRegistry(merged.reg);
 
+  // Под вопросом: шлюз только сдвигает срок перепроверки; статус меняет тренер.
+  const due = await recheckDue(sb, today);
+  const recheck = recheckPlan(due, p.recheck || [], today);
+  for (const r of recheck.rejected) out.push({ kind: "skipped", id: r.split(":")[0], text: `перепроверка: ${r}` });
+  if (apply) {
+    for (const id of recheck.bump) {
+      const { error: re } = await sb.from("race_overrides").update({ recheck_after: addDays(today, 7), updated_at: new Date().toISOString() })
+        .eq("id", id).eq("status", "questionable");
+      if (re) throw re;
+    }
+  }
+
   // Точки обхода: у проверенных на этой неделе обновится last_searched.
   const cityList = readCities();
   const citiesMarked = markCities(cityList, p.cities_searched || [], today);
@@ -1144,6 +1210,7 @@ async function cmdApply(file: string, apply: boolean) {
     citiesMarked,
     citiesTotal: cityList.length,
     tiers,
+    recheckLines: recheck.lines,
   });
   console.log(summary);
   // Игорю сразу, а не только в ops-log: сбой робота, повышение уровня, кандидат в робота.
@@ -1242,6 +1309,7 @@ export function weeklySummary(a: {
   citiesMarked?: number;
   citiesTotal?: number;
   tiers?: TierStats;
+  recheckLines?: string[];
 }): string {
   const n = (k: Outcome["kind"]) => a.out.filter((o) => o.kind === k).length;
   const tri = a.out.filter((o) => o.kind === "added" && o.tri).length;
@@ -1267,6 +1335,7 @@ export function weeklySummary(a: {
   const sg = a.suggestions || [];
   const sgn = (st: string) => sg.filter((x) => x.status === st).length;
   lines.push(`Заявки с сайта: разобрано ${sg.length - sgn("skipped")} (добавлено ${sgn("added")}, дубль ${sgn("duplicate")}, отклонено ${sgn("rejected")})${sgn("skipped") ? `, не принято шлюзом ${sgn("skipped")}` : ""}`);
+  if (a.recheckLines?.length) lines.push(...a.recheckLines);
   lines.push(`Обход по городам: ${a.citiesMarked ?? 0} точек на этой неделе из ${a.citiesTotal ?? 0}; ВК: ${a.proposal.vk_queries?.length ? `${a.proposal.vk_queries.length} запросов` : "не искали"}`);
   const cands = a.proposal.candidates || [];
   lines.push(cands.length ? "Кандидаты в автосбор:" : "Кандидаты в автосбор: нет");
@@ -1621,6 +1690,7 @@ async function main() {
   if (cmd === "dup" && arg) return cmdDup(arg);
   if (cmd === "dedupe") return void (await cmdDedupe(apply));
   if (cmd === "announce" && arg) return void (await cmdAnnounce(arg, apply));
+  if (cmd === "recheck") return cmdRecheck();
   if (cmd === "apply" && arg) return void (await cmdApply(arg, apply));
   if (cmd === "sources") return cmdSources(arg === "all");
   if (cmd === "sources-seed") return cmdSourcesSeed(apply);
@@ -1630,7 +1700,7 @@ async function main() {
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
   if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
-  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
+  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | recheck | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
 
