@@ -39,9 +39,14 @@ export type VOpts = {
 
 const adj = (a: number, b: number): boolean => Math.abs(a - b) === 1;
 
-/** Тяжёлое ли это для дней перед стартом: работа, длительная или дольше короткой активации. */
+/**
+ * Тяжёлое ли это для дней перед стартом: работа или дольше короткой активации. Только по ФАКТУ —
+ * качество или минуты, — НЕ по ярлыку «длительная». Ярлык означает «самая длинная в неделе»: перед
+ * главным стартом 27 из 31 таких сессий — ровно 40 мин, то есть сама активация (замер 15.10).
+ * С ярлыком запрет «отклонял» 46 из 160 собственных недель Игоря перед главными стартами, по факту — 19.
+ */
 export function heavyBeforeRace(s: { kind: string; minutes: number }): boolean {
-  return s.kind === "quality" || s.kind === "long" || s.minutes > PRE_RACE_ACTIVATION_MAX_MIN;
+  return s.kind === "quality" || s.minutes > PRE_RACE_ACTIVATION_MAX_MIN;
 }
 
 export function validateWeek(ss: VSess[], env: Envelope | null, o: VOpts): VResult[] {

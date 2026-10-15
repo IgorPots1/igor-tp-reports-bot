@@ -12,7 +12,7 @@ import path from "node:path";
 import type { Envelope } from "../lib/autoplanner-context.ts";
 import { addDays, type CWeek } from "./corpus.ts";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
-import { validateWeek, type VSess } from "./validate.ts";
+import { heavyBeforeRace, validateWeek, type VSess } from "./validate.ts";
 
 const L = load();
 const envW = JSON.parse(readFileSync(path.join(DATA_DIR, "env-weeks.json"), "utf8")) as Record<string, { env: Envelope; ill: boolean }>;
@@ -34,7 +34,7 @@ for (const w of L.corpus) {
   const prior = ws.slice(Math.max(0, i - 8), i).map((x) => x.total);
   const normalLevel = prior.length >= 4 ? q(prior, 0.5) : undefined;
   const rds = L.races.filter((r) => r.trainingpeaks_athlete_id === w.aid).map((r) => Math.round((Date.parse(r.event_date) - Date.parse(w.weekStart)) / 86400000)).filter((d) => d >= 0 && d <= 8).sort((a, b) => a - b);
-  for (const r of validateWeek(vs(w), e.env, { hasActiveIllness: e.ill, checkText: false, normalLevel, raceDayIdx: rds[0] ?? null })) {
+  for (const r of validateWeek(vs(w), e.env, { hasActiveIllness: e.ill, checkText: false, normalLevel, raceDayIdx: w.nextRaceIsMain ? rds[0] ?? null : null })) {
     const t = tally.get(r.name) ?? tally.set(r.name, [0, 0, new Set()]).get(r.name)!; t[1]++; if (!r.ok) { t[0]++; t[2].add(w.aid); }
   }
 }
@@ -107,6 +107,32 @@ for (const [aid, ws] of byAid) for (const w of ws) for (const s of w.sessions) {
 for (const off of [1, 2]) {
   const s = pre.filter((x) => x.off === off);
   p(`За ${off} дн до старта (n=${s.length}): минуты p50 ${q(s.map((x) => x.min), 0.5)}, p90 ${q(s.map((x) => x.min), 0.9)}, максимум ${q(s.map((x) => x.min), 1)}; качественных ${s.filter((x) => x.q).length}, длительных ${s.filter((x) => x.long).length}. Самые тяжёлые: ${[...s].sort((a, b) => b.min - a.min).slice(0, 3).map((x) => `«${x.title}» ${x.min}`).join("; ")}`);
+}
+// ── предстартовый запрет: все старты против главных (решение Игоря 15.10) ──
+{
+  let all = 0, allBad = 0, main = 0, mainBad = 0; const badAth = new Set<number>(); const mainAth = new Set<number>();
+  for (const w of L.corpus) {
+    if (w.weekStart < since) continue;
+    const day = w.raceDayIdx; if (day == null || day > 8) continue; // старт в этой неделе или в первые дни следующей
+    const bad = w.sessions.some((s) => !s.race && day - s.dayIdx >= 1 && day - s.dayIdx <= 2 && heavyBeforeRace(s));
+    all++; if (bad) allBad++;
+    if (w.nextRaceIsMain) { main++; mainAth.add(w.aid); if (bad) { mainBad++; badAth.add(w.aid); } }
+  }
+  p();
+  p(`## Предстартовый запрет (за 1–2 дня до старта ничего тяжелее 40 мин лёгкого)`);
+  p(`- ко ВСЕМ стартам (как было): отклоняет ${allBad} из ${all} недель старта (${Math.round(100 * allBad / Math.max(1, all))}%)`);
+  p(`- только к ГЛАВНЫМ (цель цикла по pickTargetRace): ${mainBad} из ${main} (${Math.round(100 * mainBad / Math.max(1, main))}%), атлетов ${badAth.size} из ${mainAth.size}`);
+  p(`- проходных стартов среди недель: ${all - main}; запрет к ним больше не применяется.`);
+  // что именно он ставит перед ГЛАВНЫМ стартом
+  const rows: Array<{ off: number; kind: string; minutes: number }> = [];
+  for (const w of L.corpus) { if (w.weekStart < since || !w.nextRaceIsMain || w.raceDayIdx == null || w.raceDayIdx > 8) continue;
+    for (const s of w.sessions) { const off = w.raceDayIdx - s.dayIdx; if (!s.race && (off === 1 || off === 2)) rows.push({ off, kind: s.kind, minutes: s.minutes }); } }
+  for (const off of [1, 2]) {
+    const r = rows.filter((x) => x.off === off); const heavy = r.filter((x) => heavyBeforeRace(x));
+    p(`- за ${off} дн до ГЛАВНОГО старта: сессий ${r.length}; «тяжёлых» по запрету ${heavy.length} (качественных ${heavy.filter((x) => x.kind === "quality").length}, длительных ${heavy.filter((x) => x.kind === "long").length}, лёгких дольше 40 мин ${heavy.filter((x) => x.kind === "easy").length}); минуты p50 ${q(r.map((x) => x.minutes), 0.5)}, p90 ${q(r.map((x) => x.minutes), 0.9)}`);
+  }
+  const lightHeavy = rows.filter((x) => x.kind === "easy" && x.minutes > 40 && x.minutes <= 60).length;
+  p(`- из «нарушений» лёгкие 41–60 мин: ${lightHeavy} сессий — это порог активации, а не работа/длительная.`);
 }
 writeFileSync(path.join(OUT_DIR, "r1-caps.md"), out.join("\n") + "\n");
 console.log(out.join("\n"));

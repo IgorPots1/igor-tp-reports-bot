@@ -64,7 +64,7 @@ const POST = Math.round(100 * med(postRatios)) / 100;
 const VALID_TO = "2026-08-17";
 const valid = ix.all.filter((w) => w.weekStart >= SPLIT && w.weekStart < VALID_TO && roster.has(w.aid) && w.avg4 > 0);
 type Variant = { name: string; skip: Abnormal[]; normal: number; gap: number; applyPost: boolean };
-const ALL: Abnormal[] = ["старт", "после старта", "сигнал здоровья", "провал объёма", "мало дней"];
+const ALL: Abnormal[] = ["старт", "после старта", "подводка", "сигнал здоровья", "провал объёма", "мало дней"];
 const variants: Variant[] = [];
 for (const gap of [2, 3, 99]) {
   variants.push({ name: "без пропусков", skip: [], normal: 0, gap, applyPost: false });
@@ -76,16 +76,27 @@ for (const gap of [2, 3, 99]) {
   variants.push({ name: "пропуск всего (провал <0.6), после старта ×замер", skip: ALL, normal: 0.6, gap, applyPost: true });
   // ПО НАРЯДУ: «разгрузочная, послестартовая или провальная». Сигнал здоровья НЕ причина — замер R4
   // (неделя с сигналом у тренера нормальная, медиана 1.0); «мало дней» в наряде нет.
-  for (const normal of [0.6, 0.8]) variants.push({ name: `по наряду: старт, после старта, провал/разгрузка <${normal}; после старта ×замер`, skip: ["старт", "после старта", "провал объёма"], normal, gap, applyPost: true });
+  for (const normal of [0.6, 0.8]) {
+    variants.push({ name: `по наряду: старт, после старта, провал/разгрузка <${normal}; после старта ×замер`, skip: ["старт", "после старта", "провал объёма"], normal, gap, applyPost: true });
+    // + ПРЕДСТАРТОВАЯ неделя (решение Игоря 15.10 — класс, а не заплатка): единственный разрешённый набор
+    variants.push({ name: `по наряду + подводка: старт, после старта, подводка, провал <${normal}; после старта ×замер`, skip: ["старт", "после старта", "подводка", "провал объёма"], normal, gap, applyPost: true });
+  }
 }
 const scored = variants.map((v) => { setRepeatParams({ ...v, post: POST });
   return { v, train: evalSet(train, mRepeat(false)).agg.score, valid: evalSet(valid, mRepeat(false)).agg.score }; });
 // ДИАГНОСТИКА: те же варианты на тесте B — показывается, но в ВЫБОРЕ не участвует.
 const bDiag = ix.all.filter((w) => rulesNow.has(`${w.aid}|${w.weekStart}`) && w.avg4 > 0);
 for (const x of scored) { setRepeatParams({ ...x.v, post: POST }); (x as { test?: number }).test = evalSet(bDiag, mRepeat(true)).agg.score; }
+// ДИАГНОСТИКА «ПИК» (не взят, решение за Игорем): образцом не служит неделя выше k × медианы 8 недель.
+const peakDiag = [0, 1.25, 1.4].map((k) => { const bv = variants.find((v) => v.skip.includes("подводка") && v.normal === 0.8 && v.gap === 2)!; setRepeatParams({ ...bv, skip: k > 0 ? [...bv.skip, "пик"] : bv.skip, post: POST, peak: k });
+  return { k, valid: evalSet(valid, mRepeat(false)).agg.score, test: evalSet(bDiag, mRepeat(true)).agg.score }; });
+setRepeatParams({ peak: 0 });
 // при равенстве на проверке решает обучающий отрезок (тоже не тест)
 scored.sort((a, b) => a.valid - b.valid || a.train - b.train);
-const CHOSEN = scored[0].v;
+// РЕШЕНИЕ ИГОРЯ 15.10: предстартовая неделя — не образец. Выбирается лучший вариант СРЕДИ тех, что её
+// содержат; лучший вообще (если это не он) показывается для честности, но не берётся.
+const CHOSEN = scored.find((x) => x.v.skip.includes("подводка"))!.v;
+const BEST_ANY = scored[0];
 setRepeatParams({ ...CHOSEN, post: POST });
 
 // ── тест ──
@@ -102,7 +113,9 @@ p(`- варианты (повтор без цикла), балл на обуче
 p(`  | вариант | пауза | обучение | ПРОВЕРКА (выбор) | тест B (не участвует в выборе) |`);
 p(`  |---|---|---:|---:|---:|`);
 for (const x of scored) p(`  | ${x.v.name} | ≥${x.v.gap === 99 ? "∞" : x.v.gap} | ${x.train} | **${x.valid}** | ${(x as { test?: number }).test} |`);
-p(`- ВЗЯТ по проверке: «${CHOSEN.name}», прецедент при паузе ${RETURN_GAP_WEEKS === 99 ? "не включается" : "≥ " + RETURN_GAP_WEEKS + " нед"}, порог провала ${NORMAL_MIN_RATIO}; после старта ×${POST_RACE_FACTOR} ${CHOSEN.applyPost ? "применяется" : "НЕ применяется"}.`);
+p(`- ДИАГНОСТИКА «пик» (в метод НЕ включён): ${peakDiag.map((x) => `${x.k === 0 ? "без пика" : "пик >" + x.k + "×медианы"}: проверка ${x.valid}, тест B ${x.test}`).join("; ")}`);
+p(`- лучший по проверке вообще: «${BEST_ANY.v.name}», пауза ≥${BEST_ANY.v.gap === 99 ? "∞" : BEST_ANY.v.gap} → ${BEST_ANY.valid}${BEST_ANY.v === CHOSEN ? " (он же взят)" : " — НЕ взят: решение Игоря требует предстартовую неделю в списке"}`);
+p(`- ВЗЯТ (с предстартовой неделей в списке): «${CHOSEN.name}», прецедент при паузе ${RETURN_GAP_WEEKS === 99 ? "не включается" : "≥ " + RETURN_GAP_WEEKS + " нед"}, порог провала ${NORMAL_MIN_RATIO}; после старта ×${POST_RACE_FACTOR} ${CHOSEN.applyPost ? "применяется" : "НЕ применяется"}.`);
 p();
 
 const bSet = ix.all.filter((w) => rulesNow.has(`${w.aid}|${w.weekStart}`) && w.avg4 > 0);

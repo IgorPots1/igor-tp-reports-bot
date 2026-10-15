@@ -136,7 +136,8 @@ export function adapt(ix: Index, t: CWeek, f: Found): Adapted {
       dayMap = "дни по привычке атлета";
     }
   }
-  const removed = enforcePreRace(sessions, t.raceDayIdx);
+  // запрет — только перед ГЛАВНЫМ стартом (решение Игоря 15.10): к проходным он не подводит
+  const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);
   if (removed.length) dayMap += `; снято перед стартом: ${removed.join(", ")}`;
   return { sessions, scale, dayMap };
 }

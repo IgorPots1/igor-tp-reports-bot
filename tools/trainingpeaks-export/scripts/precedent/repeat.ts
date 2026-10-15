@@ -29,16 +29,19 @@ export let NORMAL_MIN_RATIO = 0.8;
 export let RETURN_GAP_WEEKS = 3;
 /** Насколько тренер снижает неделю после старта относительно обычной (замер r2). */
 export let POST_RACE_FACTOR = 0.8;
+/** ПИК — ДИАГНОСТИКА, по умолчанию ВЫКЛ (0): неделя выше стольких медиан 8 недель образцом не служит. Не включено решением Игоря. */
+export let PEAK_RATIO = 0;
 export const DROP_DAY_BELOW = 0.75;
 export const DELTA_MIN = 0.5;
 export const DELTA_MAX = 1.25;
 export const LOOKBACK_WEEKS = 6;
 
 /** Какие причины делают неделю непригодной формой — выбирается на обучающем отрезке (r2). */
-export let SKIP_REASONS: Set<Abnormal> = new Set(["старт", "после старта", "сигнал здоровья", "провал объёма", "мало дней"]);
+export let SKIP_REASONS: Set<Abnormal> = new Set(["старт", "после старта", "подводка", "сигнал здоровья", "провал объёма", "мало дней"]);
 /** Применять ли множитель «после старта» к неделе сразу после гонки (r2). */
 export let APPLY_POST_FACTOR = true;
-export function setRepeatParams(p: { normal?: number; gap?: number; post?: number; skip?: Abnormal[]; applyPost?: boolean }): void {
+export function setRepeatParams(p: { normal?: number; gap?: number; post?: number; skip?: Abnormal[]; applyPost?: boolean; peak?: number }): void {
+  if (p.peak != null) PEAK_RATIO = p.peak;
   if (p.skip) SKIP_REASONS = new Set(p.skip);
   if (p.applyPost != null) APPLY_POST_FACTOR = p.applyPost;
   if (p.normal != null) NORMAL_MIN_RATIO = p.normal;
@@ -48,16 +51,21 @@ export function setRepeatParams(p: { normal?: number; gap?: number; post?: numbe
 
 const med = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 
-export type Abnormal = "старт" | "после старта" | "сигнал здоровья" | "провал объёма" | "мало дней";
+export type Abnormal = "старт" | "после старта" | "подводка" | "пик" | "сигнал здоровья" | "провал объёма" | "мало дней";
 
 /** Почему неделя не годится формой; null — нормальная. Только по данным ДО неё и её самой. */
 export function abnormalReason(ix: Index, w: CWeek): Abnormal | null {
   if (w.phase === "race") return "старт";
   if (w.weeksSinceRace != null && w.weeksSinceRace <= 1 && w.phase === "post") return "после старта";
+  // ПРЕДСТАРТОВАЯ НЕДЕЛЯ — тот же класс, что разгрузка, старт и после старта (решение Игоря 15.10): это
+  // неделя подводки, а не обычная. Семешина получила 345 мин, потому что через две недели после старта
+  // повтор взял предстартовую. Только перед ГЛАВНЫМ стартом: к проходным он не подводит, там неделя обычная.
+  if (w.phase === "taper" && w.nextRaceIsMain) return "подводка";
   if (w.ill) return "сигнал здоровья";
   const prior = (ix.byAid.get(w.aid) ?? []).filter((x) => x.weekStart < w.weekStart).slice(-8);
   if (prior.length >= 3) {
     if (w.total < NORMAL_MIN_RATIO * med(prior.map((x) => x.total))) return "провал объёма";
+    if (PEAK_RATIO > 0 && w.total > PEAK_RATIO * med(prior.map((x) => x.total))) return "пик";
     if (w.days < med(prior.map((x) => x.days)) - 1) return "мало дней";
   }
   return null;
@@ -101,7 +109,7 @@ export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
     if (easy.length > 1 || (easy.length === 1 && sessions.length > 2)) sessions = sessions.filter((s) => s !== easy[0]);
   }
   // старт в начале следующей недели (пн/вт) — тот же запрет на последние дни этой
-  const removed = enforcePreRace(sessions, t.raceDayIdx);
+  const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);
   if (removed.length) deltaWhy += `; снято перед стартом: ${removed.join(", ")}`;
   return { kind: "repeat", base, skipped, delta: Math.round(100 * delta) / 100, deltaWhy, sessions };
 }

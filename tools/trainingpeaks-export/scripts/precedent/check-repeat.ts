@@ -56,12 +56,17 @@ races.push({ trainingpeaks_athlete_id: 4, event_date: addDays(wk(8), 6), distanc
 for (let k = 0; k < 4; k++) rows.push(...weekRows(5, wk(k), NORMAL));
 rows.push(...weekRows(5, wk(7), NORMAL));
 
+// атлеты 7 и 8: проходной старт (10 км в пн следующей недели) — у 7 позже есть марафон (главный), у 8 только эта десятка (главный)
+for (const aid of [7, 8]) { for (let k = 0; k < 6; k++) rows.push(...weekRows(aid, wk(k), [{ d: 1, t: EASY, m: 50 }, { d: 3, t: Q, m: 60 }, { d: 4, t: EASY, m: 50 }, { d: 6, t: LONG, m: 100 }])); races.push({ trainingpeaks_athlete_id: aid, event_date: wk(6), distance_km: 10, distance_raw: null }); }
+// марафон через 3 недели после десятки: десятка — проходной старт на пути к марафону (за 19+ недель она сама была бы целью цикла)
+races.push({ trainingpeaks_athlete_id: 7, event_date: addDays(wk(9), 6), distance_km: 42.2, distance_raw: null });
+
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
 const T = (aid: number, k: number): CWeek => corpus.find((w) => w.aid === aid && w.weekStart === wk(k))!;
 const total_ = (ss: PSess[]): number => ss.reduce((s, x) => s + x.minutes, 0);
 const W8: Weights = { phase: 2.5, dist: 1.4, vol: 0.9, prev: 0.5, prevDays: 0.2, prevQ: 0.2, ill: 0.3, post: 0.3, gap: 1.8, own: 0.6, recency: 0.7 };
-setRepeatParams({ normal: 0.6, gap: 2, post: 0.67, skip: ["старт", "после старта", "провал объёма"], applyPost: true });
+setRepeatParams({ normal: 0.6, gap: 2, post: 0.67, skip: ["старт", "после старта", "подводка", "провал объёма"], applyPost: true });
 
 console.log("\n── форма: защита от наследования ──");
 {
@@ -72,8 +77,12 @@ console.log("\n── форма: защита от наследования ─
 }
 {
   const p = planRepeat(ix, T(2, 7), null);
-  check("неделя после старта: форма — неделя ДО старта, неделя старта пропущена",
-    p.kind === "repeat" && p.base.weekStart === wk(5) && p.skipped.some((s) => s.why === "старт"), JSON.stringify(p.kind === "repeat" ? p.skipped : p));
+  // ПЕРЕПИСАНО 15.10 (правило 6a). Было: «форма — неделя ДО старта (wk5), пропущена только неделя старта».
+  // Отменено решением Игоря: предстартовая неделя перед главным стартом — не образец (подводка). Теперь
+  // пропущены старт И обе недели подводки (wk4, wk5), образцом служит последняя обычная (wk3).
+  check("неделя после старта: форма — последняя ОБЫЧНАЯ неделя до подводки; старт и обе недели подводки пропущены",
+    p.kind === "repeat" && p.base.weekStart === wk(3) && p.skipped.some((s) => s.why === "старт") && p.skipped.filter((s) => s.why === "подводка").length === 2,
+    JSON.stringify(p.kind === "repeat" ? { base: p.base.weekStart, skipped: p.skipped } : p));
   // ×0.67 ниже порога 0.75 → одна лёгкая снимается; оставшиеся: лёгкая 50→35, длительная 100→65
   check("неделя после старта: ×0.67 (замер), одна лёгкая снята, качественная не масштабируется",
     p.kind === "repeat" && p.sessions.length === 3 && p.sessions.find((s) => s.kind === "easy")?.minutes === 35
@@ -119,6 +128,10 @@ console.log("\n── день гонки: выравнивание и запр�
   const removed = enforcePreRace(ss, 6);
   check("запрет снимает длительную накануне старта, лёгкую за три дня не трогает", removed.length === 1 && ss.length === 1 && ss[0].dayIdx === 3, JSON.stringify(removed));
   const sat: PSess[] = [{ dayIdx: 6, kind: "quality", title: "6 х 4", minutes: 60, work: 24, src: corpus[0].sessions[0] }];
+  const act40: PSess[] = [{ dayIdx: 5, kind: "long", title: "Лёгкий", minutes: 40, work: 0, src: corpus[0].sessions[0] }];
+  check("40 мин, названная «длительной» только потому, что самая длинная в неделе, — это активация, не снимается", enforcePreRace(act40, 6).length === 0 && act40.length === 1);
+  const act45: PSess[] = [{ dayIdx: 5, kind: "easy", title: "Лёгкий", minutes: 45, work: 0, src: corpus[0].sessions[0] }];
+  check("45 мин за день до старта — уже не активация, снимается", enforcePreRace(act45, 6).length === 1 && act45.length === 0);
   check("старт в понедельник следующей недели: воскресная работа снимается", enforcePreRace(sat, 7).length === 1 && sat.length === 0);
 }
 
@@ -148,6 +161,18 @@ console.log("\n── сигналы: закрытие для планирова
       && staleReason({ type: "pain_injury", start: "2026-09-01", validUntil: null, races: [], today: "2026-09-26" })?.startsWith("срок") === true);
   const w = signalWindow({ type: "pain_injury", start: "2026-09-01", validUntil: null, resolvedAt: null, races: ["2026-09-10"] });
   check("окно сигнала для плана обрывается днём старта", w.to === "2026-09-10", JSON.stringify(w));
+}
+
+console.log("\n── главный старт против проходного ──");
+{
+  check("десятка при марафоне позже — проходной (длинная дистанция бьёт короткую)", T(7, 5).nextRaceIsMain === false, String(T(7, 5).nextRaceIsMain));
+  check("единственная десятка в горизонте цикла — главный", T(8, 5).nextRaceIsMain === true);
+  check("марафон — главный", T(4, 8).nextRaceIsMain === true);
+  const heavySun = (p: ReturnType<typeof planRepeat>): boolean => p.kind === "repeat" && p.sessions.some((s) => s.dayIdx === 6);
+  check("перед ПРОХОДНЫМ стартом (пн) воскресная длительная остаётся: запрет не применяется", heavySun(planRepeat(ix, T(7, 5), null)));
+  check("перед ГЛАВНЫМ стартом (пн) воскресная длительная снимается", !heavySun(planRepeat(ix, T(8, 5), null)));
+  check("предстартовая неделя перед главным стартом — не образец (подводка)", planRepeat(ix, T(8, 5), null).kind === "repeat" && (planRepeat(ix, T(8, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "подводка"));
+  check("предстартовая неделя перед проходным стартом — образец (подводка не пропускается)", planRepeat(ix, T(7, 5), null).kind === "repeat" && !(planRepeat(ix, T(7, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "подводка"));
 }
 
 console.log("\n── раскидать / публикуй / снести: правки тренера и ворота записи ──");

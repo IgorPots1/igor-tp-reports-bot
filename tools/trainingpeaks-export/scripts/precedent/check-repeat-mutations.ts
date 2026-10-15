@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
+const MR = path.join(HERE, "main-race.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
 type M = { id: string; file: string; find: string; replace: string; what: string };
 const MUT: M[] = [
@@ -33,6 +34,13 @@ const MUT: M[] = [
   { id: "sig-no-race", file: S, find: "  if (raced.length) return", replace: "  if (false) return", what: "прошедший старт сигнал не закрывает" },
   { id: "sig-ttl-7", file: S, find: "pain_injury: 24,", replace: "pain_injury: 7,", what: "срок pain_injury 7 вместо 24" },
   { id: "sig-window-race", file: S, find: "  if (race && race < to) to = race;", replace: "", what: "окно сигнала не обрывается стартом" },
+  { id: "heavy-by-label", file: V, find: "  return s.kind === \"quality\" || s.minutes > PRE_RACE_ACTIVATION_MAX_MIN;", replace: "  return s.kind === \"quality\" || s.kind === \"long\" || s.minutes > PRE_RACE_ACTIVATION_MAX_MIN;", what: "тяжёлое снова определяется по ярлыку «длительная»" },
+  { id: "taper-sample", file: R, find: '  if (w.phase === "taper" && w.nextRaceIsMain) return "подводка";', replace: "", what: "предстартовая неделя снова годится образцом" },
+  { id: "taper-minor", file: R, find: '  if (w.phase === "taper" && w.nextRaceIsMain) return "подводка";', replace: '  if (w.phase === "taper") return "подводка";', what: "подводка пропускается и перед проходным стартом" },
+  { id: "ban-all-races", file: R, find: "  const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);", replace: "  const removed = enforcePreRace(sessions, t.raceDayIdx);", what: "запрет снова и перед проходными стартами" },
+  { id: "ban-no-races", file: R, find: "  const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);", replace: "  const removed = enforcePreRace(sessions, null);", what: "запрет не действует и перед главными" },
+  { id: "main-all", file: MR, find: "      if (pickTargetRace(races, m)?.id === r.id) { out.add(r.id); break; }", replace: "      out.add(r.id); break;", what: "любой старт считается главным" },
+  { id: "main-none", file: MR, find: "      if (pickTargetRace(races, m)?.id === r.id) { out.add(r.id); break; }", replace: "      void m;", what: "ни один старт не главный" },
   { id: "publish-deleted", file: E, find: "  return placed.filter((p) => current.get(p.workoutId) != null)", replace: "  return placed.filter(() => true)", what: "публикуется и удалённое тренером" },
   { id: "no-minutes-diff", file: E, find: "  if (Math.round(c.minutes) !== Math.round(p.minutes))", replace: "  if (false)", what: "правка длительности не пишется" },
   { id: "gate-no-proof", file: O, find: "    if (!g.proof.ok) return", replace: "    if (false) return", what: "раскидать пишет без доказанного скрытия" },

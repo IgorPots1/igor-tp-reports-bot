@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { AthleteContext } from "../lib/autoplanner-context.ts";
 import { workMinutesFromTitle, type CWeek } from "./corpus.ts";
+import { mainRaceIds } from "./main-race.ts";
 import { DATA_DIR } from "./load.ts";
 import { adapt, findPrecedent, type Index, type PSess, type Weights } from "./precedent.ts";
 import { adaptText } from "./adapt-text.ts";
@@ -46,11 +47,12 @@ export function stateFor(ix: Index, aid: number, weekStart: string, races: Array
   const phase = weeksToRace === 0 ? "race" : weeksToRace != null && weeksToRace <= 2 ? "taper"
     : weeksSinceRace != null && weeksSinceRace <= 1 ? "post" : gap >= 2 || ill ? "return" : weeksToRace != null && weeksToRace <= 12 ? "build" : "base";
   const km = next?.distance_km ?? null;
+  const nextRaceIsMain = next ? mainRaceIds(races.map((r) => ({ id: r.event_date, event_date: r.event_date, distance_km: r.distance_km }))).has(next.event_date) : false;
   return {
     aid, weekStart, sessions: [], other: 0, total: 0, aerobic: 0, quality: 0, days: 0, qCount: 0, longDay: null, longMin: 0, work: 0, roles: ".......",
     prevTotal: prev && gap === 0 ? prev.total : 0, prevDays: prev && gap === 0 ? prev.days : 0, prevQ: prev && gap === 0 ? prev.qCount : 0,
     avg4: Math.round(last4.reduce((s, w) => s + w.total, 0) / 4), gapWeeks: gap,
-    weeksToRace, raceKm: km, weeksSinceRace, raceDayIdx: off != null && off <= 13 ? off : null, ill, illAtStart: ill,
+    weeksToRace, raceKm: km, weeksSinceRace, raceDayIdx: off != null && off <= 13 ? off : null, nextRaceIsMain, ill, illAtStart: ill,
     tier: "T2", phase, distBucket: km == null ? "—" : km <= 6 ? "5к" : km <= 12 ? "10к" : km <= 25 ? "21к" : km <= 43 ? "42к" : "ультра",
     volBand: "", repeatOfPrev: false,
   };
@@ -81,7 +83,7 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
   const prior = hist.slice(-8).map((w) => w.total);
   const validator = validateWeek(sessions, c?.envelope ?? null, {
     hasActiveIllness: c?.hasActiveIllness ?? t.illAtStart, checkText: true,
-    normalLevel: prior.length >= 4 ? med(prior) : undefined, raceDayIdx: t.raceDayIdx,
+    normalLevel: prior.length >= 4 ? med(prior) : undefined, raceDayIdx: t.nextRaceIsMain ? t.raceDayIdx : null,
     windowCaps: { weekly: weightedP90(hist.map((w) => ({ v: w.total, weekStart: w.weekStart })), t.weekStart), long: weightedP90(hist.map((w) => ({ v: w.longMin, weekStart: w.weekStart })), t.weekStart) },
   });
   const refused = validator.some((v) => v.severity === "hard" && !v.ok);

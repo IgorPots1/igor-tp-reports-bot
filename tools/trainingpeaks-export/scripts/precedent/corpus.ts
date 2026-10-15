@@ -11,6 +11,7 @@
  */
 import { isQualityForPractice, isTempoForPractice, longDayOfWeek } from "../lib/practice-signals.ts";
 import { tierOf } from "../lib/easy-anchor.ts";
+import { mainRaceIds } from "./main-race.ts";
 
 export const QUALITY_RE = /([0-9]+\s*[xх×]\s*[0-9]|интерв|отрезк|повтор|порог|фартлек|vo\s?2|мпк|темп выше)/i;
 const LONG_RE = /длительн|длинн/i;
@@ -43,6 +44,8 @@ export type CWeek = {
   weeksToRace: number | null; raceKm: number | null; weeksSinceRace: number | null;
   /** день ближайшего старта от понедельника этой недели (0..13), null — в ближайшие 2 недели старта нет */
   raceDayIdx: number | null;
+  /** ближайший старт (до 26 нед) — ГЛАВНЫЙ (цель цикла по pickTargetRace); проходному предстартовый запрет не нужен */
+  nextRaceIsMain: boolean;
   ill: boolean;
   /** сигнал болезни уже открыт на понедельник недели (знание на момент планирования, без подглядывания) */
   illAtStart: boolean;
@@ -109,6 +112,8 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
   const raceBy = new Map<number, Race[]>();
   for (const r of races) (raceBy.get(r.trainingpeaks_athlete_id) ?? raceBy.set(r.trainingpeaks_athlete_id, []).get(r.trainingpeaks_athlete_id)!).push(r);
   for (const v of raceBy.values()) v.sort((a, b) => a.event_date.localeCompare(b.event_date));
+  const mainByAid = new Map<number, Set<string>>();
+  for (const [a, rs] of raceBy) mainByAid.set(a, mainRaceIds(rs.map((r) => ({ id: r.event_date, event_date: r.event_date, distance_km: r.distance_km }))));
 
   const byAthWeek = new Map<number, Map<string, RawRow[]>>();
   for (const r of rows) {
@@ -167,6 +172,7 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
       const weeksToRace = next ? weeksBetween(wk, mondayOf(next.event_date)) : null;
       const raceOff = next ? Math.round((Date.parse(next.event_date) - Date.parse(wk)) / DAY) : null;
       const raceDayIdx = raceOff != null && raceOff <= 13 ? raceOff : null;
+      const nextRaceIsMain = next ? mainByAid.get(aid)?.has(next.event_date) ?? false : false;
       const weeksSinceRace = lastR ? weeksBetween(mondayOf(lastR.event_date), wk) : null;
       const sid = sidByAid.get(aid);
       const end = addDays(wk, 6);
@@ -183,7 +189,7 @@ export function buildCorpus(rows: RawRow[], races: Race[], sig: Signal[], studen
         qCount: ts.filter((s) => s.kind === "quality").length, longDay: long?.dayIdx ?? null, longMin: long?.minutes ?? 0,
         work: ts.reduce((s, x) => s + x.work, 0), roles: roles.join(""),
         prevTotal: prev?.total ?? 0, prevDays: prev?.days ?? 0, prevQ: prev?.q ?? 0, avg4, gapWeeks: gap,
-        weeksToRace, raceKm: next?.distance_km ?? null, weeksSinceRace, raceDayIdx, ill: isIll, illAtStart,
+        weeksToRace, raceKm: next?.distance_km ?? null, weeksSinceRace, raceDayIdx, nextRaceIsMain, ill: isIll, illAtStart,
         tier: tierOf(avg4 > 0 ? avg4 : total), phase, distBucket: distBucket(next?.distance_km ?? null), volBand: volBand(total),
         repeatOfPrev: prev?.sig === sigStr,
       });
