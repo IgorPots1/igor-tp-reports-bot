@@ -11,6 +11,7 @@ import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corp
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
 import { donorExcluded, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
 import { postRaceAdjust, setRecovery } from "./post-race.ts";
+import { substituteDonorStyle } from "./donor-style.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
@@ -85,6 +86,11 @@ races.push({ trainingpeaks_athlete_id: 16, event_date: addDays(wk(6), 6), distan
 for (let k = 0; k < 2; k++) rows.push(...weekRows(18, wk(k), NORMAL));
 rows.push(...weekRows(18, wk(2), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Забег", m: 200 }]));
 races.push({ trainingpeaks_athlete_id: 18, event_date: addDays(wk(2), 6), distance_km: 10, distance_raw: null });
+// атлеты 21 и 22: донор в стиле «по пульсу» и цель в стиле «по темпу» с двумя видами лёгкой (40 и 90 мин)
+const PUL: S[] = [{ d: 1, t: "Легкий бег по пульсу", m: 50 }, { d: 3, t: Q, m: 60 }, { d: 4, t: "Легкий бег по пульсу", m: 85 }, { d: 6, t: "Длительный бег по пульсу", m: 100 }];
+const TMP: S[] = [{ d: 1, t: "Лёгкий кросс", m: 40 }, { d: 3, t: Q, m: 60 }, { d: 4, t: "Легкий бег по темпу", m: 90 }, { d: 6, t: "Длительный бег по темпу", m: 100 }];
+for (let k = 0; k < 6; k++) { rows.push(...weekRows(21, wk(k), PUL)); rows.push(...weekRows(22, wk(k), TMP)); }
+rows.push(...weekRows(22, wk(6), TMP));
 // атлет 12: пиковая неделя (400 при медиане 260) прямо перед целевой
 for (let k = 0; k < 6; k++) rows.push(...weekRows(12, wk(k), NORMAL));
 rows.push(...weekRows(12, wk(6), [{ d: 1, t: EASY, m: 80 }, { d: 3, t: Q, m: 60 }, { d: 4, t: EASY, m: 80 }, { d: 6, t: LONG, m: 180 }]));
@@ -325,6 +331,30 @@ console.log("\n── после старта: ОБЕ ветки (повтор �
   const t18 = T(18, 2);
   check("неделя старта без истории (2 недели): ОТКАЗ и в ветке прецедента", t18.phase === "race" && planRepeat(ix, t18, null).kind === "refuse");
   check("неделя старта с историей: прецедент (не отказ)", planRepeat(ix, T(4, 8), null).kind === "precedent");
+}
+
+console.log("\n── названия донора → обычные сессии атлета ──");
+{
+  const don = (p: CWeek) => ({ p, why: { d: 0, parts: [] as Array<[string, number]> }, ownAvailable: 0 });
+  const tgt = T(22, 6); const own = new Set(["Лёгкий кросс", "Легкий бег по темпу", "Длительный бег по темпу"]);
+  const on = adapt(ix, tgt, don(T(21, 5)), true); const off = adapt(ix, tgt, don(T(21, 5)), false);
+  const nonQ = on.sessions.filter((x) => x.kind !== "quality");
+  check("чужой донор «по пульсу»: все названия лёгких и длительной — из обычных сессий атлета («по темпу»), «пульса» нет",
+    nonQ.length === 3 && nonQ.every((x) => own.has(x.title)) && !on.sessions.some((x) => /пульс/i.test(x.title) && x.kind !== "quality"), JSON.stringify(on.sessions.map((x) => [x.kind, x.title, x.minutes])));
+  check("в тексте тоже его сессия: описание (src) принадлежит шаблону атлета, а не донору", nonQ.every((x) => !/пульс/i.test(x.src.title)));
+  check("качественная не подменяется: рецепт «6 х 4 мин» остаётся", on.sessions.some((x) => x.kind === "quality" && x.title === Q));
+  check("минуты и дни остаются донорскими (подмена меняет заголовок и текст, не нагрузку)", on.sessions.map((x) => `${x.dayIdx}:${x.minutes}`).join() === off.sessions.map((x) => `${x.dayIdx}:${x.minutes}`).join());
+  const e50 = on.sessions.find((x) => x.kind === "easy" && x.minutes <= 55)!, e85 = on.sessions.find((x) => x.kind === "easy" && x.minutes >= 80)!;
+  check("шаблон — ближайший по минутам: лёгкая ~50 → «Лёгкий кросс» (40), ~85 → «Легкий бег по темпу» (90)", e50.title === "Лёгкий кросс" && e85.title === "Легкий бег по темпу", `${e50.title} / ${e85.title}`);
+  const ownDon = adapt(ix, tgt, don(T(22, 5)), true);
+  check("свой донор не трогается: подмены нет, в пометке про названия пусто", !ownDon.dayMap.includes("названия донора"), ownDon.dayMap);
+  check("в пометке недели названо, что заменено и сколько", on.dayMap.includes("названия донора заменены обычными сессиями атлета: 3 из 3"), on.dayMap);
+  const mp = adapt(ix, T(10, 5), don(T(21, 5)), true);
+  check("шаблон не бывает блоком «в темпе марафона»: у атлета 10 такие длительные — берётся его обычная лёгкая", !mp.sessions.some((x) => /марафон/i.test(x.title)), JSON.stringify(mp.sessions.map((x) => x.title)));
+  const keepMp = adapt(ix, T(22, 6), don(T(10, 5)), true);
+  check("донорская сессия с блоком «в темпе марафона» (качество по содержанию) остаётся как есть, лёгкие подменены", keepMp.sessions.some((x) => /темпе марафона/.test(x.title)) && keepMp.sessions.filter((x) => x.kind === "easy").every((x) => own.has(x.title)), JSON.stringify(keepMp.sessions.map((x) => x.title)));
+  const none = substituteDonorStyle(ix, T(18, 0), adapt(ix, T(18, 0), don(T(21, 5)), false).sessions, 21);
+  check("у атлета нет своей истории (шаблонов нет): донорские сессии остаются, подмены 0", none.replaced === 0 && none.considered > 0, JSON.stringify({ r: none.replaced, c: none.considered }));
 }
 
 console.log("\n── донор прецедента: пик не донор (правило из повтора выровнено) ──");

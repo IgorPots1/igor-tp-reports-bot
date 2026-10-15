@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
 const MR = path.join(HERE, "main-race.ts");
-const PC = path.join(HERE, "precedent.ts"), BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts"), RL = path.join(HERE, "recent-level.ts");
+const DS = path.join(HERE, "donor-style.ts"), PC = path.join(HERE, "precedent.ts"), BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts"), RL = path.join(HERE, "recent-level.ts");
 const HF = path.join(HERE, "hidden-flow.ts"), PB = path.join(HERE, "probe-hidden-via-client.ts");
 const PR = path.join(HERE, "post-race.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
@@ -84,7 +84,6 @@ const MUT: M[] = [
   { id: "strip-half", file: PR, find: "  if (t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace != null && t.weeksSinceRace <= POST_MARATHON_NO_QUALITY_WEEKS) {", replace: "  if (t.lastRaceKm != null && t.lastRaceKm >= 15 && t.weeksSinceRace != null && t.weeksSinceRace <= POST_MARATHON_NO_QUALITY_WEEKS) {", what: "качество снимается и после половинки" },
   { id: "adjust-raises", file: PR, find: "const rel = Math.min(1, Math.max(RECOVERY_DELTA_MIN, rf) / Math.max(RECOVERY_DELTA_MIN, alreadyFactor));", replace: "const rel = Math.max(RECOVERY_DELTA_MIN, rf) / Math.max(RECOVERY_DELTA_MIN, alreadyFactor);", what: "множитель может ПОВЫСИТЬ нагрузку, если донор был ниже" },
   { id: "prec-no-post-flag", file: BW, find: "const a = adapt(ix, t, f, true);", replace: "const a = adapt(ix, t, f);", what: "сборка не включает «после старта» в ветке прецедента" },
-  { id: "prec-no-adjust", file: PC, find: "  if (postRace) {", replace: "  if (false) {", what: "прецедент не применяет «после старта»" },
   { id: "prec-double-factor", file: PC, find: "recoveryFactor(p.lastRaceKm, p.weeksSinceRace) ?? 1)", replace: "1)", what: "множитель недели-донора не учитывается: двойное снижение" },
   { id: "no-drop-day", file: R, find: "  } else if (delta < DROP_DAY_BELOW) {", replace: "  } else if (false) {", what: "глубокая разгрузка цикла не снимает день" },
   { id: "no-drop-day-recovery", file: PR, find: "if (t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace === 1) {\n    const easy", replace: "if (false) {\n    const easy", what: "1-я неделя после марафона не снимает день" },
@@ -93,6 +92,13 @@ const MUT: M[] = [
   { id: "drop-day-by-threshold", file: PR, find: "if (t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace === 1) {\n    const easy", replace: "if (rel < DROP_DAY_BELOW) {\n    const easy", what: "день снимается по порогу множителя (двойной счёт), а не только на +1 после марафона" },
   { id: "donor-filter-unwired", file: BW, find: "return findPrecedent(ix, t, W, mode, DONOR_PEAK_FILTER ? (p) => donorExcluded(ix, p) : undefined);", replace: "return findPrecedent(ix, t, W, mode);", what: "боевой выбор донора не исключает пики" },
   { id: "donor-filter-default-off", file: BW, find: "export let DONOR_PEAK_FILTER = true;", replace: "export let DONOR_PEAK_FILTER = false;", what: "фильтр доноров-пиков выключен по умолчанию" },
+  { id: "style-off", file: PC, find: "    const st = substituteDonorStyle(ix, t, sessions, p.aid);", replace: "    const st = { considered: 0, sessions, notes: [] as string[] };", what: "подмена названий донора не действует" },
+  { id: "style-own-donor", file: DS, find: "  if (donorAid === t.aid) return { sessions, replaced: 0, considered: 0, notes: [] };", replace: "", what: "подмена применяется и к своему донору" },
+  { id: "style-quality", file: DS, find: "    if (s.kind === \"quality\" || hasQualityContent({ kind: s.kind, title: s.title, description: s.src.desc })) return s;", replace: "", what: "подмена затрагивает и качественные сессии донора" },
+  { id: "style-farthest", file: DS, find: "const d = Math.abs(s.minutes - minutes);", replace: "const d = -Math.abs(s.minutes - minutes);", what: "берётся шаблон, самый далёкий по минутам" },
+  { id: "style-minutes", file: DS, find: "return { ...s, title: tpl.title, src: tpl } as PSess;", replace: "return { ...s, title: tpl.title, src: tpl, minutes: tpl.minutes } as PSess;", what: "подмена переписывает и минуты донора" },
+  { id: "style-racepace-tpl", file: DS, find: "      if (s.race || s.kind !== k || hasQualityContent({ kind: s.kind, title: s.title, description: s.desc })) continue;", replace: "      if (s.race || s.kind !== k) continue;", what: "шаблоном может стать блок «в темпе марафона»" },
+  { id: "prec-no-adjust", file: PC, find: "  if (prod) {\n    const adj = postRaceAdjust", replace: "  if (false) {\n    const adj = postRaceAdjust", what: "прецедент не применяет «после старта»" },
   { id: "publish-deleted", file: E, find: "  return placed.filter((p) => current.get(p.workoutId) != null)", replace: "  return placed.filter(() => true)", what: "публикуется и удалённое тренером" },
   { id: "no-minutes-diff", file: E, find: "  if (Math.round(c.minutes) !== Math.round(p.minutes))", replace: "  if (false)", what: "правка длительности не пишется" },
   { id: "gate-no-proof", file: O, find: "    if (!g.proof.ok) return", replace: "    if (false) return", what: "раскидать пишет без доказанного скрытия" },
