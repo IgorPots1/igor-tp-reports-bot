@@ -50,6 +50,7 @@ import { computeBotStats, dailyMessage, statsMessage, weeklyMessage, type StatEv
 import { memStore } from "./lib/races-bot-memstore";
 import * as T from "@/features/races-bot/texts";
 import { courseList } from "@/features/race-course";
+import { fullDetails, type FullRow } from "@/features/race-details/full";
 
 // ── данные ───────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,8 @@ let NOW = new Date("2026-10-12T10:00:00Z"); // 13:00 по Москве, поне
 // Часы защиты от двойного клика: каждое нажатие cb() — через 5 секунд после прошлого;
 // двойной клик в тесте собирается вручную, без сдвига.
 let CLICK = Date.parse("2026-10-12T10:00:00Z");
+/** Выжимка race_details по стартам (вариант Б, 15.10.2026), задаётся в тесте «Всё о старте». */
+const DETAILS = new Map<string, FullRow[]>();
 const store = memStore({ now: () => NOW, announced: ANNOUNCED, clock: () => CLICK });
 const bot = createBot({
   store,
@@ -118,6 +121,7 @@ const bot = createBot({
   weather: async () => ({ tMax: 14.4, tMin: 6.2, rainProb: 30, windMax: 4.1 }),
   goLink: (tg, r, kind) => `https://igorp.run/go/${kind}${raceCode(r.id)}-${tg.toString(36)}-0123456789`,
   cancelled: async () => CANCELLED,
+  details: async (id) => DETAILS.get(id) ?? [],
 });
 
 const USER = { id: 501, first_name: "Анна", username: "anna_runs" };
@@ -1139,6 +1143,64 @@ async function main() {
   assert.ok(!/Старты России/.test(allBotText));
   for (const t of [T.week1(HALF).text, T.weeks12(HALF, true).text, T.afterFinish({ race_id: "x", created_at: "", race_name: "X", race_date: null, race_end: null, race_city: null }).text]) {
     assert.ok(!/раскладк|прогноз (на )?результат|прогноз времени|темп \d/i.test(t), `без раскладок и прогнозов: ${t}`);
+  }
+
+  // ── «Всё о старте» (вариант Б, 15.10.2026) ────────────────────────────────────
+  // Кнопка под «Важное» — только при выжимке от 3 полей; по ней тот же живой экран редактируется в
+  // полную выжимку (новым сообщением не отправляем); нажатие — событие details_open и ветка в /stats.
+  {
+    const row = (distance: number | null, field: string, value: string): FullRow => ({ distance, field, value, source_url: "https://org.ru/race", checked_at: "2026-10-15" });
+    DETAILS.set(SHORT.id, [
+      row(10, "start_time", "10:00"), row(5, "start_time", "10:30"), row(1, "start_time", "9:30 (детский)"),
+      row(null, "packet_pickup", "сб 12:00–20:00, ТЦ <Галерея>"), row(null, "registration_status", "открыта"),
+      row(null, "baggage", "нет данных"),
+    ]);
+    DETAILS.set(TRAIL.id, [row(null, "start_time", "9:00"), row(null, "packet_pickup", "в день старта")]);
+    const card = T.raceScreen(SHORT, "Москва", false, null, null, "sz", false, "Важное: старт 10:00–10:30 по дистанциям", true);
+    const first = buttons({ params: card as unknown as Record<string, unknown> } as Call)[0];
+    assert.equal(first.text, "Всё о старте", "кнопка сразу под строкой «Важное», первой");
+    assert.equal(first.callback_data, `ds:${raceCode(SHORT.id)}:sz`);
+    assert.ok(!buttons({ params: T.raceScreen(SHORT, "Москва", false, null, null, "sz", false, null, false) as unknown as Record<string, unknown> } as Call).some((b) => b.text === "Всё о старте"));
+
+    reset();
+    const evBefore = store.events.length;
+    await bot.handleUpdate(cbm(USER, `ds:${raceCode(SHORT.id)}:sz`));
+    const sentNew = calls.filter((c) => c.method === "sendMessage" && c.params.chat_id === USER.id);
+    const edit = calls.filter((c) => c.method === "editMessageText" && c.params.chat_id === USER.id).at(-1);
+    assert.equal(sentNew.length, 0, "новым сообщением не отправляем");
+    const text = String(edit?.params.text);
+    assert.match(text, /что важно знать/);
+    assert.match(text, /<pre>10 км  10:00\n5 км   10:30<\/pre>\nДетские: 9:30 \(детский\)\./, `время столбиком, детские ниже: ${text}`);
+    assert.match(text, /&lt;Галерея&gt;/, "экранирование");
+    assert.match(text, /Открыта \(на 15\.10\)\./);
+    assert.match(text, /Источник: <a href="https:\/\/org\.ru\/race">сайт организатора<\/a>, проверено 15\.10/);
+    assert.doesNotMatch(text, /нет данных|На месте/, "«нет данных» нигде, пустой раздел не показан");
+    assert.deepEqual(buttons(edit!).map((b) => b.text), ["◀ К старту", "⭐ Следить"]);
+    assert.equal(buttons(edit!)[0].callback_data, `tb:${raceCode(SHORT.id)}:sz`);
+    assert.ok(store.events.slice(evBefore).some((e) => e.event === "details_open" && e.race_id === SHORT.id), "событие details_open");
+    // Меньше 3 полей: кнопки нет, а старое нажатие ведёт в карточку, не в выжимку.
+    reset();
+    await bot.handleUpdate(cbm(USER, `ds:${raceCode(TRAIL.id)}:sz`));
+    const back = calls.filter((c) => c.params.chat_id === USER.id && (c.method === "editMessageText" || c.method === "sendMessage")).at(-1);
+    assert.doesNotMatch(String(back?.params.text), /что важно знать/);
+    assert.ok(!buttons(back!).some((b) => b.text === "Всё о старте"), "2 поля — без кнопки");
+    // /stats: ветка «увидел список → открыл „Всё о старте“».
+    reset();
+    await bot.handleUpdate(msg(COACH, "/stats"));
+    assert.match(texts(900).at(-1)!, /Ветка: увидел список → открыл «Всё о старте»: \d+/);
+    // Лимит Telegram: не влезает — режем «На месте» и цены, время старта и номера остаются.
+    const huge: FullRow[] = [
+      ...Array.from({ length: 6 }, (_, i) => row(5 + i * 5, "start_time", `${9 + i}:00`)),
+      row(null, "packet_pickup", "ЭКСПО 05.12 12:00–20:00"),
+      row(null, "aid_stations", "питание ".repeat(300)), row(null, "baggage", "камера хранения ".repeat(100)),
+      row(null, "registration_status", "открыта"), row(null, "next_price_increase", "с 01.11 дороже ".repeat(100)),
+    ];
+    const m = T.raceDetails(SHORT, fullDetails(huge, SHORT.ds), false, false, "x", "sz");
+    assert.ok(m.text.length <= T.DETAILS_MAX, `длина ${m.text.length}`);
+    assert.match(m.text, /30 км  14:00/, "время старта целиком");
+    assert.match(m.text, /ЭКСПО 05\.12 12:00–20:00/, "номера целиком");
+    assert.doesNotMatch(m.text, /Повышение цены/, "цены сокращены");
+    DETAILS.clear();
   }
 
   console.log("check:races-bot ok");

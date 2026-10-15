@@ -43,6 +43,7 @@ export function actionCategory(e: StatEvent): string | null {
       if (["sz", "sn", "show", "dlist"].includes(k)) return "Сезоны";
       if (["so", "oc"].includes(k)) return "Карточки";
       if (["tc", "tv", "tb"].includes(k)) return "Разбор трассы";
+      if (k === "ds") return "Всё о старте";
       if (["f", "sf"].includes(k)) return "⭐ Следить";
       if (k === "consult") return "Консультация";
       if (["city", "cityg", "pick", "city_other", "geo", "restart"].includes(k)) return "Город";

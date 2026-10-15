@@ -7,7 +7,8 @@
 
 import { norm } from "@/app/races/races-logic";
 import { courseList } from "@/features/race-course";
-import { importantLine, type DetailRow } from "@/features/race-details/important";
+import { fieldCount, fullDetails, MIN_FIELDS, type FullRow } from "@/features/race-details/full";
+import { importantLine } from "@/features/race-details/important";
 
 import {
   consultAllowed,
@@ -70,7 +71,7 @@ export type BotEvent =
   | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
   | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked"
   | "expected_watch" | "expected_announced" | "pick_city" | "nudge_sent"
-  | "tap" | "card_open" | "miniapp";
+  | "tap" | "card_open" | "miniapp" | "details_open";
 
 /** Действия в календаре Mini App, которые пишем в статистику (наряд 13.10.2026). */
 export const MINIAPP_ACTIONS = ["season", "filter", "open", "reg", "site"] as const;
@@ -131,7 +132,7 @@ export type BotDeps = {
   /** Ссылка через igorp.run/go/<код>: клик записывается и сразу 302 на сайт или регистрацию. */
   goLink?: (tgId: number, r: BotRace, kind: "r" | "s") => string;
   /** Выжимка по старту (race_details): строка «Важное» в карточке. Нет — блока нет. */
-  details?: (raceId: string) => Promise<DetailRow[]>;
+  details?: (raceId: string) => Promise<FullRow[]>;
   /** Отменённые вручную старты (race_overrides.status = cancelled): в «Моих стартах» с пометкой. */
   cancelled?: () => Promise<Set<string>>;
 };
@@ -406,8 +407,11 @@ export function createBot(deps: BotDeps) {
       const following = (await followingSet(u.tg_id)).has(x.race.id);
       const place = x.near ? T.placeLine(x.race, x.km) : x.race.city || T.placeLine(x.race, null);
       // «Важное» из выжимки: сбой чтения не мешает карточке, просто без блока.
-      const important = deps.details ? importantLine(await deps.details(x.race.id).catch(() => [])) : null;
-      return screen(u, T.raceScreen(x.race, place, following, regLink(u, x.race), siteLink(u, x.race), back, consult, important), origin);
+      const rows = deps.details ? await deps.details(x.race.id).catch(() => []) : [];
+      const important = importantLine(rows);
+      // «Всё о старте» — только когда выжимка есть хотя бы по 3 полям (вариант Б, 15.10.2026)
+      const more = fieldCount(rows) >= MIN_FIELDS;
+      return screen(u, T.raceScreen(x.race, place, following, regLink(u, x.race), siteLink(u, x.race), back, consult, important, more), origin);
     }
     const watching = new Set(await store.listExpectedWatches(u.tg_id)).has(x.e.id);
     const place = x.e.city ? `${x.e.city}${x.km === null ? "" : `, ${x.km} км`}` : x.e.subject || "место уточняется";
@@ -715,6 +719,18 @@ export function createBot(deps: BotDeps) {
         const c = courses[Math.min(idx, courses.length - 1)];
         const following = (await followingSet(u.tg_id)).has(x.race.id);
         return screen(u, T.courseShort(x.race, c, courses.length > 1, following, code, tail), msg);
+      }
+      case "ds": {
+        // «Всё о старте»: тот же живой экран редактируется в полную выжимку. Хвост — как у карточки.
+        const [code, ...rest] = arg.split(":");
+        const x = await itemByCode(u, code);
+        if (!x || x.kind !== "race") return showFork(u, msg);
+        const rows = deps.details ? await deps.details(x.race.id).catch(() => []) : [];
+        if (fieldCount(rows) < MIN_FIELDS) return showItem(u, x, backOf(rest), msg);
+        await track(u.tg_id, "details_open", { raceId: x.race.id, meta: { race_name: x.race.name } });
+        const hasCourse = courseList(x.race.id).length > 0;
+        const following = (await followingSet(u.tg_id)).has(x.race.id);
+        return screen(u, T.raceDetails(x.race, fullDetails(rows, x.race.ds, hasCourse), following, hasCourse, code, rest.join(":") || "sz"), msg);
       }
       case "flt":
         return screen(u, T.prefs(u.types, u.distances, "Отметь, что интересно, и нажми «Показать забеги»."), msg);

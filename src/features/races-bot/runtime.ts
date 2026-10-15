@@ -10,7 +10,7 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import { BotBlockedError, createBot, type BotFollow, type BotStore, type BotTg, type BotUser } from "./bot";
 import { localParts, raceCode, type BotRace, type ExpectedItem, type GoCode } from "./core";
 import { loadGeoRows, toExpected, withGeo } from "@/app/races/expected";
-import type { DetailRow } from "@/features/race-details/important";
+import type { FullRow } from "@/features/race-details/full";
 import { computeBotStats, type StatEvent, type StatFollow, type StatPeriod, type StatUser } from "./stats";
 import type { Weather } from "./texts";
 
@@ -104,21 +104,21 @@ export async function loadBotRaces(): Promise<BotRace[]> {
 
 // ── выжимка по стартам ─────────────────────────────────────────────────────────
 
-const detailsCache = new Map<string, { at: number; rows: DetailRow[] }>();
+const detailsCache = new Map<string, { at: number; rows: FullRow[] }>();
 let detailsBroken = false;
 
 /** Выжимка по старту из race_details (блок «Важное»). Кэш 10 минут на инстанс. Таблицы ещё нет или
  *  чтение упало — пусто и одна строка в лог: карточка показывается без блока. */
-export async function loadRaceDetails(raceId: string): Promise<DetailRow[]> {
+export async function loadRaceDetails(raceId: string): Promise<FullRow[]> {
   const hit = detailsCache.get(raceId);
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.rows;
-  const { data, error } = await createSupabaseServerClient().from("race_details").select("distance,field,value,checked_at").eq("race_id", raceId);
+  const { data, error } = await createSupabaseServerClient().from("race_details").select("distance,field,value,source_url,checked_at").eq("race_id", raceId);
   if (error) {
     if (!detailsBroken) console.error(`[races-bot] race_details: ${error.message}`);
     detailsBroken = true;
     return [];
   }
-  const rows = ((data ?? []) as { distance: number | string | null; field: string; value: string; checked_at: string | null }[]).map((r) => ({ ...r, distance: r.distance == null ? null : Number(r.distance) }));
+  const rows = ((data ?? []) as { distance: number | string | null; field: string; value: string; source_url: string | null; checked_at: string | null }[]).map((r) => ({ ...r, distance: r.distance == null ? null : Number(r.distance) }));
   detailsCache.set(raceId, { at: Date.now(), rows });
   return rows;
 }

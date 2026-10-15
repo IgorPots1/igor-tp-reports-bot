@@ -3,6 +3,7 @@
  * их собирает scripts/race-course/build.ts; персональных данных учеников в них нет. */
 
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import SiteHeader from "@/components/SiteHeader";
@@ -66,9 +67,9 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
     <div className={`${onest.variable} ${jetbrains.variable} ${pageStyles.page}`}>
       <SiteHeader />
       <main className={styles.wrap}>
-        <a className={styles.back} href="/races">
+        <Link className={styles.back} href="/races">
           ← Календарь забегов
-        </a>
+        </Link>
         <h1 className={styles.h1}>{c.name}</h1>
         <p className={styles.lede}>
           {longDate(c.date)} · {ru(c.distanceKm)} км · разбор трассы

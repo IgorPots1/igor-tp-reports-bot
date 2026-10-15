@@ -1,0 +1,51 @@
+/* Страница старта: блок «Что важно знать» (вариант Б, 15.10.2026) */
+.important {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--paper-2, rgba(0, 0, 0, 0.04));
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.important b {
+  font-weight: 600;
+}
+
+.sec {
+  margin-top: 14px;
+}
+
+.k {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.times {
+  display: grid;
+  grid-template-columns: max-content;
+  gap: 2px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 6em auto;
+  gap: 12px;
+}
+
+.line {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.links {
+  margin-top: 16px;
+}

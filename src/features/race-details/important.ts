@@ -18,7 +18,8 @@ export const MAX_LINE = 140;
 
 /** Значение коротко: до « — », без скобок, до первого «;», не длиннее max. */
 export function shortValue(v: string, max = MAX_PART): string {
-  let s = v.split(/\s+[—–]\s+/)[0].replace(/\s*\([^)]*\)/g, "").split(/;\s*/)[0].replace(/\s+/g, " ").trim();
+  // скобки — до тире: тире внутри скобки («ЭКСПО (адрес — не позднее 20.11)») рвало строку (15.10.2026)
+  let s = v.replace(/\s*\([^)]*\)/g, "").split(/\s+[—–]\s+/)[0].split(/;\s*/)[0].replace(/\s+/g, " ").trim();
   if (s.length > max) {
     // режем по последней запятой до лимита (адрес, название), иначе по слову
     const cut = s.slice(0, max);
@@ -33,8 +34,12 @@ const has = (rows: DetailRow[], field: string) => rows.filter((r) => r.field ===
 const toMin = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 const hhmm = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
 
+/** Детские забеги (до 2 км или «детск» в тексте) в «Важное» не идут, если есть взрослые: их 12:00 растягивал промежуток. */
+const kids = (r: DetailRow) => (r.distance != null && r.distance < 2) || /детск/i.test(r.value);
+
 function startPart(rows: DetailRow[]): string | null {
-  const own = has(rows, "start_time");
+  const all = has(rows, "start_time");
+  const own = all.some((r) => !kids(r)) ? all.filter((r) => !kids(r)) : all;
   if (!own.length) return null;
   // Время берём из основной части значения (до « — » и скобок): «09:00 (регистрация 08:00)» → 9:00.
   const times = new Set<number>();
@@ -78,7 +83,11 @@ function registrationPart(rows: DetailRow[]): string | null {
   const checked = own.map((r) => r.checked_at ?? "").filter((x) => /^\d{4}-\d{2}-\d{2}/.test(x)).sort().at(-1);
   if (!checked) return null;
   const on = ` (на ${checked.slice(8, 10)}.${checked.slice(5, 7)})`;
-  if (/исчерпан|нет мест|sold ?out|мест не осталось/i.test(v)) return `мест нет${on}`;
+  // «мест нет» — только если регистрация не открыта: «открыта; свободно 143; ходьба — лимит исчерпан»
+  // это не «мест нет» (Змейка, 15.10.2026), а места на основных дистанциях есть.
+  // «свободно 0 из 300» — не открыта: свободно считается, только если число мест не ноль
+  const open = (/открыт|есть места/i.test(v) || /свободно\D{0,3}[1-9]/i.test(v)) && !/на всех дистанциях/i.test(v);
+  if (!open && /исчерпан|нет мест|sold ?out|мест не осталось/i.test(v)) return `мест нет${on}`;
   if (/^закрыт|регистрация закрыта|онлайн-регистрация закрыта/i.test(v)) return `регистрация закрыта${on}`;
   return null;
 }

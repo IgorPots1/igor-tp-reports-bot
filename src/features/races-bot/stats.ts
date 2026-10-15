@@ -47,6 +47,8 @@ export type BotStatsReport = {
   nudge: { sent: number; acted: number };
   users: { total: number; new7: number; new30: number; active7: number; blocked: number; unsubscribed: number };
   funnel: FunnelStep[];
+  /** Ветка воронки (15.10.2026): из увидевших список — открыли «Всё о старте»; % от увидевших список. */
+  details: { people: number; pct: number | null };
   sources: { source: string; users: number; follow: number; consult: number }[];
   clicks: Record<"registration" | "site" | "calendar", { d7: number; d30: number }>;
   topRaces: { name: string; n: number }[];
@@ -160,6 +162,11 @@ export function computeBotStats(input: {
     click: did(["click_registration", "click_site"]),
     consult_click: did(["consult_click"]),
   };
+  // Ветка, а не шаг цепочки: ⭐ жмут и без выжимки, процент ⭐ от неё был бы неверным.
+  const listSeen = cohort.filter((u) => stepSets.list_shown.has(u.tg_id)).length;
+  const detailsOpen = did(["details_open"]);
+  const detailsPeople = cohort.filter((u) => stepSets.list_shown.has(u.tg_id) && detailsOpen.has(u.tg_id)).length;
+  const details = { people: detailsPeople, pct: listSeen ? Math.round((detailsPeople / listSeen) * 100) : null };
   let prev = cohort.length;
   const funnel = FUNNEL.map(([key, label]) => {
     const n = cohort.filter((u) => stepSets[key].has(u.tg_id)).length;
@@ -271,6 +278,7 @@ export function computeBotStats(input: {
       unsubscribed: peopleWith("unsubscribe").size,
     },
     funnel,
+    details,
     sources: [...bySource.entries()].sort((a, b) => b[1].users - a[1].users).map(([source, s]) => ({ source, ...s })),
     clicks: {
       registration: { d7: count("click_registration", d7), d30: count("click_registration", d30) },
@@ -316,6 +324,7 @@ export function statsMessage(s: BotStatsReport): { text: string; reply_markup: {
     "",
     `<b>Воронка новых за период</b> (люди, % от предыдущего шага):`,
     ...s.funnel.map((f) => (f.key === "came" || f.pct === null ? `${f.label}: ${f.people}` : `${f.label}: ${f.people} (${f.pct}%)`)),
+    `Ветка: увидел список → открыл «Всё о старте»: ${s.details.people}${s.details.pct === null ? "" : ` (${s.details.pct}%)`}`,
     `Ветка: пришёл → открыл календарь: ${s.calendar.cohort}${s.calendar.cohortPct === null ? "" : ` (${s.calendar.cohortPct}%)`}`,
     "",
     `<b>Открыли календарь:</b> ${s.calendar.people} чел.${s.calendar.byFrom.length ? ` (${s.calendar.byFrom.map((x) => `${CAL_FROM[x.from] ?? esc(x.from)} ${x.people}`).join(", ")})` : ""}`,
@@ -363,6 +372,7 @@ export function weeklyMessage(s: BotStatsReport): string {
     ...dailyLines(s.daily),
     "<b>Воронка новых за неделю</b> (люди, % от предыдущего шага):",
     ...s.funnel.map((f) => (f.key === "came" || f.pct === null ? `${f.label}: ${f.people}` : `${f.label}: ${f.people} (${f.pct}%)`)),
+    `Ветка: увидел список → открыл «Всё о старте»: ${s.details.people}${s.details.pct === null ? "" : ` (${s.details.pct}%)`}`,
     "",
     `<b>Смотрели</b> (карточки): ${s.topViewed.length ? s.topViewed.map((r) => `${esc(r.name)} (${r.n})`).join("; ") : "нет"}`,
     `<b>Сохраняли</b> (⭐): ${s.topSaved.length ? s.topSaved.map((r) => `${esc(r.name)} (${r.n})`).join("; ") : "нет"}`,

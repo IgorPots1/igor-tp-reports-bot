@@ -5,6 +5,7 @@
 import { MONTHS_GEN, TYPE_LABEL, distPills, plural, type Race } from "@/app/races/races-logic";
 import { SITE_URL } from "@/lib/site";
 import { courseList, type CourseLink } from "@/features/race-course";
+import type { FullDetails } from "@/features/race-details/full";
 
 import {
   DIST_BUTTONS,
@@ -836,6 +837,49 @@ export function courseShort(r: BotRace, c: CourseLink, multi: boolean, following
   };
 }
 
+// ── «Всё о старте» (вариант Б, 15.10.2026) ──────────────────────────────────────
+
+/** Лимит текста сообщения Telegram (4096) с запасом под HTML-сущности. */
+export const DETAILS_MAX = 4000;
+
+function detailsText(r: BotRace, d: FullDetails, cut: number): string {
+  // Порядок сокращения, если не влезает: «На месте» до первой строки, без цен, без «На месте»,
+  // затем длинные строки регистрации и трассы. Время старта и номера не сокращаются никогда.
+  const secs = d.sections
+    .map((x) => ({ ...x, lines: [...x.lines] }))
+    .map((x) => (cut >= 1 && x.key === "onsite" ? { ...x, lines: x.lines.slice(0, 1) } : x))
+    .map((x) => (cut >= 2 && x.key === "registration" ? { ...x, lines: x.lines.filter((l) => !l.startsWith("Повышение цены")) } : x))
+    .filter((x) => !(cut >= 3 && x.key === "onsite"))
+    .map((x) => (cut >= 4 && (x.key === "registration" || x.key === "track") ? { ...x, lines: x.lines.map((l) => (l.length > 140 ? `${l.slice(0, 137)}…` : l)) } : x))
+    .filter((x) => x.lines.length || x.times?.length || x.key === "track");
+  const body = secs.map((x) => {
+    const parts = [`<b>${esc(x.title)}</b>`];
+    if (x.times?.length) {
+      const w = Math.max(...x.times.map((t) => t.label.length));
+      parts.push(`<pre>${x.times.map((t) => esc(`${t.label.padEnd(w)}  ${t.time}`)).join("\n")}</pre>`);
+    }
+    if (x.key === "track" && !x.lines.length) parts.push("Есть разбор трассы.");
+    parts.push(...x.lines.map(esc));
+    return parts.join("\n");
+  });
+  const src = d.source ? `\n\nИсточник: <a href="${esc(d.source.url)}">сайт организатора</a>, проверено ${d.source.checked.slice(8, 10)}.${d.source.checked.slice(5, 7)}` : "";
+  return `<b>${esc(r.name)}</b> · что важно знать\n\n${body.join("\n\n")}${src}`;
+}
+
+/** Экран «Всё о старте» в том же живом сообщении: разделы выжимки, источник, «◀ К старту» и «Следить». */
+export function raceDetails(r: BotRace, d: FullDetails, following: boolean, hasCourse: boolean, code: string, tail: string): Msg {
+  let text = detailsText(r, d, 0);
+  for (let cut = 1; text.length > DETAILS_MAX && cut <= 4; cut++) text = detailsText(r, d, cut);
+  if (text.length > DETAILS_MAX) text = `${text.slice(0, DETAILS_MAX - 1)}…`;
+  const rows: Button[][] = [];
+  if (hasCourse && d.sections.some((x) => x.key === "track")) rows.push([{ text: "Разбор трассы", callback_data: `tc:${code}:${tail}` }]);
+  rows.push([
+    { text: "◀ К старту", callback_data: `tb:${code}:${tail}` },
+    following ? { text: "✓ Слежу · убрать", callback_data: `su:${code}:${tail}` } : { text: "⭐ Следить", callback_data: `sf:${code}:${tail}` },
+  ]);
+  return { text, reply_markup: { inline_keyboard: rows } };
+}
+
 /** Карточка старта в том же сообщении. back — «sn:<сезон>:<страница>» или «sz». */
 export function raceScreen(
   r: BotRace,
@@ -846,11 +890,14 @@ export function raceScreen(
   back: string,
   consult: boolean,
   important: string | null = null,
+  /** Кнопка «Всё о старте» под строкой «Важное»: только если выжимка есть хотя бы по 3 полям. */
+  details = false,
 ): Msg {
   const dist = distPills(r).join(" / ");
   const code = raceCode(r.id);
   const tail = back.replace(/^sn:/, "");
   const rows: Button[][] = [
+    ...(details ? [[{ text: "Всё о старте", callback_data: `ds:${code}:${tail}` }]] : []),
     [following ? { text: "✓ Слежу · убрать", callback_data: `su:${code}:${tail}` } : { text: "⭐ Следить", callback_data: `sf:${code}:${tail}` }],
   ];
   const links: Button[] = [];
