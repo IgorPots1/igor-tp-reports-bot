@@ -14,8 +14,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
-import { addDays, type CWeek } from "./corpus.ts";
-import { adapt, adaptTransition, needsWholePrecedent, DEFAULT_WEIGHTS, findPrecedent, indexCorpus, type Index, type Mode, type Weights } from "./precedent.ts";
+import type { CWeek } from "./corpus.ts";
+import { adapt, adaptTransition, needsWholePrecedent, DEFAULT_WEIGHTS, findPrecedent, indexCorpus, type Mode, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Agg, type Err, type Side } from "./metrics.ts";
 import { workMinutesFromTitle } from "./corpus.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
@@ -151,4 +151,3 @@ for (const t of [...tried].sort((a, b) => a.s - b.s).slice(0, 10)) p(`- ${t.s} Â
 writeFileSync(path.join(OUT_DIR, "step3-backtest.md"), out.join("\n") + "\n");
 writeFileSync(path.join(DATA_DIR, "tuned-weights.json"), JSON.stringify(TUNED));
 console.log(out.join("\n"));
-void addDays;
