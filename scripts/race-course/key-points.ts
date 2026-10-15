@@ -1,6 +1,8 @@
 /* Ключевые точки тактики: детерминированные правила по профилю и ветру, без цифр темпа.
  * Каждое правило ниже даёт кандидата с приоритетом; в выдачу идут 5–6 лучших, по порядку км.
- * Чистые функции без сети, их стережёт scripts/check-race-course.ts. */
+ * Два шаблона: keyPoints для шоссе (как было, на «вы») и keyPointsTrail для трейла (на «ты»,
+ * шаг на крутом, спуски, фонарь, питание; наряд 15.10.2026). Чистые функции без сети,
+ * их стережёт scripts/check-race-course.ts. */
 
 import { windFrom } from "@/features/race-course/types";
 import type { Segment } from "./profile";
@@ -30,19 +32,28 @@ export function keyPoints(input: {
    *  (последний км бывает неполным, поэтому вызывающему лучше посчитать честно). */
   startStretch?: { gain: number; loss: number };
   finishStretch?: { gain: number; loss: number };
+  /** «Старт в толпе» только у массовых стартов: false для ультра и малых (меньше 300). Не задано, значит true. */
+  crowd?: boolean;
 }): KeyPoint[] {
   const { totalM, segments, perKm, wind } = input;
+  const crowd = input.crowd ?? true;
   // Уклон участка: не просто «набрал 5 м», а набрал заметно больше, чем сбросил.
   const tilt = (x?: { gain: number; loss: number }) => (!x ? 0 : x.gain - x.loss >= 5 ? 1 : x.loss - x.gain >= 5 ? -1 : 0);
   const c: Candidate[] = [];
 
   // Старт: первый километр в толпе.
   const startTilt = tilt(input.startStretch ?? perKm[0]);
-  const startText = startTilt > 0
-    ? "Старт сразу в горку и в толпе: первый километр начните спокойнее, чем хочется, разгон потом."
-    : startTilt < 0
-      ? "Старт под уклон и в толпе: легко убежать слишком быстро, первый километр держите сдержанно."
-      : "Старт в толпе: не тратьте силы на обгоны, первый километр спокойнее, чем хочется.";
+  const startText = !crowd
+    ? startTilt > 0
+      ? "Старт сразу в горку: первый километр начните спокойнее, чем хочется, разгон потом."
+      : startTilt < 0
+        ? "Старт под уклон: легко убежать слишком быстро, первый километр держите сдержанно."
+        : "Первый километр спокойнее, чем хочется: силы пригодятся во второй половине."
+    : startTilt > 0
+      ? "Старт сразу в горку и в толпе: первый километр начните спокойнее, чем хочется, разгон потом."
+      : startTilt < 0
+        ? "Старт под уклон и в толпе: легко убежать слишком быстро, первый километр держите сдержанно."
+        : "Старт в толпе: не тратьте силы на обгоны, первый километр спокойнее, чем хочется.";
   c.push({ km: 0, type: "other", text: startText, prio: 100 });
 
   // Подъёмы: два самых больших заметных.
@@ -142,4 +153,154 @@ export function keyPoints(input: {
     picked.push(x);
   }
   return picked.sort((a, b) => a.km - b.km).map(({ km, type, text }) => ({ km: Math.round(km * 10) / 10, type, text }));
+}
+
+/** Пункты питания из положения: сколько всего и какие известны по километрам. */
+export type AidInfo = { count: number | null; known: { km: number; name: string }[] };
+
+const plural = (n: number, one: string, few: string, many: string) =>
+  n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many;
+const num = (x: number) => String(Math.round(x * 10) / 10).replace(".", ",");
+
+/** Трейловый шаблон: тот же профиль, другие подсказки. Без «толпы»: на трейле и ультра её нет.
+ *  startMin/cutoffMin — час старта своей дистанции и контрольное время в минутах; sun — восход и
+ *  закат в минутах местного времени; aid — пункты из положения (null, если положения нет). */
+export function keyPointsTrail(input: Parameters<typeof keyPoints>[0] & {
+  distanceKm: number;
+  startMin: number | null;
+  cutoffMin: number | null;
+  sun: { sunrise: number; sunset: number } | null;
+  aid: AidInfo | null;
+}): KeyPoint[] {
+  const { totalM, segments, perKm, wind, distanceKm, startMin, cutoffMin, sun, aid } = input;
+  const tilt = (x?: { gain: number; loss: number }) => (!x ? 0 : x.gain - x.loss >= 5 ? 1 : x.loss - x.gain >= 5 ? -1 : 0);
+  const c: Candidate[] = [];
+
+  // Старт: без толпы; до рассвета, значит фонарь.
+  const dark = startMin != null && sun != null && startMin < sun.sunrise;
+  const startTilt = tilt(input.startStretch ?? perKm[0]);
+  const first = startTilt > 0
+    ? "первые минуты шагом или совсем легко, пульс ещё успеет вырасти."
+    : "первый километр спокойно, на трейле время теряют не на старте, а на последних подъёмах.";
+  c.push({
+    km: 0,
+    type: "other",
+    text: dark ? `Старт до рассвета: налобный фонарь и запасные батарейки, ${first}` : startTilt > 0 ? `Старт сразу в подъём: ${first}` : `Первый километр спокойно: на трейле время теряют не на старте, а на последних подъёмах.`,
+    prio: 100,
+  });
+
+  // Финиш после заката у тех, кто бежит до контрольного времени: где стемнеет при ровном темпе.
+  if (startMin != null && cutoffMin != null && sun != null && startMin + cutoffMin > sun.sunset && startMin < sun.sunset) {
+    const hours = Math.floor(((sun.sunset - startMin) / 60) * 2) / 2;
+    const km = Math.max(1, Math.min(distanceKm - 1, (distanceKm * (sun.sunset - startMin)) / cutoffMin));
+    c.push({ km, type: "other", text: `Если бежишь дольше ${num(hours)} ч, где-то здесь стемнеет: налобный фонарь и запасные батарейки с собой.`, prio: 97 });
+  }
+
+  // Подъёмы: два самых больших заметных.
+  const ups = segments.filter((s) => s.kind === "up" && s.delta >= MIN_SEGMENT_M).sort((a, b) => b.delta - a.delta).slice(0, 2);
+  for (const s of ups) {
+    const lenKm = (s.toM - s.fromM) / 1000;
+    c.push({
+      km: kmOf(s.fromM),
+      type: "climb",
+      text: lenKm >= 1
+        ? `Длинный подъём, около ${round5(s.delta)} м вверх на ${lenKm.toFixed(1).replace(".", ",")} км: темп по дыханию и пульсу, не по часам. На крутом шагом выгоднее, чем бегом; палки, если разрешены.`
+        : `Подъём, около ${round5(s.delta)} м: на крутых участках шагом выгоднее, чем бегом; палки, если разрешены.`,
+      prio: 90 + s.delta / 100,
+    });
+  }
+
+  // Спуск: самый большой заметный.
+  const down = segments.filter((s) => s.kind === "down" && s.delta >= MIN_SEGMENT_M).sort((a, b) => b.delta - a.delta)[0];
+  if (down) {
+    c.push({
+      km: kmOf(down.fromM),
+      type: "descent",
+      text: `Спуск, около ${round5(down.delta)} м вниз: короткий частый шаг, смотри на 3-5 м вперёд. На техничном спуске не обгоняй.`,
+      prio: 70 + down.delta / 100,
+    });
+  }
+
+  // Питание и вода: дистанция больше 20 км или контрольное время больше 2,5 часа.
+  if (distanceKm > 20 || (cutoffMin != null && cutoffMin > 150)) {
+    let text: string;
+    let km = Math.max(1, distanceKm / 3);
+    if (aid && (aid.count || aid.known.length)) {
+      const known = [...aid.known].sort((a, b) => a.km - b.km);
+      const n = aid.count ?? known.length;
+      // Самый длинный перегон: по известным км, если известны все пункты, иначе в среднем.
+      const gap = known.length === n
+        ? Math.max(...[0, ...known.map((k) => k.km), distanceKm].map((x, i, arr) => (i ? x - arr[i - 1] : 0)))
+        : distanceKm / (n + 1);
+      const where = known.length ? `, ${known.map((k) => `${k.name} на ${num(k.km)} км`).join(", ")}` : "";
+      text = `На трассе ${n} ${plural(n, "пункт питания", "пункта питания", "пунктов питания")}${where}: `
+        + (gap > 10 ? "между ними больше 10 км, бери воду с собой." : "воду всё равно бери с собой, пей по плану.");
+      if (known.length) km = known[0].km;
+    } else {
+      text = "Воду и еду бери с собой на всю дистанцию: где пункты питания, уточни в положении.";
+    }
+    c.push({ km, type: "other", text, prio: 92 });
+  }
+
+  // Ветер: только длинный встречный отрезок, и без «держитесь в группе»: на тропе группы нет.
+  if (wind && wind.medianMs >= WIND_WORTH_MS) {
+    let best: [number, number] | null = null;
+    let runStart = -1;
+    perKm.forEach((k, i) => {
+      if (k.wind !== "head") { runStart = -1; return; }
+      if (runStart < 0) runStart = i;
+      if (!best || i - runStart > best[1] - best[0]) best = [runStart, i];
+    });
+    const head = best as [number, number] | null;
+    if (head && head[1] - head[0] + 1 >= MIN_HEAD_RUN_KM) {
+      const a = perKm[head[0]].km, z = perKm[head[1]].km;
+      c.push({ km: a - 0.5, type: "wind", text: `С ${a}-го по ${z}-й км ветер чаще в лицо (обычно дует ${windFrom(wind.dirLabel)}): на открытых участках держи усилие, а не темп.`, prio: 75 });
+    }
+  }
+
+  // Вторая половина длинной дистанции: место, где обычно тяжелеет.
+  if (distanceKm >= 10) {
+    c.push({ km: Math.round((totalM * 2) / 3 / 1000), type: "other", text: "Здесь обычно наваливается усталость: ешь и пей по плану, даже если не хочется.", prio: 50 });
+  }
+
+  // Финиш по профилю последнего километра.
+  const finishTilt = tilt(input.finishStretch ?? perKm[perKm.length - 1]);
+  c.push({
+    km: Math.max(0, Math.round(totalM / 100) / 10 - 1),
+    type: "other",
+    text: finishTilt > 0
+      ? "Финиш в горку: оставь силы на последний подъём."
+      : finishTilt < 0
+        ? "Финиш под уклон: не рискуй ради секунд, падение дороже."
+        : "Последний километр ровный: если силы есть, прибавляй.",
+    prio: 95,
+  });
+
+  const picked: Candidate[] = [];
+  for (const x of [...c].sort((a, b) => b.prio - a.prio)) {
+    if (picked.length >= 6) break;
+    if (picked.some((p) => Math.abs(p.km - x.km) < 0.5)) continue;
+    picked.push(x);
+  }
+  return picked.sort((a, b) => a.km - b.km).map(({ km, type, text }) => ({ km: Math.round(km * 10) / 10, type, text }));
+}
+
+/** Суть трассы одной строкой для выбора дистанции в боте: «2 подъёма до 200 м, спуск до 325 м, финиш в горку».
+ *  Считаются подъёмы от 30 м: мелочь в одну строку не нужна. */
+export function courseSummary(segments: Segment[], finish?: { gain: number; loss: number }): string {
+  const ups = segments.filter((s) => s.kind === "up" && s.delta >= 30);
+  const downs = segments.filter((s) => s.kind === "down" && s.delta >= 30);
+  const parts: string[] = [];
+  if (!ups.length && !downs.length) parts.push("почти без перепадов");
+  if (ups.length) parts.push(`${ups.length} ${plural(ups.length, "подъём", "подъёма", "подъёмов")} до ${round5(Math.max(...ups.map((s) => s.delta)))} м`);
+  if (downs.length) parts.push(`спуск до ${round5(Math.max(...downs.map((s) => s.delta)))} м`);
+  if (finish && finish.gain - finish.loss >= 5) parts.push("финиш в горку");
+  else if (finish && finish.loss - finish.gain >= 5) parts.push("финиш под уклон");
+  return parts.join(", ");
+}
+
+/** До 4 точек для короткого разбора в боте: подъёмы, спуск, фонарь и питание, по порядку км. */
+export function shortPoints(points: KeyPoint[], max = 4): KeyPoint[] {
+  const rank = (p: KeyPoint) => (p.type === "climb" ? 3 : p.type === "descent" ? 2 : /фонарь|пункт|воду/i.test(p.text) ? 2.5 : p.type === "wind" ? 1 : 0);
+  return [...points].filter((p) => rank(p) > 0).sort((a, b) => rank(b) - rank(a)).slice(0, max).sort((a, b) => a.km - b.km);
 }

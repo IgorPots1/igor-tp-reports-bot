@@ -13,16 +13,20 @@ export function courseSlug(raceId: string): string {
   return raceId.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-export function listCourses(): CourseData[] {
+/** Разбор с адресом страницы: slug — имя файла (у старта с несколькими дистанциями их несколько,
+ *  «probeg_77976-30k»), а не id старта. */
+export type CourseFile = CourseData & { slug: string };
+
+export function listCourses(): CourseFile[] {
   let files: string[] = [];
   try {
     files = readdirSync(DIR).filter((f) => f.endsWith(".json") && f !== "index.json");
   } catch {
     return [];
   }
-  return files.map((f) => JSON.parse(readFileSync(path.join(DIR, f), "utf8")) as CourseData);
+  return files.map((f) => ({ ...(JSON.parse(readFileSync(path.join(DIR, f), "utf8")) as CourseData), slug: f.replace(/\.json$/, "") }));
 }
 
-export function loadCourse(slug: string): CourseData | null {
-  return listCourses().find((c) => courseSlug(c.raceId) === slug) ?? null;
+export function loadCourse(slug: string): CourseFile | null {
+  return listCourses().find((c) => c.slug === slug) ?? null;
 }

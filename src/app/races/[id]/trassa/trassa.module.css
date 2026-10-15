@@ -186,3 +186,30 @@
   text-decoration: none;
   font-weight: 600;
 }
+
+/* Метка свежести трека, цифры и «Следить в Telegram» под заголовком (наряд 15.10.2026). */
+.fresh {
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-bg);
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.facts {
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+.follow {
+  display: inline-block;
+  margin: 0 0 20px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+}

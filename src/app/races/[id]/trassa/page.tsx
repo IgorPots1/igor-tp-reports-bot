@@ -8,8 +8,9 @@ import { notFound } from "next/navigation";
 import SiteHeader from "@/components/SiteHeader";
 import { jetbrains, onest } from "@/lib/fonts";
 import { publicPageMetadata } from "@/lib/site";
-import { courseSlug, listCourses, loadCourse } from "@/features/race-course/load";
-import { ru, windFrom } from "@/features/race-course/types";
+import { listCourses, loadCourse } from "@/features/race-course/load";
+import { raceCode } from "@/features/races-bot/core";
+import { ru, trackFreshness, windFrom } from "@/features/race-course/types";
 
 import { CourseMap, ProfileChart, WindStrip } from "./CourseViews";
 import "../../races-page.css";
@@ -20,7 +21,8 @@ export const dynamicParams = false;
 
 export function generateStaticParams() {
   // Страница — только для разборов, прошедших сверку (publish); остальные — 404, как и кнопки в боте нет.
-  return listCourses().filter((c) => c.checks.publish).map((c) => ({ id: courseSlug(c.raceId) }));
+  // Адрес — имя файла: у старта с несколькими дистанциями страница на каждую («probeg_77976-30k»).
+  return listCourses().filter((c) => c.checks.publish).map((c) => ({ id: c.slug }));
 }
 
 const MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
@@ -42,6 +44,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 }
 
 const COACH = (process.env.COACH_TG_USERNAME || "IgorPotseluev").replace(/^@/, "");
+const BOT = (process.env.RACES_BOT_USERNAME || "ruruns_bot").trim().replace(/^@/, "");
 
 export default async function TrassaPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -49,6 +52,9 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
   if (!c || !c.checks.publish) notFound();
   const consult = `https://t.me/${COACH}?text=${encodeURIComponent(`Привет! Хочу консультацию по подготовке к ${c.name}`)}`;
   const heads = c.perKm.filter((k) => k.wind === "head").length;
+  const fresh = trackFreshness(c);
+  // «Следить в Telegram»: та же ссылка r_<код>, что у звёздочки в календаре на сайте.
+  const follow = `https://t.me/${BOT}?start=r_${raceCode(c.raceId)}`;
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${pageStyles.page}`}>
       <SiteHeader />
@@ -60,6 +66,13 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
         <p className={styles.lede}>
           {longDate(c.date)} · {ru(c.distanceKm)} км · разбор трассы
         </p>
+        {fresh ? <p className={styles.fresh}>{fresh}</p> : null}
+        <p className={styles.facts}>
+          Набор {c.gain} м · сброс {c.loss} м{c.checks.organizer !== null ? ` · у организатора ${c.checks.organizer} м` : ""}
+        </p>
+        <a className={styles.follow} href={follow}>
+          ⭐ Следить в Telegram
+        </a>
 
         <section className={styles.block}>
           <h2 className={styles.h2}>Профиль высот</h2>
@@ -107,8 +120,8 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
             </p>
             <WindStrip c={c} />
             <p className={styles.legend}>
-              <span className={`${styles.dot} ${styles.head}`} /> встречный <span className={`${styles.dot} ${styles.tail}`} /> попутный{" "}
-              <span className={`${styles.dot} ${styles.cross}`} /> боковой
+              <span className={`${styles.dot} ${styles.head}`} /> в лицо <span className={`${styles.dot} ${styles.tail}`} /> в спину{" "}
+              <span className={`${styles.dot} ${styles.cross}`} /> сбоку
             </p>
             {c.forecast ? (
               <p>

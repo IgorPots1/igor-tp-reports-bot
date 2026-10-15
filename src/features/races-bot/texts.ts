@@ -4,7 +4,7 @@
 
 import { MONTHS_GEN, TYPE_LABEL, distPills, plural, type Race } from "@/app/races/races-logic";
 import { SITE_URL } from "@/lib/site";
-import { courseUrl } from "@/features/race-course";
+import { courseList, type CourseLink } from "@/features/race-course";
 
 import {
   DIST_BUTTONS,
@@ -25,7 +25,8 @@ import {
 
 export type Button = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
 export type Keyboard = { inline_keyboard: Button[][] };
-export type Msg = { text: string; reply_markup?: Keyboard | Record<string, unknown> };
+/** preview — адрес картинки: предпросмотр над текстом (мини-профиль разбора трассы). Без него предпросмотр выключен. */
+export type Msg = { text: string; reply_markup?: Keyboard | Record<string, unknown>; preview?: string };
 
 export const CALENDAR_URL = `${SITE_URL}/races`;
 
@@ -770,6 +771,40 @@ export function seasonList(
   };
 }
 
+const kmText = (x: number) => String(Math.round(x * 10) / 10).replace(".", ",");
+const courseTitle = (c: CourseLink) => (c.km != null ? `${kmText(c.km)} км${c.label ? ` · ${c.label}` : ""}` : c.label ?? "Разбор трассы");
+
+/** Выбор дистанции (экран 2): в тексте под каждой суть одной строкой и набор, кнопка на каждую.
+ *  code/tail — как у карточки: tv:<code>:<номер>:<tail>, назад tb:<code>:<tail>. */
+export function courseChoice(r: BotRace, courses: CourseLink[], code: string, tail: string): Msg {
+  const lines = courses.map((c) => `<b>${esc(courseTitle(c))}</b>\n${esc(c.summary ?? "")}${c.gain != null ? `${c.summary ? " · " : ""}набор ${c.gain} м` : ""}`);
+  return {
+    text: `<b>${esc(r.name)}</b>\nРазбор трассы: выбери дистанцию.\n\n${lines.join("\n\n")}`,
+    reply_markup: {
+      inline_keyboard: [
+        ...courses.map((c, i) => [{ text: courseTitle(c), callback_data: `tv:${code}:${i}:${tail}` }]),
+        [{ text: "← К старту", callback_data: `tb:${code}:${tail}` }],
+      ],
+    },
+  };
+}
+
+/** Короткий разбор в том же сообщении (экран 3): мини-профиль предпросмотром, до 4 точек с теми же
+ *  номерами, что на картинке, и кнопки «Полный разбор с картой», «Другая дистанция», «Следить». */
+export function courseShort(r: BotRace, c: CourseLink, multi: boolean, following: boolean, code: string, tail: string): Msg {
+  const facts = [c.km != null ? `${kmText(c.km)} км` : null, c.label, c.gain != null ? `набор ${c.gain} м` : null, c.loss != null ? `сброс ${c.loss} м` : null].filter(Boolean).join(" · ");
+  const pts = c.points.map((p) => `<b>${p.n}. ${kmText(p.km)} км.</b> ${esc(p.text)}`);
+  const rows: Button[][] = [[{ text: "Полный разбор с картой", url: c.url }]];
+  if (multi) rows.push([{ text: "Другая дистанция", callback_data: `tc:${code}:${tail}` }]);
+  rows.push([following ? { text: "✓ Слежу · убрать", callback_data: `su:${code}:${tail}` } : { text: "⭐ Следить", callback_data: `sf:${code}:${tail}` }]);
+  rows.push([{ text: "← К старту", callback_data: `tb:${code}:${tail}` }]);
+  return {
+    text: `<b>${esc(r.name)}</b>\n${esc(facts)}${pts.length ? `\n\n${pts.join("\n\n")}` : ""}`,
+    reply_markup: { inline_keyboard: rows },
+    ...(c.mini ? { preview: c.mini } : {}),
+  };
+}
+
 /** Карточка старта в том же сообщении. back — «sn:<сезон>:<страница>» или «sz». */
 export function raceScreen(
   r: BotRace,
@@ -790,15 +825,17 @@ export function raceScreen(
   if (regUrl) links.push({ text: "Регистрация", url: regUrl });
   if (siteUrl) links.push({ text: "Сайт", url: siteUrl });
   if (links.length) rows.push(links);
-  // Разбор трассы (пилот 14.10.2026): кнопка, только если для старта он собран.
-  const course = courseUrl(r.id);
-  if (course) rows.push([{ text: "Разбор трассы", url: course }]);
+  // Разбор трассы (наряд 15.10.2026): метка в карточке и кнопка; одна дистанция — сразу короткий
+  // разбор в этом сообщении, несколько — выбор по км.
+  const courses = courseList(r.id);
+  if (courses.length) rows.push([{ text: "Разбор трассы: подъёмы, спуски, ветер", callback_data: `tc:${code}:${tail}` }]);
   if (consult) rows.push([{ text: "Бесплатная консультация", callback_data: `consult:${code}` }]);
   rows.push([{ text: "← К списку", callback_data: back }]);
   return {
     text:
       `<b>${esc(r.name)}</b>\n${cardDate(r)}\n📍 ${esc(place)}` +
       `${TYPE_LABEL[r.type] ? `\n${TYPE_LABEL[r.type]}` : ""}${dist ? ` · ${esc(dist)}` : ""}` +
+      (courses.length ? "\n🗺 Есть разбор трассы" : "") +
       (following ? "\n\n⭐ Слежу: напомню за 12 недель, за неделю и накануне." : ""),
     reply_markup: { inline_keyboard: rows },
   };

@@ -64,7 +64,9 @@ export async function fetchElevations(points: LatLon[]): Promise<number[]> {
 }
 
 const HOURLY = "wind_speed_10m,wind_direction_10m,wind_gusts_10m";
-type Hourly = { hourly: { time: string[]; wind_speed_10m: (number | null)[]; wind_direction_10m: (number | null)[]; wind_gusts_10m: (number | null)[] } };
+/** Архив ERA5 не меняется: ответы кэшируем по URL, пересборка разбора не тратит часовой лимит Open-Meteo. */
+const WIND_CACHE = "/Users/igor/ops-log/races/wind-archive-cache.json";
+type Hourly = { utc_offset_seconds?: number; hourly: { time: string[]; wind_speed_10m: (number | null)[]; wind_direction_10m: (number | null)[]; wind_gusts_10m: (number | null)[] } };
 
 function shiftDate(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
@@ -74,17 +76,26 @@ function shiftDate(iso: string, days: number): string {
 
 /** Архив ERA5 (Open-Meteo Archive): по каждому году fromYear..toYear дата старта ±spreadDays,
  *  только час старта по местному времени. Один запрос на год. */
-export async function fetchWindHistory(p: LatLon, raceDate: string, hour: number, fromYear: number, toYear: number, spreadDays = 3): Promise<{ obs: WindObs[]; years: number }> {
+export async function fetchWindHistory(p: LatLon, raceDate: string, hour: number, fromYear: number, toYear: number, spreadDays = 3): Promise<{ obs: WindObs[]; years: number; utcOffsetMin: number | null }> {
   const obs: WindObs[] = [];
   let years = 0;
+  // Смещение часового пояса точки (timezone=auto): по нему восход и закат для подсказки «фонарь».
+  let utcOffsetMin: number | null = null;
   const mmdd = raceDate.slice(5);
   for (let y = fromYear; y <= toYear; y++) {
-    if (y > fromYear) await sleep(PAUSE_MS);
     const center = `${y}-${mmdd}`;
     const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${p[0].toFixed(4)}&longitude=${p[1].toFixed(4)}`
       + `&start_date=${shiftDate(center, -spreadDays)}&end_date=${shiftDate(center, spreadDays)}`
       + `&hourly=${HOURLY}&wind_speed_unit=ms&timezone=auto`;
-    const data = (await getJson(url)) as Hourly;
+    const cache: Record<string, Hourly> = existsSync(WIND_CACHE) ? JSON.parse(readFileSync(WIND_CACHE, "utf8")) : {};
+    let data = cache[url];
+    if (!data) {
+      if (y > fromYear) await sleep(PAUSE_MS);
+      data = (await getJson(url)) as Hourly;
+      cache[url] = data;
+      writeFileSync(WIND_CACHE, JSON.stringify(cache));
+    }
+    if (data.utc_offset_seconds != null) utcOffsetMin = data.utc_offset_seconds / 60;
     let got = 0;
     data.hourly.time.forEach((t, i) => {
       if (Number(t.slice(11, 13)) !== hour) return;
@@ -95,7 +106,7 @@ export async function fetchWindHistory(p: LatLon, raceDate: string, hour: number
     });
     if (got) years++;
   }
-  return { obs, years };
+  return { obs, years, utcOffsetMin };
 }
 
 /** Прогноз Open-Meteo на час старта (только если до старта не больше 7 дней, решает вызывающий). */

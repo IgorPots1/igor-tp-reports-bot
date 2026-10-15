@@ -2,6 +2,8 @@
  * который уже стоит в зависимостях проекта. Пишется вне репозитория. */
 
 import { writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 
 import type { KeyPoint } from "./key-points";
 import type { WindSide } from "./wind";
@@ -74,10 +76,47 @@ export function profileSvg(input: {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join("")}</svg>`;
 }
 
+/** Мини-профиль для короткого разбора в боте: рельеф и номера точек, без подписей мелким шрифтом
+ *  (в Telegram картинка маленькая). Номера совпадают со списком точек в сообщении. */
+export function miniProfileSvg(elevation: [number, number][], points: { n: number; km: number }[]): string {
+  const W = 800, H = 300, L = 20, R = 20, T = 30, B = 40;
+  const pw = W - L - R, ph = H - T - B;
+  const maxKm = elevation.length ? elevation[elevation.length - 1][0] : 1;
+  const ys = elevation.map((e) => e[1]);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (hi - lo < 40) { const mid = (hi + lo) / 2; lo = mid - 20; hi = mid + 20; }
+  const x = (km: number) => L + (km / maxKm) * pw;
+  const y = (m: number) => T + ph - ((m - lo) / (hi - lo)) * ph;
+  const line = elevation.map((e, i) => `${i ? "L" : "M"}${x(e[0]).toFixed(1)},${y(e[1]).toFixed(1)}`).join("");
+  const parts = [
+    `<rect width="${W}" height="${H}" fill="#ffffff"/>`,
+    `<path d="${line}L${x(maxKm).toFixed(1)},${T + ph}L${L},${T + ph}Z" fill="#cfe3f5"/>`,
+    `<path d="${line}" fill="none" stroke="#1f5f99" stroke-width="3"/>`,
+    `<text x="${L}" y="${H - 12}" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#666">0 км</text>`,
+    `<text x="${W - R}" y="${H - 12}" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#666">${String(Math.round(maxKm * 10) / 10).replace(".", ",")} км</text>`,
+  ];
+  for (const p of points) {
+    const near = elevation.reduce((best, e) => (Math.abs(e[0] - p.km) < Math.abs(best[0] - p.km) ? e : best), elevation[0] ?? [0, lo]);
+    const px = x(Math.min(maxKm, p.km)), py = y(near[1]);
+    parts.push(`<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="16" fill="#d9534f" stroke="#fff" stroke-width="3"/>`);
+    parts.push(`<text x="${px.toFixed(1)}" y="${(py + 7).toFixed(1)}" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#fff">${p.n}</text>`);
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join("")}</svg>`;
+}
+
+/** sharp: обычный импорт, а при запуске скрипта из worktree без node_modules — из каталога запуска. */
+async function loadSharp(): Promise<typeof import("sharp")> {
+  try {
+    return (await import("sharp")).default;
+  } catch {
+    return createRequire(path.join(process.cwd(), "package.json"))("sharp") as typeof import("sharp");
+  }
+}
+
 /** SVG в PNG через sharp; если sharp не загрузился, кладём SVG рядом и говорим об этом. */
 export async function writeProfileImage(svg: string, pngPath: string): Promise<string> {
   try {
-    const sharp = (await import("sharp")).default;
+    const sharp = await loadSharp();
     await sharp(Buffer.from(svg)).png().toFile(pngPath);
     return pngPath;
   } catch (e) {

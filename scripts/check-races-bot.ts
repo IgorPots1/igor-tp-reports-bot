@@ -977,13 +977,65 @@ async function main() {
     assert.ok(calls.some((c) => /по дням<\/b>/.test(String(c.params.text))), "экран «По дням» у тренера");
   }
 
-  // ── разбор трассы (пилот 14.10.2026): кнопка в карточке только там, где разбор опубликован ──
+  // ── разбор трассы ──────────────────────────────────────────────────────────────────
+  // Было (пилот 14.10.2026): кнопка «Разбор трассы» вела ссылкой прямо на страницу сайта. Отменено
+  // нарядом 15.10.2026: в карточке метка «Есть разбор трассы», кнопка открывает разбор в самом боте —
+  // выбор дистанции (если их несколько), короткий разбор с мини-профилем и только оттуда «Полный
+  // разбор с картой». Ссылки на сайт в карточке больше нет, это и стережём.
   {
     const fox = race("probeg:75594", "Mad Fox Ultra", "2026-12-18", "Переславль-Залесский", "trail", [40.7]);
-    const withCourse = buttons({ params: T.raceScreen(fox, "Переславль-Залесский", false, null, null, "sz", false) as unknown as Record<string, unknown> } as Call);
-    assert.equal(withCourse.find((b) => b.text === "Разбор трассы")?.url, "https://igorp.run/races/probeg_75594/trassa");
-    const noCourse = buttons({ params: T.raceScreen(TRAIL, "Москва", false, null, null, "sz", false) as unknown as Record<string, unknown> } as Call);
-    assert.ok(!noCourse.some((b) => b.text === "Разбор трассы"), "нет разбора — нет кнопки");
+    const zh = race("probeg:77976", "Железноводск Ultra Trail", "2026-11-01", "Железноводск", "trail", [100, 50, 30.2, 12.7, 5.1]);
+    const card = T.raceScreen(fox, "Переславль-Залесский", false, null, null, "sz", false);
+    const cardBtn = buttons({ params: card as unknown as Record<string, unknown> } as Call).find((b) => b.text === "Разбор трассы: подъёмы, спуски, ветер");
+    assert.equal(cardBtn?.callback_data, `tc:${raceCode(fox.id)}:sz`, "кнопка ведёт в бота, а не на сайт");
+    assert.equal(cardBtn?.url, undefined);
+    assert.match(card.text, /🗺 Есть разбор трассы/);
+    const plain = T.raceScreen(TRAIL, "Москва", false, null, null, "sz", false);
+    assert.ok(!buttons({ params: plain as unknown as Record<string, unknown> } as Call).some((b) => /Разбор трассы/.test(b.text)), "нет разбора — нет кнопки");
+    assert.doesNotMatch(plain.text, /разбор трассы/i, "и метки нет");
+
+    const saved = RACES;
+    RACES = [...saved, fox, zh];
+    const last = () => {
+      const c = [...calls].reverse().find((x) => (x.method === "sendMessage" || x.method === "editMessageText") && x.params.chat_id === USER.id)!;
+      return { c, text: String(c.params.text), btns: buttons(c), preview: c.params.link_preview_options as Record<string, unknown> };
+    };
+    const zc = raceCode(zh.id);
+    // Несколько дистанций: выбор, под каждой суть и набор, кнопки по возрастанию км.
+    reset();
+    await bot.handleUpdate(cbm(USER, `tc:${zc}:sz`));
+    let v = last();
+    assert.match(v.text, /Разбор трассы: выбери дистанцию/);
+    assert.match(v.text, /набор \d+ м/);
+    const tv = v.btns.filter((b) => b.callback_data?.startsWith(`tv:${zc}:`));
+    assert.equal(tv.length, 5, "кнопка на каждую дистанцию");
+    assert.match(tv[0].text, /^5,2 км/);
+    assert.match(tv[4].text, /^101 км|^100,8 км|^101/);
+    assert.equal(v.preview.is_disabled, true, "у выбора без картинки");
+    // Короткий разбор самой длинной: мини-профиль над текстом, до 4 точек, кнопки.
+    reset();
+    await bot.handleUpdate(cbm(USER, tv[4].callback_data!));
+    v = last();
+    assert.match(String(v.preview.url), /\/race-courses\/probeg_77976-100k-mini\.png$/);
+    assert.equal(v.preview.show_above_text, true);
+    const nums = v.text.match(/<b>\d\. /g) ?? [];
+    assert.ok(nums.length >= 1 && nums.length <= 4, `точек ${nums.length}`);
+    assert.equal(v.btns.find((b) => b.text === "Полный разбор с картой")?.url, "https://igorp.run/races/probeg_77976-100k/trassa");
+    assert.equal(v.btns.find((b) => b.text === "Другая дистанция")?.callback_data, `tc:${zc}:sz`);
+    assert.equal(v.btns.find((b) => b.text === "⭐ Следить")?.callback_data, `sf:${zc}:sz`);
+    // Назад к карточке: снова карточка с меткой, предпросмотр снова выключен.
+    reset();
+    await bot.handleUpdate(cbm(USER, `tb:${zc}:sz`));
+    v = last();
+    assert.match(v.text, /Железноводск Ultra Trail[\s\S]*Есть разбор трассы/);
+    assert.equal(v.preview.is_disabled, true);
+    // Одна дистанция: сразу короткий разбор, без «Другая дистанция».
+    reset();
+    await bot.handleUpdate(cbm(USER, `tc:${raceCode(fox.id)}:sz`));
+    v = last();
+    assert.ok(v.btns.some((b) => b.text === "Полный разбор с картой"));
+    assert.ok(!v.btns.some((b) => b.text === "Другая дистанция"));
+    RACES = saved;
   }
 
   // ── подпись ссылок /go/ ────────────────────────────────────────────────────

@@ -135,7 +135,7 @@ export function CourseMap({ c }: { c: CourseData }) {
   );
 }
 
-const SIDE: Record<WindSide, string> = { head: "встречный", tail: "попутный", cross: "боковой" };
+const SIDE: Record<WindSide, string> = { head: "в лицо", tail: "в спину", cross: "сбоку" };
 
 /** Полоса по километрам: встречный, попутный, боковой. */
 export function WindStrip({ c }: { c: CourseData }) {

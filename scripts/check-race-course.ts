@@ -11,7 +11,10 @@
  *   — роза по 8 румбам и перцентили;
  *   — правило 30%: расхождение набора больше 30% с любым доступным эталоном снимает
  *     публикацию и пишет причину; эталона нет, значит публикации не мешает;
- *   — тактика: без цифр темпа, не больше 6 точек, есть финиш и старт.
+ *   — тактика: без цифр темпа, не больше 6 точек, есть финиш и старт;
+ *   — трейловый шаблон (15.10.2026): без «толпы», шаг на крутом, спуск «3-5 м вперёд», фонарь до
+ *     рассвета и после заката по контрольному времени, питание от 20 км; без длинного тире;
+ *   — шоссе без «толпы» у ультра и малых стартов; восход и закат по формуле.
  *
  *   npm run check:race-course
  */
@@ -20,8 +23,9 @@ import assert from "node:assert/strict";
 
 import { checkGain } from "./race-course/checks";
 import { bearing, haversine, resample, simplifyTo, type LatLon } from "./race-course/geo";
-import { keyPoints } from "./race-course/key-points";
+import { keyPoints, keyPointsTrail } from "./race-course/key-points";
 import { gainLoss, perKm, profileSeries, segments, smoothByDistance } from "./race-course/profile";
+import { sunTimes } from "./race-course/sun";
 import { angleBetween, percentile, prevailing, windSide, windStats } from "./race-course/wind";
 
 let n = 0;
@@ -209,6 +213,64 @@ ok("тактика: один встречный км не повод, длинн
   assert.equal(w.length, 1);
   assert.match(w[0].text, /в спину/);
   assert.match(w[0].text, /С 5-го по 8-й км/);
+});
+
+ok("восход и закат: Железноводск 1 ноября, МСК", () => {
+  const t = sunTimes(44.13, 43.05, "2026-11-01", 180)!;
+  assert.ok(t.sunrise >= 6 * 60 + 30 && t.sunrise <= 7 * 60, `восход ${t.sunrise}`);
+  assert.ok(t.sunset >= 16 * 60 + 45 && t.sunset <= 17 * 60 + 15, `закат ${t.sunset}`);
+  assert.equal(sunTimes(78, 15, "2026-06-21", 120), null, "полярный день");
+});
+
+// Профиль трейла: подъём 300 м на 3–6 км, спуск 300 м на 6–8 км; 50 км, старт в 6:00 до рассвета.
+const trailCase = (opts: { startMin: number | null; cutoffMin: number | null; aid: Parameters<typeof keyPointsTrail>[0]["aid"]; total?: number }) => {
+  const total = opts.total ?? 49.4;
+  const pts = north(total);
+  const dist = pts.map((_, i) => i * 50);
+  const elev = dist.map((d) => (d < 3000 ? 300 : d < 6000 ? 300 + (d - 3000) * 0.1 : d < 8000 ? 600 - (d - 6000) * 0.15 : 300));
+  const km = perKm(dist, elev, pts).map((k) => ({ ...k, wind: "cross" as const }));
+  return keyPointsTrail({
+    totalM: total * 1000, segments: segments(dist, elev, 3), perKm: km, wind: null,
+    distanceKm: total, startMin: opts.startMin, cutoffMin: opts.cutoffMin, sun: { sunrise: 6 * 60 + 45, sunset: 17 * 60 }, aid: opts.aid,
+  });
+};
+
+ok("трейл: без толпы, шаг на крутом, спуск, без длинного тире", () => {
+  const kp = trailCase({ startMin: 9 * 60 + 30, cutoffMin: 6 * 60, aid: null });
+  const all = kp.map((p) => p.text).join(" | ");
+  assert.doesNotMatch(all, /толп/i, "на трейле толпы нет");
+  assert.doesNotMatch(all, /—/, "без длинного тире");
+  assert.match(all, /шагом выгоднее, чем бегом; палки, если разрешены/);
+  assert.match(all, /по дыханию и пульсу, не по часам/);
+  assert.match(all, /короткий частый шаг, смотри на 3-5 м вперёд\. На техничном спуске не обгоняй/);
+  assert.doesNotMatch(all, /фонарь/, "старт днём и финиш до заката");
+  assert.ok(kp.length <= 6);
+});
+
+ok("трейл: старт до рассвета и финиш после заката по контрольному времени, значит фонарь", () => {
+  const night = trailCase({ startMin: 6 * 60, cutoffMin: 10 * 60, aid: null });
+  assert.match(night[0].text, /^Старт до рассвета: налобный фонарь и запасные батарейки/);
+  const late = trailCase({ startMin: 9 * 60 + 30, cutoffMin: 10 * 60, aid: null });
+  assert.ok(late.some((p) => /Если бежишь дольше 7,5 ч, где-то здесь стемнеет/.test(p.text)), late.map((p) => p.text).join(" | "));
+});
+
+ok("трейл: питание по положению; пунктов не знаем, значит воду и еду с собой", () => {
+  const known = trailCase({ startMin: 6 * 60, cutoffMin: 10 * 60, aid: { count: 3, known: [{ km: 37, name: "Феррум" }] } });
+  assert.ok(known.some((p) => p.text === "На трассе 3 пункта питания, Феррум на 37 км: между ними больше 10 км, бери воду с собой."), known.map((p) => p.text).join(" | "));
+  const none = trailCase({ startMin: 9 * 60 + 30, cutoffMin: null, aid: null, total: 29 });
+  assert.ok(none.some((p) => p.text === "Воду и еду бери с собой на всю дистанцию: где пункты питания, уточни в положении."));
+  const short = trailCase({ startMin: 11 * 60, cutoffMin: 90, aid: null, total: 9.6 });
+  assert.ok(!short.some((p) => /пункт/i.test(p.text)), "короткая дистанция: про питание молчим");
+});
+
+ok("шоссе: у ультра и малых стартов без «толпы», у массовых как было", () => {
+  const pts = north(10);
+  const dist = pts.map((_, i) => i * 50);
+  const km = perKm(dist, dist.map(() => 50), pts).map((k) => ({ ...k, wind: "cross" as const }));
+  const crowd = keyPoints({ totalM: 10000, segments: [], perKm: km, wind: null });
+  assert.match(crowd[0].text, /в толпе/, "по умолчанию массовый старт: толпа есть, как раньше");
+  const small = keyPoints({ totalM: 10000, segments: [], perKm: km, wind: null, crowd: false });
+  assert.doesNotMatch(small.map((p) => p.text).join(" "), /толп/i);
 });
 
 console.log(`\ncheck:race-course: ${n} ok`);

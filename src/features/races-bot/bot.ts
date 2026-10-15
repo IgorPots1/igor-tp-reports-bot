@@ -6,6 +6,7 @@
  * тестовых датах без сети и без настоящего Telegram. */
 
 import { norm } from "@/app/races/races-logic";
+import { courseList } from "@/features/race-course";
 
 import {
   consultAllowed,
@@ -181,13 +182,18 @@ export function createBot(deps: BotDeps) {
     return deps.goLink ? deps.goLink(u.tg_id, r, "s") : T.raceUrl(r);
   }
 
+  /** Предпросмотр ссылок выключен везде, кроме сообщений с картинкой (мини-профиль трассы над текстом). */
+  function previewOf(msg: T.Msg): Record<string, unknown> {
+    return msg.preview ? { url: msg.preview, prefer_large_media: true, show_above_text: true } : { is_disabled: true };
+  }
+
   /** Сообщение как есть, без правила меню: уведомление тренеру, /stats. */
   async function sendRaw(chatId: number, msg: T.Msg): Promise<number | null> {
     const res = (await tg.call("sendMessage", {
       chat_id: chatId,
       text: msg.text,
       parse_mode: "HTML",
-      link_preview_options: { is_disabled: true },
+      link_preview_options: previewOf(msg),
       ...(msg.reply_markup ? { reply_markup: msg.reply_markup } : {}),
     })) as { message_id?: number } | null;
     return typeof res?.message_id === "number" ? res.message_id : null;
@@ -211,7 +217,7 @@ export function createBot(deps: BotDeps) {
     }
     await dropMenu(u);
     const markup = rm?.inline_keyboard?.length ? msg.reply_markup : T.menuKeyboard(u.city);
-    const id = await sendRaw(chatId, { text: msg.text, reply_markup: markup });
+    const id = await sendRaw(chatId, { text: msg.text, reply_markup: markup, ...(msg.preview ? { preview: msg.preview } : {}) });
     if (id !== null) await store.saveUser({ tg_id: chatId, menu_message_id: id, menu_message_at: now().toISOString() });
   }
 
@@ -235,7 +241,7 @@ export function createBot(deps: BotDeps) {
           message_id: origin.message_id,
           text: msg.text,
           parse_mode: "HTML",
-          link_preview_options: { is_disabled: true },
+          link_preview_options: previewOf(msg),
           reply_markup: msg.reply_markup ?? T.menuKeyboard(cur.city),
         });
         return;
@@ -676,6 +682,23 @@ export function createBot(deps: BotDeps) {
           }
         }
         return showItem(u, x, back, msg, consultNow);
+      }
+      case "tc":
+      case "tv":
+      case "tb": {
+        // Разбор трассы: tc — выбор дистанции (одна — сразу короткий разбор), tv — короткий разбор
+        // дистанции по номеру, tb — назад к карточке. Хвост — как у карточки (сезон и страница).
+        const [code, ...rest] = arg.split(":");
+        const x = await itemByCode(u, code);
+        if (!x || x.kind !== "race") return showFork(u, msg);
+        const courses = courseList(x.race.id);
+        if (key === "tb" || !courses.length) return showItem(u, x, backOf(key === "tv" ? rest.slice(1) : rest), msg);
+        const idx = key === "tv" ? Math.max(0, Number(rest[0]) || 0) : 0;
+        const tail = (key === "tv" ? rest.slice(1) : rest).join(":") || "sz";
+        if (key === "tc" && courses.length > 1) return screen(u, T.courseChoice(x.race, courses, code, tail), msg);
+        const c = courses[Math.min(idx, courses.length - 1)];
+        const following = (await followingSet(u.tg_id)).has(x.race.id);
+        return screen(u, T.courseShort(x.race, c, courses.length > 1, following, code, tail), msg);
       }
       case "flt":
         return screen(u, T.prefs(u.types, u.distances, "Отметь, что интересно, и нажми «Показать забеги»."), msg);
