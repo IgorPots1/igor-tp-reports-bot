@@ -295,13 +295,21 @@ async function main(): Promise<void> {
     // до них при аэробном 400, доля должна быть 13%. То есть на базовой заготовке эта
     // проверка не могла иметь зубов вообще. Берём атлета с высокой долей — там связывает
     // именно потолок.
-    const dq = draft({ baseAerobicMin: 200, baseQualityMin: 40, peakCapAerobicMin: 9999 });
+    // ПЕРЕПИСАНО 15.10 (дыра cap-quality-off): база 40/200 всё равно не связывала — работа росла
+    // до 60 САМА, через шаг и зажим доли, и прогноз со снятым потолком совпадал с исправным
+    // минута в минуту (проверено: макс. 60 в обоих). «Реально связывает» было неправдой.
+    // При базе 50/200 исправный прогноз упирается в 60, а без потолка уходит до 70.
+    const dq = draft({ baseAerobicMin: 200, baseQualityMin: 50, peakCapAerobicMin: 9999 });
     const wq = forecast(dq, MON, 14);
     const overQ2 = wq.find((x) => x.qualityMin > dq.peakCapQualityMin);
     const hitQ = wq.some((x) => x.qualityMin === dq.peakCapQualityMin);
     check("аэробный не выше личного потолка (и потолок реально связывает)",
       !overA && hitA, overA ? `неделя ${overA.index}: ${overA.aerobicMin} > ${d.peakCapAerobicMin}`
         : `потолок ${d.peakCapAerobicMin} ни разу не достигнут — проверка ничего не меряет`);
+    // Страховка от возврата дыры: на заглушке потолок обязан быть СКУЧЕН выше — без него работа ушла бы дальше.
+    const noCap = forecast({ ...dq, peakCapQualityMin: 9999 }, MON, 14);
+    check("потолок работы реально связывает: без него работа на этой заглушке уходит выше потолка",
+      noCap.some((x) => x.qualityMin > dq.peakCapQualityMin), `макс. без потолка ${Math.max(...noCap.map((x) => x.qualityMin))}, потолок ${dq.peakCapQualityMin}`);
     check("работа не выше личного потолка (и потолок реально связывает)",
       !overQ && !overQ2 && hitQ, (overQ ?? overQ2)
         ? `неделя ${(overQ ?? overQ2)!.index}: ${(overQ ?? overQ2)!.qualityMin} > потолка`
