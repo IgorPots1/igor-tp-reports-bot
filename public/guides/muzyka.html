@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Яндекс Музыка и VK Музыка на Garmin · igorp.run</title>
+<meta name="description" content="Как слушать Яндекс Музыку и VK Музыку на часах Garmin без телефона: пошаговый гайд со схемами экранов. Гайд Игоря Поцелуева.">
+<meta property="og:title" content="Яндекс Музыка и VK Музыка на Garmin">
+<meta property="og:description" content="Пошаговый гайд: от установки до первой пробежки с музыкой без телефона">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff;
+    --ya: #f6c445; --vk: #2f6fd6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(34px, 9.6vw, 54px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(24px, 6.6vw, 32px); margin-bottom: 14px; }
+  h3 { font-size: 19px; margin-bottom: 6px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  a { color: var(--acc); }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 44px; }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .hero-art { margin-top: 22px; padding: 26px 16px; display: flex; align-items: center; justify-content: center; gap: 18px; background: var(--bg2); border-radius: 26px; border: 1.5px solid var(--line); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; }
+  .stat .disp { font-size: 24px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+
+  /* checklist */
+  .need { padding: 6px 16px; }
+  .need li { list-style: none; display: flex; gap: 12px; align-items: flex-start; padding: 13px 0; border-top: 1.5px solid var(--line); }
+  .need li:first-child { border-top: 0; }
+  .need .ic { flex: none; width: 30px; height: 30px; border-radius: 10px; background: #e8f0e3; color: var(--grn); display: flex; align-items: center; justify-content: center; font-weight: 900; }
+  .need small { display: block; color: var(--dim); font-size: 14.5px; font-weight: 600; }
+
+  /* steps */
+  .step { margin-top: 16px; overflow: hidden; }
+  .step .shot { position: relative; background: var(--bg2); border-bottom: 1.5px solid var(--line); padding: 26px 16px 22px; display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+  .step .num { position: absolute; top: 14px; left: 14px; width: 42px; height: 42px; border-radius: 13px; background: var(--acc); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 19px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(184,71,31,.3); z-index: 2; }
+  .step .body { padding: 16px 18px 18px; }
+  .step .where { display: inline-block; font-size: 12px; font-weight: 800; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; background: #f6e1d6; color: var(--acc); }
+  .where.ya { background: #fdf0c8; color: #8a6400; }
+  .where.vk { background: #dfe9fb; color: var(--vk); }
+  .path { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin: 8px 0 2px; font-weight: 800; font-size: 15px; }
+  .path span { background: #f3eee5; border-radius: 8px; padding: 3px 9px; }
+  .path i { font-style: normal; color: var(--dim); }
+  .note { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #f3eee5; font-size: 15px; }
+  .note b { color: var(--acc); }
+  .shotcap { position: absolute; right: 14px; bottom: 8px; font-size: 10px; }
+
+  /* phone mockup */
+  .phone { width: 220px; border-radius: 30px; background: #fff; border: 7px solid var(--ink); box-shadow: 0 18px 40px rgba(28,26,23,.16); overflow: hidden; font-size: 13px; }
+  .phone .bar { height: 22px; display: flex; justify-content: center; align-items: center; }
+  .phone .bar::after { content: ""; width: 60px; height: 8px; border-radius: 6px; background: var(--ink); }
+  .phone .scr { padding: 6px 12px 16px; min-height: 250px; }
+  .phone .ttl { font-weight: 800; font-size: 15px; margin: 4px 0 10px; }
+  .search { border-radius: 10px; background: #f1ede5; padding: 7px 10px; font-weight: 700; color: var(--ink); margin-bottom: 12px; }
+  .appcard { display: flex; gap: 10px; align-items: center; padding: 10px; border-radius: 14px; border: 1.5px solid var(--line); }
+  .appicon { flex: none; width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #2b2b2b, #555); color: #fff; display: flex; align-items: center; justify-content: center; font-family: Unbounded; font-weight: 900; font-size: 11px; letter-spacing: -.02em; }
+  .appcard small { display: block; color: var(--dim); font-size: 11px; }
+  .pbtn { margin-top: 12px; text-align: center; border-radius: 999px; padding: 9px; background: var(--ink); color: #fff; font-weight: 800; }
+  .pbtn.hl, .hl-ring { box-shadow: 0 0 0 4px rgba(184,71,31,.35); }
+  .push { border-radius: 14px; background: #f1ede5; padding: 10px; margin-top: 6px; }
+  .push small { color: var(--dim); font-size: 11px; display: block; }
+  .field { margin-top: 10px; }
+  .field label { display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px; }
+  .field div { border: 1.5px solid var(--line); border-radius: 10px; padding: 7px 10px; font-weight: 800; }
+  .field .on { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(184,71,31,.18); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 0; border-top: 1.5px solid var(--line); }
+  .row:first-of-type { border-top: 0; }
+  .row b { color: var(--acc); }
+
+  /* watch mockup */
+  .watch { width: 210px; height: 210px; border-radius: 50%; background: #161513; border: 10px solid #3a3733; box-shadow: 0 18px 40px rgba(28,26,23,.2), inset 0 0 0 2px #000; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; font-size: 13px; position: relative; }
+  .watch .wt { font-family: "JetBrains Mono"; font-size: 10px; color: rgba(255,255,255,.55); letter-spacing: .06em; margin-bottom: 6px; }
+  .watch .it { width: 150px; padding: 4px 8px; font-size: 12px; white-space: nowrap; border-radius: 8px; color: rgba(255,255,255,.7); font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+  .watch .it.sel { background: var(--acc); color: #fff; }
+  .watch .dot { width: 7px; height: 7px; border-radius: 50%; background: #5fd068; }
+  .watch .box { width: 12px; height: 12px; border-radius: 3px; border: 2px solid rgba(255,255,255,.6); }
+  .watch .box.on { background: var(--acc); border-color: var(--acc); }
+  .watch svg { display: block; }
+
+  /* fixes */
+  .fix { padding: 6px 16px; }
+  .fix details { border-top: 1.5px solid var(--line); padding: 13px 0; }
+  .fix details:first-child { border-top: 0; }
+  .fix summary { cursor: pointer; font-weight: 800; list-style: none; display: flex; justify-content: space-between; gap: 10px; }
+  .fix summary::-webkit-details-marker { display: none; }
+  .fix summary::after { content: "+"; color: var(--acc); font-family: Unbounded; }
+  .fix details[open] summary::after { content: "−"; }
+  .fix details p { margin-top: 8px; color: rgba(28,26,23,.82); font-size: 15.5px; }
+
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 4px; }
+  .tab { border: 2px solid var(--line); background: #fff; border-radius: 14px; padding: 12px; font-family: Unbounded; font-weight: 900; font-size: 14px; cursor: pointer; color: var(--ink); }
+  .tab[aria-selected="true"].t-ya { border-color: var(--ya); background: #fdf0c8; }
+  .tab[aria-selected="true"].t-vk { border-color: var(--vk); background: #dfe9fb; color: var(--vk); }
+  .pane[hidden] { display: none; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+  .src { margin-top: 20px; font-size: 13.5px; color: var(--dim); }
+  .src a { color: var(--dim); }
+
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  .eq i { display: inline-block; width: 6px; margin: 0 2px; border-radius: 3px; background: var(--acc); animation: eq 1s ease-in-out infinite; vertical-align: bottom; }
+  .eq i:nth-child(2) { animation-delay: -.3s; } .eq i:nth-child(3) { animation-delay: -.6s; } .eq i:nth-child(4) { animation-delay: -.15s; }
+  @keyframes eq { 0%,100% { height: 8px; } 50% { height: 26px; } }
+  @media (prefers-reduced-motion: reduce) { .r { opacity: 1; transform: none; transition: none; } .eq i { animation: none; height: 16px; } }
+  @media (max-width: 400px) { .phone { width: 200px; } .watch { width: 190px; height: 190px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">гайд · музыка</span></div>
+    <h1>ЯНДЕКС МУЗЫКА<br>И VK МУЗЫКА<br><em>НА GARMIN</em></h1>
+    <p class="lead">Свои плейлисты прямо с часов в наушники. Телефон можно оставить дома. Настройка один раз, минут на 10-15.</p>
+    <div class="hero-art">
+      <div class="watch" aria-hidden="true">
+        <div class="wt">ИГРАЕТ</div>
+        <div style="font-weight:800;font-size:15px">Бег по утрам</div>
+        <div style="color:rgba(255,255,255,.6);font-size:11px;margin:2px 0 10px">мой плейлист</div>
+        <div class="eq"><i></i><i></i><i></i><i></i></div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat card"><div class="disp">0 ₽</div><div class="mono">приложение</div></div>
+      <div class="stat card"><div class="disp">2</div><div class="mono">сервиса</div></div>
+      <div class="stat card"><div class="disp">15</div><div class="mono">минут</div></div>
+    </div>
+  </header>
+
+  <section class="r">
+    <h2>Что <em>понадобится</em></h2>
+    <ul class="need card">
+      <li><span class="ic">✓</span><div><b>Часы Garmin с памятью под музыку</b><small>Например, Forerunner 265/965/570/970, Venu, fēnix Pro. Если в часах есть пункт «Музыка», подойдут.</small></div></li>
+      <li><span class="ic">✓</span><div><b>Bluetooth-наушники</b><small>Любые беспроводные.</small></div></li>
+      <li><span class="ic">✓</span><div><b>Телефон с Garmin Connect и Connect IQ</b><small>Оба приложения установлены и открыты: через телефон часы получают плейлисты.</small></div></li>
+      <li><span class="ic">✓</span><div><b>Аккаунт в Яндекс Музыке или VK</b><small>Для Яндекса понадобится подписка, а в VK музыка должна лежать в плейлистах.</small></div></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2 class="r">Шаги <em>для обоих сервисов</em></h2>
+
+    <article class="step card r">
+      <div class="shot"><div class="num">1</div>
+        <div class="phone" aria-hidden="true"><div class="bar"></div><div class="scr">
+          <div class="ttl">Connect IQ</div>
+          <div class="search">🔍 TRAXX</div>
+          <div class="appcard"><div class="appicon">TRAXX</div><div><b>TRAXX - VK и Яндекс Музыка</b><small>Музыка · бесплатно</small></div></div>
+          <div class="pbtn hl">Установить</div>
+        </div></div>
+        <span class="shotcap mono">схема экрана</span>
+      </div>
+      <div class="body"><span class="where">телефон</span>
+        <h3>Поставь приложение TRAXX</h3>
+        <p>Открой на телефоне приложение <b>Connect IQ</b>, найди в поиске <b>TRAXX</b> и нажми «Установить». Приложение бесплатное и работает сразу с обоими сервисами.</p>
+        <div class="note"><b>Старый гайд не подходит.</b> Приложения, которое было в моей прошлой инструкции, в магазине больше нет. Сейчас рабочий вариант TRAXX.</div>
+      </div>
+    </article>
+
+    <article class="step card r">
+      <div class="shot"><div class="num">2</div>
+        <div class="watch" aria-hidden="true">
+          <div class="wt">ИСТОЧНИКИ МУЗЫКИ</div>
+          <div class="it">Моя музыка</div>
+          <div class="it sel">TRAXX</div>
+          <div class="it">Spotify</div>
+        </div>
+        <span class="shotcap mono">схема экрана</span>
+      </div>
+      <div class="body"><span class="where">часы</span>
+        <h3>Выбери TRAXX источником музыки</h3>
+        <p>Открой на часах музыку и смени источник:</p>
+        <div class="path"><span>Музыка</span><i>›</i><span>Управление</span><i>›</i><span>Источники музыки</span><i>›</i><span>TRAXX</span></div>
+        <p style="margin-top:10px">Названия пунктов на разных моделях немного отличаются, ищи слово «Источник».</p>
+      </div>
+    </article>
+  </section>
+
+  <section>
+    <h2 class="r">Подключи <em>свой сервис</em></h2>
+    <div class="tabs r" role="tablist">
+      <button class="tab t-ya" role="tab" aria-selected="true" data-p="ya">Яндекс Музыка</button>
+      <button class="tab t-vk" role="tab" aria-selected="false" data-p="vk">VK Музыка</button>
+    </div>
+
+    <div class="pane" id="p-ya">
+      <article class="step card r">
+        <div class="shot"><div class="num">3</div>
+          <div class="watch" aria-hidden="true">
+            <div class="wt">TRAXX</div>
+            <div class="it sel">Яндекс.Музыка</div>
+            <div class="it">VK</div>
+            <div class="it">Мои плейлисты</div>
+            <div class="it">Настройки</div>
+          </div>
+          <div class="phone" aria-hidden="true"><div class="bar"></div><div class="scr">
+            <div class="ttl">Уведомления</div>
+            <div class="push hl-ring"><small>GARMIN CONNECT · сейчас</small><b>TRAXX: войдите в Яндекс</b><br>Нажмите, чтобы продолжить</div>
+          </div></div>
+          <span class="shotcap mono">схема экрана</span>
+        </div>
+        <div class="body"><span class="where ya">часы + телефон</span>
+          <h3>Войди в Яндекс</h3>
+          <p>Открой на часах <b>TRAXX</b> и зайди в раздел <b>«Яндекс.Музыка»</b>. На телефон придёт уведомление от Garmin Connect: нажми на него и войди в свой аккаунт Яндекса. Когда окно входа закроется само, значит, всё подключилось.</p>
+          <div class="note"><b>Уведомление не пришло?</b> Открой Garmin Connect на телефоне и подожди: запрос на вход появится прямо в приложении.</div>
+        </div>
+      </article>
+      <article class="step card r">
+        <div class="shot"><div class="num">4</div>
+          <div class="watch" aria-hidden="true">
+            <div class="wt">ЯНДЕКС.МУЗЫКА</div>
+            <div class="it">Мне нравится <span class="dot"></span></div>
+            <div class="it">Плейлисты</div>
+            <div class="it">Доб/Удал</div>
+          </div>
+          <span class="shotcap mono">схема экрана</span>
+        </div>
+        <div class="body"><span class="where ya">часы</span>
+          <h3>Зайди в раздел ещё раз</h3>
+          <p>Снова открой «Яндекс.Музыка» на часах, и подтянется список твоих плейлистов. Зелёная точка у пункта меню означает, что сервис подключён.</p>
+          <div class="note"><b>Старый телефон без входа через уведомление?</b> В настройках TRAXX в Connect IQ можно вставить токен Яндекса вручную. Как его получить, написано в описании приложения в магазине.</div>
+        </div>
+      </article>
+    </div>
+
+    <div class="pane" id="p-vk" hidden>
+      <article class="step card r">
+        <div class="shot"><div class="num">3</div>
+          <div class="phone" aria-hidden="true"><div class="bar"></div><div class="scr">
+            <div class="ttl">Приватность</div>
+            <div class="row"><span>Кто видит основную информацию</span><b>Все</b></div>
+            <div class="row hl-ring" style="border-radius:8px;padding:9px 6px"><span>Кто видит список моих аудиозаписей</span><b>Все</b></div>
+            <div class="row"><span>Закрытый профиль</span><b style="color:var(--dim)">выкл</b></div>
+          </div></div>
+          <span class="shotcap mono">схема экрана</span>
+        </div>
+        <div class="body"><span class="where vk">телефон · VK</span>
+          <h3>Открой аудиозаписи</h3>
+          <p>В VK зайди в настройки приватности и поставь <b>«Кто видит список моих аудиозаписей: Все пользователи»</b>. Профиль должен быть открытым, иначе TRAXX не увидит музыку.</p>
+          <div class="note"><b>Важно:</b> TRAXX видит только <b>плейлисты</b>. Отдельные треки сначала сложи в плейлист.</div>
+        </div>
+      </article>
+      <article class="step card r">
+        <div class="shot"><div class="num">4</div>
+          <div class="phone" aria-hidden="true"><div class="bar"></div><div class="scr">
+            <div class="ttl">TRAXX · Настройки</div>
+            <div class="field"><label>VK ID (только цифры)</label><div class="on">4093404</div></div>
+            <div class="field"><label>Яндекс Музыка, токен</label><div style="color:var(--dim);font-weight:600">не нужен для VK</div></div>
+            <div class="pbtn">Сохранить</div>
+          </div></div>
+          <span class="shotcap mono">схема экрана</span>
+        </div>
+        <div class="body"><span class="where vk">телефон · Connect IQ</span>
+          <h3>Впиши свой VK ID</h3>
+          <p>Узнай числовой ID своей страницы, например на сайте <a href="https://regvk.com/id/" target="_blank" rel="noopener">regvk.com/id</a>. Потом открой на телефоне:</p>
+          <div class="path"><span>Connect IQ</span><i>›</i><span>Мои устройства</span><i>›</i><span>TRAXX</span><i>›</i><span>Настройки</span></div>
+          <p style="margin-top:10px">Впиши ID <b>только цифрами, без «id»</b> и сохрани. На часах с кнопками можно войти и прямо в разделе «VK».</p>
+          <div class="note"><b>VK иногда отваливается.</b> VK периодически блокирует источники, через которые работает приложение, и разработчик их чинит. Если плейлисты перестали грузиться, подожди обновления.</div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="r">Закачай <em>музыку</em></h2>
+    <article class="step card r">
+      <div class="shot"><div class="num">5</div>
+        <div class="watch" aria-hidden="true">
+          <div class="wt">ДОБ/УДАЛ ПЛЕЙЛИСТЫ</div>
+          <div class="it">Бег по утрам <span class="box on"></span></div>
+          <div class="it">Интервалы <span class="box on"></span></div>
+          <div class="it sel" style="justify-content:center">Готово</div>
+        </div>
+        <div class="watch" aria-hidden="true">
+          <svg width="120" height="120" viewBox="0 0 120 120"><circle cx="60" cy="60" r="50" stroke="rgba(255,255,255,.15)" stroke-width="10" fill="none"/><circle cx="60" cy="60" r="50" stroke="#b8471f" stroke-width="10" fill="none" stroke-linecap="round" stroke-dasharray="314" stroke-dashoffset="190" transform="rotate(-90 60 60)"/><text x="60" y="58" fill="#fff" text-anchor="middle" font-family="Unbounded" font-weight="900" font-size="22">39%</text><text x="60" y="78" fill="rgba(255,255,255,.6)" text-anchor="middle" font-family="Manrope" font-weight="700" font-size="11">синхронизация</text></svg>
+        </div>
+        <span class="shotcap mono">схема экрана</span>
+      </div>
+      <div class="body"><span class="where">часы</span>
+        <h3>Выбери плейлисты и нажми «Готово»</h3>
+        <p>В TRAXX открой <b>«Доб/Удал плейлисты»</b>, отметь нужные и нажми «Готово». Начнётся закачка на часы. Потом слушай их в разделе <b>«Мои плейлисты»</b>.</p>
+        <div class="note"><b>Как закачать быстрее и без сбоев:</b> поставь часы на зарядку, держи телефон рядом и не закрывай Garmin Connect. Огромный плейлист разбей на несколько по 30-50 треков.</div>
+      </div>
+    </article>
+
+    <article class="step card r">
+      <div class="shot"><div class="num">6</div>
+        <div class="watch" aria-hidden="true">
+          <div class="wt">НАУШНИКИ</div>
+          <div class="it sel">Добавить новые</div>
+          <div class="it">Поиск…</div>
+        </div>
+        <span class="shotcap mono">схема экрана</span>
+      </div>
+      <div class="body"><span class="where">часы</span>
+        <h3>Подключи наушники</h3>
+        <p>Переведи наушники в режим сопряжения, а на часах открой в настройках музыки <b>«Наушники» › «Добавить»</b>. Подключаешь один раз, дальше они цепляются сами.</p>
+      </div>
+    </article>
+
+    <article class="step card r">
+      <div class="shot"><div class="num">7</div>
+        <div class="watch" aria-hidden="true">
+          <div class="wt">БЕГ · 5:42 /КМ</div>
+          <div style="font-weight:800;font-size:15px">Интервалы</div>
+          <div style="color:rgba(255,255,255,.6);font-size:11px;margin:2px 0 10px">трек 4 из 32</div>
+          <div class="eq"><i></i><i></i><i></i><i></i></div>
+        </div>
+        <span class="shotcap mono">схема экрана</span>
+      </div>
+      <div class="body"><span class="where">на пробежке</span>
+        <h3>Беги без телефона</h3>
+        <p>Запусти тренировку, потом открой управление музыкой. На многих моделях это долгое нажатие нижней кнопки. Интернет для прослушивания уже не нужен: треки лежат в памяти часов.</p>
+      </div>
+    </article>
+  </section>
+
+  <section class="r">
+    <h2>Если <em>не работает</em></h2>
+    <div class="fix card">
+      <details><summary>Синхронизация зависла на 0% или не показывает прогресс</summary><p>Прерви синхронизацию, посмотри, сколько треков уже загрузилось, и запусти снова. Иногда прогресс не обновляется, а треки при этом продолжают качаться.</p></details>
+      <details><summary>Сервис был подключён и вдруг перестал</summary><p>В TRAXX открой «Настройки» › «Очистить кеш авторизации» и войди заново. Скачанные плейлисты при этом не удаляются.</p></details>
+      <details><summary>Не вижу плейлисты из VK</summary><p>Проверь, что профиль открыт, аудиозаписи видны всем, а ID вписан только цифрами. Новые плейлисты появляются с небольшой задержкой.</p></details>
+      <details><summary>Большой плейлист играет только с начала</summary><p>Так устроено: плейлисты больше 50 треков запускаются сразу, без выбора конкретного трека. Хочешь выбирать, разбей его на плейлисты поменьше.</p></details>
+      <details><summary>Нет пункта «Музыка» в часах</summary><p>Значит, у модели нет памяти под музыку, и TRAXX на неё не встанет. Список совместимых часов есть на странице приложения в Connect IQ.</p></details>
+    </div>
+    <p class="src">Шаги сверены с описанием TRAXX в магазине Connect IQ (версия 2.5.9, сентябрь 2026) и <a href="https://t.me/traxx_for_garmin" target="_blank" rel="noopener">каналом разработчика</a>, там же новости, если VK или Яндекс поменяют вход. TRAXX делает независимый разработчик, не Garmin и не Яндекс. Если приложение помогло, у него на странице есть ссылка, чтобы поддержать автора.</p>
+  </section>
+
+  <div class="cta r">
+    <h2>Музыка есть. <em style="color:#f0a56f">А план?</em></h2>
+    <p>Распишу тренировки под твою цель и график, чтобы было что слушать на длинных. Напиши мне в Telegram.</p>
+    <a class="btn" href="https://t.me/IgorPotseluev?text=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%21%20%D0%A5%D0%BE%D1%87%D1%83%20%D0%BF%D0%BB%D0%B0%D0%BD%20%D1%82%D1%80%D0%B5%D0%BD%D0%B8%D1%80%D0%BE%D0%B2%D0%BE%D0%BA">Написать в Telegram</a><br>
+    <a class="btn ghost" href="https://instagram.com/igorp.run">@igorp.run</a>
+  </div>
+  <p class="foot mono">igorp.run · бег с умом и без лишних травм</p>
+</div>
+<script>
+  (function () {
+    var tabs = document.querySelectorAll('.tab');
+    tabs.forEach(function (t) {
+      t.addEventListener('click', function () {
+        tabs.forEach(function (x) { x.setAttribute('aria-selected', x === t ? 'true' : 'false'); });
+        document.getElementById('p-ya').hidden = t.dataset.p !== 'ya';
+        document.getElementById('p-vk').hidden = t.dataset.p !== 'vk';
+        document.querySelectorAll('#p-' + t.dataset.p + ' .r').forEach(function (e) { e.classList.add('in'); });
+      });
+    });
+    var els = document.querySelectorAll('.r');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
+</body>
+</html>
