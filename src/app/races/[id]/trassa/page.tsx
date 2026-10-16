@@ -76,7 +76,7 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
         {fresh ? <p className={styles.fresh}>{fresh}</p> : null}
         {lite ? (
           <p className={styles.facts}>
-            Набор высоты уточняется{surface ? ` · покрытие: ${surface}` : ""}
+            Набор высоты уточняется{surface ? ` · покрытие по данным карты: ${surface}` : ""}
           </p>
         ) : (
           <p className={styles.facts}>

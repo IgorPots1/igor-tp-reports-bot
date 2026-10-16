@@ -192,10 +192,15 @@ type Cand = CourseKeyPoint & { prio: number };
 const kmOf = (m: number) => Math.max(0.1, Math.round(m / 100) / 10);
 const ruKm = (x: number) => String(x).replace(".", ",");
 
-function surfaceText(to: Surface, trail: boolean): string {
-  if (to === "асфальт") return trail ? "дальше асфальт: можно прибавить, но без рывка." : "дальше асфальт: держите ровный темп, без рывка.";
-  if (to === "грунт") return trail ? "дальше грунт: шаг короче, смотри под ноги." : "дальше грунт: шаг короче, темп по ощущению, а не по часам.";
-  return trail ? "дальше тропа: корни и камни, смотри под ноги, на узком не обгоняй." : "дальше тропа: смотрите под ноги, на узком не обгоняйте.";
+/** Шкала сложности покрытия (решение Игоря 16.10.2026): асфальт → грунт → тропа. */
+const HARDNESS: Record<Surface, number> = { асфальт: 0, грунт: 1, тропа: 2 };
+
+/** Подсказка на смене покрытия по НАПРАВЛЕНИЮ: стало тяжелее — «шаг короче, смотри под ноги»,
+ *  стало легче — «можно вернуться в свой темп, без рывка». Было (до 16.10.2026): текст зависел только
+ *  от того, КУДА сменилось, и «тропа → грунт» у Borisovo читалось как усложнение. */
+export function surfaceText(from: Surface, to: Surface, trail: boolean): string {
+  if (HARDNESS[to] > HARDNESS[from]) return `дальше ${to}: шаг короче, ${trail ? "смотри" : "смотрите"} под ноги.`;
+  return `дальше ${to}: можно вернуться в свой темп, без рывка.`;
 }
 
 /**
@@ -249,7 +254,7 @@ export function keyPointsLite(input: {
     runs.slice(1).forEach((r, k) => {
       c.push({
         km: kmOf(r.from), type: "surface", prio: 60 + Math.min(10, (r.to - r.from) / 1000),
-        text: `С ${ruKm(kmOf(r.from))} км ${runs[k].s} кончается, ${surfaceText(r.s, trail)}`,
+        text: `С ${ruKm(kmOf(r.from))} км ${runs[k].s} кончается, ${surfaceText(runs[k].s, r.s, trail)}`,
       });
     });
   }
@@ -295,6 +300,16 @@ export function liteSummary(share: Partial<Record<Surface, number>>, known: numb
   if (u) parts.push(`${u} ${u === 1 ? "разворот" : u < 5 ? "разворота" : "разворотов"}`);
   return parts.join(", ");
 }
+
+/** Урезанный выходит, только если покрытие известно хотя бы на половине трассы и точек не меньше 3
+ *  (решение Игоря 16.10.2026: Archeda ×4 и «Осеннее обострение» 20 км были пустыми — карта и ветер). */
+export const LITE_MIN_KNOWN = 50;
+export const LITE_MIN_POINTS = 3;
+export function litePublishable(l: { keyPoints: unknown[]; surface: { known: number } }): boolean {
+  return l.surface.known >= LITE_MIN_KNOWN && l.keyPoints.length >= LITE_MIN_POINTS;
+}
+export const liteThinReason = (l: { keyPoints: unknown[]; surface: { known: number } }) =>
+  `урезанный разбор беден: покрытие по карте известно на ${l.surface.known}%, ключевых точек ${l.keyPoints.length} (нужно от ${LITE_MIN_KNOWN}% и от ${LITE_MIN_POINTS})`;
 
 /** До 4 точек короткого разбора в боте: развороты, смены покрытия, серпантин, ветер. */
 export function liteShortPoints(points: CourseKeyPoint[], max = 4): CourseKeyPoint[] {

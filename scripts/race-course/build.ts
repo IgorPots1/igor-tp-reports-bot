@@ -43,7 +43,7 @@ import { courseSummary, keyPoints, keyPointsTrail, shortPoints, type AidInfo } f
 import { gainLoss, perKm, profileSeries, segments, smoothByDistance } from "./profile";
 import { miniProfileSvg, profileSvg, writeProfileImage } from "./render";
 import { fetchElevations, fetchForecast, fetchWindHistory, readGpx, readGpxEle } from "./sources";
-import { fetchSurface, isScheme, liteEligible, liteShortPoints, makeLite, SCHEME_REASON } from "./lite";
+import { fetchSurface, isScheme, liteEligible, litePublishable, liteShortPoints, liteThinReason, makeLite, SCHEME_REASON } from "./lite";
 import { sunTimes } from "./sun";
 import { windSide, windStats } from "./wind";
 
@@ -224,8 +224,12 @@ async function main() {
   };
   // Эталона набора нет, а больше претензий нет — урезанный разбор: без профиля и цифры набора,
   // точки по поворотам, покрытию и ветру (решение Игоря 15.10.2026).
-  if (liteEligible(course)) {
-    course = makeLite(course, await fetchSurface(course.track), trail);
+  const lite = liteEligible(course) ? makeLite(course, await fetchSurface(course.track), trail) : null;
+  if (lite && !litePublishable(lite)) {
+    // бедный урезанный не публикуется: остаётся полный неопубликованный, причина — для тренера
+    course.checks = { ...course.checks, reason: `${course.checks.reason}; ${liteThinReason(lite)}` };
+  } else if (lite) {
+    course = lite;
     writeFileSync(outFile, JSON.stringify(course, null, 1) + "\n");
     const short = liteShortPoints(course.keyPoints).map((p, i) => ({ n: i + 1, km: p.km, text: p.text }));
     updateIndex(raceId, true, { km: distanceKm, label: label ?? null, gain: null, loss: null, summary: course.summary ?? "", points: short, lite: true });

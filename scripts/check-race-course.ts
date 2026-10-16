@@ -34,7 +34,7 @@ import { bearing, haversine, resample, simplifyTo, type LatLon } from "./race-co
 import { keyPoints, keyPointsTrail } from "./race-course/key-points";
 import { gainLoss, perKm, profileSeries, segments, smoothByDistance } from "./race-course/profile";
 import { readGpxEle } from "./race-course/sources";
-import { findTurns, keyPointsLite, liteEligible, liteSummary, makeLite, NO_REF_REASON, surfaceOf, surfaceRuns, type OsmWay } from "./race-course/lite";
+import { findTurns, keyPointsLite, liteEligible, litePublishable, liteSummary, makeLite, NO_REF_REASON, surfaceOf, surfaceRuns, surfaceText, type OsmWay } from "./race-course/lite";
 import { sunTimes } from "./race-course/sun";
 import { angleBetween, percentile, prevailing, windSide, windStats } from "./race-course/wind";
 
@@ -385,6 +385,30 @@ ok("урезанный: makeLite убирает профиль, набор и с
   assert.ok(l.keyPoints.some((p) => /^Разворот/.test(p.text)), "разворот найден");
 });
 
+// Было до 16.10.2026: текст на смене покрытия зависел только от того, КУДА сменилось, и «тропа → грунт»
+// (Borisovo, 3,3 км) подписывалось как усложнение. Теперь — по направлению на шкале асфальт → грунт → тропа.
+ok("урезанный: подсказка на смене покрытия по направлению", () => {
+  const harder = /шаг короче, смотри под ноги/;
+  const easier = /можно вернуться в свой темп, без рывка/;
+  for (const [a, b] of [["асфальт", "грунт"], ["грунт", "тропа"], ["асфальт", "тропа"]] as const) {
+    assert.match(surfaceText(a, b, true), harder, `${a} → ${b} тяжелее`);
+    assert.doesNotMatch(surfaceText(a, b, true), easier);
+  }
+  for (const [a, b] of [["тропа", "грунт"], ["грунт", "асфальт"], ["тропа", "асфальт"]] as const) {
+    assert.match(surfaceText(a, b, true), easier, `${a} → ${b} легче`);
+    assert.doesNotMatch(surfaceText(a, b, true), /под ноги/);
+  }
+  const pts = keyPointsLite({ totalM: 3000, trail: true, turns: [], runs: [{ from: 0, to: 1000, s: "тропа" }, { from: 1000, to: 3000, s: "грунт" }], perKm: [], wind: null });
+  assert.ok(pts.some((x) => /тропа кончается, дальше грунт: можно вернуться в свой темп/.test(x.text)), JSON.stringify(pts));
+});
+
+// Решение 16.10.2026: бедный урезанный (покрытие известно меньше чем на половине или точек меньше 3) не выходит.
+ok("урезанный: бедный не публикуется", () => {
+  assert.equal(litePublishable({ keyPoints: [1, 2, 3], surface: { known: 50 } }), true);
+  assert.equal(litePublishable({ keyPoints: [1, 2, 3], surface: { known: 49 } }), false, "покрытие меньше половины");
+  assert.equal(litePublishable({ keyPoints: [1, 2], surface: { known: 90 } }), false, "точек меньше 3");
+});
+
 // Было до 15.10.2026: без эталона разбор не публиковался вовсе (index.json — только полные). Теперь
 // он публикуется урезанным; стережём на настоящих данных, что урезанный ни в одном месте не выдаёт
 // высоту, а не прошедшие сверку, без трека и по схемам в index.json не попали.
@@ -399,6 +423,7 @@ ok("данные: урезанные без высот, не прошедшие 
     assert.ok(!/scheme|схем/i.test(c.source.kind), `${slug}: трасса по схеме опубликована`);
     if (!c.checks.lite) continue;
     assert.equal(c.checks.reason, NO_REF_REASON, `${slug}: урезанным — только «нет эталона»`);
+    assert.ok(litePublishable(c), `${slug}: бедный урезанный опубликован (покрытие ${c.surface?.known}%, точек ${c.keyPoints.length})`);
     assert.ok(c.elevation.length === 0 && c.gain === 0 && c.loss === 0, `${slug}: профиль или набор`);
     assert.ok(!c.keyPoints.some((p: { text: string }) => HEIGHT_WORDS.test(p.text)), `${slug}: слова о высоте в точках`);
     assert.doesNotMatch(c.summary ?? "", HEIGHT_WORDS, slug);
@@ -406,7 +431,9 @@ ok("данные: урезанные без высот, не прошедшие 
     assert.ok(e.lite === true && e.gain === null && e.loss === null && !e.mini, `${slug}: в index.json цифры или мини-профиль`);
     assert.ok(!(e.points ?? []).some((p) => HEIGHT_WORDS.test(p.text)), slug);
   }
-  for (const s of ["probeg_78437-9k", "probeg_73615-7k", "probeg_78465", "probeg_84558", "probeg_85642-10k"]) {
+  for (const s of ["probeg_78437-9k", "probeg_73615-7k", "probeg_78465", "probeg_84558", "probeg_85642-10k",
+    // бедные урезанные (16.10.2026)
+    "probeg_83333-5k", "probeg_83333-14k", "probeg_83333-28k", "probeg_83333-50k", "regplace_autumn-exacerbation-20k"]) {
     assert.ok(!published.has(s), `${s} не прошёл сверку — не публикуем`);
   }
 });
