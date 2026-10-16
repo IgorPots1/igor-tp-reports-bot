@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Силовая для бегуна · igorp.run</title>
+<meta name="description" content="Силовая для бегуна: 6 упражнений, 2 раза в неделю, план на 8 недель. Гайд Игоря Поцелуева.">
+<meta property="og:title" content="Силовая для бегуна">
+<meta property="og:description" content="6 упражнений, 2 раза в неделю, план на 8 недель">
+<meta property="og:image" content="https://igorp.run/guides/sila/gsquat.jpg">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(40px, 11vw, 60px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(26px, 7vw, 34px); margin-bottom: 14px; }
+  h3 { font-size: 21px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 44px; }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .hero-vid { margin-top: 22px; position: relative; border-radius: 26px; overflow: hidden; aspect-ratio: 1; background: var(--bg2); border: 1.5px solid var(--line); }
+  .hero-vid video, .ex video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; text-align: left; }
+  .stat .disp { font-size: 28px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+
+  /* why */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 2px solid var(--ink); background: #fff; font-weight: 800; font-size: 15px; }
+  .chip.ok { border-color: var(--grn); color: var(--grn); }
+  .chip.no { border-color: var(--line); color: var(--dim); text-decoration: line-through; }
+
+  /* week */
+  .week { display: grid; gap: 0; padding: 4px 16px; }
+  .day { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1.5px solid var(--line); }
+  .day:first-child { border-top: 0; }
+  .day .mono { width: 34px; font-size: 13px; }
+  .pill { font-size: 14px; font-weight: 800; border-radius: 9px; padding: 5px 12px; }
+  .p-easy { background: #e8f0e3; color: var(--grn); }
+  .p-hard { background: #f6e1d6; color: var(--acc); }
+  .p-long { background: #faecd2; color: #9a6514; }
+  .p-sila { background: var(--acc); color: #fff; }
+  .p-rest { color: var(--dim); padding-left: 0; }
+  .rules { margin-top: 14px; display: grid; gap: 10px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; }
+  .rule .n { flex: none; width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* warmup */
+  .warm { padding: 6px 16px; }
+  .warm li { list-style: none; display: flex; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .warm li:first-child { border-top: 0; }
+  .warm span:last-child { font-family: "JetBrains Mono"; font-size: 14px; color: var(--acc); white-space: nowrap; }
+
+  /* exercises */
+  .ex { overflow: hidden; margin-top: 16px; }
+  .ex .vid { position: relative; aspect-ratio: 1; background: var(--bg2); }
+  .ex .num { position: absolute; top: 14px; left: 14px; width: 46px; height: 46px; border-radius: 14px; background: var(--acc); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(184,71,31,.3); }
+  .ex .dose { position: absolute; right: 14px; bottom: 14px; background: #fff; border-radius: 14px; padding: 8px 14px; box-shadow: 0 8px 24px rgba(28,26,23,.12); text-align: right; }
+  .ex .dose .disp { font-size: 22px; }
+  .ex .dose .mono { font-size: 10.5px; }
+  .ex .body { padding: 16px 18px 18px; }
+  .ex .tag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--acc); background: #f6e1d6; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; }
+  .cues { margin-top: 10px; display: grid; gap: 6px; }
+  .cues div { display: flex; gap: 10px; align-items: flex-start; }
+  .cues div::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; background: var(--acc); }
+  .home { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #f3eee5; font-size: 15px; }
+  .home b { color: var(--grn); }
+
+  /* weight */
+  .rpe { padding: 16px; }
+  .scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 12px; }
+  .scale div { border-radius: 12px; padding: 10px 4px; text-align: center; font-size: 12.5px; font-weight: 800; background: #f3eee5; color: var(--dim); }
+  .scale .on { background: var(--acc); color: #fff; }
+
+  /* plan */
+  .plan { padding: 8px 16px 16px; }
+  .phase { padding: 14px 0; border-top: 1.5px solid var(--line); display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; }
+  .phase:first-child { border-top: 0; }
+  .phase .disp { font-size: 17px; }
+  .bar { height: 12px; border-radius: 6px; background: #efe9de; overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: var(--acc); transition: width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .in .bar i { width: var(--w); }
+  .phase small { display: block; color: var(--dim); font-size: 14px; margin-top: 2px; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+
+  /* reveal */
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .r { opacity: 1; transform: none; transition: none; } .bar i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">гайд · сила</span></div>
+    <h1>СИЛОВАЯ<br><em>ДЛЯ БЕГУНА</em></h1>
+    <p class="lead">Шесть упражнений, два раза в неделю, около сорока минут. Шаг становится экономичнее, ноги крепче, а травм меньше.</p>
+    <div class="hero-vid"><video src="sila/squat.mp4" poster="sila/squat.jpg" autoplay muted loop playsinline preload="auto"></video></div>
+    <div class="stats">
+      <div class="stat card"><div class="disp">2×</div><div class="mono">в неделю</div></div>
+      <div class="stat card"><div class="disp">40</div><div class="mono">минут</div></div>
+      <div class="stat card"><div class="disp">8</div><div class="mono">недель плана</div></div>
+    </div>
+  </header>
+
+  <section class="r">
+    <h2>Что <em>работает</em></h2>
+    <p>Бегуну нужна не «лёгкая силовая на тонус», а настоящая нагрузка: тяжёлые упражнения на мало повторов и взрывные прыжки. Именно они учат мышцы и сухожилия работать как пружина.</p>
+    <div class="chips">
+      <span class="chip ok">тяжело, 4-6 повторов</span>
+      <span class="chip ok">прыжки</span>
+      <span class="chip ok">2 раза в неделю</span>
+      <span class="chip no">30 повторов с гантелькой</span>
+      <span class="chip no">раз в месяц</span>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Как встроить <em>в неделю</em></h2>
+    <div class="week card">
+      <div class="day"><span class="mono">пн</span><span class="pill p-easy">лёгкий бег</span><span class="pill p-sila">силовая</span></div>
+      <div class="day"><span class="mono">вт</span><span class="pill p-rest">отдых</span></div>
+      <div class="day"><span class="mono">ср</span><span class="pill p-hard">быстрая тренировка</span></div>
+      <div class="day"><span class="mono">чт</span><span class="pill p-easy">лёгкий бег</span><span class="pill p-sila">силовая</span></div>
+      <div class="day"><span class="mono">пт</span><span class="pill p-rest">отдых</span></div>
+      <div class="day"><span class="mono">сб</span><span class="pill p-long">длинная пробежка</span></div>
+      <div class="day"><span class="mono">вс</span><span class="pill p-easy">лёгкий бег</span></div>
+    </div>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div>Силовую ставь <b>после лёгкой пробежки</b> в тот же день или в день быстрой тренировки, но после неё. Тогда тяжёлые дни остаются тяжёлыми, а лёгкие лёгкими.</div></div>
+      <div class="rule card"><div class="n">2</div><div>Не ставь силовую <b>накануне быстрой тренировки или длинной пробежки</b>. На них ноги должны прийти свежими.</div></div>
+      <div class="rule card"><div class="n">3</div><div>Пропустишь тренировку? Делай следующую по плану. <b>Догонять не надо.</b></div></div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Разминка, <em>7 минут</em></h2>
+    <ul class="warm card">
+      <li><span>Лёгкий бег, вело или скакалка</span><span>5 мин</span></li>
+      <li><span>Приседания без веса</span><span>10</span></li>
+      <li><span>Выпады назад</span><span>по 6</span></li>
+      <li><span>Махи ногой вперёд и в сторону</span><span>по 10</span></li>
+      <li><span>Первый подход каждого упражнения лёгкий</span><span>×1</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2 class="r">Тренировка, <em>6 упражнений</em></h2>
+    <p class="r">Делай по порядку. Отдых между подходами 2-3 минуты, между прыжками до полного восстановления.</p>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/squat.mp4" poster="sila/squat.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">1</div><div class="dose"><div class="disp">3 × 5</div><div class="mono">в начале</div></div></div>
+      <div class="body"><span class="tag">взрывное</span><h3>Прыжки из полуприседа</h3>
+        <div class="cues"><div>Присядь наполовину и сразу вверх изо всех сил</div><div>Приземляйся тихо, мягко в тот же полуприсед</div><div>Каждый прыжок отдельно, без спешки</div></div>
+        <div class="home"><b>Первыми, пока ноги свежие.</b> Прыжок стал ниже, значит подход закончен.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/gsquat.mp4" poster="sila/gsquat.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">2</div><div class="dose"><div class="disp">3-4 × 5</div><div class="mono">тяжело</div></div></div>
+      <div class="body"><span class="tag">ноги целиком</span><h3>Гоблет-присед</h3>
+        <div class="cues"><div>Гантель или гиря у груди, локти вниз</div><div>Садись глубоко, пятки прижаты, колени смотрят туда же, куда носки</div><div>Вверх мощно, спина ровная</div></div>
+        <div class="home"><b>Дома:</b> рюкзак с бутылками воды у груди, вниз медленно на 3 счёта.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/rdl.mp4" poster="sila/rdl.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">3</div><div class="dose"><div class="disp">3 × 6</div><div class="mono">тяжело</div></div></div>
+      <div class="body"><span class="tag">задняя поверхность бедра</span><h3>Румынская тяга</h3>
+        <div class="cues"><div>Колени чуть согнуты и почти не двигаются</div><div>Таз уводи назад, гантели скользят вдоль ног</div><div>Спина прямая, опускайся до натяжения сзади бедра</div></div>
+        <div class="home"><b>Дома:</b> на одной ноге с рюкзаком в руке, по 8 на ногу.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/ssq.mp4" poster="sila/ssq.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">4</div><div class="dose"><div class="disp">3 × 6</div><div class="mono">на ногу</div></div></div>
+      <div class="body"><span class="tag">одна нога</span><h3>Сплит-присед</h3>
+        <div class="cues"><div>Широкий шаг, вес на передней ноге</div><div>Опускайся вертикально, заднее колено почти касается пола</div><div>Переднее колено не заваливается внутрь</div></div>
+        <div class="home"><b>Сложнее:</b> задняя нога на скамье, это болгарский присед. Начинай без веса.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/stepup.mp4" poster="sila/stepup.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">5</div><div class="dose"><div class="disp">3 × 6</div><div class="mono">на ногу</div></div></div>
+      <div class="body"><span class="tag">как в беге</span><h3>Зашагивания на тумбу</h3>
+        <div class="cues"><div>Тумба на высоте колена или чуть ниже</div><div>Поднимайся за счёт ноги на тумбе, не отталкивайся нижней</div><div>Наверху колено второй ноги вперёд, как в шаге</div></div>
+        <div class="home"><b>Дома:</b> устойчивый стул или ступенька, гантели или рюкзак в руках.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/calf.mp4" poster="sila/calf.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">6</div><div class="dose"><div class="disp">3 × 10</div><div class="mono">на ногу</div></div></div>
+      <div class="body"><span class="tag">икры и ахилл</span><h3>Подъём на носок на одной ноге</h3>
+        <div class="cues"><div>Вверх за 1 счёт, вниз медленно за 3</div><div>Поднимайся максимально высоко, колено прямое</div><div>Держись рукой за стену для равновесия</div></div>
+        <div class="home"><b>Сложнее:</b> с гантелью в руке или на краю ступеньки, пятка уходит ниже.</div></div>
+    </article>
+  </section>
+
+  <section class="r">
+    <h2>Как выбрать <em>вес</em></h2>
+    <div class="rpe card">
+      <p>Последние два повтора в подходе даются тяжело, но техника держится. Если можешь сделать ещё 4-5 повторов, вес лёгкий.</p>
+      <div class="scale"><div>легко</div><div>норм</div><div class="on">тяжело</div><div class="on">очень</div><div>отказ</div></div>
+      <p style="margin-top:12px">До отказа не работай. Добавляй вес, когда все подходы проходят ровно.</p>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>План на <em>8 недель</em></h2>
+    <div class="plan card">
+      <div class="phase"><div class="disp">1-2</div><div><b>Освоение</b><small>2-3 подхода по 8-10, вес средний, учишь технику. Прыжки 2 × 5.</small><div class="bar"><i style="--w:40%"></i></div></div></div>
+      <div class="phase"><div class="disp">3-5</div><div><b>Тяжело</b><small>3-4 подхода по 5-6. Прыжки 3 × 5.</small><div class="bar"><i style="--w:72%"></i></div></div></div>
+      <div class="phase"><div class="disp">6-8</div><div><b>Тяжелее</b><small>4 подхода по 4-5, вес выше. Прыжки 3 × 6.</small><div class="bar"><i style="--w:92%"></i></div></div></div>
+      <div class="phase"><div class="disp">старт</div><div><b>Перед забегом</b><small>Последняя тяжёлая за 10 дней. В неделю старта силовой нет.</small><div class="bar"><i style="--w:15%;background:var(--grn)"></i></div></div></div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Чтобы <em>без травм</em></h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div>Техника важнее веса. Сначала движение, потом килограммы.</div></div>
+      <div class="rule card"><div class="n">2</div><div>В первую неделю ноги будут болеть, это нормально. Острая боль в суставе или ахилле, стоп и к врачу.</div></div>
+      <div class="rule card"><div class="n">3</div><div>Новичку в силовой первые две недели лучше без веса или с лёгким, а прыжки добавить с третьей.</div></div>
+    </div>
+  </section>
+
+  <div class="cta r">
+    <h2>Хочешь план <em style="color:#f0a56f">под себя?</em></h2>
+    <p>Распишу бег и силовую под твою цель и график. Напиши мне в Telegram.</p>
+    <a class="btn" href="https://t.me/IgorPotseluev?text=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%21%20%D0%A5%D0%BE%D1%87%D1%83%20%D0%BF%D0%BB%D0%B0%D0%BD%20%D1%81%20%D1%81%D0%B8%D0%BB%D0%BE%D0%B2%D0%BE%D0%B9">Написать в Telegram</a><br>
+    <a class="btn ghost" href="https://instagram.com/igorp.run">@igorp.run</a>
+  </div>
+  <p class="foot mono">igorp.run · бег с умом и без лишних травм</p>
+</div>
+<script>
+  (function () {
+    var els = document.querySelectorAll('.r');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(function (e) { io.observe(e); });
+    // play videos only while visible (saves battery in the Instagram browser)
+    var vio = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { var v = e.target; if (e.isIntersecting) { var p = v.play(); if (p && p.catch) p.catch(function () {}); } else v.pause(); });
+    }, { threshold: 0.2 });
+    document.querySelectorAll('video').forEach(function (v) { vio.observe(v); });
+  })();
+</script>
+</body>
+</html>
