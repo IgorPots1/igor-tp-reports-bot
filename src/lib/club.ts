@@ -14,4 +14,6 @@ const NBSP = "\u00A0";
 export const CLUB = {
   /** Цена сопровождения в месяц, готовая к выводу: «5 000 ₽». */
   priceMonthly: `5${NBSP}000${NBSP}₽`,
+  /** Цена для англоязычной страницы /coaching: «€60». */
+  priceMonthlyEur: "€60",
 };

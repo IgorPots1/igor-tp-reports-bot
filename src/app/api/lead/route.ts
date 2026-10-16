@@ -27,8 +27,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { name: rawName, phone: rawPhone, telegram: rawTelegram } =
-    body as Record<string, unknown>;
+  const {
+    name: rawName,
+    phone: rawPhone,
+    telegram: rawTelegram,
+    source: rawSource,
+  } = body as Record<string, unknown>;
+
+  // Источник заявки: только из закрытого списка, всё прочее = «landing».
+  // Английская страница /coaching шлёт «coaching-en», чтобы тренер видел в
+  // уведомлении и в leads, что человек пришёл с англоязычного сайта.
+  const source = rawSource === "coaching-en" ? "coaching-en" : "landing";
 
   const name =
     typeof rawName === "string" ? rawName.trim().slice(0, 200) : "";
@@ -69,7 +78,7 @@ export async function POST(req: NextRequest) {
   }
 
   const now = msk(new Date());
-  const text = `🏃 <b>Новая заявка с сайта</b>\nИмя: ${name}\nТелефон: ${phone}\nTelegram: ${telegram || "—"}\nВремя: ${now}\nИсточник: landing igorp.run`;
+  const text = `🏃 <b>Новая заявка с сайта</b>\nИмя: ${name}\nТелефон: ${phone}\nTelegram: ${telegram || "—"}\nВремя: ${now}\nИсточник: ${source === "coaching-en" ? "🇬🇧 английская страница igorp.run/coaching" : "landing igorp.run"}`;
 
   const userAgent = req.headers.get("user-agent") ?? "";
 
@@ -104,7 +113,7 @@ export async function POST(req: NextRequest) {
       name,
       phone,
       telegram: telegram || null,
-      source: "landing",
+      source,
       user_agent: userAgent,
       status: "new",
     });
