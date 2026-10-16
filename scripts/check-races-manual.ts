@@ -66,6 +66,8 @@ import {
   recheckPlan,
   tracksPlan,
   detailsPlan,
+  pickDetailsDue,
+  DETAIL_PER_WEEK,
 } from "./races-manual";
 
 const TODAY = "2026-10-11";
@@ -472,6 +474,23 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.ok(plan.rejected.some((r) => /probeg:1: не в списке/.test(r)));
   assert.ok(!plan.rows.some((r) => r.field === "packet_pickup"), "пустое — ни записи, ни удаления");
   assert.deepEqual(detailsPlan([], [], "2026-10-19").lines, [], "проверять нечего — строки нет");
+}
+
+// Выбор на перепроверку (16.10.2026): ближайшие первыми; ВСЕ старты на 14 дней каждую неделю, даже если
+// их больше недельного ограничения (было: общее ограничение 40 срезало ближайшие 14 дней — их 111);
+// дальше 14 дней — до DETAIL_PER_WEEK; без выжимки и проверенные за 3 дня — пропуск.
+{
+  const day = (n: number) => new Date(Date.UTC(2026, 9, 19 + n)).toISOString().slice(0, 10);
+  const c = (id: string, n: number, checked = "2026-10-15", empty = false) => ({ id, date_start: day(n), fields: empty ? [] : [{ checked_at: checked }] });
+  const near = Array.from({ length: 60 }, (_, i) => c(`n${i}`, i % 15)); // 60 стартов в ближайшие 14 дней
+  const far = Array.from({ length: 60 }, (_, i) => c(`f${i}`, 15 + (i % 40)));
+  const picked = pickDetailsDue([...far, ...near, c("fresh", 2, "2026-10-17"), c("nodet", 3, "2026-10-15", true), c("past", -1), c("late", 61)], "2026-10-19");
+  assert.equal(picked.filter((x) => x.id.startsWith("n")).length, 60, "все 60 стартов на 14 дней — больше недельного ограничения");
+  assert.equal(picked.filter((x) => x.id.startsWith("f")).length, DETAIL_PER_WEEK, "дальше 14 дней — не больше ограничения");
+  assert.ok(picked.every((x, i) => i === 0 || picked[i - 1].date_start <= x.date_start), "ближайшие первыми");
+  assert.ok(!picked.some((x) => ["fresh", "nodet", "past", "late"].includes(x.id)), "проверенный за 3 дня, без выжимки, прошедший и дальше 60 дней — нет");
+  const farPicked = picked.filter((x) => x.id.startsWith("f"));
+  assert.ok(farPicked.at(-1)!.date_start <= far.map((x) => x.date_start).sort()[DETAIL_PER_WEEK], "из дальних — самые ранние");
 }
 
 console.log("check:races-manual ok");

@@ -194,8 +194,24 @@ export type Proposal = {
  */
 export const DETAIL_REFRESH_FIELDS = ["registration_status", "start_time", "packet_pickup", "cutoff"] as const;
 export const DETAIL_WINDOW_DAYS = 60;
-/** Не больше стольких стартов за неделю (ближайшие первыми); проверенные за последние 3 дня пропускаются. */
+/** Старты на ближайшие 14 дней проверяются КАЖДУЮ неделю, все (решение Игоря 16.10.2026: было общее
+ *  ограничение 40 в неделю, а в ближайших 14 днях 111 стартов — неделя не успевала бы их обойти). */
+export const DETAIL_ALWAYS_DAYS = 14;
+/** Дальше (15–60 дней) — не больше стольких за неделю, ближайшие первыми. Проверенные за 3 дня пропускаются. */
 export const DETAIL_PER_WEEK = 40;
+
+/** Кого перепроверять на этой неделе: всё в ближайшие 14 дней, затем до DETAIL_PER_WEEK из 15–60 дней,
+ *  ближайшие первыми; без выжимки и проверенные за последние 3 дня — пропуск. Чистая, её стережёт check. */
+export function pickDetailsDue<T extends { date_start: string; fields: { checked_at: string }[] }>(cands: T[], today: string): T[] {
+  const near = addDays(today, DETAIL_ALWAYS_DAYS);
+  const fresh = addDays(today, -3);
+  const ok = [...cands]
+    .filter((c) => c.date_start >= today && c.date_start <= addDays(today, DETAIL_WINDOW_DAYS) && c.fields.length)
+    .filter((c) => c.fields.map((x) => x.checked_at).sort().at(-1)! <= fresh)
+    .sort((a, b) => a.date_start.localeCompare(b.date_start));
+  const always = ok.filter((c) => c.date_start <= near);
+  return [...always, ...ok.filter((c) => c.date_start > near).slice(0, DETAIL_PER_WEEK)];
+}
 const FIELD_RU: Record<string, string> = { registration_status: "регистрация", start_time: "время старта", packet_pickup: "выдача номеров", cutoff: "лимиты" };
 export type DetailCheck = { race_id: string; distance: number | null; field: string; value: string; source_url: string };
 export type DetailRowDb = { race_id: string; distance: number | null; field: string; value: string; source_url: string | null; checked_at: string };
@@ -1039,25 +1055,20 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   return hits;
 }
 
-/** Старты в ближайшие 60 дней с выжимкой, не проверявшиеся 3 дня: до DETAIL_PER_WEEK ближайших. */
+/** Старты на перепроверку выжимки (выбор — pickDetailsDue). Выжимка читается пачками по 200 стартов. */
 async function detailsDue(sb: SupabaseClient, today: string): Promise<DetailsDue[]> {
   const { data: cal, error } = await sb.from("race_calendar").select("id,name,date_start,site_url,reg_url,vk_url,dist_km")
     .gte("date_start", today).lte("date_start", addDays(today, DETAIL_WINDOW_DAYS)).order("date_start").order("id");
   if (error) throw error;
-  const out: DetailsDue[] = [];
-  for (const r of (cal || []) as Omit<DetailsDue, "fields">[]) {
-    if (out.length >= DETAIL_PER_WEEK) break;
+  const races = (cal || []) as Omit<DetailsDue, "fields">[];
+  const byRace = new Map<string, DetailRowDb[]>();
+  for (let i = 0; i < races.length; i += 200) {
     const { data: det, error: de } = await sb.from("race_details").select("race_id,distance,field,value,source_url,checked_at")
-      .eq("race_id", r.id).in("field", [...DETAIL_REFRESH_FIELDS]);
+      .in("race_id", races.slice(i, i + 200).map((r) => r.id)).in("field", [...DETAIL_REFRESH_FIELDS]).order("id").limit(5000);
     if (de) throw de;
-    const fields = ((det || []) as DetailRowDb[]).map((x) => ({ ...x, distance: x.distance == null ? null : Number(x.distance) }));
-    if (!fields.length) continue; // выжимки нет — нечего обновлять (новые старты собирает отдельный наряд)
-    const last = fields.map((x) => x.checked_at).sort().at(-1)!;
-    // проверено в последние 3 дня (сбор выжимки, ручная правка) — на этой неделе не трогаем
-    if (last > addDays(today, -3)) continue;
-    out.push({ ...r, fields });
+    for (const x of (det || []) as DetailRowDb[]) byRace.set(x.race_id, [...(byRace.get(x.race_id) ?? []), { ...x, distance: x.distance == null ? null : Number(x.distance) }]);
   }
-  return out;
+  return pickDetailsDue(races.map((r) => ({ ...r, fields: byRace.get(r.id) ?? [] })), today);
 }
 
 async function cmdDetailsDue() {
