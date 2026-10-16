@@ -25,6 +25,7 @@
  *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке, и только плавание → removed
  *   npx tsx scripts/races-manual.ts recheck                  старты «под вопросом» (race_overrides), у которых подошла перепроверка
  *   npx tsx scripts/races-manual.ts tracks-due               старты в ближайшие 21 день без трека (race_details track = «нет данных»)
+ *   npx tsx scripts/races-manual.ts details-due              старты в ближайшие 60 дней: регистрация, время, номера, лимиты на перепроверку
  *   npx tsx scripts/races-manual.ts announce <exp_id>=<race_id>,… [--apply]   ожидаемые, чьё проведение уже в
  *                                                            календаре, а робот не узнал (решение тренера) → announced
  *   npx tsx scripts/races-manual.ts apply <proposal.json> [--apply]   итог недели пишется в ops-log
@@ -180,7 +181,69 @@ export type Proposal = {
   recheck?: RecheckVerdict[];
   /** Найденные треки для стартов из tracks-due.json (ближайшие 21 день, трека «нет данных»). */
   tracks?: TrackFind[];
+  /** Перепроверка выжимки по details-due.json (ближайшие 60 дней): текущее значение поля у организатора. */
+  details?: DetailCheck[];
 };
+
+/**
+ * Обновление выжимки (наряд 16.10.2026): раз в неделю у стартов на ближайшие 60 дней агент заново
+ * смотрит у организатора статус регистрации, время старта, выдачу номеров и лимиты. Шлюз сам решает,
+ * что изменилось: то же значение — только новая дата проверки; другое — старое в снимок
+ * ~/ops-log/races/details-snapshot-<дата>.json, новое с новой датой проверки, строка в итог недели
+ * «изменилось: старт, поле, было, стало». Ничего не удаляется; «нет данных» старое значение не затирает.
+ */
+export const DETAIL_REFRESH_FIELDS = ["registration_status", "start_time", "packet_pickup", "cutoff"] as const;
+export const DETAIL_WINDOW_DAYS = 60;
+/** Не больше стольких стартов за неделю (ближайшие первыми); проверенные за последние 3 дня пропускаются. */
+export const DETAIL_PER_WEEK = 40;
+const FIELD_RU: Record<string, string> = { registration_status: "регистрация", start_time: "время старта", packet_pickup: "выдача номеров", cutoff: "лимиты" };
+export type DetailCheck = { race_id: string; distance: number | null; field: string; value: string; source_url: string };
+export type DetailRowDb = { race_id: string; distance: number | null; field: string; value: string; source_url: string | null; checked_at: string };
+export type DetailsDue = { id: string; name: string; date_start: string; site_url: string | null; reg_url: string | null; vk_url: string | null; dist_km: number[] | null; fields: DetailRowDb[] };
+
+const normV = (v: string) => v.replace(/\s+/g, " ").trim();
+const cut = (v: string, n = 80) => (v.length > n ? `${v.slice(0, n - 1)}…` : v);
+
+export function detailsPlan(due: DetailsDue[], checks: DetailCheck[], today: string): { rows: DetailRowDb[]; snapshot: DetailRowDb[]; lines: string[]; rejected: string[] } {
+  const byId = new Map(due.map((r) => [r.id, r]));
+  const rows: DetailRowDb[] = [], snapshot: DetailRowDb[] = [], changes: string[] = [], rejected: string[] = [];
+  const seen = new Set<string>();
+  let confirmed = 0;
+  for (const c of checks) {
+    const r = byId.get(c.race_id);
+    const value = normV(c.value ?? "");
+    if (!r) { rejected.push(`${c.race_id}: не в списке перепроверки выжимки`); continue; }
+    if (!(DETAIL_REFRESH_FIELDS as readonly string[]).includes(c.field)) { rejected.push(`${c.race_id}: поле «${c.field}» не перепроверяется`); continue; }
+    if (!value || /^нет данных/i.test(value)) { rejected.push(`${c.race_id}: ${c.field} пустое — старое значение оставлено`); continue; }
+    if (!/^https?:\/\/\S+$/.test(c.source_url ?? "") || /(yandex\.ru|ya\.ru|google\.[a-z]+)\/search|[?&](text|q)=/.test(c.source_url)) {
+      rejected.push(`${c.race_id}: ${c.field} — источник не страница организатора`);
+      continue;
+    }
+    const d = c.distance == null ? null : Number(c.distance);
+    const old = r.fields.find((x) => x.field === c.field && (x.distance ?? null) === d);
+    if (!old && d !== null && !(r.dist_km ?? []).some((k) => Math.abs(k - d) <= Math.max(0.5, k * 0.1))) {
+      rejected.push(`${c.race_id}: ${c.field} — дистанции ${d} км у старта нет`);
+      continue;
+    }
+    const key = `${r.id}|${d}|${c.field}`;
+    if (seen.has(key)) { rejected.push(`${c.race_id}: ${c.field} — повтор`); continue; }
+    seen.add(key);
+    const row: DetailRowDb = { race_id: r.id, distance: d, field: c.field, value: value.slice(0, 400), source_url: c.source_url, checked_at: today };
+    if (old && normV(old.value) === normV(row.value)) {
+      confirmed++;
+      rows.push({ ...row, value: old.value }); // то же — только новая дата проверки
+      continue;
+    }
+    if (old) snapshot.push(old);
+    rows.push(row);
+    const dist = d === null ? "" : ` ${String(d).replace(".", ",")} км`;
+    changes.push(`изменилось: «${r.name}», ${FIELD_RU[c.field]}${dist}, было «${old ? cut(old.value) : "нет данных"}», стало «${cut(row.value)}»`);
+  }
+  const lines = due.length
+    ? [`Выжимка (старты в ближайшие ${DETAIL_WINDOW_DAYS} дней): к перепроверке ${due.length}, подтверждено полей ${confirmed}, изменилось ${changes.length}`, ...changes]
+    : [];
+  return { rows, snapshot, lines, rejected };
+}
 
 /**
  * Повторный поиск треков (наряд 15.10.2026): у стартов в ближайшие 21 день с track = «нет данных»
@@ -976,6 +1039,31 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   return hits;
 }
 
+/** Старты в ближайшие 60 дней с выжимкой, не проверявшиеся 3 дня: до DETAIL_PER_WEEK ближайших. */
+async function detailsDue(sb: SupabaseClient, today: string): Promise<DetailsDue[]> {
+  const { data: cal, error } = await sb.from("race_calendar").select("id,name,date_start,site_url,reg_url,vk_url,dist_km")
+    .gte("date_start", today).lte("date_start", addDays(today, DETAIL_WINDOW_DAYS)).order("date_start").order("id");
+  if (error) throw error;
+  const out: DetailsDue[] = [];
+  for (const r of (cal || []) as Omit<DetailsDue, "fields">[]) {
+    if (out.length >= DETAIL_PER_WEEK) break;
+    const { data: det, error: de } = await sb.from("race_details").select("race_id,distance,field,value,source_url,checked_at")
+      .eq("race_id", r.id).in("field", [...DETAIL_REFRESH_FIELDS]);
+    if (de) throw de;
+    const fields = ((det || []) as DetailRowDb[]).map((x) => ({ ...x, distance: x.distance == null ? null : Number(x.distance) }));
+    if (!fields.length) continue; // выжимки нет — нечего обновлять (новые старты собирает отдельный наряд)
+    const last = fields.map((x) => x.checked_at).sort().at(-1)!;
+    // проверено в последние 3 дня (сбор выжимки, ручная правка) — на этой неделе не трогаем
+    if (last > addDays(today, -3)) continue;
+    out.push({ ...r, fields });
+  }
+  return out;
+}
+
+async function cmdDetailsDue() {
+  console.log(JSON.stringify(await detailsDue(db(), todayBelgrade()), null, 2));
+}
+
 /** Старты в ближайшие 21 день, у которых в выжимке трек «нет данных». */
 async function tracksDue(sb: SupabaseClient, today: string): Promise<TrackDue[]> {
   const { data: det, error } = await sb.from("race_details").select("race_id").eq("field", "track").is("distance", null).ilike("value", "нет данных%");
@@ -1285,6 +1373,21 @@ async function cmdApply(file: string, apply: boolean) {
     if (te) throw te;
   }
 
+  // Выжимка: шлюз сам решает, что изменилось; старое значение — в снимок до записи, ничего не удаляем.
+  const detDue = await detailsDue(sb, today);
+  const det = detailsPlan(detDue, p.details || [], today);
+  for (const r of det.rejected) out.push({ kind: "skipped", id: r.split(":")[0], text: `выжимка: ${r}` });
+  if (apply && det.rows.length) {
+    if (det.snapshot.length) {
+      const file = path.join(os.homedir(), "ops-log", "races", `details-snapshot-${today}.json`);
+      mkdirSync(path.dirname(file), { recursive: true });
+      const prev = existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as unknown[]) : [];
+      writeFileSync(file, `${JSON.stringify([...prev, ...det.snapshot.map((x) => ({ ...x, replaced_at: today }))], null, 1)}\n`);
+    }
+    const { error: de } = await sb.from("race_details").upsert(det.rows.map((r) => ({ ...r, updated_at: new Date().toISOString() })), { onConflict: "race_id,distance,field" });
+    if (de) throw de;
+  }
+
   // Точки обхода: у проверенных на этой неделе обновится last_searched.
   const cityList = readCities();
   const citiesMarked = markCities(cityList, p.cities_searched || [], today);
@@ -1303,6 +1406,7 @@ async function cmdApply(file: string, apply: boolean) {
     tiers,
     recheckLines: recheck.lines,
     trackLines: tracks.lines,
+    detailLines: det.lines,
   });
   console.log(summary);
   // Игорю сразу, а не только в ops-log: сбой робота, повышение уровня, кандидат в робота.
@@ -1403,6 +1507,7 @@ export function weeklySummary(a: {
   tiers?: TierStats;
   recheckLines?: string[];
   trackLines?: string[];
+  detailLines?: string[];
 }): string {
   const n = (k: Outcome["kind"]) => a.out.filter((o) => o.kind === k).length;
   const tri = a.out.filter((o) => o.kind === "added" && o.tri).length;
@@ -1430,6 +1535,7 @@ export function weeklySummary(a: {
   lines.push(`Заявки с сайта: разобрано ${sg.length - sgn("skipped")} (добавлено ${sgn("added")}, дубль ${sgn("duplicate")}, отклонено ${sgn("rejected")})${sgn("skipped") ? `, не принято шлюзом ${sgn("skipped")}` : ""}`);
   if (a.recheckLines?.length) lines.push(...a.recheckLines);
   if (a.trackLines?.length) lines.push(...a.trackLines);
+  if (a.detailLines?.length) lines.push(...a.detailLines);
   lines.push(`Обход по городам: ${a.citiesMarked ?? 0} точек на этой неделе из ${a.citiesTotal ?? 0}; ВК: ${a.proposal.vk_queries?.length ? `${a.proposal.vk_queries.length} запросов` : "не искали"}`);
   const cands = a.proposal.candidates || [];
   lines.push(cands.length ? "Кандидаты в автосбор:" : "Кандидаты в автосбор: нет");
@@ -1786,6 +1892,7 @@ async function main() {
   if (cmd === "announce" && arg) return void (await cmdAnnounce(arg, apply));
   if (cmd === "recheck") return cmdRecheck();
   if (cmd === "tracks-due") return cmdTracksDue();
+  if (cmd === "details-due") return cmdDetailsDue();
   if (cmd === "apply" && arg) return void (await cmdApply(arg, apply));
   if (cmd === "sources") return cmdSources(arg === "all");
   if (cmd === "sources-seed") return cmdSourcesSeed(apply);
@@ -1795,7 +1902,7 @@ async function main() {
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
   if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
-  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | recheck | tracks-due | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
+  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | recheck | tracks-due | details-due | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
 

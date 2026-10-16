@@ -74,7 +74,8 @@ export type BotEvent =
   | "tap" | "card_open" | "miniapp" | "details_open";
 
 /** Действия в календаре Mini App, которые пишем в статистику (наряд 13.10.2026). */
-export const MINIAPP_ACTIONS = ["season", "filter", "open", "reg", "site"] as const;
+/** details — раскрыл «Всё о старте» в мини-приложении (16.10.2026): пишется как details_open с via: miniapp. */
+export const MINIAPP_ACTIONS = ["season", "filter", "open", "reg", "site", "details"] as const;
 export type MiniappAction = (typeof MINIAPP_ACTIONS)[number];
 
 export type EventOpts = { raceId?: string | null; source?: string | null; meta?: Record<string, unknown> };
@@ -1069,7 +1070,9 @@ export function createBot(deps: BotDeps) {
     if (action === "list") await track(u.tg_id, "open_calendar", { meta: { from: opened ?? null } });
     // Что делают внутри календаря: сезон/вкладка, фильтр, открыл старт, «Регистрация», «Сайт».
     if (action === "event" && ev && (MINIAPP_ACTIONS as readonly string[]).includes(ev.a)) {
-      await track(u.tg_id, "miniapp", { raceId: raceId ?? null, meta: { a: ev.a, v: ev.v ? String(ev.v).slice(0, 60) : null } });
+      // «Всё о старте» — то же событие, что в боте (ветка воронки в /stats), с пометкой, откуда
+      if (ev.a === "details") await track(u.tg_id, "details_open", { raceId: raceId ?? null, meta: { via: "miniapp" } });
+      else await track(u.tg_id, "miniapp", { raceId: raceId ?? null, meta: { a: ev.a, v: ev.v ? String(ev.v).slice(0, 60) : null } });
       return (await store.listFollows(u.tg_id)).map((f) => f.race_id);
     }
     if ((action === "follow" || action === "unfollow") && raceId) await track(u.tg_id, "miniapp", { raceId, meta: { a: action } });

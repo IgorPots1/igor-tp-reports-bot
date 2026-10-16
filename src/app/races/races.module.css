@@ -816,3 +816,53 @@
   color: var(--muted);
   font-weight: 600;
 }
+
+/* ── мини-приложение: свёрнутая шапка, «Важное», «Всё о старте» (16.10.2026) ── */
+
+.compact .seasons,
+.compact .filters {
+  display: none;
+}
+
+.race {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
+}
+
+.important {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-2, var(--ink));
+  overflow-wrap: anywhere;
+}
+
+.important b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.more {
+  margin-top: 2px;
+}
+
+.moreSummary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-ink, var(--ink));
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.moreBody {
+  padding: 4px 0 6px;
+  font-size: 14px;
+}
+
+.moreWait {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}

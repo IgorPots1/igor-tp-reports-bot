@@ -49,3 +49,9 @@
 .links {
   margin-top: 16px;
 }
+
+.src {
+  margin: 12px 0 0;
+  font-size: 13px;
+  opacity: 0.75;
+}

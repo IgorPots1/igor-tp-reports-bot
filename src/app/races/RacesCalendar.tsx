@@ -25,7 +25,9 @@ import {
   type Filters,
   type Race,
 } from "./races-logic";
+import DetailsSections, { type CourseRef } from "./DetailsSections";
 import SuggestRace from "./SuggestRace";
+import type { FullDetails } from "@/features/race-details/full";
 import styles from "./races.module.css";
 
 /** Как показывать «Следить»: ссылкой в бота (сайт) или звёздочкой (внутри Telegram). */
@@ -52,8 +54,57 @@ function allLabel(subject: string): string {
 }
 
 /** away — для блока «Рядом в области»: «Старица, 71 км» вместо обычной строки места. */
-function RaceItem({ r, follow, away, onAct }: { r: Race; follow: FollowUi; away?: string; onAct?: (a: "open" | "reg" | "site", r: Race) => void }) {
+/** «Всё о старте» в мини-приложении (16.10.2026): раскрывающийся блок, выжимка грузится при первом
+ *  раскрытии (/api/races/details), раскрытие — событие details_open с via: miniapp. */
+function DetailsToggle({ r, onOpen }: { r: Race; onOpen: (r: Race) => void }) {
+  const [data, setData] = useState<{ important: string | null; details: FullDetails; courses: CourseRef[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const started = useRef(false);
+  return (
+    <details
+      className={styles.more}
+      onToggle={(e) => {
+        if (!(e.currentTarget as HTMLDetailsElement).open || started.current) return;
+        started.current = true;
+        onOpen(r);
+        fetch(`/api/races/details?id=${encodeURIComponent(r.id)}`)
+          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+          .then((j) => setData(j))
+          .catch(() => setFailed(true));
+      }}
+    >
+      <summary className={styles.moreSummary}>Всё о старте</summary>
+      <div className={styles.moreBody}>
+        {data ? (
+          <DetailsSections d={data.details} courses={data.courses} />
+        ) : failed ? (
+          <p className={styles.note}>Не получилось загрузить. Попробуйте ещё раз позже.</p>
+        ) : (
+          <p className={styles.moreWait}>Загружаю…</p>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function RaceItem({
+  r,
+  follow,
+  away,
+  onAct,
+  onDetails,
+}: {
+  r: Race;
+  follow: FollowUi;
+  away?: string;
+  onAct?: (a: "open" | "reg" | "site", r: Race) => void;
+  /** Только внутри Telegram: строка «Важное» и «Всё о старте». На сайте список без них (вариант Б). */
+  onDetails?: (r: Race) => void;
+}) {
   const stub = dateStub(r);
+  // Расхождение дат разрешено (пометка проверки или правка даты) — без оранжевого предупреждения,
+  // одна спокойная строка (16.10.2026). Оранжевое — только для неразрешённых.
+  const resolved = !!r.checked || !!r.dateFixed;
   const pills = distPills(r);
   const where = r.region && r.region !== r.city;
   return (
@@ -110,14 +161,25 @@ function RaceItem({ r, follow, away, onAct }: { r: Race; follow: FollowUi; away?
             </span>
           ) : null}
         </div>
-        {r.altDates.length ? (
+        {r.altDates.length && !resolved ? (
           <p className={styles.note}>
             Другой календарь указывает {r.altDates.map(dayMonth).join(", ")}. Возможно, это другой день
             программы. Уточните дату на сайте организатора.
           </p>
         ) : null}
         {r.linkBad ? <p className={styles.note}>Сайт может не работать.</p> : null}
-        {r.checked ? <p className={`${styles.note} ${styles.checked}`}>{r.checked}</p> : null}
+        {r.checked ? (
+          <p className={`${styles.note} ${styles.checked}`}>{r.checked}</p>
+        ) : r.dateFixed && r.altDates.length ? (
+          <p className={`${styles.note} ${styles.checked}`}>Дата сверена с организатором.</p>
+        ) : null}
+        {onDetails && r.important ? (
+          <p className={styles.important}>
+            <b>Важное:</b>
+            {r.important.replace(/^Важное:/, "")}
+          </p>
+        ) : null}
+        {onDetails && (r.detailsN ?? 0) >= 3 ? <DetailsToggle r={r} onOpen={onDetails} /> : null}
         <div className={styles.links}>
           {r.reg ? (
             <a className={`${styles.btn} ${styles.primary}`} href={r.reg} target="_blank" rel="noopener noreferrer" onClick={() => onAct?.("reg", r)}>
@@ -237,7 +299,7 @@ export default function RacesCalendar({
   // Статистика: что делают внутри календаря (только в Telegram, по подписанному initData).
   // Тихо и без ожидания: сбой записи не мешает человеку.
   const act = useCallback(
-    (a: "season" | "filter" | "open" | "reg" | "site", v?: string | null, raceId?: string) => {
+    (a: "season" | "filter" | "open" | "reg" | "site" | "details", v?: string | null, raceId?: string) => {
       if (!initData) return;
       void fetch("/api/races-bot/miniapp", {
         method: "POST",
@@ -292,11 +354,11 @@ export default function RacesCalendar({
     setQuery(init.q);
   }, []);
 
-  // Поиск с задержкой, чтобы список не перерисовывался на каждую букву.
+  // Поиск с задержкой 250 мс (16.10.2026; было 120): список не перерисовывается на каждую букву.
   useEffect(() => {
     const t = window.setTimeout(() => {
       setF((prev) => (prev.q === query ? prev : { ...prev, q: query }));
-    }, 120);
+    }, 250);
     return () => window.clearTimeout(t);
   }, [query]);
 
@@ -309,6 +371,67 @@ export default function RacesCalendar({
     }
     setOpen({});
   }, [f]);
+
+  // Сменился фильтр или поиск — список наверх, один раз и сразу (без плавной прокрутки, которая
+  // на iPhone догоняла новые результаты и прыгала). Только если человек уже ниже начала списка.
+  const listTop = useRef<HTMLDivElement | null>(null);
+  const pinned = useRef<HTMLDivElement | null>(null);
+  const firstF = useRef(true);
+  const quietUntil = useRef(0);
+  useEffect(() => {
+    if (firstF.current) {
+      firstF.current = false;
+      return;
+    }
+    const el = listTop.current;
+    if (!el) return;
+    const head = pinned.current?.getBoundingClientRect().height ?? 0;
+    const target = el.getBoundingClientRect().top + window.scrollY - head - 8;
+    if (window.scrollY > target) {
+      quietUntil.current = Date.now() + 350;
+      window.scrollTo({ top: Math.max(0, target), behavior: "auto" });
+    }
+  }, [f]);
+
+  // Шапка мини-приложения (16.10.2026): при прокрутке вниз сворачивается в одну строку (поиск и
+  // «Фильтры»), при прокрутке вверх или по кнопке раскрывается. Направление — после 40 px в одну
+  // сторону; 350 мс после переключения прокрутку не слушаем: браузер подвигает страницу на разницу
+  // высоты шапки, и это читалось бы как прокрутка обратно (шапка дёргалась бы туда-обратно).
+  const [compact, setCompactState] = useState(false);
+  const compactNow = useRef(false);
+  const setCompact = useCallback((v: boolean) => {
+    if (compactNow.current === v) return;
+    compactNow.current = v;
+    quietUntil.current = Date.now() + 350;
+    setCompactState(v);
+  }, []);
+  useEffect(() => {
+    if (initData === null) return;
+    let last = window.scrollY;
+    let acc = 0;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        const y = window.scrollY;
+        const dy = y - last;
+        last = y;
+        if (Date.now() < quietUntil.current) return;
+        acc = Math.sign(dy) === Math.sign(acc) ? acc + dy : dy;
+        const top = (listTop.current?.offsetTop ?? 300) - 40;
+        if (y < top) setCompact(false);
+        else if (acc > 40) setCompact(true);
+        else if (acc < -40) setCompact(false);
+        if (Math.abs(acc) > 40) acc = 0;
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, [initData, setCompact]);
 
   // Сезоны вкладками сверху — те же, что в боте: Ближайшие, три сезона, Все.
   const today = useMemo(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date()), []);
@@ -373,6 +496,7 @@ export default function RacesCalendar({
   const seasonBase = useMemo(() => applyFilters(races, { ...f, season: "" }), [races, f]);
   const seasonCount = (s: { from: string; to: string } | null) => (s ? seasonBase.filter((r) => inRange(r, s.from, s.to)).length : seasonBase.length);
   const onRaceAct = (a: "open" | "reg" | "site", r: Race) => act(a, null, r.id);
+  const onDetails = (r: Race) => act("details", null, r.id);
   const followUi = (r: Race): FollowUi =>
     inTg ? { mode: "tg", saved: saved.has(r.id), busy: busy === r.id, onToggle: toggle } : { mode: "site", bot: botUsername };
 
@@ -401,7 +525,7 @@ export default function RacesCalendar({
         ) : null}
       </header>
 
-      <div className={inTg ? styles.pinnedTg : undefined}>
+      <div ref={pinned} className={inTg ? `${styles.pinnedTg} ${compact ? styles.compact : ""}` : undefined}>
       <div className={styles.search}>
         <input
           type="search"
@@ -422,7 +546,15 @@ export default function RacesCalendar({
         </datalist>
         {/* «Сбросить» только когда есть что сбрасывать: на 375 px пустое поле
             рядом с кнопкой обрезало плейсхолдер, а с фильтрами в поле уже текст. */}
-        {dirty || query !== "" ? (
+        {inTg && compact ? (
+          <button
+            type="button"
+            className={styles.reset}
+            onClick={() => setCompact(false)}
+          >
+            Фильтры
+          </button>
+        ) : dirty || query !== "" ? (
           <button type="button" className={styles.reset} onClick={reset}>
             Сбросить
           </button>
@@ -523,14 +655,15 @@ export default function RacesCalendar({
       </section>
       </div>
 
-      {/* Над списком, а в пустом результате поиска такая же форма стоит внутри сообщения. */}
-      {races.length && list.length ? (
+      {/* Плашка всегда на одном месте (16.10.2026): раньше при пустом промежуточном результате поиска
+          она переезжала внутрь сообщения «ничего не нашлось» и монтировалась заново — мигала. */}
+      {races.length ? (
         <div className={styles.suggestBar}>
           <SuggestRace />
         </div>
       ) : null}
 
-      <div className={styles.months}>
+      <div ref={listTop} className={styles.months}>
         {failed ? (
           <div className={styles.state}>Не получилось загрузить календарь. Обновите страницу через минуту.</div>
         ) : !races.length ? (
@@ -539,12 +672,11 @@ export default function RacesCalendar({
           <div className={styles.state}>
             <p>
               Ничего не нашлось{f.q ? ` по запросу «${f.q}»` : ""}. Попробуйте область вместо города или
-              снимите фильтр дистанции.
+              снимите фильтр дистанции. Знаете старт, которого нет? Добавьте его формой выше.
             </p>
             <button type="button" className={`${styles.btn} ${styles.primary}`} onClick={reset}>
               Сбросить фильтры
             </button>
-            <SuggestRace prefillCity={f.q.trim()} />
           </div>
         ) : (
           months.map((m, i) => {
@@ -568,11 +700,15 @@ export default function RacesCalendar({
                   </span>
                   <span className={styles.caret} aria-hidden="true" />
                 </summary>
-                <ol className={styles.races}>
-                  {m.races.map((r) => (
-                    <RaceItem key={r.id} r={r} follow={followUi(r)} onAct={onRaceAct} />
-                  ))}
-                </ol>
+                {/* Закрытый месяц стартов не рисует (16.10.2026): на «Все» это 474 блока в DOM,
+                    прокрутка на iPhone дёргалась. */}
+                {isOpen ? (
+                  <ol className={styles.races}>
+                    {m.races.map((r) => (
+                      <RaceItem key={r.id} r={r} follow={followUi(r)} onAct={onRaceAct} onDetails={inTg ? onDetails : undefined} />
+                    ))}
+                  </ol>
+                ) : null}
               </details>
             );
           })
@@ -593,6 +729,7 @@ export default function RacesCalendar({
                 r={race}
                 follow={followUi(race)}
                 onAct={onRaceAct}
+                onDetails={inTg ? onDetails : undefined}
                 away={`${race.city || `${race.subject}, город не указан`}${km === null ? "" : `, ${km} км`}`}
               />
             ))}

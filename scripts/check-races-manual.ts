@@ -65,6 +65,7 @@ import {
   type Source,
   recheckPlan,
   tracksPlan,
+  detailsPlan,
 } from "./races-manual";
 
 const TODAY = "2026-10-11";
@@ -440,6 +441,37 @@ assert.ok(VK_SEARCH_WORDS.includes("акватлон") && VK_SEARCH_WORDS.includ
   assert.ok(plan.rejected.some((r) => /поисковая выдача/.test(r)), "источник — поиск, а не организатор");
   assert.ok(plan.rejected.some((r) => /probeg:9: не в списке/.test(r)), "только старты из списка");
   assert.deepEqual(tracksPlan([], [], "2026-10-18").lines, [], "искать нечего — строки нет");
+}
+
+// Обновление выжимки (16.10.2026): то же значение — только дата проверки; другое — старое в снимок,
+// строка «изменилось: старт, поле, было, стало»; «нет данных» и чужие поля не пишутся, ничего не удаляется.
+{
+  const old = (field: string, value: string, distance: number | null = null) => ({ race_id: "probeg:71741", distance, field, value, source_url: "https://reg.ru/sochi", checked_at: "2026-10-15" });
+  const due = [{
+    id: "probeg:71741", name: "Сочи Марафон", date_start: "2026-11-01", site_url: null, reg_url: null, vk_url: null, dist_km: [42.2, 21.1, 10, 5],
+    fields: [old("registration_status", "открыта до 31.10"), old("start_time", "01.11 7:30", 42.195), old("packet_pickup", "Зимний театр: 30.10 10:00–20:00")],
+  }];
+  const plan = detailsPlan(due, [
+    { race_id: "probeg:71741", distance: null, field: "registration_status", value: "закрыта, лимит исчерпан", source_url: "https://reg.ru/sochi" },
+    { race_id: "probeg:71741", distance: 42.195, field: "start_time", value: "01.11  7:30", source_url: "https://reg.ru/sochi" },
+    { race_id: "probeg:71741", distance: null, field: "packet_pickup", value: "нет данных", source_url: "https://reg.ru/sochi" },
+    { race_id: "probeg:71741", distance: null, field: "baggage", value: "есть", source_url: "https://reg.ru/sochi" },
+    { race_id: "probeg:71741", distance: null, field: "cutoff", value: "42,2 км — 6 ч", source_url: "https://yandex.ru/search/?text=сочи" },
+    { race_id: "probeg:1", distance: null, field: "cutoff", value: "3 ч", source_url: "https://x.ru" },
+  ], "2026-10-19");
+  assert.deepEqual(plan.rows.map((r) => [r.field, r.value, r.checked_at]), [
+    ["registration_status", "закрыта, лимит исчерпан", "2026-10-19"],
+    ["start_time", "01.11 7:30", "2026-10-19"],
+  ], "изменённое — новым значением, то же — прежним значением с новой датой проверки");
+  assert.deepEqual(plan.snapshot.map((r) => [r.field, r.value, r.checked_at]), [["registration_status", "открыта до 31.10", "2026-10-15"]], "в снимок — только заменённое");
+  assert.ok(plan.lines.includes("изменилось: «Сочи Марафон», регистрация, было «открыта до 31.10», стало «закрыта, лимит исчерпан»"), plan.lines.join("\n"));
+  assert.match(plan.lines[0], /к перепроверке 1, подтверждено полей 1, изменилось 1/);
+  assert.ok(plan.rejected.some((r) => /packet_pickup пустое — старое значение оставлено/.test(r)), "«нет данных» не затирает");
+  assert.ok(plan.rejected.some((r) => /«baggage» не перепроверяется/.test(r)));
+  assert.ok(plan.rejected.some((r) => /источник не страница организатора/.test(r)));
+  assert.ok(plan.rejected.some((r) => /probeg:1: не в списке/.test(r)));
+  assert.ok(!plan.rows.some((r) => r.field === "packet_pickup"), "пустое — ни записи, ни удаления");
+  assert.deepEqual(detailsPlan([], [], "2026-10-19").lines, [], "проверять нечего — строки нет");
 }
 
 console.log("check:races-manual ok");

@@ -6,7 +6,7 @@ import { jetbrains, onest } from "@/lib/fonts";
 
 import RacesCalendar from "./RacesCalendar";
 import { loadExpected } from "./expected";
-import { loadRaces } from "./load";
+import { loadListExtras, loadRaces } from "./load";
 import "./races-page.css";
 import styles from "./races.module.css";
 
@@ -27,9 +27,13 @@ export const viewport: Viewport = {
 export const revalidate = 3600;
 
 export default async function RacesPage() {
-  // Строки «Важное» в списке нет (вариант Б, 15.10.2026): она на странице старта /races/<id>.
-  const [loaded, expected] = await Promise.all([loadRaces(), loadExpected()]);
-  const races = loaded ?? [];
+  // На сайте строки «Важное» в списке нет (вариант Б, 15.10.2026). Данные едут в браузер для
+  // мини-приложения: там «Важное» и «Всё о старте» в блоке старта (16.10.2026).
+  const [loaded, expected, extras] = await Promise.all([loadRaces(), loadExpected(), loadListExtras()]);
+  const races = (loaded ?? []).map((r) => {
+    const d = extras.details.get(r.id);
+    return { ...r, important: d?.line ?? null, detailsN: d?.n ?? 0, dateFixed: extras.dateFixed.has(r.id) };
+  });
 
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>

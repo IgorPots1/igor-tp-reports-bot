@@ -43,6 +43,8 @@ fi
 "${GATE[@]}" recheck > "$WORK/recheck.json" || echo "[]" > "$WORK/recheck.json"
 # Старты в ближайшие 21 день без трека (race_details track = «нет данных»): поискать трек заново.
 "${GATE[@]}" tracks-due > "$WORK/tracks-due.json" || echo "[]" > "$WORK/tracks-due.json"
+# Выжимка у стартов на ближайшие 60 дней: регистрация, время старта, номера, лимиты — перепроверить.
+"${GATE[@]}" details-due > "$WORK/details-due.json" || echo "[]" > "$WORK/details-due.json"
 # Поиск во ВКонтакте только при сервисном ключе в .env.local основной папки.
 if grep -q '^VK_SERVICE_TOKEN=.' "$REPO/.env.local" 2>/dev/null; then VK_MODE="есть"; else VK_MODE="нет"; fi
 # ВК — по ВСЕМ точкам каждую неделю (1664 поиска), детерминированно, до агента: шлюз сам ищет,

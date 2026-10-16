@@ -11,7 +11,7 @@ import SiteHeader from "@/components/SiteHeader";
 import { jetbrains, onest } from "@/lib/fonts";
 import { publicPageMetadata } from "@/lib/site";
 import { courseList } from "@/features/race-course";
-import { fullDetails, sourceText } from "@/features/race-details/full";
+import { fullDetails } from "@/features/race-details/full";
 import { importantLine } from "@/features/race-details/important";
 import { raceCode } from "@/features/races-bot/core";
 
@@ -20,7 +20,8 @@ import { TYPE_LABEL, distPills, MONTHS_GEN } from "../races-logic";
 import "../races-page.css";
 import pageStyles from "../races.module.css";
 import styles from "./trassa/trassa.module.css";
-import own from "./race.module.css";
+import own from "../details.module.css";
+import DetailsSections, { courseRefs } from "../DetailsSections";
 
 export const revalidate = 3600;
 
@@ -85,47 +86,7 @@ export default async function RacePage({ params }: { params: Promise<{ id: strin
         {d.sections.length ? (
           <section className={styles.block}>
             <h2 className={styles.h2}>Что важно знать</h2>
-            {important ? (
-              <p className={own.important}>
-                <b>Важное:</b>
-                {important.replace(/^Важное:/, "")}
-              </p>
-            ) : null}
-            {d.sections.map((s) => (
-              <div key={s.key} className={own.sec}>
-                <h3 className={own.k}>{s.title}</h3>
-                {s.times?.length ? (
-                  <div className={own.times}>
-                    {s.times.map((t) => (
-                      <span key={t.label} className={own.row}>
-                        <span>{t.label}</span>
-                        <span>{t.time}</span>
-                      </span>
-                    ))}
-                  </div>
-                ) : null}
-                {s.lines.map((l, i) => (
-                  <p key={i} className={own.line}>
-                    {l}
-                  </p>
-                ))}
-                {s.key === "track" && courses.length ? (
-                  <p className={own.line}>
-                    {courses.map((c, i) => (
-                      <span key={c.url}>
-                        {i ? " · " : ""}
-                        <a href={c.url}>{courses.length > 1 && c.km != null ? `Разбор трассы ${String(c.km).replace(".", ",")} км` : "Разбор трассы"}</a>
-                      </span>
-                    ))}
-                  </p>
-                ) : null}
-              </div>
-            ))}
-            {d.source ? (
-              <p className={styles.note}>
-                <a href={d.source.url}>{sourceText(d.source)}</a>
-              </p>
-            ) : null}
+            <DetailsSections d={d} important={important} courses={courseRefs(courses)} />
           </section>
         ) : null}
 

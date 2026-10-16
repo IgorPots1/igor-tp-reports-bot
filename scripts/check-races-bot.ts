@@ -1008,6 +1008,14 @@ async function main() {
     const mini = store.events.filter((e) => e.tg_id === 7001 && e.event === "miniapp").map((e) => (e.meta as { a: string }).a);
     assert.deepEqual(mini, ["reg", "follow"], "действия календаря; чужое имя действия не пишется");
     assert.ok(store.follows.some((f) => f.tg_id === 7001 && f.race_id === TRAIL.id), "«Следить» из календаря сохраняет как в боте");
+    // «Всё о старте» в мини-приложении (16.10.2026): то же событие details_open, что в боте, с via: miniapp;
+    // в события «miniapp» не попадает (ветка воронки считает details_open).
+    await bot.miniapp({ id: 7001, first_name: "Тап" }, "event", TRAIL.id, null, { a: "details" });
+    const det = store.events.filter((e) => e.tg_id === 7001 && e.event === "details_open");
+    assert.equal(det.length, 1);
+    assert.deepEqual(det[0].meta, { via: "miniapp" });
+    assert.equal(det[0].race_id, TRAIL.id);
+    assert.ok(!store.events.some((e) => e.tg_id === 7001 && e.event === "miniapp" && (e.meta as { a: string }).a === "details"));
 
     // еженедельный итог тренеру: выключен — ничего; включён — один раз в понедельник с 10:00
     const savedNow = NOW;

@@ -43,6 +43,11 @@ export type RaceRow = {
 /** Старт в том виде, в каком он уходит в браузер: только нужные поля. */
 export type Race = {
   id: string;
+  /** Мини-приложение (16.10.2026): строка «Важное», число полей выжимки (от 3 — «Всё о старте»),
+   *  правка даты в race_overrides (расхождение дат разрешено). На сайте в списке не показываются. */
+  important?: string | null;
+  detailsN?: number;
+  dateFixed?: boolean;
   name: string;
   ds: string;
   de: string;
