@@ -406,7 +406,10 @@ ok("урезанный: подсказка на смене покрытия по
 ok("урезанный: бедный не публикуется", () => {
   assert.equal(litePublishable({ keyPoints: [1, 2, 3], surface: { known: 50 } }), true);
   assert.equal(litePublishable({ keyPoints: [1, 2, 3], surface: { known: 49 } }), false, "покрытие меньше половины");
-  assert.equal(litePublishable({ keyPoints: [1, 2], surface: { known: 90 } }), false, "точек меньше 3");
+  // порог уточнён 16.10.2026: при покрытии от 90% хватает 2 точек; 1 точки — нет никогда
+  assert.equal(litePublishable({ keyPoints: [1, 2], surface: { known: 90 } }), true, "покрытие почти целиком — 2 точки хватает");
+  assert.equal(litePublishable({ keyPoints: [1, 2], surface: { known: 89 } }), false, "ниже 90% — нужно 3 точки");
+  assert.equal(litePublishable({ keyPoints: [1], surface: { known: 100 } }), false, "одна точка — никогда");
 });
 
 // Было до 15.10.2026: без эталона разбор не публиковался вовсе (index.json — только полные). Теперь
@@ -433,7 +436,8 @@ ok("данные: урезанные без высот, не прошедшие 
   }
   for (const s of ["probeg_78437-9k", "probeg_73615-7k", "probeg_78465", "probeg_84558", "probeg_85642-10k",
     // бедные урезанные (16.10.2026)
-    "probeg_83333-5k", "probeg_83333-14k", "probeg_83333-28k", "probeg_83333-50k", "regplace_autumn-exacerbation-20k"]) {
+    "probeg_83333-5k", "probeg_83333-14k", "probeg_83333-28k", "probeg_83333-50k", "regplace_autumn-exacerbation-20k",
+    "probeg_74251-3k", "probeg_78892-7k", "probeg_78892-12k"]) {
     assert.ok(!published.has(s), `${s} не прошёл сверку — не публикуем`);
   }
 });

@@ -301,15 +301,20 @@ export function liteSummary(share: Partial<Record<Surface, number>>, known: numb
   return parts.join(", ");
 }
 
-/** Урезанный выходит, только если покрытие известно хотя бы на половине трассы и точек не меньше 3
- *  (решение Игоря 16.10.2026: Archeda ×4 и «Осеннее обострение» 20 км были пустыми — карта и ветер). */
+/** Урезанный выходит, только если он не пустой (решение Игоря 16.10.2026): покрытие известно хотя бы на
+ *  половине трассы и точек не меньше 3, либо покрытие известно почти целиком (от 90%) и точек хотя бы 2.
+ *  Archeda ×4 и «Осеннее обострение» 20 км были пустыми — карта и ветер. */
 export const LITE_MIN_KNOWN = 50;
 export const LITE_MIN_POINTS = 3;
+export const LITE_FULL_KNOWN = 90;
+export const LITE_FULL_MIN_POINTS = 2;
 export function litePublishable(l: { keyPoints: unknown[]; surface: { known: number } }): boolean {
-  return l.surface.known >= LITE_MIN_KNOWN && l.keyPoints.length >= LITE_MIN_POINTS;
+  const k = l.surface.known, n = l.keyPoints.length;
+  return (k >= LITE_FULL_KNOWN && n >= LITE_FULL_MIN_POINTS) || (k >= LITE_MIN_KNOWN && n >= LITE_MIN_POINTS);
 }
 export const liteThinReason = (l: { keyPoints: unknown[]; surface: { known: number } }) =>
-  `урезанный разбор беден: покрытие по карте известно на ${l.surface.known}%, ключевых точек ${l.keyPoints.length} (нужно от ${LITE_MIN_KNOWN}% и от ${LITE_MIN_POINTS})`;
+  `урезанный разбор беден: покрытие по карте известно на ${l.surface.known}%, ключевых точек ${l.keyPoints.length} ` +
+  `(нужно от ${LITE_MIN_KNOWN}% и от ${LITE_MIN_POINTS} точек или от ${LITE_FULL_KNOWN}% и от ${LITE_FULL_MIN_POINTS})`;
 
 /** До 4 точек короткого разбора в боте: развороты, смены покрытия, серпантин, ветер. */
 export function liteShortPoints(points: CourseKeyPoint[], max = 4): CourseKeyPoint[] {
