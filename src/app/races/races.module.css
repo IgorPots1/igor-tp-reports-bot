@@ -866,3 +866,17 @@
   font-size: 13px;
   color: var(--muted);
 }
+
+/* «Фильтры» видна только в свёрнутой шапке, «Сбросить» — только в раскрытой */
+.expandBtn {
+  display: none;
+}
+
+.compact .expandBtn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.compact .resetBtn {
+  display: none;
+}

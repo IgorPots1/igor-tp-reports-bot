@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { NEARBY_KM, areaRaces, citySlug, expectedDate, inCity, raceCode, seasons, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
 
@@ -223,6 +223,90 @@ function telegramWebApp(): TgWebApp | null {
   return w.Telegram?.WebApp?.initData ? w.Telegram.WebApp : null;
 }
 
+/**
+ * Шапка мини-приложения (16.10.2026): при прокрутке вниз сворачивается в одну строку (поиск и
+ * «Фильтры»), при прокрутке вверх или по кнопке «Фильтры» раскрывается. Направление — после 40 px в
+ * одну сторону; 350 мс после переключения прокрутку не слушаем: браузер подвигает страницу на разницу
+ * высоты шапки, и это читалось бы как прокрутка обратно. Своё состояние — отдельным компонентом:
+ * переключение перерисовывает только шапку, не 474 старта списка.
+ */
+function PinnedHead({
+  enabled,
+  boxRef,
+  listTop,
+  quietUntil,
+  children,
+}: {
+  enabled: boolean;
+  boxRef: RefObject<HTMLDivElement | null>;
+  listTop: RefObject<HTMLDivElement | null>;
+  quietUntil: RefObject<number>;
+  children: ReactNode;
+}) {
+  const [compact, setCompactState] = useState(false);
+  const now = useRef(false);
+  const setCompact = useCallback(
+    (v: boolean) => {
+      if (now.current === v) return;
+      now.current = v;
+      quietUntil.current = Date.now() + 350;
+      setCompactState(v);
+    },
+    [quietUntil],
+  );
+  useEffect(() => {
+    if (!enabled) return;
+    let last = window.scrollY;
+    let acc = 0;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        const y = window.scrollY;
+        const dy = y - last;
+        last = y;
+        if (Date.now() < quietUntil.current) return;
+        acc = Math.sign(dy) === Math.sign(acc) ? acc + dy : dy;
+        const top = (listTop.current?.offsetTop ?? 300) - 40;
+        if (y < top) setCompact(false);
+        else if (acc > 40) setCompact(true);
+        else if (acc < -40) setCompact(false);
+        if (Math.abs(acc) > 40) acc = 0;
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, [enabled, listTop, quietUntil, setCompact]);
+  if (!enabled) return <div ref={boxRef}>{children}</div>;
+  return (
+    <div
+      ref={boxRef}
+      className={`${styles.pinnedTg} ${compact ? styles.compact : ""}`}
+      // «Фильтры» в свёрнутой шапке: кнопка с data-expand внутри children
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("[data-expand]")) setCompact(false);
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Месяц «Ожидаемых»: старты рисуются только в раскрытом (их больше 1500 — список тормозил). */
+function LazyMonth({ summary, children }: { summary: ReactNode; children: () => ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className={styles.month} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      {summary}
+      {open ? children() : null}
+    </details>
+  );
+}
+
 const BANNER_KEY = "races_tg_city_banner_closed";
 
 export default function RacesCalendar({
@@ -393,45 +477,7 @@ export default function RacesCalendar({
     }
   }, [f]);
 
-  // Шапка мини-приложения (16.10.2026): при прокрутке вниз сворачивается в одну строку (поиск и
-  // «Фильтры»), при прокрутке вверх или по кнопке раскрывается. Направление — после 40 px в одну
-  // сторону; 350 мс после переключения прокрутку не слушаем: браузер подвигает страницу на разницу
-  // высоты шапки, и это читалось бы как прокрутка обратно (шапка дёргалась бы туда-обратно).
-  const [compact, setCompactState] = useState(false);
-  const compactNow = useRef(false);
-  const setCompact = useCallback((v: boolean) => {
-    if (compactNow.current === v) return;
-    compactNow.current = v;
-    quietUntil.current = Date.now() + 350;
-    setCompactState(v);
-  }, []);
-  useEffect(() => {
-    if (initData === null) return;
-    let last = window.scrollY;
-    let acc = 0;
-    let raf = 0;
-    const onScroll = () => {
-      if (raf) return;
-      raf = window.requestAnimationFrame(() => {
-        raf = 0;
-        const y = window.scrollY;
-        const dy = y - last;
-        last = y;
-        if (Date.now() < quietUntil.current) return;
-        acc = Math.sign(dy) === Math.sign(acc) ? acc + dy : dy;
-        const top = (listTop.current?.offsetTop ?? 300) - 40;
-        if (y < top) setCompact(false);
-        else if (acc > 40) setCompact(true);
-        else if (acc < -40) setCompact(false);
-        if (Math.abs(acc) > 40) acc = 0;
-      });
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      if (raf) window.cancelAnimationFrame(raf);
-    };
-  }, [initData, setCompact]);
+
 
   // Сезоны вкладками сверху — те же, что в боте: Ближайшие, три сезона, Все.
   const today = useMemo(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date()), []);
@@ -525,7 +571,7 @@ export default function RacesCalendar({
         ) : null}
       </header>
 
-      <div ref={pinned} className={inTg ? `${styles.pinnedTg} ${compact ? styles.compact : ""}` : undefined}>
+      <PinnedHead enabled={inTg} boxRef={pinned} listTop={listTop} quietUntil={quietUntil}>
       <div className={styles.search}>
         <input
           type="search"
@@ -546,16 +592,13 @@ export default function RacesCalendar({
         </datalist>
         {/* «Сбросить» только когда есть что сбрасывать: на 375 px пустое поле
             рядом с кнопкой обрезало плейсхолдер, а с фильтрами в поле уже текст. */}
-        {inTg && compact ? (
-          <button
-            type="button"
-            className={styles.reset}
-            onClick={() => setCompact(false)}
-          >
+        {inTg ? (
+          <button type="button" className={`${styles.reset} ${styles.expandBtn}`} data-expand="1">
             Фильтры
           </button>
-        ) : dirty || query !== "" ? (
-          <button type="button" className={styles.reset} onClick={reset}>
+        ) : null}
+        {dirty || query !== "" ? (
+          <button type="button" className={`${styles.reset} ${styles.resetBtn}`} onClick={reset}>
             Сбросить
           </button>
         ) : null}
@@ -653,7 +696,7 @@ export default function RacesCalendar({
           ) : null}
         </p>
       </section>
-      </div>
+      </PinnedHead>
 
       {/* Плашка всегда на одном месте (16.10.2026): раньше при пустом промежуточном результате поиска
           она переезжала внутрь сообщения «ничего не нашлось» и монтировалась заново — мигала. */}
@@ -750,14 +793,19 @@ export default function RacesCalendar({
             {plural(expectedCount, "старт", "старта", "стартов")}, по месяцу прошлого проведения.
           </p>
           {expectedByMonth.map(([m, xs]) => (
-            <details key={m} className={styles.month}>
-              <summary className={styles.summary}>
-                <span className={styles.mName}>{MONTHS[m - 1]}</span>
-                <span className={styles.mCount}>
-                  <b>{xs.length}</b> ожидается
-                </span>
-                <span className={styles.caret} aria-hidden="true" />
-              </summary>
+            <LazyMonth
+              key={m}
+              summary={
+                <summary className={styles.summary}>
+                  <span className={styles.mName}>{MONTHS[m - 1]}</span>
+                  <span className={styles.mCount}>
+                    <b>{xs.length}</b> ожидается
+                  </span>
+                  <span className={styles.caret} aria-hidden="true" />
+                </summary>
+              }
+            >
+              {() => (
               <ol className={styles.races}>
                 {xs.map((e) => (
                   <li key={e.id} className={`${styles.race} ${styles.expectedItem}`}>
@@ -798,7 +846,8 @@ export default function RacesCalendar({
                   </li>
                 ))}
               </ol>
-            </details>
+              )}
+            </LazyMonth>
           ))}
         </section>
       ) : null}
