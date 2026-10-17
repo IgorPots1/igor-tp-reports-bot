@@ -9,7 +9,7 @@
 import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
-import { donorExcluded, isPeak, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
+import { QUALITY_SHARE_MIN, donorExcluded, isPeak, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
 import { plainTemplate, postRaceAdjust, setRecovery } from "./post-race.ts";
 import { substituteDonorStyle } from "./donor-style.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
@@ -113,6 +113,15 @@ for (const k of [10, 11, 12]) rows.push(...weekRows(15, wk(k), [{ d: 1, t: EASY,
 rows.push(...weekRows(15, wk(13), NORMAL));
 races.push({ trainingpeaks_athlete_id: 15, event_date: addDays(wk(9), 6), distance_km: 42.2, distance_raw: null });
 
+// КАЧЕСТВО ПО ПРАКТИКЕ (17.10): образец качества не содержит. Атлет 31: качество в 7 из 8 недель, образец (последняя) — без него; 32: качество в 3 из 8.
+const NOQ: S[] = [{ d: 1, t: EASY, m: 50 }, { d: 3, t: EASY, m: 60 }, { d: 4, t: EASY, m: 50 }, { d: 6, t: LONG, m: 100 }]; // 260 без качества
+for (const aid of [31, 33]) { for (let k = 0; k < 7; k++) rows.push(...weekRows(aid, wk(k), NORMAL)); rows.push(...weekRows(aid, wk(7), NOQ), ...weekRows(aid, wk(8), NOQ)); }
+// 34: тот же 7/8, но в образце на его привычный день качества (3) лёгкой нет — качество встаёт на ПРИВЫЧНЫЙ день, заменяя ближайшую лёгкую
+const NOQ2: S[] = [{ d: 1, t: EASY, m: 50 }, { d: 4, t: EASY, m: 60 }, { d: 5, t: EASY, m: 50 }, { d: 6, t: LONG, m: 100 }];
+for (let k = 0; k < 7; k++) rows.push(...weekRows(34, wk(k), NORMAL)); rows.push(...weekRows(34, wk(7), NOQ2), ...weekRows(34, wk(8), NOQ2));
+for (let k = 0; k < 8; k++) rows.push(...weekRows(32, wk(k), k % 8 < 3 ? NORMAL : NOQ));
+rows.push(...weekRows(32, wk(8), NOQ));
+
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
 const T = (aid: number, k: number): CWeek => corpus.find((w) => w.aid === aid && w.weekStart === wk(k))!;
@@ -120,7 +129,7 @@ const hasQ = (s: { kind: string; title: string; src?: { desc?: string } }): bool
 const total_ = (ss: PSess[]): number => ss.reduce((s, x) => s + x.minutes, 0);
 const W8: Weights = { phase: 2.5, dist: 1.4, vol: 0.9, prev: 0.5, prevDays: 0.2, prevQ: 0.2, ill: 0.3, post: 0.3, gap: 1.8, own: 0.6, recency: 0.7 };
 // БОЕВЫЕ УМОЛЧАНИЯ снимаются ДО того, как проверки зададут свои значения: именно они работают в «раскидать».
-const PROD = { lookback: LOOKBACK_WEEKS, peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON };
+const PROD = { lookback: LOOKBACK_WEEKS, peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON, qs: QUALITY_SHARE_MIN };
 setRepeatParams({ normal: 0.6, gap: 2, skip: ["старт", "после старта", "подводка", "пик", "провал объёма"], peak: 1.5, recovery: true });
 useExplicitParams();
 
@@ -291,6 +300,30 @@ console.log("\n── восстановление после старта по 
   check("ЖЁСТКО: марафонский блок на 2-й неделе после марафона — отказ валидатора", hard.some((r) => r.severity === "hard" && !r.ok && r.name.includes("после марафона")));
   const late = validateWeek([{ dayIdx: 6, kind: "long", title: "24 км в темпе марафона", minutes: 170, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, postMarathonWeek: 4 });
   check("на 4-й неделе после марафона это правило уже не действует", !late.some((r) => r.name.includes("после марафона")));
+}
+
+console.log("\n── качество по практике: пустоту образца не копируем ──");
+{
+  const withQ = (qs: number | null) => { setRepeatParams({ qualityShare: qs }); return planRepeat(ix, T(31, 8), null); };
+  const on = withQ(0.875), off = withQ(null);
+  check("боевое умолчание: качество «обычно», если было в 7 из 8 недель (0.875, измерено r14)", PROD.qs === 0.875, String(PROD.qs));
+  check("атлет делает качество в 7 из 8 недель, образец без него: в неделе появляется ровно одна качественная сессия (его «6 х 4 мин») на его привычный день 3",
+    on.kind === "repeat" && on.sessions.filter((s) => s.kind === "quality").length === 1 && on.sessions.find((s) => s.kind === "quality")!.title === Q && on.sessions.find((s) => s.kind === "quality")!.dayIdx === 3, JSON.stringify(on.kind === "repeat" ? on.sessions.map((s) => [s.dayIdx, s.kind, s.title]) : on));
+  check("добавленное качество ЗАМЕНЯЕТ лёгкую (дней столько же, сколько в образце), а не прибавляется сверху; в причине названо «качество по практике»",
+    on.kind === "repeat" && on.sessions.length === 4 && /качество по практике \(7 из 8/.test(on.deltaWhy), on.kind === "repeat" ? on.deltaWhy : "");
+  check("при выключенном правиле та же неделя копирует пустоту (проверка различает)", off.kind === "repeat" && off.sessions.every((s) => s.kind !== "quality"));
+  setRepeatParams({ qualityShare: 0.875 });
+  const rare = planRepeat(ix, T(32, 8), null);
+  check("качество в 3 из 8 недель — НЕ «обычно»: образец копируется как есть, качество не добавляется", rare.kind === "repeat" && rare.sessions.every((s) => s.kind !== "quality") && !/качество по практике/.test(rare.deltaWhy));
+  const free = planRepeat(ix, T(34, 8), null); const fq = free.kind === "repeat" ? free.sessions.find((x) => x.kind === "quality") : undefined;
+  check("привычный день качества в образце свободен: качество встаёт на него (день 3), заменяя ближайшую лёгкую (день 4), а не садится на чужой день",
+    free.kind === "repeat" && fq?.dayIdx === 3 && !free.sessions.some((x) => x.dayIdx === 4) && free.sessions.length === 4, JSON.stringify(free.kind === "repeat" ? free.sessions.map((x) => [x.dayIdx, x.kind]) : free));
+  const sick = planRepeat(ix, { ...T(33, 8), ill: true }, null), sick2 = planRepeat(ix, { ...T(33, 8), illAtStart: true }, null);
+  check("активная болезнь на неделе: качество по практике не добавляется (ни по сигналу, ни по сигналу на понедельник)",
+    sick.kind === "repeat" && sick.sessions.every((s) => s.kind !== "quality") && sick2.kind === "repeat" && sick2.sessions.every((s) => s.kind !== "quality"));
+  const pre = planRepeat(ix, { ...T(31, 8), raceDayIdx: 4, nextRaceIsMain: true }, null);
+  check("перед главным стартом в четверг добавленное качество в среду-четверг снимается предстартовым запретом (добавка не обходит границы)",
+    pre.kind === "repeat" && pre.sessions.every((s) => !(s.kind === "quality" && s.dayIdx >= 4 - 2 && s.dayIdx < 4)), JSON.stringify(pre.kind === "repeat" ? pre.sessions.map((s) => [s.dayIdx, s.kind]) : pre));
 }
 
 console.log("\n── класс «пик» ──");

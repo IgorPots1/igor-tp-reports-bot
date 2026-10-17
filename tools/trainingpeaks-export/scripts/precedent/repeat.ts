@@ -45,6 +45,16 @@ export let PEAK_RATIO = 1.5;
 /** Правило пика как функция (объёмы 8 недель до неё, объём недели). По умолчанию — множитель от медианы; r13 подставляет кандидатов. */
 export type PeakRule = (prior: number[], total: number) => boolean;
 export let PEAK_RULE: PeakRule | null = null;
+/**
+ * КАЧЕСТВО ПО ПРАКТИКЕ (17.10, r14): если образец качества не содержит, а атлет «обычно» его делает — добавляем по его практике, а не копируем пустоту.
+ * «Обычно» = качество было не меньше чем в этой доле его последних QUALITY_WINDOW своих недель (без недели старта и после старта). Порог 0.875 (7 из 8)
+ * измерен r14 по правилу «вероятность качества в настоящей неделе > 50% и на обучении, и на проверке»: корзина 0.63–0.75 даёт 53%/49%, 0.75–0.88 — 49%/57%
+ * (монетка), 0.88–1.00 — 71%/59%. Ниже порога качество НЕ добавляется: система не угадывает, а копирует образец. null — выключено.
+ */
+export let QUALITY_SHARE_MIN: number | null = 0.875;
+export const QUALITY_WINDOW = 8;
+/** Откуда берём недели для оценки практики: последние 12 своих, из них подходящих (не старт, не после старта, не болезнь) — до 8. Неделя с сигналом здоровья в счёт идёт (замер R4: она у тренера обычная; у Ярулиной качество стояло именно в них). */
+export const QUALITY_LOOKBACK = 12;
 export const DELTA_MIN = 0.5;
 export const DELTA_MAX = 1.25;
 /** Сколько недель назад искать образец. Блок «подводка 2 + старт + восстановление 3» сам занимает 6 недель, поэтому 6 не хватает (выбор — r8 по проверке). */
@@ -55,8 +65,9 @@ export let LOOKBACK_WEEKS = 10;
  * сюда НЕ входят: замер R4 (498 недель) — неделя с сигналом у Игоря обычная (объём ×1.0). Раньше список в коде был шире проверенного.
  */
 export let SKIP_REASONS: Set<Abnormal> = new Set(["старт", "после старта", "подводка", "пик", "провал объёма"]);
-export function setRepeatParams(p: { peakRule?: PeakRule | null; normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean; recoveryTable?: "train" | "all"; lookback?: number }): void {
+export function setRepeatParams(p: { qualityShare?: number | null; peakRule?: PeakRule | null; normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean; recoveryTable?: "train" | "all"; lookback?: number }): void {
   if (p.lookback != null) LOOKBACK_WEEKS = p.lookback;
+  if (p.qualityShare !== undefined) QUALITY_SHARE_MIN = p.qualityShare;
   if (p.peakRule !== undefined) PEAK_RULE = p.peakRule;
   if (p.peak != null) PEAK_RATIO = p.peak;
   if (p.skip) SKIP_REASONS = new Set(p.skip);
@@ -140,6 +151,25 @@ export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
     dayIdx: s.dayIdx, kind: s.kind as Kind, title: s.title, src: s, work: s.work,
     minutes: s.kind === "quality" ? s.minutes : round5(s.minutes * delta),
   }));
+  // КАЧЕСТВО ПО ПРАКТИКЕ: до дельты-таблицы и предстартового запрета — они ниже сами снимут добавленное, если неделя этого не допускает.
+  let qualityNote = "";
+  if (QUALITY_SHARE_MIN != null && !recoveryWeek && !t.ill && !t.illAtStart && !sessions.some((x) => x.kind === "quality")) {
+    const win = own.slice(-QUALITY_LOOKBACK).filter((w) => w.phase !== "race" && w.phase !== "post").slice(-QUALITY_WINDOW);
+    const qWeeks = win.filter((w) => w.qCount > 0);
+    if (win.length >= 4 && qWeeks.length / win.length >= QUALITY_SHARE_MIN) {
+      const tpl = [...qWeeks].reverse().flatMap((w) => w.sessions.filter((x) => x.kind === "quality" && !x.race))[0];
+      const days = qWeeks.flatMap((w) => w.sessions.filter((x) => x.kind === "quality" && !x.race).map((x) => x.dayIdx));
+      const modal = [...new Set(days)].sort((a, b) => days.filter((d) => d === b).length - days.filter((d) => d === a).length || a - b)[0];
+      const easy = sessions.filter((x) => x.kind === "easy").sort((a, b) => Math.abs(a.dayIdx - modal) - Math.abs(b.dayIdx - modal) || b.dayIdx - a.dayIdx)[0];
+      if (tpl && easy) {
+        const free = !sessions.some((x) => x.dayIdx === modal);
+        sessions = sessions.filter((x) => x !== easy);
+        sessions.push({ dayIdx: free ? modal : easy.dayIdx, kind: "quality", title: tpl.title, src: tpl, work: tpl.work, minutes: tpl.minutes });
+        sessions.sort((a, b) => a.dayIdx - b.dayIdx);
+        qualityNote = `качество по практике (${qWeeks.length} из ${win.length} своих недель), образец его не содержал: ${tpl.title} вместо «${easy.title}»`;
+      }
+    }
+  }
   if (recoveryWeek) {
     const adj = postRaceAdjust(ix, t, sessions, 1);
     sessions = adj.sessions; delta = adj.rel ?? 1; deltaWhy = adj.notes.join("; ");
@@ -150,5 +180,6 @@ export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
   // старт в начале следующей недели (пн/вт) — тот же запрет на последние дни этой
   const removed = enforcePreRace(sessions, t.nextRaceIsMain ? t.raceDayIdx : null);
   if (removed.length) deltaWhy += `; снято перед стартом: ${removed.join(", ")}`;
+  if (qualityNote) deltaWhy += `; ${qualityNote}`;
   return { kind: "repeat", base, skipped, delta: Math.round(100 * delta) / 100, deltaWhy, sessions };
 }
