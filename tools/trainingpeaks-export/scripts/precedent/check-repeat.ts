@@ -9,7 +9,7 @@
 import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
-import { donorExcluded, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
+import { donorExcluded, isPeak, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
 import { plainTemplate, postRaceAdjust, setRecovery } from "./post-race.ts";
 import { substituteDonorStyle } from "./donor-style.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
@@ -121,7 +121,7 @@ const total_ = (ss: PSess[]): number => ss.reduce((s, x) => s + x.minutes, 0);
 const W8: Weights = { phase: 2.5, dist: 1.4, vol: 0.9, prev: 0.5, prevDays: 0.2, prevQ: 0.2, ill: 0.3, post: 0.3, gap: 1.8, own: 0.6, recency: 0.7 };
 // БОЕВЫЕ УМОЛЧАНИЯ снимаются ДО того, как проверки зададут свои значения: именно они работают в «раскидать».
 const PROD = { lookback: LOOKBACK_WEEKS, peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON };
-setRepeatParams({ normal: 0.6, gap: 2, skip: ["старт", "после старта", "подводка", "пик", "провал объёма"], peak: 1.25, recovery: true });
+setRepeatParams({ normal: 0.6, gap: 2, skip: ["старт", "после старта", "подводка", "пик", "провал объёма"], peak: 1.5, recovery: true });
 useExplicitParams();
 
 console.log("\n── форма: защита от наследования ──");
@@ -295,7 +295,7 @@ console.log("\n── восстановление после старта по 
 
 console.log("\n── класс «пик» ──");
 {
-  check("боевые умолчания: пик >1.25 × медианы, восстановление включено, окно поиска образца 10 нед (подводка+старт+восстановление занимают 6)", PROD.peak === 1.25 && PROD.recovery === true && PROD.lookback === 10, JSON.stringify(PROD));
+  check("боевые умолчания: пик >1.5 × медианы, восстановление включено, окно поиска образца 10 нед (подводка+старт+восстановление занимают 6)", PROD.peak === 1.5 && PROD.recovery === true && PROD.lookback === 10, JSON.stringify(PROD));
   check("боевые умолчания: не-образцы — ровно пять проверенных классов: старт, после старта, подводка, пик, провал (сигнал здоровья — НЕ класс, замер R4)",
     PROD.skip === ["старт", "после старта", "подводка", "пик", "провал объёма"].sort().join(), PROD.skip);
   const pk = planRepeat(ix, T(12, 7), null);
@@ -304,7 +304,13 @@ console.log("\n── класс «пик» ──");
   setRepeatParams({ peak: 0 });
   const nopk = planRepeat(ix, T(12, 7), null);
   check("без класса «пик» та же пиковая неделя была бы образцом (проверка различает)", nopk.kind === "repeat" && nopk.base.weekStart === wk(6) && total_(nopk.sessions) === 400);
-  setRepeatParams({ peak: 1.25 });
+  setRepeatParams({ peak: 1.5 });
+  // БЫЛО (до 17.10): порог 1.25, затем на один день 1.35 (подгонка под Семешину ×1.39 — Игорь отменил: порог по данным, не под случай).
+  // Теперь 1.5 = точка, где по 4307 неделям держится-после падает с ~60% до ~46%. Граница и зазор держатся числами с обеих сторон.
+  check("зазор пика: ×1.26 (Ярулина 239 при 190), ×1.39 (Семешина 430 при 310) и ровно на границе ×1.5 НЕ пик; ×1.51 и ×1.9 — пик",
+    !isPeak(Array(8).fill(190), 239) && !isPeak(Array(8).fill(310), 430) && !isPeak(Array(8).fill(200), 300) && isPeak(Array(8).fill(200), 302) && isPeak(Array(8).fill(200), 380));
+  check("зазор пика: нет единичной хрупкости — сдвиг недели на ±1.5 мин вокруг прежней границы 1.25 не меняет вердикта",
+    [236, 237.5, 239].every((t) => !isPeak(Array(8).fill(190), t)));
   check("неделя ×1.15 медианы — не пик", planRepeat(ix, T(1, 5), null).kind === "repeat" && !(planRepeat(ix, T(1, 5), null) as { skipped: Array<{ why: string }> }).skipped.some((x) => x.why === "пик"));
 }
 

@@ -33,8 +33,18 @@ export let RETURN_GAP_WEEKS = 2;
 export { RECOVERY, RECOVERY_ON, recoveryFactor, setRecovery } from "./post-race.ts";
 /** Неделя восстановления не годится образцом, если тренер сам ставит её ниже этой доли обычной. */
 export const RECOVERY_NOT_A_SAMPLE_BELOW = 0.9;
-/** ПИК: неделя выше стольких медиан 8 недель образцом не служит (решение Игоря 15.10: Семешина 430 мин через 2 недели после марафона). */
-export let PEAK_RATIO = 1.25;
+/**
+ * ПИК: неделя выше стольких медиан 8 недель образцом не служит.
+ * 1.25 → 1.5 (17.10, r13, решение Игоря: порог там, где его показывают данные, а не под один случай). 1.25 резало тело распределения
+ * (8% всех недель лежат в полосе 1.20–1.30) и отсекло обычную неделю Ярулиной 12.10 (239 мин при пороге 237.5, запас 0.8%).
+ * Граница по данным: после недели ×1.2–1.5 объём держится в 56–63% случаев (как после обычных), после ×1.5+ — в 45–48%, следующая
+ * неделя 0.85. ВАЖНО: неделя Семешиной 31.08 (430 мин, ×1.39) прежним порогом 15.10 отсекалась; теперь НЕ отсекается ничем — она
+ * +4 после половинки (таблица половинки кончается на +3), не марафон и не +2. Это известное следствие, не дыра таблицы.
+ */
+export let PEAK_RATIO = 1.5;
+/** Правило пика как функция (объёмы 8 недель до неё, объём недели). По умолчанию — множитель от медианы; r13 подставляет кандидатов. */
+export type PeakRule = (prior: number[], total: number) => boolean;
+export let PEAK_RULE: PeakRule | null = null;
 export const DELTA_MIN = 0.5;
 export const DELTA_MAX = 1.25;
 /** Сколько недель назад искать образец. Блок «подводка 2 + старт + восстановление 3» сам занимает 6 недель, поэтому 6 не хватает (выбор — r8 по проверке). */
@@ -45,8 +55,9 @@ export let LOOKBACK_WEEKS = 10;
  * сюда НЕ входят: замер R4 (498 недель) — неделя с сигналом у Игоря обычная (объём ×1.0). Раньше список в коде был шире проверенного.
  */
 export let SKIP_REASONS: Set<Abnormal> = new Set(["старт", "после старта", "подводка", "пик", "провал объёма"]);
-export function setRepeatParams(p: { normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean; recoveryTable?: "train" | "all"; lookback?: number }): void {
+export function setRepeatParams(p: { peakRule?: PeakRule | null; normal?: number; gap?: number; skip?: Abnormal[]; peak?: number; recovery?: boolean; recoveryTable?: "train" | "all"; lookback?: number }): void {
   if (p.lookback != null) LOOKBACK_WEEKS = p.lookback;
+  if (p.peakRule !== undefined) PEAK_RULE = p.peakRule;
   if (p.peak != null) PEAK_RATIO = p.peak;
   if (p.skip) SKIP_REASONS = new Set(p.skip);
   if (p.normal != null) NORMAL_MIN_RATIO = p.normal;
@@ -58,6 +69,11 @@ export function setRepeatParams(p: { normal?: number; gap?: number; skip?: Abnor
 const med = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 
 export type Abnormal = "старт" | "после старта" | "подводка" | "пик" | "сигнал здоровья" | "провал объёма" | "мало дней";
+
+/** Пик ли неделя объёмом total при объёмах prior (8 недель до неё). Строго «больше»: неделя ровно на границе не отсекается. */
+export function isPeak(prior: number[], total: number): boolean {
+  return PEAK_RULE ? PEAK_RULE(prior, total) : PEAK_RATIO > 0 && total > PEAK_RATIO * med(prior);
+}
 
 /** Почему неделя не годится формой; null — нормальная. Только по данным ДО неё и её самой. */
 export function abnormalReason(ix: Index, w: CWeek): Abnormal | null {
@@ -72,7 +88,7 @@ export function abnormalReason(ix: Index, w: CWeek): Abnormal | null {
   const prior = (ix.byAid.get(w.aid) ?? []).filter((x) => x.weekStart < w.weekStart).slice(-8);
   if (prior.length >= 3) {
     if (w.total < NORMAL_MIN_RATIO * med(prior.map((x) => x.total))) return "провал объёма";
-    if (PEAK_RATIO > 0 && w.total > PEAK_RATIO * med(prior.map((x) => x.total))) return "пик";
+    if (isPeak(prior.map((x) => x.total), w.total)) return "пик";
     if (w.days < med(prior.map((x) => x.days)) - 1) return "мало дней";
   }
   return null;
