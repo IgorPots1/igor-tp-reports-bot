@@ -23,6 +23,9 @@ import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } fro
 import { placeWeek, runPublikuy, runSnesti, verifyPlaced, type Manifest } from "./week-core.ts";
 import { CONFIRM, GROUP12, MAX_REAL_ATHLETES, hiddenProven, isDry, mayPlace, realGate } from "./week-ops.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { compareStructures, parseSnap, scaleToSeconds, totalSeconds, asString, type Snap } from "./structure-copy.ts";
+import { runCase, PROBE_ATHLETE, type Case } from "./probe-structure-copy.ts";
+import type { TpLike } from "./hidden-flow.ts";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -327,6 +330,45 @@ console.log("\n── неделя из завершённого цикла не
   check("внутри окна (+4): outside не трогает, all — трогает", bm("outside", 3, 10) === false && bm("all", 3, 10) === true);
   check("старт в первую неделю после образца или в саму целевую неделю — ещё не «между»: граница строгая (старт в понедельник целевой не лежит между)", bm("all", 5, 6) === false && bm("all", 4, 6) === false && bm("all", 4, 7) === true);
   check("неделя ПОСЛЕ главного старта образцу «за стартом» не мешает; сама неделя старта этим классом не считается", bm("all", 8, 15) === false && bm("all", 6, 15) === false);
+}
+
+console.log("\n── копия структуры из образца (пересчёт длительностей, рецепт не трогаем; проба на подставном клиенте) ──");
+{
+  const EASYSNAP: Snap = { structure: [{ type: "step", begin: 0, end: 5400, steps: [{ name: "Active", length: { unit: "second", value: 5400 }, targets: [{ minValue: 76, maxValue: 80 }], intensityClass: "active", openDuration: false }], length: { unit: "repetition", value: 1 } }], polyline: [[0, 0], [0, 1], [1, 1], [1, 0]], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace" };
+  const QSNAP: Snap = { structure: [
+    { type: "step", steps: [{ name: "Warm up", length: { unit: "second", value: 600 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "warmUp" }], length: { unit: "repetition", value: 1 } },
+    { type: "repetition", steps: [{ name: "Hard", length: { unit: "second", value: 240 }, targets: [{ minValue: 106, maxValue: 110 }], intensityClass: "active" }, { name: "Easy", length: { unit: "second", value: 90 }, targets: [{ minValue: 0, maxValue: 76 }], intensityClass: "rest" }], length: { unit: "repetition", value: 8 } },
+    { type: "step", steps: [{ name: "Cool down", length: { unit: "second", value: 300 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "coolDown" }], length: { unit: "repetition", value: 1 } }], polyline: [], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace" };
+  check("суммарные секунды: лёгкая 5400; интервалы 600 + 8×(240+90) + 300 = 3540", totalSeconds(EASYSNAP) === 5400 && totalSeconds(QSNAP) === 3540);
+  const e40 = scaleToSeconds(EASYSNAP, 2400);
+  check("лёгкая 90→40 мин: длина шага и end = 2400 с, цели (76–80 %) прежние, исходный снимок не изменён", e40.ok && totalSeconds(e40.snap) === 2400 && e40.snap.structure[0].end === 2400 && JSON.stringify(e40.snap.structure[0].steps[0].targets) === JSON.stringify([{ minValue: 76, maxValue: 80 }]) && totalSeconds(EASYSNAP) === 5400);
+  check("рецепт интервалов не трогается: попытка пересчитать 8×4 на другие секунды — отказ; на те же секунды — копия", !scaleToSeconds(QSNAP, 3000).ok && scaleToSeconds(QSNAP, 3540).ok && totalSeconds((scaleToSeconds(QSNAP, 3540) as { snap: Snap }).snap) === 3540);
+  check("нелепая длительность (0, NaN, отрицательная) — отказ, структура не строится", [0, NaN, -5].every((x) => !scaleToSeconds(EASYSNAP, x).ok));
+  check("parseSnap принимает объект и JSON-строку; мусор и пустую структуру — нет", parseSnap(EASYSNAP) != null && parseSnap(asString(EASYSNAP)) != null && parseSnap("не json") == null && parseSnap({ structure: [] }) == null && parseSnap(null) == null);
+  const bad = (m: (x: Snap) => void) => { const c = JSON.parse(JSON.stringify(QSNAP)) as Snap; m(c); return compareStructures(QSNAP, c); };
+  check("сверка ловит каждую подмену: длина шага, цель, число повторов, класс, лишний узел, потерю структуры",
+    compareStructures(QSNAP, asString(QSNAP)).ok && !bad((c) => { c.structure[1].steps[0].length.value = 241; }).ok && !bad((c) => { c.structure[1].steps[0].targets![0].maxValue = 111; }).ok
+    && !bad((c) => { c.structure[1].length.value = 7; }).ok && !bad((c) => { c.structure[1].steps[1].intensityClass = "active"; }).ok && !bad((c) => { c.structure.pop(); }).ok && !compareStructures(QSNAP, null).ok);
+  type Mode = "ok" | "drop" | "stringify" | "short" | "visible";
+  const mem = (mode: Mode, opts: { noDelete?: boolean } = {}) => {
+    const store = new Map<number, Record<string, unknown>>(); let id = 9000;
+    const tp: TpLike = {
+      createWorkout: async (b) => { const w = { ...b, workoutId: ++id }; if (mode === "drop") w.structure = null; if (mode === "short") w.totalTimePlanned = Number(b.totalTimePlanned) / 2; if (mode === "visible") w.isHidden = false; store.set(id, w); return { workoutId: id, raw: w }; },
+      getWorkoutDetail: async (_a, i) => { const w = store.get(i); if (!w) throw new Error("gone"); return mode === "stringify" && w.structure && typeof w.structure === "object" ? { ...w, structure: JSON.stringify(w.structure) } : w; },
+      putWorkout: async () => ({}), deleteWorkout: async (_a, i) => { if (!opts.noDelete) store.delete(i); return { status: 200, body: null }; }, listDay: async () => [], isGone: (e) => e instanceof Error && e.message === "gone",
+    };
+    return { tp, store };
+  };
+  const C: Case = { label: "лёгкая", minutes: 40, snap: (e40 as { snap: Snap }).snap, note: "" };
+  const okA = await runCase(mem("ok").tp, C, "string"), okB = await runCase(mem("ok").tp, C, "object"), okC = await runCase(mem("stringify").tp, C, "object");
+  check("проба на подставном клиенте: строка и объект проходят, а клиент, возвращающий другой вид, не мешает сверке; удалено и проверено", okA.ok && okB.ok && okC.ok && okA.cleaned === true && okB.cleaned === true && okC.cleaned === true, JSON.stringify([okA.stopped, okB.stopped, okC.stopped]));
+  const dropped = await runCase(mem("drop").tp, C, "string"), shortT = await runCase(mem("short").tp, C, "string");
+  check("TP молча теряет структуру (null) или режет totalTimePlanned — проба НЕ проходит, созданное всё равно удалено", !dropped.ok && /не читается|не совпала/.test(dropped.stopped ?? "") && dropped.cleaned === true && !shortT.ok && /totalTimePlanned/.test(shortT.stopped ?? "") && shortT.cleaned === true, JSON.stringify([dropped.stopped, shortT.stopped]));
+  const vis = await runCase(mem("visible").tp, C, "string");
+  check("TP не скрыл созданное (isHidden=false) — проба не проходит, созданное удалено (тест-атлет не должен показывать пробу даже себе)", !vis.ok && /не скрыта/.test(vis.stopped ?? "") && vis.cleaned === true, String(vis.stopped));
+  const nodel = await runCase(mem("ok", { noDelete: true }).tp, C, "string");
+  check("удаление не сработало (тренировка всё ещё читается) — проба провалена и это названо, а не «ок»", !nodel.ok && nodel.cleaned === false);
+  check("проба жёстко привязана к тест-атлету 3102415", PROBE_ATHLETE === 3102415);
 }
 
 console.log("\n── качество по практике: пустоту образца не копируем ──");
