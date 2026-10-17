@@ -744,7 +744,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         background: BG,
         color: INK,
         padding: "20px 16px 48px",

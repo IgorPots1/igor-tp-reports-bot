@@ -123,7 +123,7 @@ function ScaleRow(props: {
 
 const STYLES = {
   page: {
-    minHeight: "100vh",
+    minHeight: "100dvh",
     // Force light palette — never inherit Telegram dark themeParams (same as ReviewScreen).
     background: "#f5f8f7",
     color: "#222",

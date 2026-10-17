@@ -2636,7 +2636,7 @@ const TABBAR_H = 56; // px, tab strip height excluding the safe-area inset below
 const CONTENT_GAP = 24; // px, breathing room so page content never kisses the bar
 
 const S = {
-  shell: { minHeight: "100vh", background: C.bg, color: C.ink, fontFamily: BODY, paddingBottom: `calc(${TABBAR_H + CONTENT_GAP}px + env(safe-area-inset-bottom))` } as React.CSSProperties,
+  shell: { minHeight: "100dvh", background: C.bg, color: C.ink, fontFamily: BODY, paddingBottom: `calc(${TABBAR_H + CONTENT_GAP}px + env(safe-area-inset-bottom))` } as React.CSSProperties,
   header: { padding: "16px 16px 8px", display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 } as React.CSSProperties,
   h1: { fontFamily: HEAD, fontSize: 26, fontWeight: 700, letterSpacing: "0.06em", margin: 0, color: C.ink } as React.CSSProperties,
   fresh: { color: C.faint, fontSize: 12 } as React.CSSProperties,

@@ -495,6 +495,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-01-lex.jpg"
+                width={520}
+                height={531}
                 alt="Отзыв Lex об интенсиве"
                 loading="lazy"
               />
@@ -502,6 +504,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-02-lubava.jpg"
+                width={520}
+                height={379}
                 alt="Отзыв Любавы"
                 loading="lazy"
               />
@@ -509,6 +513,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-03-olga.jpg"
+                width={520}
+                height={908}
                 alt="Отзыв Ольги Королёвой"
                 loading="lazy"
               />
@@ -516,6 +522,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-04-stepan.jpg"
+                width={520}
+                height={506}
                 alt="Отзыв Степана Трофимова"
                 loading="lazy"
               />
@@ -523,6 +531,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-05-makar.jpg"
+                width={520}
+                height={594}
                 alt="Отзыв Макара"
                 loading="lazy"
               />
@@ -530,6 +540,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-06-anna.jpg"
+                width={520}
+                height={355}
                 alt="Отзыв Анны Куликовой"
                 loading="lazy"
               />
@@ -537,6 +549,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-07-viktoria.jpg"
+                width={520}
+                height={767}
                 alt="Отзыв Виктории"
                 loading="lazy"
               />
@@ -544,6 +558,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-08-nadi.jpg"
+                width={520}
+                height={495}
                 alt="Отзыв Нади"
                 loading="lazy"
               />
@@ -551,6 +567,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-09-darya.jpg"
+                width={520}
+                height={519}
                 alt="Отзыв Дарьи"
                 loading="lazy"
               />
@@ -558,6 +576,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-10-babyso.jpg"
+                width={520}
+                height={604}
                 alt="Отзыв участницы интенсива"
                 loading="lazy"
               />
@@ -565,6 +585,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-11-irina.jpg"
+                width={520}
+                height={462}
                 alt="Отзыв Ирины"
                 loading="lazy"
               />
@@ -572,6 +594,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-12-alina-kovaleva.jpg"
+                width={520}
+                height={444}
                 alt="Отзыв Алины Ковалевой"
                 loading="lazy"
               />
@@ -579,6 +603,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-13-yaroslav.jpg"
+                width={520}
+                height={413}
                 alt="Отзыв Ярослава Ермолаева"
                 loading="lazy"
               />
@@ -586,6 +612,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-14-svetlana.jpg"
+                width={520}
+                height={351}
                 alt="Отзыв Светланы"
                 loading="lazy"
               />
@@ -593,6 +621,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-15-alina.jpg"
+                width={520}
+                height={419}
                 alt="Отзыв Алины"
                 loading="lazy"
               />
@@ -600,6 +630,8 @@ export default async function IntensivePage() {
             <div className="slide">
               <img
                 src="/intensive/rev-16-maria.jpg"
+                width={520}
+                height={387}
                 alt="Отзыв Марии Туркиной"
                 loading="lazy"
               />
@@ -815,7 +847,7 @@ export default async function IntensivePage() {
           <div>© 2026 · Игорь Поцелуев · Беговой интенсив</div>
           <div>
             <a href="https://t.me/IgorPotseluev">Telegram</a> ·{" "}
-            <a href="#">Instagram</a> · <a href="/tools">Бесплатно</a>
+            <a href="https://instagram.com/igorp.run">Instagram</a> · <a href="/tools">Бесплатно</a>
           </div>
         </div>
       </footer>

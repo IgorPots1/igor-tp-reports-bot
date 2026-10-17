@@ -97,7 +97,7 @@ const C = {
 
 const S = {
   shell: {
-    minHeight: "100vh",
+    minHeight: "100dvh",
     background: C.bg,
     fontFamily: "var(--font-montserrat), system-ui, sans-serif",
     color: C.ink,
@@ -155,9 +155,9 @@ const S = {
     border: `1px solid ${C.line}`,
   } as const,
   cardTop: { display: "flex" as const, justifyContent: "space-between" as const, alignItems: "baseline" as const, gap: 10 },
-  name: { fontSize: 16, fontWeight: 700, lineHeight: 1.25 } as const,
+  name: { fontSize: 16, fontWeight: 700, lineHeight: 1.25, minWidth: 0 } as const,
   days: { flex: "0 0 auto" as const, fontSize: 12.5, fontWeight: 700, color: C.faint } as const,
-  summary: { margin: "5px 0 0", fontSize: 14, fontWeight: 500, color: C.sub, lineHeight: 1.4 } as const,
+  summary: { margin: "5px 0 0", fontSize: 14, fontWeight: 500, color: C.sub, lineHeight: 1.4, overflowWrap: "anywhere" as const } as const,
   doubtBadge: {
     margin: "7px 0 0",
     padding: "6px 10px",
@@ -269,7 +269,7 @@ const S = {
   soon: { fontSize: 9, fontWeight: 700, color: C.faint, letterSpacing: "0.04em" } as const,
   fresh: { margin: "3px 0 0", fontSize: 11.5, fontWeight: 600, color: C.teal } as const,
   softNote: { margin: "0 18px 6px", fontSize: 11.5, fontWeight: 600, color: C.faint, fontStyle: "italic" as const } as const,
-  nameRow: { display: "flex" as const, alignItems: "center" as const, gap: 6 } as const,
+  nameRow: { display: "flex" as const, alignItems: "center" as const, gap: 6, minWidth: 0 } as const,
   chatDot: { fontSize: 13, color: C.teal, flex: "0 0 auto" as const } as const,
   noLink: { fontSize: 11, fontWeight: 700, color: C.faint } as const,
   dim: { opacity: 0.55 } as const,
@@ -287,18 +287,26 @@ const TABS: Array<{ key: Tab; icon: string; label: string; ready: boolean }> = [
   { key: "reports", icon: "📊", label: "Отчёты", ready: true },
 ];
 
+// Русская плюрализация: 1 день, 2 дня, 5 дней, 11 дней, 21 день, 22 дня, 111 дней.
+function pluralRu(n: number, one: string, few: string, many: string): string {
+  const mod100 = Math.abs(n) % 100;
+  const mod10 = mod100 % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
 function daysLabel(days: number | null): string {
   if (days === null) return "";
   if (days === 0) return "сегодня";
-  if (days === 1) return "1 день";
-  if (days >= 2 && days <= 4) return `${days} дня`;
-  return `${days} дней`;
+  return `${days} ${pluralRu(days, "день", "дня", "дней")}`;
 }
 
 function daysToLabel(days: number): string {
   if (days <= 0) return "сегодня";
   if (days === 1) return "завтра";
-  return `через ${days} ${days >= 2 && days <= 4 ? "дня" : "дней"}`;
+  return `через ${days} ${pluralRu(days, "день", "дня", "дней")}`;
 }
 
 export default function CoachDeskPage() {
@@ -1299,7 +1307,7 @@ function EventCard(props: { event: StartEvent; open: boolean; onToggle: () => vo
         <span style={S.eventWhen(e.thisWeek)}>{daysToLabel(e.daysTo)}</span>
       </button>
       <p style={S.eventCount}>
-        {e.athletes.length} {e.athletes.length === 1 ? "ученик" : e.athletes.length >= 2 && e.athletes.length <= 4 ? "ученика" : "учеников"} {props.open ? "▲" : "▼"}
+        {e.athletes.length} {pluralRu(e.athletes.length, "ученик", "ученика", "учеников")} {props.open ? "▲" : "▼"}
       </p>
       {props.open ? (
         <div style={S.roster}>

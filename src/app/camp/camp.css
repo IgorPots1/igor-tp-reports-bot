@@ -28,11 +28,11 @@
 .intensive-root .brand{font-weight:700;font-size:16px;letter-spacing:-.02em;display:flex;align-items:center;gap:9px}
 .intensive-root .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent)}
 .intensive-root .btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;border:none;cursor:pointer;font-family:var(--font-onest),sans-serif;font-weight:600;font-size:15px;letter-spacing:-.01em;background:var(--accent);color:#fff;padding:12px 20px;border-radius:999px;transition:transform .15s ease,background .2s ease;white-space:nowrap}
-.intensive-root .btn:hover{background:var(--accent-ink)}.intensive-root .btn:active{transform:translateY(1px)}
+.intensive-root .btn:active{transform:translateY(1px)}
 .intensive-root .btn--lg{padding:16px 26px;font-size:17px}
-.intensive-root .btn--tg{background:#229ED9}.intensive-root .btn--tg:hover{background:#1b87ba}
+.intensive-root .btn--tg{background:#229ED9}
 .intensive-root .btn--ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line-2)}
-.intensive-root .btn--ghost:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+
 .intensive-root nav.top .btn{padding:9px 17px;font-size:14px}
 .intensive-root .tg-ic{width:18px;height:18px;flex:0 0 auto}
 
@@ -85,8 +85,8 @@
 .intensive-root .swipe-hint{font-family:var(--font-jetbrains),monospace;font-size:11px;color:var(--muted);letter-spacing:.05em;margin-top:4px}
 @media(min-width:900px){.intensive-root .swipe-hint{display:none}}
 .intensive-root .caro-nav{display:flex;gap:8px;justify-content:flex-end;margin-top:6px}
-.intensive-root .caro-nav button{width:42px;height:42px;border-radius:50%;border:1.5px solid var(--line-2);background:var(--surface);cursor:pointer;display:grid;place-items:center;font-size:18px;color:var(--ink);transition:all .18s ease}
-.intensive-root .caro-nav button:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+.intensive-root .caro-nav button{width:42px;height:42px;border-radius:50%;border:1.5px solid var(--line-2);background:var(--surface);cursor:pointer;display:grid;place-items:center;font-size:18px;color:var(--ink);transition:background-color .18s ease,color .18s ease,border-color .18s ease}
+
 
 /* FAQ */
 .intensive-root .faq{border-top:1px solid var(--line);max-width:760px}
@@ -117,8 +117,8 @@
 
 /* bottom nav (hub links) */
 .intensive-root .links{display:grid;gap:12px;max-width:520px;margin:0 auto}
-.intensive-root .linkbtn{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:17px 20px;font-weight:600;font-size:16px;letter-spacing:-.01em;transition:all .18s ease;box-shadow:var(--shadow)}
-.intensive-root .linkbtn:hover{border-color:var(--ink);transform:translateY(-1px)}
+.intensive-root .linkbtn{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:17px 20px;font-weight:600;font-size:16px;letter-spacing:-.01em;transition:border-color .18s ease,transform .18s ease;box-shadow:var(--shadow)}
+
 .intensive-root .linkbtn .ic{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;background:var(--green-bg);color:var(--green);font-size:15px}
 .intensive-root .linkbtn .ar{margin-left:auto;color:var(--muted)}
 
@@ -156,3 +156,21 @@
 .intensive-root .wc-row .pc{font-family:var(--font-jetbrains),monospace;font-size:11px;color:var(--accent);min-width:74px;flex:0 0 auto}
 .intensive-root .wc-row .tx{color:var(--ink-2)} .intensive-root .wc-row .tx b{color:var(--ink);font-weight:600}
 .intensive-root .wc-note{margin-top:12px;font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;line-height:1.45}
+
+/* hover только там, где он есть: на тач-экране :hover залипает после тапа */
+@media (hover:hover) and (pointer:fine){
+.intensive-root .btn:hover{background:var(--accent-ink)}
+.intensive-root .btn--tg:hover{background:#1b87ba}
+.intensive-root .btn--ghost:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+.intensive-root .caro-nav button:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+.intensive-root .linkbtn:hover{border-color:var(--ink);transform:translateY(-1px)}
+}
+
+/* без плавного скролла и сдвигов; цвет и рамка остаются */
+@media (prefers-reduced-motion:reduce){
+.intensive-root{scroll-behavior:auto}
+.intensive-root .btn,.intensive-root .linkbtn{transition:background-color .01ms,border-color .01ms}
+.intensive-root .btn:active{transform:none}
+.intensive-root .linkbtn:hover{transform:none}
+.intensive-root .track{scroll-behavior:auto}
+}

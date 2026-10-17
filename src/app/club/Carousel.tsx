@@ -14,7 +14,8 @@ export default function Carousel({ children, trackClassName }: CarouselProps) {
     if (!track) return;
     const card = track.querySelector<HTMLElement>(".slide");
     const step = card ? card.offsetWidth + 16 : 320;
-    track.scrollBy({ left: step * dir, behavior: "smooth" });
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    track.scrollBy({ left: step * dir, behavior: reduce ? "auto" : "smooth" });
   }
 
   return (

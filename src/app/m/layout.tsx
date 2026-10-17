@@ -1,3 +1,4 @@
+import type { Viewport } from "next";
 import Script from "next/script";
 import type { ReactNode } from "react";
 import { montserrat } from "@/lib/fonts";
@@ -7,6 +8,14 @@ import { montserrat } from "@/lib/fonts";
 export const metadata = {
   title: "Недельный отчёт",
   robots: "noindex,nofollow",
+};
+
+// viewport-fit=cover — без него env(safe-area-inset-*) равен 0 и нижняя панель
+// /m/* не получает отступ под жестовую полосу. Layout покрывает все страницы /m/*.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function MiniAppLayout({ children }: { children: ReactNode }) {

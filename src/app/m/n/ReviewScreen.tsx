@@ -120,7 +120,7 @@ function splitParagraphs(text: string): string[] {
 
 const S = {
   page: {
-    minHeight: "100vh",
+    minHeight: "100dvh",
     // Force the light palette — never inherit Telegram's dark themeParams. The
     // whole review screen is designed light (white cards, dark text, green accents).
     background: "#f5f8f7",
