@@ -7,6 +7,8 @@
 // графическом файле, который потом никто не сможет повторить.
 //
 // Запуск из корня репозитория:  node scripts/build-og-image.mjs
+// Английская карточка для /coaching:  node scripts/build-og-image.mjs en
+//   (пишет public/og-coaching-1200x630.png, тексты из COPY.en ниже)
 //
 // Playwright берётся из tools/trainingpeaks-export — единственное место в репо,
 // где он уже стоит; отдельной зависимости в корневой package.json это не добавляет.
@@ -30,12 +32,25 @@ try {
 
 const WIDTH = 1200;
 const HEIGHT = 630;
-const OUT = "public/og-1200x630.png";
+const LANG = process.argv[2] === "en" ? "en" : "ru";
+const OUT = LANG === "en" ? "public/og-coaching-1200x630.png" : "public/og-1200x630.png";
+const COPY = {
+  ru: {
+    h1: 'Беговой клуб<br><span class="hl">Игоря Поцелуева</span>',
+    p: "Индивидуальный план, разбор техники и тренер на связи каждый день",
+    foot: "план · разбор · сопровождение",
+  },
+  en: {
+    h1: 'Online running<br><span class="hl">coaching with Igor</span>',
+    p: "A personal plan, feedback on every run and a coach in touch every day",
+    foot: "plan · feedback · support",
+  },
+}[LANG];
 
 const logo = readFileSync("public/logo-512.png").toString("base64");
 
 const html = `<!doctype html>
-<html lang="ru">
+<html lang="${LANG}">
 <head>
 <meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -64,9 +79,9 @@ const html = `<!doctype html>
 <body>
   <div class="col">
     <div class="eyebrow"><span class="dot"></span>igorp.run</div>
-    <h1>Беговой клуб<br><span class="hl">Игоря Поцелуева</span></h1>
-    <p>Индивидуальный план, разбор техники и тренер на связи каждый день</p>
-    <div class="foot">план · разбор · сопровождение</div>
+    <h1>${COPY.h1}</h1>
+    <p>${COPY.p}</p>
+    <div class="foot">${COPY.foot}</div>
   </div>
   <div class="mark"><img src="data:image/png;base64,${logo}" alt=""></div>
 </body>

@@ -24,6 +24,8 @@ export const SITE_DESCRIPTION =
 // Путь, а не абсолютный адрес: metadataBase в корневом layout разворачивает
 // относительные ссылки сам, и картинка не разъедется, если домен сменится.
 export const OG_IMAGE_PATH = "/og-1200x630.png";
+/** Английская карточка для /coaching (scripts/build-og-image.mjs en). */
+export const OG_IMAGE_PATH_EN = "/og-coaching-1200x630.png";
 export const OG_IMAGE_WIDTH = 1200;
 export const OG_IMAGE_HEIGHT = 630;
 
@@ -88,6 +90,9 @@ type PublicPageMetadataInput = {
    *  opengraph-image.tsx. Картинка, заданная здесь, в Next ПОБЕЖДАЕТ файловую
    *  (проверено на сборке 11.10.2026), поэтому вписывать её всем нельзя. */
   clubImage?: boolean;
+  /** Английская страница (/coaching): своя картинка превью без кириллицы,
+   *  og:locale en_US и английская подпись картинки. По умолчанию русская. */
+  lang?: "ru" | "en";
 };
 
 /**
@@ -104,13 +109,14 @@ export function publicPageMetadata({
   description,
   siteName = OG_SITE_NAME,
   clubImage = false,
+  lang = "ru",
 }: PublicPageMetadataInput): Metadata {
   const url = siteUrl(path);
   // Без clubImage картинку даёт opengraph-image.tsx / twitter-image.tsx страницы.
   const ogImages = clubImage
-    ? { images: [{ url: OG_IMAGE_PATH, width: OG_IMAGE_WIDTH, height: OG_IMAGE_HEIGHT, alt: SITE_NAME }] }
+    ? { images: [{ url: lang === "en" ? OG_IMAGE_PATH_EN : OG_IMAGE_PATH, width: OG_IMAGE_WIDTH, height: OG_IMAGE_HEIGHT, alt: lang === "en" ? siteName : SITE_NAME }] }
     : {};
-  const twImages = clubImage ? { images: [OG_IMAGE_PATH] } : {};
+  const twImages = clubImage ? { images: [lang === "en" ? OG_IMAGE_PATH_EN : OG_IMAGE_PATH] } : {};
 
   return {
     title,
@@ -118,7 +124,7 @@ export function publicPageMetadata({
     alternates: { canonical: url },
     openGraph: {
       type: "website",
-      locale: "ru_RU",
+      locale: lang === "en" ? "en_US" : "ru_RU",
       siteName,
       url,
       title,

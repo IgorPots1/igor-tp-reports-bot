@@ -4,9 +4,11 @@ import { useRef } from "react";
 interface CarouselProps {
   children: React.ReactNode;
   trackClassName: string;
+  /** Подсказка под каруселью на телефоне. /coaching передаёт английскую. */
+  hint?: string;
 }
 
-export default function Carousel({ children, trackClassName }: CarouselProps) {
+export default function Carousel({ children, trackClassName, hint = "← листай вбок →" }: CarouselProps) {
   const trackRef = useRef<HTMLDivElement>(null);
 
   function scroll(dir: number) {
@@ -23,7 +25,7 @@ export default function Carousel({ children, trackClassName }: CarouselProps) {
       <div className={`track ${trackClassName}`} ref={trackRef}>
         {children}
       </div>
-      <div className="swipe-hint">← листай вбок →</div>
+      <div className="swipe-hint">{hint}</div>
       <div className="caro-nav">
         <button type="button" onClick={() => scroll(-1)}>
           ‹

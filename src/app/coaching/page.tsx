@@ -5,6 +5,7 @@ import { CLUB } from "@/lib/club";
 import { jetbrains, onest } from "@/lib/fonts";
 import Carousel from "../club/Carousel";
 import LeadFormEn from "./LeadFormEn";
+import HtmlLang from "./HtmlLang";
 import "../club/club.css";
 
 // English version of /club for the international Instagram account (@runnigor).
@@ -18,15 +19,16 @@ export const metadata: Metadata = publicPageMetadata({
     "A personal training plan, feedback on every run and a coach in touch every day. From your first 5K to the marathon.",
   siteName: "Igor | Online Running Coach",
   clubImage: true,
+  lang: "en",
 });
 
 const RESULTS: { img: string; delta: React.ReactNode; sub: string }[] = [
   { img: "/landing/05-result-nadya.jpg", delta: <>1:52 <span className="ar">&rarr;</span> 1:44</>, sub: "Half marathon · 8 minutes faster · 1st in group" },
-  { img: "/landing/06-result-2-10-to-1-52.jpg", delta: <>2:10 <span className="ar">&rarr;</span> 1:52</>, sub: "Half marathon · 18 minutes faster" },
-  { img: "/landing/07-result-2-16-to-1-50.jpg", delta: <>2:16 <span className="ar">&rarr;</span> 1:50</>, sub: "Half marathon · 26 minutes faster" },
-  { img: "/landing/09-result-sochi-marathon.jpg", delta: <>First marathon</>, sub: "42.2 km in 4:21 · “barely tired”" },
-  { img: "/landing/10-result-10k-47-43.jpg", delta: <>10K in 47:43</>, sub: "New personal best" },
-  { img: "/landing/11-result-capcity-1-51-47.jpg", delta: <>1:51:47</>, sub: "Second half marathon · 15 minutes faster (USA)" },
+  { img: "/landing/06-result-2-10-to-1-52-en.jpg", delta: <>2:10 <span className="ar">&rarr;</span> 1:52</>, sub: "Half marathon · 18 minutes faster" },
+  { img: "/landing/07-result-2-16-to-1-50-en.jpg", delta: <>2:16 <span className="ar">&rarr;</span> 1:50</>, sub: "Half marathon · 26 minutes faster" },
+  { img: "/landing/09-result-sochi-marathon-en.jpg", delta: <>First marathon</>, sub: "42.2 km in 4:21 · “barely tired”" },
+  { img: "/landing/10-result-10k-47-43-en.jpg", delta: <>10K in 47:43</>, sub: "New personal best" },
+  { img: "/landing/11-result-capcity-1-51-47-en.jpg", delta: <>1:51:47</>, sub: "Second half marathon · 15 minutes faster (USA)" },
 ];
 
 const FAQ: { q: string; a: string }[] = [
@@ -67,6 +69,7 @@ const FAQ: { q: string; a: string }[] = [
 export default function CoachingPage() {
   return (
     <div lang="en" className={`landing-root ${onest.variable} ${jetbrains.variable}`}>
+      <HtmlLang lang="en" />
       {/* NAV */}
       <nav className="top">
         <div className="wrap">
@@ -179,7 +182,7 @@ export default function CoachingPage() {
                   <div className="win-spacer"></div>
                 </div>
                 <div className="window-body">
-                  <img src="/landing/02-calendar.jpg" alt="Training calendar" loading="lazy" />
+                  <img src="/landing/02-calendar-en.jpg" alt="Training calendar" loading="lazy" />
                 </div>
               </div>
               <div className="visual-cap">Your personal training calendar</div>
@@ -240,7 +243,7 @@ export default function CoachingPage() {
           </div>
           <div className="analyze">
             <div className="analyze-img">
-              <img src="/landing/03-garmin-report.jpg" alt="An athlete's workout" loading="lazy" />
+              <img src="/landing/03-garmin-report-en.jpg" alt="An athlete's workout" loading="lazy" />
               <div className="visual-cap">A real athlete&apos;s workout · Garmin</div>
             </div>
             <div className="analyze-card">
@@ -273,7 +276,7 @@ export default function CoachingPage() {
           <div className="tech">
             <div className="tech-visual">
               <Image
-                src="/landing/04-technique.jpg"
+                src="/landing/04-technique-en.jpg"
                 alt="Running technique review"
                 width={600}
                 height={450}
@@ -310,7 +313,7 @@ export default function CoachingPage() {
             <h2>What my athletes achieve</h2>
             <p>Real results from athletes I coach. Before &rarr; after.</p>
           </div>
-          <Carousel trackClassName="w-case">
+          <Carousel trackClassName="w-case" hint="← swipe →">
             {RESULTS.map((r, i) => (
               <div className="slide" key={r.img}>
                 <img src={r.img} alt={`Result ${i + 1}`} loading="lazy" />
