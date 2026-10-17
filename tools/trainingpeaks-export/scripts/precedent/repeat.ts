@@ -20,7 +20,7 @@
  * Пороги нормальности и паузы выбираются на обучающем отрезке (r2-backtest.ts), не здесь.
  */
 import type { CSess, CWeek, Kind } from "./corpus.ts";
-import { weeksBetween } from "./corpus.ts";
+import { addDays, weeksBetween } from "./corpus.ts";
 import { enforcePreRace, type Index, type PSess } from "./precedent.ts";
 import { DROP_DAY_BELOW, postRaceAdjust, recoveryFactor, setRecovery } from "./post-race.ts";
 import { recent } from "./recent-level.ts";
@@ -79,7 +79,7 @@ export function setRepeatParams(p: { qualityShare?: number | null; peakRule?: Pe
 
 const med = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 
-export type Abnormal = "старт" | "после старта" | "подводка" | "пик" | "сигнал здоровья" | "провал объёма" | "мало дней";
+export type Abnormal = "за главным стартом" | "старт" | "после старта" | "подводка" | "пик" | "сигнал здоровья" | "провал объёма" | "мало дней";
 
 /** Пик ли неделя объёмом total при объёмах prior (8 недель до неё). Строго «больше»: неделя ровно на границе не отсекается. */
 export function isPeak(prior: number[], total: number): boolean {
@@ -104,6 +104,25 @@ export function abnormalReason(ix: Index, w: CWeek): Abnormal | null {
   }
   return null;
 }
+
+/**
+ * НЕДЕЛЯ ИЗ ЗАВЕРШЁННОГО ЦИКЛА НЕ ОБРАЗЕЦ (решение Игоря 17.10): если между образцом и целевой неделей прошёл ГЛАВНЫЙ старт, образец из другой
+ * жизни — независимо от множителя. Пример: Семешина, неделя 31.08 (430 мин) — вершина марафонского блока, марафон 27.09 прошёл, а
+ * целевая неделя 19.10. Главный старт образца = ближайший старт самого образца (nextRaceIsMain), неделя которого строго раньше целевой.
+ * Сама неделя старта и подводка — свои классы (старт, подводка), здесь только «старт остался позади».
+ */
+export function beyondMainRace(sample: CWeek, target: CWeek): boolean {
+  if (BEYOND_MAIN === "off") return false;
+  if (!sample.nextRaceIsMain || sample.weeksToRace == null || sample.weeksToRace <= 0) return false;
+  if (addDays(sample.weekStart, 7 * sample.weeksToRace) >= target.weekStart) return false;
+  // ВНУТРИ окна восстановления таблица (post-race.ts) по замыслу масштабирует ПРЕДСТАРТОВУЮ обычную неделю — отдельное решение Игоря 15.10
+  // («после марафонного блока образец — последняя обычная неделя, а не чужой прецедент»). Режим "outside" его не трогает; "all" — буквально.
+  if (BEYOND_MAIN === "outside" && recoveryFactor(target.lastRaceKm, target.weeksSinceRace) != null) return false;
+  return true;
+}
+/** off — правило выключено; outside — только вне окна таблицы восстановления; all — буквально для любой недели (ломает путь «таблица × предстартовая неделя»). */
+export let BEYOND_MAIN: "off" | "outside" | "all" = "outside";
+export function setBeyondMain(m: "off" | "outside" | "all"): void { BEYOND_MAIN = m; }
 
 /**
  * ДОНОР-ПИК (аудит r10): правило «пик не образец» раньше жило только в ветке повтора, а прецедент брал донором любую неделю
@@ -132,8 +151,8 @@ export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
   const skipped: Array<{ week: string; why: Abnormal }> = [];
   let base: CWeek | null = null;
   for (let i = own.length - 1; i >= 0 && weeksBetween(own[i].weekStart, t.weekStart) <= LOOKBACK_WEEKS; i--) {
-    const why = abnormalReason(ix, own[i]);
-    if (!why || !SKIP_REASONS.has(why)) { base = own[i]; break; }
+    const why = beyondMainRace(own[i], t) ? "за главным стартом" : abnormalReason(ix, own[i]);
+    if (!why || (why !== "за главным стартом" && !SKIP_REASONS.has(why))) { base = own[i]; break; }
     skipped.push({ week: own[i].weekStart, why });
   }
   if (!base) return { kind: "precedent", why: `нормальной недели за ${LOOKBACK_WEEKS} нед нет (${skipped.map((s) => `${s.week} ${s.why}`).join(", ")})` };

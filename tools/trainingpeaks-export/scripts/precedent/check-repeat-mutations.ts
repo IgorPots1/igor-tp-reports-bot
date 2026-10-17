@@ -20,7 +20,7 @@ const PR = path.join(HERE, "post-race.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
 type M = { id: string; file: string; find: string; replace: string; what: string };
 const MUT: M[] = [
-  { id: "no-skip", file: R, find: "    if (!why || !SKIP_REASONS.has(why)) { base = own[i]; break; }", replace: "    if (true) { base = own[i]; break; }", what: "ненормальная неделя снова берётся формой" },
+  { id: "no-skip", file: R, find: "    if (!why || (why !== \"за главным стартом\" && !SKIP_REASONS.has(why))) { base = own[i]; break; }", replace: "    if (true) { base = own[i]; break; }", what: "ненормальная неделя снова берётся формой" },
   { id: "quality-scaled", file: R, find: "    minutes: s.kind === \"quality\" ? s.minutes : round5(s.minutes * delta),", replace: "    minutes: round5(s.minutes * delta),", what: "дельта масштабирует и качественную" },
   { id: "race-repeat", file: R, find: "  if (t.phase === \"race\") return { kind: \"precedent\", why: \"неделя старта\" };", replace: "", what: "неделю старта повторяем, а не берём прецедент" },
   { id: "gap-repeat", file: R, find: "  if (gap >= RETURN_GAP_WEEKS)", replace: "  if (false && gap >= RETURN_GAP_WEEKS)", what: "после паузы повторяем неделю до паузы" },
@@ -64,6 +64,9 @@ const MUT: M[] = [
   { id: "q-share-low", file: R, find: "qWeeks.length / win.length >= QUALITY_SHARE_MIN", replace: "qWeeks.length / win.length >= 0.3", what: "порог «обычно делает» 0.3 вместо измеренного" },
   { id: "q-on-top", file: R, find: "        sessions = sessions.filter((x) => x !== easy);\n        sessions.push", replace: "        sessions.push", what: "качество добавляется сверху, лёгкая не заменяется" },
   { id: "q-modal-day", file: R, find: "dayIdx: free ? modal : easy.dayIdx", replace: "dayIdx: easy.dayIdx", what: "качество не на привычный день" },
+  { id: "bm-off", file: R, find: "  if (BEYOND_MAIN === \"off\") return false;", replace: "  return false;", what: "правило «за главным стартом» не работает" },
+  { id: "bm-window", file: R, find: "recoveryFactor(target.lastRaceKm, target.weeksSinceRace) != null) return false;", replace: "false) return false;", what: "режим outside трогает окно таблицы восстановления" },
+  { id: "bm-strict", file: R, find: "7 * sample.weeksToRace) >= target.weekStart) return false;", replace: "7 * sample.weeksToRace) > target.weekStart) return false;", what: "граница главного старта сдвинута на неделю" },
   { id: "peak-ratio-old", file: R, find: "export let PEAK_RATIO = 1.5;", replace: "export let PEAK_RATIO = 1.25;", what: "порог пика снова 1.25 — без зазора (Ярулина 12.10)" },
   { id: "peak-ge", file: R, find: "total > PEAK_RATIO * med(prior)", replace: "total >= PEAK_RATIO * med(prior) * 0.99", what: "граница включительно/ужесточена" },
   { id: "refuse-no-history", file: R, find: "  if (!rec.ok) return { kind: \"refuse\", why: `нет недавней истории: ${rec.why}` };", replace: "", what: "нет недавней истории — больше не отказ" },

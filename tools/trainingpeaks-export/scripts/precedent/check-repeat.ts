@@ -9,7 +9,7 @@
 import process from "node:process";
 import { addDays, buildCorpus, type CWeek, type RawRow, type Race } from "./corpus.ts";
 import { adapt, enforcePreRace, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
-import { QUALITY_SHARE_MIN, donorExcluded, isPeak, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
+import { BEYOND_MAIN, QUALITY_SHARE_MIN, beyondMainRace, setBeyondMain, donorExcluded, isPeak, planRepeat, recoveryFactor, setRepeatParams, PEAK_RATIO, SKIP_REASONS, RECOVERY_ON, LOOKBACK_WEEKS } from "./repeat.ts";
 import { plainTemplate, postRaceAdjust, setRecovery } from "./post-race.ts";
 import { substituteDonorStyle } from "./donor-style.ts";
 import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./recent-level.ts";
@@ -122,6 +122,13 @@ for (let k = 0; k < 7; k++) rows.push(...weekRows(34, wk(k), NORMAL)); rows.push
 for (let k = 0; k < 8; k++) rows.push(...weekRows(32, wk(k), k % 8 < 3 ? NORMAL : NOQ));
 rows.push(...weekRows(32, wk(8), NOQ));
 
+// 35: ГЛАВНЫЙ марафон между образцом и целевой неделей. Шесть обычных недель (цикл до старта), старт в вс недели 6, потом недели восстановления.
+for (let k = 0; k < 6; k++) rows.push(...weekRows(35, wk(k), NORMAL));
+rows.push(...weekRows(35, wk(6), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Марафон", m: 240 }]));
+for (let k = 7; k < 15; k++) rows.push(...weekRows(35, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 30 }]));
+rows.push(...weekRows(35, wk(15), NORMAL));
+races.push({ trainingpeaks_athlete_id: 35, event_date: addDays(wk(6), 6), distance_km: 42.2, distance_raw: null });
+
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
 const T = (aid: number, k: number): CWeek => corpus.find((w) => w.aid === aid && w.weekStart === wk(k))!;
@@ -129,7 +136,7 @@ const hasQ = (s: { kind: string; title: string; src?: { desc?: string } }): bool
 const total_ = (ss: PSess[]): number => ss.reduce((s, x) => s + x.minutes, 0);
 const W8: Weights = { phase: 2.5, dist: 1.4, vol: 0.9, prev: 0.5, prevDays: 0.2, prevQ: 0.2, ill: 0.3, post: 0.3, gap: 1.8, own: 0.6, recency: 0.7 };
 // БОЕВЫЕ УМОЛЧАНИЯ снимаются ДО того, как проверки зададут свои значения: именно они работают в «раскидать».
-const PROD = { lookback: LOOKBACK_WEEKS, peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON, qs: QUALITY_SHARE_MIN };
+const PROD = { lookback: LOOKBACK_WEEKS, peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON, qs: QUALITY_SHARE_MIN, bm: BEYOND_MAIN };
 setRepeatParams({ normal: 0.6, gap: 2, skip: ["старт", "после старта", "подводка", "пик", "провал объёма"], peak: 1.5, recovery: true });
 useExplicitParams();
 
@@ -300,6 +307,23 @@ console.log("\n── восстановление после старта по 
   check("ЖЁСТКО: марафонский блок на 2-й неделе после марафона — отказ валидатора", hard.some((r) => r.severity === "hard" && !r.ok && r.name.includes("после марафона")));
   const late = validateWeek([{ dayIdx: 6, kind: "long", title: "24 км в темпе марафона", minutes: 170, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, postMarathonWeek: 4 });
   check("на 4-й неделе после марафона это правило уже не действует", !late.some((r) => r.name.includes("после марафона")));
+}
+
+console.log("\n── неделя из завершённого цикла не образец (решение Игоря 17.10) ──");
+{
+  // БЫЛО (до 17.10): образец искался до окна, ГЛАВНЫЙ старт между образцом и целью ничего не значил — вершина марафонского блока (Семешина, 430 мин) брался образцом
+  // для недели после марафона. Теперь образец до главного старта — «из другой жизни». РЕЖИМЫ: outside (боевой) не трогает окно таблицы восстановления,
+  // где форма — предстартовая неделя по решению 15.10; all — буквально, и тогда все недели после главного старта идут в прецедент.
+  const run = (m: "off" | "outside" | "all", k: number) => { setBeyondMain(m); const r = planRepeat(ix, T(35, k), null); setBeyondMain("outside"); return r; };
+  const bm = (m: "off" | "outside" | "all", sk: number, tk: number): boolean => { setBeyondMain(m); const r = beyondMainRace(T(35, sk), T(35, tk)); setBeyondMain("outside"); return r; };
+  check("боевое умолчание режима: outside", PROD.bm === "outside", String(PROD.bm));
+  check("внутри окна таблицы (+4 после марафона) режим outside оставляет образцом последнюю обычную неделю до подводки (решение 15.10 цело)",
+    run("outside", 10).kind === "repeat" && (run("outside", 10) as { base: CWeek }).base.weekStart === wk(3), JSON.stringify(run("outside", 10).kind));
+  check("буквальный режим all: те же +4 после главного марафона — образца нет, неделя идёт в прецедент (вершина блока не берётся)", run("all", 10).kind === "precedent" && /за главным стартом/.test((run("all", 10) as { why: string }).why));
+  check("вне окна таблицы (+9): неделя до главного старта в режиме outside — прошлый цикл, не образец; в режиме off — образец (проверка различает)", bm("outside", 3, 15) === true && bm("off", 3, 15) === false);
+  check("внутри окна (+4): outside не трогает, all — трогает", bm("outside", 3, 10) === false && bm("all", 3, 10) === true);
+  check("старт в первую неделю после образца или в саму целевую неделю — ещё не «между»: граница строгая (старт в понедельник целевой не лежит между)", bm("all", 5, 6) === false && bm("all", 4, 6) === false && bm("all", 4, 7) === true);
+  check("неделя ПОСЛЕ главного старта образцу «за стартом» не мешает; сама неделя старта этим классом не считается", bm("all", 8, 15) === false && bm("all", 6, 15) === false);
 }
 
 console.log("\n── качество по практике: пустоту образца не копируем ──");
