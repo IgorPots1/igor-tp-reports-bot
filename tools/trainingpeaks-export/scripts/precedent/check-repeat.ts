@@ -129,6 +129,9 @@ for (let k = 7; k < 15; k++) rows.push(...weekRows(35, wk(k), [{ d: 1, t: EASY, 
 rows.push(...weekRows(35, wk(15), NORMAL));
 races.push({ trainingpeaks_athlete_id: 35, event_date: addDays(wk(6), 6), distance_km: 42.2, distance_raw: null });
 
+// 36: качество в 5 из 8 недель (0.625), образец без него; 37: в 4 из 8 (0.5). Ярулина по числам: порог измерен на чистых неделях (r17), не под неё.
+for (const [aid, qk] of [[36, [0, 1, 3, 5, 6]], [37, [0, 2, 4, 6]]] as Array<[number, number[]]>) { for (let k = 0; k < 8; k++) rows.push(...weekRows(aid, wk(k), qk.includes(k) ? NORMAL : NOQ)); rows.push(...weekRows(aid, wk(8), NOQ)); }
+
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
 const T = (aid: number, k: number): CWeek => corpus.find((w) => w.aid === aid && w.weekStart === wk(k))!;
@@ -329,16 +332,20 @@ console.log("\n── неделя из завершённого цикла не
 console.log("\n── качество по практике: пустоту образца не копируем ──");
 {
   const withQ = (qs: number | null) => { setRepeatParams({ qualityShare: qs }); return planRepeat(ix, T(31, 8), null); };
-  const on = withQ(0.875), off = withQ(null);
-  check("боевое умолчание: качество «обычно», если было в 7 из 8 недель (0.875, измерено r14)", PROD.qs === 0.875, String(PROD.qs));
+  const on = withQ(0.625), off = withQ(null);
+  check("боевое умолчание: качество «обычно», если было в 5 из 8 недель (0.625, r17: норма тренера на чистых неделях; было 0.875 по r14 — замер мерил не то)", PROD.qs === 0.625, String(PROD.qs));
   check("атлет делает качество в 7 из 8 недель, образец без него: в неделе появляется ровно одна качественная сессия (его «6 х 4 мин») на его привычный день 3",
     on.kind === "repeat" && on.sessions.filter((s) => s.kind === "quality").length === 1 && on.sessions.find((s) => s.kind === "quality")!.title === Q && on.sessions.find((s) => s.kind === "quality")!.dayIdx === 3, JSON.stringify(on.kind === "repeat" ? on.sessions.map((s) => [s.dayIdx, s.kind, s.title]) : on));
   check("добавленное качество ЗАМЕНЯЕТ лёгкую (дней столько же, сколько в образце), а не прибавляется сверху; в причине названо «качество по практике»",
     on.kind === "repeat" && on.sessions.length === 4 && /качество по практике \(7 из 8/.test(on.deltaWhy), on.kind === "repeat" ? on.deltaWhy : "");
   check("при выключенном правиле та же неделя копирует пустоту (проверка различает)", off.kind === "repeat" && off.sessions.every((s) => s.kind !== "quality"));
-  setRepeatParams({ qualityShare: 0.875 });
+  setRepeatParams({ qualityShare: 0.625 });
   const rare = planRepeat(ix, T(32, 8), null);
   check("качество в 3 из 8 недель — НЕ «обычно»: образец копируется как есть, качество не добавляется", rare.kind === "repeat" && rare.sessions.every((s) => s.kind !== "quality") && !/качество по практике/.test(rare.deltaWhy));
+  const five = planRepeat(ix, T(36, 8), null), four = planRepeat(ix, T(37, 8), null), taper = planRepeat(ix, { ...T(36, 8), phase: "taper" }, null);
+  check("5 из 8 недель с качеством (порог 0.625) — «обычно делает»: в неделе без качества в образце качество появляется (случай Ярулиной)", five.kind === "repeat" && five.sessions.filter((x) => x.kind === "quality").length === 1 && /5 из 8/.test(five.deltaWhy), JSON.stringify(five.kind));
+  check("4 из 8 (0.5) — ещё не «обычно»: образец копируется как есть", four.kind === "repeat" && four.sessions.every((x) => x.kind !== "quality"));
+  check("правило работает только в чистую целевую неделю: в подводку (phase taper) качество по практике не добавляется", taper.kind === "repeat" && taper.sessions.every((x) => x.kind !== "quality"));
   const free = planRepeat(ix, T(34, 8), null); const fq = free.kind === "repeat" ? free.sessions.find((x) => x.kind === "quality") : undefined;
   check("привычный день качества в образце свободен: качество встаёт на него (день 3), заменяя ближайшую лёгкую (день 4), а не садится на чужой день",
     free.kind === "repeat" && fq?.dayIdx === 3 && !free.sessions.some((x) => x.dayIdx === 4) && free.sessions.length === 4, JSON.stringify(free.kind === "repeat" ? free.sessions.map((x) => [x.dayIdx, x.kind]) : free));

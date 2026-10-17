@@ -59,7 +59,7 @@ const MUT: M[] = [
   { id: "strip-content", file: V, find: "RACE_PACE_BLOCK_RE.test(s.title) || RACE_PACE_BLOCK_RE.test(s.description) || ", replace: "", what: "качеством считается только ярлык, блок в темпе марафона — нет" },
   { id: "peak-off", file: R, find: "    if (isPeak(prior.map((x) => x.total), w.total)) return \"пик\";", replace: "", what: "класс «пик» не работает" },
   { id: "peak-ratio-2", file: R, find: "export let PEAK_RATIO = 1.5;", replace: "export let PEAK_RATIO = 2.5;", what: "порог пика 2.5 вместо 1.5" },
-  { id: "q-off", file: R, find: "if (QUALITY_SHARE_MIN != null && !recoveryWeek", replace: "if (false && !recoveryWeek", what: "качество по практике не работает" },
+  { id: "q-off", file: R, find: "if (QUALITY_SHARE_MIN != null && (t.phase === \"base\" || t.phase === \"build\") && !recoveryWeek", replace: "if (false && !recoveryWeek", what: "качество по практике не работает" },
   { id: "q-ill", file: R, find: " && !t.ill && !t.illAtStart && !sessions.some", replace: " && !sessions.some", what: "качество добавляется и при активной болезни" },
   { id: "q-share-low", file: R, find: "qWeeks.length / win.length >= QUALITY_SHARE_MIN", replace: "qWeeks.length / win.length >= 0.3", what: "порог «обычно делает» 0.3 вместо измеренного" },
   { id: "q-on-top", file: R, find: "        sessions = sessions.filter((x) => x !== easy);\n        sessions.push", replace: "        sessions.push", what: "качество добавляется сверху, лёгкая не заменяется" },
