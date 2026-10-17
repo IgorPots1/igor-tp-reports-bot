@@ -109,23 +109,33 @@ export function abnormalReason(ix: Index, w: CWeek): Abnormal | null {
 }
 
 /**
- * НЕДЕЛЯ ИЗ ЗАВЕРШЁННОГО ЦИКЛА НЕ ОБРАЗЕЦ (решение Игоря 17.10): если между образцом и целевой неделей прошёл ГЛАВНЫЙ старт, образец из другой
- * жизни — независимо от множителя. Пример: Семешина, неделя 31.08 (430 мин) — вершина марафонского блока, марафон 27.09 прошёл, а
- * целевая неделя 19.10. Главный старт образца = ближайший старт самого образца (nextRaceIsMain), неделя которого строго раньше целевой.
- * Сама неделя старта и подводка — свои классы (старт, подводка), здесь только «старт остался позади».
+ * ЗАВЕРШЁННЫЙ ЦИКЛ: ВЕРШИНА БЛОКА НЕ ОБРАЗЕЦ (решение Игоря 17.10, уточнено тем же днём).
+ * После главного старта образец — ПОСЛЕДНЯЯ ОБЫЧНАЯ неделя того же цикла до старта; вершина блока не берётся никогда. Прежняя таблица восстановления и
+ * решение 15.10 («образец — последняя обычная неделя до подводки, а не чужой прецедент») этим не нарушаются: предстартовая обычная неделя остаётся образцом.
+ * Образец исключается, если между ним и целевой неделей лежит главный старт И
+ *   (а) после этого старта был ещё один главный (образец из позапрошлого цикла — прошлая жизнь), ИЛИ
+ *   (б) образец — ВЕРШИНА своего блока: единственная самая объёмная неделя цикла (12 недель до старта, без недель самого старта), строго выше второй по объёму.
+ *       Ничья не вершина: ровный цикл вершины не имеет. Пример: Семешина, 31.08 — 430 мин при следующей 345: вершина марафонского блока, берётся 24.08 (310).
+ * Главный старт образца = ближайший старт самого образца (nextRaceIsMain), неделя которого строго раньше целевой.
  */
-export function beyondMainRace(sample: CWeek, target: CWeek): boolean {
+export const CYCLE_WEEKS = 12;
+export function beyondMainRace(ix: Index, sample: CWeek, target: CWeek): boolean {
   if (BEYOND_MAIN === "off") return false;
   if (!sample.nextRaceIsMain || sample.weeksToRace == null || sample.weeksToRace <= 0) return false;
-  if (addDays(sample.weekStart, 7 * sample.weeksToRace) >= target.weekStart) return false;
-  // ВНУТРИ окна восстановления таблица (post-race.ts) по замыслу масштабирует ПРЕДСТАРТОВУЮ обычную неделю — отдельное решение Игоря 15.10
-  // («после марафонного блока образец — последняя обычная неделя, а не чужой прецедент»). Режим "outside" его не трогает; "all" — буквально.
-  if (BEYOND_MAIN === "outside" && recoveryFactor(target.lastRaceKm, target.weeksSinceRace) != null) return false;
-  return true;
+  const raceMonday = addDays(sample.weekStart, 7 * sample.weeksToRace);
+  if (raceMonday >= target.weekStart) return false;
+  const own = ix.byAid.get(sample.aid) ?? [];
+  // (а) ещё один главный старт между тем стартом и целевой неделей
+  if (own.some((w) => w.phase === "race" && w.nextRaceIsMain && w.weekStart > raceMonday && w.weekStart < target.weekStart)) return true;
+  // (б) вершина блока: окно цикла = CYCLE_WEEKS недель до старта, после предыдущего главного старта, без недель самого старта
+  const prevMain = own.filter((w) => w.phase === "race" && w.nextRaceIsMain && w.weekStart < raceMonday).map((w) => w.weekStart).sort().pop() ?? "";
+  const cyc = own.filter((w) => w.weekStart < raceMonday && w.weekStart > prevMain && weeksBetween(w.weekStart, raceMonday) <= CYCLE_WEEKS && w.phase !== "race");
+  const tot = cyc.map((w) => w.total).sort((x, y) => y - x);
+  return cyc.length >= 3 && sample.total === tot[0] && tot[0] > (tot[1] ?? 0);
 }
-/** off — правило выключено; outside — только вне окна таблицы восстановления; all — буквально для любой недели (ломает путь «таблица × предстартовая неделя»). */
-export let BEYOND_MAIN: "off" | "outside" | "all" = "outside";
-export function setBeyondMain(m: "off" | "outside" | "all"): void { BEYOND_MAIN = m; }
+/** off — выключено; all — боевой режим (правило выше). */
+export let BEYOND_MAIN: "off" | "all" = "all";
+export function setBeyondMain(m: "off" | "all"): void { BEYOND_MAIN = m; }
 
 /**
  * ДОНОР-ПИК (аудит r10): правило «пик не образец» раньше жило только в ветке повтора, а прецедент брал донором любую неделю
@@ -154,7 +164,7 @@ export function planRepeat(ix: Index, t: CWeek, cycle: CycleDelta): RepeatPlan {
   const skipped: Array<{ week: string; why: Abnormal }> = [];
   let base: CWeek | null = null;
   for (let i = own.length - 1; i >= 0 && weeksBetween(own[i].weekStart, t.weekStart) <= LOOKBACK_WEEKS; i--) {
-    const why = beyondMainRace(own[i], t) ? "за главным стартом" : abnormalReason(ix, own[i]);
+    const why = beyondMainRace(ix, own[i], t) ? "за главным стартом" : abnormalReason(ix, own[i]);
     if (!why || (why !== "за главным стартом" && !SKIP_REASONS.has(why))) { base = own[i]; break; }
     skipped.push({ week: own[i].weekStart, why });
   }

@@ -16,7 +16,7 @@ const E = path.join(HERE, "plan-edits.ts"), O = path.join(HERE, "week-ops.ts");
 const MR = path.join(HERE, "main-race.ts");
 const WC = path.join(HERE, "week-core.ts"), WO = path.join(HERE, "week-ops.ts"), DS = path.join(HERE, "donor-style.ts"), PC = path.join(HERE, "precedent.ts"), BW = path.join(HERE, "build-week.ts"), CO = path.join(HERE, "corpus.ts"), RL = path.join(HERE, "recent-level.ts");
 const HF = path.join(HERE, "hidden-flow.ts"), PB = path.join(HERE, "probe-hidden-via-client.ts");
-const PR = path.join(HERE, "post-race.ts"), SC = path.join(HERE, "structure-copy.ts"), PSC = path.join(HERE, "probe-structure-copy.ts");
+const PR = path.join(HERE, "post-race.ts"), AT = path.join(HERE, "adapt-text.ts"), SC = path.join(HERE, "structure-copy.ts"), PSC = path.join(HERE, "probe-structure-copy.ts");
 const R = path.join(HERE, "repeat.ts"), P = path.join(HERE, "precedent.ts"), V = path.join(HERE, "validate.ts"), S = path.join(HERE, "..", "lib", "signal-closure.ts");
 type M = { id: string; file: string; find: string; replace: string; what: string };
 const MUT: M[] = [
@@ -65,8 +65,6 @@ const MUT: M[] = [
   { id: "q-on-top", file: R, find: "        sessions = sessions.filter((x) => x !== easy);\n        sessions.push", replace: "        sessions.push", what: "качество добавляется сверху, лёгкая не заменяется" },
   { id: "q-modal-day", file: R, find: "dayIdx: free ? modal : easy.dayIdx", replace: "dayIdx: easy.dayIdx", what: "качество не на привычный день" },
   { id: "bm-off", file: R, find: "  if (BEYOND_MAIN === \"off\") return false;", replace: "  return false;", what: "правило «за главным стартом» не работает" },
-  { id: "bm-window", file: R, find: "recoveryFactor(target.lastRaceKm, target.weeksSinceRace) != null) return false;", replace: "false) return false;", what: "режим outside трогает окно таблицы восстановления" },
-  { id: "bm-strict", file: R, find: "7 * sample.weeksToRace) >= target.weekStart) return false;", replace: "7 * sample.weeksToRace) > target.weekStart) return false;", what: "граница главного старта сдвинута на неделю" },
   { id: "sc-scale-all", file: SC, find: "  if (!single) return {", replace: "  if (false) return {", what: "рецепт интервалов масштабируется (должен не трогаться)" },
   { id: "sc-rep-factor", file: SC, find: "(n.type === \"repetition\" ? n.length.value : 1)", replace: "1", what: "повторы не учитываются в суммарных секундах" },
   { id: "sc-cmp-targets", file: SC, find: "      if (a !== b) diffs.push(", replace: "      if (false) diffs.push(", what: "сверка не смотрит на цели (%)" },
@@ -74,6 +72,17 @@ const MUT: M[] = [
   { id: "pb-no-cleanup", file: PSC, find: "  if (r.workoutId != null) {", replace: "  if (false) {", what: "проба не удаляет созданное" },
   { id: "pb-hidden", file: PSC, find: "if (got.isHidden !== true) throw", replace: "if (false) throw", what: "проба не требует скрытия" },
   { id: "pb-total", file: PSC, find: "if (Math.abs(Number(got.totalTimePlanned) - plannedHours(c.snap)) > 1e-6) throw", replace: "if (false) throw", what: "проба не сверяет totalTimePlanned" },
+  { id: "at-bydur-off", file: AT, find: "    if (m && rs.every((r) =>", replace: "    if (false && m && rs.every((r) =>", what: "привязка темпов к шагам по длительности выключена (прежний «счёт уровней»)" },
+  { id: "at-openfloor", file: AT, find: "return !!st && st.min > 0 && Number.isFinite(st.max); })) {", replace: "return !!st; })) {", what: "шаг с открытым полом даёт «темп»" },
+  { id: "at-tol", file: AT, find: "const TOL = 1.5;", replace: "const TOL = 500;", what: "обратное чтение ничего не ловит" },
+  { id: "at-readback-off", file: AT, find: "if (o.kind === \"quality\" && o.a?.threshold && /^% порога/.test(paceMode)) {", replace: "if (false) {", what: "обратное чтение не вызывается" },
+  { id: "at-fallback-swap", file: AT, find: "r.fast === fastest.fast && r.slow === fastest.slow ? { fast: work.absPaceMinS", replace: "r.fast !== fastest.fast ? { fast: work.absPaceMinS", what: "работа и разминка перепутаны в запасном режиме" },
+  { id: "bm-strict", file: R, find: "if (raceMonday >= target.weekStart) return false;", replace: "if (raceMonday > target.weekStart) return false;", what: "граница главного старта сдвинута на неделю" },
+  { id: "bm-top-any", file: R, find: "return cyc.length >= 3 && sample.total === tot[0] && tot[0] > (tot[1] ?? 0);", replace: "return true;", what: "любой образец до старта исключается (ломает таблицу восстановления)" },
+  { id: "bm-top-never", file: R, find: "return cyc.length >= 3 && sample.total === tot[0] && tot[0] > (tot[1] ?? 0);", replace: "return false;", what: "вершина блока снова берётся образцом" },
+  { id: "bm-tie", file: R, find: "tot[0] > (tot[1] ?? 0);", replace: "tot[0] >= (tot[1] ?? 0);", what: "ничья считается вершиной" },
+  { id: "bm-second-main", file: R, find: "w.weekStart > raceMonday && w.weekStart < target.weekStart)) return true;", replace: "false)) return true;", what: "образец из позапрошлого цикла не исключается" },
+  { id: "bm-cycle-len", file: R, find: "weeksBetween(w.weekStart, raceMonday) <= CYCLE_WEEKS", replace: "weeksBetween(w.weekStart, raceMonday) <= 2", what: "окно цикла слишком короткое" },
   { id: "peak-ratio-old", file: R, find: "export let PEAK_RATIO = 1.5;", replace: "export let PEAK_RATIO = 1.25;", what: "порог пика снова 1.25 — без зазора (Ярулина 12.10)" },
   { id: "peak-ge", file: R, find: "total > PEAK_RATIO * med(prior)", replace: "total >= PEAK_RATIO * med(prior) * 0.99", what: "граница включительно/ужесточена" },
   { id: "refuse-no-history", file: R, find: "  if (!rec.ok) return { kind: \"refuse\", why: `нет недавней истории: ${rec.why}` };", replace: "", what: "нет недавней истории — больше не отказ" },

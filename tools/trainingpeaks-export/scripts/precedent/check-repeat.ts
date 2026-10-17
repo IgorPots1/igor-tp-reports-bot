@@ -23,6 +23,8 @@ import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } fro
 import { placeWeek, runPublikuy, runSnesti, verifyPlaced, type Manifest } from "./week-core.ts";
 import { CONFIRM, GROUP12, MAX_REAL_ATHLETES, hiddenProven, isDry, mayPlace, realGate } from "./week-ops.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { adaptText, paceTextVsStructure } from "./adapt-text.ts";
+import type { AthleteAnchors } from "../lib/pace-resolver.ts";
 import { compareStructures, parseSnap, scaleToSeconds, totalSeconds, asString, type Snap } from "./structure-copy.ts";
 import { runCase, PROBE_ATHLETE, type Case } from "./probe-structure-copy.ts";
 import type { TpLike } from "./hidden-flow.ts";
@@ -134,6 +136,28 @@ races.push({ trainingpeaks_athlete_id: 35, event_date: addDays(wk(6), 6), distan
 
 // 36: качество в 5 из 8 недель (0.625), образец без него; 37: в 4 из 8 (0.5). Ярулина по числам: порог измерен на чистых неделях (r17), не под неё.
 for (const [aid, qk] of [[36, [0, 1, 3, 5, 6]], [37, [0, 2, 4, 6]]] as Array<[number, number[]]>) { for (let k = 0; k < 8; k++) rows.push(...weekRows(aid, wk(k), qk.includes(k) ? NORMAL : NOQ)); rows.push(...weekRows(aid, wk(8), NOQ)); }
+
+
+// 38: цикл с ВЕРШИНОЙ блока (неделя 3 — 330 мин, остальные 260), главный марафон в вс недели 6, потом недели восстановления
+const BIG: S[] = [{ d: 1, t: EASY, m: 70 }, { d: 3, t: Q, m: 60 }, { d: 4, t: EASY, m: 70 }, { d: 6, t: LONG, m: 130 }]; // 330
+for (let k = 0; k < 6; k++) rows.push(...weekRows(38, wk(k), k === 3 ? BIG : NORMAL));
+rows.push(...weekRows(38, wk(6), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Марафон", m: 240 }]));
+for (let k = 7; k < 15; k++) rows.push(...weekRows(38, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 30 }]));
+races.push({ trainingpeaks_athlete_id: 38, event_date: addDays(wk(6), 6), distance_km: 42.2, distance_raw: null });
+// 39: ДВА главных марафона (недели 6 и 18); целевая — неделя 24, образец из цикла до первого — позапрошлая жизнь
+for (let k = 0; k < 6; k++) rows.push(...weekRows(39, wk(k), NORMAL));
+rows.push(...weekRows(39, wk(6), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Марафон", m: 240 }]));
+for (let k = 7; k < 18; k++) rows.push(...weekRows(39, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 30 }]));
+rows.push(...weekRows(39, wk(18), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Марафон", m: 240 }]));
+for (let k = 19; k < 25; k++) rows.push(...weekRows(39, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 30 }]));
+races.push({ trainingpeaks_athlete_id: 39, event_date: addDays(wk(6), 6), distance_km: 42.2, distance_raw: null }, { trainingpeaks_athlete_id: 39, event_date: addDays(wk(18), 6), distance_km: 42.2, distance_raw: null });
+// 40: форма Семешиной — цикл 310 (нед. 3) → 430 (нед. 4, вершина) → подводка 170 → 345, старт (половинка не нужна: главный марафон) в вс недели 8, целевая — через 4 недели после
+const S310: S[] = [{ d: 1, t: EASY, m: 70 }, { d: 3, t: EASY, m: 60 }, { d: 4, t: EASY, m: 60 }, { d: 6, t: LONG, m: 120 }]; // 310
+const S430: S[] = [{ d: 1, t: EASY, m: 90 }, { d: 3, t: Q, m: 60 }, { d: 4, t: EASY, m: 80 }, { d: 6, t: LONG, m: 200 }]; // 430
+for (let k = 0; k < 8; k++) rows.push(...weekRows(40, wk(k), k === 4 ? S430 : k < 4 ? S310 : [{ d: 1, t: EASY, m: 100 }, { d: 3, t: EASY, m: 80 }, { d: 6, t: LONG, m: 150 }].slice(0, k === 5 ? 1 : 3)));
+rows.push(...weekRows(40, wk(8), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Марафон", m: 240 }]));
+for (let k = 9; k < 13; k++) rows.push(...weekRows(40, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 30 }]));
+races.push({ trainingpeaks_athlete_id: 40, event_date: addDays(wk(8), 6), distance_km: 42.2, distance_raw: null });
 
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
@@ -315,21 +339,63 @@ console.log("\n── восстановление после старта по 
   check("на 4-й неделе после марафона это правило уже не действует", !late.some((r) => r.name.includes("после марафона")));
 }
 
-console.log("\n── неделя из завершённого цикла не образец (решение Игоря 17.10) ──");
+console.log("\n── завершённый цикл: вершина блока не образец (решение Игоря 17.10) ──");
 {
-  // БЫЛО (до 17.10): образец искался до окна, ГЛАВНЫЙ старт между образцом и целью ничего не значил — вершина марафонского блока (Семешина, 430 мин) брался образцом
-  // для недели после марафона. Теперь образец до главного старта — «из другой жизни». РЕЖИМЫ: outside (боевой) не трогает окно таблицы восстановления,
-  // где форма — предстартовая неделя по решению 15.10; all — буквально, и тогда все недели после главного старта идут в прецедент.
-  const run = (m: "off" | "outside" | "all", k: number) => { setBeyondMain(m); const r = planRepeat(ix, T(35, k), null); setBeyondMain("outside"); return r; };
-  const bm = (m: "off" | "outside" | "all", sk: number, tk: number): boolean => { setBeyondMain(m); const r = beyondMainRace(T(35, sk), T(35, tk)); setBeyondMain("outside"); return r; };
-  check("боевое умолчание режима: outside", PROD.bm === "outside", String(PROD.bm));
-  check("внутри окна таблицы (+4 после марафона) режим outside оставляет образцом последнюю обычную неделю до подводки (решение 15.10 цело)",
-    run("outside", 10).kind === "repeat" && (run("outside", 10) as { base: CWeek }).base.weekStart === wk(3), JSON.stringify(run("outside", 10).kind));
-  check("буквальный режим all: те же +4 после главного марафона — образца нет, неделя идёт в прецедент (вершина блока не берётся)", run("all", 10).kind === "precedent" && /за главным стартом/.test((run("all", 10) as { why: string }).why));
-  check("вне окна таблицы (+9): неделя до главного старта в режиме outside — прошлый цикл, не образец; в режиме off — образец (проверка различает)", bm("outside", 3, 15) === true && bm("off", 3, 15) === false);
-  check("внутри окна (+4): outside не трогает, all — трогает", bm("outside", 3, 10) === false && bm("all", 3, 10) === true);
-  check("старт в первую неделю после образца или в саму целевую неделю — ещё не «между»: граница строгая (старт в понедельник целевой не лежит между)", bm("all", 5, 6) === false && bm("all", 4, 6) === false && bm("all", 4, 7) === true);
-  check("неделя ПОСЛЕ главного старта образцу «за стартом» не мешает; сама неделя старта этим классом не считается", bm("all", 8, 15) === false && bm("all", 6, 15) === false);
+  // БЫЛО (15.10–17.10): образец искался без оглядки на главный старт — вершина марафонского блока (Семешина, 430 мин при следующей 345) брался образцом
+  // для недели +4 после марафона и давал 345 мин. Потом правило было сформулировано буквально («образец до главного старта не годится») и ломало 13 проверок
+  // таблицы восстановления; обходить их режимом отвергнуто. Принцип Игоря: образец после старта — последняя ОБЫЧНАЯ неделя того же цикла до старта, ВЕРШИНА БЛОКА
+  // не берётся никогда. Все 13 прежних проверок таблицы (образец — обычная предстартовая неделя) остались прежними и проходят.
+  setBeyondMain("all");
+  const bm = (m: "off" | "all", aid: number, sk: number, tk: number): boolean => { setBeyondMain(m); const r = beyondMainRace(ix, T(aid, sk), T(aid, tk)); setBeyondMain("all"); return r; };
+  check("боевое умолчание режима: all", PROD.bm === "all", String(PROD.bm));
+  check("ровный цикл (атлет 35): образец после главного марафона — обычная предстартовая неделя до подводки (решение 15.10 цело), не прецедент",
+    planRepeat(ix, T(35, 10), null).kind === "repeat" && (planRepeat(ix, T(35, 10), null) as { base: CWeek }).base.weekStart === wk(3));
+  const top = planRepeat(ix, T(38, 10), null);
+  check("вершина блока (атлет 38: одна неделя цикла 330 мин при остальных 260) образцом НЕ берётся: берётся последняя обычная до неё, причина названа",
+    top.kind === "repeat" && top.base.weekStart === wk(2) && top.skipped.some((x) => x.week === wk(3) && x.why === "за главным стартом") && total_(top.sessions) > 0, JSON.stringify(top.kind === "repeat" ? { b: top.base.weekStart, sk: top.skipped } : top));
+  check("без правила (off) та же вершина блока была бы образцом (проверка различает)", (() => { setBeyondMain("off"); const r = planRepeat(ix, T(38, 10), null); setBeyondMain("all"); return r.kind === "repeat" && r.base.weekStart === wk(3); })());
+  check("вершина — только ЕДИНСТВЕННЫЙ максимум: в ровном цикле (ничья) ни одна неделя не вершина", [0, 1, 2, 3].every((k) => bm("all", 35, k, 10) === false));
+  check("вершина определена по циклу, а не по уровню: неделя 330 — вершина (атлет 38, неделя 3), соседние обычные — нет", bm("all", 38, 3, 10) === true && bm("all", 38, 2, 10) === false && bm("all", 38, 1, 10) === false);
+  check("граница старта строгая: старт в понедельник целевой не лежит «между» (вершина при целевой = неделя старта не исключается), в следующую неделю — исключается", bm("all", 38, 3, 6) === false && bm("all", 38, 3, 7) === true);
+  check("образец из ПОЗАПРОШЛОГО цикла (между ним и целью два главных старта) не годится, даже если не вершина", bm("all", 39, 3, 24) === true && bm("off", 39, 3, 24) === false);
+  check("неделя ПОСЛЕ главного старта правилу не подлежит; сама неделя старта этим классом не считается", bm("all", 35, 8, 15) === false && bm("all", 35, 6, 15) === false);
+  // Семешина: сквозной случай на фикстуре её формы (цикл 310 / 430 / подводка 170 / 345)
+  const sem = planRepeat(ix, T(40, 12), null);
+  check("случай Семешиной: цикл 310 → 430 (вершина) → подводка → старт; через 4 нед после марафона образец — 310, а не 430, и неделя ≈ 310 × таблица, не 345",
+    sem.kind === "repeat" && sem.base.weekStart === wk(3) && total_(sem.sessions) < 345, JSON.stringify(sem.kind === "repeat" ? { b: sem.base.weekStart, t: total_(sem.sessions) } : sem));
+}
+
+console.log("\n── темпы качественной: привязка к шагам по длительности, обратное чтение (17.10, Ярулина «8 x 4» шла «по ощущениям» без цифр) ──");
+{
+  // БЫЛО: темпы качественной переносились, только если число РАЗНЫХ темпов в тексте равно числу уровней структуры. У тренера разминка и заминка делят один темп
+  // (2 разных), в структуре есть ещё «отдых» с открытым полом (3 уровня) → «темпы работы не перенесены», ученица получала «по ощущениям» без цифр.
+  // 12 из 34 качественных сессий группы 12 так уходили. Теперь привязка по длительности (как в ночном пересчёте); проверка держит и цифры, и их происхождение.
+  const ST = (lo: number, hi: number, sec: number, name: string, cls: string) => ({ name, length: { unit: "second", value: sec }, targets: [{ minValue: lo, maxValue: hi }], intensityClass: cls });
+  const STRUCT = { polyline: [], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace", structure: [
+    { type: "step", length: { unit: "repetition", value: 1 }, steps: [ST(77, 81, 600, "Warm up", "warmUp")] },
+    { type: "repetition", length: { unit: "repetition", value: 8 }, steps: [ST(106, 110, 240, "Hard", "active"), ST(0, 76, 90, "Easy", "rest")] },
+    { type: "step", length: { unit: "repetition", value: 1 }, steps: [ST(77, 81, 300, "Cool down", "coolDown")] }] };
+  const TEXT = "Разминка: — 10 минут в темпе 06:24-06:41 /км Основная часть — 8 повторений: — 4 минуты в темпе 04:42-04:52 /км — 1,5 минуты — легко бегом Заминка: — 5 минут в темпе 06:24-06:41 /км";
+  const A = { athleteId: 1, tier: "T1", easy: { fastSec: 420, slowSec: 450, source: "easy_description", confidence: "high" }, threshold: { paceSec: 310, source: "applied_threshold_coach", confidence: "high" } } as unknown as AthleteAnchors;
+  const run = (a: AthleteAnchors | null, struct: unknown = STRUCT) => adaptText({ title: "8 x 4 мин", desc: TEXT, struct, kind: "quality", srcMinutes: 59, minutes: 59, a });
+  const r = run(A);
+  check("2 разных темпа в тексте при 3 уровнях структуры: цифры подставлены у ВСЕХ трёх диапазонов (разминка/заминка — 06:23-06:43, работа — 04:42-04:52), не «по ощущениям»",
+    (r.description.match(/06:23-06:43/g) ?? []).length === 2 && /04:42-04:52/.test(r.description) && !/по ощущениям/.test(r.description) && r.written.length === 3, r.description);
+  check("режим назван: темпы взяты по шагам структуры × порог атлета; пометок нет", /по шагам структуры/.test(r.paceMode) && r.flags.length === 0, `${r.paceMode} | ${r.flags.join("; ")}`);
+  check("обратное чтение: темпы итогового текста, пересчитанные в % порога, совпадают с % шагов структуры (adaptText сам его выполнил и вернул [])", paceTextVsStructure(r.description, STRUCT, 310).length === 0 && Array.isArray(r.readBack) && r.readBack.length === 0, JSON.stringify(r.readBack));
+  const openText = TEXT.replace("1,5 минуты — легко бегом", "1,5 минуты в темпе 07:10-07:40 /км");
+  const ofl = adaptText({ title: "8 x 4 мин", desc: openText, struct: STRUCT, kind: "quality", srcMinutes: 59, minutes: 59, a: A });
+  check("у отдыха с открытым полом (0–76 %) в тексте есть темп: деления на ноль нет — ни «Infinity», ни «NaN» в тексте тренировки", !/Infinity|NaN/.test(ofl.description) && ofl.written.every((w) => Number.isFinite(w.fast) && Number.isFinite(w.slow)), ofl.description);
+  check("обратное чтение ловит подмену: один темп в тексте сдвинут на 10 с — расхождение названо словами", paceTextVsStructure(r.description.replace("04:42-04:52", "04:52-05:02"), STRUCT, 310).some((x) => /работа/.test(x)) && paceTextVsStructure(r.description, STRUCT, 330).length > 0);
+  const noThr = run({ ...A, threshold: null } as AthleteAnchors);
+  check("порога нет: цифры НЕ выдумываются — «по ощущениям» и пометка тренеру", !/\d{1,2}:\d{2}/.test(noThr.description) && noThr.flags.some((f) => /нет порога/.test(f)));
+  const noStruct = run(A, null);
+  const wm = /(\d\d):(\d\d)-(\d\d):(\d\d)/.exec(noStruct.description);
+  check("структуры нет, порог есть: темпы строит резолвер — работа узкой полосой под порогом (не быстрее порога 05:10, ширина ≤ 12 с), цифры есть, пометка «проверить глазами»",
+    !!wm && /резолвер/.test(noStruct.paceMode) && noStruct.written.length === 3 && noStruct.flags.some((f) => /проверить глазами/.test(f)) && noStruct.written[1].fast >= 310 && noStruct.written[1].slow - noStruct.written[1].fast <= 12 && noStruct.written[0].fast === 420 && noStruct.written[2].slow === 450, `${noStruct.paceMode} | ${JSON.stringify(noStruct.written)}`);
+  const withQ = run({ ...A, quality: { fastSec: 300, slowSec: 312, confidence: "high" } } as AthleteAnchors, null);
+  check("есть якорь качества из описаний — в резолвере он приоритетнее полосы от порога: работа 05:00-05:12", /05:00-05:12/.test(withQ.description) && /якорь качества/.test(withQ.paceMode), withQ.description);
+  check("структура тренера для интервалов первична: при ЕЁ наличии якорь качества не сплющивает 106–110 % в полосу порога (работа остаётся 04:42-04:52)", /04:42-04:52/.test(run({ ...A, quality: { fastSec: 300, slowSec: 312, confidence: "high" } } as AthleteAnchors).description));
 }
 
 console.log("\n── копия структуры из образца (пересчёт длительностей, рецепт не трогаем; проба на подставном клиенте) ──");

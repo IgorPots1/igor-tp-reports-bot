@@ -14,11 +14,12 @@
  */
 import type { AthleteAnchors } from "../lib/pace-resolver.ts";
 import { resolvePace } from "../lib/pace-resolver.ts";
-import { flatSteps, ranges } from "../lib/tp-recompute.ts";
+import { flatSteps, matchByDuration, parseSegments, ranges, type FlatStep } from "../lib/tp-recompute.ts";
 import type { Kind } from "./corpus.ts";
 
 export type PaceOut = { fast: number; slow: number };
-export type TextResult = { title: string; description: string; written: PaceOut[]; paceMode: string; flags: string[] };
+/** readBack: null — обратное чтение не применимо (темпы не из структуры); [] — текст и структура сошлись; иначе — расхождения словами. */
+export type TextResult = { title: string; description: string; written: PaceOut[]; paceMode: string; flags: string[]; readBack?: string[] | null };
 
 const fmt = (sec: number, lead: boolean): string => {
   let m = Math.floor(sec / 60), s = Math.round(sec % 60); if (s === 60) { m++; s = 0; }
@@ -39,6 +40,37 @@ function pctLevels(struct: unknown): Array<{ lo: number; hi: number }> {
     if (!seen.has(k)) { seen.add(k); out.push({ lo: s.min, hi }); }
   }
   return out.sort((a, b) => b.hi - a.hi);
+}
+
+/**
+ * ПРИВЯЗКА ТЕМПОВ ТЕКСТА К ШАГАМ СТРУКТУРЫ ПО ДЛИТЕЛЬНОСТИ — та же matchByDuration, что у ночного пересчёта (lib/tp-recompute.ts).
+ * БЫЛО (17.10, Ярулина «8 x 4»): темпы переносились, только если число РАЗНЫХ темпов в тексте равно числу уровней структуры. У тренера разминка и заминка
+ * делят один темп (2 разных в тексте), а в структуре ещё «отдых» с открытым полом (3 уровня) → «не перенесены», в ученицу уходило «по ощущениям» без цифр.
+ * Теперь каждый диапазон текста берёт % своего шага (разминка → её %, работа → её %), темп = порог × 100 / %. Шаг без нижней границы (open floor)
+ * числа не даёт — такая привязка отвергается целиком (угадывать не будем).
+ */
+export function mapRangesToSteps(desc: string, struct: unknown): Map<number, FlatStep> | null {
+  const fx = flatSteps(struct); if (!fx || fx.metric !== "percentOfThresholdPace") return null;
+  const asg = matchByDuration(fx.steps, parseSegments(desc)); if (!asg) return null;
+  const byIdx = new Map<number, FlatStep>();
+  fx.steps.forEach((st, i) => { const r = asg[i].ref; if (typeof r === "object") byIdx.set(r.idx, st); });
+  return byIdx;
+}
+
+/**
+ * ОБРАТНОЕ ЧТЕНИЕ: темпы в ИТОГОВОМ тексте → % порога атлета → сравнение с % шага структуры (допуск 1.5 п.п. на округление секунд).
+ * Возвращает расхождения словами; пусто — текст и структура сошлись. Тот же порог, что был при записи.
+ */
+export function paceTextVsStructure(desc: string, struct: unknown, thrSec: number): string[] {
+  const m = mapRangesToSteps(desc, struct); if (!m) return ["структура не привязывается к тексту по длительности"];
+  const diffs: string[] = []; const TOL = 1.5;
+  for (const r of ranges(desc)) {
+    const st = m.get(r.idx); if (!st) { diffs.push(`темп ${fmt(r.fast, true)}-${fmt(r.slow, true)} не привязан ни к одному шагу`); continue; }
+    if (!(st.min > 0)) continue; // открытый пол — потолок не сверяем
+    const hi = Math.round(thrSec * 100 / r.fast * 10) / 10, lo = Math.round(thrSec * 100 / r.slow * 10) / 10;
+    if (Math.abs(hi - st.max) > TOL || Math.abs(lo - st.min) > TOL) diffs.push(`${st.role}: в тексте ${fmt(r.fast, true)}-${fmt(r.slow, true)} = ${lo}–${hi}% порога, в структуре ${st.min}–${st.max}%`);
+  }
+  return diffs;
 }
 
 export function adaptText(o: { title: string; desc: string; struct: unknown; kind: Kind; srcMinutes: number; minutes: number; a: AthleteAnchors | null }): TextResult {
@@ -66,7 +98,17 @@ export function adaptText(o: { title: string; desc: string; struct: unknown; kin
   // качественная с разминкой/работой/отдыхом). Его переносим по процентам структуры: один
   // лёгкий якорь на всё стёр бы блок в целевом темпе (так было в первом прогоне — дефект).
   const lv = pctLevels(o.struct);
-  if (o.a?.threshold && (o.kind === "quality" || distinct.length > 1) && lv.length > 0 && lv.length === distinct.length) {
+  // 1) привязка по длительности шагов (как в ночном пересчёте)
+  if (o.a?.threshold && (o.kind === "quality" || distinct.length > 1) && lv.length > 0) {
+    const m = mapRangesToSteps(text, o.struct); const thr = o.a.threshold.paceSec;
+    if (m && rs.every((r) => { const st = m.get(r.idx); return !!st && st.min > 0 && Number.isFinite(st.max); })) {
+      plan = rs.map((r) => { const st = m.get(r.idx)!; return { fast: Math.round(thr * 100 / st.max), slow: Math.round(thr * 100 / st.min) }; });
+      paceMode = "% порога по шагам структуры (привязка по длительности) × порог атлета";
+    }
+  }
+  // 2) прежний путь: число разных темпов равно числу уровней
+  // уровень с нулевым низом (открытый пол «отдых») темпа не даёт — делить на 0 нельзя; такой путь не берём вовсе (раньше выдавал «Infinity:NaN»)
+  if (!plan && o.a?.threshold && (o.kind === "quality" || distinct.length > 1) && lv.length > 0 && lv.length === distinct.length && lv.every((l) => l.lo > 0)) {
     const thr = o.a.threshold.paceSec;
     const map = new Map(distinct.map((r, i) => [`${r.fast}|${r.slow}`, { fast: Math.round(thr * 100 / lv[i].hi), slow: Math.round(thr * 100 / lv[i].lo) }]));
     plan = rs.map((r) => map.get(`${r.fast}|${r.slow}`)!); paceMode = "% порога из структуры × порог атлета";
@@ -76,6 +118,18 @@ export function adaptText(o: { title: string; desc: string; struct: unknown; kin
     if (r.ok) {
       plan = rs.map(() => ({ fast: r.absPaceMinS, slow: r.absPaceMaxS })); paceMode = `якорь лёгкой (${r.anchorSource})`;
       if (new Set(rs.map((x) => `${x.fast}|${x.slow}`)).size > 1) flags.push("в лёгкой у тренера было несколько темпов — все сведены к одному якорю");
+    }
+  }
+  // 3) КАЧЕСТВО БЕЗ ОПОРЫ В СТРУКТУРЕ, но порог у атлета есть — РЕЗОЛВЕР, как в сборщике: якорь качества из описаний (a.quality) в приоритете, иначе узкая
+  //    полоса от порога «под порогом» (верх не быстрее порога, ширина ≤ 12 с/км). Её получает самый быстрый темп текста (работа); остальное (разминка, заминка) —
+  //    якорь лёгкой; нет лёгкого — темпы не пишем, как раньше. Структура тренера здесь первична, потому что хранит РИСУНОК (106–110 % — быстрее порога):
+  //    якорь качества сплющил бы интервалы в полосу порога.
+  if (!plan && o.kind === "quality" && o.a?.threshold) {
+    const work = resolvePace(o.a, "threshold", "maintenance"), easy = resolvePace(o.a, "easy", "maintenance"); const fastest = distinct[0];
+    if (work.ok && easy.ok) {
+      plan = rs.map((r) => (r.fast === fastest.fast && r.slow === fastest.slow ? { fast: work.absPaceMinS, slow: work.absPaceMaxS } : { fast: easy.absPaceMinS, slow: easy.absPaceMaxS }));
+      paceMode = `резолвер (структуры нет): работа — ${work.anchorSource === "quality_description" ? "якорь качества" : "полоса под порогом"}, остальное — якорь лёгкой`;
+      flags.push("темпы построены резолвером, а не из структуры тренера — проверить глазами");
     }
   }
   if (!plan && o.kind === "quality") {
@@ -96,5 +150,10 @@ export function adaptText(o: { title: string; desc: string; struct: unknown; kin
     const p = plan![k]; return `${fmt(p.fast, lead)}${s1}${d}${s2}${fmt(p.slow, lead)}`;
   });
   if (i !== rs.length) flags.push(`заменено ${i} из ${rs.length} темпов (односторонние «X и медленнее» не переписаны)`);
-  return { title, description: text, written: plan, paceMode, flags };
+  let readBack: string[] | null = null;
+  // ОБРАТНОЕ ЧТЕНИЕ итогового текста против структуры (только когда темпы шли из структуры)
+  if (o.kind === "quality" && o.a?.threshold && /^% порога/.test(paceMode)) {
+    const bad = paceTextVsStructure(text, o.struct, o.a.threshold.paceSec); readBack = bad; if (bad.length) flags.push(`текст и структура расходятся после записи темпов: ${bad.join("; ")}`);
+  }
+  return { title, description: text, written: plan, paceMode, flags, readBack };
 }

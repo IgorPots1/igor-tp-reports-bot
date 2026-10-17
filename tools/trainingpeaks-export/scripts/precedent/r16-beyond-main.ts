@@ -25,11 +25,11 @@ setGuardParams({ gap: 4, ratio: 1.5 }); setDonorPeakFilter(true);
 const out: string[] = []; const p = (s = ""): void => { out.push(s); };
 p(`# R16 · неделя из завершённого цикла не образец`); p();
 p(`| режим | балл: обучение | балл: проверка | выдано (пров.) | отказов/нет (пров.) | недодано >15% (пров.) |`); p(`|---|---:|---:|---:|---:|---:|`);
-for (const m of ["off", "outside", "all"] as const) { setBeyondMain(m); setRepeatParams(base); const a = run(train), b = run(valid); p(`| ${m} | ${a.a.score} | ${b.a.score} | ${b.a.n} | ${b.ref} | ${b.a.under}% |`); }
+for (const m of ["off", "all"] as const) { setBeyondMain(m); setRepeatParams(base); const a = run(train), b = run(valid); p(`| ${m} | ${a.a.score} | ${b.a.score} | ${b.a.n} | ${b.ref} | ${b.a.under}% |`); }
 p();
 const wk = "2026-10-19"; const ixw = indexCorpus(buildCorpus(L.rows, L.races, L.sig, L.students, wk));
-p(`## Группа 12 на ${wk}`); p(`| атлет | off | outside | all |`); p(`|---|---|---|---|`);
+p(`## Группа 12 на ${wk}`); p(`| атлет | off | all |`); p(`|---|---|---|`);
 for (const aid of GROUP12) { const t = stateFor(ixw, aid, wk, L.races.filter((r) => r.trainingpeaks_athlete_id === aid), false);
-  const cell = (m: "off" | "outside" | "all"): string => { setBeyondMain(m); setRepeatParams(base); const r = planRepeat(ixw, t, null); return r.kind === "repeat" ? `${r.base.weekStart} (${r.base.total}) → ${r.sessions.reduce((a, s) => a + s.minutes, 0)} мин` : r.kind; };
-  p(`| ${L.names.get(aid) ?? aid} | ${cell("off")} | ${cell("outside")} | ${cell("all")} |`); }
+  const cell = (m: "off" | "all"): string => { setBeyondMain(m); setRepeatParams(base); const r = planRepeat(ixw, t, null); return r.kind === "repeat" ? `${r.base.weekStart} (${r.base.total}) → ${r.sessions.reduce((a, s) => a + s.minutes, 0)} мин` : r.kind; };
+  p(`| ${L.names.get(aid) ?? aid} | ${cell("off")} | ${cell("all")} |`); }
 writeFileSync(path.join(OUT_DIR, "r16-beyond-main.md"), out.join("\n") + "\n"); console.log(out.join("\n"));
