@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Заливка разборов Strava: следит за strava-breakdown/bd-outbox/ (WatchPaths). Положил PDF —
+<!-- Заливка разборов Strava: следит за tools/strava-breakdown/bd-outbox/ (WatchPaths). Положил PDF —
      scripts/bd-upload.py заливает его в ig-reels/breakdowns/, пишет строку в bd_uploads и
      переносит файл в bd-outbox/sent/. С ошибкой файл остаётся, в bd_uploads строка status='error'.
      Перенос в sent/ снова дёргает WatchPaths — второй прогон видит пустую папку и выходит.
      НЕ ставится автоматически. Ставит Игорь:
-       mkdir -p ~/igor-tp-reports-bot/strava-breakdown/bd-outbox/sent
+       mkdir -p ~/igor-tp-reports-bot/tools/strava-breakdown/bd-outbox/sent
        cp .../com.igor.trainingpeaks.bd-upload.plist ~/Library/LaunchAgents/
        launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.bd-upload.plist -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -21,7 +21,7 @@
 
   <key>WatchPaths</key>
   <array>
-    <string>/Users/igor/igor-tp-reports-bot/strava-breakdown/bd-outbox</string>
+    <string>/Users/igor/igor-tp-reports-bot/tools/strava-breakdown/bd-outbox</string>
   </array>
 
   <!-- Не чаще раза в 10 с: пачка PDF, скопированная разом, уйдёт одним прогоном. -->

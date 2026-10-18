@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Заливка готовых разборов Strava из strava-breakdown/bd-outbox/ в Supabase Storage.
+"""Заливка готовых разборов Strava из tools/strava-breakdown/bd-outbox/ в Supabase Storage.
 
 Запускается launchd-агентом com.igor.trainingpeaks.bd-upload (WatchPaths на bd-outbox/).
 На каждый *.pdf в папке:
@@ -19,7 +19,7 @@ import datetime, json, os, re, sys, time, urllib.error, urllib.parse, urllib.req
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-OUTBOX = Path(os.environ.get("BD_OUTBOX") or REPO / "strava-breakdown" / "bd-outbox")
+OUTBOX = Path(os.environ.get("BD_OUTBOX") or REPO / "tools" / "strava-breakdown" / "bd-outbox")
 ENV_FILE = Path(os.environ.get("BD_ENV_FILE") or Path.home() / "igor-tp-reports-bot" / ".env.local")
 BUCKET = "ig-reels"
 PREFIX = "breakdowns"

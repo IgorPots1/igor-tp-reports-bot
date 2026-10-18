@@ -58,4 +58,4 @@ supabase/.temp/
 .claude/settings.local.json
 
 # Очередь заливки разборов Strava (scripts/bd-upload.py): личные PDF лидов, в гит не идут.
-strava-breakdown/bd-outbox/
+tools/strava-breakdown/bd-outbox/
