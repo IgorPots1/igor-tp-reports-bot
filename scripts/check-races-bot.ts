@@ -893,7 +893,10 @@ async function main() {
     assert.ok(!/Зима/.test(fk), "зима пустая — скрыта");
     await bot.handleUpdate(cbm(G, "sn:ve27:0"));
     const spring = String(screens(G.id).at(-1)!.params.text);
-    assert.match(spring, /1\. <b>9 мая, вс<\/b> · Тверской забег\n    Тверь[\s\S]*2\. <b>22 мая, сб<\/b> · Тверской полумарафон\n    Тверь[\s\S]*<i>Область и рядом:<\/i>\n3\. <b>20 мая, чт<\/b> · Клинский забег\n    Клин, \d+ км/, "сначала город, потом область и рядом с км");
+    // Было: строки стартов через один перенос. С 18.10.2026 текстовая версия — две строки на старт и ПУСТАЯ
+    // строка между стартами; заголовок «Область и рядом» прилипает к своему первому старту.
+    assert.match(spring, /1\. <b>9 мая, вс<\/b> · Тверской забег\n    Тверь[^\n]*\n\n2\. <b>22 мая, сб<\/b> · Тверской полумарафон\n    Тверь[^\n]*\n\n<i>Область и рядом:<\/i>\n3\. <b>20 мая, чт<\/b> · Клинский забег\n    Клин, \d+ км/, "сначала город, потом область и рядом с км; пустая строка между стартами");
+    assert.doesNotMatch(spring, /\n\n\n/, "не больше одной пустой строки подряд");
     // «Все старты подряд»: 8 стартов → 2 страницы; ▶, открыть на 2-й, «← К списку» — снова 2-я
     await bot.handleUpdate(cbm(G, "sn:all:0"));
     const p1 = screens(G.id).at(-1)!;
@@ -1209,6 +1212,121 @@ async function main() {
     assert.match(m.text, /ЭКСПО 05\.12 12:00–20:00/, "номера целиком");
     assert.doesNotMatch(m.text, /Повышение цены/, "цены сокращены");
     DETAILS.clear();
+  }
+
+  // ── rich-сообщения (18.10.2026) ────────────────────────────────────────────────
+  // rich_for в race_bot_config: нет ключа / off — всем обычный HTML (все проверки выше идут так);
+  // all — всем rich; new — только пришедшим не раньше rich_since. «Текстовая версия» — rich_off,
+  // событие rich_off и тот же экран обычным HTML на месте; в настройках «Красивое оформление».
+  {
+    const savedNow = NOW;
+    NOW = new Date("2026-10-12T10:00:00Z");
+    const R = { id: 7701, first_name: "Рич", username: "rich7701" };
+    const open = async (who: typeof R) => {
+      await bot.handleUpdate(msg(who, "/start"));
+      await bot.handleUpdate(cb(who, "pick"));
+      await bot.handleUpdate(cb(who, "city_other"));
+      await bot.handleUpdate(msg(who, "Москва"));
+      await bot.handleUpdate(cbm(who, "show"));
+      await bot.handleUpdate(cbm(who, "sn:near:0"));
+      return calls.filter((c) => c.params.chat_id === who.id && /^(sendMessage|editMessageText|sendRichMessage)$/.test(c.method)).at(-1)!;
+    };
+    // выключено (ключа нет): обычный HTML
+    reset();
+    let lst = await open(R);
+    assert.ok(typeof lst.params.text === "string" && !lst.params.rich_message, "без rich_for — обычный HTML");
+    assert.ok(!calls.some((c) => c.method === "sendRichMessage" || c.params.rich_message), "ни одного rich-сообщения");
+
+    store.config.set("rich_for", "all");
+    reset();
+    await bot.handleUpdate(cbm(R, "sn:near:0"));
+    lst = calls.filter((c) => c.params.chat_id === R.id).at(-1)!;
+    assert.equal(lst.method, "editMessageText", "живое меню: rich правкой того же сообщения");
+    assert.equal(lst.params.text, undefined);
+    const rm = lst.params.rich_message as { blocks: { type: string; text?: unknown; cells?: unknown[][]; is_compact?: boolean }[] };
+    assert.deepEqual(rm.blocks[0], { type: "heading", size: 2, text: "Забеги в Москве" });
+    const tbl = rm.blocks.find((b) => b.type === "table")!;
+    assert.equal(tbl.is_compact, true);
+    assert.deepEqual((tbl.cells![0] as { text: { text: string } }[]).map((c) => c.text.text), ["№", "дата", "старт", "км"], "колонка «город» — только в «Область и рядом»");
+    assert.ok((tbl.cells as { align?: string; valign?: string }[][]).flat().every((c) => c.align && c.valign), "align и valign у каждой ячейки (обязательны)");
+    assert.match(String((rm.blocks.at(-1) as { text: string }).text), /^Ближайшие: с 12 октября по 30 ноября · 1–5 из \d+$/, "подвал с периодом");
+    const kb = (lst.params.reply_markup as { inline_keyboard: { text: string; callback_data?: string; style?: string; web_app?: unknown }[][] }).inline_keyboard;
+    assert.equal(kb[0][0].text, "📅 Открыть календарь");
+    assert.equal(kb[0][0].style, "primary");
+    assert.ok(kb[0][0].web_app);
+    assert.deepEqual(kb.slice(1).map((r) => r.map((b) => b.text)), [["1", "2", "3", "4", "5"], ["▶"], ["◀ Другой сезон"], ["Фильтры", "Мои старты"], ["Текстовая версия"]], "номера, листание, другой сезон, фильтры и мои, последней — текстовая");
+    assert.equal(kb.at(-1)![0].callback_data, "rt|sn:near:0");
+
+    // карточка: Details по разделам, только реальные; без кнопки «Всё о старте»
+    const row = (distance: number | null, field: string, value: string): FullRow => ({ distance, field, value, source_url: "https://org.ru/r", checked_at: "2026-10-15" });
+    DETAILS.set(TRAIL.id, [row(21, "start_time", "10:00"), row(10, "start_time", "10:30"), row(null, "packet_pickup", "сб 12:00–20:00"), row(null, "registration_status", "открыта"), row(null, "baggage", "нет данных")]);
+    reset();
+    await bot.handleUpdate(cbm(R, "so:near:0:0"));
+    const card = calls.filter((c) => c.params.chat_id === R.id).at(-1)!;
+    assert.equal(card.method, "editMessageText");
+    const cb2 = (card.params.rich_message as { blocks: { type: string; summary?: { text: string } }[] }).blocks;
+    assert.deepEqual(cb2.filter((b) => b.type === "details").map((b) => b.summary!.text), ["Старт 18 октября", "Номера", "Регистрация"], "только разделы с данными");
+    assert.ok(cb2.some((b) => b.type === "paragraph" && JSON.stringify(b).includes("Важное:")));
+    assert.ok(cb2.at(-1)!.type === "footer" && JSON.stringify(cb2.at(-1)).includes("https://org.ru/r"), "источник в подвале");
+    assert.ok(!JSON.stringify(cb2).includes("нет данных"));
+    const ckb = (card.params.reply_markup as { inline_keyboard: { text: string; callback_data?: string; url?: string }[][] }).inline_keyboard.flat();
+    assert.ok(!ckb.some((b) => b.text === "Всё о старте"), "в rich выжимка уже в карточке");
+    assert.ok(ckb.some((b) => b.text === "⭐ Следить") && ckb.some((b) => b.text === "◀ К списку"));
+    assert.equal(ckb.at(-1)!.callback_data, `rt|tb:${raceCode(TRAIL.id)}:near:0`);
+    assert.ok(JSON.stringify(card.params.rich_message).length < 32768, "лимит знаков");
+    assert.ok(!/(\[|,)""(,|\])/.test(JSON.stringify(card.params.rich_message)) && !/(\[|,)""(,|\])/.test(JSON.stringify(lst.params.rich_message)), "пустых частей в RichText нет");
+
+    // «Текстовая версия»: rich_off, событие и тот же экран обычным HTML на месте
+    reset();
+    const evBefore = store.events.length;
+    await bot.handleUpdate(cbm(R, `rt|tb:${raceCode(TRAIL.id)}:near:0`));
+    const back = calls.filter((c) => c.params.chat_id === R.id).at(-1)!;
+    assert.equal(back.method, "editMessageText");
+    assert.match(String(back.params.text), /Трейл «Краски осени»/, "тот же экран текстом");
+    assert.equal(back.params.rich_message, undefined);
+    assert.equal(store.users.get(R.id)?.rich_off, true);
+    assert.deepEqual(store.events.slice(evBefore).filter((e) => e.event === "rich_off").map((e) => e.meta), [{ via: "button" }]);
+    reset();
+    await bot.handleUpdate(cbm(R, "sn:near:0"));
+    assert.ok(!calls.some((c) => c.params.rich_message), "после «Текстовой версии» rich больше нет");
+    // настройки: снять флаг
+    reset();
+    await bot.handleUpdate(msg(R, "/settings"));
+    const st = calls.filter((c) => c.params.chat_id === R.id).at(-1)!;
+    const rb = buttons(st).find((b) => /Красивое оформление/.test(b.text))!;
+    assert.equal(rb.text, "Красивое оформление: включить");
+    await bot.handleUpdate(cbm(R, rb.callback_data!));
+    assert.equal(store.users.get(R.id)?.rich_off, false);
+    reset();
+    await bot.handleUpdate(cbm(R, "sn:near:0"));
+    assert.ok(calls.some((c) => c.params.rich_message), "снова rich");
+
+    // new: только пришедшие не раньше rich_since
+    store.config.set("rich_for", "new");
+    store.config.set("rich_since", "2026-10-12T11:00:00.000Z");
+    reset();
+    await bot.handleUpdate(cbm(R, "sn:near:0"));
+    assert.ok(!calls.some((c) => c.params.rich_message), "пришёл до rich_since — обычный HTML");
+    NOW = new Date("2026-10-12T12:00:00Z");
+    const N2 = { id: 7702, first_name: "Новый", username: "new7702" };
+    reset();
+    const l2 = await open(N2);
+    assert.ok(l2.params.rich_message, "пришёл после rich_since — rich");
+    // старый клиент из мини-приложения: WebApp.version ниже 10.1 — rich_off сам; 10.3 — ничего
+    await bot.miniapp({ id: N2.id, first_name: "Новый" }, "list", undefined, "list", undefined, "10.3");
+    assert.equal(store.users.get(N2.id)?.rich_off, false);
+    await bot.miniapp({ id: N2.id, first_name: "Новый" }, "list", undefined, "list", undefined, "9.6");
+    assert.equal(store.users.get(N2.id)?.rich_off, true);
+    assert.ok(store.events.some((e) => e.tg_id === N2.id && e.event === "rich_off" && (e.meta as { via: string }).via === "webapp_version"));
+    // /stats: строка про «Текстовую версию»
+    reset();
+    await bot.handleUpdate(msg(COACH, "/stats"));
+    assert.match(texts(900).at(-1)!, /«Текстовая версия» вместо красивого оформления: 2 чел\. \(кнопкой 1, в настройках 0, старый Telegram 1\)/);
+
+    store.config.delete("rich_for");
+    store.config.delete("rich_since");
+    DETAILS.clear();
+    NOW = savedNow;
   }
 
   console.log("check:races-bot ok");

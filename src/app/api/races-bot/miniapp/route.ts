@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 const MAX_AGE_S = 24 * 3600;
 
 export async function POST(request: Request) {
-  let body: { initData?: unknown; action?: unknown; raceId?: unknown; from?: unknown; a?: unknown; v?: unknown };
+  let body: { initData?: unknown; action?: unknown; raceId?: unknown; from?: unknown; a?: unknown; v?: unknown; appVersion?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -29,6 +29,8 @@ export async function POST(request: Request) {
   const raceId = typeof body.raceId === "string" && body.raceId.length <= 200 ? body.raceId : undefined;
   // Откуда открыт календарь (from в ссылке web_app из бота) — только для статистики.
   const from = typeof body.from === "string" && /^[a-z_]{1,20}$/.test(body.from) ? body.from : null;
+  // WebApp.version (версия Bot API в приложении): ниже 10.1 — rich-сообщения бот не шлёт (18.10.2026)
+  const appVersion = typeof body.appVersion === "string" && /^\d{1,3}(\.\d{1,3}){0,2}$/.test(body.appVersion) ? body.appVersion : null;
   let token: string;
   try {
     token = botToken();
@@ -51,6 +53,7 @@ export async function POST(request: Request) {
       raceId,
       from,
       ev,
+      appVersion,
     );
     return Response.json({ ok: true, follows });
   } catch (e) {

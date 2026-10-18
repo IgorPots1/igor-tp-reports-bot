@@ -8,6 +8,7 @@
 import { norm } from "@/app/races/races-logic";
 import { courseList } from "@/features/race-course";
 import { fieldCount, fullDetails, MIN_FIELDS, type FullRow } from "@/features/race-details/full";
+import { versionBelow } from "./rich";
 import { importantLine } from "@/features/race-details/important";
 
 import {
@@ -62,6 +63,8 @@ export type BotUser = PlanUser & {
   /** Точка из геолокации: «Рядом» считается от неё. Сбрасывается при выборе города кнопкой или текстом. */
   geo_lat?: number | null;
   geo_lon?: number | null;
+  /** «Текстовая версия» (18.10.2026): человек выбрал обычный HTML вместо rich-сообщений; снимается в настройках. */
+  rich_off?: boolean | null;
 };
 
 export type BotFollow = PlanFollow & { tg_id: number };
@@ -71,7 +74,7 @@ export type BotEvent =
   | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
   | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked"
   | "expected_watch" | "expected_announced" | "pick_city" | "nudge_sent"
-  | "tap" | "card_open" | "miniapp" | "details_open";
+  | "tap" | "card_open" | "miniapp" | "details_open" | "rich_off";
 
 /** Действия в календаре Mini App, которые пишем в статистику (наряд 13.10.2026). */
 /** details — раскрыл «Всё о старте» в мини-приложении (16.10.2026): пишется как details_open с via: miniapp. */
@@ -223,9 +226,35 @@ export function createBot(deps: BotDeps) {
       return;
     }
     await dropMenu(u);
-    const markup = rm?.inline_keyboard?.length ? msg.reply_markup : T.menuKeyboard(u.city);
-    const id = await sendRaw(chatId, { text: msg.text, reply_markup: markup, ...(msg.preview ? { preview: msg.preview } : {}) });
+    let id: number | null;
+    if (msg.rich && (await richOn(u))) {
+      const res = (await tg.call("sendRichMessage", { chat_id: chatId, rich_message: msg.rich.rich_message, reply_markup: msg.rich.reply_markup })) as { message_id?: number } | null;
+      id = typeof res?.message_id === "number" ? res.message_id : null;
+    } else {
+      const markup = rm?.inline_keyboard?.length ? msg.reply_markup : T.menuKeyboard(u.city);
+      id = await sendRaw(chatId, { text: msg.text, reply_markup: markup, ...(msg.preview ? { preview: msg.preview } : {}) });
+    }
     if (id !== null) await store.saveUser({ tg_id: chatId, menu_message_id: id, menu_message_at: now().toISOString() });
+  }
+
+  /**
+   * Rich-сообщения (наряд 18.10.2026): кому слать rich вместо обычного HTML. rich_for в race_bot_config:
+   * off (или нет ключа) — никому; all — всем; new — только пришедшим не раньше rich_since. Флаг
+   * rich_off человека («Текстовая версия», старый клиент) выключает всегда.
+   */
+  async function richEligible(u: BotUser): Promise<boolean> {
+    const mode = await store.getConfig("rich_for");
+    if (mode === "all") return true;
+    if (mode !== "new") return false;
+    const since = await store.getConfig("rich_since");
+    return !!since && !!u.created_at && u.created_at >= since;
+  }
+  async function richOn(u: BotUser): Promise<boolean> {
+    return !u.rich_off && (await richEligible(u));
+  }
+  /** Переключатель «Красивое оформление» в настройках: null — rich для человека не включён вовсе. */
+  async function richSetting(u: BotUser): Promise<"on" | "off" | null> {
+    return (await richEligible(u)) ? (u.rich_off ? "off" : "on") : null;
   }
 
   /** Снять кнопки со старого меню (оно могло быть уже снято или удалено — не важно). */
@@ -243,14 +272,19 @@ export function createBot(deps: BotDeps) {
     const age = cur?.menu_message_at ? now().getTime() - Date.parse(cur.menu_message_at) : Infinity;
     if (origin && cur?.menu_message_id === origin.message_id && age < MENU_TTL_MS) {
       try {
-        await tg.call("editMessageText", {
-          chat_id: u.tg_id,
-          message_id: origin.message_id,
-          text: msg.text,
-          parse_mode: "HTML",
-          link_preview_options: previewOf(msg),
-          reply_markup: msg.reply_markup ?? T.menuKeyboard(cur.city),
-        });
+        // rich и обычный текст переключаются на месте той же правкой (проверено 18.10.2026)
+        if (msg.rich && (await richOn(cur))) {
+          await tg.call("editMessageText", { chat_id: u.tg_id, message_id: origin.message_id, rich_message: msg.rich.rich_message, reply_markup: msg.rich.reply_markup });
+        } else {
+          await tg.call("editMessageText", {
+            chat_id: u.tg_id,
+            message_id: origin.message_id,
+            text: msg.text,
+            parse_mode: "HTML",
+            link_preview_options: previewOf(msg),
+            reply_markup: msg.reply_markup ?? T.menuKeyboard(cur.city),
+          });
+        }
         return;
       } catch (e) {
         if (/message is not modified/i.test(e instanceof Error ? e.message : String(e))) return;
@@ -395,6 +429,8 @@ export function createBot(deps: BotDeps) {
     const msg = T.seasonList(browseTitle(b), s, items, page, following, (r) => !!regLink(u, r));
     if (!u.star_hint_at) {
       msg.text += `\n\n${T.STAR_HINT_LIST}`;
+      // в rich — абзацем перед подвалом
+      msg.rich?.rich_message.blocks.splice(-1, 0, { type: "paragraph", text: T.STAR_HINT_LIST });
       await store.saveUser({ tg_id: u.tg_id, star_hint_at: now().toISOString() });
     }
     await screen(u, msg, origin);
@@ -412,7 +448,9 @@ export function createBot(deps: BotDeps) {
       const important = importantLine(rows);
       // «Всё о старте» — только когда выжимка есть хотя бы по 3 полям (вариант Б, 15.10.2026)
       const more = fieldCount(rows) >= MIN_FIELDS;
-      return screen(u, T.raceScreen(x.race, place, following, regLink(u, x.race), siteLink(u, x.race), back, consult, important, more), origin);
+      // rich-карточка показывает выжимку блоками Details сразу (тот же порог: от 3 полей)
+      const full = more ? fullDetails(rows, x.race.ds, courseList(x.race.id).length > 0) : null;
+      return screen(u, T.raceScreen(x.race, place, following, regLink(u, x.race), siteLink(u, x.race), back, consult, important, more, full), origin);
     }
     const watching = new Set(await store.listExpectedWatches(u.tg_id)).has(x.e.id);
     const place = x.e.city ? `${x.e.city}${x.km === null ? "" : `, ${x.km} км`}` : x.e.subject || "место уточняется";
@@ -576,7 +614,7 @@ export function createBot(deps: BotDeps) {
         });
       }
       if (name === "city") return pickCity(u.tg_id);
-      if (name === "settings") return send(u.tg_id, T.settings(u, now()));
+      if (name === "settings") return send(u.tg_id, T.settings(u, now(), await richSetting(u)));
       if (name === "delete") return send(u.tg_id, T.DELETE_CONFIRM);
       if (name === "stats") {
         const coachChat = await store.getConfig("coach_chat_id");
@@ -622,6 +660,14 @@ export function createBot(deps: BotDeps) {
   }
 
   async function onCallback(u: BotUser, data: string, msg: TgMessage | undefined) {
+    // «Текстовая версия» под rich-сообщением: флаг rich_off, событие и тот же экран обычным HTML на месте.
+    if (data.startsWith("rt|")) {
+      if (!u.rich_off) {
+        u = await store.saveUser({ tg_id: u.tg_id, rich_off: true });
+        await track(u.tg_id, "rich_off", { meta: { via: "button" } });
+      }
+      return onCallback(u, data.slice(3), msg);
+    }
     const i = data.indexOf(":");
     const key = i < 0 ? data : data.slice(0, i);
     const arg = i < 0 ? "" : data.slice(i + 1);
@@ -811,11 +857,16 @@ export function createBot(deps: BotDeps) {
         return send(u.tg_id, T.NO_CONSULT);
       case "s": {
         if (arg.startsWith("dg:")) return setDigestMode(u, arg.slice(3), msg);
+        if (arg === "rich:on" || arg === "rich:off") {
+          const nu = await store.saveUser({ tg_id: u.tg_id, rich_off: arg === "rich:off" });
+          if (arg === "rich:off" && !u.rich_off) await track(u.tg_id, "rich_off", { meta: { via: "settings" } });
+          return screen(nu, T.settings(nu, now(), await richSetting(nu)), msg);
+        }
         if (arg === "rarer" || arg === "pause") {
           // Старые кнопки-переключатели из прежних сообщений: ничего не меняют (было непонятно,
           // что они переключили), показывают новый экран, где всё видно.
           await send(u.tg_id, { text: T.SETTINGS_OUTDATED });
-          return send(u.tg_id, T.settings(u, now()));
+          return send(u.tg_id, T.settings(u, now(), await richSetting(u)));
         }
         if (arg === "prefs") return send(u.tg_id, T.prefs(u.types, u.distances, "Отметь, что интересно, и нажми «Показать забеги»."));
         if (arg === "city") {
@@ -828,7 +879,7 @@ export function createBot(deps: BotDeps) {
           await track(u.tg_id, "unsubscribe", { meta: { from: "settings" } });
           return send(u.tg_id, T.UNSUBSCRIBED);
         }
-        return send(u.tg_id, T.settings(u, now()));
+        return send(u.tg_id, T.settings(u, now(), await richSetting(u)));
       }
       case "del":
         if (arg === "yes") {
@@ -850,7 +901,7 @@ export function createBot(deps: BotDeps) {
    */
   async function setDigestMode(u: BotUser, want: string, msg: TgMessage | undefined) {
     const modes: T.DigestMode[] = ["w1", "w2", "w4", "pause", "off"];
-    if (!modes.includes(want as T.DigestMode)) return send(u.tg_id, T.settings(u, now()));
+    if (!modes.includes(want as T.DigestMode)) return send(u.tg_id, T.settings(u, now(), await richSetting(u)));
     const mode = want as T.DigestMode;
     const same = T.digestMode(u, now()) === mode;
     if (!same) {
@@ -866,7 +917,7 @@ export function createBot(deps: BotDeps) {
         if (weeks[mode] > 1) await track(u.tg_id, "settings_less", { meta: { weeks: weeks[mode] } });
       }
     }
-    const screen = T.settings(u, now());
+    const screen = T.settings(u, now(), await richSetting(u));
     if (msg && !same) {
       await tg
         .call("editMessageText", { chat_id: u.tg_id, message_id: msg.message_id, text: screen.text, parse_mode: "HTML", reply_markup: screen.reply_markup })
@@ -1064,8 +1115,15 @@ export function createBot(deps: BotDeps) {
     raceId?: string,
     opened?: string | null,
     ev?: { a: MiniappAction; v?: string | null },
+    /** WebApp.version — версия Bot API в приложении человека; ниже 10.1 rich-сообщений нет. */
+    appVersion?: string | null,
   ): Promise<string[]> {
-    const u = await ensureUser(from);
+    let u = await ensureUser(from);
+    // Старый клиент: rich_off автоматически (18.10.2026), чтобы бот не слал ему нечитаемое.
+    if (action === "list" && appVersion && versionBelow(appVersion) && !u.rich_off) {
+      u = await store.saveUser({ tg_id: u.tg_id, rich_off: true });
+      await track(u.tg_id, "rich_off", { meta: { via: "webapp_version", v: appVersion.slice(0, 12) } });
+    }
     // opened — откуда открыт календарь (from в ссылке web_app): first, list, menu, my, reminder.
     if (action === "list") await track(u.tg_id, "open_calendar", { meta: { from: opened ?? null } });
     // Что делают внутри календаря: сезон/вкладка, фильтр, открыл старт, «Регистрация», «Сайт».

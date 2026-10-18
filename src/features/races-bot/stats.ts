@@ -45,6 +45,8 @@ export type BotStatsReport = {
   calendar: { people: number; byFrom: { from: string; people: number }[]; cohort: number; cohortPct: number | null };
   /** Напоминание через 30 минут: сколько ушло за период и сколько из получивших потом что-то нажали. */
   nudge: { sent: number; acted: number };
+  /** «Текстовая версия» вместо rich (18.10.2026): люди за период; по кнопке, в настройках, старый клиент. */
+  richOff: { people: number; button: number; settings: number; version: number };
   users: { total: number; new7: number; new30: number; active7: number; blocked: number; unsubscribed: number };
   funnel: FunnelStep[];
   /** Ветка воронки (15.10.2026): из увидевших список — открыли «Всё о старте»; % от увидевших список. */
@@ -255,6 +257,10 @@ export function computeBotStats(input: {
     acted: nudged.filter((n) => events.some((e) => e.tg_id === n.tg_id && e.event !== "start" && e.event !== "nudge_sent" && e.created_at > n.created_at)).length,
   };
 
+  const ro = win.filter((e) => e.event === "rich_off" && e.tg_id !== null);
+  const roVia = (v: string) => new Set(ro.filter((e) => (e.meta as { via?: string } | null)?.via === v).map((e) => e.tg_id)).size;
+  const richOff = { people: new Set(ro.map((e) => e.tg_id)).size, button: roVia("button"), settings: roVia("settings"), version: roVia("webapp_version") };
+
   const week = events.filter((e) => inWindow(e.created_at, d7));
   const nameOf = (e: StatEvent) => String((e.meta as { race_name?: unknown } | null)?.race_name ?? e.race_id ?? "?");
   const topViewed = top(week.filter((e) => e.event === "card_open").map(nameOf), 5).map(({ key, n }) => ({ name: key, n }));
@@ -268,6 +274,7 @@ export function computeBotStats(input: {
     topSaved,
     calendar,
     nudge,
+    richOff,
     returnedVia: [...via.entries()].map(([source, ids]) => ({ source, people: ids.size })).sort((a, b) => b.people - a.people),
     users: {
       total: users.length,
@@ -329,6 +336,7 @@ export function statsMessage(s: BotStatsReport): { text: string; reply_markup: {
     "",
     `<b>Открыли календарь:</b> ${s.calendar.people} чел.${s.calendar.byFrom.length ? ` (${s.calendar.byFrom.map((x) => `${CAL_FROM[x.from] ?? esc(x.from)} ${x.people}`).join(", ")})` : ""}`,
     `Напоминание через 30 минут: ушло ${s.nudge.sent}, после него что-то нажали ${s.nudge.acted}`,
+    `«Текстовая версия» вместо красивого оформления: ${s.richOff.people} чел. (кнопкой ${s.richOff.button}, в настройках ${s.richOff.settings}, старый Telegram ${s.richOff.version})`,
     "",
     "<b>Источники по первому приходу</b> (новые / ⭐ / заявка):",
     ...(s.sources.length ? s.sources.map((x) => `${esc(x.source)}: ${x.users} / ${x.follow} / ${x.consult}`) : ["нет"]),

@@ -216,7 +216,7 @@ function RaceItem({
   );
 }
 
-type TgWebApp = { initData?: string; ready?: () => void; expand?: () => void };
+type TgWebApp = { initData?: string; version?: string; ready?: () => void; expand?: () => void };
 
 function telegramWebApp(): TgWebApp | null {
   const w = window as unknown as { Telegram?: { WebApp?: TgWebApp } };
@@ -372,7 +372,8 @@ export default function RacesCalendar({
       const res = await fetch("/api/races-bot/miniapp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ initData, action, raceId, from }),
+        // version — чтобы бот не слал rich-сообщения старому клиенту (18.10.2026)
+        body: JSON.stringify({ initData, action, raceId, from, appVersion: action === "list" ? telegramWebApp()?.version ?? null : null }),
       });
       const body = (await res.json().catch(() => null)) as { ok?: boolean; follows?: string[] } | null;
       if (body?.ok && body.follows) setSaved(new Set(body.follows));

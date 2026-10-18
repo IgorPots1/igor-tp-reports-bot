@@ -6,6 +6,7 @@ import { MONTHS_GEN, TYPE_LABEL, distPills, plural, type Race } from "@/app/race
 import { SITE_URL } from "@/lib/site";
 import { courseList, type CourseLink } from "@/features/race-course";
 import type { FullDetails } from "@/features/race-details/full";
+import { cardRich, listRich, periodText, type ListRow, type RichMessage } from "./rich";
 
 import {
   DIST_BUTTONS,
@@ -24,10 +25,17 @@ import {
   type SeasonItem,
 } from "./core";
 
-export type Button = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
+/** style — цвет кнопки (Bot API 9.4): primary синяя, success зелёная, danger красная. */
+export type Button = { text: string; callback_data?: string; url?: string; web_app?: { url: string }; style?: "primary" | "success" | "danger" };
 export type Keyboard = { inline_keyboard: Button[][] };
 /** preview — адрес картинки: предпросмотр над текстом (мини-профиль разбора трассы). Без него предпросмотр выключен. */
-export type Msg = { text: string; reply_markup?: Keyboard | Record<string, unknown>; preview?: string };
+/** rich — тот же экран rich-сообщением (Bot API 10.1+, наряд 18.10.2026): бот шлёт его вместо text, если
+ *  rich включён для человека (rich_for в race_bot_config, без rich_off). У rich свои кнопки, последней —
+ *  «Текстовая версия». */
+export type Msg = { text: string; reply_markup?: Keyboard | Record<string, unknown>; preview?: string; rich?: { rich_message: RichMessage; reply_markup: Keyboard } };
+
+/** Последняя строка под каждым rich-сообщением: обычный HTML этого же экрана и флаг rich_off. again — callback, перерисовывающий экран. */
+export const textVersionRow = (again: string): Button[] => [{ text: "Текстовая версия", callback_data: `rt|${again}`.slice(0, 64) }];
 
 export const CALENDAR_URL = `${SITE_URL}/races`;
 
@@ -500,7 +508,8 @@ export function settingsState(u: SettingsUser, now: Date): string {
   return `Дайджест: ${digest}. Город: ${u.city || "не выбран"}. Типы и дистанции: ${filtersLine(u.types, u.distances)}.`;
 }
 
-export function settings(u: SettingsUser, now: Date): Msg {
+/** rich — «Красивое оформление» (rich-сообщения): on/off, null — для человека не включено вовсе (кнопки нет). */
+export function settings(u: SettingsUser, now: Date, rich: "on" | "off" | null = null): Msg {
   const mode = digestMode(u, now);
   const opt = (m: DigestMode, label: string): Button[] => [{ text: mode === m ? `✓ ${label}` : label, callback_data: `s:dg:${m}` }];
   return {
@@ -517,6 +526,7 @@ export function settings(u: SettingsUser, now: Date): Msg {
         opt("off", "Не присылать дайджест"),
         [{ text: "Сменить город", callback_data: "s:city" }, { text: "Сменить типы и дистанции", callback_data: "s:prefs" }],
         [{ text: "Мои забеги", callback_data: "my" }, { text: "Отписаться от всего", callback_data: "s:unsub" }],
+        ...(rich ? [[{ text: rich === "on" ? "✓ Красивое оформление" : "Красивое оформление: включить", callback_data: `s:rich:${rich === "on" ? "off" : "on"}` }]] : []),
       ],
     },
   };
@@ -769,15 +779,23 @@ export function seasonList(
   const p = Math.min(Math.max(page, 0), pages - 1);
   const slice = items.slice(p * SEASON_PAGE, (p + 1) * SEASON_PAGE);
   const lines: string[] = [];
+  const own: ListRow[] = [];
+  const near: ListRow[] = [];
   slice.forEach((x, i) => {
     const prev = i > 0 ? slice[i - 1] : p > 0 ? items[p * SEASON_PAGE - 1] : null;
-    if (x.near && (!prev || !prev.near)) lines.push("<i>Область и рядом:</i>");
+    // заголовок блока прилипает к первому старту блока: пустая строка — только между стартами
+    const nearHead = x.near && (!prev || !prev.near) ? "<i>Область и рядом:</i>\n" : "";
+    (x.near ? near : own).push(
+      x.kind === "race"
+        ? { n: i + 1, kind: "race", race: x.race, star: following.has(x.race.id), place: itemPlace(x), regOpen: hasReg(x.race) }
+        : { n: i + 1, kind: "exp", e: x.e, date: x.date, place: itemPlace(x) },
+    );
     if (x.kind === "race") {
       const star = following.has(x.race.id) ? "⭐ " : "";
       const dist = distPills(x.race).join(" / ");
-      lines.push(`${i + 1}. ${star}<b>${shortDate(x.race)}</b> · ${esc(x.race.name)}\n    ${esc(itemPlace(x))}${dist ? ` · ${esc(dist)}` : ""}${hasReg(x.race) ? " · регистрация открыта" : ""}`);
+      lines.push(`${nearHead}${i + 1}. ${star}<b>${shortDate(x.race)}</b> · ${esc(x.race.name)}\n    ${esc(itemPlace(x))}${dist ? ` · ${esc(dist)}` : ""}${hasReg(x.race) ? " · регистрация открыта" : ""}`);
     } else {
-      lines.push(`${i + 1}. <b>~${dayMon(x.date)}</b> · ${esc(x.e.name)}\n    ${esc(itemPlace(x))} · ${expectedNote(x.e)}`);
+      lines.push(`${nearHead}${i + 1}. <b>~${dayMon(x.date)}</b> · ${esc(x.e.name)}\n    ${esc(itemPlace(x))} · ${expectedNote(x.e)}`);
     }
   });
   const from = p * SEASON_PAGE + 1;
@@ -786,7 +804,8 @@ export function seasonList(
   if (p > 0) nav.push({ text: "◀", callback_data: `sn:${s.key}:${p - 1}` });
   if (p < pages - 1) nav.push({ text: "▶", callback_data: `sn:${s.key}:${p + 1}` });
   return {
-    text: `<b>${esc(city)} и рядом · ${esc(s.label)}</b>\n${from}-${to} из ${items.length}\n\n${lines.join("\n")}`,
+    // Текстовая версия (18.10.2026): две строки на старт и пустая строка между стартами, даты жирным.
+    text: `<b>${esc(city)} и рядом · ${esc(s.label)}</b>\n${from}-${to} из ${items.length}\n\n${lines.join("\n\n")}`,
     reply_markup: {
       inline_keyboard: [
         slice.map((_, i) => ({ text: String(i + 1), callback_data: `so:${s.key}:${p}:${i}` })),
@@ -794,6 +813,24 @@ export function seasonList(
         [{ text: "Другой сезон", callback_data: "sz" }],
         navRow(city),
       ],
+    },
+    rich: {
+      rich_message: listRich(
+        city.startsWith("«") ? `Забеги: ${city}` : `Забеги ${inCity(city)}`,
+        own,
+        near,
+        `${s.label.replace(/\s*\(.*\)$/, "")}: ${periodText(s.from, s.to)} · ${from}–${to} из ${items.length}`,
+      ),
+      reply_markup: {
+        inline_keyboard: [
+          [{ ...calendarButton("📅 Открыть календарь", city.startsWith("«") ? undefined : city, "list"), style: "primary" }],
+          slice.map((_, i) => ({ text: String(i + 1), callback_data: `so:${s.key}:${p}:${i}` })),
+          ...(nav.length ? [nav] : []),
+          [{ text: "◀ Другой сезон", callback_data: "sz" }],
+          [{ text: "Фильтры", callback_data: "flt" }, { text: "Мои старты", callback_data: "my" }],
+          textVersionRow(`sn:${s.key}:${p}`),
+        ],
+      },
     },
   };
 }
@@ -892,6 +929,8 @@ export function raceScreen(
   important: string | null = null,
   /** Кнопка «Всё о старте» под строкой «Важное»: только если выжимка есть хотя бы по 3 полям. */
   details = false,
+  /** Выжимка разделами для rich-карточки (Details по разделам); null — без «Всё о старте». */
+  full: FullDetails | null = null,
 ): Msg {
   const dist = distPills(r).join(" / ");
   const code = raceCode(r.id);
@@ -911,7 +950,21 @@ export function raceScreen(
   if (courses.length) rows.push([{ text: courses.every((c) => c.lite) ? "Разбор трассы: повороты, покрытие, ветер" : "Разбор трассы: подъёмы, спуски, ветер", callback_data: `tc:${code}:${tail}` }]);
   if (consult) rows.push([{ text: "Бесплатная консультация", callback_data: `consult:${code}` }]);
   rows.push([{ text: "← К списку", callback_data: back }]);
+  // Rich-карточка: Details вместо кнопки «Всё о старте», сайт ссылкой в подвале.
+  const richRows: Button[][] = [
+    [following ? { text: "✓ Слежу · убрать", callback_data: `su:${code}:${tail}` } : { text: "⭐ Следить", callback_data: `sf:${code}:${tail}`, style: "success" }],
+    ...(regUrl ? [[{ text: "Регистрация", url: regUrl, style: "primary" as const }]] : []),
+    ...(courses.length ? [[{ text: courses.every((c) => c.lite) ? "Разбор трассы: повороты, покрытие, ветер" : "Разбор трассы", callback_data: `tc:${code}:${tail}` }]] : []),
+    ...(consult ? [[{ text: "Бесплатная консультация", callback_data: `consult:${code}` }]] : []),
+    [{ text: "◀ К списку", callback_data: back }],
+    textVersionRow(`tb:${code}:${tail}`),
+  ];
+  const rich = {
+    rich_message: cardRich({ race: r, dateLine: cardDate(r), place, important, details: full, siteUrl, following, hasCourse: courses.length > 0 }),
+    reply_markup: { inline_keyboard: richRows },
+  };
   return {
+    rich,
     text:
       `<b>${esc(r.name)}</b>\n${cardDate(r)}\n📍 ${esc(place)}` +
       `${TYPE_LABEL[r.type] ? `\n${TYPE_LABEL[r.type]}` : ""}${dist ? ` · ${esc(dist)}` : ""}` +
