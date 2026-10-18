@@ -60,7 +60,7 @@ function rowCells(x: ListRow, withPlace: boolean) {
   const n = cell(String(x.n), { align: "right" });
   if (x.kind === "race") {
     const km = distPills(x.race).join(" / ");
-    const name = parts(x.star && "⭐ ", x.race.name, x.regOpen && italic(" · регистрация открыта"));
+    const name = parts(x.star && "⭐ ", shortName(x.race.name), x.regOpen && italic(" · регистрация открыта"));
     return [n, cell(tableDate(x.race.ds, x.race.de)), cell(name), ...(withPlace ? [cell(x.place)] : []), cell(km || "—")];
   }
   const km = x.e.distances.slice(0, 4).join(" / ");
@@ -68,7 +68,7 @@ function rowCells(x: ListRow, withPlace: boolean) {
   return [
     n,
     cell(`~${d.getUTCDate()} ${MON[d.getUTCMonth()]}`),
-    cell([x.e.name, italic(" · дата не объявлена")]),
+    cell(parts(shortName(x.e.name), italic(" · дата не объявлена"))),
     ...(withPlace ? [cell(x.place)] : []),
     cell(km || "—"),
   ];
@@ -147,4 +147,57 @@ export function periodText(from: string, to: string): string {
   const f = new Date(`${from}T00:00:00Z`);
   const t = new Date(`${to}T00:00:00Z`);
   return `с ${f.getUTCDate()} ${MONTHS_GEN[f.getUTCMonth()]} по ${t.getUTCDate()} ${MONTHS_GEN[t.getUTCMonth()]}`;
+}
+
+/** Длинное название в списках и на главном экране — до 45 знаков с «…» (18.10.2026); полное — только в карточке. */
+export const NAME_MAX = 45;
+export function shortName(name: string, max = NAME_MAX): string {
+  if (name.length <= max) return name;
+  const cut = name.slice(0, max - 1);
+  // по границе слова, если она недалеко (не обрываем «края п…»)
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp >= max - 16 ? cut.slice(0, sp) : cut).replace(/[\s,.:;—–-]+$/, "")}…`;
+}
+
+/** Главный экран (18.10.2026): «С возвращением!», «Город: Тверь», «Фильтры: шоссе, трейл», ближайший
+ *  сохранённый старт отдельной строкой с датой. notice — строка сверху («✓ Сохранил …» после ссылки). */
+export function menuRich(a: { head: string; notice: string | null; city: string | null; filters: string; next: { race: BotRace; left: string } | null; savedTotal: number }): RichMessage {
+  const blocks: RichBlock[] = [];
+  if (a.notice) blocks.push({ type: "paragraph", text: bold(a.notice) });
+  blocks.push({ type: "heading", size: 2, text: a.head });
+  blocks.push({ type: "paragraph", text: parts("Город: ", bold(a.city || "не выбран")) });
+  blocks.push({ type: "paragraph", text: `Фильтры: ${a.filters}` });
+  blocks.push({
+    type: "paragraph",
+    text: a.next
+      ? parts("Ближайший: ", bold(tableDate(a.next.race.ds, a.next.race.de)), ` · ${shortName(a.next.race.name)} (${a.next.left})`, a.savedTotal > 1 && italic(` · всего сохранено ${a.savedTotal}`))
+      : "Сохранённых забегов пока нет: открой старт и нажми ⭐.",
+  });
+  return { blocks };
+}
+
+/** Мои забеги (18.10.2026): таблица «№ · дата · старт · город · до старта»; номер открывает карточку. */
+export type MyRow = { n: number; name: string; city: string; ds: string | null; de: string | null; left: string; cancelled: boolean };
+export function myRich(rows: MyRow[], title: string): RichMessage {
+  return {
+    blocks: [
+      { type: "heading", size: 2, text: title },
+      {
+        type: "table",
+        is_compact: true,
+        is_striped: true,
+        cells: [
+          [head("№", { align: "right" }), head("дата"), head("старт"), head("город"), head("до старта", { align: "right" })],
+          ...rows.map((r) => [
+            cell(String(r.n), { align: "right" }),
+            cell(r.ds ? tableDate(r.ds, r.de ?? r.ds) : "—"),
+            cell(r.cancelled ? parts(shortName(r.name), italic(" · отменён")) : shortName(r.name)),
+            cell(r.city || "—"),
+            cell(r.cancelled ? "—" : r.left, { align: "right" }),
+          ]),
+        ],
+      },
+      { type: "footer", text: "Номер открывает карточку старта: там «Убрать» и сайт." },
+    ],
+  };
 }

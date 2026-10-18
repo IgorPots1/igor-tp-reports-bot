@@ -49,6 +49,7 @@ import { computeBotStats, dailyMessage, statsMessage, weeklyMessage, type StatEv
 
 import { memStore } from "./lib/races-bot-memstore";
 import * as T from "@/features/races-bot/texts";
+import { shortName } from "@/features/races-bot/rich";
 import { courseList } from "@/features/race-course";
 import { fullDetails, type FullRow } from "@/features/race-details/full";
 
@@ -195,7 +196,7 @@ async function main() {
   await bot.handleUpdate(cb(USER, "pick"));
   const picker = sent(501).at(-1)!;
   assert.match(String(picker.params.text), /Где ты бегаешь\?/);
-  assert.deepEqual(buttons(picker).map((b) => b.text), ["Москва", "Санкт-Петербург", "Казань", "Екатеринбург", "Отправить геолокацию", "Другой город"]);
+  assert.deepEqual(buttons(picker).map((b) => b.text), ["Москва", "Санкт-Петербург", "Казань", "Екатеринбург", "Отправить геолокацию", "Другой город", "🏠 Меню"]);
   await bot.handleUpdate(cb(USER, `city:${citySlug("Москва")}`));
   assert.equal(store.users.get(501)?.city, "Москва");
   assert.match(texts(501).at(-1)!, /Что тебе интересно\? Можно выбрать несколько\./);
@@ -218,14 +219,15 @@ async function main() {
   const forkBtns = buttons(fork).map((b) => b.text);
   assert.deepEqual(forkBtns.slice(0, 3), ["Ближайшие (до 30 ноября) · 1", "Весна 2027 · 1", "Все старты подряд · 2"]);
   assert.ok(!forkBtns.some((t) => /^Зима|^Лето/.test(t)), "сезоны с нулём не показываются");
-  assert.deepEqual(forkBtns.slice(-3), ["Фильтры", "Мои старты", "📅 Календарь"], "нижний ряд");
+  // С 18.10.2026 на каждом экране, кроме главного, последней строкой «🏠 Меню» (было: экраны-тупики).
+  assert.deepEqual(forkBtns.slice(-4), ["Фильтры", "Мои старты", "📅 Календарь", "🏠 Меню"], "нижний ряд и «🏠 Меню» последней");
   // список сезона
   await bot.handleUpdate(cbm(USER, "sn:near:0"));
   const lst = screens(501).at(-1)!;
   assert.equal(lst.method, "editMessageText");
   assert.match(String(lst.params.text), /^<b>Москва и рядом · Ближайшие \(до 30 ноября\)<\/b>\n1-1 из 1\n\n1\. <b>18 окт, вс<\/b> · Трейл «Краски осени»\n    Москва · .+ · регистрация открыта/);
   assert.match(String(lst.params.text), /Открой старт кнопкой с номером и нажми ⭐, и я напомню, когда пора начинать готовиться\./, "подсказка про ⭐ строкой, один раз");
-  assert.deepEqual(buttons(lst).map((b) => b.text), ["1", "Другой сезон", "Фильтры", "Мои старты", "📅 Календарь"]);
+  assert.deepEqual(buttons(lst).map((b) => b.text), ["1", "Другой сезон", "Фильтры", "Мои старты", "📅 Календарь", "🏠 Меню"]);
   // карточка в том же сообщении
   await bot.handleUpdate(cbm(USER, "so:near:0:0"));
   const card0 = screens(501).at(-1)!;
@@ -233,8 +235,9 @@ async function main() {
   assert.match(String(card0.params.text), /^<b>Трейл «Краски осени»<\/b>\n18 октября 2026, вс\n📍 Москва/, "дата карточки полностью");
   assert.equal(T.cardDate({ ds: "2026-10-03", de: "2026-10-04" }), "3-4 октября 2026");
   assert.equal(T.cardDate({ ds: "2026-10-31", de: "2026-11-01" }), "31 октября - 1 ноября 2026");
-  assert.deepEqual(buttons(card0).map((b) => b.text), ["⭐ Следить", "Регистрация", "Сайт", "← К списку"]);
-  assert.equal(buttons(card0).at(-1)!.callback_data, "sn:near:0", "назад — на ту же страницу");
+  assert.deepEqual(buttons(card0).map((b) => b.text), ["⭐ Следить", "Регистрация", "Сайт", "← К списку", "🏠 Меню"]);
+  assert.equal(buttons(card0).find((b) => b.text === "← К списку")!.callback_data, "sn:near:0", "назад — на ту же страницу");
+  assert.equal(buttons(card0).at(-1)!.callback_data, "menu", "последней — «🏠 Меню»");
   // Было: «Регистрация» вела прямо на сайт организатора. Теперь — через igorp.run/go/<код>, чтобы
   // записать клик (наряд статистики 12.10): ссылка подписана и привязана к этому человеку.
   const regBtn = buttons(card0).find((b) => b.text === "Регистрация");
@@ -247,7 +250,7 @@ async function main() {
   assert.ok(store.follows.some((f) => f.tg_id === 501 && f.race_id === TRAIL.id), "⭐ сохранил");
   const card1 = screens(501, c0).at(-1)!;
   assert.equal(card1.method, "editMessageText", "без новых сообщений");
-  assert.deepEqual(buttons(card1).map((b) => b.text), ["✓ Слежу · убрать", "Регистрация", "Сайт", "Бесплатная консультация", "← К списку"]);
+  assert.deepEqual(buttons(card1).map((b) => b.text), ["✓ Слежу · убрать", "Регистрация", "Сайт", "Бесплатная консультация", "← К списку", "🏠 Меню"]);
   assert.equal(sent(501, c0).length, 0, "ни одного нового сообщения");
   // «← К списку» — та же страница, отметка ⭐, подсказки больше нет
   await bot.handleUpdate(cbm(USER, "sn:near:0"));
@@ -286,22 +289,34 @@ async function main() {
   reset();
   await bot.handleUpdate(msg(USER, `/start r_${raceCode(HALF.id)}`));
   assert.ok(store.follows.some((f) => f.tg_id === 501 && f.race_id === HALF.id), "старт сохранён по deep link");
+  // Было: отдельный экран «Сохранил» с датой и планом напоминаний. С 18.10.2026 ссылка «Следить» с сайта
+  // (Telegram показывает её как «/start») открывает ГЛАВНЫЙ экран, сверху строка «✓ Сохранил …»: иначе
+  // казалось, что /start не ведёт в меню. Ровно одно сообщение, без «🏠 Меню» (это и есть меню).
+  assert.equal(sent(501).length, 1, "одно сообщение");
   const savedText = texts(501)[0];
-  assert.match(savedText, /Сохранил/);
-  assert.match(savedText, /14 марта, вс · Москва/);
-  assert.match(savedText, /за неделю: короткий чек-лист старта/);
-  assert.match(savedText, /накануне: погоду на трассе/);
+  assert.match(savedText, /^<b>✓ Сохранил «Полумарафон «Покровское-Стрешнево»»\. За неделю пришлю чек-лист, накануне погоду\.<\/b>\n\n<b>С возвращением!<\/b>\nГород: <b>Москва<\/b>/);
+  assert.ok(!buttons(sent(501)[0]).some((b) => b.text === "🏠 Меню"), "на главном экране «🏠 Меню» нет");
+  // повторная ссылка на тот же старт — тоже главный экран, «уже слежу», без второго сохранения
+  reset();
+  await bot.handleUpdate(msg(USER, `/start r_${raceCode(HALF.id)}`));
+  assert.match(texts(501)[0], /^<b>⭐ Уже слежу за «Полумарафон «Покровское-Стрешнево»»\.<\/b>\n\n<b>С возвращением!<\/b>/);
+  assert.equal(store.follows.filter((f) => f.tg_id === 501 && f.race_id === HALF.id).length, 1);
   // Было: первое предложение консультации — после deep link. С 13.10.2026 первая ⭐ (в карточке
   // сезона выше) уже предложила её кнопкой «Бесплатная консультация» — в те же 30 дней второй раз не предлагаем.
   assert.equal(sent(501).length, 1, "после ⭐ в карточке консультация не повторяется");
   const offer = { params: T.consultOffer(raceCode(HALF.id)) as unknown as Record<string, unknown> };
   assert.match(String(offer.params.text), /Запишись на бесплатную консультацию: тренер разберёт твою ситуацию и даст конкретное решение под этот старт\./);
   assert.deepEqual(buttons(offer as Call).slice(0, 2).map((b) => b.text), ["Записаться", "Пока не нужно"]);
-  // второе сохранение в те же 30 дней — без предложения консультации
+  // второе сохранение в те же 30 дней — без предложения консультации. ⭐ (18.10.2026): всплывающее
+  // «Сохранил…» на нажатие и карточка с «✓ Слежу», а не отдельный экран.
   reset();
   await bot.handleUpdate(cb(USER, `f:${raceCode(TRAIL.id)}`));
   assert.equal(sent(501).length, 1, "консультация не чаще раза в 30 дней");
   assert.ok(!texts(501)[0].includes("консультац"));
+  assert.doesNotMatch(texts(501)[0], /^✓ Сохранил/, "не отдельный экран «Сохранил»");
+  assert.ok(buttons(sent(501)[0]).some((b) => b.text === "✓ Слежу · убрать"), "карточка с «✓ Слежу»");
+  assert.equal(calls.find((c) => c.method === "answerCallbackQuery")?.params.text, T.FOLLOW_TOAST, "всплывающее уведомление");
+  assert.equal(T.FOLLOW_TOAST, "Сохранил. За неделю пришлю чек-лист, накануне погоду");
   // «Записаться»
   reset();
   await bot.handleUpdate(cb(USER, `consult:${raceCode(HALF.id)}`));
@@ -317,6 +332,19 @@ async function main() {
   assert.ok(link.startsWith("https://t.me/IgorPotseluev?text="), link);
   assert.match(decodeURIComponent(link.split("text=")[1]), /Хочу консультацию по подготовке к Полумарафон/);
   assert.ok(store.users.get(501)?.consult_requested_at, "отмечено consult_requested_at");
+
+  // ── /start всегда главный экран (18.10.2026) ─────────────────────────────────
+  // Три /start подряд — три одинаковых главных экрана, что бы ни было до этого (листал сезон, ждал город).
+  {
+    await store.saveUser({ tg_id: 501, browse_ctx: "q:трейл", state: "await_city" });
+    reset();
+    for (let i = 0; i < 3; i++) await bot.handleUpdate(msg(USER, "/start"));
+    const three = texts(501);
+    assert.equal(three.length, 3);
+    assert.ok(three.every((t) => t === three[0] && /^<b>С возвращением!<\/b>\nГород: <b>Москва<\/b>/.test(t)), three.join("\n---\n"));
+    assert.ok(sent(501).every((c) => buttons(c)[0].text === "Старты: Москва и рядом"));
+    await store.saveUser({ tg_id: 501, browse_ctx: null, state: null });
+  }
 
   // ── мои забеги, убрать старт ───────────────────────────────────────────────
   reset();
@@ -445,7 +473,7 @@ async function main() {
   assert.match(st, /src_ig_story: 1 \/ 1 \/ 1/, "источник по первому приходу дошёл до ⭐ и заявки");
   assert.match(st, /Анна @anna_runs · Москва · Полумарафон/, "заявка в списке");
   // С 13.10.2026 под периодами — «По дням» (экран ежедневной активности).
-  assert.deepEqual(buttons(sent(900).at(-1)!).map((b) => b.text), ["7 дней", "• 30 дней", "Всё время", "По дням"]);
+  assert.deepEqual(buttons(sent(900).at(-1)!).map((b) => b.text), ["7 дней", "• 30 дней", "Всё время", "По дням", "🏠 Меню"]);
   await bot.handleUpdate(cb(COACH, "st:7"));
   const edited = calls.filter((c) => c.method === "editMessageText").at(-1)!;
   assert.match(String(edited.params.text), /Забеги России · 7 дней/, "период переключается");
@@ -488,7 +516,7 @@ async function main() {
   await bot.runTick();
   const after = sent(501).find((c) => String(c.params.text).startsWith("С финишем"));
   assert.ok(after, "после финиша");
-  assert.deepEqual(buttons(after!).map((b) => b.text), ["Консультация", "Следующий старт"]);
+  assert.deepEqual(buttons(after!).map((b) => b.text), ["Консультация", "Следующий старт", "🏠 Меню"]);
   assert.ok(!store.follows.some((f) => f.race_id === HALF.id), "после финиша снят");
   RACES = [HALF, ...RACES];
 
@@ -580,7 +608,7 @@ async function main() {
   assert.equal(dg.length, 1, "дайджест одним сообщением");
   assert.match(String(dg[0].params.text), /^<b>Новые забеги за неделю:<\/b> в Москве 1\.\n\n1\. <b>29 ноя, вс<\/b> · Новый осенний забег/);
   assert.ok(!String(dg[0].params.text).includes(" и рядом"), "в области новых нет — второго блока нет");
-  assert.deepEqual(buttons(dg[0]).map((b) => b.text), ["1", "Все старты по сезонам", "Фильтры", "Мои старты", "📅 Календарь"]);
+  assert.deepEqual(buttons(dg[0]).map((b) => b.text), ["1", "Все старты по сезонам", "Фильтры", "Мои старты", "📅 Календарь", "🏠 Меню"]);
   // «меню всегда последнее»: со старого меню сняли кнопки; в этом же тике ушло ещё напоминание
   // «через неделю» — кнопки остаются только у последнего сообщения, оно и живое меню
   const strippedIds = calls.filter((c) => c.method === "editMessageReplyMarkup" && (c.params.reply_markup as { inline_keyboard: unknown[] }).inline_keyboard.length === 0).map((c) => c.params.message_id);
@@ -593,7 +621,7 @@ async function main() {
   const dgCard = screens(501).at(-1)!;
   assert.equal(dgCard.method, "editMessageText");
   assert.match(String(dgCard.params.text), /^<b>Новый осенний забег<\/b>/);
-  assert.equal(buttons(dgCard).at(-1)!.callback_data, "sz");
+  assert.equal(buttons(dgCard).find((b) => b.text === "← К списку")!.callback_data, "sz");
   await bot.handleUpdate(cb(USER, "dlist"));
   reset();
   NOW = new Date("2026-10-26T07:30:00Z"); // следующий понедельник, новых нет
@@ -639,7 +667,7 @@ async function main() {
     const expCard = screens(811).at(-1)!;
     assert.equal(expCard.method, "editMessageText");
     assert.match(String(expCard.params.text), /^<b>Ночной забег<\/b>\n~20 июня 2027, вс: дата ожидается, в 2026 было 20 июня/);
-    assert.deepEqual(buttons(expCard).map((b) => b.text), ["Сообщить, когда объявят", "Прошлый старт", "← К списку"], "у ожидаемого нет ⭐");
+    assert.deepEqual(buttons(expCard).map((b) => b.text), ["Сообщить, когда объявят", "Прошлый старт", "← К списку", "🏠 Меню"], "у ожидаемого нет ⭐");
     await bot.handleUpdate(cbm(OLEG, buttons(expCard)[0].callback_data!));
     assert.deepEqual(await store.listExpectedWatches(811), [EXP_NIGHT.id], "подписка «сообщить, когда объявят»");
     const expCard2 = screens(811).at(-1)!;
@@ -1186,7 +1214,7 @@ async function main() {
     assert.match(text, /Открыта \(на 15\.10\)\./);
     assert.match(text, /Источник: <a href="https:\/\/org\.ru\/race">сайт организатора<\/a>, проверено 15\.10/);
     assert.doesNotMatch(text, /нет данных|На месте/, "«нет данных» нигде, пустой раздел не показан");
-    assert.deepEqual(buttons(edit!).map((b) => b.text), ["◀ К старту", "⭐ Следить"]);
+    assert.deepEqual(buttons(edit!).map((b) => b.text), ["◀ К старту", "⭐ Следить", "🏠 Меню"]);
     assert.equal(buttons(edit!)[0].callback_data, `tb:${raceCode(SHORT.id)}:sz`);
     assert.ok(store.events.slice(evBefore).some((e) => e.event === "details_open" && e.race_id === SHORT.id), "событие details_open");
     // Меньше 3 полей: кнопки нет, а старое нажатие ведёт в карточку, не в выжимку.
@@ -1254,8 +1282,8 @@ async function main() {
     assert.equal(kb[0][0].text, "📅 Открыть календарь");
     assert.equal(kb[0][0].style, "primary");
     assert.ok(kb[0][0].web_app);
-    assert.deepEqual(kb.slice(1).map((r) => r.map((b) => b.text)), [["1", "2", "3", "4", "5"], ["▶"], ["◀ Другой сезон"], ["Фильтры", "Мои старты"], ["Текстовая версия"]], "номера, листание, другой сезон, фильтры и мои, последней — текстовая");
-    assert.equal(kb.at(-1)![0].callback_data, "rt|sn:near:0");
+    assert.deepEqual(kb.slice(1).map((r) => r.map((b) => b.text)), [["1", "2", "3", "4", "5"], ["▶"], ["◀ Другой сезон"], ["Фильтры", "Мои старты"], ["🏠 Меню", "Текстовая версия"]], "номера, листание, другой сезон, фильтры и мои; последней строкой «🏠 Меню» и «Текстовая версия» (18.10.2026)");
+    assert.equal(kb.at(-1)![1].callback_data, "rt|sn:near:0");
 
     // карточка: Details по разделам, только реальные; без кнопки «Всё о старте»
     const row = (distance: number | null, field: string, value: string): FullRow => ({ distance, field, value, source_url: "https://org.ru/r", checked_at: "2026-10-15" });
@@ -1273,6 +1301,7 @@ async function main() {
     assert.ok(!ckb.some((b) => b.text === "Всё о старте"), "в rich выжимка уже в карточке");
     assert.ok(ckb.some((b) => b.text === "⭐ Следить") && ckb.some((b) => b.text === "◀ К списку"));
     assert.equal(ckb.at(-1)!.callback_data, `rt|tb:${raceCode(TRAIL.id)}:near:0`);
+    assert.equal(ckb.at(-2)!.callback_data, "menu", "«🏠 Меню» в одном ряду с «Текстовой версией»");
     assert.ok(JSON.stringify(card.params.rich_message).length < 32768, "лимит знаков");
     assert.ok(!/(\[|,)""(,|\])/.test(JSON.stringify(card.params.rich_message)) && !/(\[|,)""(,|\])/.test(JSON.stringify(lst.params.rich_message)), "пустых частей в RichText нет");
 
@@ -1300,6 +1329,47 @@ async function main() {
     reset();
     await bot.handleUpdate(cbm(R, "sn:near:0"));
     assert.ok(calls.some((c) => c.params.rich_message), "снова rich");
+
+    // Главный экран и «Мои забеги» в rich (18.10.2026): «С возвращением!», город, фильтры, ближайший
+    // строкой с датой; «Начать заново» — в настройках; «Мои забеги» — таблица «дата · старт · город · до
+    // старта», номера кнопками ведут в карточку; «🏠 Меню» правит то же сообщение.
+    reset();
+    await bot.handleUpdate(cbm(R, `f:${raceCode(TRAIL.id)}`));
+    reset();
+    await bot.handleUpdate(msg(R, "/start"));
+    const mn = calls.filter((c) => c.params.chat_id === R.id).at(-1)!;
+    assert.equal(mn.method, "sendRichMessage");
+    const mnb = JSON.stringify((mn.params.rich_message as { blocks: unknown[] }).blocks);
+    assert.ok(mnb.includes('"text":"С возвращением!"') && mnb.includes("Город: ") && mnb.includes("Фильтры: ") && mnb.includes("Ближайший: "), mnb);
+    const mnk = (mn.params.reply_markup as { inline_keyboard: { text: string; callback_data?: string; style?: string }[][] }).inline_keyboard;
+    assert.deepEqual(mnk.map((r) => r.map((b) => b.text)), [["Старты: Москва и рядом"], ["Мои забеги", "📅 Весь календарь"], ["Настройки", "Сменить город"], ["Текстовая версия"]], "главный: без «Начать заново» и без «🏠 Меню»");
+    assert.equal(mnk[0][0].style, "primary");
+    reset();
+    await bot.handleUpdate(cbm(R, "my"));
+    const my = calls.filter((c) => c.params.chat_id === R.id).at(-1)!;
+    const myt = (my.params.rich_message as { blocks: { type: string; cells?: { text: unknown }[][] }[] }).blocks.find((b) => b.type === "table")!;
+    assert.deepEqual(myt.cells![0].map((c) => (c.text as { text: string }).text), ["№", "дата", "старт", "город", "до старта"]);
+    const myk = (my.params.reply_markup as { inline_keyboard: { text: string; callback_data?: string }[][] }).inline_keyboard;
+    assert.ok(!myk.flat().some((b) => /^Сайт старта/.test(b.text) || b.text === "Убрать старт"), "без пары «Сайт · Убрать» на каждый старт");
+    assert.deepEqual(myk.at(-1)!.map((b) => b.text), ["🏠 Меню", "Текстовая версия"]);
+    const one = myk.flat().find((b) => b.text === "1")!;
+    assert.equal(one.callback_data, `mo:${raceCode(TRAIL.id)}`);
+    reset();
+    await bot.handleUpdate(cbm(R, one.callback_data!));
+    const mc = calls.filter((c) => c.params.chat_id === R.id).at(-1)!;
+    const mck = (mc.params.reply_markup as { inline_keyboard: { text: string; callback_data?: string }[][] }).inline_keyboard.flat();
+    assert.equal(mck.find((b) => b.text === "◀ К списку")?.callback_data, "my", "из карточки — обратно в «Мои забеги»");
+    assert.ok(mck.some((b) => b.callback_data === `su:${raceCode(TRAIL.id)}:my`), "убрать — в карточке");
+    reset();
+    await bot.handleUpdate(cbm(R, "menu"));
+    assert.deepEqual(calls.filter((c) => c.params.chat_id === R.id && c.method !== "editMessageReplyMarkup").map((c) => c.method), ["editMessageText"], "«🏠 Меню» — правка того же сообщения");
+    reset();
+    await bot.handleUpdate(msg(R, "/settings"));
+    assert.ok(buttons(calls.filter((c) => c.params.chat_id === R.id).at(-1)!).some((b) => b.text === "Начать заново"), "«Начать заново» в настройках");
+    // длинные названия — до 45 знаков с «…» в списках и на главном экране, полностью — в карточке
+    assert.equal(shortName("Чемпионат и Первенство Краснодарского края по триатлону (дуатлон-кросс)"), "Чемпионат и Первенство Краснодарского края…", "по границе слова");
+    assert.ok(shortName("Ааааааааааааааааааааааааааааааааааааааааааааааааааааааа").length <= 45, "без пробелов — жёстко до 45");
+    assert.equal(shortName("Парк кросс"), "Парк кросс");
 
     // owner (18.10.2026): rich видит только тренер (coach_chat_id), все остальные — как без флага
     store.config.set("rich_for", "owner");

@@ -6,7 +6,7 @@ import { MONTHS_GEN, TYPE_LABEL, distPills, plural, type Race } from "@/app/race
 import { SITE_URL } from "@/lib/site";
 import { courseList, type CourseLink } from "@/features/race-course";
 import type { FullDetails } from "@/features/race-details/full";
-import { cardRich, listRich, periodText, type ListRow, type RichMessage } from "./rich";
+import { cardRich, listRich, menuRich, myRich, periodText, shortName, type ListRow, type RichMessage } from "./rich";
 
 import {
   DIST_BUTTONS,
@@ -32,7 +32,24 @@ export type Keyboard = { inline_keyboard: Button[][] };
 /** rich — тот же экран rich-сообщением (Bot API 10.1+, наряд 18.10.2026): бот шлёт его вместо text, если
  *  rich включён для человека (rich_for в race_bot_config, без rich_off). У rich свои кнопки, последней —
  *  «Текстовая версия». */
-export type Msg = { text: string; reply_markup?: Keyboard | Record<string, unknown>; preview?: string; rich?: { rich_message: RichMessage; reply_markup: Keyboard } };
+export type Msg = {
+  text: string;
+  reply_markup?: Keyboard | Record<string, unknown>;
+  preview?: string;
+  rich?: { rich_message: RichMessage; reply_markup: Keyboard };
+  /** Главный экран: «🏠 Меню» под ним не добавляется (на остальных — последней строкой, 18.10.2026). */
+  main?: boolean;
+};
+
+/** «🏠 Меню» — последней строкой на каждом экране, кроме главного; с «Текстовой версией» — в одном ряду. */
+export const MENU_BUTTON: Button = { text: "🏠 Меню", callback_data: "menu" };
+export function withMenuRow(kb: Keyboard): Keyboard {
+  const rows = kb.inline_keyboard;
+  if (rows.some((r) => r.some((b) => b.callback_data === "menu"))) return kb;
+  const last = rows.at(-1);
+  if (last && last.length === 1 && last[0].callback_data?.startsWith("rt|")) return { inline_keyboard: [...rows.slice(0, -1), [MENU_BUTTON, last[0]]] };
+  return { inline_keyboard: [...rows, [MENU_BUTTON]] };
+}
 
 /** Последняя строка под каждым rich-сообщением: обычный HTML этого же экрана и флаг rich_off. again — callback, перерисовывающий экран. */
 export const textVersionRow = (again: string): Button[] => [{ text: "Текстовая версия", callback_data: `rt|${again}`.slice(0, 64) }];
@@ -105,9 +122,12 @@ function racesCount(n: number): string {
 }
 
 /** Первое сообщение нового человека: два явных пути, город и весь календарь. Кнопки городов — после «Выбрать город». */
-export function greeting(nRaces: number): Msg {
+/** notice — строка сверху («✓ Сохранил …», если пришёл по ссылке «Следить» с сайта). */
+export function greeting(nRaces: number, notice: string | null = null): Msg {
   return {
+    main: true,
     text:
+      (notice ? `<b>${esc(notice)}</b>\n\n` : "") +
       `Привет! Я собираю все беговые старты России: ${racesCount(nRaces)} забегов до конца 2027. ` +
       "Выбери свой город, и я покажу старты рядом. Или открой весь календарь и посмотри сам.",
     reply_markup: {
@@ -122,6 +142,8 @@ export function greeting(nRaces: number): Msg {
 /** Одно мягкое напоминание через 30 минут, если после /start ничего не нажато. Никогда повторно. */
 export function nudge(): Msg {
   return {
+    // те же два пути, что в приветствии: это и есть главный экран нового человека, «🏠 Меню» не нужно
+    main: true,
     text: "Если удобно, выбери свой город, и я покажу старты рядом. Или открой весь календарь и посмотри сам.",
     reply_markup: {
       inline_keyboard: [
@@ -290,7 +312,7 @@ export function menuKeyboard(city: string | null): Keyboard {
       ...(city ? [[{ text: `Старты: ${city} и рядом`, callback_data: "sz" }]] : []),
       [{ text: "Мои забеги", callback_data: "my" }, calendarButton(CALENDAR_LABEL, city ?? undefined, "menu")],
       [{ text: "Настройки", callback_data: "s:menu" }, { text: "Сменить город", callback_data: "s:city" }],
-      [{ text: "Начать заново", callback_data: "restart" }],
+      // «Начать заново» — в настройках (18.10.2026)
     ],
   };
 }
@@ -309,23 +331,53 @@ function filtersLine(types: string[], dists: string[]): string {
   return [...t, ...ds].join(", ") || "все забеги";
 }
 
-/** Повторный /start у человека, который уже выбрал город: сводка и меню, без онбординга. */
+/** Главный экран (повторный /start, «🏠 Меню»): город, фильтры, ближайший сохранённый старт строкой с датой.
+ *  notice — строка сверху («✓ Сохранил …» после ссылки «Следить» с сайта); consultCode — кнопка консультации. */
 export function welcomeBack(
   u: { first_name: string | null; city: string | null; types: string[]; distances: string[] },
   saved: { race: Race }[],
   today: string,
   head = "С возвращением!",
+  notice: string | null = null,
+  consultCode: string | null = null,
 ): Msg {
   const next = saved[0];
+  const left = next ? countdown(daysBetween(today, next.race.ds)) : "";
   const lines = [
+    ...(notice ? [`<b>${esc(notice)}</b>\n`] : []),
     `<b>${head}</b>`,
     `Город: <b>${esc(u.city || "не выбран")}</b>`,
     `Фильтры: ${esc(filtersLine(u.types, u.distances))}`,
-    saved.length
-      ? `Сохранено: ${saved.length} ${plural(saved.length, "забег", "забега", "забегов")}, ближайший: ${esc(next.race.name)} (${countdown(daysBetween(today, next.race.ds))})`
+    next
+      ? `Ближайший: <b>${shortDate(next.race)}</b> · ${esc(shortName(next.race.name))} (${left})${saved.length > 1 ? ` · всего сохранено ${saved.length}` : ""}`
       : "Сохранённых забегов пока нет: нажми ⭐ под забегом.",
   ];
-  return { text: lines.join("\n"), reply_markup: menuKeyboard(u.city) };
+  const consult: Button[][] = consultCode ? [[{ text: "Бесплатная консультация", callback_data: `consult:${consultCode}` }]] : [];
+  const base = menuKeyboard(u.city);
+  return {
+    main: true,
+    text: lines.join("\n"),
+    reply_markup: { inline_keyboard: [...consult, ...base.inline_keyboard] },
+    rich: {
+      rich_message: menuRich({
+        head,
+        notice,
+        city: u.city,
+        filters: filtersLine(u.types, u.distances),
+        next: next ? { race: next.race as BotRace, left } : null,
+        savedTotal: saved.length,
+      }),
+      reply_markup: {
+        inline_keyboard: [
+          ...consult,
+          ...(u.city ? [[{ text: `Старты: ${u.city} и рядом`, callback_data: "sz", style: "primary" as const }]] : []),
+          [{ text: "Мои забеги", callback_data: "my" }, calendarButton(CALENDAR_LABEL, u.city ?? undefined, "menu")],
+          [{ text: "Настройки", callback_data: "s:menu" }, { text: "Сменить город", callback_data: "s:city" }],
+          textVersionRow("menu"),
+        ],
+      },
+    },
+  };
 }
 
 export function cityNotFound(text: string, suggestions: string[]): Msg {
@@ -369,6 +421,9 @@ export const DIGEST_ON: Msg = { text: "Договорились: новые за
 export const DIGEST_OFF: Msg = { text: "Хорошо, без рассылки. Найти забеги можно в любой момент: напиши, например, «трейл Казань»." };
 
 // ── «Сохранил» и консультация ────────────────────────────────────────────────
+
+/** Всплывающее после «⭐ Следить» (18.10.2026): вместо отдельного экрана «Сохранил». */
+export const FOLLOW_TOAST = "Сохранил. За неделю пришлю чек-лист, накануне погоду";
 
 export function saved(r: Race): Msg {
   return {
@@ -439,11 +494,11 @@ export function myRaces(all: MyItem[], today: string, page = 0, city?: string | 
       // Отменён (race_overrides.status = cancelled): не исчезает из списка, а помечен (15.10.2026).
       const g = it.gone;
       const when = g.date ? shortDate({ ds: g.date, de: g.end || g.date }) : "дата неизвестна";
-      return `<b>${esc(g.name)}</b> · отменён\n${when}${g.city ? ` · ${esc(g.city)}` : ""}`;
+      return `<b>${esc(shortName(g.name))}</b> · отменён\n${when}${g.city ? ` · ${esc(g.city)}` : ""}`;
     }
     const { race } = it;
     const left = daysBetween(today, race.ds);
-    return `<b>${esc(race.name)}</b> · ${countdown(left)}\n${shortDate(race)} · ${esc(raceMeta(race))}`;
+    return `<b>${esc(shortName(race.name))}</b> · ${countdown(left)}\n${shortDate(race)} · ${esc(raceMeta(race))}`;
   });
   // Страницы по 10: текст укладывается в 4096 знаков, кнопок не больше 100 (лимиты Telegram).
   const pages = Math.ceil(all.length / MY_PAGE);
@@ -451,7 +506,31 @@ export function myRaces(all: MyItem[], today: string, page = 0, city?: string | 
   if (page > 0) nav.push({ text: "Назад", callback_data: `myp:${page - 1}` });
   if (page < pages - 1) nav.push({ text: `Ещё (${all.length - (page + 1) * MY_PAGE})`, callback_data: `myp:${page + 1}` });
   const head = pages > 1 ? `Твои забеги (${page + 1}/${pages})` : "Твои забеги";
+  // Rich (18.10.2026): таблица и номера кнопками — номер открывает карточку (там «Убрать» и сайт);
+  // было по две кнопки «Сайт» и «Убрать» на каждый старт — 10 кнопок при 5 стартах.
+  const nums: Button[] = items.map((it, i) => ({ text: String(i + 1), callback_data: "gone" in it ? `u:${it.code}` : `mo:${it.code}` }));
+  const numRows: Button[][] = [];
+  for (let i = 0; i < nums.length; i += 5) numRows.push(nums.slice(i, i + 5));
+  const rich = {
+    rich_message: myRich(
+      items.map((it, i) =>
+        "gone" in it
+          ? { n: i + 1, name: it.gone.name, city: it.gone.city ?? "", ds: it.gone.date, de: it.gone.end, left: "", cancelled: true }
+          : { n: i + 1, name: it.race.name, city: it.race.city, ds: it.race.ds, de: it.race.de, left: countdown(daysBetween(today, it.race.ds)), cancelled: false },
+      ),
+      head,
+    ),
+    reply_markup: {
+      inline_keyboard: [
+        ...numRows,
+        ...(nav.length ? [nav] : []),
+        [{ ...calendarButton(CALENDAR_LABEL, city ?? undefined, "my"), style: "primary" as const }],
+        textVersionRow(page > 0 ? `myp:${page}` : "my"),
+      ],
+    },
+  };
   return {
+    rich,
     text: `${head}\n\n${lines.join("\n\n")}`.slice(0, 4000),
     reply_markup: {
       inline_keyboard: [
@@ -527,6 +606,7 @@ export function settings(u: SettingsUser, now: Date, rich: "on" | "off" | null =
         [{ text: "Сменить город", callback_data: "s:city" }, { text: "Сменить типы и дистанции", callback_data: "s:prefs" }],
         [{ text: "Мои забеги", callback_data: "my" }, { text: "Отписаться от всего", callback_data: "s:unsub" }],
         ...(rich ? [[{ text: rich === "on" ? "✓ Красивое оформление" : "Красивое оформление: включить", callback_data: `s:rich:${rich === "on" ? "off" : "on"}` }]] : []),
+        [{ text: "Начать заново", callback_data: "restart" }],
       ],
     },
   };
@@ -793,9 +873,9 @@ export function seasonList(
     if (x.kind === "race") {
       const star = following.has(x.race.id) ? "⭐ " : "";
       const dist = distPills(x.race).join(" / ");
-      lines.push(`${nearHead}${i + 1}. ${star}<b>${shortDate(x.race)}</b> · ${esc(x.race.name)}\n    ${esc(itemPlace(x))}${dist ? ` · ${esc(dist)}` : ""}${hasReg(x.race) ? " · регистрация открыта" : ""}`);
+      lines.push(`${nearHead}${i + 1}. ${star}<b>${shortDate(x.race)}</b> · ${esc(shortName(x.race.name))}\n    ${esc(itemPlace(x))}${dist ? ` · ${esc(dist)}` : ""}${hasReg(x.race) ? " · регистрация открыта" : ""}`);
     } else {
-      lines.push(`${nearHead}${i + 1}. <b>~${dayMon(x.date)}</b> · ${esc(x.e.name)}\n    ${esc(itemPlace(x))} · ${expectedNote(x.e)}`);
+      lines.push(`${nearHead}${i + 1}. <b>~${dayMon(x.date)}</b> · ${esc(shortName(x.e.name))}\n    ${esc(itemPlace(x))} · ${expectedNote(x.e)}`);
     }
   });
   const from = p * SEASON_PAGE + 1;

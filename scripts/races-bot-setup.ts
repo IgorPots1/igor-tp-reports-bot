@@ -25,9 +25,11 @@ import { CALENDAR_URL } from "@/features/races-bot/texts";
 
 const WEBHOOK_URL = "https://igorp.run/api/races-bot/webhook";
 
+// По кнопке «/» видно, как вернуться (18.10.2026): /start — главный экран, /my — мои забеги.
+// /races оставлен в боте (старые подсказки), из списка убран.
 const COMMANDS = [
-  { command: "start", description: "Начать" },
-  { command: "races", description: "Мои забеги" },
+  { command: "start", description: "Главное меню" },
+  { command: "my", description: "Мои забеги" },
   { command: "calendar", description: "Календарь" },
   { command: "city", description: "Мой город" },
   { command: "settings", description: "Настройки" },

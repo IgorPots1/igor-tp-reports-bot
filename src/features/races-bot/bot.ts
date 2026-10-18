@@ -228,10 +228,12 @@ export function createBot(deps: BotDeps) {
     await dropMenu(u);
     let id: number | null;
     if (msg.rich && (await richOn(u))) {
-      const res = (await tg.call("sendRichMessage", { chat_id: chatId, rich_message: msg.rich.rich_message, reply_markup: msg.rich.reply_markup })) as { message_id?: number } | null;
+      const kb = !msg.main ? T.withMenuRow(msg.rich.reply_markup) : msg.rich.reply_markup;
+      const res = (await tg.call("sendRichMessage", { chat_id: chatId, rich_message: msg.rich.rich_message, reply_markup: kb })) as { message_id?: number } | null;
       id = typeof res?.message_id === "number" ? res.message_id : null;
     } else {
-      const markup = rm?.inline_keyboard?.length ? msg.reply_markup : T.menuKeyboard(u.city);
+      // свои кнопки — плюс «🏠 Меню» последней строкой (кроме главного экрана); без кнопок — главное меню
+      const markup = rm?.inline_keyboard?.length ? (!msg.main ? T.withMenuRow(msg.reply_markup as T.Keyboard) : msg.reply_markup) : T.menuKeyboard(u.city);
       id = await sendRaw(chatId, { text: msg.text, reply_markup: markup, ...(msg.preview ? { preview: msg.preview } : {}) });
     }
     if (id !== null) await store.saveUser({ tg_id: chatId, menu_message_id: id, menu_message_at: now().toISOString() });
@@ -275,16 +277,19 @@ export function createBot(deps: BotDeps) {
     if (origin && cur?.menu_message_id === origin.message_id && age < MENU_TTL_MS) {
       try {
         // rich и обычный текст переключаются на месте той же правкой (проверено 18.10.2026)
+        const menuRow = !msg.main;
         if (msg.rich && (await richOn(cur))) {
-          await tg.call("editMessageText", { chat_id: u.tg_id, message_id: origin.message_id, rich_message: msg.rich.rich_message, reply_markup: msg.rich.reply_markup });
+          const kb = menuRow ? T.withMenuRow(msg.rich.reply_markup) : msg.rich.reply_markup;
+          await tg.call("editMessageText", { chat_id: u.tg_id, message_id: origin.message_id, rich_message: msg.rich.rich_message, reply_markup: kb });
         } else {
+          const own = (msg.reply_markup as T.Keyboard | undefined)?.inline_keyboard?.length ? (msg.reply_markup as T.Keyboard) : null;
           await tg.call("editMessageText", {
             chat_id: u.tg_id,
             message_id: origin.message_id,
             text: msg.text,
             parse_mode: "HTML",
             link_preview_options: previewOf(msg),
-            reply_markup: msg.reply_markup ?? T.menuKeyboard(cur.city),
+            reply_markup: own ? (menuRow ? T.withMenuRow(own) : own) : msg.reply_markup ?? T.menuKeyboard(cur.city),
           });
         }
         return;
@@ -324,9 +329,9 @@ export function createBot(deps: BotDeps) {
     return new Set((await store.listFollows(tgId)).map((f) => f.race_id));
   }
 
-  async function greet(chatId: number) {
+  async function greet(chatId: number, notice: string | null = null) {
     const races = await deps.races();
-    await send(chatId, T.greeting(races.length));
+    await send(chatId, T.greeting(races.length, notice));
   }
 
   /** Выбор города (после «📍 Выбрать город», «Сменить город», /city). */
@@ -472,6 +477,7 @@ export function createBot(deps: BotDeps) {
 
   /** «sn:ve27:2» из хвоста кнопки карточки «ve27:2»; «sz» — к развилке. */
   function backOf(tail: string[]): string {
+    if (tail[0] === "my") return "my"; // карточка из «Моих забегов» (18.10.2026)
     return tail[0] === "sz" || !tail[0] ? "sz" : `sn:${tail[0]}:${Number(tail[1]) || 0}`;
   }
 
@@ -492,21 +498,7 @@ export function createBot(deps: BotDeps) {
     return showSeason(u, "all", 0);
   }
 
-  async function follow(u: BotUser, r: BotRace, via = "bot") {
-    // Второй ⭐ на тот же старт: ответить, но не сохранять и не писать событие ещё раз.
-    if ((await followingSet(u.tg_id)).has(r.id)) return send(u.tg_id, T.alreadyFollowing(r));
-    await store.addFollow(u.tg_id, r);
-    await track(u.tg_id, "follow", { raceId: r.id, meta: { race_name: r.name, city: r.city, via } });
-    const offer = consultAllowed(u.consult_offered_at, now());
-    if (offer) {
-      await send(u.tg_id, T.saved(r));
-      await send(u.tg_id, T.consultOffer(raceCode(r.id)));
-      await store.saveUser({ tg_id: u.tg_id, consult_offered_at: now().toISOString() });
-      await track(u.tg_id, "consult_offer_shown", { raceId: r.id, meta: { after: "follow" } });
-    } else {
-      await send(u.tg_id, { ...T.saved(r), reply_markup: T.NAV });
-    }
-  }
+
 
   async function showMy(u: BotUser, page = 0, origin?: TgMessage) {
     const races = await deps.races();
@@ -539,9 +531,25 @@ export function createBot(deps: BotDeps) {
   }
 
   /** Сводка и главное меню вместо повторного онбординга. */
-  async function welcomeBack(u: BotUser, head?: string) {
-    return send(u.tg_id, T.welcomeBack(u, await savedRaces(u), today(u), head));
+  /** Главный экран; origin — нажатие «🏠 Меню»: правка того же сообщения (живое меню). */
+  async function welcomeBack(u: BotUser, head?: string, origin?: TgMessage, notice: string | null = null, consultCode: string | null = null) {
+    const m = T.welcomeBack(u, await savedRaces(u), today(u), head, notice, consultCode);
+    return origin ? screen(u, m, origin) : send(u.tg_id, m);
   }
+
+  /** «⭐ Следить» без отдельного экрана (18.10.2026): сохранить, событие, предложение консультации (не чаще
+   *  раза в 30 дней). Возвращает: новый ли это старт и показывать ли консультацию. */
+  async function followQuiet(u: BotUser, r: BotRace, via: string): Promise<{ added: boolean; consult: boolean }> {
+    if ((await followingSet(u.tg_id)).has(r.id)) return { added: false, consult: false };
+    await store.addFollow(u.tg_id, r);
+    await track(u.tg_id, "follow", { raceId: r.id, meta: { race_name: r.name, city: r.city, via } });
+    if (!consultAllowed(u.consult_offered_at, now())) return { added: true, consult: false };
+    await store.saveUser({ tg_id: u.tg_id, consult_offered_at: now().toISOString() });
+    await track(u.tg_id, "consult_offer_shown", { raceId: r.id, meta: { after: "follow" } });
+    return { added: true, consult: true };
+  }
+  /** Текст всплывающего уведомления на нажатие (answerCallbackQuery), по человеку; читается после обработки. */
+  const toasts = new Map<number, string>();
 
   async function consult(u: BotUser, code: string) {
     const races = await deps.races();
@@ -569,11 +577,15 @@ export function createBot(deps: BotDeps) {
     // Источник пишется один раз, при первом приходе (без метки — «direct»). Повторный приход с
     // другой меткой его не меняет: он виден в событии start как «вернулся через».
     if (isNew && !u.source) u = await store.saveUser({ tg_id: u.tg_id, source: source ?? "direct" });
+    // Ссылка «Следить» с сайта (r_<код>): старт сохраняем, а открываем всё равно главный экран со строкой
+    // «✓ Сохранил …» (18.10.2026: Telegram показывает такой переход как «/start», и отдельный экран «Сохранил»
+    // путал — казалось, что /start не открывает меню).
     if (p.kind === "race") {
       const r = findRaceByCode(await deps.races(), p.code);
-      if (r) return follow(u, r);
-      await send(u.tg_id, { text: "Этот забег уже прошёл или убран из календаря." });
-      return u.city ? welcomeBack(u) : greet(u.tg_id);
+      if (!r) return u.city ? welcomeBack(u, undefined, undefined, "Этот забег уже прошёл или убран из календаря.") : greet(u.tg_id, "Этот забег уже прошёл или убран из календаря.");
+      const f = await followQuiet(u, r, "bot");
+      const notice = f.added ? `✓ Сохранил «${r.name}». За неделю пришлю чек-лист, накануне погоду.` : `⭐ Уже слежу за «${r.name}».`;
+      return u.city ? welcomeBack(u, undefined, undefined, notice, f.consult ? raceCode(r.id) : null) : greet(u.tg_id, notice);
     }
     if (p.kind === "expected") return watchExpected(u, p.code);
     // Город уже выбран: «С возвращением!» и меню, а не онбординг заново (было: любой /start
@@ -608,7 +620,7 @@ export function createBot(deps: BotDeps) {
     if (cmd) {
       const [, name, arg] = cmd;
       if (name === "start") return onStart(u, arg);
-      if (name === "races") return showMy(u);
+      if (name === "races" || name === "my") return showMy(u);
       if (name === "calendar") {
         return send(u.tg_id, {
           text: "Весь календарь забегов: поиск по городу, фильтры, кнопка «Следить».",
@@ -623,7 +635,7 @@ export function createBot(deps: BotDeps) {
         if (coachChat && Number(coachChat) === u.tg_id) return send(u.tg_id, statsMessage(await store.loadStats(30, now())));
         return send(u.tg_id, T.unknownCommand(u.city));
       }
-      if (name === "menu") return welcomeBack(u, "Меню");
+      if (name === "menu") return welcomeBack(u);
       return send(u.tg_id, T.unknownCommand(u.city));
     }
     if (u.state === "await_city") {
@@ -690,7 +702,8 @@ export function createBot(deps: BotDeps) {
         await track(u.tg_id, "pick_city");
         return pickCity(u.tg_id);
       case "menu":
-        return welcomeBack(u, "Меню");
+        // без города главный экран — приветствие с выбором города
+        return u.city ? welcomeBack(u, undefined, msg) : greet(u.tg_id);
       case "restart":
         // «Начать заново»: город и фильтры с нуля, сохранённые забеги остаются.
         await store.saveUser({ tg_id: u.tg_id, city: null, types: [], distances: [], state: null });
@@ -717,6 +730,11 @@ export function createBot(deps: BotDeps) {
         const x = seasonSlice(await itemsOf(u, b), s)[p * T.SEASON_PAGE + (Number(idx) || 0)];
         return x ? showItem(u, x, `sn:${key}:${p}`, msg) : showSeason(u, key, p, msg);
       }
+      case "mo": {
+        // номер в «Моих забегах»: карточка, «← К списку» ведёт обратно в «Мои забеги»
+        const x = await itemByCode(u, arg);
+        return x ? showItem(u, x, "my", msg) : showMy(u, 0, msg);
+      }
       case "oc": {
         const x = await itemByCode(u, arg);
         return x ? showItem(u, x, "sz", msg) : showFork(u, msg);
@@ -730,15 +748,10 @@ export function createBot(deps: BotDeps) {
         if (!x) return showFork(u, msg);
         let consultNow = false;
         if (key === "sf" && x.kind === "race") {
-          if (!(await followingSet(u.tg_id)).has(x.race.id)) {
-            await store.addFollow(u.tg_id, x.race);
-            await track(u.tg_id, "follow", { raceId: x.race.id, meta: { race_name: x.race.name, city: x.race.city, via: "season" } });
-            if (consultAllowed(u.consult_offered_at, now())) {
-              consultNow = true;
-              await store.saveUser({ tg_id: u.tg_id, consult_offered_at: now().toISOString() });
-              await track(u.tg_id, "consult_offer_shown", { raceId: x.race.id, meta: { after: "follow" } });
-            }
-          }
+          const f = await followQuiet(u, x.race, "season");
+          consultNow = f.consult;
+          // подтверждение — всплывающим уведомлением, карточка на месте с «✓ Слежу» (18.10.2026)
+          if (f.added) toasts.set(u.tg_id, T.FOLLOW_TOAST);
         } else if (key === "su" && x.kind === "race") {
           if ((await followingSet(u.tg_id)).has(x.race.id)) {
             await store.removeFollow(u.tg_id, x.race.id);
@@ -841,7 +854,10 @@ export function createBot(deps: BotDeps) {
       case "f": {
         const r = findRaceByCode(await deps.races(), arg);
         if (!r) return send(u.tg_id, { text: "Этот забег уже прошёл или убран из календаря." });
-        return follow(u, r);
+        // ⭐ из напоминаний и старых сообщений: всплывающее «Сохранил» и карточка на месте (18.10.2026)
+        const f = await followQuiet(u, r, "bot");
+        toasts.set(u.tg_id, f.added ? T.FOLLOW_TOAST : "Уже слежу за этим забегом");
+        return showItem(u, { kind: "race", race: r, km: null, date: r.ds, near: false }, "sz", msg, f.consult);
       }
       case "u": {
         const f = (await store.listFollows(u.tg_id)).find((x) => raceCode(x.race_id) === arg);
@@ -970,16 +986,25 @@ export function createBot(deps: BotDeps) {
     }
     if (update.callback_query) {
       const q = update.callback_query;
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => undefined);
-      if (q.message && q.message.chat.type !== "private") return;
-      // Двойной клик: та же кнопка тем же человеком за 3 секунды — второй раз ничего не делаем
-      // (было: unsubscribe дважды за секунду).
-      if (!(await firstTime(`cb:${q.from.id}:${q.data || ""}`, DOUBLE_CLICK_SEC))) return;
-      const u = await ensureUser(q.from);
-      // Нажатие для статистики по дням: что именно (часть до «:»), без самих данных.
-      const k = (q.data || "").split(":")[0];
-      if (k && k !== "noop") await track(u.tg_id, "tap", { meta: { k } });
-      return guarded(u.tg_id, () => onCallback(u, q.data || "", q.message));
+      // Ответ на нажатие — после обработки (18.10.2026): так в нём может быть текст («Сохранил…»).
+      const answer = () => {
+        const text = toasts.get(q.from.id);
+        toasts.delete(q.from.id);
+        return tg.call("answerCallbackQuery", { callback_query_id: q.id, ...(text ? { text } : {}) }).catch(() => undefined);
+      };
+      try {
+        if (q.message && q.message.chat.type !== "private") return;
+        // Двойной клик: та же кнопка тем же человеком за 3 секунды — второй раз ничего не делаем
+        // (было: unsubscribe дважды за секунду).
+        if (!(await firstTime(`cb:${q.from.id}:${q.data || ""}`, DOUBLE_CLICK_SEC))) return;
+        const u = await ensureUser(q.from);
+        // Нажатие для статистики по дням: что именно (часть до «:»), без самих данных.
+        const k = (q.data || "").split(":")[0];
+        if (k && k !== "noop") await track(u.tg_id, "tap", { meta: { k } });
+        return await guarded(u.tg_id, () => onCallback(u, q.data || "", q.message));
+      } finally {
+        await answer();
+      }
     }
     const m = update.message;
     if (!m || m.chat.type !== "private" || !m.from) return;
