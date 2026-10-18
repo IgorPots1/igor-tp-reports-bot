@@ -2,6 +2,7 @@
  * ключевые точки, ветер в эти дни по архиву и блок консультации. Данные — src/data/race-courses,
  * их собирает scripts/race-course/build.ts; персональных данных учеников в них нет. */
 
+import { nbsp } from "@/lib/typography";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -72,16 +73,16 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
         </Link>
         <h1 className={styles.h1}>{c.name}</h1>
         <p className={styles.lede}>
-          {longDate(c.date)} · {ru(c.distanceKm)} км · разбор трассы
+          {nbsp(`${longDate(c.date)} · ${ru(c.distanceKm)} км · разбор трассы`)}
         </p>
         {fresh ? <p className={styles.fresh}>{fresh}</p> : null}
         {lite ? (
           <p className={styles.facts}>
-            Набор высоты уточняется{surface ? ` · покрытие по данным карты: ${surface}` : ""}
+            {nbsp(`Набор высоты уточняется${surface ? ` · покрытие по данным карты: ${surface}` : ""}`)}
           </p>
         ) : (
           <p className={styles.facts}>
-            Набор {c.gain} м · сброс {c.loss} м{c.checks.organizer !== null ? ` · у организатора ${c.checks.organizer} м` : ""}
+            {nbsp(`Набор ${c.gain} м · сброс ${c.loss} м${c.checks.organizer !== null ? ` · у организатора ${c.checks.organizer} м` : ""}`)}
           </p>
         )}
         <a className={styles.follow} href={follow}>
@@ -119,7 +120,7 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
                   <b>
                     {i + 1}. {ru(p.km)} км.
                   </b>{" "}
-                  {p.text}
+                  {nbsp(p.text)}
                 </li>
               ))}
             </ol>

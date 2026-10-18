@@ -7,6 +7,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { nbsp, nbspDeep, nbspHtml } from "@/lib/typography";
+
 import { norm } from "@/app/races/races-logic";
 import { courseList } from "@/features/race-course";
 import { fieldCount, fullDetails, MIN_FIELDS, type FullRow } from "@/features/race-details/full";
@@ -165,6 +167,14 @@ const perfCtx = new AsyncLocalStorage<Perf>();
 /** Первое обновление в экземпляре функции — холодный старт (модуль только что загружен). */
 let warmInstance = false;
 const SCREEN_METHODS = new Set(["sendMessage", "editMessageText", "sendRichMessage"]);
+const TEXT_METHODS = new Set(["sendMessage", "editMessageText", "sendRichMessage", "answerCallbackQuery", "editMessageReplyMarkup"]);
+function typoParams(p: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...p };
+  if (typeof out.text === "string") out.text = out.parse_mode === "HTML" ? nbspHtml(out.text) : nbsp(out.text);
+  if (out.rich_message) out.rich_message = nbspDeep(out.rich_message);
+  if (out.reply_markup) out.reply_markup = nbspDeep(out.reply_markup);
+  return out;
+}
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgMessage = {
@@ -238,7 +248,10 @@ export function createBot(deps: BotDeps) {
     },
   });
   const tg: BotTg = {
-    call: async (method: string, params: Record<string, unknown>) => {
+    call: async (method: string, raw: Record<string, unknown>) => {
+      // Неразрывные пробелы (18.10.2026): одно место для ВСЕХ текстов бота — экраны, rich, кнопки,
+      // всплывающие уведомления. «21 км», «25 окт, вс», «№ 5» не рвутся, строка не начинается с «·».
+      const params = TEXT_METHODS.has(method) ? typoParams(raw) : raw;
       const r = await timed("tg", () => deps.tg.call(method, params));
       const p = perfCtx.getStore();
       if (p && p.screen === null && SCREEN_METHODS.has(method)) p.screen = Date.now() - p.t0;

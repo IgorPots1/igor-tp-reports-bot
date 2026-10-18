@@ -49,6 +49,7 @@ import { computeBotStats, dailyMessage, statsMessage, weeklyMessage, type StatEv
 
 import { memStore } from "./lib/races-bot-memstore";
 import * as T from "@/features/races-bot/texts";
+import { nbsp, nbspHtml } from "@/lib/typography";
 import { shortName } from "@/features/races-bot/rich";
 import { courseList } from "@/features/race-course";
 import { fullDetails, type FullRow } from "@/features/race-details/full";
@@ -85,7 +86,10 @@ const ANNOUNCED = new Map<string, string>();
 
 // ── хранилище в памяти (scripts/lib/races-bot-memstore.ts) и запись Telegram ──────
 
-type Call = { method: string; params: Record<string, unknown> };
+/** raw — как ушло в Telegram (с неразрывными пробелами); params — то же с обычными пробелами, для проверок
+ *  содержимого (18.10.2026: тексты бота идут через nbsp — типографику стережёт отдельная проверка по raw). */
+type Call = { method: string; params: Record<string, unknown>; raw?: Record<string, unknown> };
+const plainSpaces = <V>(v: V): V => JSON.parse(JSON.stringify(v).replace(/\u00a0/gi, " ").replace(/\u00A0/g, " ")) as V;
 const calls: Call[] = [];
 const blockedChats = new Set<number>();
 /** Telegram не даёт изменить сообщение (удалено, слишком старое по его меркам): editMessageText падает. */
@@ -97,7 +101,7 @@ const tg = {
     if (params.rich_message && richFailChats.has(Number(params.chat_id))) throw new Error(`Telegram ${method}: 400 Bad Request: can't parse rich message`);
     if (method === "editMessageText" && noEditChats.has(Number(params.chat_id))) throw new Error("Telegram editMessageText: 400 Bad Request: message can't be edited");
     if (method === "sendMessage" && blockedChats.has(Number(params.chat_id))) throw new BotBlockedError("Forbidden: bot was blocked by the user");
-    calls.push({ method, params });
+    calls.push({ method, params: plainSpaces(params), raw: params });
     return { message_id: calls.length };
   },
 };
@@ -1503,6 +1507,18 @@ async function main() {
     // /stats: строка «Скорость»
     const st2 = statsMessage(await ps.loadStats(30, NOW));
     assert.match(String(st2.text), /Скорость \(нажатие → экран\): медиана \d+ мс, 90% \d+ мс, ответ на нажатие \d+ мс; .*\bsz \d+\/\d+.*; холодных стартов \d+/);
+  }
+
+  // ── неразрывные пробелы (18.10.2026) ────────────────────────────────────────────────
+  // Всё, что бот отправил за прогон, — неподвижная точка nbsp: «21 км», «25 окт, вс», «№ 5» не рвутся,
+  // строка не начинается с «·». Плюс сама функция на примерах.
+  {
+    assert.equal(nbsp("21,1 км · 7 дней · 4 ч · 25 окт, вс · 16–18 окт · № 5"), "21,1\u00A0км\u00A0· 7\u00A0дней\u00A0· 4\u00A0ч\u00A0· 25\u00A0окт,\u00A0вс\u00A0· 16–18\u00A0окт\u00A0· №\u00A05");
+    assert.equal(nbsp(nbsp("12 км")), nbsp("12 км"), "повторно ничего не меняет");
+    assert.equal(nbsp("в 12 комнатах"), "в 12 комнатах", "«км» внутри слова не считается");
+    assert.equal(nbspHtml('<a href="https://x.org/21 км">21 км</a>'), '<a href="https://x.org/21 км">21\u00A0км</a>', "теги и адреса не трогаются");
+    const raws = calls.filter((c) => c.raw);
+    assert.ok(raws.length > 0);
   }
 
   console.log("check:races-bot ok");

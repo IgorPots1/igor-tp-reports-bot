@@ -8,7 +8,9 @@
  *   — нигде нет «нет данных»; нет пустых таблиц (только шапка); у ячеек есть align/valign; нет пустых
  *     частей RichText;
  *   — у каждого экрана, кроме главного, есть «🏠 Меню»;
- *   — нет кнопок в никуда: ключ каждого callback_data есть в обработчике бота.
+ *   — нет кнопок в никуда: ключ каждого callback_data есть в обработчике бота;
+ *   — переносы (18.10.2026): текст, rich и кнопки — неподвижная точка nbsp (неразрывные пробелы в «21 км»,
+ *     «25 окт, вс», «№ 5», перед «·»); ни одна строка не начинается с «·» или с единицы измерения.
  *
  *   npm run check:races-bot-screens
  */
@@ -22,6 +24,7 @@ import { raceCode, type BotRace, type ExpectedItem } from "@/features/races-bot/
 import type { FullRow } from "@/features/race-details/full";
 
 import { memStore } from "./lib/races-bot-memstore";
+import { nbsp, nbspDeep, nbspHtml } from "@/lib/typography";
 
 type Call = { method: string; params: Record<string, unknown> };
 type Btn = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
@@ -122,6 +125,12 @@ function richStats(blocks: { type: string; [k: string]: unknown }[]): { blocks: 
   walk(blocks);
   return { blocks: n, chars, issues };
 }
+/** Где две строки расходятся — кусок вокруг первого отличия. */
+function diffSnippet(a: string, b: string): string {
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  return a.slice(Math.max(0, i - 15), i + 15);
+}
 function check(c: Call, screen: string, mode: string) {
   const where = `[${mode}] ${screen}`;
   const kb = ((c.params.reply_markup as { inline_keyboard?: Btn[][] } | undefined)?.inline_keyboard ?? []) as Btn[][];
@@ -151,6 +160,18 @@ function check(c: Call, screen: string, mode: string) {
   // клавиатура главного меню (её бот ставит под сообщение без своих кнопок) — тоже путь домой
   const mainKb = flat.some((b) => b.callback_data === "my") && flat.some((b) => b.callback_data === "s:menu");
   if (kb.length && !isMain(c) && !mainKb && !flat.some((b) => b.callback_data === "menu")) problems.push(`${where}: нет «🏠 Меню»`);
+  // переносы: всё уже прошло через nbsp, и ни одна строка не начинается с «·» или с единицы
+  const UNIT_START = /^\s*(·|км|м|мин|ч|час|дн|дней|дня|день|лет|года?)(?![А-Яа-яЁё])/m;
+  if (typeof c.params.text === "string") {
+    const t = c.params.text;
+    if (nbspHtml(t) !== t) problems.push(`${where}: обычный пробел там, где нужен неразрывный: «${diffSnippet(t, nbspHtml(t))}»`);
+    const plain = t.replace(/<[^>]+>/g, "");
+    if (UNIT_START.test(plain)) problems.push(`${where}: строка начинается с «·» или единицы: «${plain.match(UNIT_START)![0].trim()}»`);
+  }
+  if (c.params.rich_message && JSON.stringify(nbspDeep(c.params.rich_message)) !== JSON.stringify(c.params.rich_message)) {
+    problems.push(`${where}: в rich обычный пробел там, где нужен неразрывный: «${diffSnippet(JSON.stringify(c.params.rich_message), JSON.stringify(nbspDeep(c.params.rich_message)))}»`);
+  }
+  for (const b of flat) if (nbsp(b.text) !== b.text) problems.push(`${where}: кнопка «${b.text}» без неразрывного пробела`);
   if (!kb.length && c.method !== "editMessageReplyMarkup") problems.push(`${where}: экран без кнопок`);
   checkedScreens++;
 }

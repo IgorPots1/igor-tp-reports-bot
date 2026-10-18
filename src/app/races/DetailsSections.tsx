@@ -2,6 +2,7 @@
  * /races/<id> и блока в мини-приложении. Данные — fullDetails (те же правила, что в боте: пустые
  * разделы не показываются, «нет данных» не выводится, источник и дата проверки внизу). */
 
+import { nbsp } from "@/lib/typography";
 import type { FullDetails } from "@/features/race-details/full";
 import { sourceText } from "@/features/race-details/full";
 
@@ -15,7 +16,7 @@ export default function DetailsSections({ d, important, courses }: { d: FullDeta
       {important ? (
         <p className={styles.important}>
           <b>Важное:</b>
-          {important.replace(/^Важное:/, "")}
+          {nbsp(important.replace(/^Важное:/, ""))}
         </p>
       ) : null}
       {d.sections.map((s) => (
@@ -25,7 +26,7 @@ export default function DetailsSections({ d, important, courses }: { d: FullDeta
             <div className={styles.times}>
               {s.times.map((t) => (
                 <span key={t.label} className={styles.row}>
-                  <span>{t.label}</span>
+                  <span>{nbsp(t.label)}</span>
                   <span>{t.time}</span>
                 </span>
               ))}
@@ -33,7 +34,7 @@ export default function DetailsSections({ d, important, courses }: { d: FullDeta
           ) : null}
           {s.lines.map((l, i) => (
             <p key={i} className={styles.line}>
-              {l}
+              {nbsp(l)}
             </p>
           ))}
           {s.key === "track" && courses.length ? (

@@ -1,5 +1,6 @@
 "use client";
 
+import { nbsp } from "@/lib/typography";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { NEARBY_KM, areaRaces, citySlug, expectedDate, inCity, raceCode, seasons, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
@@ -56,19 +57,50 @@ function allLabel(subject: string): string {
 /** away — для блока «Рядом в области»: «Старица, 71 км» вместо обычной строки места. */
 /** «Всё о старте» в мини-приложении (16.10.2026): раскрывающийся блок, выжимка грузится при первом
  *  раскрытии (/api/races/details), раскрытие — событие details_open с via: miniapp. */
+/** Выжимка, уже загруженная или в пути: блок, появившийся на экране, грузит её заранее (18.10.2026),
+ *  и раскрытие «Всё о старте» показывает готовое без ожидания. */
+type DetailsData = { important: string | null; details: FullDetails; courses: CourseRef[] };
+const detailsCache = new Map<string, Promise<DetailsData>>();
+function loadDetails(id: string): Promise<DetailsData> {
+  let p = detailsCache.get(id);
+  if (!p) {
+    p = fetch(`/api/races/details?id=${encodeURIComponent(id)}`).then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))));
+    p.catch(() => detailsCache.delete(id)); // сбой — следующая попытка заново
+    detailsCache.set(id, p);
+  }
+  return p;
+}
+
 function DetailsToggle({ r, onOpen }: { r: Race; onOpen: (r: Race) => void }) {
-  const [data, setData] = useState<{ important: string | null; details: FullDetails; courses: CourseRef[] } | null>(null);
+  const [data, setData] = useState<DetailsData | null>(null);
   const [failed, setFailed] = useState(false);
   const started = useRef(false);
+  const box = useRef<HTMLDetailsElement | null>(null);
+  // предзагрузка: блок на экране (или в 300 px от него) — выжимка грузится заранее, один раз
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es.some((e) => e.isIntersecting)) {
+          loadDetails(r.id).catch(() => undefined);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "300px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [r.id]);
   return (
     <details
+      ref={box}
       className={styles.more}
       onToggle={(e) => {
         if (!(e.currentTarget as HTMLDetailsElement).open || started.current) return;
         started.current = true;
         onOpen(r);
-        fetch(`/api/races/details?id=${encodeURIComponent(r.id)}`)
-          .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+        loadDetails(r.id)
           .then((j) => setData(j))
           .catch(() => setFailed(true));
       }}
@@ -176,7 +208,7 @@ function RaceItem({
         {onDetails && r.important ? (
           <p className={styles.important}>
             <b>Важное:</b>
-            {r.important.replace(/^Важное:/, "")}
+            {nbsp(r.important.replace(/^Важное:/, ""))}
           </p>
         ) : null}
         {onDetails && (r.detailsN ?? 0) >= 3 ? <DetailsToggle r={r} onOpen={onDetails} /> : null}

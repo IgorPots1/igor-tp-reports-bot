@@ -3,6 +3,7 @@
  * (src/features/race-details/full.ts). В списке /races строки «Важное» нет. <id> — id старта как в
  * календаре (probeg:71741); форма probeg_71741 тоже принимается. Данные — публичным ключом. */
 
+import { nbsp } from "@/lib/typography";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -79,9 +80,7 @@ export default async function RacePage({ params }: { params: Promise<{ id: strin
         </Link>
         <h1 className={styles.h1}>{r.name}</h1>
         <p className={styles.lede}>
-          {longDate(r.ds)} · {r.city || r.region || "место уточняется"}
-          {TYPE_LABEL[r.type] ? ` · ${TYPE_LABEL[r.type]}` : ""}
-          {dist ? ` · ${dist}` : ""}
+          {nbsp(`${longDate(r.ds)} · ${r.city || r.region || "место уточняется"}${TYPE_LABEL[r.type] ? ` · ${TYPE_LABEL[r.type]}` : ""}${dist ? ` · ${dist}` : ""}`)}
         </p>
         <a className={styles.follow} href={follow}>
           ⭐ Следить в Telegram

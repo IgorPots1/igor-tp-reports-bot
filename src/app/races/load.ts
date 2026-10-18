@@ -81,6 +81,17 @@ export async function loadRacePage(id: string): Promise<{ race: Race; rows: Full
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return null;
   const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  // Старт и выжимка — параллельно (18.10.2026: было по очереди, два обращения к базе подряд).
+  const detailsP = fetch(`${url}/rest/v1/race_details?select=distance,field,value,source_url,checked_at&race_id=eq.${encodeURIComponent(id)}&order=id.asc`, { headers, next: { revalidate: 3600 } })
+    .then(async (d) => {
+      if (d.ok) return ((await d.json()) as (FullRow & { distance: number | string | null })[]).map((r) => ({ ...r, distance: r.distance == null ? null : Number(r.distance) }));
+      console.error(`[races] race_details ${id}: HTTP ${d.status}`);
+      return [] as FullRow[];
+    })
+    .catch((e) => {
+      console.error(`[races] race_details недоступна: ${e instanceof Error ? e.message : String(e)}`);
+      return [] as FullRow[];
+    });
   const res = await fetch(`${url}/rest/v1/race_calendar?select=${COLUMNS}&id=eq.${encodeURIComponent(id)}`, { headers, next: { revalidate: 3600 } });
   if (!res.ok) {
     console.error(`[races] race_calendar ${id}: HTTP ${res.status}`);
@@ -89,14 +100,7 @@ export async function loadRacePage(id: string): Promise<{ race: Race; rows: Full
   const found = (await res.json()) as RaceRow[];
   const race = prepare(found, todayIso())[0];
   if (!race) return null;
-  let rows: FullRow[] = [];
-  try {
-    const d = await fetch(`${url}/rest/v1/race_details?select=distance,field,value,source_url,checked_at&race_id=eq.${encodeURIComponent(id)}&order=id.asc`, { headers, next: { revalidate: 3600 } });
-    if (d.ok) rows = ((await d.json()) as (FullRow & { distance: number | string | null })[]).map((r) => ({ ...r, distance: r.distance == null ? null : Number(r.distance) }));
-    else console.error(`[races] race_details ${id}: HTTP ${d.status}`);
-  } catch (e) {
-    console.error(`[races] race_details недоступна: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  const rows = await detailsP;
   return { race, rows };
 }
 

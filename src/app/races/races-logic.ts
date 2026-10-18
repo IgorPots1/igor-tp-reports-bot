@@ -10,6 +10,7 @@
  *     иначе плашка стояла бы на каждом старте и ничего бы не значила.
  */
 
+import { nbsp } from "@/lib/typography";
 import { FEDERAL_CITIES, canonicalSubject, isSubjectName } from "./subjects";
 
 export type RaceType = "road" | "trail" | "tri" | "track";
@@ -139,7 +140,7 @@ function parseDate(s: string): Date {
 
 export function dayMonth(s: string): string {
   const d = parseDate(s);
-  return `${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`;
+  return nbsp(`${d.getDate()} ${MONTHS_GEN[d.getMonth()]}`);
 }
 
 /** Название и регион для показа: « — » и « – » между словами становятся дефисом.
@@ -230,9 +231,10 @@ export function distPills(r: Race): string[] {
   const adult = r.dist.filter((x) => !/дет|kids|скандинав|ходьб/i.test(x));
   if (adult.length > 8 && r.km.length > 8) {
     const km = r.km.filter((x) => x >= 1);
-    if (km.length) return [`${fmtKm(Math.min(...km))}-${fmtKm(Math.max(...km))} км`];
+    if (km.length) return [nbsp(`${fmtKm(Math.min(...km))}-${fmtKm(Math.max(...km))} км`)];
   }
-  const shown = adult.slice(0, 6).map(prettyDist);
+  // «21 км» не рвётся ни в плашке, ни в строке бота (18.10.2026)
+  const shown = adult.slice(0, 6).map((x) => nbsp(prettyDist(x)));
   if (adult.length > shown.length) shown.push(`+${adult.length - shown.length}`);
   return shown;
 }
