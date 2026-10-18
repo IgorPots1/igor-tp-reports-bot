@@ -47,6 +47,8 @@ export type BotStatsReport = {
   nudge: { sent: number; acted: number };
   /** «Текстовая версия» вместо rich (18.10.2026): люди за период; по кнопке, в настройках, старый клиент. */
   richOff: { people: number; button: number; settings: number; version: number };
+  /** Сбои (18.10.2026): меню пришло новым сообщением (почему, на каких экранах) и ошибки Telegram, после которых бот выкрутился. */
+  glitches: { resend: number; editFailed: number; oldMessage: number; expired: number; tgErrors: number; top: string[] };
   users: { total: number; new7: number; new30: number; active7: number; blocked: number; unsubscribed: number };
   funnel: FunnelStep[];
   /** Ветка воронки (15.10.2026): из увидевших список — открыли «Всё о старте»; % от увидевших список. */
@@ -261,6 +263,19 @@ export function computeBotStats(input: {
   const roVia = (v: string) => new Set(ro.filter((e) => (e.meta as { via?: string } | null)?.via === v).map((e) => e.tg_id)).size;
   const richOff = { people: new Set(ro.map((e) => e.tg_id)).size, button: roVia("button"), settings: roVia("settings"), version: roVia("webapp_version") };
 
+  const rs = win.filter((e) => e.event === "menu_resend");
+  const te = win.filter((e) => e.event === "tg_error");
+  const whyOf = (e: StatEvent) => (e.meta as { why?: string } | null)?.why;
+  const keyOf = (e: StatEvent) => String((e.meta as { k?: string | null; method?: string } | null)?.k ?? "?");
+  const glitches = {
+    resend: rs.length,
+    editFailed: rs.filter((e) => whyOf(e) === "edit_failed").length,
+    oldMessage: rs.filter((e) => whyOf(e) === "old_message").length,
+    expired: rs.filter((e) => whyOf(e) === "expired").length,
+    tgErrors: te.length,
+    top: top([...rs.filter((e) => whyOf(e) === "edit_failed"), ...te].map(keyOf), 4).map(({ key, n }) => `${key} ${n}`),
+  };
+
   const week = events.filter((e) => inWindow(e.created_at, d7));
   const nameOf = (e: StatEvent) => String((e.meta as { race_name?: unknown } | null)?.race_name ?? e.race_id ?? "?");
   const topViewed = top(week.filter((e) => e.event === "card_open").map(nameOf), 5).map(({ key, n }) => ({ name: key, n }));
@@ -275,6 +290,7 @@ export function computeBotStats(input: {
     calendar,
     nudge,
     richOff,
+    glitches,
     returnedVia: [...via.entries()].map(([source, ids]) => ({ source, people: ids.size })).sort((a, b) => b.people - a.people),
     users: {
       total: users.length,
@@ -337,6 +353,7 @@ export function statsMessage(s: BotStatsReport): { text: string; reply_markup: {
     `<b>Открыли календарь:</b> ${s.calendar.people} чел.${s.calendar.byFrom.length ? ` (${s.calendar.byFrom.map((x) => `${CAL_FROM[x.from] ?? esc(x.from)} ${x.people}`).join(", ")})` : ""}`,
     `Напоминание через 30 минут: ушло ${s.nudge.sent}, после него что-то нажали ${s.nudge.acted}`,
     `«Текстовая версия» вместо красивого оформления: ${s.richOff.people} чел. (кнопкой ${s.richOff.button}, в настройках ${s.richOff.settings}, старый Telegram ${s.richOff.version})`,
+    `Сбои: меню новым сообщением ${s.glitches.resend} (правка не удалась ${s.glitches.editFailed}, нажали в старом ${s.glitches.oldMessage}, старше 48 ч ${s.glitches.expired}), ошибок Telegram ${s.glitches.tgErrors}${s.glitches.top.length ? ` · экраны: ${esc(s.glitches.top.join(", "))}` : ""}`,
     "",
     "<b>Источники по первому приходу</b> (новые / ⭐ / заявка):",
     ...(s.sources.length ? s.sources.map((x) => `${esc(x.source)}: ${x.users} / ${x.follow} / ${x.consult}`) : ["нет"]),

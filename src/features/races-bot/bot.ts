@@ -74,7 +74,7 @@ export type BotEvent =
   | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
   | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked"
   | "expected_watch" | "expected_announced" | "pick_city" | "nudge_sent"
-  | "tap" | "card_open" | "miniapp" | "details_open" | "rich_off";
+  | "tap" | "card_open" | "miniapp" | "details_open" | "rich_off" | "menu_resend" | "tg_error";
 
 /** Действия в календаре Mini App, которые пишем в статистику (наряд 13.10.2026). */
 /** details — раскрыл «Всё о старте» в мини-приложении (16.10.2026): пишется как details_open с via: miniapp. */
@@ -227,11 +227,21 @@ export function createBot(deps: BotDeps) {
     }
     await dropMenu(u);
     let id: number | null;
-    if (msg.rich && (await richOn(u))) {
+    let asText = !(msg.rich && (await richOn(u)));
+    id = null;
+    if (!asText && msg.rich) {
       const kb = !msg.main ? T.withMenuRow(msg.rich.reply_markup) : msg.rich.reply_markup;
-      const res = (await tg.call("sendRichMessage", { chat_id: chatId, rich_message: msg.rich.rich_message, reply_markup: kb })) as { message_id?: number } | null;
-      id = typeof res?.message_id === "number" ? res.message_id : null;
-    } else {
+      try {
+        const res = (await tg.call("sendRichMessage", { chat_id: chatId, rich_message: msg.rich.rich_message, reply_markup: kb })) as { message_id?: number } | null;
+        id = typeof res?.message_id === "number" ? res.message_id : null;
+      } catch (e) {
+        // Telegram не принял rich (разметка, старый клиент): тот же экран обычным текстом, а не тишина (18.10.2026)
+        if (e instanceof BotBlockedError) throw e;
+        await tgError(chatId, "sendRichMessage", e);
+        asText = true;
+      }
+    }
+    if (asText) {
       // свои кнопки — плюс «🏠 Меню» последней строкой (кроме главного экрана); без кнопок — главное меню
       const markup = rm?.inline_keyboard?.length ? (!msg.main ? T.withMenuRow(msg.reply_markup as T.Keyboard) : msg.reply_markup) : T.menuKeyboard(u.city);
       id = await sendRaw(chatId, { text: msg.text, reply_markup: markup, ...(msg.preview ? { preview: msg.preview } : {}) });
@@ -274,14 +284,28 @@ export function createBot(deps: BotDeps) {
   async function screen(u: BotUser, msg: T.Msg, origin?: TgMessage): Promise<void> {
     const cur = await store.getUser(u.tg_id);
     const age = cur?.menu_message_at ? now().getTime() - Date.parse(cur.menu_message_at) : Infinity;
+    // Учёт «меню размножилось» (18.10.2026): нажатие пришло не из живого меню или оно старше 48 часов —
+    // новое сообщение по правилу; правка не удалась — тоже новое, и это сбой. Всё видно в /stats.
+    if (origin && cur && cur.menu_message_id !== origin.message_id) await track(u.tg_id, "menu_resend", { meta: { why: "old_message", k: lastKey.get(u.tg_id) ?? null } });
+    else if (origin && cur && age >= MENU_TTL_MS) await track(u.tg_id, "menu_resend", { meta: { why: "expired", k: lastKey.get(u.tg_id) ?? null } });
     if (origin && cur?.menu_message_id === origin.message_id && age < MENU_TTL_MS) {
       try {
         // rich и обычный текст переключаются на месте той же правкой (проверено 18.10.2026)
         const menuRow = !msg.main;
+        let richFailed = false;
         if (msg.rich && (await richOn(cur))) {
           const kb = menuRow ? T.withMenuRow(msg.rich.reply_markup) : msg.rich.reply_markup;
-          await tg.call("editMessageText", { chat_id: u.tg_id, message_id: origin.message_id, rich_message: msg.rich.rich_message, reply_markup: kb });
-        } else {
+          try {
+            await tg.call("editMessageText", { chat_id: u.tg_id, message_id: origin.message_id, rich_message: msg.rich.rich_message, reply_markup: kb });
+          } catch (e) {
+            const m = e instanceof Error ? e.message : String(e);
+            if (e instanceof BotBlockedError || /message is not modified|message to edit not found|can't be edited/i.test(m)) throw e;
+            // разметку не приняли: правим на месте обычным текстом этого же экрана
+            await tgError(u.tg_id, "editMessageText(rich)", e);
+            richFailed = true;
+          }
+        }
+        if (!msg.rich || richFailed || !(await richOn(cur))) {
           const own = (msg.reply_markup as T.Keyboard | undefined)?.inline_keyboard?.length ? (msg.reply_markup as T.Keyboard) : null;
           await tg.call("editMessageText", {
             chat_id: u.tg_id,
@@ -296,9 +320,17 @@ export function createBot(deps: BotDeps) {
       } catch (e) {
         if (/message is not modified/i.test(e instanceof Error ? e.message : String(e))) return;
         if (e instanceof BotBlockedError) throw e;
+        await track(u.tg_id, "menu_resend", { meta: { why: "edit_failed", k: lastKey.get(u.tg_id) ?? null, err: String(e instanceof Error ? e.message : e).slice(0, 120) } });
       }
     }
     await send(u.tg_id, msg);
+  }
+
+  /** Ошибка Telegram, после которой бот выкрутился сам (rich → текст): в лог Vercel и событием tg_error. */
+  async function tgError(tgId: number, method: string, e: unknown) {
+    const err = String(e instanceof Error ? e.message : e).slice(0, 160);
+    console.error(`[races-bot] ${method} ${tgId} (${lastKey.get(tgId) ?? "?"}): ${err}`);
+    await track(tgId, "tg_error", { meta: { method, k: lastKey.get(tgId) ?? null, err } });
   }
 
   /** Пользователь создан в этом обновлении (первый приход): ему источник пишется при /start.
@@ -550,6 +582,8 @@ export function createBot(deps: BotDeps) {
   }
   /** Текст всплывающего уведомления на нажатие (answerCallbackQuery), по человеку; читается после обработки. */
   const toasts = new Map<number, string>();
+  /** Что человек нажал или написал последним (ключ кнопки, «/команда», «text»): экран для учёта сбоев. */
+  const lastKey = new Map<number, string>();
 
   async function consult(u: BotUser, code: string) {
     const races = await deps.races();
@@ -616,6 +650,7 @@ export function createBot(deps: BotDeps) {
 
   async function onText(u: BotUser, text: string) {
     const t = text.trim();
+    lastKey.set(u.tg_id, t.startsWith("/") ? t.split(/[\s@]/)[0].slice(0, 20) : "text");
     const cmd = t.match(/^\/(\w+)(?:@\w+)?(?:\s+(.+))?$/);
     if (cmd) {
       const [, name, arg] = cmd;
@@ -1001,6 +1036,7 @@ export function createBot(deps: BotDeps) {
         // Нажатие для статистики по дням: что именно (часть до «:»), без самих данных.
         const k = (q.data || "").split(":")[0];
         if (k && k !== "noop") await track(u.tg_id, "tap", { meta: { k } });
+        lastKey.set(u.tg_id, k.startsWith("rt|") ? k.slice(3) : k);
         return await guarded(u.tg_id, () => onCallback(u, q.data || "", q.message));
       } finally {
         await answer();

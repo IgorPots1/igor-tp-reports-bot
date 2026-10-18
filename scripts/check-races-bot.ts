@@ -90,8 +90,11 @@ const calls: Call[] = [];
 const blockedChats = new Set<number>();
 /** Telegram не даёт изменить сообщение (удалено, слишком старое по его меркам): editMessageText падает. */
 const noEditChats = new Set<number>();
+/** Telegram не принимает rich-разметку в этом чате (старый клиент, ошибка разметки): 400 на rich. */
+const richFailChats = new Set<number>();
 const tg = {
   async call(method: string, params: Record<string, unknown>) {
+    if (params.rich_message && richFailChats.has(Number(params.chat_id))) throw new Error(`Telegram ${method}: 400 Bad Request: can't parse rich message`);
     if (method === "editMessageText" && noEditChats.has(Number(params.chat_id))) throw new Error("Telegram editMessageText: 400 Bad Request: message can't be edited");
     if (method === "sendMessage" && blockedChats.has(Number(params.chat_id))) throw new BotBlockedError("Forbidden: bot was blocked by the user");
     calls.push({ method, params });
@@ -1370,6 +1373,35 @@ async function main() {
     assert.equal(shortName("Чемпионат и Первенство Краснодарского края по триатлону (дуатлон-кросс)"), "Чемпионат и Первенство Краснодарского края…", "по границе слова");
     assert.ok(shortName("Ааааааааааааааааааааааааааааааааааааааааааааааааааааааа").length <= 45, "без пробелов — жёстко до 45");
     assert.equal(shortName("Парк кросс"), "Парк кросс");
+
+    // Сбои (18.10.2026): Telegram не принял rich — тот же экран обычным текстом (было: повтор rich и
+    // тишина), событие tg_error; правка не удалась / нажали в старом сообщении — menu_resend; всё в /stats.
+    richFailChats.add(R.id);
+    reset();
+    const ev0 = store.events.length;
+    await bot.handleUpdate(cbm(R, "sn:near:0"));
+    const fb = calls.filter((c) => c.params.chat_id === R.id && c.method === "editMessageText");
+    // отвергнутая rich-правка в запись не попадает: остаётся одна — текстом, на месте
+    assert.equal(fb.length, 1, "rich-правка не прошла — правка текстом на месте");
+    assert.match(String(fb[0].params.text), /и рядом/, "тот же экран обычным текстом");
+    assert.ok(!calls.some((c) => c.params.chat_id === R.id && /^send/.test(c.method)), "без нового сообщения");
+    assert.ok(store.events.slice(ev0).some((e) => e.event === "tg_error" && (e.meta as { method: string; k: string }).method === "editMessageText(rich)" && (e.meta as { k: string }).k === "sn"));
+    reset();
+    await bot.handleUpdate(msg(R, "/start"));
+    assert.ok(calls.some((c) => c.method === "sendMessage" && c.params.chat_id === R.id && /С возвращением!/.test(String(c.params.text))), "rich-отправка не прошла — то же текстом, не тишина");
+    richFailChats.delete(R.id);
+    const ev1 = store.events.length;
+    noEditChats.add(R.id);
+    await bot.handleUpdate(cbm(R, "my"));
+    noEditChats.delete(R.id);
+    assert.ok(store.events.slice(ev1).some((e) => e.event === "menu_resend" && (e.meta as { why: string; k: string }).why === "edit_failed" && (e.meta as { k: string }).k === "my"));
+    const old = { callback_query: { id: "old1", from: R, data: "sz", message: { message_id: 1, chat: { id: R.id, type: "private" } } } };
+    CLICK += 5000;
+    await bot.handleUpdate(old);
+    assert.ok(store.events.some((e) => e.tg_id === R.id && e.event === "menu_resend" && (e.meta as { why: string }).why === "old_message"), "нажатие в старом сообщении");
+    reset();
+    await bot.handleUpdate(msg(COACH, "/stats"));
+    assert.match(texts(900).at(-1)!, /Сбои: меню новым сообщением \d+ \(правка не удалась \d+, нажали в старом \d+, старше 48 ч \d+\), ошибок Telegram \d+ · экраны: /);
 
     // owner (18.10.2026): rich видит только тренер (coach_chat_id), все остальные — как без флага
     store.config.set("rich_for", "owner");

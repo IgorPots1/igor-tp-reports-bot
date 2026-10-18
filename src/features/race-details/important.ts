@@ -44,7 +44,8 @@ function startPart(rows: DetailRow[]): string | null {
   // Время берём из основной части значения (до « — » и скобок): «09:00 (регистрация 08:00)» → 9:00.
   const times = new Set<number>();
   for (const r of own) for (const t of shortValue(r.value, 200).match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) ?? []) times.add(toMin(t));
-  if (!times.size) return `старт ${shortValue(own[0].value, 30)}`;
+  // Времени нет — части нет (18.10.2026): было «старт 21 км», «старт 5», «старт 18.10: 15-17 лет и 18+».
+  if (!times.size) return null;
   const sorted = [...times].sort((a, b) => a - b);
   return sorted.length === 1 ? `старт ${hhmm(sorted[0])}` : `старт ${hhmm(sorted[0])}–${hhmm(sorted.at(-1)!)} по дистанциям`;
 }

@@ -168,11 +168,13 @@ export function cityPicker(): Msg {
   };
 }
 
-export const ASK_CITY: Msg = { text: "Напиши название города, например: Новосибирск" };
+// «🏠 Меню» и здесь (18.10.2026): без своих кнопок бот подставлял всё главное меню, а пока человек печатает город, хватает выхода.
+export const ASK_CITY: Msg = { text: "Напиши название города, например: Новосибирск", reply_markup: { inline_keyboard: [[{ text: "🏠 Меню", callback_data: "menu" }]] } };
 
 /** Нижней reply-клавиатуры нет совсем (наряд 13.10.2026): геолокация — через скрепку. */
 export const ASK_GEO: Msg = {
   text: "Пришли геолокацию: скрепка 📎 внизу, потом «Геопозиция». Найду города со стартами рядом. Или напиши город словами.",
+  reply_markup: { inline_keyboard: [[{ text: "🏠 Меню", callback_data: "menu" }]] },
 };
 
 const mark = (on: boolean, label: string) => (on ? `✓ ${label}` : label);
