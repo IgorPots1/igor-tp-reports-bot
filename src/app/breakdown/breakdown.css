@@ -1,0 +1,73 @@
+/* Strava breakdown form. Scoped to .bd-root: globals.css has bare main{}, h1{}, .btn. */
+.bd-root{
+  --bg:#F6F4EF;--surface:#FFFFFF;--ink:#191712;--ink-2:#4D483F;--muted:#857F73;
+  --line:#E7E1D5;--line-2:#D8D0C0;--accent:#E5480E;--accent-ink:#B53707;--accent-bg:#FCEBE3;
+  --green:#2E7D45;--green-bg:#EAF3EC;
+}
+.bd-root *{box-sizing:border-box;margin:0;padding:0}
+.bd-root{background:var(--bg);color:var(--ink);font-family:var(--font-onest),system-ui,sans-serif;font-size:16.5px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column}
+.bd-root .wrap{width:100%;max-width:560px;margin:0 auto;padding:0 20px}
+
+.bd-root header{position:sticky;top:0;z-index:5;background:rgba(246,244,239,.94);backdrop-filter:blur(10px);padding-top:env(safe-area-inset-top)}
+.bd-root .hbar{display:flex;align-items:center;justify-content:space-between;height:54px;gap:12px}
+.bd-root .who{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;letter-spacing:-.01em}
+.bd-root .ava{width:30px;height:30px;border-radius:50%;object-fit:cover;background:var(--line)}
+.bd-root .count{font-family:var(--font-jetbrains),monospace;font-size:12px;color:var(--muted)}
+.bd-root .prog{display:flex;gap:5px;padding-bottom:10px}
+.bd-root .prog i{flex:1;height:4px;border-radius:4px;background:var(--line);transition:background .25s}
+.bd-root .prog i.on{background:var(--accent)}
+
+.bd-root main{flex:1;padding:22px 0 24px}
+.bd-root .step{animation:bd-in .28s ease}
+@keyframes bd-in{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+.bd-root .eyebrow{font-family:var(--font-jetbrains),monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.bd-root h1{font-size:clamp(25px,6.6vw,32px);font-weight:800;letter-spacing:-.025em;line-height:1.1;margin:10px 0 8px}
+.bd-root .lede{color:var(--ink-2);font-size:15.5px;margin-bottom:22px}
+
+.bd-root .opts{display:grid;gap:10px}
+.bd-root .opt{display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--surface);border:1.5px solid var(--line);border-radius:16px;padding:16px 16px;font:inherit;color:inherit;cursor:pointer;transition:border-color .15s,background .15s,transform .1s;-webkit-tap-highlight-color:transparent}
+.bd-root .opt:active{transform:scale(.985)}
+.bd-root .opt .em{width:42px;height:42px;border-radius:12px;background:var(--bg);display:grid;place-items:center;font-size:21px;flex:0 0 auto}
+.bd-root .opt .tx b{display:block;font-size:16.5px;font-weight:650;letter-spacing:-.01em}
+.bd-root .opt .tx span{display:block;font-size:13.5px;color:var(--muted);margin-top:1px}
+.bd-root .opt.sel{border-color:var(--accent);background:var(--accent-bg)}
+.bd-root .opt.sel .em{background:#fff}
+.bd-root .grid4{grid-template-columns:1fr 1fr}
+.bd-root .grid4 .opt{flex-direction:column;align-items:flex-start;gap:4px;padding:16px}
+.bd-root .grid4 .opt b{font-family:var(--font-jetbrains),monospace;font-size:26px;font-weight:700;letter-spacing:-.02em}
+
+.bd-root .f{margin-top:18px}
+.bd-root .f label{display:block;font-weight:600;font-size:15px;margin-bottom:8px}
+.bd-root .f .hint{font-size:13px;color:var(--muted);margin-top:7px;line-height:1.45}
+.bd-root input[type=text],.bd-root input[type=url],.bd-root input[type=number],.bd-root textarea{width:100%;background:var(--surface);border:1.5px solid var(--line);border-radius:13px;padding:14px 15px;font:inherit;font-size:16px;color:var(--ink);outline:none;transition:border-color .15s}
+.bd-root textarea{min-height:84px;resize:vertical}
+.bd-root input:focus,.bd-root textarea:focus{border-color:var(--accent)}
+.bd-root .bad input{border-color:var(--accent)}
+.bd-root .emsg{margin-top:7px;font-size:13.5px;color:var(--accent-ink);font-weight:600}
+.bd-root .ok-link{margin-top:7px;font-size:13.5px;color:var(--green);font-weight:600}
+
+.bd-root .how{background:var(--surface);border:1.5px solid var(--line);border-radius:16px;padding:16px;margin-bottom:16px}
+.bd-root .how ol{padding-left:20px;display:grid;gap:5px;font-size:14.5px;color:var(--ink-2)}
+.bd-root .how b{color:var(--ink)}
+.bd-root .warn{display:flex;gap:10px;background:#FFF8F4;border:1.5px solid #F3D9C9;border-radius:13px;padding:12px 14px;font-size:13.5px;color:var(--ink-2);margin-top:12px}
+.bd-root .warn i{font-style:normal;color:var(--accent);font-weight:800}
+
+.bd-root .intro{display:grid;gap:10px;margin:18px 0 6px}
+.bd-root .intro div{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--ink-2)}
+.bd-root .intro div i{font-style:normal;width:26px;height:26px;border-radius:8px;background:var(--green-bg);color:var(--green);display:grid;place-items:center;font-size:14px;font-weight:800;flex:0 0 auto}
+.bd-root .cred{margin-top:18px;font-size:14px;color:var(--muted)}
+.bd-root .free{display:inline-block;font-family:var(--font-jetbrains),monospace;font-size:12px;font-weight:700;color:var(--green);background:var(--green-bg);padding:4px 10px;border-radius:999px;margin-top:6px}
+
+.bd-root .bar{position:sticky;bottom:0;background:linear-gradient(rgba(246,244,239,0),var(--bg) 30%);padding:18px 0 calc(16px + env(safe-area-inset-bottom))}
+.bd-root .bar .wrap{display:flex;gap:10px}
+.bd-root .btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;border:none;cursor:pointer;font:inherit;font-weight:650;font-size:16.5px;background:var(--accent);color:#fff;padding:16px 22px;border-radius:999px;transition:background .15s,opacity .15s;-webkit-tap-highlight-color:transparent}
+.bd-root a.btn{text-decoration:none}
+.bd-root .btn:disabled{opacity:.45;cursor:default}
+.bd-root .btn.ghost{flex:0 0 auto;background:transparent;color:var(--ink);border:1.5px solid var(--line-2);padding:16px 18px}
+
+.bd-root .done{text-align:center;padding:36px 0 10px}
+.bd-root .done .tick{width:76px;height:76px;border-radius:50%;background:var(--green-bg);color:var(--green);display:grid;place-items:center;margin:0 auto 20px;font-size:36px;animation:bd-pop .4s cubic-bezier(.2,1.4,.4,1)}
+@keyframes bd-pop{from{transform:scale(.4);opacity:0}to{transform:none;opacity:1}}
+.bd-root .done p{color:var(--ink-2);max-width:40ch;margin:0 auto 8px}
+.bd-root .sendfail{margin-top:12px;background:#FFF1EC;border:1.5px solid #F3D9C9;border-radius:12px;padding:12px 14px;font-size:14px;color:var(--accent-ink)}
+.bd-root .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
