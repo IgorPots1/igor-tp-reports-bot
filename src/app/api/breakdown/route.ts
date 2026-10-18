@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { instagramHandle } from "@/features/breakdown/instagram-handle";
 import { stravaLinkOk } from "@/features/breakdown/strava-link";
 
 // Free Strava breakdown form (igorp.run/breakdown, English, @runnigor).
@@ -48,7 +49,8 @@ export async function POST(req: NextRequest) {
   const ageRaw = Number(str(body.age, 3));
   const row = {
     chatplace_client_id: str(body.c, 64),
-    instagram: str(body.instagram, 60)?.replace(/^@/u, "") ?? null,
+    // The ChatPlace button passes the username (?u=); the typed field is only for opens without it.
+    instagram: instagramHandle(body.u) ?? str(body.instagram, 60)?.replace(/^@/u, "") ?? null,
     goal_type: pick(body.goal_type, GOAL_TYPES),
     goal_details: str(body.goal_details, 300),
     runs_week: pick(body.runs_week, RUNS_WEEK),

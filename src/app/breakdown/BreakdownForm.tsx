@@ -6,8 +6,8 @@ import { useSearchParams } from "next/navigation";
 import { stravaLinkOk } from "@/features/breakdown/strava-link";
 
 // 6 questions, one per screen. Tap answers move on by themselves; text answers
-// have a Next button. ChatPlace opens this page with ?c=<client id>, which is how
-// the answers get matched to the Instagram chat. Without it we ask for the @handle.
+// have a Next button. ChatPlace opens this page with ?c=<client id>&u=<instagram username>,
+// which is how the answers get matched to the Instagram chat. Without c we ask for the @handle.
 
 type Answers = {
   goal_type: string;
@@ -58,6 +58,7 @@ const STRAP: Opt[] = [
 export default function BreakdownForm() {
   const params = useSearchParams();
   const clientId = (params.get("c") ?? "").replace(/[^\w-]/gu, "").slice(0, 64);
+  const username = (params.get("u") ?? "").slice(0, 64); // checked by the API
   const [step, setStep] = useState(0); // 0 intro, 1..6 questions, 7 done
   const [a, setA] = useState<Answers>(EMPTY);
   const [touched, setTouched] = useState(false);
@@ -94,7 +95,7 @@ export default function BreakdownForm() {
       const res = await fetch("/api/breakdown", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...a, c: clientId }),
+        body: JSON.stringify({ ...a, c: clientId, u: username }),
       });
       const j = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (res.ok && j.ok) { setStep(7); window.scrollTo(0, 0); }
