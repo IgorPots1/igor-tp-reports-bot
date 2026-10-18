@@ -23,6 +23,7 @@ import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } fro
 import { placeWeek, runPublikuy, runSnesti, verifyPlaced, type Manifest } from "./week-core.ts";
 import { CONFIRM, GROUP12, MAX_REAL_ATHLETES, hiddenProven, isDry, mayPlace, realGate } from "./week-ops.ts";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { deletedByUs, trainerWritten } from "./assemble.ts";
 import { adaptText, paceTextVsStructure } from "./adapt-text.ts";
 import type { AthleteAnchors } from "../lib/pace-resolver.ts";
 import { compareStructures, parseSnap, scaleToSeconds, totalSeconds, asString, type Snap } from "./structure-copy.ts";
@@ -337,6 +338,19 @@ console.log("\n── восстановление после старта по 
   check("ЖЁСТКО: марафонский блок на 2-й неделе после марафона — отказ валидатора", hard.some((r) => r.severity === "hard" && !r.ok && r.name.includes("после марафона")));
   const late = validateWeek([{ dayIdx: 6, kind: "long", title: "24 км в темпе марафона", minutes: 170, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, postMarathonWeek: 4 });
   check("на 4-й неделе после марафона это правило уже не действует", !late.some((r) => r.name.includes("после марафона")));
+}
+
+console.log("\n── кэш отстаёт от TP: удалённое нами не считается работой тренера ──");
+{
+  const dir = mkdtempSync(path.join(tmpdir(), "runs-")); const w = (n: string, o: unknown): void => writeFileSync(path.join(dir, n), JSON.stringify(o));
+  w("a.json", { mode: "real", deleted: [111, 222] }); w("b.json", { mode: "dry_run", deleted: [333] }); w("c.json", { mode: "real", deleted: [] }); writeFileSync(path.join(dir, "bad.json"), "{не json"); writeFileSync(path.join(dir, "x.txt"), "444");
+  const d = deletedByUs(dir);
+  check("из манифестов берутся id, удалённые в РЕАЛЬНЫХ прогонах (111, 222); сухие, пустые, битые и чужие файлы не влияют", d.has(111) && d.has(222) && !d.has(333) && !d.has(444) && d.size === 2, JSON.stringify([...d]));
+  const R3 = (id: number, date: string, aid = 7) => ({ trainingpeaks_athlete_id: aid, trainingpeaks_workout_id: id, workout_type_value_id: 3, planned_time_raw: 0.67, workout_date: date });
+  const rows3 = [R3(111, "2026-10-21"), R3(222, "2026-10-23"), R3(555, "2026-10-22"), R3(666, "2026-10-22", 8), R3(777, "2026-10-26")];
+  check("кэш отстаёт: строки с удалёнными нами id не считаются работой тренера, чужая тренировка на неделе — считается; другой атлет и другая неделя не в счёт",
+    trainerWritten(rows3, 7, "2026-10-19", d).map((x) => x.trainingpeaks_workout_id).join() === "555" && trainerWritten(rows3, 7, "2026-10-19", new Set()).length === 3);
+  check("нет папки манифестов — пустое множество, без падения", deletedByUs(path.join(dir, "нет-такой")).size === 0);
 }
 
 console.log("\n── завершённый цикл: вершина блока не образец (решение Игоря 17.10) ──");

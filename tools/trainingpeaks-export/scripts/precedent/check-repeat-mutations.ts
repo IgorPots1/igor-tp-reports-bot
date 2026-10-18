@@ -77,6 +77,8 @@ const MUT: M[] = [
   { id: "at-tol", file: AT, find: "const TOL = 1.5;", replace: "const TOL = 500;", what: "обратное чтение ничего не ловит" },
   { id: "at-readback-off", file: AT, find: "if (o.kind === \"quality\" && o.a?.threshold && /^% порога/.test(paceMode)) {", replace: "if (false) {", what: "обратное чтение не вызывается" },
   { id: "at-fallback-swap", file: AT, find: "r.fast === fastest.fast && r.slow === fastest.slow ? { fast: work.absPaceMinS", replace: "r.fast !== fastest.fast ? { fast: work.absPaceMinS", what: "работа и разминка перепутаны в запасном режиме" },
+  { id: "gone-ignored", file: path.join(HERE, "assemble.ts"), find: "if (m.mode === \"real\") for", replace: "for", what: "сухие прогоны тоже считаются удалившими" },
+  { id: "gone-unused", file: path.join(HERE, "assemble.ts"), find: "!gone.has(Number(r.trainingpeaks_workout_id)) && ", replace: "", what: "удалённое нами снова считается работой тренера" },
   { id: "bm-strict", file: R, find: "if (raceMonday >= target.weekStart) return false;", replace: "if (raceMonday > target.weekStart) return false;", what: "граница главного старта сдвинута на неделю" },
   { id: "bm-top-any", file: R, find: "return cyc.length >= 3 && sample.total === tot[0] && tot[0] > (tot[1] ?? 0);", replace: "return true;", what: "любой образец до старта исключается (ломает таблицу восстановления)" },
   { id: "bm-top-never", file: R, find: "return cyc.length >= 3 && sample.total === tot[0] && tot[0] > (tot[1] ?? 0);", replace: "return false;", what: "вершина блока снова берётся образцом" },
