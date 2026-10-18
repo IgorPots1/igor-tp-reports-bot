@@ -56,3 +56,12 @@ supabase/.temp/
 # быть чистым навсегда — а именно на это ругается localadmin-rebuild.sh.
 # Общая часть настроек лежит рядом в settings.json и в гите [24.09.2026].
 .claude/settings.local.json
+
+# Дизайн-скилл impeccable: установлен локально, в гит не идёт [17.10.2026].
+.cursor/skills/impeccable/
+.impeccable/
+
+# Strava breakdowns: athletes' data and PDFs stay local
+tools/strava-breakdown/data/
+tools/strava-breakdown/out/
+tools/strava-breakdown/bd-outbox/
