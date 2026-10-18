@@ -3,7 +3,8 @@
  *
  * Отдаёт не 302, а маленькую HTML-страницу (раньше был 302 сразу на PDF — превью в Instagram и
  * Telegram выходило пустым: на PDF карточку не построить). Превьюшники JS не исполняют и видят
- * og:*-карточку; человек сразу уходит в PDF через location.replace, без JS — большая кнопка.
+ * og:*-карточку; человек сразу уходит в PDF через location.replace, без JS — кнопка. Страница
+ * нарочно пустая (белый фон, заголовок, кнопка): ничего не должно мелькать перед PDF.
  * Подпись на ig-reels/breakdowns/<name> свежая на каждый заход и живёт час: сама короткая
  * ссылка не протухает, утёкшая подпись — час. Нет строки (или код не того вида), нет файла — 404. */
 
@@ -48,23 +49,23 @@ function page(pdfUrl: string): string {
 <meta name="twitter:description" content="${OG_DESCRIPTION}">
 <meta name="twitter:image" content="${OG_IMAGE}">
 <style>
-  :root { color-scheme: light dark; }
+  /* Нарочно пусто и нейтрально: белый фон, чёрная кнопка. Прежний вариант (серый фон, кнопка
+     цвета Strava #fc4c02, строка «Opening your PDF…») на телефоне мелькал «чем-то похожим на
+     Страву» за долю секунды до PDF. Ни внешних ресурсов, ни общих layout'ов. */
+  :root { color-scheme: light; }
   body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-    font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #f6f6f4; color: #1a1a1a; text-align: center; }
-  main { padding: 32px 16px; max-width: 420px; }
-  h1 { font-size: 24px; margin: 0 0 8px; }
-  p { margin: 0 0 24px; color: #555; }
-  a.btn { display: block; padding: 18px 20px; border-radius: 14px; background: #fc4c02; color: #fff;
-    font-weight: 600; font-size: 18px; text-decoration: none; }
-  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } p { color: #aaa; } }
+    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #fff; color: #111; text-align: center; }
+  main { padding: 24px 16px; width: 100%; max-width: 420px; box-sizing: border-box; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 20px; }
+  a { display: block; padding: 16px 20px; border-radius: 12px; background: #111; color: #fff;
+    font-weight: 600; text-decoration: none; }
 </style>
 </head>
 <body>
 <main>
   <h1>${OG_TITLE}</h1>
-  <p>Opening your PDF… If nothing happens, tap the button.</p>
-  <a class="btn" href="${escHtml(pdfUrl)}">Open your breakdown (PDF)</a>
+  <a href="${escHtml(pdfUrl)}">Open your breakdown (PDF)</a>
 </main>
 <script>location.replace(${js});</script>
 </body>
