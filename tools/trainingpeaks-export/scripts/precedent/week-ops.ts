@@ -92,7 +92,7 @@ async function raskidat(): Promise<void> {
   const m: Manifest = { runId: `raskidat-${week}-${Date.now()}`, createdAt: new Date().toISOString(), mode: isDry(gate) ? "dry_run" : "real", week, items: [], refused: [], published: [], deleted: [] };
   for (const r of results) {
     if (!r.ok) { m.refused.push({ aid: r.aid, why: r.why }); continue; }
-    for (const s of r.built.sessions) m.items.push({ aid: r.aid, date: addDays(week, s.dayIdx), dayIdx: s.dayIdx, title: s.title, minutes: s.minutes, description: s.description, warnings: r.built.warnings, source: r.built.source, why: r.built.why, workoutId: null, verified: false });
+    for (const s of r.built.sessions) m.items.push({ aid: r.aid, date: addDays(week, s.dayIdx), dayIdx: s.dayIdx, title: s.title, minutes: s.minutes, description: s.description, structure: s.structure, warnings: r.built.warnings, source: r.built.source, why: r.built.why, workoutId: null, verified: false });
   }
   saveManifest(m);
   let placed: string[] = [];

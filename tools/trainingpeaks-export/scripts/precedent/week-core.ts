@@ -16,7 +16,9 @@ import { createHiddenVerified, deleteVerified, emptyFlow, FlowStop, setHiddenVer
 import { addDays } from "./corpus.ts";
 import { addedByCoach, diffPlaced, toPublish, type Current, type EditRow, type Placed } from "./plan-edits.ts";
 
-export type Item = { aid: number; date: string; dayIdx: number; title: string; minutes: number; description: string; warnings: string[]; source: string; why: string; workoutId: number | null; verified: boolean };
+import { asString, compareStructures, parseSnap, plannedHours, type Snap } from "./structure-copy.ts";
+
+export type Item = { structure?: Snap | null; aid: number; date: string; dayIdx: number; title: string; minutes: number; description: string; warnings: string[]; source: string; why: string; workoutId: number | null; verified: boolean };
 export type Manifest = { runId: string; createdAt: string; mode: "dry_run" | "real"; week: string; items: Item[]; refused: Array<{ aid: number; why: string }>; published: number[]; deleted: number[] };
 
 const norm = (s: string): string => s.replace(/\s+/g, " ").trim();
@@ -48,6 +50,8 @@ export async function verifyPlaced(tp: TpLike, m: Manifest): Promise<Verify> {
     if (String(d.title ?? "") !== it.title) bad.push(`название «${String(d.title)}»`);
     if (mins !== it.minutes) bad.push(`длительность ${mins} вместо ${it.minutes}`);
     if (norm(String(d.description ?? "")) !== norm(it.description)) bad.push("текст описания отличается");
+    if (it.description !== String(d.description ?? "")) bad.push("текст описания не совпал БАЙТ В БАЙТ (переносы строк/пробелы)");
+    if (it.structure) { const c = compareStructures(it.structure, d.structure); if (!c.ok) bad.push(`структура: ${c.diffs.join("; ")}`); }
     if (bad.length) problems.push(`${tag}: ${bad.join("; ")}`);
     lines.push(`${tag} · «${String(d.title)}» · ${mins} мин · isHidden=${String(d.isHidden)} · день ${String(d.workoutDay).slice(0, 10)}${bad.length ? " · РАСХОЖДЕНИЕ" : " · ok"}`);
   }
@@ -85,7 +89,7 @@ export async function placeWeek(tp: TpLike, m: Manifest, save: (m: Manifest) => 
   try {
     for (const it of m.items) {
       const res = emptyFlow();
-      const body = { athleteId: it.aid, workoutDay: `${it.date}T00:00:00`, title: it.title, workoutTypeValueId: 3, workoutSubTypeId: null, description: it.description, coachComments: null, distancePlanned: null, totalTimePlanned: it.minutes / 60, structure: null };
+      const body = { athleteId: it.aid, workoutDay: `${it.date}T00:00:00`, title: it.title, workoutTypeValueId: 3, workoutSubTypeId: null, description: it.description, coachComments: null, distancePlanned: null, totalTimePlanned: it.structure ? plannedHours(it.structure) : it.minutes / 60, structure: it.structure ? asString(it.structure) : null };
       try { it.workoutId = await createHiddenVerified(tp, res, it.aid, body); it.verified = true; save(m); }
       catch (e) { if (res.workoutId != null) { it.workoutId = res.workoutId; save(m); } throw e; }
       if (res.discrepancies.length) it.warnings.push(...res.discrepancies);

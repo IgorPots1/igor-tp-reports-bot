@@ -13,12 +13,14 @@ import { workMinutesFromTitle, type CWeek } from "./corpus.ts";
 import { mainRaceIds } from "./main-race.ts";
 import { DATA_DIR } from "./load.ts";
 import { adapt, findPrecedent, type Found, type Index, type Mode, type PSess, type Weights } from "./precedent.ts";
+import { parseSnap, plannedHours, scaleToSeconds, totalSeconds, type Snap } from "./structure-copy.ts";
 import { adaptText } from "./adapt-text.ts";
 import { donorExcluded, planRepeat, setRepeatParams, type Abnormal, type CycleDelta } from "./repeat.ts";
 import { recent } from "./recent-level.ts";
 import { validateWeek, weightedP90, type VResult, type VSess } from "./validate.ts";
 
-export type BuiltSession = VSess & { flags: string[]; paceMode: string; srcWorkoutId: number; srcDate: string };
+/** structure — снимок шагов, СКОПИРОВАННЫЙ из образца с пересчётом длительности под минуты сессии (structure-copy.ts); null — шагов не будет (причина в flags). */
+export type BuiltSession = VSess & { flags: string[]; paceMode: string; srcWorkoutId: number; srcDate: string; structure: Snap | null };
 export type BuiltWeek = {
   aid: number; weekStart: string; sessions: BuiltSession[]; source: string; why: string;
   validator: VResult[]; refused: boolean; warnings: string[];
@@ -102,9 +104,17 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
   const sessions: BuiltSession[] = ps.map((s) => {
     const live = descOverride?.get(s.src.wid);
     const tx = adaptText({ title: s.title, desc: live ?? s.src.desc, struct: s.src.struct, kind: s.kind, srcMinutes: s.src.minutes, minutes: s.minutes, a: c ?? null });
+    // СТРУКТУРА (наряд 18.10): шаги берутся из снимка образца, длительность пересчитывается под минуты сессии, рецепт интервалов не трогается.
+    // Нет снимка / не пересчитывается / итог расходится с минутами больше чем на минуту — structure=null и пометка (на часах шагов не будет).
+    let structure: Snap | null = null; const srcSnap = parseSnap(s.src.struct);
+    if (!srcSnap) tx.flags.push("структуры в образце нет: шагов на часах не будет");
+    else { const sc = scaleToSeconds(srcSnap, s.minutes * 60);
+      // scaleToSeconds отдаёт ok только при точном равенстве секунд (одиночный шаг пересчитан или рецепт уже ровно на эти минуты), иначе — отказ с причиной
+      if (!sc.ok) tx.flags.push(`структура не пересчитана (${sc.reason}): шагов на часах не будет`);
+      else structure = sc.snap; }
     if (descOverride && live == null) tx.flags.push("переносы строк не восстановлены: подлинный текст из TP не получен, взят схлопнутый из кэша");
     return { dayIdx: s.dayIdx, kind: s.kind, title: tx.title, minutes: s.minutes, work: s.kind === "quality" ? workMinutesFromTitle(tx.title) : 0,
-      description: tx.description, written: tx.written, flags: tx.flags, paceMode: tx.paceMode, srcWorkoutId: s.src.wid, srcDate: s.src.date };
+      description: tx.description, written: tx.written, flags: tx.flags, structure, paceMode: tx.paceMode, srcWorkoutId: s.src.wid, srcDate: s.src.date };
   }).sort((a, b) => a.dayIdx - b.dayIdx);
   const hist = (ix.byAid.get(t.aid) ?? []).filter((w) => w.weekStart < t.weekStart);
   const prior = hist.slice(-8).map((w) => w.total);

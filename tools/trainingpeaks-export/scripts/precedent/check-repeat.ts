@@ -160,6 +160,14 @@ rows.push(...weekRows(40, wk(8), [{ d: 1, t: EASY, m: 40 }, { d: 6, t: "Мара
 for (let k = 9; k < 13; k++) rows.push(...weekRows(40, wk(k), [{ d: 1, t: EASY, m: 40 }, { d: 3, t: EASY, m: 30 }]));
 races.push({ trainingpeaks_athlete_id: 40, event_date: addDays(wk(8), 6), distance_km: 42.2, distance_raw: null });
 
+// 42: у образца ЕСТЬ снимок структуры (лёгкая/длительная — один шаг, качественная — рецепт 8×4 на 59 мин)
+const SNAP1 = (sec: number) => ({ structure: [{ type: "step", begin: 0, end: sec, steps: [{ name: "Active", length: { unit: "second", value: sec }, targets: [{ minValue: 76, maxValue: 80 }], intensityClass: "active", openDuration: false }], length: { unit: "repetition", value: 1 } }], polyline: [[0, 0], [0, 1], [1, 1], [1, 0]], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace" });
+const SNAPQ59 = { structure: [
+  { type: "step", steps: [{ name: "Warm up", length: { unit: "second", value: 600 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "warmUp" }], length: { unit: "repetition", value: 1 } },
+  { type: "repetition", steps: [{ name: "Hard", length: { unit: "second", value: 240 }, targets: [{ minValue: 106, maxValue: 110 }], intensityClass: "active" }, { name: "Easy", length: { unit: "second", value: 90 }, targets: [{ minValue: 0, maxValue: 76 }], intensityClass: "rest" }], length: { unit: "repetition", value: 8 } },
+  { type: "step", steps: [{ name: "Cool down", length: { unit: "second", value: 300 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "coolDown" }], length: { unit: "repetition", value: 1 } }], polyline: [], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace" };
+const WK42: S[] = [{ d: 1, t: EASY, m: 50 }, { d: 3, t: Q, m: 59 }, { d: 4, t: EASY, m: 50 }, { d: 6, t: LONG, m: 100 }];
+for (let k = 0; k < 7; k++) for (const r of weekRows(42, wk(k), WK42)) { (r as { struct: unknown }).struct = r.title === Q ? SNAPQ59 : SNAP1(Math.round(Number(r.planned_time_raw) * 3600)); rows.push(r); }
 const corpus = buildCorpus(rows, races, [], [], "2027-01-01");
 const ix = indexCorpus(corpus);
 const T = (aid: number, k: number): CWeek => corpus.find((w) => w.aid === aid && w.weekStart === wk(k))!;
@@ -338,6 +346,18 @@ console.log("\n── восстановление после старта по 
   check("ЖЁСТКО: марафонский блок на 2-й неделе после марафона — отказ валидатора", hard.some((r) => r.severity === "hard" && !r.ok && r.name.includes("после марафона")));
   const late = validateWeek([{ dayIdx: 6, kind: "long", title: "24 км в темпе марафона", minutes: 170, work: 0, description: "" }], null, { hasActiveIllness: false, checkText: false, postMarathonWeek: 4 });
   check("на 4-й неделе после марафона это правило уже не действует", !late.some((r) => r.name.includes("после марафона")));
+}
+
+console.log("\n── структура из образца в собранной неделе (18.10) ──");
+{
+  const b = buildRepeatWeek(ix, T(42, 6), W8, null, undefined, new Map());
+  const q = b?.sessions.find((x) => x.kind === "quality"), e = b?.sessions.find((x) => x.kind === "easy");
+  check("у образца есть снимок: каждая сессия получает структуру; лёгкая — один шаг на её минуты, качественная — рецепт 8×4 как есть (3540 с)", !!b && b.sessions.every((x) => x.structure != null) && !!e && totalSeconds(e.structure!) === e.minutes * 60 && !!q && totalSeconds(q.structure!) === 3540 && q.structure!.structure.length === 3, JSON.stringify(b?.sessions.map((x) => [x.kind, x.minutes, x.structure ? totalSeconds(x.structure) : null])));
+  const grown = buildRepeatWeek(ix, T(42, 6), W8, { role: "рост", target: 300, base: 260 }, undefined, new Map());
+  const ge = grown?.sessions.filter((x) => x.kind !== "quality") ?? [], gq = grown?.sessions.find((x) => x.kind === "quality");
+  check("дельта цикла меняет минуты лёгких — длительность их шага пересчитана под новые минуты, а рецепт интервалов НЕ тронут (3540 с, 8 повторов)", ge.length > 0 && ge.every((x) => x.structure != null && totalSeconds(x.structure) === x.minutes * 60) && ge.some((x) => x.minutes !== 50 && x.minutes !== 100) && !!gq && totalSeconds(gq.structure!) === 3540 && gq.structure!.structure[1].length.value === 8, JSON.stringify(ge.map((x) => [x.minutes, x.structure ? totalSeconds(x.structure) : null])));
+  const none = buildRepeatWeek(ix, T(1, 7), W8, null, undefined, new Map());
+  check("в образце структуры нет — structure=null и пометка «шагов на часах не будет», а не выдуманные шаги", !!none && none.sessions.every((x) => x.structure === null && x.flags.some((f) => /структуры в образце нет/.test(f))));
 }
 
 console.log("\n── переносы строк в описаниях (18.10, Ярулина: «склеились в один абзац») ──");
@@ -718,6 +738,35 @@ console.log("\n── ядро «раскидать / снести / публи�
   check("постановка: ни одного лишнего PUT (TP принял isHidden в POST), удалений нет", f1.count("PUT") === 0 && f1.count("DELETE") === 0, JSON.stringify(f1.log.filter((l) => !l.startsWith("POST"))));
   const v1 = await verifyPlaced(f1, m1);
   check("итоговая проверка: ok, в календаре недели ровно наши три", v1.ok && v1.lines.some((l) => l.includes("ровно наши")), JSON.stringify(v1.problems));
+
+  // — структура (наряд 18.10): шаги пишутся в POST строкой, читаются обратно и сверяются; рецепт и длительность не расходятся с минутами —
+  {
+    const snapE = (sec: number): Snap => ({ structure: [{ type: "step", begin: 0, end: sec, steps: [{ name: "Active", length: { unit: "second", value: sec }, targets: [{ minValue: 76, maxValue: 80 }], intensityClass: "active", openDuration: false }], length: { unit: "repetition", value: 1 } }], polyline: [[0, 0], [0, 1], [1, 1], [1, 0]], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace" });
+    const snapQ: Snap = { structure: [
+      { type: "step", steps: [{ name: "Warm up", length: { unit: "second", value: 600 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "warmUp" }], length: { unit: "repetition", value: 1 } },
+      { type: "repetition", steps: [{ name: "Hard", length: { unit: "second", value: 240 }, targets: [{ minValue: 106, maxValue: 110 }], intensityClass: "active" }, { name: "Easy", length: { unit: "second", value: 90 }, targets: [{ minValue: 0, maxValue: 76 }], intensityClass: "rest" }], length: { unit: "repetition", value: 8 } },
+      { type: "step", steps: [{ name: "Cool down", length: { unit: "second", value: 300 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "coolDown" }], length: { unit: "repetition", value: 1 } }], polyline: [], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace" };
+    const mkS = (): Manifest => ({ runId: "ts", createdAt: "", mode: "real", week: WEEK, refused: [], published: [], deleted: [], items: [
+      { aid: A, date: "2026-10-19", dayIdx: 0, title: "Бег по темпу", minutes: 40, description: "40 минут.\n\nСтрока.", structure: snapE(2400), warnings: [], source: "t", why: "t", workoutId: null, verified: false },
+      { aid: A, date: "2026-10-22", dayIdx: 3, title: "8 x 4 мин", minutes: 59, description: "Разминка:\n\n— 10 минут", structure: snapQ, warnings: [], source: "t", why: "t", workoutId: null, verified: false },
+      { aid: A, date: "2026-10-24", dayIdx: 5, title: "Бег по темпу", minutes: 90, description: "90 минут.", structure: null, warnings: [], source: "t", why: "t", workoutId: null, verified: false }] });
+    const fs1 = fakeClient({}); const ms1 = mkS(); const rs1 = await placeWeek(fs1, ms1, save);
+    const rec = (i: number) => (fs1.store.get(ms1.items[i].workoutId!) ?? {}) as Record<string, unknown>;
+    check("со структурой: в POST структура уходит СТРОКОЙ (формат доказан пробой на 3102415), totalTimePlanned = секунды структуры / 3600; без структуры — null", rs1.ok && typeof rec(0).structure === "string" && Math.abs(Number(rec(0).totalTimePlanned) - 2400 / 3600) < 1e-9 && Math.abs(Number(rec(1).totalTimePlanned) - 3540 / 3600) < 1e-9 && rec(2).structure === null, rs1.ok ? "" : String((rs1 as { stopped: string }).stopped));
+    check("итоговая проверка со структурой ok: шаги, цели, повторы и суммарная длительность сошлись", (await verifyPlaced(fs1, ms1)).ok);
+    fs1.edit(ms1.items[0].workoutId!, { structure: null });
+    const vNull = await verifyPlaced(fs1, ms1);
+    check("TP потерял структуру (null) — итоговая проверка НЕ ok, расхождение названо «структура»", !vNull.ok && vNull.problems.some((x) => /структура/.test(x)), JSON.stringify(vNull.problems));
+    fs1.edit(ms1.items[0].workoutId!, { structure: asString(snapE(2400)) }); const bumped = JSON.parse(JSON.stringify(snapQ)) as Snap; bumped.structure[1].steps[0].length.value = 241; fs1.edit(ms1.items[1].workoutId!, { structure: asString(bumped) });
+    const vBump = await verifyPlaced(fs1, ms1);
+    check("TP изменил длину одного шага интервалов (240→241 с) — проверка ловит", !vBump.ok && vBump.problems.some((x) => /структура: узел 1 шаг 0: длина 241/.test(x)), JSON.stringify(vBump.problems));
+    fs1.edit(ms1.items[1].workoutId!, { structure: asString(snapQ), description: "Разминка:\n— 10 минут" });
+    const vTxt = await verifyPlaced(fs1, ms1);
+    check("переносы строк в описании обязаны сохраниться БАЙТ В БАЙТ: потеря пустой строки ловится (раньше сравнение нормализовало пробелы и не видело)", !vTxt.ok && vTxt.problems.some((x) => /БАЙТ В БАЙТ/.test(x)), JSON.stringify(vTxt.problems));
+    const fs2 = fakeClient({}); const drop = { ...fs2, createWorkout: (b: Record<string, unknown>) => fs2.createWorkout({ ...b, structure: null }) } as typeof fs2;
+    const ms2 = mkS(); const rs2 = await placeWeek(drop, ms2, save);
+    check("TP молча теряет структуру при записи — вся постановка откатывается (в календаре пусто), причина названа", !rs2.ok && /структура/.test(String((rs2 as { stopped?: string }).stopped)) && fs2.store.size === 0, JSON.stringify([rs2.ok, fs2.store.size]));
+  }
 
   const f2 = fakeClient({}); f2.seed({ workoutId: 77, athleteId: A, workoutDay: "2026-10-22T00:00:00", title: "тренировка Игоря", minutes: 50 });
   const r2 = await placeWeek(f2, mkM(), save);
