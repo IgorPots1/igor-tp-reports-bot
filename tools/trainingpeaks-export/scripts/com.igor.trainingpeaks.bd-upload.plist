@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Заливка разборов Strava: следит за strava-breakdown/bd-outbox/ (WatchPaths). Положил PDF —
+     scripts/bd-upload.py заливает его в ig-reels/breakdowns/, пишет строку в bd_uploads и
+     переносит файл в bd-outbox/sent/. С ошибкой файл остаётся, в bd_uploads строка status='error'.
+     Перенос в sent/ снова дёргает WatchPaths — второй прогон видит пустую папку и выходит.
+     НЕ ставится автоматически. Ставит Игорь:
+       mkdir -p ~/igor-tp-reports-bot/strava-breakdown/bd-outbox/sent
+       cp .../com.igor.trainingpeaks.bd-upload.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.igor.trainingpeaks.bd-upload.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.trainingpeaks.bd-upload</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/igor/igor-tp-reports-bot/scripts/bd-upload.py</string>
+  </array>
+
+  <key>WatchPaths</key>
+  <array>
+    <string>/Users/igor/igor-tp-reports-bot/strava-breakdown/bd-outbox</string>
+  </array>
+
+  <!-- Не чаще раза в 10 с: пачка PDF, скопированная разом, уйдёт одним прогоном. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/bd-upload.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/bd-upload.launchd.err.log</string>
+</dict>
+</plist>

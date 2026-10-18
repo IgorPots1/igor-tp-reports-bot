@@ -56,3 +56,6 @@ supabase/.temp/
 # быть чистым навсегда — а именно на это ругается localadmin-rebuild.sh.
 # Общая часть настроек лежит рядом в settings.json и в гите [24.09.2026].
 .claude/settings.local.json
+
+# Очередь заливки разборов Strava (scripts/bd-upload.py): личные PDF лидов, в гит не идут.
+strava-breakdown/bd-outbox/
