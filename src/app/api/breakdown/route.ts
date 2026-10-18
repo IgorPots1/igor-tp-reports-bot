@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
   if (botToken && leadsChat) {
     const who = row.instagram ? `@${row.instagram}` : `ChatPlace ${row.chatplace_client_id}`;
     const text = [
-      "🇬🇧 <b>Strava breakdown: new form</b>",
+      "@runnigor <b>Strava breakdown: new form</b>",
       `Who: ${esc(who)}`,
       `Goal: ${esc([row.goal_type, row.goal_details].filter(Boolean).join(", ") || "-")}`,
       `Runs a week: ${row.runs_week ?? "-"}`,
