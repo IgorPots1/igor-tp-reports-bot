@@ -70,24 +70,6 @@ export default async function IntensivePage() {
               Первые сдвиги уже на первой неделе.
             </p>
 
-            {/* CONFIG plashka */}
-            <div className="flow-band">
-              <div className="fb">
-                <div className="k">Формат</div>
-                <div className="v">Индивидуально</div>
-              </div>
-              <div className="fb">
-                <div className="k">Старт</div>
-                <div className="v">В любой день</div>
-              </div>
-              <div className="fb">
-                <div className="k">Мест</div>
-                <div className="v">
-                  <span className="acc">5 в неделю</span>
-                </div>
-              </div>
-            </div>
-
             <div className="hero-cta">
               <a href={TG_LINK} className="btn btn--tg btn--lg">
                 <TgIcon />

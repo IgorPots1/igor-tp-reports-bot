@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { publicPageMetadata } from "@/lib/site";
-import { Calculator, Send, Users, Zap } from "lucide-react";
-import { formatFlowStartDate, seatsWord } from "@/lib/flow";
-import { getFlowConfig, getSeatsLeft } from "@/features/intensive/repository";
+import { Calculator, Users, Zap } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import "./_hub/hub.css";
 import { jetbrains, onest } from "@/lib/fonts";
@@ -15,24 +13,18 @@ import { jetbrains, onest } from "@/lib/fonts";
 // не становится адресом. Обычная папка src/app/hub/ завела бы лишнюю страницу.
 // Старые адреса (/start, /landing, /intensive) переброшены в next.config.ts.
 
-// Счётчик мест живой — считается по заявкам на каждый показ страницы.
-export const dynamic = "force-dynamic";
-
 export const metadata: Metadata = publicPageMetadata({
   path: "/",
   title: "Игорь Поцелуев · Тренер по бегу",
   description:
-    "Беговой интенсив, беговой клуб и личная связь с тренером — все ссылки в одном месте.",
+    "Беговой интенсив, беговой клуб и бесплатные материалы — все ссылки в одном месте.",
   clubImage: true,
 });
 
-const TG_LINK =
-  "https://t.me/IgorPotseluev?text=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%21%20%D0%A5%D0%BE%D1%87%D1%83%20%D0%B7%D0%B0%D0%BF%D0%B8%D1%81%D0%B0%D1%82%D1%8C%D1%81%D1%8F%20%D0%BD%D0%B0%20%D0%B1%D0%B5%D0%B3%D0%BE%D0%B2%D0%BE%D0%B9%20%D0%B8%D0%BD%D1%82%D0%B5%D0%BD%D1%81%D0%B8%D0%B2";
-
-export default async function StartPage() {
-  const flow = await getFlowConfig();
-  const seatsLeft = await getSeatsLeft(flow);
-
+export default function StartPage() {
+  // Строки «Набор в этот поток закрыт / Старт … · осталось N мест» под
+  // интенсивом и карточки «Написать мне» больше нет — тренер убрал (18.10.2026):
+  // интенсив стартует в любой день, а связь в Telegram есть на самом /camp.
   return (
     <div className={`start-root ${onest.variable} ${jetbrains.variable}`}>
       <SiteHeader />
@@ -62,16 +54,6 @@ export default async function StartPage() {
                 <span className="s">
                   10 дней, которые изменят твои тренировки
                 </span>
-                <span className="meta">
-                  {seatsLeft <= 0 ? (
-                    <>&#128337; Набор в этот поток закрыт</>
-                  ) : (
-                    <>
-                      &#128337; Старт {formatFlowStartDate(flow.startDateIso)} · осталось{" "}
-                      {seatsLeft} {seatsWord(seatsLeft)}
-                    </>
-                  )}
-                </span>
               </span>
               <span className="ar">&rsaquo;</span>
             </a>
@@ -99,17 +81,6 @@ export default async function StartPage() {
                   Калькуляторы темпа, раскладки, питания, одежды и тест
                   готовности к марафону
                 </span>
-              </span>
-              <span className="ar">&rsaquo;</span>
-            </a>
-
-            <a className="card" href={TG_LINK}>
-              <span className="ic tg">
-                <Send size={22} strokeWidth={2} aria-hidden="true" />
-              </span>
-              <span className="txt">
-                <span className="t">Написать мне</span>{" "}
-                <span className="s">Отвечу лично, помогу выбрать формат</span>
               </span>
               <span className="ar">&rsaquo;</span>
             </a>
