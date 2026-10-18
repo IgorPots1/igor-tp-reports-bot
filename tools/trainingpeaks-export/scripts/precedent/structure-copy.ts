@@ -2,7 +2,7 @@
  * КОПИЯ СТРУКТУРЫ ТРЕНИРОВКИ ИЗ ОБРАЗЦА (наряд Игоря 17.10: на часах нужны шаги). ЧИСТЫЕ ФУНКЦИИ, без сети.
  * Источник — снимок `structure`, который TP отдаёт в GET (в корпусе — поле struct сессии): { structure: [узлы], polyline, primaryLengthMetric,
  * primaryIntensityMetric }. Узел: step (один шаг) или repetition (n повторов набора шагов); у шага length {unit:"second", value}, targets [{minValue,maxValue}].
- * Правила: длительности пересчитываются ТОЛЬКО у одиночного шага (лёгкая, длительная); рецепт интервалов (повторения) не трогается;
+ * Правила: без повторов (лёгкая, длительная, «разминка + основная») разница минут уходит в самый длинный шаг; рецепт интервалов (повторения) не трогается;
  * нет структуры в образце — null и пометка (решает вызывающий).
  * Формат запроса (объект или сериализованная строка) НЕ доказан для POST — это выясняет проба probe-structure-copy.ts.
  */
@@ -32,12 +32,31 @@ export function scaleToSeconds(src: Snap, seconds: number): Scaled {
   if (!Number.isFinite(seconds) || seconds <= 0) return { ok: false, reason: `некорректная длительность ${seconds}` };
   const total = totalSeconds(copy);
   if (total === seconds) return { ok: true, snap: copy, note: "длительность та же — копия без изменений" };
-  const single = copy.structure.length === 1 && copy.structure[0].type === "step" && copy.structure[0].steps.length === 1;
-  if (!single) return { ok: false, reason: `составная структура (${copy.structure.length} узл., ${total} с) не масштабируется: рецепт интервалов не трогаем, а ${seconds} с ≠ ${total} с` };
-  const n = copy.structure[0];
-  n.steps[0].length = { ...n.steps[0].length, value: Math.round(seconds) };
-  if (n.end != null) { n.begin = 0; n.end = Math.round(seconds); }
-  return { ok: true, snap: copy, note: `одиночный шаг ${total} с → ${Math.round(seconds)} с, цели (%) прежние` };
+  // Повторы (repetition) — рецепт интервалов: не трогаем, длительность должна совпасть ровно.
+  if (copy.structure.some((n) => n.type === "repetition")) return { ok: false, reason: `в структуре есть повторы (${total} с): рецепт интервалов не трогаем, а ${seconds} с ≠ ${total} с` };
+  // Без повторов (лёгкая, длительная — один шаг или «разминка + основная» и т.п.): разница минут уходит в САМЫЙ ДЛИННЫЙ шаг — так же, как адаптация текста
+  // меняет самое большое число минут (adapt-text.ts); короткие шаги (разминка 10 мин) остаются как у тренера. Основной шаг не может стать короче 2 мин и меньше четверти прежнего.
+  const flat = copy.structure.flatMap((n) => n.steps);
+  const main = flat.reduce((m, st) => (st.length.value > m.length.value ? st : m), flat[0]);
+  const oldB = boundaries(copy); const oldMain = main.length.value; const nv = Math.round(oldMain + (seconds - total));
+  if (nv < 120 || nv < oldMain * 0.25) return { ok: false, reason: `основной шаг стал бы ${nv} с (было ${oldMain} с) — пересчёт не делаем` };
+  main.length = { ...main.length, value: nv };
+  let t = 0; for (const n of copy.structure) { const len = n.steps.reduce((x, st) => x + st.length.value, 0); if (n.begin != null || n.end != null) { n.begin = t; n.end = t + len; } t += len; }
+  remapPolyline(copy, oldB, boundaries(copy));
+  return { ok: true, snap: copy, note: flat.length === 1 ? `одиночный шаг ${total} с → ${Math.round(seconds)} с, цели (%) прежние` : `основной шаг ${oldMain} с → ${nv} с, остальные шаги и цели (%) прежние` };
+}
+
+/** Границы шагов по времени (без повторов): [0, конец 1-го, …, итог]. */
+function boundaries(s: Snap): number[] { const out = [0]; for (const n of s.structure) for (const st of n.steps) out.push(out[out.length - 1] + st.length.value); return out; }
+/** polyline TP — точки [доля времени, уровень]; доли пересчитываются кусочно-линейно по новым границам шагов, уровни не меняются. */
+function remapPolyline(s: Snap, oldB: number[], newB: number[]): void {
+  if (!Array.isArray(s.polyline)) return; const To = oldB[oldB.length - 1], Tn = newB[newB.length - 1]; if (!(To > 0 && Tn > 0)) return;
+  s.polyline = (s.polyline as unknown[]).map((pt) => {
+    if (!Array.isArray(pt) || typeof pt[0] !== "number") return pt;
+    const tOld = pt[0] * To; let i = 0; while (i < oldB.length - 2 && tOld > oldB[i + 1] + 1e-6) i++;
+    const span = oldB[i + 1] - oldB[i]; const tNew = newB[i] + (span > 0 ? (tOld - oldB[i]) * (newB[i + 1] - newB[i]) / span : 0);
+    return [Math.round((tNew / Tn) * 1000) / 1000, ...pt.slice(1)];
+  });
 }
 
 /** Два вида тела для POST: объект и сериализованная строка. Какой принимает TP — выясняет проба. */
