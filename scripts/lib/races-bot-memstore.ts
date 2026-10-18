@@ -14,7 +14,7 @@ export function memStore(kit: { now: () => Date; announced: Map<string, string>;
   const blank = (tg_id: number): BotUser => ({
     tg_id, first_name: null, username: null, city: null, types: [], distances: [], digest_on: false, digest_every_weeks: 1,
     digest_last_at: null, paused_until: null, tz: "Europe/Moscow", source: null, state: null, consult_offered_at: null,
-    consult_requested_at: null, blocked: false, created_at: kit.now().toISOString(), rich_off: false,
+    consult_requested_at: null, blocked: false, created_at: kit.now().toISOString(), rich_off: false, webapp_version: null,
   });
   const seen = new Map<string, number>();
   const clock = kit.clock ?? (() => Date.now());

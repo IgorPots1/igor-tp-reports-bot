@@ -1403,6 +1403,34 @@ async function main() {
     await bot.handleUpdate(msg(COACH, "/stats"));
     assert.match(texts(900).at(-1)!, /Сбои: меню новым сообщением \d+ \(правка не удалась \d+, нажали в старом \d+, старше 48 ч \d+\), ошибок Telegram \d+ · экраны: /);
 
+    // capable (18.10.2026): rich только у тех, чья версия Telegram из мини-приложения известна и не ниже
+    // 10.1; версия сохраняется при каждом открытии; остальным — текстовая версия.
+    {
+      store.config.set("rich_for", "capable");
+      const Cp = { id: 7703, first_name: "Кейп", username: "cap7703" };
+      reset();
+      const c0 = await open(Cp);
+      assert.ok(!c0.params.rich_message, "capable: версия неизвестна (мини-приложение не открывал) — текст");
+      await bot.miniapp({ id: Cp.id, first_name: "Кейп" }, "list", undefined, "list", undefined, "10.3");
+      assert.equal(store.users.get(Cp.id)?.webapp_version, "10.3", "версия сохранена");
+      reset();
+      await bot.handleUpdate(cbm(Cp, "sn:near:0"));
+      assert.ok(calls.some((c) => c.params.chat_id === Cp.id && c.params.rich_message), "capable: 10.3 — rich");
+      await bot.miniapp({ id: Cp.id, first_name: "Кейп" }, "list", undefined, "list", undefined, "10.1");
+      reset();
+      await bot.handleUpdate(cbm(Cp, "sn:near:0"));
+      assert.ok(calls.some((c) => c.params.chat_id === Cp.id && c.params.rich_message), "capable: ровно 10.1 — rich");
+      await bot.miniapp({ id: Cp.id, first_name: "Кейп" }, "list", undefined, "list", undefined, "10.0");
+      assert.equal(store.users.get(Cp.id)?.webapp_version, "10.0", "обновляется при каждом открытии");
+      store.users.set(Cp.id, { ...store.users.get(Cp.id)!, rich_off: false }); // проверяем сам режим, не флаг
+      reset();
+      await bot.handleUpdate(cbm(Cp, "sn:near:0"));
+      assert.ok(!calls.some((c) => c.params.chat_id === Cp.id && c.params.rich_message), "capable: 10.0 — текст");
+      reset();
+      await bot.handleUpdate(cbm(R, "sn:near:0"));
+      assert.ok(!calls.some((c) => c.params.chat_id === R.id && c.params.rich_message), "capable: R без версии — текст");
+    }
+
     // owner (18.10.2026): rich видит только тренер (coach_chat_id), все остальные — как без флага
     store.config.set("rich_for", "owner");
     store.config.set("coach_chat_id", String(COACH.id));
@@ -1435,7 +1463,7 @@ async function main() {
     // /stats: строка про «Текстовую версию»
     reset();
     await bot.handleUpdate(msg(COACH, "/stats"));
-    assert.match(texts(900).at(-1)!, /«Текстовая версия» вместо красивого оформления: 2 чел\. \(кнопкой 1, в настройках 0, старый Telegram 1\)/);
+    assert.match(texts(900).at(-1)!, /«Текстовая версия» вместо красивого оформления: 3 чел\. \(кнопкой 1, в настройках 0, старый Telegram 2\)/, "ещё один старый Telegram — из теста capable (10.0)");
 
     store.config.delete("rich_for");
     store.config.delete("rich_since");

@@ -65,6 +65,8 @@ export type BotUser = PlanUser & {
   geo_lon?: number | null;
   /** «Текстовая версия» (18.10.2026): человек выбрал обычный HTML вместо rich-сообщений; снимается в настройках. */
   rich_off?: boolean | null;
+  /** WebApp.version при последнем открытии мини-приложения (18.10.2026); null — не открывал. */
+  webapp_version?: string | null;
 };
 
 export type BotFollow = PlanFollow & { tg_id: number };
@@ -252,12 +254,14 @@ export function createBot(deps: BotDeps) {
   /**
    * Rich-сообщения (наряд 18.10.2026): кому слать rich вместо обычного HTML. rich_for в race_bot_config:
    * off (или нет ключа) — никому; owner — только тренеру (coach_chat_id), для просмотра вживую до
-   * включения остальным; all — всем; new — только пришедшим не раньше rich_since. Флаг
+   * включения остальным; capable — только тем, чья версия Telegram из мини-приложения известна и не ниже
+   * 10.1 (остальным текст); all — всем; new — только пришедшим не раньше rich_since. Флаг
    * rich_off человека («Текстовая версия», старый клиент) выключает всегда.
    */
   async function richEligible(u: BotUser): Promise<boolean> {
     const mode = await store.getConfig("rich_for");
     if (mode === "owner") return (await store.getConfig("coach_chat_id")) === String(u.tg_id);
+    if (mode === "capable") return !!u.webapp_version && !versionBelow(u.webapp_version);
     if (mode === "all") return true;
     if (mode !== "new") return false;
     const since = await store.getConfig("rich_since");
@@ -1182,6 +1186,8 @@ export function createBot(deps: BotDeps) {
     appVersion?: string | null,
   ): Promise<string[]> {
     let u = await ensureUser(from);
+    // Версия Telegram при каждом открытии (для rich_for = capable), если изменилась.
+    if (action === "list" && appVersion && u.webapp_version !== appVersion) u = await store.saveUser({ tg_id: u.tg_id, webapp_version: appVersion });
     // Старый клиент: rich_off автоматически (18.10.2026), чтобы бот не слал ему нечитаемое.
     if (action === "list" && appVersion && versionBelow(appVersion) && !u.rich_off) {
       u = await store.saveUser({ tg_id: u.tg_id, rich_off: true });
