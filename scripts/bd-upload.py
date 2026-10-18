@@ -5,7 +5,8 @@
 На каждый *.pdf в папке:
   1. upsert в ig-reels/breakdowns/<имя>;
   2. подписанная ссылка на 30 дней;
-  3. строка в public.bd_uploads (status='done', url, bytes, done_at);
+  3. строка в public.bd_uploads (status='done', url, bytes, done_at, code);
+     code — 6 случайных a-z0-9 для короткой ссылки igorp.run/bd/<code> (src/app/bd/[code]);
   4. файл переезжает в bd-outbox/sent/.
 При ошибке — строка со status='error' и текстом ошибки, файл остаётся в папке.
 
@@ -15,7 +16,7 @@
 
 Переопределения для проверки: BD_OUTBOX (папка), BD_ENV_FILE (файл ключей).
 """
-import datetime, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+import datetime, json, os, re, secrets, string, sys, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -26,6 +27,10 @@ PREFIX = "breakdowns"
 SIGN_SECONDS = 30 * 24 * 3600
 # Тот же шаблон, что check-констрейнт bd_uploads.name: иначе не записать даже строку ошибки.
 NAME_RE = re.compile(r"^[a-z0-9._-]+\.pdf$")
+# Код ссылки случайный, а не из ника: по нику чужой разбор не угадать. Формат держит
+# check-констрейнт bd_uploads.code ^[a-z0-9]{6}$.
+CODE_ALPHABET = string.ascii_lowercase + string.digits
+SITE = "https://igorp.run"
 
 
 def log(msg):
@@ -71,6 +76,19 @@ def insert_row(row):
     http("POST", f"{SB_URL}/rest/v1/bd_uploads", row, {"Prefer": "return=minimal"})
 
 
+def insert_with_code(row, tries=5):
+    """Вставка с новым code; 409 — код уже занят (уникальный индекс), берём другой."""
+    for _ in range(tries):
+        code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(6))
+        try:
+            insert_row({**row, "code": code})
+            return code
+        except RuntimeError as e:
+            if "-> 409:" not in str(e):
+                raise
+    raise RuntimeError(f"не нашёл свободный code за {tries} попыток")
+
+
 def wait_stable(f, tries=10):
     """WatchPaths срабатывает, пока файл ещё копируется: ждём, пока размер перестанет меняться."""
     size = -1
@@ -93,12 +111,12 @@ def upload(f):
          {"Content-Type": "application/pdf", "x-upsert": "true"})
     signed = http("POST", f"{SB_URL}/storage/v1/object/sign/{BUCKET}/{path}", {"expiresIn": SIGN_SECONDS})
     url = f"{SB_URL}/storage/v1{signed['signedURL']}"
-    insert_row({"name": name, "status": "done", "url": url, "bytes": size,
-                "done_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+    code = insert_with_code({"name": name, "status": "done", "url": url, "bytes": size,
+                             "done_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
     sent = OUTBOX / "sent"
     sent.mkdir(exist_ok=True)
     f.rename(sent / name)
-    return size
+    return size, code
 
 
 def error_name(name):
@@ -120,8 +138,9 @@ def main():
     failed = 0
     for f in files:
         try:
-            size = upload(f)
-            log(f"ok {f.name} ({size} байт) -> {BUCKET}/{PREFIX}/{f.name}, перенесён в sent/")
+            size, code = upload(f)
+            log(f"ok {f.name} ({size} байт) -> {BUCKET}/{PREFIX}/{f.name}, ссылка {SITE}/bd/{code}, "
+                f"перенесён в sent/")
         except Exception as e:
             failed += 1
             err = str(e)[:1000]
