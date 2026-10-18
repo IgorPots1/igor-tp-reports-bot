@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Strength Training for Runners · igorp.run</title>
+<meta name="description" content="Strength training for runners: 6 exercises, twice a week, an 8-week plan. A guide by Igor Potseluev.">
+<meta property="og:title" content="Strength Training for Runners">
+<meta property="og:description" content="6 exercises, twice a week, an 8-week plan">
+<meta property="og:image" content="https://igorp.run/guides/sila/gsquat.jpg">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(40px, 11vw, 60px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(26px, 7vw, 34px); margin-bottom: 14px; }
+  h3 { font-size: 21px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 44px; }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .hero-vid { margin-top: 22px; position: relative; border-radius: 26px; overflow: hidden; aspect-ratio: 1; background: var(--bg2); border: 1.5px solid var(--line); }
+  .hero-vid video, .ex video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; text-align: left; }
+  .stat .disp { font-size: 28px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+
+  /* why */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 2px solid var(--ink); background: #fff; font-weight: 800; font-size: 15px; }
+  .chip.ok { border-color: var(--grn); color: var(--grn); }
+  .chip.no { border-color: var(--line); color: var(--dim); text-decoration: line-through; }
+
+  /* week */
+  .week { display: grid; gap: 0; padding: 4px 16px; }
+  .day { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1.5px solid var(--line); }
+  .day:first-child { border-top: 0; }
+  .day .mono { width: 34px; font-size: 13px; }
+  .pill { font-size: 14px; font-weight: 800; border-radius: 9px; padding: 5px 12px; }
+  .p-easy { background: #e8f0e3; color: var(--grn); }
+  .p-hard { background: #f6e1d6; color: var(--acc); }
+  .p-long { background: #faecd2; color: #9a6514; }
+  .p-sila { background: var(--acc); color: #fff; }
+  .p-rest { color: var(--dim); padding-left: 0; }
+  .rules { margin-top: 14px; display: grid; gap: 10px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; }
+  .rule .n { flex: none; width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* warmup */
+  .warm { padding: 6px 16px; }
+  .warm li { list-style: none; display: flex; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .warm li:first-child { border-top: 0; }
+  .warm span:last-child { font-family: "JetBrains Mono"; font-size: 14px; color: var(--acc); white-space: nowrap; }
+
+  /* exercises */
+  .ex { overflow: hidden; margin-top: 16px; }
+  .ex .vid { position: relative; aspect-ratio: 1; background: var(--bg2); }
+  .ex .num { position: absolute; top: 14px; left: 14px; width: 46px; height: 46px; border-radius: 14px; background: var(--acc); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(184,71,31,.3); }
+  .ex .dose { position: absolute; right: 14px; bottom: 14px; background: #fff; border-radius: 14px; padding: 8px 14px; box-shadow: 0 8px 24px rgba(28,26,23,.12); text-align: right; }
+  .ex .dose .disp { font-size: 22px; }
+  .ex .dose .mono { font-size: 10.5px; }
+  .ex .body { padding: 16px 18px 18px; }
+  .ex .tag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--acc); background: #f6e1d6; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; }
+  .cues { margin-top: 10px; display: grid; gap: 6px; }
+  .cues div { display: flex; gap: 10px; align-items: flex-start; }
+  .cues div::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; background: var(--acc); }
+  .home { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #f3eee5; font-size: 15px; }
+  .home b { color: var(--grn); }
+
+  /* weight */
+  .rpe { padding: 16px; }
+  .scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 12px; }
+  .scale div { border-radius: 12px; padding: 10px 4px; text-align: center; font-size: 12.5px; font-weight: 800; background: #f3eee5; color: var(--dim); }
+  .scale .on { background: var(--acc); color: #fff; }
+
+  /* plan */
+  .plan { padding: 8px 16px 16px; }
+  .phase { padding: 14px 0; border-top: 1.5px solid var(--line); display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; }
+  .phase:first-child { border-top: 0; }
+  .phase .disp { font-size: 17px; }
+  .bar { height: 12px; border-radius: 6px; background: #efe9de; overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: var(--acc); transition: width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .in .bar i { width: var(--w); }
+  .phase small { display: block; color: var(--dim); font-size: 14px; margin-top: 2px; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+
+  /* reveal */
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .r { opacity: 1; transform: none; transition: none; } .bar i { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">guide · strength</span></div>
+    <h1>STRENGTH<br><em>FOR RUNNERS</em></h1>
+    <p class="lead">Six exercises, twice a week, about forty minutes. Your stride gets more economical, your legs get stronger, and you get injured less.</p>
+    <div class="hero-vid"><video src="sila/squat.mp4" poster="sila/squat.jpg" autoplay muted loop playsinline preload="auto"></video></div>
+    <div class="stats">
+      <div class="stat card"><div class="disp">2×</div><div class="mono">a week</div></div>
+      <div class="stat card"><div class="disp">40</div><div class="mono">minutes</div></div>
+      <div class="stat card"><div class="disp">8</div><div class="mono">week plan</div></div>
+    </div>
+  </header>
+
+  <section class="r">
+    <h2>What <em>works</em></h2>
+    <p>Runners don't need "light toning workouts". They need real load: heavy lifts for low reps and explosive jumps. That's what teaches your muscles and tendons to work like a spring.</p>
+    <div class="chips">
+      <span class="chip ok">heavy, 4-6 reps</span>
+      <span class="chip ok">jumps</span>
+      <span class="chip ok">twice a week</span>
+      <span class="chip no">30 reps with a tiny dumbbell</span>
+      <span class="chip no">once a month</span>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Fitting it <em>into your week</em></h2>
+    <div class="week card">
+      <div class="day"><span class="mono">mon</span><span class="pill p-easy">easy run</span><span class="pill p-sila">strength</span></div>
+      <div class="day"><span class="mono">tue</span><span class="pill p-rest">rest</span></div>
+      <div class="day"><span class="mono">wed</span><span class="pill p-hard">speed workout</span></div>
+      <div class="day"><span class="mono">thu</span><span class="pill p-easy">easy run</span><span class="pill p-sila">strength</span></div>
+      <div class="day"><span class="mono">fri</span><span class="pill p-rest">rest</span></div>
+      <div class="day"><span class="mono">sat</span><span class="pill p-long">long run</span></div>
+      <div class="day"><span class="mono">sun</span><span class="pill p-easy">easy run</span></div>
+    </div>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div>Do strength <b>after an easy run</b> on the same day, or on your speed workout day, but after the workout. That way hard days stay hard and easy days stay easy.</div></div>
+      <div class="rule card"><div class="n">2</div><div>Don't do strength <b>the day before a speed workout or a long run</b>. Your legs need to show up fresh for those.</div></div>
+      <div class="rule card"><div class="n">3</div><div>Missed a session? Just do the next one in the plan. <b>No need to catch up.</b></div></div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Warm-up, <em>7 minutes</em></h2>
+    <ul class="warm card">
+      <li><span>Easy jog, bike or jump rope</span><span>5 min</span></li>
+      <li><span>Bodyweight squats</span><span>10</span></li>
+      <li><span>Reverse lunges</span><span>6 each</span></li>
+      <li><span>Leg swings, front and side</span><span>10 each</span></li>
+      <li><span>First set of each exercise kept light</span><span>×1</span></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2 class="r">The workout, <em>6&nbsp;exercises</em></h2>
+    <p class="r">Go in order. Rest 2-3 minutes between sets, and between jump sets rest until you're fully recovered.</p>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/squat.mp4" poster="sila/squat.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">1</div><div class="dose"><div class="disp">3 × 5</div><div class="mono">first up</div></div></div>
+      <div class="body"><span class="tag">explosive</span><h3>Half-squat jumps</h3>
+        <div class="cues"><div>Drop into a half squat and jump up as hard as you can</div><div>Land quietly and softly, back into the same half squat</div><div>One jump at a time, no rushing</div></div>
+        <div class="home"><b>Do these first, while your legs are fresh.</b> Once your jumps get lower, the set is over.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/gsquat.mp4" poster="sila/gsquat.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">2</div><div class="dose"><div class="disp">3-4 × 5</div><div class="mono">heavy</div></div></div>
+      <div class="body"><span class="tag">whole legs</span><h3>Goblet squat</h3>
+        <div class="cues"><div>Dumbbell or kettlebell at your chest, elbows down</div><div>Squat deep, heels down, knees tracking over your toes</div><div>Drive up powerfully, back straight</div></div>
+        <div class="home"><b>At home:</b> a backpack with water bottles held at your chest, lower slowly for a count of 3.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/rdl.mp4" poster="sila/rdl.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">3</div><div class="dose"><div class="disp">3 × 6</div><div class="mono">heavy</div></div></div>
+      <div class="body"><span class="tag">hamstrings</span><h3>Romanian deadlift</h3>
+        <div class="cues"><div>Knees slightly bent and almost still</div><div>Push your hips back, dumbbells slide down along your legs</div><div>Back straight, lower until you feel a stretch in the back of your thighs</div></div>
+        <div class="home"><b>At home:</b> single-leg, with a backpack in your hand, 8 per leg.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/ssq.mp4" poster="sila/ssq.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">4</div><div class="dose"><div class="disp">3 × 6</div><div class="mono">per leg</div></div></div>
+      <div class="body"><span class="tag">single leg</span><h3>Split squat</h3>
+        <div class="cues"><div>Long stance, weight on the front leg</div><div>Lower straight down, back knee almost touches the floor</div><div>Don't let your front knee cave inward</div></div>
+        <div class="home"><b>Harder:</b> rear foot up on a bench, that's a Bulgarian split squat. Start without weight.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/stepup.mp4" poster="sila/stepup.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">5</div><div class="dose"><div class="disp">3 × 6</div><div class="mono">per leg</div></div></div>
+      <div class="body"><span class="tag">just like running</span><h3>Box step-ups</h3>
+        <div class="cues"><div>Box at knee height or a bit lower</div><div>Rise using the leg on the box, don't push off with the bottom one</div><div>At the top, drive the other knee forward, like in a stride</div></div>
+        <div class="home"><b>At home:</b> a sturdy chair or a step, with dumbbells or a backpack in your hands.</div></div>
+    </article>
+
+    <article class="ex card r">
+      <div class="vid"><video src="sila/calf.mp4" poster="sila/calf.jpg" autoplay muted loop playsinline preload="metadata"></video>
+        <div class="num">6</div><div class="dose"><div class="disp">3 × 10</div><div class="mono">per leg</div></div></div>
+      <div class="body"><span class="tag">calves and Achilles</span><h3>Single-leg calf raise</h3>
+        <div class="cues"><div>Up for a count of 1, down slowly for a count of 3</div><div>Rise as high as you can, knee straight</div><div>Hold a wall with one hand for balance</div></div>
+        <div class="home"><b>Harder:</b> with a dumbbell in your hand, or on the edge of a step so your heel drops lower.</div></div>
+    </article>
+  </section>
+
+  <section class="r">
+    <h2>Choosing <em>the weight</em></h2>
+    <div class="rpe card">
+      <p>The last two reps of a set feel hard, but your form holds. If you could do 4-5 more reps, the weight is too light.</p>
+      <div class="scale"><div>easy</div><div>OK</div><div class="on">hard</div><div class="on">very hard</div><div>failure</div></div>
+      <p style="margin-top:12px">Don't train to failure. Add weight once all your sets feel smooth.</p>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>The <em>8-week</em> plan</h2>
+    <div class="plan card">
+      <div class="phase"><div class="disp">1-2</div><div><b>Learn</b><small>2-3 sets of 8-10, moderate weight, focus on technique. Jumps 2 × 5.</small><div class="bar"><i style="--w:40%"></i></div></div></div>
+      <div class="phase"><div class="disp">3-5</div><div><b>Heavy</b><small>3-4 sets of 5-6. Jumps 3 × 5.</small><div class="bar"><i style="--w:72%"></i></div></div></div>
+      <div class="phase"><div class="disp">6-8</div><div><b>Heavier</b><small>4 sets of 4-5, more weight. Jumps 3 × 6.</small><div class="bar"><i style="--w:92%"></i></div></div></div>
+      <div class="phase"><div class="disp">race</div><div><b>Before your race</b><small>Last heavy session 10 days out. No strength work in race week.</small><div class="bar"><i style="--w:15%;background:var(--grn)"></i></div></div></div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Stay <em>injury-free</em></h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div>Technique beats weight. Master the movement first, then add the kilos.</div></div>
+      <div class="rule card"><div class="n">2</div><div>Your legs will be sore in the first week, that's normal. Sharp pain in a joint or your Achilles: stop and see a doctor.</div></div>
+      <div class="rule card"><div class="n">3</div><div>New to strength training? Spend the first two weeks with no weight or light weight, and add the jumps from week three.</div></div>
+    </div>
+  </section>
+
+  <div class="cta r">
+    <h2>Want a plan <em style="color:#f0a56f">built for you?</em></h2>
+    <p>I'll put together your running and strength work around your goal and schedule. Send me a DM on Instagram.</p>
+    <a class="btn" href="https://ig.me/m/runnigor">Message me on Instagram</a><br>
+    <a class="btn ghost" href="https://www.instagram.com/runnigor/">@runnigor</a>
+  </div>
+  <p class="foot mono">igorp.run · smart running, fewer injuries</p>
+</div>
+<script>
+  (function () {
+    var els = document.querySelectorAll('.r');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(function (e) { io.observe(e); });
+    // play videos only while visible (saves battery in the Instagram browser)
+    var vio = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { var v = e.target; if (e.isIntersecting) { var p = v.play(); if (p && p.catch) p.catch(function () {}); } else v.pause(); });
+    }, { threshold: 0.2 });
+    document.querySelectorAll('video').forEach(function (v) { vio.observe(v); });
+  })();
+</script>
+</body>
+</html>
