@@ -49,6 +49,8 @@ export type BotStatsReport = {
   richOff: { people: number; button: number; settings: number; version: number };
   /** Сбои (18.10.2026): меню пришло новым сообщением (почему, на каких экранах) и ошибки Telegram, после которых бот выкрутился. */
   glitches: { resend: number; editFailed: number; oldMessage: number; expired: number; tgErrors: number; top: string[] };
+  /** Скорость (18.10.2026): от нажатия до экрана, мс — медиана и 90-й процентиль, по экранам; холодные старты. */
+  speed: { n: number; p50: number | null; p90: number | null; ack50: number | null; byKey: { k: string; n: number; p50: number; p90: number }[]; cold: number; cold50: number | null };
   users: { total: number; new7: number; new30: number; active7: number; blocked: number; unsubscribed: number };
   funnel: FunnelStep[];
   /** Ветка воронки (15.10.2026): из увидевших список — открыли «Всё о старте»; % от увидевших список. */
@@ -276,6 +278,22 @@ export function computeBotStats(input: {
     top: top([...rs.filter((e) => whyOf(e) === "edit_failed"), ...te].map(keyOf), 4).map(({ key, n }) => `${key} ${n}`),
   };
 
+  const pf = win.filter((e) => e.event === "perf").map((e) => e.meta as { k?: string; screen?: number | null; ack?: number | null; total?: number; cold?: boolean });
+  const pct = (xs: number[], q: number) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(q * xs.length))] : null);
+  const scr = pf.filter((m) => typeof m.screen === "number").map((m) => m.screen as number);
+  const keys = new Map<string, number[]>();
+  for (const m of pf) if (typeof m.screen === "number" && m.k) keys.set(m.k, [...(keys.get(m.k) ?? []), m.screen]);
+  const coldOnes = pf.filter((m) => m.cold);
+  const speed = {
+    n: scr.length,
+    p50: pct(scr, 0.5),
+    p90: pct(scr, 0.9),
+    ack50: pct(pf.filter((m) => typeof m.ack === "number").map((m) => m.ack as number), 0.5),
+    byKey: [...keys.entries()].map(([k, xs]) => ({ k, n: xs.length, p50: pct(xs, 0.5)!, p90: pct(xs, 0.9)! })).sort((a, b) => b.n - a.n).slice(0, 6),
+    cold: coldOnes.length,
+    cold50: pct(coldOnes.map((m) => m.total ?? 0), 0.5),
+  };
+
   const week = events.filter((e) => inWindow(e.created_at, d7));
   const nameOf = (e: StatEvent) => String((e.meta as { race_name?: unknown } | null)?.race_name ?? e.race_id ?? "?");
   const topViewed = top(week.filter((e) => e.event === "card_open").map(nameOf), 5).map(({ key, n }) => ({ name: key, n }));
@@ -291,6 +309,7 @@ export function computeBotStats(input: {
     nudge,
     richOff,
     glitches,
+    speed,
     returnedVia: [...via.entries()].map(([source, ids]) => ({ source, people: ids.size })).sort((a, b) => b.people - a.people),
     users: {
       total: users.length,
@@ -353,6 +372,9 @@ export function statsMessage(s: BotStatsReport): { text: string; reply_markup: {
     `<b>Открыли календарь:</b> ${s.calendar.people} чел.${s.calendar.byFrom.length ? ` (${s.calendar.byFrom.map((x) => `${CAL_FROM[x.from] ?? esc(x.from)} ${x.people}`).join(", ")})` : ""}`,
     `Напоминание через 30 минут: ушло ${s.nudge.sent}, после него что-то нажали ${s.nudge.acted}`,
     `«Текстовая версия» вместо красивого оформления: ${s.richOff.people} чел. (кнопкой ${s.richOff.button}, в настройках ${s.richOff.settings}, старый Telegram ${s.richOff.version})`,
+    s.speed.n
+      ? `Скорость (нажатие → экран): медиана ${s.speed.p50} мс, 90% ${s.speed.p90} мс, ответ на нажатие ${s.speed.ack50 ?? "?"} мс; ${s.speed.byKey.map((x) => `${esc(x.k)} ${x.p50}/${x.p90}`).join(", ")}; холодных стартов ${s.speed.cold}${s.speed.cold50 !== null ? ` (медиана ${s.speed.cold50} мс)` : ""}`
+      : "Скорость: замеров пока нет",
     `Сбои: меню новым сообщением ${s.glitches.resend} (правка не удалась ${s.glitches.editFailed}, нажали в старом ${s.glitches.oldMessage}, старше 48 ч ${s.glitches.expired}), ошибок Telegram ${s.glitches.tgErrors}${s.glitches.top.length ? ` · экраны: ${esc(s.glitches.top.join(", "))}` : ""}`,
     "",
     "<b>Источники по первому приходу</b> (новые / ⭐ / заявка):",

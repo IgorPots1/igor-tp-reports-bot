@@ -5,6 +5,8 @@
  * (scripts/check-races-bot.ts). Поэтому все экраны и плановые сообщения проверяются на
  * тестовых датах без сети и без настоящего Telegram. */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { norm } from "@/app/races/races-logic";
 import { courseList } from "@/features/race-course";
 import { fieldCount, fullDetails, MIN_FIELDS, type FullRow } from "@/features/race-details/full";
@@ -76,7 +78,7 @@ export type BotEvent =
   | "click_registration" | "click_site" | "consult_offer_shown" | "consult_click" | "digest_sent"
   | "digest_opened_list" | "settings_less" | "pause" | "unsubscribe" | "delete" | "blocked"
   | "expected_watch" | "expected_announced" | "pick_city" | "nudge_sent"
-  | "tap" | "card_open" | "miniapp" | "details_open" | "rich_off" | "menu_resend" | "tg_error";
+  | "tap" | "card_open" | "miniapp" | "details_open" | "rich_off" | "menu_resend" | "tg_error" | "perf";
 
 /** Действия в календаре Mini App, которые пишем в статистику (наряд 13.10.2026). */
 /** details — раскрыл «Всё о старте» в мини-приложении (16.10.2026): пишется как details_open с via: miniapp. */
@@ -141,7 +143,28 @@ export type BotDeps = {
   details?: (raceId: string) => Promise<FullRow[]>;
   /** Отменённые вручную старты (race_overrides.status = cancelled): в «Моих стартах» с пометкой. */
   cancelled?: () => Promise<Set<string>>;
+  /** Работа после ответа (события статистики): в бою — after() из next/server, в тестах нет — ждём сразу. */
+  defer?: (fn: () => Promise<unknown>) => void;
+  /** Писать замер каждого нажатия событием perf (в бою — да; в тестах — только где проверяется сам замер). */
+  measure?: boolean;
+  /** Кэш конфига (rich_for, rich_since, coach_chat_id) на экземпляр, мс; в бою 30 с, в тестах нет. */
+  configTtlMs?: number;
 };
+
+/**
+ * Скорость (наряд 18.10.2026): тайминги одного обновления. t0 — когда вебхук получен; ack — ответ на
+ * нажатие ушёл; screen — экран (правка или новое сообщение) ушёл в Telegram; db/tg — число и время
+ * запросов к базе и к Telegram. Плюс кэш на одно обновление: пользователь, конфиг, подписки.
+ */
+type Perf = {
+  t0: number; ack: number | null; screen: number | null; k: string | null; cold: boolean;
+  db: { n: number; ms: number }; tg: { n: number; ms: number };
+  users: Map<number, BotUser>; config: Map<string, string | null>; follows: Map<number, BotFollow[]>;
+};
+const perfCtx = new AsyncLocalStorage<Perf>();
+/** Первое обновление в экземпляре функции — холодный старт (модуль только что загружен). */
+let warmInstance = false;
+const SCREEN_METHODS = new Set(["sendMessage", "editMessageText", "sendRichMessage"]);
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgMessage = {
@@ -172,17 +195,72 @@ export const NUDGE_AFTER_MIN = 30;
 export const NUDGE_MAX_MIN = 180;
 
 export function createBot(deps: BotDeps) {
-  const { store, tg } = deps;
+  // Обёртки: время и число запросов к базе и к Telegram в текущем обновлении, кэш на обновление.
+  const configCache = new Map<string, { at: number; v: string | null }>();
+  const rawStore = deps.store;
+  const timed = async <R>(kind: "db" | "tg", fn: () => Promise<R>): Promise<R> => {
+    const p = perfCtx.getStore();
+    const a = Date.now();
+    try {
+      return await fn();
+    } finally {
+      if (p) { p[kind].n++; p[kind].ms += Date.now() - a; }
+    }
+  };
+  const store: BotStore = new Proxy(rawStore, {
+    get(t, prop, rcv) {
+      const v = Reflect.get(t, prop, rcv);
+      if (typeof v !== "function") return v;
+      const name = String(prop);
+      return async (...args: unknown[]) => {
+        const p = perfCtx.getStore();
+        if (p && name === "getUser" && p.users.has(args[0] as number)) return p.users.get(args[0] as number);
+        if (p && name === "getConfig" && p.config.has(args[0] as string)) return p.config.get(args[0] as string);
+        if (name === "getConfig" && deps.configTtlMs) {
+          const hit = configCache.get(args[0] as string);
+          if (hit && Date.now() - hit.at < deps.configTtlMs) return hit.v;
+        }
+        if (p && name === "listFollows" && p.follows.has(args[0] as number)) return p.follows.get(args[0] as number);
+        const r = await timed("db", () => (v as (...x: unknown[]) => Promise<unknown>).apply(t, args));
+        if (name === "getConfig") configCache.set(args[0] as string, { at: Date.now(), v: r as string | null });
+        if (name === "setConfig") configCache.delete(args[0] as string);
+        if (p) {
+          if (name === "getUser" && r) p.users.set(args[0] as number, r as BotUser);
+          if (name === "saveUser" && r) p.users.set((r as BotUser).tg_id, r as BotUser);
+          if (name === "getConfig") p.config.set(args[0] as string, r as string | null);
+          if (name === "setConfig") p.config.delete(args[0] as string);
+          if (name === "listFollows") p.follows.set(args[0] as number, r as BotFollow[]);
+          if (/Follow/.test(name) && name !== "listFollows") p.follows.clear();
+          if (name === "deleteUser") { p.users.clear(); p.follows.clear(); }
+        }
+        return r;
+      };
+    },
+  });
+  const tg: BotTg = {
+    call: async (method: string, params: Record<string, unknown>) => {
+      const r = await timed("tg", () => deps.tg.call(method, params));
+      const p = perfCtx.getStore();
+      if (p && p.screen === null && SCREEN_METHODS.has(method)) p.screen = Date.now() - p.t0;
+      if (p && method === "answerCallbackQuery") p.ack = Date.now() - p.t0;
+      return r;
+    },
+  };
   const now = deps.now ?? (() => new Date());
   const coach = deps.coachUsername.replace(/^@/, "").toLowerCase();
 
   /** Событие для статистики. Сбой записи никогда не мешает ответу человеку. */
   async function track(tgId: number | null, event: BotEvent, opts?: EventOpts): Promise<void> {
-    try {
-      await store.logEvent(tgId, event, opts);
-    } catch (e) {
-      console.error(`[races-bot] событие ${event}: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const write = async () => {
+      try {
+        await store.logEvent(tgId, event, opts);
+      } catch (e) {
+        console.error(`[races-bot] событие ${event}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
+    // Статистика — после ответа человеку (18.10.2026: было 1–4 записи до экрана на каждое нажатие).
+    if (deps.defer) deps.defer(write);
+    else await write();
   }
 
   function regLink(u: { tg_id: number }, r: BotRace): string | null {
@@ -584,8 +662,6 @@ export function createBot(deps: BotDeps) {
     await track(u.tg_id, "consult_offer_shown", { raceId: r.id, meta: { after: "follow" } });
     return { added: true, consult: true };
   }
-  /** Текст всплывающего уведомления на нажатие (answerCallbackQuery), по человеку; читается после обработки. */
-  const toasts = new Map<number, string>();
   /** Что человек нажал или написал последним (ключ кнопки, «/команда», «text»): экран для учёта сбоев. */
   const lastKey = new Map<number, string>();
 
@@ -787,10 +863,16 @@ export function createBot(deps: BotDeps) {
         if (!x) return showFork(u, msg);
         let consultNow = false;
         if (key === "sf" && x.kind === "race") {
-          const f = await followQuiet(u, x.race, "season");
-          consultNow = f.consult;
-          // подтверждение — всплывающим уведомлением, карточка на месте с «✓ Слежу» (18.10.2026)
-          if (f.added) toasts.set(u.tg_id, T.FOLLOW_TOAST);
+          // «Сохранил…» уже показано всплывающим (ответ на нажатие — первым делом). Сохранить не вышло —
+          // карточка остаётся с «⭐ Следить», и под ней короткое сообщение.
+          try {
+            consultNow = (await followQuiet(u, x.race, "season")).consult;
+          } catch (e) {
+            if (e instanceof BotBlockedError) throw e;
+            console.error(`[races-bot] sf ${u.tg_id}: ${e instanceof Error ? e.message : String(e)}`);
+            await showItem(u, x, back, msg);
+            return send(u.tg_id, { text: "Не получилось сохранить старт. Нажми ⭐ ещё раз." });
+          }
         } else if (key === "su" && x.kind === "race") {
           if ((await followingSet(u.tg_id)).has(x.race.id)) {
             await store.removeFollow(u.tg_id, x.race.id);
@@ -895,7 +977,7 @@ export function createBot(deps: BotDeps) {
         if (!r) return send(u.tg_id, { text: "Этот забег уже прошёл или убран из календаря." });
         // ⭐ из напоминаний и старых сообщений: всплывающее «Сохранил» и карточка на месте (18.10.2026)
         const f = await followQuiet(u, r, "bot");
-        toasts.set(u.tg_id, f.added ? T.FOLLOW_TOAST : "Уже слежу за этим забегом");
+        // всплывающее «Сохранил…» уже ушло первым делом (ответ на нажатие до работы)
         return showItem(u, { kind: "race", race: r, km: null, date: r.ds, near: false }, "sz", msg, f.consult);
       }
       case "u": {
@@ -1007,9 +1089,44 @@ export function createBot(deps: BotDeps) {
     }
   }
 
-  async function handleUpdate(update: TgUpdate): Promise<void> {
-    // Telegram повторил то же обновление (таймаут, 5xx): второй раз не обрабатываем.
-    if (update.update_id !== undefined && !(await firstTime(`u:${update.update_id}`, 2 * 86400))) return;
+  /** t0 — когда вебхук получен (для замера скорости); без него — начало обработки. */
+  async function handleUpdate(update: TgUpdate, opts: { t0?: number } = {}): Promise<void> {
+    const perf: Perf = {
+      t0: opts.t0 ?? Date.now(), ack: null, screen: null, k: null, cold: !warmInstance,
+      db: { n: 0, ms: 0 }, tg: { n: 0, ms: 0 }, users: new Map(), config: new Map(), follows: new Map(),
+    };
+    warmInstance = true;
+    await perfCtx.run(perf, () => handleUpdateInner(update));
+    // Замер одного нажатия или сообщения — событием perf, после ответа (в /stats — «Скорость»).
+    const who = update.callback_query?.from.id ?? update.message?.from?.id ?? null;
+    if (deps.measure && who !== null && perf.k !== null) {
+      await track(who, "perf", {
+        meta: { k: perf.k, total: Date.now() - perf.t0, ack: perf.ack, screen: perf.screen, db_n: perf.db.n, db_ms: perf.db.ms, tg_n: perf.tg.n, tg_ms: perf.tg.ms, cold: perf.cold },
+      });
+    }
+  }
+
+  async function handleUpdateInner(update: TgUpdate): Promise<void> {
+    const perf = perfCtx.getStore();
+    // Ответ на нажатие — ПЕРВЫМ делом, до любой работы (18.10.2026): индикатор на кнопке гаснет сразу.
+    // Текст «Сохранил…» для ⭐ известен заранее; ошибка сохранения видна потом правкой карточки.
+    if (update.callback_query) {
+      const q = update.callback_query;
+      const data = q.data || "";
+      const toast = /^(sf|f):/.test(data) ? T.FOLLOW_TOAST : undefined;
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, ...(toast ? { text: toast } : {}) }).catch(() => undefined);
+    }
+    // Telegram повторил то же обновление (таймаут, 5xx) и двойной клик — обе проверки сразу, параллельно.
+    const cbKey = update.callback_query ? `cb:${update.callback_query.from.id}:${update.callback_query.data || ""}` : null;
+    // и сразу пользователь — тем же ожиданием (повтор или двойной клик — прочитанное просто не понадобится)
+    const cbFrom = update.callback_query && (!update.callback_query.message || update.callback_query.message.chat.type === "private") ? update.callback_query.from : null;
+    const [freshUpdate, freshClick, cbUser] = await Promise.all([
+      update.update_id !== undefined ? firstTime(`u:${update.update_id}`, 2 * 86400) : Promise.resolve(true),
+      cbKey ? firstTime(cbKey, DOUBLE_CLICK_SEC) : Promise.resolve(true),
+      cbFrom ? store.getUser(cbFrom.id) : Promise.resolve(null),
+    ]);
+    void cbUser; // попадает в кэш обновления: ensureUser ниже возьмёт его без нового запроса
+    if (!freshUpdate) return;
     if (update.my_chat_member) {
       const m = update.my_chat_member;
       if (m.chat.type !== "private") return;
@@ -1025,33 +1142,27 @@ export function createBot(deps: BotDeps) {
     }
     if (update.callback_query) {
       const q = update.callback_query;
-      // Ответ на нажатие — после обработки (18.10.2026): так в нём может быть текст («Сохранил…»).
-      const answer = () => {
-        const text = toasts.get(q.from.id);
-        toasts.delete(q.from.id);
-        return tg.call("answerCallbackQuery", { callback_query_id: q.id, ...(text ? { text } : {}) }).catch(() => undefined);
-      };
-      try {
-        if (q.message && q.message.chat.type !== "private") return;
-        // Двойной клик: та же кнопка тем же человеком за 3 секунды — второй раз ничего не делаем
-        // (было: unsubscribe дважды за секунду).
-        if (!(await firstTime(`cb:${q.from.id}:${q.data || ""}`, DOUBLE_CLICK_SEC))) return;
-        const u = await ensureUser(q.from);
-        // Нажатие для статистики по дням: что именно (часть до «:»), без самих данных.
-        const k = (q.data || "").split(":")[0];
-        if (k && k !== "noop") await track(u.tg_id, "tap", { meta: { k } });
-        lastKey.set(u.tg_id, k.startsWith("rt|") ? k.slice(3) : k);
-        return await guarded(u.tg_id, () => onCallback(u, q.data || "", q.message));
-      } finally {
-        await answer();
-      }
+      if (q.message && q.message.chat.type !== "private") return;
+      // Двойной клик: та же кнопка тем же человеком за 3 секунды — второй раз ничего не делаем
+      // (было: unsubscribe дважды за секунду).
+      if (!freshClick) return;
+      const u = await ensureUser(q.from);
+      // Нажатие для статистики по дням: что именно (часть до «:»), без самих данных.
+      const k = (q.data || "").split(":")[0];
+      if (k && k !== "noop") await track(u.tg_id, "tap", { meta: { k } });
+      const key = k.startsWith("rt|") ? k.slice(3) : k;
+      lastKey.set(u.tg_id, key);
+      if (perf && k !== "noop") perf.k = key;
+      return guarded(u.tg_id, () => onCallback(u, q.data || "", q.message));
     }
     const m = update.message;
     if (!m || m.chat.type !== "private" || !m.from) return;
     const u = await ensureUser(m.from);
     // Нажатие для статистики по дням: /start пишется своим событием start, остальное — tap.
     const cmd = typeof m.text === "string" ? m.text.trim().match(/^\/(\w+)/)?.[1] : null;
-    if (cmd !== "start") await track(u.tg_id, "tap", { meta: { k: cmd ? `/${cmd}` : m.location ? "geo" : typeof m.text === "string" ? "text" : "other" } });
+    const mk = cmd ? `/${cmd}` : m.location ? "geo" : typeof m.text === "string" ? "text" : "other";
+    if (perf) perf.k = mk;
+    if (cmd !== "start") await track(u.tg_id, "tap", { meta: { k: mk } });
     if (m.location) return guarded(u.tg_id, () => onLocation(u, m.location!.latitude, m.location!.longitude));
     if (typeof m.text === "string") return guarded(u.tg_id, () => onText(u, m.text as string));
     // Стикер, фото, голосовое, документ: вежливо и с меню, без падения.

@@ -24,6 +24,10 @@ import own from "../details.module.css";
 import DetailsSections, { courseRefs } from "../DetailsSections";
 
 export const revalidate = 3600;
+// Регион функции — Дублин, рядом с базой (Supabase eu-west-1) и серверами Telegram (18.10.2026):
+// было iad1 (Вашингтон), каждый запрос к базе пересекал Атлантику.
+export const preferredRegion = "dub1";
+
 
 const WD = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 function longDate(iso: string): string {

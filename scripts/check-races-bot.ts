@@ -1471,6 +1471,40 @@ async function main() {
     NOW = savedNow;
   }
 
+  // ── скорость (18.10.2026): ответ на нажатие — ПЕРВЫМ делом, замер каждого нажатия событием perf ──
+  // Было: answerCallbackQuery после всей работы — индикатор на кнопке крутился до конца.
+  {
+    const ps = memStore({ now: () => NOW, announced: new Map(), clock: () => NOW.getTime() });
+    const pcalls: string[] = [];
+    const pbot = createBot({
+      store: ps, tg: { async call(m: string) { pcalls.push(m); return { message_id: 50 }; } },
+      races: async () => RACES, expected: async () => [], now: () => NOW, coachUsername: "c", measure: true,
+    });
+    const P = { id: 8801, first_name: "Пер", username: "perf8801" };
+    await pbot.handleUpdate(msg(P, "/start"));
+    await pbot.handleUpdate({ message: { message_id: 1, chat: { id: P.id, type: "private" }, from: P, text: "Москва" } });
+    pcalls.length = 0;
+    CLICK += 5000;
+    await pbot.handleUpdate({ update_id: 991, callback_query: { id: "p1", from: P, data: "sz", message: { message_id: 50, chat: { id: P.id, type: "private" } } } }, { t0: Date.now() - 5 });
+    assert.equal(pcalls[0], "answerCallbackQuery", `ответ на нажатие — первым вызовом: ${pcalls.join(", ")}`);
+    const pe = ps.events.filter((e) => e.event === "perf").at(-1)!.meta as { k: string; ack: number; screen: number; total: number; db_n: number; tg_n: number; cold: boolean };
+    assert.equal(pe.k, "sz");
+    assert.ok(pe.ack >= 5 && pe.screen >= pe.ack && pe.total >= pe.screen, JSON.stringify(pe));
+    assert.ok(pe.db_n > 0 && pe.tg_n >= 2, "запросы к базе и к Telegram посчитаны");
+    // «Следить»: «Сохранил…» сразу, до сохранения
+    pcalls.length = 0;
+    CLICK += 5000;
+    const sfCode = raceCode(HALF.id);
+    const calls2: Call[] = [];
+    const pbot2 = createBot({ store: ps, tg: { async call(method: string, params: Record<string, unknown>) { calls2.push({ method, params }); return { message_id: 50 }; } }, races: async () => RACES, expected: async () => [], now: () => NOW, coachUsername: "c" });
+    await pbot2.handleUpdate({ callback_query: { id: "p2", from: P, data: `sf:${sfCode}:sz`, message: { message_id: 50, chat: { id: P.id, type: "private" } } } });
+    assert.equal(calls2[0].method, "answerCallbackQuery");
+    assert.equal(calls2[0].params.text, T.FOLLOW_TOAST, "«Сохранил…» первым делом");
+    // /stats: строка «Скорость»
+    const st2 = statsMessage(await ps.loadStats(30, NOW));
+    assert.match(String(st2.text), /Скорость \(нажатие → экран\): медиана \d+ мс, 90% \d+ мс, ответ на нажатие \d+ мс; .*\bsz \d+\/\d+.*; холодных стартов \d+/);
+  }
+
   console.log("check:races-bot ok");
 }
 

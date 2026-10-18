@@ -8,6 +8,9 @@ import { botToken, productionBot } from "@/features/races-bot/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Регион функции — Дублин, рядом с базой (Supabase eu-west-1) и серверами Telegram (18.10.2026):
+// было iad1 (Вашингтон), каждый запрос к базе пересекал Атлантику.
+export const preferredRegion = "dub1";
 
 const MAX_AGE_S = 24 * 3600;
 

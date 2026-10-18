@@ -2,6 +2,7 @@
  * race_calendar, погода Open-Meteo и геокодер. Всё серверное: токен бота и ключ сервисной
  * роли сюда приходят из окружения Vercel и наружу не уходят. */
 
+import { after } from "next/server";
 import { createHmac } from "node:crypto";
 
 import { prepare, type RaceRow } from "@/app/races/races-logic";
@@ -405,5 +406,15 @@ export function productionBot() {
     reverseGeocode: nominatimCity,
     weather: openMeteoWeather,
     goLink,
+    // события статистики — после ответа человеку (after из next/server); вне запроса — сразу
+    defer: (fn) => {
+      try {
+        after(fn);
+      } catch {
+        void fn();
+      }
+    },
+    measure: true,
+    configTtlMs: 30_000,
   });
 }

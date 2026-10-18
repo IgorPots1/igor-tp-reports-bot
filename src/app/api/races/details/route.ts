@@ -8,6 +8,10 @@ import { importantLine } from "@/features/race-details/important";
 import { loadRacePage } from "@/app/races/load";
 import { courseRefs } from "@/app/races/DetailsSections";
 
+// Регион функции — Дублин, рядом с базой (Supabase eu-west-1) и серверами Telegram (18.10.2026):
+// было iad1 (Вашингтон), каждый запрос к базе пересекал Атлантику.
+export const preferredRegion = "dub1";
+
 export async function GET(request: Request) {
   const id = new URL(request.url).searchParams.get("id") ?? "";
   if (!id || id.length > 200) return Response.json({ ok: false, error: "bad_request" }, { status: 400 });
