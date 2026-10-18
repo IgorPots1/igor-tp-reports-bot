@@ -340,6 +340,31 @@ console.log("\n── восстановление после старта по 
   check("на 4-й неделе после марафона это правило уже не действует", !late.some((r) => r.name.includes("после марафона")));
 }
 
+console.log("\n── переносы строк в описаниях (18.10, Ярулина: «склеились в один абзац») ──");
+{
+  // БЫЛО: кэш плановых строк схлопывает \s+ → " " (tp-workouts-cache-scan.ts toCompactText), описание образца приходило одной строкой, и текст в TP терял «Разминка:» /
+  // «Основная часть:» на отдельных строках (у 8 из 12 атлетов группы 12). Починено у источника копирования: подлинный текст образца из TP (override), адаптация его не портит.
+  const NLQ = "Разминка:\n\n— 10 минут в темпе 06:24-06:41 /км\n\nОсновная часть — 8 повторений:\n\n— 4 минуты в темпе 04:42-04:52 /км\n\n— 1,5 минуты — легко бегом\n\nЗаминка:\n\n— 5 минут в темпе 06:24-06:41 /км";
+  const NLE = "90 минут равномерного бега в темпе 06:28-06:50 /км.\n\nСтарайтесь держать стабильный ритм без рывков.\n\nСледите за техникой.";
+  const cnt = (s: string): number => (s.match(/\n/g) ?? []).length;
+  const ST3 = { polyline: [], primaryLengthMetric: "duration", primaryIntensityMetric: "percentOfThresholdPace", structure: [
+    { type: "step", length: { unit: "repetition", value: 1 }, steps: [{ name: "Warm up", length: { unit: "second", value: 600 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "warmUp" }] },
+    { type: "repetition", length: { unit: "repetition", value: 8 }, steps: [{ name: "Hard", length: { unit: "second", value: 240 }, targets: [{ minValue: 106, maxValue: 110 }], intensityClass: "active" }, { name: "Easy", length: { unit: "second", value: 90 }, targets: [{ minValue: 0, maxValue: 76 }], intensityClass: "rest" }] },
+    { type: "step", length: { unit: "repetition", value: 1 }, steps: [{ name: "Cool down", length: { unit: "second", value: 300 }, targets: [{ minValue: 77, maxValue: 81 }], intensityClass: "coolDown" }] }] };
+  const A2 = { athleteId: 1, tier: "T1", easy: { fastSec: 420, slowSec: 450, source: "easy_description", confidence: "high" }, threshold: { paceSec: 310, source: "applied_threshold_coach", confidence: "high" } } as unknown as AthleteAnchors;
+  const q = adaptText({ title: "8 x 4 мин", desc: NLQ, struct: ST3, kind: "quality", srcMinutes: 59, minutes: 59, a: A2 });
+  check("качественная: число переносов в итоговом тексте = числу в подлиннике (12), абзацы на месте, темпы заменены", cnt(q.description) === 12 && q.description.startsWith("Разминка:\n\n— 10 минут в темпе 06:23-06:43 /км\n\nОсновная часть") && /04:42-04:52/.test(q.description) && q.description.endsWith("06:23-06:43 /км"), JSON.stringify(q.description));
+  const e = adaptText({ title: "Бег по темпу 90 мин", desc: NLE, struct: null, kind: "easy", srcMinutes: 90, minutes: 40, a: A2 });
+  check("лёгкая: переносы сохранены (4 = 4), минуты в тексте пересчитаны (90 → 40), темп подставлен", cnt(e.description) === cnt(NLE) && /^40 минут равномерного бега в темпе 07:00-07:30 \/км\.\n\nСтарайтесь/.test(e.description), JSON.stringify(e.description));
+  check("текст без темпа и без пересчёта проходит БАЙТ В БАЙТ (в том числе пустые строки и пробелы в конце строк)", adaptText({ title: "x", desc: "Строка 1 \n\n\nСтрока 3\n", struct: null, kind: "easy", srcMinutes: 50, minutes: 50, a: A2 }).description === "Строка 1 \n\n\nСтрока 3\n");
+  // сквозной: override подлинного текста в сборке недели; без override сборка берёт схлопнутый текст кэша; override задан, а id нет — пометка ⚑
+  const base = planRepeat(ix, T(1, 7), null); const wids = base.kind === "repeat" ? base.sessions.map((s) => s.src.wid) : [];
+  const over = new Map<number, string>(wids.map((w) => [w, "Строка А.\n\nСтрока Б, 50 минут в темпе 06:50-07:13 /км."]));
+  const b1 = buildRepeatWeek(ix, T(1, 7), W8, null, undefined, new Map(), over), b0 = buildRepeatWeek(ix, T(1, 7), W8, null, undefined, new Map()), bm = buildRepeatWeek(ix, T(1, 7), W8, null, undefined, new Map(), new Map());
+  check("сборка недели: при override описание берётся подлинное (с переносами), без override — как раньше", !!b1 && b1.sessions.every((s) => cnt(s.description) === 2) && !!b0 && b0.sessions.every((s) => cnt(s.description) === 0));
+  check("override задан, а подлинный текст не получен — сессия сохраняет схлопнутый текст и получает пометку ⚑ «переносы строк не восстановлены»", !!bm && bm.sessions.every((s) => s.flags.some((f) => /переносы строк не восстановлены/.test(f))) && !!b0 && b0.sessions.every((s) => !s.flags.some((f) => /переносы строк/.test(f))));
+}
+
 console.log("\n── кэш отстаёт от TP: удалённое нами не считается работой тренера ──");
 {
   const dir = mkdtempSync(path.join(tmpdir(), "runs-")); const w = (n: string, o: unknown): void => writeFileSync(path.join(dir, n), JSON.stringify(o));

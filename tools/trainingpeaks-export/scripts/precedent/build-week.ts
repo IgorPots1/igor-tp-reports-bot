@@ -75,7 +75,12 @@ export function selectDonor(ix: Index, t: CWeek, W: Weights, mode: Mode = "any")
   return findPrecedent(ix, t, W, mode, DONOR_PEAK_FILTER ? (p) => donorExcluded(ix, p) : undefined);
 }
 
-export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDelta, c: AthleteContext | undefined, names: Map<number, string>): BuiltWeek | null {
+/**
+ * descOverride: workoutId образца → ПОДЛИННЫЙ description из TP (с переносами строк). Кэш плановых строк хранит описание схлопнутым в одну строку
+ * (tp-workouts-cache-scan.ts toCompactText: \s+ → " "), поэтому текст, скопированный из кэша, теряет «Разминка:» / «Основная часть:» на отдельных строках
+ * (Игорь, 18.10, Ярулина). Карта задана, а id в ней нет (TP не ответил) — сессия остаётся со схлопнутым текстом и получает пометку ⚑.
+ */
+export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDelta, c: AthleteContext | undefined, names: Map<number, string>, descOverride?: Map<number, string>): BuiltWeek | null {
   loadRepeatParams();
   const plan = planRepeat(ix, t, cycle);
   let ps: PSess[]; let source: string; let why: string;
@@ -95,7 +100,9 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
     why = `дистанция ${Math.round(100 * f.why.d) / 100}: ${[...f.why.parts].sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).slice(0, 4).map(([k, v]) => `${k} ${Math.round(100 * v) / 100}`).join(", ")}`;
   }
   const sessions: BuiltSession[] = ps.map((s) => {
-    const tx = adaptText({ title: s.title, desc: s.src.desc, struct: s.src.struct, kind: s.kind, srcMinutes: s.src.minutes, minutes: s.minutes, a: c ?? null });
+    const live = descOverride?.get(s.src.wid);
+    const tx = adaptText({ title: s.title, desc: live ?? s.src.desc, struct: s.src.struct, kind: s.kind, srcMinutes: s.src.minutes, minutes: s.minutes, a: c ?? null });
+    if (descOverride && live == null) tx.flags.push("переносы строк не восстановлены: подлинный текст из TP не получен, взят схлопнутый из кэша");
     return { dayIdx: s.dayIdx, kind: s.kind, title: tx.title, minutes: s.minutes, work: s.kind === "quality" ? workMinutesFromTitle(tx.title) : 0,
       description: tx.description, written: tx.written, flags: tx.flags, paceMode: tx.paceMode, srcWorkoutId: s.src.wid, srcDate: s.src.date };
   }).sort((a, b) => a.dayIdx - b.dayIdx);

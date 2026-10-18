@@ -39,7 +39,14 @@ export type Assembled =
   | { aid: number; ok: true; built: BuiltWeek; t: CWeek; c: AthleteContext }
   | { aid: number; ok: false; why: string; built?: BuiltWeek; t?: CWeek; c?: AthleteContext };
 
-export async function assemble(week: string, aids: number[]): Promise<{ L: Loaded; ix: Index; results: Assembled[] }> {
+/** Подлинный description образца из TP (GET, только чтение). Не получилось — нет записи в карте. */
+export type DescFetcher = (aid: number, workoutId: number) => Promise<string | null>;
+export const liveDescFetcher: DescFetcher = async (aid, id) => {
+  try { const tp = await import("../../../../src/features/trainingpeaks/tp-api-client.ts"); const d = await tp.getWorkoutDetail(aid, id); return typeof d.description === "string" ? d.description : null; } catch { return null; }
+};
+
+export async function assemble(week: string, aids: number[], opts: { descFetcher?: DescFetcher | null } = {}): Promise<{ L: Loaded; ix: Index; results: Assembled[] }> {
+  const fetchDesc = opts.descFetcher === undefined ? liveDescFetcher : opts.descFetcher;
   const L = load(); const sb = sbc();
   const ix = indexCorpus(buildCorpus(L.rows, L.races, L.sig, L.students, week)); // история — все недели ДО целевой
   const Wt = JSON.parse(readFileSync(path.join(DATA_DIR, "tuned-weights.json"), "utf8")) as Weights;
@@ -56,7 +63,12 @@ export async function assemble(week: string, aids: number[]): Promise<{ L: Loade
     let cyc = null;
     if (d) { const w2r = d.targetDate ? Math.round((Date.parse(d.targetDate) - Date.parse(week)) / (7 * 86400000)) + 1 : 8; const f = forecast(d, week, Math.max(1, w2r))[0]; if (f) cyc = { role: f.role, target: f.aerobicMin + f.qualityMin, base: d.baseAerobicMin + d.baseQualityMin }; }
     const t = stateFor(ix, aid, week, L.races.filter((r) => r.trainingpeaks_athlete_id === aid), c.hasActiveIllness);
-    const b = buildRepeatWeek(ix, t, Wt, cyc, c, L.names);
+    let b = buildRepeatWeek(ix, t, Wt, cyc, c, L.names);
+    if (b && fetchDesc) { // второй проход: подлинные тексты образца (с переносами строк) вместо схлопнутых из кэша
+      const over = new Map<number, string>();
+      for (const s of b.sessions) { if (over.has(s.srcWorkoutId)) continue; const own = ix.byAid.get(aid)?.flatMap((w) => w.sessions).some((x) => x.wid === s.srcWorkoutId); const owner = own ? aid : (L.corpus.find((w) => w.sessions.some((x) => x.wid === s.srcWorkoutId))?.aid ?? aid); const txt = await fetchDesc(owner, s.srcWorkoutId); if (txt != null) over.set(s.srcWorkoutId, txt); }
+      b = buildRepeatWeek(ix, t, Wt, cyc, c, L.names, over) ?? b;
+    }
     if (!b) { results.push({ aid, ok: false, c, t, why: "не из чего собрать (нет своих недель и прецедента)" }); continue; }
     if (b.refused) { results.push({ aid, ok: false, c, t, built: b, why: b.sessions.length ? `жёсткое нарушение: ${b.refusedWhy} · собиралось как: ${b.source} (${b.why.slice(0, 160)}) · ${b.sessions.length} сесс., ${b.sessions.reduce((a, x) => a + x.minutes, 0)} мин` : (b.refusedWhy ?? "отказ") }); continue; }
     results.push({ aid, ok: true, built: b, t, c });
