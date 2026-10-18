@@ -239,11 +239,13 @@ export function createBot(deps: BotDeps) {
 
   /**
    * Rich-сообщения (наряд 18.10.2026): кому слать rich вместо обычного HTML. rich_for в race_bot_config:
-   * off (или нет ключа) — никому; all — всем; new — только пришедшим не раньше rich_since. Флаг
+   * off (или нет ключа) — никому; owner — только тренеру (coach_chat_id), для просмотра вживую до
+   * включения остальным; all — всем; new — только пришедшим не раньше rich_since. Флаг
    * rich_off человека («Текстовая версия», старый клиент) выключает всегда.
    */
   async function richEligible(u: BotUser): Promise<boolean> {
     const mode = await store.getConfig("rich_for");
+    if (mode === "owner") return (await store.getConfig("coach_chat_id")) === String(u.tg_id);
     if (mode === "all") return true;
     if (mode !== "new") return false;
     const since = await store.getConfig("rich_since");

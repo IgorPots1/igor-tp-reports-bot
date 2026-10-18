@@ -2,7 +2,7 @@
 --   race_bot_users.rich_off — человек выбрал «Текстовая версия» (или у него старый Telegram): бот шлёт
 --   ему обычный HTML; снимается в настройках «Красивое оформление».
 --   race_bot_events: событие rich_off (кнопка, настройки, старый клиент по WebApp.version) для /stats.
--- Флаг включения rich_for (new | all | off) и rich_since — строки race_bot_config, ставятся при выкатке
+-- Флаг включения rich_for (owner | new | all | off) и rich_since — строки race_bot_config, ставятся при выкатке
 -- отдельным SQL (без них rich выключен у всех). Только добавление.
 
 alter table public.race_bot_users add column if not exists rich_off boolean not null default false;

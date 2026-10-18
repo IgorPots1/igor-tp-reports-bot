@@ -1301,6 +1301,18 @@ async function main() {
     await bot.handleUpdate(cbm(R, "sn:near:0"));
     assert.ok(calls.some((c) => c.params.rich_message), "снова rich");
 
+    // owner (18.10.2026): rich видит только тренер (coach_chat_id), все остальные — как без флага
+    store.config.set("rich_for", "owner");
+    store.config.set("coach_chat_id", String(COACH.id));
+    reset();
+    await bot.handleUpdate(cbm(R, "sn:near:0"));
+    assert.ok(!calls.some((c) => c.params.rich_message), "owner: обычный пользователь — обычный HTML");
+    await bot.handleUpdate(msg(R, "/settings"));
+    assert.ok(!buttons(calls.filter((c) => c.params.chat_id === R.id).at(-1)!).some((b) => /Красивое оформление/.test(b.text)), "owner: у обычного нет переключателя");
+    reset();
+    const lc = await open(COACH);
+    assert.ok(lc.params.rich_message, "owner: тренеру — rich");
+
     // new: только пришедшие не раньше rich_since
     store.config.set("rich_for", "new");
     store.config.set("rich_since", "2026-10-12T11:00:00.000Z");
