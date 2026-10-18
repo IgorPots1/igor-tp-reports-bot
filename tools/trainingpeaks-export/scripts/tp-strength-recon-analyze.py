@@ -57,7 +57,11 @@ for f in sorted(RAW.glob("[0-9]*.json")):
 
 all_fetched = len(workouts)
 future = [x for x in workouts if x[1]["prescribedDate"][:10] > UNTIL]
-workouts = [x for x in workouts if SINCE <= x[1]["prescribedDate"][:10] <= UNTIL]
+in_range = [x for x in workouts if SINCE <= x[1]["prescribedDate"][:10] <= UNTIL]
+# "Unplanned" rows are device files (title "Strength", hasPrescribedData=false, 0 sets) that
+# the strength service also lists — not something the coach prescribed. Keep them out.
+unplanned = [x for x in in_range if not x[1].get("hasPrescribedData")]
+workouts = [x for x in in_range if x[1].get("hasPrescribedData")]
 
 anon = {}
 def A(aid):
@@ -79,6 +83,9 @@ res["fetch_failed"] = [
 ]
 res["fetched_total_incl_future"] = all_fetched
 res["future_after_until"] = len(future)
+res["in_range_all"] = len(in_range)
+res["unplanned_device_rows_excluded"] = {"n": len(unplanned), "titles": Counter(w["title"] for _, w, _ in unplanned).most_common(5),
+                                         "athletes": len({a for a, _, _ in unplanned})}
 res["workouts"] = len(workouts)
 res["with_detail"] = sum(1 for _, _, d in workouts if d)
 res["athletes_with_strength"] = len(per_ath)
