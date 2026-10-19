@@ -78,7 +78,10 @@ export async function buildBody(week: PlanWeek, o: { athleteId: number; date: st
     const notes = b.blockType === "Circuit" ? `${b.coachNotes ?? `${b.rounds} круга`}. ${restLine()}` : b.coachNotes;
     blocks.push({ id: randomUUID(), blockType: b.blockType, title: b.blockType === "Circuit" ? "Круг" : prescriptions.length ? (prescriptions[0].exercise as Exercise).title : "", coachNotes: notes, isComplete: false, compliancePercent: 0, parameters: [], prescriptions });
   }
-  const instructions = [week.instructions, circuit ? restLine() : null].filter(Boolean).join("\n\n") || null;
+  // «Начинай с более слабой ноги…» — только если в тренировке есть упражнения на одну ногу (параметр «на сторону»); решение Игоря 19.10
+  const unilateral = week.blocks.some((b) => b.prescriptions.some((p) => p.parameter === "RepsPerSide" || (p.extra ?? []).some((x) => x.parameter === "RepsPerSide")));
+  const base = week.instructions && /слабой ноги/i.test(week.instructions) && !unilateral ? null : week.instructions;
+  const instructions = [base, circuit ? restLine() : null].filter(Boolean).join("\n\n") || null;
   const totalSets = week.blocks.reduce((a, b) => a + b.prescriptions.reduce((x, p) => x + p.sets, 0), 0); const totalPres = week.blocks.reduce((a, b) => a + b.prescriptions.length, 0);
   return {
     workoutType: "StructuredStrength", lastUpdatedAt: null, compliancePercent: 0, rpe: null, feel: null, blocks,
