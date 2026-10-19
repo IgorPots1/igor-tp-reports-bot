@@ -49,45 +49,84 @@ assert.match(scanScriptSource, /--from="\$\{FROM\}" --to="\$\{TO\}"/, "daily cac
 /**
  * TP-SAFETY: the workout cache scan is READ-ONLY against TrainingPeaks.
  *
- * The old guard banned the literal `method: "POST"` anywhere in the file. The scan does POST — to
- * api.telegram.org, to tell the coach its TP session died and needs a manual re-login (29dd8f2).
- * That alert is not a TrainingPeaks call, so a TP-safety check went red over it and stayed red;
- * together with the ENOENT above, this file has been asserting nothing since 8 июля.
+ * ЧТО БЫЛО И ПОЧЕМУ ПЕРЕПИСАНО (2026-10-19, наряд «силовые в кэш»). Прежний guard требовал, чтобы
+ * каждый запрос в TP шёл через performApiJsonRequest({ method: "GET" }) — помощник Playwright-пути.
+ * Скан давно ушёл на fetch-клиент (наряд ЭТАП 2: tp-api-client, getTpApiJsonRaw), performApiJsonRequest
+ * в нём не осталось, и чек стоял КРАСНЫМ на main, то есть не сторожил ничего. А теперь скан ходит
+ * ещё и во второй хост TP — сервис силовых (api.peakswaresb.com), — так что сторож нужен как никогда.
  *
- * The invariant is unchanged and now checked precisely: every TP request goes through
- * performApiJsonRequest, that helper is only ever handed GET, and nothing reaches a TrainingPeaks
- * host by any other route.
+ * Инвариант тот же, проверка — под нынешний путь и СТРОЖЕ прежней:
+ *  1. из tp-api-client скан импортирует ТОЛЬКО белый список: getTpApiJsonRaw (метода в сигнатуре
+ *     нет — это GET и только GET), нарезку дат и классы ошибок. Любая пишущая функция клиента
+ *     (createWorkout, updateWorkout, moveWorkout, deleteWorkout, createStrengthWorkout, createEvent,
+ *     createNote, createAvailability, createStrengthExercise, …) в импорте — красный;
+ *  2. сам getTpApiJsonRaw в клиенте жёстко зашит на { method: "GET" } и не принимает метод;
+ *  3. вынесенные модули скана (тело по ученику, строки силовых) не ходят в сеть вовсе — не
+ *     импортируют клиент и не зовут fetch;
+ *  4. сырой fetch в скане — только в api.telegram.org (алерт тренеру); ни к одному хосту TP
+ *     (trainingpeaks / peakswaresb) напрямую.
  */
+const tpApiClientSource = readFileSync(join(root, "src/features/trainingpeaks/tp-api-client.ts"), "utf8");
+const scanLibSources = [
+  "tools/trainingpeaks-export/scripts/lib/workout-cache-scan-student.ts",
+  "tools/trainingpeaks-export/scripts/lib/strength-cache-rows.ts",
+].map((relativePath) => ({ relativePath, source: readFileSync(join(root, relativePath), "utf8") }));
+
+const SCAN_ALLOWED_TP_CLIENT_IMPORTS = new Set(["chunkDateRangeInclusive", "getTpApiJsonRaw", "TpApiAuthError", "TpApiHttpError"]);
+
 function assertScanNeverMutatesTrainingPeaks(source: string): void {
-  const tpRequests = [...source.matchAll(/performApiJsonRequest\(\{([\s\S]{0,300}?)\}\)/g)];
-  assert.ok(tpRequests.length > 0, "the scan must reach TrainingPeaks through performApiJsonRequest");
-  for (const [, options] of tpRequests) {
-    assert.doesNotMatch(
-      options,
-      /method:\s*"(?:POST|PUT|PATCH|DELETE)"/i,
-      "workout cache scan must not mutate TP workouts"
-    );
-    assert.match(options, /method:\s*"GET"/, "every TrainingPeaks request in the cache scan must be a GET");
+  const clientImports = [...source.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*"[^"]*tp-api-client(?:\.ts)?"/g)];
+  assert.ok(clientImports.length > 0, "the scan must reach TrainingPeaks through tp-api-client");
+  for (const [, names] of clientImports) {
+    for (const name of names.split(",").map((part) => part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]!).filter(Boolean)) {
+      assert.ok(
+        SCAN_ALLOWED_TP_CLIENT_IMPORTS.has(name),
+        `workout cache scan must not mutate TP workouts: it imports "${name}" from tp-api-client (allowed: GET-only getTpApiJsonRaw + helpers)`
+      );
+    }
+  }
+  assert.doesNotMatch(source, /import\s*\*\s*as\s+\w+\s+from\s*"[^"]*tp-api-client/, "workout cache scan must not mutate TP workouts: namespace import of tp-api-client hides what is used");
+  for (const [, target] of source.matchAll(/fetch\(\s*([`"'][^`"']*)/g)) {
+    assert.match(target, /api\.telegram\.org/, "TrainingPeaks must be reached only through the audited request helper, never a raw fetch");
   }
   assert.doesNotMatch(
     source,
-    /fetch\(\s*[`"'][^`"']*trainingpeaks/i,
+    /fetch\(\s*[`"'][^`"']*(?:trainingpeaks|peakswaresb)/i,
     "TrainingPeaks must be reached only through the audited request helper, never a raw fetch"
   );
 }
 
 assertScanNeverMutatesTrainingPeaks(scanTsSource);
 
-// Positive controls — the narrowed guard must still catch a real TP mutation, by either route.
-// Without these, someone could loosen it again and the check would stay green while the invariant
-// died, which is exactly how it got here.
+// getTpApiJsonRaw: без параметра метода и с зашитым GET.
+const rawGetFn = tpApiClientSource.match(/export async function getTpApiJsonRaw\(([\s\S]*?)\)[^{]*\{([\s\S]*?)\n\}/);
+assert.ok(rawGetFn, "tp-api-client must export getTpApiJsonRaw");
+assert.doesNotMatch(rawGetFn![1]!, /method/i, "getTpApiJsonRaw must not accept a method");
+assert.match(rawGetFn![2]!, /\{\s*method:\s*"GET"\s*\}/, "getTpApiJsonRaw must be hard-wired to GET");
+
+for (const { relativePath, source } of scanLibSources) {
+  assert.doesNotMatch(source, /from\s*"[^"]*tp-api-client/, `${relativePath} must not talk to TP itself (no tp-api-client import)`);
+  assert.doesNotMatch(source, /\bfetch\(/, `${relativePath} must not do network I/O of its own`);
+}
+
+// Positive controls — the guard must still catch a real TP mutation, by every route. Without these,
+// someone could loosen it again and the check would stay green while the invariant died, which is
+// exactly how it got here (twice).
 assert.throws(
   () =>
     assertScanNeverMutatesTrainingPeaks(
-      `${scanTsSource}\nawait performApiJsonRequest({ page, method: "POST", endpoint, headers: authState.headers })\n`
+      `${scanTsSource}\nimport { deleteWorkout } from "../../../src/features/trainingpeaks/tp-api-client.ts";\n`
     ),
   /must not mutate TP workouts/,
-  "guard must still catch a mutating TP request through the helper"
+  "guard must still catch a write function imported from the client"
+);
+assert.throws(
+  () =>
+    assertScanNeverMutatesTrainingPeaks(
+      `${scanTsSource}\nimport { getTpApiJsonRaw, createStrengthWorkout as save } from "../../../src/features/trainingpeaks/tp-api-client.ts";\n`
+    ),
+  /must not mutate TP workouts/,
+  "guard must still catch an aliased write import"
 );
 assert.throws(
   () =>
@@ -96,6 +135,14 @@ assert.throws(
     ),
   /only through the audited request helper/,
   "guard must still catch a raw mutating fetch straight at a TP host"
+);
+assert.throws(
+  () =>
+    assertScanNeverMutatesTrainingPeaks(
+      scanTsSource + "\nawait fetch(`https://api.peakswaresb.com/rx/activity/v1/workouts/${id}`, { method: \"DELETE\" })\n"
+    ),
+  /only through the audited request helper/,
+  "guard must still catch a raw fetch at the strength host"
 );
 
 function buildPlannedFutureRow(input: {

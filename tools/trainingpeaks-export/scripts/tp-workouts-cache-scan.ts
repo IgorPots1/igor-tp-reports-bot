@@ -11,7 +11,19 @@ import * as trainingPeaksRepository from "../../../src/features/trainingpeaks/re
 // Fetch-client path (наряд ЭТАП 2): session-snapshot → cookie → bearer over plain HTTP,
 // NO Playwright, NO persistent-profile lock — so this scan no longer collides with the
 // move/races loops that share that browser profile. Same client fit-ingest already uses.
-import { getTpApiJsonRaw, TpApiAuthError, TpApiHttpError } from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import {
+  chunkDateRangeInclusive,
+  getTpApiJsonRaw,
+  TpApiAuthError,
+  TpApiHttpError,
+} from "../../../src/features/trainingpeaks/tp-api-client.ts";
+import {
+  belgradeTodayIso,
+  extractStrengthCalendarItems,
+  isStrengthScanEnabled,
+  STRENGTH_SCAN_FLAG,
+  strengthCalendarPath,
+} from "./lib/strength-cache-rows.ts";
 import { toolRoot } from "./lib/paths.ts";
 import type { ApiJsonResponse } from "./lib/trainingpeaks-api-move.ts";
 import {
@@ -19,6 +31,7 @@ import {
   type ResolvedTarget,
   type StudentSummary,
   type ReconcilePlannedRowsFn,
+  type StrengthScanInput,
 } from "./lib/workout-cache-scan-student.ts";
 import {
   classifyScanFailure,
@@ -558,6 +571,27 @@ async function main(): Promise<void> {
       }
     }
 
+    // Тренерские силовые (наряд 19.10, п.4) — ЗА ФЛАГОМ TP_SCAN_STRENGTH=1, по умолчанию выкл.
+    // Только GET (getTpApiJsonRaw другого метода не умеет) в сервис силовых, кусками по 90 дней.
+    // Ошибка здесь не роняет ученика: scanOneStudent отметит её в итоге и пропустит сверку.
+    const strengthInput: StrengthScanInput | undefined = isStrengthScanEnabled()
+      ? {
+        todayIso: belgradeTodayIso(),
+        fetchItems: async (athleteId, from, to) => {
+          const items: Record<string, unknown>[] = [];
+          for (const chunk of chunkDateRangeInclusive(from, to)) {
+            const { status, body } = await getTpApiJsonRaw("strength", strengthCalendarPath(athleteId, chunk.start, chunk.end));
+            if (status !== 200) throw new Error(`TrainingPeaks strength calendar GET failed: status=${status}`);
+            const list = extractStrengthCalendarItems(body);
+            if (!list) throw new Error("TrainingPeaks strength calendar GET returned non-array JSON body.");
+            items.push(...list);
+          }
+          return items;
+        },
+      }
+      : undefined;
+    if (strengthInput) console.log(`[tp-workouts-cache-scan] ${STRENGTH_SCAN_FLAG}=1: coach strength from the strength service is ON`);
+
     // Probe once before the loop: a dead session-snapshot cookie → alert + abort instead
     // of hammering all ~110. Only TpApiAuthError (the cookie itself is dead) counts as
     // session death; a per-athlete 403 on the first student is athlete-specific, so we
@@ -587,6 +621,7 @@ async function main(): Promise<void> {
           from: args.from,
           to: args.to,
           scannedAt,
+          strength: strengthInput,
         });
         summaries.push(studentSummary);
       } catch (error) {
@@ -670,8 +705,13 @@ async function main(): Promise<void> {
     for (const item of summaries.sort((a, b) => a.studentName.localeCompare(b.studentName))) {
       const shortReason = item.reason ? ` (${item.reason})` : "";
       const incomplete = item.incompleteDays?.length ? `, incomplete_days=${item.incompleteDays.join(",")}` : "";
+      const strength = item.strength
+        ? item.strength.ok
+          ? `, strength_rows=${item.strength.counts.rows}, strength_watch_files=${item.strength.counts.watchFiles}, strength_hidden=${item.strength.counts.hidden}, strength_past=${item.strength.counts.past}`
+          : `, strength_failed (${item.strength.error}), reconcile_skipped`
+        : "";
       console.log(
-        `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, reconciled_deleted=${item.reconciledDeleted}, warnings=${item.warnings}, status=${item.status}${incomplete}${shortReason}`,
+        `- ${item.studentName}: rows=${item.rows}, planned=${item.planned}, completed=${item.completed}, planned_not_completed=${item.plannedButNotCompleted}, reconciled_deleted=${item.reconciledDeleted}, warnings=${item.warnings}, status=${item.status}${incomplete}${strength}${shortReason}`,
       );
     }
     // Отдельно от warnings: тот у каждой строки уже содержит «completed is non-boolean» и
@@ -680,6 +720,16 @@ async function main(): Promise<void> {
       (item.incompleteDays ?? []).map((date) => `${item.studentName} ${date}`),
     );
     console.log(`incomplete_days_total: ${incompleteDays.length}`);
+    if (strengthInput) {
+      const strengthOk = summaries.filter((item) => item.strength?.ok);
+      const sum = (key: "rows" | "watchFiles" | "hidden" | "past" | "badId" | "idCollision") =>
+        strengthOk.reduce((acc, item) => acc + (item.strength?.ok ? item.strength.counts[key] : 0), 0);
+      console.log(
+        `strength: students_ok=${strengthOk.length}, students_failed=${summaries.filter((item) => item.strength && !item.strength.ok).length}, ` +
+          `rows=${sum("rows")}, watch_files_skipped=${sum("watchFiles")}, hidden_skipped=${sum("hidden")}, past_skipped=${sum("past")}, ` +
+          `bad_id=${sum("badId")}, id_collision=${sum("idCollision")}`,
+      );
+    }
 
     // Итог прогона для обёртки (heartbeat sent / partial). 403 и сетевой сбой — раздельно.
     const failedKinds = summaries

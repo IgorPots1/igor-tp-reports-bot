@@ -47,6 +47,7 @@
     "tp:generate-strength-exercise-catalog": "npm --prefix tools/trainingpeaks-export run tp-generate-strength-exercise-catalog --",
     "tp:create-test-strength-workout": "npm --prefix tools/trainingpeaks-export run tp-create-test-strength-workout --",
     "check:strength-template-matcher": "npm --prefix tools/trainingpeaks-export run check:strength-template-matcher --",
+    "check:strength-cache-scan": "npm --prefix tools/trainingpeaks-export run check:strength-cache-scan --",
     "check:strength-exercise-catalog": "npm --prefix tools/trainingpeaks-export run check:strength-exercise-catalog --",
     "check:strength-exercise-db-capture": "npm --prefix tools/trainingpeaks-export run check:strength-exercise-db-capture --",
     "check:strength-rendered-exercise-scrape": "npm --prefix tools/trainingpeaks-export run check:strength-rendered-exercise-scrape --",

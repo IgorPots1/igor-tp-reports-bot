@@ -46,6 +46,7 @@
     "tp-generate-strength-exercise-catalog": "tsx scripts/tp-generate-strength-exercise-catalog.ts",
     "tp-create-test-strength-workout": "tsx scripts/tp-create-test-strength-workout.ts",
     "check:strength-template-matcher": "tsx scripts/check-strength-template-matcher.ts",
+    "check:strength-cache-scan": "tsx scripts/check-strength-cache-scan.ts",
     "check:strength-exercise-catalog": "tsx scripts/check-strength-exercise-catalog.ts",
     "check:strength-exercise-db-capture": "tsx scripts/check-strength-exercise-db-capture.ts",
     "check:strength-rendered-exercise-scrape": "tsx scripts/check-strength-rendered-exercise-scrape.ts",

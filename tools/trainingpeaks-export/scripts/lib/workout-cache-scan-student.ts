@@ -13,6 +13,11 @@ import {
   normalizeTrainingPeaksWorkoutItems,
   type TrainingPeaksWorkoutRaw,
 } from "./trainingpeaks-workout-normalization.ts";
+import {
+  buildStrengthCacheRows,
+  type StrengthRowsCounts,
+  type StrengthRowsResult,
+} from "./strength-cache-rows.ts";
 
 const TP_API_HOST = "https://tpapi.trainingpeaks.com";
 
@@ -38,6 +43,8 @@ export type StudentSummary = {
   reconciledDeleted: number;
   /** Days with a hole in orderOnDay — possibly incomplete (see findOrderOnDayGaps). */
   incompleteDays?: string[];
+  /** Только при TP_SCAN_STRENGTH=1: итог по тренерским силовым. */
+  strength?: StudentStrengthSummary;
 };
 
 export type ReconcilePlannedRowsFn = (input: {
@@ -265,6 +272,11 @@ export async function scanOneStudent(input: {
   from: string;
   to: string;
   scannedAt: string;
+  /**
+   * Тренерские силовые из сервиса силовых (флаг TP_SCAN_STRENGTH=1). Не передано — скан
+   * работает ровно как до наряда: ни одного лишнего запроса, ни одной лишней строки.
+   */
+  strength?: StrengthScanInput;
 }): Promise<StudentSummary> {
   const { upsertCacheFn, reconcileFn, fetchFn, target, from, to, scannedAt } = input;
   const endpoint = `${TP_API_HOST}/fitness/v6/athletes/${target.athleteId}/workouts/${from}/${to}`;
@@ -284,11 +296,36 @@ export async function scanOneStudent(input: {
   });
   const filteredItems = normalizedItems.filter((item) => item.workoutDate >= from && item.workoutDate <= to);
 
+  // Силовые читаются ТОЛЬКО после успешного ответа tpapi (выше уже бросило бы): строки силовых
+  // получают тот же scanned_at, что и строки tpapi, и не могут освежить кэш ученика, чей скан упал.
+  let strengthOutcome: StrengthOutcome | null = null;
+  if (input.strength) {
+    try {
+      const items = await input.strength.fetchItems(target.athleteId, from, to);
+      const built = buildStrengthCacheRows({
+        items,
+        student: target.student,
+        athleteId: target.athleteId,
+        from,
+        to,
+        todayIso: input.strength.todayIso,
+        scannedAt,
+        tpapiWorkoutIds: new Set(normalizedItems.map((item) => item.trainingPeaksWorkoutId)),
+      });
+      strengthOutcome = { ok: true, ...built };
+    } catch (error) {
+      strengthOutcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   // A hole in a day's orderOnDay (#2 present, #1 absent) = a calendar object the feed did not
   // return. Status stays ok — the fetch did succeed — but the day is marked on every one of its
   // rows and counted separately, so the plan reader and the run summary see it, instead of the
   // old silence (Elena 06.10: the coach's strength never arrived, the scan said ok).
-  const orderGaps = findOrderOnDayGaps(filteredItems);
+  // С силовыми дыра, которую закрывает номер силовой в дне, — уже не дыра: объект найден.
+  const orderGaps = findOrderOnDayGaps(
+    strengthOutcome?.ok ? [...filteredItems, ...strengthOutcome.orderItems] : filteredItems,
+  );
   const gapWarningByDate = new Map(orderGaps.map((gap) => [gap.date, formatOrderOnDayGapWarning(gap)]));
 
   const rawByWorkoutId = new Map<number, TrainingPeaksWorkoutRaw>();
@@ -333,23 +370,43 @@ export async function scanOneStudent(input: {
 
   await upsertCacheFn(rows);
 
+  // Силовые — ОТДЕЛЬНЫМ вызовом после строк tpapi: сбой записи силовых не должен ронять запись
+  // ленты (ученик не станет failed из-за силовых).
+  if (strengthOutcome?.ok && strengthOutcome.rows.length > 0) {
+    try {
+      await upsertCacheFn(strengthOutcome.rows);
+    } catch (error) {
+      strengthOutcome = { ok: false, error: `upsert: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   // Reconciliation: only reached after a successful scan (HTTP 200 + parsed
   // array) and a successful upsert above. Deletes stale phantom plans this run
   // did not refresh. runStartedAt === scannedAt (fixed once before the loop), so
   // the rows just upserted are never deleted.
-  const reconciledDeleted = await reconcileFn({
-    studentId: target.student.id,
-    from,
-    to,
-    runStartedAt: scannedAt,
-  });
+  //
+  // СИЛОВЫЕ И СВЕРКА. Сверка (RPC) удаляет плановые невыполненные строки окна, не освежённые этим
+  // прогоном, — без фильтра по источнику. Силовые выше записаны с тем же scanned_at, поэтому
+  // живые не удаляются; снятые/перенесённые/скрытые в TP и прошедшие (вчерашняя силовая) —
+  // удаляются, как фантомы ленты. Но если силовые в этом прогоне НЕ прочитались или НЕ
+  // записались, сверка снесла бы все живые силовые ученика — поэтому тогда сверку для ученика
+  // пропускаем: фантом ленты проживёт один прогон, силовая не пропадёт из дня.
+  const reconcileSkippedForStrength = strengthOutcome !== null && !strengthOutcome.ok;
+  const reconciledDeleted = reconcileSkippedForStrength
+    ? 0
+    : await reconcileFn({
+      studentId: target.student.id,
+      from,
+      to,
+      runStartedAt: scannedAt,
+    });
 
   const planned = filteredItems.filter((item) => item.isPlanned).length;
   const completed = filteredItems.filter((item) => item.isCompleted).length;
   const plannedButNotCompleted = filteredItems.filter((item) => item.isPlanned && !item.isCompleted).length;
   const warnings = filteredItems.reduce((acc, item) => acc + item.normalizationWarnings.length, 0);
 
-  return {
+  const summary: StudentSummary = {
     studentId: target.student.id,
     athleteId: target.athleteId,
     studentName: target.student.studentName,
@@ -364,4 +421,26 @@ export async function scanOneStudent(input: {
     reconciledDeleted,
     incompleteDays: orderGaps.map((gap) => gap.date),
   };
+  // Ключ появляется ТОЛЬКО с флагом: без него итог по ученику — тот же объект, что до наряда.
+  if (strengthOutcome) {
+    summary.strength = strengthOutcome.ok
+      ? { ok: true, counts: strengthOutcome.counts, reconcileSkipped: false }
+      : { ok: false, error: strengthOutcome.error.replace(/\s+/g, " ").slice(0, 240), reconcileSkipped: true };
+  }
+  return summary;
 }
+
+export type StrengthScanInput = {
+  /** Только GET в сервис силовых; бросает на не-200 / не-массив. */
+  fetchItems: (athleteId: number, from: string, to: string) => Promise<Record<string, unknown>[]>;
+  /** «Сегодня» по Белграду: силовые раньше этого дня не пишутся. */
+  todayIso: string;
+};
+
+type StrengthOutcome =
+  | ({ ok: true } & StrengthRowsResult)
+  | { ok: false; error: string };
+
+export type StudentStrengthSummary =
+  | { ok: true; counts: StrengthRowsCounts; reconcileSkipped: false }
+  | { ok: false; error: string; reconcileSkipped: true };
