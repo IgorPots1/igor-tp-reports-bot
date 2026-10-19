@@ -759,6 +759,16 @@ export async function createStrengthWorkout(payload: CreateStrengthWorkoutReques
  * model, PUT .../exercises with the filled model creates it. Plain capability functions like the ones above:
  * the caller decides whether a write happens. Not proven live as of 2026-10-19.
  */
+/**
+ * Show/hide a structured strength workout for the athlete -- PUT .../workouts/updateHidden with { isHidden, workoutId },
+ * exactly as the TP web client's updateCalendarActivityHide (release-20261016). Capability function: the caller decides.
+ */
+export async function setStrengthWorkoutHidden(workoutId: number, isHidden: boolean): Promise<Record<string, unknown>> {
+  const endpoint = "/rx/activity/v1/workouts/updateHidden";
+  const body = await writeJsonOrThrow(`${TP_STRENGTH_HOST}${endpoint}`, "PUT", { isHidden, workoutId });
+  return assertRecord(body, endpoint);
+}
+
 export async function newStrengthExerciseModel(): Promise<Record<string, unknown>> {
   const endpoint = "/rx/activity/v1/exercises";
   const body = await writeJsonOrThrow(`${TP_STRENGTH_HOST}${endpoint}`, "POST", {});
