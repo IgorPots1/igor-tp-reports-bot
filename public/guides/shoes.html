@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Running Shoes Guide 2026 · igorp.run</title>
+<meta name="description" content="Running shoes for fall 2026: daily trainers, max cushion, stability, tempo, carbon racers and trail. Specs, pros and cons, and what the science says. A guide by Igor Potseluev.">
+<meta property="og:title" content="Running Shoes Guide, Fall 2026">
+<meta property="og:description" content="What to wear every day, for tempo, on race day and on trails">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(40px, 11vw, 60px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(26px, 7vw, 34px); margin-bottom: 14px; }
+  h3 { font-size: 21px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 44px; }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .hero-vid { margin-top: 22px; position: relative; border-radius: 26px; overflow: hidden; aspect-ratio: 1; background: var(--bg2); border: 1.5px solid var(--line); }
+  .hero-vid video, .ex video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; text-align: left; }
+  .stat .disp { font-size: 28px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+
+  /* why */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 2px solid var(--ink); background: #fff; font-weight: 800; font-size: 15px; }
+  .chip.ok { border-color: var(--grn); color: var(--grn); }
+  .chip.no { border-color: var(--line); color: var(--dim); text-decoration: line-through; }
+
+  /* week */
+  .week { display: grid; gap: 0; padding: 4px 16px; }
+  .day { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1.5px solid var(--line); }
+  .day:first-child { border-top: 0; }
+  .day .mono { width: 34px; font-size: 13px; }
+  .pill { font-size: 14px; font-weight: 800; border-radius: 9px; padding: 5px 12px; }
+  .p-easy { background: #e8f0e3; color: var(--grn); }
+  .p-hard { background: #f6e1d6; color: var(--acc); }
+  .p-long { background: #faecd2; color: #9a6514; }
+  .p-sila { background: var(--acc); color: #fff; }
+  .p-rest { color: var(--dim); padding-left: 0; }
+  .rules { margin-top: 14px; display: grid; gap: 10px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; }
+  .rule .n { flex: none; width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* warmup */
+  .warm { padding: 6px 16px; }
+  .warm li { list-style: none; display: flex; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .warm li:first-child { border-top: 0; }
+  .warm span:last-child { font-family: "JetBrains Mono"; font-size: 14px; color: var(--acc); white-space: nowrap; }
+
+  /* exercises */
+  .ex { overflow: hidden; margin-top: 16px; }
+  .ex .vid { position: relative; aspect-ratio: 1; background: var(--bg2); }
+  .ex .num { position: absolute; top: 14px; left: 14px; width: 46px; height: 46px; border-radius: 14px; background: var(--acc); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(184,71,31,.3); }
+  .ex .dose { position: absolute; right: 14px; bottom: 14px; background: #fff; border-radius: 14px; padding: 8px 14px; box-shadow: 0 8px 24px rgba(28,26,23,.12); text-align: right; }
+  .ex .dose .disp { font-size: 22px; }
+  .ex .dose .mono { font-size: 10.5px; }
+  .ex .body { padding: 16px 18px 18px; }
+  .ex .tag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--acc); background: #f6e1d6; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; }
+  .cues { margin-top: 10px; display: grid; gap: 6px; }
+  .cues div { display: flex; gap: 10px; align-items: flex-start; }
+  .cues div::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; background: var(--acc); }
+  .home { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #f3eee5; font-size: 15px; }
+  .home b { color: var(--grn); }
+
+  /* weight */
+  .rpe { padding: 16px; }
+  .scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 12px; }
+  .scale div { border-radius: 12px; padding: 10px 4px; text-align: center; font-size: 12.5px; font-weight: 800; background: #f3eee5; color: var(--dim); }
+  .scale .on { background: var(--acc); color: #fff; }
+
+  /* plan */
+  .plan { padding: 8px 16px 16px; }
+  .phase { padding: 14px 0; border-top: 1.5px solid var(--line); display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; }
+  .phase:first-child { border-top: 0; }
+  .phase .disp { font-size: 17px; }
+  .bar { height: 12px; border-radius: 6px; background: #efe9de; overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: var(--acc); transition: width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .in .bar i { width: var(--w); }
+  .phase small { display: block; color: var(--dim); font-size: 14px; margin-top: 2px; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+
+  /* reveal */
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .r { opacity: 1; transform: none; transition: none; } .bar i { transition: none; } }
+
+  /* guide additions */
+  .toc { padding: 6px 16px; }
+  .toc a { display: flex; gap: 12px; align-items: baseline; padding: 11px 0; border-top: 1.5px solid var(--line); color: var(--ink); text-decoration: none; }
+  .toc a:first-child { border-top: 0; }
+  .toc .mono { width: 26px; flex: none; color: var(--acc); }
+  .sub { color: rgba(28,26,23,.75); margin-bottom: 4px; }
+  .box { padding: 16px 18px; margin-top: 14px; }
+  .box h3 { font-size: 18px; margin-bottom: 8px; }
+  .list { display: grid; gap: 8px; margin-top: 4px; }
+  .list div { position: relative; padding-left: 18px; }
+  .list div::before { content: ""; position: absolute; left: 0; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--acc); }
+  .list.no div::before { background: transparent; border: 1.5px solid var(--dim); box-sizing: border-box; }
+  .list.ok div::before { background: var(--grn); }
+  .item { padding: 16px 18px; margin-top: 12px; }
+  .item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .item h3 { font-size: 18px; line-height: 1.15; }
+  .item .when { display: block; font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 12px; color: var(--dim); margin-top: 4px; letter-spacing: .02em; }
+  .item p { margin-top: 8px; }
+  .lvl { flex: none; font-size: 12px; font-weight: 800; border-radius: 8px; padding: 3px 9px; white-space: nowrap; }
+  .l-budget { background: #e8f0e3; color: var(--grn); }
+  .l-mid { background: #faecd2; color: #9a6514; }
+  .l-top { background: #f6e1d6; color: var(--acc); }
+  .pick { background: var(--acc); color: #fff; }
+  .specs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+  .specs div { background: #f3eee5; border-radius: 12px; padding: 8px 10px; }
+  .specs .mono { font-size: 10.5px; display: block; }
+  .specs b { font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 14px; }
+  .flag { display: inline-block; font-size: 11.5px; font-weight: 800; color: #9a6514; background: #faecd2; border-radius: 7px; padding: 2px 8px; margin: 10px 6px 0 0; }
+  .pm { margin-top: 10px; display: grid; gap: 4px; font-size: 15.5px; }
+  .pm div { display: flex; gap: 8px; }
+  .pm .s { flex: none; width: 16px; font-family: "JetBrains Mono", monospace; font-weight: 700; }
+  .pm .plus .s { color: var(--grn); }
+  .pm .minus .s { color: var(--acc); }
+  .note { margin-top: 10px; font-size: 14px; color: var(--dim); }
+  .callout { margin-top: 14px; padding: 14px 16px; border-radius: 16px; background: #f3eee5; border: 1.5px solid var(--line); }
+  .bottom { margin-top: 14px; padding: 16px 18px; border-radius: 18px; background: var(--ink); color: #fff; }
+  .bottom b { color: #f0a56f; }
+  .tbl { padding: 4px 16px; }
+  .tbl .row { padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .tbl .row:first-child { border-top: 0; }
+  .tbl .row .mono { display: block; margin-bottom: 2px; }
+  .gl { padding: 4px 16px; }
+  .gl div { padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .gl div:first-child { border-top: 0; }
+  .gl b { display: block; font-family: Unbounded, sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 2px; }
+  .cta p + p { margin-top: 10px; }
+  .cta .big { color: #fff; font-size: 18px; }
+  .foot { line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">guide · fall 2026</span></div>
+    <h1>RUNNING<br><em>SHOES</em></h1>
+    <p class="lead">What to wear every day, for tempo runs, on race day and on trails. Models from 2025-2026.</p>
+  </header>
+
+  <section class="r">
+    <h2>In <em>this guide</em></h2>
+    <nav class="toc card">
+      <a href="#daily"><span class="mono">01</span>Neutral daily trainers</a>
+      <a href="#max"><span class="mono">02</span>Max cushion and recovery</a>
+      <a href="#stability"><span class="mono">03</span>Stability</a>
+      <a href="#tempo"><span class="mono">04</span>Tempo shoes and super trainers</a>
+      <a href="#carbon"><span class="mono">05</span>Carbon racing super shoes</a>
+      <a href="#trail"><span class="mono">06</span>Trail and waterproof (GTX)</a>
+      <a href="#science"><span class="mono">07</span>Carbon: what the science says</a>
+      <a href="#rules"><span class="mono">08</span>Practical rules</a>
+      <a href="#glossary"><span class="mono">09</span>Glossary</a>
+      <a href="#pick"><span class="mono">10</span>Quick pick</a>
+    </nav>
+  </section>
+
+  <section class="r">
+    <h2>How to <em>read it</em></h2>
+    <div class="box card"><div class="list">
+      <div><b>Stack:</b> sole thickness under the heel and under the forefoot, in mm (for example, 38/30).</div>
+      <div><b>Drop:</b> the difference between those two numbers, in mm.</div>
+      <div><b>Weight:</b> men's US 9, brand figure. I give the lab weight in brackets when it's clearly different.</div>
+      <div><b>Budget:</b> "budget" means Kiprun, Chinese brands and last year's versions. "Mid" is the main line of the big brands. "Top" is flagships and racing shoes.</div>
+      <div>Brand and lab numbers often differ by 1-4 mm and 10-30 g. That's normal. Look at the ballpark.</div>
+      <div><b>Tags:</b> "1 source" means only one source confirmed the specs. "Sources differ" means sources give different numbers.</div>
+    </div></div>
+    <div class="chips"><span class="lvl l-budget">budget</span><span class="lvl l-mid">mid</span><span class="lvl l-top">top</span></div>
+  </section>
+
+  <section id="daily">
+    <div class="r"><span class="mono">section 01</span>
+    <h2 style="margin-top:6px">Neutral <em>daily trainers</em></h2>
+    <p class="sub">Your main pair for most of your mileage: easy and moderate pace, long runs.</p></div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>ASICS Novablast 6</h3><span class="when">2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>An all-rounder for easy and moderate pace.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>41.5/33.5</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>242 (lab 249)</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Bouncy, light for its height, durable.</span></div><div class="minus"><span class="s">-</span><span>Less stable than v5, and the toe box narrows. May not suit heel strikers.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Nike Pegasus 42</h3><span class="when">April 2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>A workhorse with a roomy toe box.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>37/27</b></div><div><span class="mono">drop, mm</span><b>10</b></div><div><span class="mono">weight, g</span><b>286-292</b></div><div><span class="mono">plate</span><b>no, full-length Air Zoom</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Durable and predictable.</span></div><div class="minus"><span class="s">-</span><span>On the heavy side. ReactX foam isn't supercritical, so there's not much softness on long runs.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Brooks Ghost 18</h3><span class="when">2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>Soft heel landings. A classic.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>36/26</b></div><div><span class="mono">drop, mm</span><b>10</b></div><div><span class="mono">weight, g</span><b>289 (lab 283)</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Reliable, long-lasting, good grip.</span></div><div class="minus"><span class="s">-</span><span>Heavy, hot upper, toe box a bit narrow.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Saucony Ride 19</h3><span class="when">late 2025</span></div><span class="lvl l-mid">mid</span></div>
+      <p>Lively PWRRUN+ (eTPU) foam and a wide platform.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>38/30</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>252-255 (lab 278)</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Good rebound, stable.</span></div><div class="minus"><span class="s">-</span><span>Bulky. Not the best choice for intervals.</span></div></div>
+      <span class="flag">sources differ</span><p class="note">One review measured 38/30, the brand figure is 36/28.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Puma Velocity Nitro 4</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Light and flexible, with a natural feel underfoot.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>36/26</b></div><div><span class="mono">drop, mm</span><b>10</b></div><div><span class="mono">weight, g</span><b>245 (lab 224)</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Great grip, handles tempo runs too.</span></div><div class="minus"><span class="s">-</span><span>Narrow, gets firm in the cold, a bit firm for long runs.</span></div></div>
+      <span class="flag">1 source</span>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Xtep 2000km 5 Pro</h3></div><span class="lvl l-budget">budget</span></div>
+      <p>An example of Chinese value: PEBA-based foam at a budget price.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>about 39/33</b></div><div><span class="mono">drop, mm</span><b>5-6</b></div><div><span class="mono">weight, g</span><b>about 229 (EU 43)</b></div><div><span class="mono">plate</span><b>no, torsion insert</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Durable, lively, works for heavier runners, roomy toe box.</span></div><div class="minus"><span class="s">-</span><span>Sold mostly through Chinese online stores, few large sizes.</span></div></div>
+      <p class="note">One lab measured 39/33 and a drop of 6, another review gives a drop of 5.</p>
+    </article>
+    </div>
+  </section>
+
+  <section id="max">
+    <div class="r"><span class="mono">section 02</span>
+    <h2 style="margin-top:6px">Max cushion <em>and recovery</em></h2>
+    <p class="sub">Soft and thick: for recovery runs, long slow runs, and for anyone who wants extra protection for their legs.</p></div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>ASICS Gel-Nimbus 28</h3></div><span class="lvl l-top">top</span></div>
+      <p>Soft, high, and stable for its height.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>43.5/35.5</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>283</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Comfort, cushioning.</span></div><div class="minus"><span class="s">-</span><span>Not much energy return, expensive.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Nike Vomero 18</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>ZoomX on top, ReactX below. For recovery runs and heel strikers.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>45/35</b></div><div><span class="mono">drop, mm</span><b>10</b></div><div><span class="mono">weight, g</span><b>325 (lab 298)</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Soft, cheaper than the last version.</span></div><div class="minus"><span class="s">-</span><span>Heavy, narrow toe box.</span></div></div>
+      <span class="flag">sources differ</span><p class="note">One review also gives 46/36.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Hoka Bondi 9</h3><span class="when">2025, latest version</span></div><span class="lvl l-mid">mid</span></div>
+      <p>Supercritical EVA and a rocker. Good for walking too.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>43/38</b></div><div><span class="mono">drop, mm</span><b>5</b></div><div><span class="mono">weight, g</span><b>297</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Stable heel.</span></div><div class="minus"><span class="s">-</span><span>Heavy, not for fast running.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Hoka Clifton 11</h3><span class="when">2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>Soft and light, bends fairly well.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>42/34</b></div><div><span class="mono">drop, mm</span><b>8 (lab 11.7)</b></div><div><span class="mono">weight, g</span><b>258</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Comfort, heel protection.</span></div><div class="minus"><span class="s">-</span><span>Almost no rebound, the toe box narrows.</span></div></div>
+      <p class="note">The lab drop is much higher than the brand figure.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>New Balance 1080 v15</h3><span class="when">January 2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>New supercritical Infinion foam, 30-40 g lighter than v14.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>40/34</b></div><div><span class="mono">drop, mm</span><b>6</b></div><div><span class="mono">weight, g</span><b>about 249-261</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Lively and light.</span></div><div class="minus"><span class="s">-</span><span>Narrow, long toe box, hot upper.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Kiprun KS900 2</h3></div><span class="lvl l-budget">budget</span></div>
+      <p>Decathlon's budget max-cushion shoe.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>lab 40/31</b></div><div><span class="mono">drop, mm</span><b>6 (lab 8)</b></div><div><span class="mono">weight, g</span><b>lab 295</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Lots of foam for little money.</span></div><div class="minus"><span class="s">-</span><span>Heavy, EVA with almost no rebound, narrow.</span></div></div>
+      <span class="flag">1 source</span>
+    </article>
+    </div>
+    <div class="callout r">Two more options. <b>Brooks Glycerin 23:</b> 38/30, drop 8, 300 g, long-lasting but heavy. <b>Saucony Triumph 23:</b> PEBA-based PWRRUN PB foam, listed drop 10, lab weight 265 g, livelier than the rest.</div>
+  </section>
+
+  <section id="stability">
+    <div class="r"><span class="mono">section 03</span>
+    <h2 style="margin-top:6px"><em>Stability</em></h2>
+    <p class="sub">Modern stability isn't a hard wedge. It's a wide platform, high sidewalls and firmer foam on the inner side.</p></div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>ASICS Gel-Kayano 33</h3><span class="when">2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>Soft and secure. FluidSupport replaced 4D Guidance.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>39/31</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>298</b></div><div><span class="mono">plate</span><b>no · FluidSupport</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Grip, stability.</span></div><div class="minus"><span class="s">-</span><span>Some testers call it more of a walking shoe: flat when running, and the lacing needs fine-tuning.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>ASICS GT-2000 14</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>A light daily stability shoe that handles pickups too.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>36/28</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>about 266</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Versatile.</span></div><div class="minus"><span class="s">-</span><span>Thin tongue rubs with low socks.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Brooks Adrenaline GTS 25 / 26</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>The most popular stability shoe.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>36/26</b></div><div><span class="mono">drop, mm</span><b>10</b></div><div><span class="mono">weight, g</span><b>300-306</b></div><div><span class="mono">plate</span><b>no · GuideRails</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Reliable, wide fit.</span></div><div class="minus"><span class="s">-</span><span>Heavy, weak rebound.</span></div></div>
+      <span class="flag">sources differ</span><p class="note">GTS 26 goes on sale on 1 November 2026: same stack, drop, GuideRails and price, reworked DNA Loft v3 foam, new tongue. For GTS 25 one source lists a 12 mm drop, another says 10.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Saucony Guide 19</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Soft, light support.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>35/29</b></div><div><span class="mono">drop, mm</span><b>6</b></div><div><span class="mono">weight, g</span><b>275</b></div><div><span class="mono">plate</span><b>no · CenterPath</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Good value, durable outsole.</span></div><div class="minus"><span class="s">-</span><span>Not very responsive.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Hoka Arahi 8</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Softer and wider than the last version.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>39/31</b></div><div><span class="mono">drop, mm</span><b>8 (lab 11.3)</b></div><div><span class="mono">weight, g</span><b>256</b></div><div><span class="mono">plate</span><b>no · H-Frame</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Cushioning, light.</span></div><div class="minus"><span class="s">-</span><span>Hot upper, average grip in the wet.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Nike Structure 26</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Stable and firm.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>lab 38/29</b></div><div><span class="mono">drop, mm</span><b>10 (lab 8.5)</b></div><div><span class="mono">weight, g</span><b>lab 294</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Wide platform, a heel "rail".</span></div><div class="minus"><span class="s">-</span><span>Heavy, weak rebound.</span></div></div>
+      <span class="flag">1 source</span>
+    </article>
+    </div>
+  </section>
+
+  <section id="tempo">
+    <div class="r"><span class="mono">section 04</span>
+    <h2 style="margin-top:6px">Tempo shoes and <em>super trainers</em></h2>
+    <p class="sub">For tempo runs, long runs with pickups and marathon pace. Often with springy race foam, sometimes with a plate.</p></div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>ASICS Superblast 3</h3></div><span class="lvl l-top">top</span></div>
+      <p>New FF Leap (A-TPU) foam on top. One pair for long runs, tempo and marathon pace.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>45/37</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>249 (lab 235)</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Cushioning and rebound at a low weight.</span></div><div class="minus"><span class="s">-</span><span>Expensive.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Saucony Endorphin Speed 6</h3><span class="when">October 2026</span></div><span class="lvl l-top">top</span></div>
+      <p>New PWRRUN PBX foam, 2 mm more stack and 6 g lighter than v5.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>38/30</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>233</b></div><div><span class="mono">plate</span><b>nylon</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Versatile.</span></div><div class="minus"><span class="s">-</span><span>Brand new, few reviews so far.</span></div></div>
+      <p class="note">Endorphin Speed 5 (36/28, drop 8, about 238 g) is still on sale and is now a good-value alternative.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>adidas Adizero Evo SL</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Lightstrike Pro race foam with no plate, at a fair price.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>38.5/32</b></div><div><span class="mono">drop, mm</span><b>6.5 (lab 8)</b></div><div><span class="mono">weight, g</span><b>224</b></div><div><span class="mono">plate</span><b>no, midfoot insert</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>One of the best picks of 2025-2026.</span></div><div class="minus"><span class="s">-</span><span>Weak laces and a short tongue.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Puma Deviate Nitro 4</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>A carbon trainer to pair with your race shoe.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>38/30</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>250</b></div><div><span class="mono">plate</span><b>carbon</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Very responsive.</span></div><div class="minus"><span class="s">-</span><span>Stiff forefoot, it has to suit your running form. Be sure to try it on.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>ASICS Megablast</h3></div><span class="lvl l-top">top</span></div>
+      <p>Maximum cushioning and rebound with no plate.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>45/37</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>224</b></div><div><span class="mono">plate</span><b>no</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Light for its height.</span></div><div class="minus"><span class="s">-</span><span>Expensive.</span></div></div>
+      <p class="note">Specs taken from roundup reviews.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Li-Ning Red Hare 9 Ultra</h3></div><span class="lvl l-budget">budget</span></div>
+      <p>A soft, springy Chinese super trainer on PEBA.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>46-47/37-42</b></div><div><span class="mono">drop, mm</span><b>5-9</b></div><div><span class="mono">weight, g</span><b>237-246</b></div><div><span class="mono">plate</span><b>no, plastic insert</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Rebound and protection on long runs.</span></div><div class="minus"><span class="s">-</span><span>Narrow at the arch, unstable, feels wobbly on intervals.</span></div></div>
+      <span class="flag">sources differ</span><p class="note">One lab measured 47/42 and a drop of 5, another 46/37 and a drop of 9.</p>
+    </article>
+    </div>
+  </section>
+
+  <section id="carbon">
+    <div class="r"><span class="mono">section 05</span>
+    <h2 style="margin-top:6px">Carbon racing <em>super shoes</em></h2>
+    <p class="sub">PEBA or A-TPU foam plus a stiff plate. For races and key workouts.</p></div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Nike Vaporfly 4</h3></div><span class="lvl l-top">top</span></div>
+      <p>The lightest Vaporfly. Best from 5K to half marathon.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>35/29</b></div><div><span class="mono">drop, mm</span><b>6 (lab 8.6)</b></div><div><span class="mono">weight, g</span><b>184 (lab 166)</b></div><div><span class="mono">plate</span><b>carbon</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Light, good rebound.</span></div><div class="minus"><span class="s">-</span><span>Narrow heel. For a marathon the cushioning may not be enough.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Nike Alphafly 3</h3></div><span class="lvl l-top">top</span></div>
+      <p>The benchmark for the marathon.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>40/32</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>198</b></div><div><span class="mono">plate</span><b>carbon + Air Zoom</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Helps you hold pace on tired legs.</span></div><div class="minus"><span class="s">-</span><span>The heel wears fast if you land on it.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>adidas Adios Pro 5</h3><span class="when">September 2026</span></div><span class="lvl l-top">top</span></div>
+      <p>An EnergyRim instead of rods. It feels more natural, without an aggressive push.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>39/35</b></div><div><span class="mono">drop, mm</span><b>4</b></div><div><span class="mono">weight, g</span><b>about 164-175</b></div><div><span class="mono">plate</span><b>carbon rim</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Lighter than v4, wider toe box.</span></div><div class="minus"><span class="s">-</span><span>Pricier than v4, not much snap.</span></div></div>
+      <span class="flag">sources differ</span><p class="note">One review lists 6.1 oz in the spec box and 164 g in the text, another says 175 g.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>ASICS Metaspeed Sky / Edge Tokyo</h3></div><span class="lvl l-top">top</span></div>
+      <p>FF Leap foam. Sky is for runners with a long stride, Edge for runners with a high cadence.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>39.5/34.5</b></div><div><span class="mono">drop, mm</span><b>5</b></div><div><span class="mono">weight, g</span><b>170</b></div><div><span class="mono">plate</span><b>carbon</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Light, strong rebound.</span></div><div class="minus"><span class="s">-</span><span>Narrow, unstable for heel strikers.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Puma Deviate Nitro Elite 4</h3></div><span class="lvl l-top">top</span></div>
+      <p>Nitro Elite (A-TPU) foam, a lot lighter than before.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>40/32</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>170-177</b></div><div><span class="mono">plate</span><b>carbon</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Good as a first carbon shoe, and for heel or midfoot strikers.</span></div><div class="minus"><span class="s">-</span><span>Narrow heel.</span></div></div>
+      <span class="flag">sources differ</span><p class="note">Brand data says 40/32, one review measured 38/30.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Li-Ning Feidian 6 Elite</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Chinese carbon at the level of the top shoes, but cheaper.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>lab 40/34</b></div><div><span class="mono">drop, mm</span><b>6</b></div><div><span class="mono">weight, g</span><b>about 205</b></div><div><span class="mono">plate</span><b>carbon</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Rebound, protection.</span></div><div class="minus"><span class="s">-</span><span>Narrow arch, soft and unstable heel.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Kiprun KD900X LD+</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Decathlon's budget carbon marathon shoe with 100% PEBAX.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>39/35</b></div><div><span class="mono">drop, mm</span><b>4</b></div><div><span class="mono">weight, g</span><b>219</b></div><div><span class="mono">plate</span><b>carbon</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>The plate isn't too stiff and forgives form mistakes.</span></div><div class="minus"><span class="s">-</span><span>Runs large, go half a size down.</span></div></div>
+      
+    </article>
+    </div>
+  </section>
+
+  <section id="trail">
+    <div class="r"><span class="mono">section 06</span>
+    <h2 style="margin-top:6px">Trail and <em>waterproof (GTX)</em></h2>
+    <p class="sub">Grip, protection and stability off-road. In this section the last spec shows the lugs instead of the plate.</p></div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Hoka Speedgoat 7</h3><span class="when">GTX version available</span></div><span class="lvl l-mid">mid</span></div>
+      <p>An all-rounder for mixed terrain and long distances.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>37-38/33</b></div><div><span class="mono">drop, mm</span><b>5</b></div><div><span class="mono">weight, g</span><b>257-275</b></div><div><span class="mono">lugs</span><b>5 mm, Vibram Megagrip</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Grip, protection.</span></div><div class="minus"><span class="s">-</span><span>Narrow toe box (there's a Wide version).</span></div></div>
+      <span class="flag">sources differ</span><p class="note">Most sources give a 5 mm drop, one says 4 mm. The GTX version was tested on the Tour du Mont Blanc.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Saucony Peregrine 16</h3></div><span class="lvl l-mid">mid</span></div>
+      <p>Grippy and protective, for technical trails.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>32/28</b></div><div><span class="mono">drop, mm</span><b>4</b></div><div><span class="mono">weight, g</span><b>269-271</b></div><div><span class="mono">lugs</span><b>4 mm, Vibram Megagrip</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Grip, tough upper.</span></div><div class="minus"><span class="s">-</span><span>A bit firm, runs large.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Brooks Cascadia 20</h3><span class="when">August 2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>A stable tank, now with Vibram for the first time.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>38/32</b></div><div><span class="mono">drop, mm</span><b>6</b></div><div><span class="mono">weight, g</span><b>299-306</b></div><div><span class="mono">lugs</span><b>4 mm, Vibram Megagrip</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Stability, protection.</span></div><div class="minus"><span class="s">-</span><span>Heavy, no rocker.</span></div></div>
+      <p class="note">One review lists a drop of 4 in one spot.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Nike ACG Pegasus Trail</h3><span class="when">GTX version available</span></div><span class="lvl l-mid">mid</span></div>
+      <p>Door to trail: road plus easy trails.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>39/31</b></div><div><span class="mono">drop, mm</span><b>8</b></div><div><span class="mono">weight, g</span><b>about 295-306</b></div><div><span class="mono">lugs</span><b>up to 3.5 mm</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Grip, roomy toe box.</span></div><div class="minus"><span class="s">-</span><span>Small lugs, feels soft on rocks.</span></div></div>
+      <span class="flag">sources differ</span><p class="note">One retailer lists the GTX version at 34/26.</p>
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Kiprun Kipsummit Max</h3><span class="when">April 2026</span></div><span class="lvl l-mid">mid</span></div>
+      <p>A soft max-cushion trail shoe.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>38/32</b></div><div><span class="mono">drop, mm</span><b>6</b></div><div><span class="mono">weight, g</span><b>280</b></div><div><span class="mono">lugs</span><b>4 mm, Vibram Megagrip</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Good value.</span></div><div class="minus"><span class="s">-</span><span>Unstable on technical sections.</span></div></div>
+      
+    </article>
+    </div>
+    <div class="r">
+    <article class="item card">
+      <div class="item-top"><div><h3>Salomon Speedcross 6 GTX</h3><span class="when">2022</span></div><span class="lvl l-mid">mid</span></div>
+      <p>For mud and snow.</p>
+      <div class="specs"><div><span class="mono">stack, mm</span><b>lab 37/26</b></div><div><span class="mono">drop, mm</span><b>10</b></div><div><span class="mono">weight, g</span><b>about 295 without GTX</b></div><div><span class="mono">lugs</span><b>deep, for mud</b></div></div>
+      <div class="pm"><div class="plus"><span class="s">+</span><span>Aggressive tread.</span></div><div class="minus"><span class="s">-</span><span>High drop, narrow fit.</span></div></div>
+      <p class="note">I didn't find a newer version than the 6, and I didn't check the lug depth.</p>
+    </article>
+    </div>
+    <div class="callout r">
+      <p><b>Road GTX:</b> Brooks Ghost 18 GTX (36/26 or 37/27 depending on the source, drop 10, about 318-320 g) and Nike Vomero 18 GTX (lab 42/31.5, 306 g, 1 source).</p>
+      <p><b>When you need GTX:</b> cold, slush, snow, puddles. In summer it's hot. If water gets in over the top, the membrane keeps it inside. For deep water use gaiters, or a regular mesh shoe that dries fast.</p>
+    </div>
+  </section>
+
+  <section id="science" class="r">
+    <span class="mono">section 07</span>
+    <h2 style="margin-top:6px">Carbon: what <em>the science says</em></h2>
+    <p class="sub">Super shoes save energy, but the gain is different for everyone, and the risks are poorly studied.</p>
+    <div class="box card"><h3>Running economy</h3><div class="list">
+      <div>The first lab study on the Vaporfly prototype: about 4% energy savings on average compared with a regular racing shoe.</div>
+      <div>Seven carbon models at 16 km/h: Alphafly, Vaporfly and Metaspeed Sky cut oxygen use by 2.5-3%. Two models were no different from regular racing shoes.</div>
+      <div>A 2025 review of 17 studies (281 runners): a moderate gain in economy and in time trials.</div>
+    </div></div>
+    <div class="box card"><h3>And for slower runners?</h3><div class="list">
+      <div>At 12 km/h the Vaporfly Next% 2 gave about 1.4%, at 10 km/h about 0.9%, and that could be chance.</div>
+      <div>Recreational runners at 9.4 and 11.5 km/h got 3.9-5%. But that study compared the Endorphin Speed 2 with a budget shoe, so part of the gain came from the foam and the weight.</div>
+      <div>At 7.5-12 km/h about 2.5%, with no link to speed. The sample was small, and the lab was partly funded by a manufacturer.</div>
+      <div>In that review, the gain didn't clearly depend on how fast people ran.</div>
+    </div></div>
+    <div class="box card"><h3>Risks</h3><div class="list">
+      <div>Five cases of navicular bone stress injuries in runners wearing carbon shoes. This doesn't prove the shoes caused them. The authors advise switching gradually.</div>
+      <div>Elite runners in carbon shoes had a lower cadence and more arch collapse. These changes are linked to stress injuries. The study measured biomechanics, not injury rates.</div>
+      <div>A survey of recreational runners: 13% reported an injury after switching to carbon, but there was no control group.</div>
+    </div></div>
+    <div class="box card"><h3>Wear</h3><div class="list">
+      <div>After 450 km a PEBA shoe lost about 2% in running economy and ended up level with the EVA version, which didn't change. Race foams wear out faster than training foams.</div>
+    </div></div>
+    <div class="bottom"><b>Bottom line.</b> Recreational runners get a small gain too, but it's smaller and varies a lot from person to person. Some runners get almost nothing.</div>
+  </section>
+
+  <section class="r">
+    <h2>Who needs carbon, <em>and who doesn't</em></h2>
+    <div class="box card"><h3>Go for it if</h3><div class="list ok">
+      <div>you run consistently 3 times a week or more</div>
+      <div>you're training for a race and going for a time</div>
+      <div>your distances are the half marathon and marathon</div>
+      <div>you use carbon for races and 1-2 key workouts a week, switch gradually and rotate it with a regular pair</div>
+    </div></div>
+    <div class="box card"><h3>Not yet if</h3><div class="list no">
+      <div>you're just starting to run</div>
+      <div>you've had stress fractures in your foot</div>
+      <div>your ankle is unstable</div>
+      <div>you run for health. You're better off with a good daily pair and a tempo shoe without a plate (Evo SL, Superblast).</div>
+    </div></div>
+  </section>
+
+  <section id="rules" class="r">
+    <span class="mono">section 08</span>
+    <h2 style="margin-top:6px">Practical <em>rules</em></h2>
+    <p class="sub">What we know about size, replacing shoes, rotation, pronation and drop, and how much you can trust it.</p>
+    <div class="box card"><h3>Size</h3>
+      <p>Leave about half to a full thumb's width between your longest toe and the end of the shoe. This is expert advice, not research: one well-known review site openly calls it "not research-based".</p>
+      <p>Measure in the evening. Your feet swell by evening and during a run. For a marathon and for downhills you need extra length. Foot size changes over the years, so check it again.</p>
+    </div>
+    <div class="box card"><h3>When to replace</h3>
+      <p>The usual 500-800 km (300-500 miles) is a convention, not a proven limit. There's no research linking a specific mileage to injuries.</p>
+      <p>What to look for: the foam feels dead, a new pain shows up, the outsole is worn through to the foam, the shoe is warped. Race foams don't last as long.</p>
+    </div>
+    <div class="box card"><h3>Rotation</h3>
+      <p>Runners who ran in several pairs had a lower injury risk: HR 0.61, about 39% lower (a study of 264 runners). It's an observational study, so cause and effect aren't proven. The variety of load probably helps.</p>
+    </div>
+    <div class="box card"><h3>Comfort filter</h3>
+      <p>Pick the pair that feels the most comfortable when you try it on and on a run. It's a sensible strategy, though the link to injuries here is only assumed.</p>
+    </div>
+    <div class="box card"><h3>Pronation</h3>
+      <p>In 927 beginners running in neutral shoes, moderate pronation didn't raise injury risk.</p>
+      <p>In the US Army, choosing shoes by foot shape didn't reduce injuries (more than 9,000 soldiers). Choose a stability shoe by feel, not by a "diagnosis" in the store.</p>
+    </div>
+    <div class="box card"><h3>Drop</h3>
+      <p>In a randomized study (553 runners, drops of 0, 6 and 10 mm), drop overall didn't affect injury risk. For occasional runners a low drop lowered the risk, for regular runners it raised it.</p>
+      <p>The takeaway: don't change drop sharply.</p>
+    </div>
+  </section>
+
+  <section id="glossary" class="r">
+    <span class="mono">section 09</span>
+    <h2 style="margin-top:6px">Glossary <em>in plain words</em></h2>
+    <div class="gl card">
+      <div><b>Stack</b>Sole thickness under the heel and forefoot. Higher means softer and more protective, but less stable. In road races World Athletics limits stack to 40 mm.</div>
+      <div><b>Drop</b>The height difference between heel and forefoot. 8-10 mm is classic, 4-6 is medium, 0 is "zero drop".</div>
+      <div><b>Rocker</b>A sole curved like a rocking chair that rolls your foot forward.</div>
+      <div><b>Plate</b>A stiff insert in the sole. Nylon or plastic plates are more flexible, carbon is stiffer and pushes harder. It only works together with springy foam.</div>
+      <div><b>EVA</b>Classic foam: cheap and durable, but flat.</div>
+      <div><b>TPU, eTPU, A-TPU</b>Springy foams: durable, stable, lively (PWRRUN+, FF Leap, Nitro Elite).</div>
+      <div><b>PEBA (Pebax)</b>The lightest and springiest foam, the base of super shoes (ZoomX, Lightstrike Pro, PWRRUN PB). Wears out faster.</div>
+      <div><b>Supercritical foam</b>Foamed with gas under pressure (nitrogen, CO&#8322;). Lighter and livelier than regular foam.</div>
+      <div><b>Upper</b>Engineered mesh breathes, knit fits like a sock, jacquard is dense and warm. A gusseted tongue is sewn to the sides and holds the foot better.</div>
+      <div><b>GTX (Gore-Tex)</b>A waterproof membrane: dry feet in slush, but hot and 20-40 g heavier.</div>
+      <div><b>Lugs</b>The studs on the outsole. 3-4 mm for hard trails, 5 mm and more for mud and snow. Vibram Megagrip is seen as the benchmark for grip.</div>
+      <div><b>Toe box</b>The front part of the shoe. A wide one gives your toes room, a narrow one holds them tighter.</div>
+      <div><b>Stability tech</b>A wide platform, high sidewalls ("rails" like GuideRails or H-Frame), firmer foam on the inner side. They don't "fix" your foot. They gently limit how much it rolls in.</div>
+    </div>
+  </section>
+
+  <section id="pick" class="r">
+    <span class="mono">section 10</span>
+    <h2 style="margin-top:6px">Quick pick, <em>step by step</em></h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div><b>Where do you run?</b> Road: road shoes. Dirt, forest, mountains: trail shoes. Slush and snow: GTX versions.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>How many pairs do you have?</b> One: a neutral daily trainer (section 1). Two or more: add a soft pair for recovery (section 2) or a tempo shoe (section 4).</div></div>
+      <div class="rule card"><div class="n">3</div><div><b>Check your stability.</b> If in a neutral pair your foot or knee starts to collapse inward by the end of a long run, try a stability shoe (section 3). Decide by feel, not by a pronation test.</div></div>
+      <div class="rule card"><div class="n">4</div><div><b>Try them on in the evening, in running socks.</b> Leave half a toe to a full toe of room, and jog around the store or on a treadmill. Take the pair that feels best.</div></div>
+      <div class="rule card"><div class="n">5</div><div><b>Training for a race and going for a time?</b> If you run more than 3 times a week regularly: carbon (section 5), but first 2-4 weeks of short efforts in it. Otherwise: tempo shoes without a plate.</div></div>
+      <div class="rule card"><div class="n">6</div><div><b>Save smart.</b> Last year's version of a model almost always gives you 90% of the benefit. Kiprun and Chinese brands (Xtep, Li-Ning, Anta) give you top-level foams for less money.</div></div>
+      <div class="rule card"><div class="n">7</div><div><b>Replace by feel.</b> Look at how they feel and how worn the outsole is, not at the mileage. Rotate your pairs.</div></div>
+    </div>
+    <p class="note" style="margin-top:16px">Specs checked against at least two sources, except those tagged "1 source". Budget tiers are approximate, based on prices when each model came out. Data as of 15 October 2026.</p>
+  </section>
+
+  <div class="cta r">
+    <h2>Want me to look at <em style="color:#f0a56f">your training?</em></h2>
+    <p class="big">Comment STRAVA under any of my reels on @runnigor and I'll send you a free Strava breakdown.</p>
+    <a class="btn" href="https://www.instagram.com/runnigor/">Open @runnigor</a>
+  </div>
+  <p class="foot mono">Igor Potseluev · running coach · 10 years coaching, 500+ races finished by my athletes · @runnigor on Instagram</p>
+</div>
+<script>
+  (function () {
+    var els = document.querySelectorAll('.r');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
+</body>
+</html>

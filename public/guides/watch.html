@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Running Watches 2026 · igorp.run</title>
+<meta name="description" content="Which running watch to buy in 2026: what matters, where to save, and which model fits your goal. A guide by Igor Potseluev.">
+<meta property="og:title" content="Running Watches 2026">
+<meta property="og:description" content="What matters, where to save, and which model to pick">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(40px, 11vw, 60px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(26px, 7vw, 34px); margin-bottom: 14px; }
+  h3 { font-size: 21px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 44px; }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .hero-vid { margin-top: 22px; position: relative; border-radius: 26px; overflow: hidden; aspect-ratio: 1; background: var(--bg2); border: 1.5px solid var(--line); }
+  .hero-vid video, .ex video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; text-align: left; }
+  .stat .disp { font-size: 28px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+
+  /* why */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 2px solid var(--ink); background: #fff; font-weight: 800; font-size: 15px; }
+  .chip.ok { border-color: var(--grn); color: var(--grn); }
+  .chip.no { border-color: var(--line); color: var(--dim); text-decoration: line-through; }
+
+  /* week */
+  .week { display: grid; gap: 0; padding: 4px 16px; }
+  .day { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1.5px solid var(--line); }
+  .day:first-child { border-top: 0; }
+  .day .mono { width: 34px; font-size: 13px; }
+  .pill { font-size: 14px; font-weight: 800; border-radius: 9px; padding: 5px 12px; }
+  .p-easy { background: #e8f0e3; color: var(--grn); }
+  .p-hard { background: #f6e1d6; color: var(--acc); }
+  .p-long { background: #faecd2; color: #9a6514; }
+  .p-sila { background: var(--acc); color: #fff; }
+  .p-rest { color: var(--dim); padding-left: 0; }
+  .rules { margin-top: 14px; display: grid; gap: 10px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; }
+  .rule .n { flex: none; width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* warmup */
+  .warm { padding: 6px 16px; }
+  .warm li { list-style: none; display: flex; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .warm li:first-child { border-top: 0; }
+  .warm span:last-child { font-family: "JetBrains Mono"; font-size: 14px; color: var(--acc); white-space: nowrap; }
+
+  /* exercises */
+  .ex { overflow: hidden; margin-top: 16px; }
+  .ex .vid { position: relative; aspect-ratio: 1; background: var(--bg2); }
+  .ex .num { position: absolute; top: 14px; left: 14px; width: 46px; height: 46px; border-radius: 14px; background: var(--acc); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(184,71,31,.3); }
+  .ex .dose { position: absolute; right: 14px; bottom: 14px; background: #fff; border-radius: 14px; padding: 8px 14px; box-shadow: 0 8px 24px rgba(28,26,23,.12); text-align: right; }
+  .ex .dose .disp { font-size: 22px; }
+  .ex .dose .mono { font-size: 10.5px; }
+  .ex .body { padding: 16px 18px 18px; }
+  .ex .tag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--acc); background: #f6e1d6; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; }
+  .cues { margin-top: 10px; display: grid; gap: 6px; }
+  .cues div { display: flex; gap: 10px; align-items: flex-start; }
+  .cues div::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; background: var(--acc); }
+  .home { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #f3eee5; font-size: 15px; }
+  .home b { color: var(--grn); }
+
+  /* weight */
+  .rpe { padding: 16px; }
+  .scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 12px; }
+  .scale div { border-radius: 12px; padding: 10px 4px; text-align: center; font-size: 12.5px; font-weight: 800; background: #f3eee5; color: var(--dim); }
+  .scale .on { background: var(--acc); color: #fff; }
+
+  /* plan */
+  .plan { padding: 8px 16px 16px; }
+  .phase { padding: 14px 0; border-top: 1.5px solid var(--line); display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; }
+  .phase:first-child { border-top: 0; }
+  .phase .disp { font-size: 17px; }
+  .bar { height: 12px; border-radius: 6px; background: #efe9de; overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: var(--acc); transition: width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .in .bar i { width: var(--w); }
+  .phase small { display: block; color: var(--dim); font-size: 14px; margin-top: 2px; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+
+  /* reveal */
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .r { opacity: 1; transform: none; transition: none; } .bar i { transition: none; } }
+
+  /* guide additions */
+  .toc { padding: 6px 16px; }
+  .toc a { display: flex; gap: 12px; align-items: baseline; padding: 11px 0; border-top: 1.5px solid var(--line); color: var(--ink); text-decoration: none; }
+  .toc a:first-child { border-top: 0; }
+  .toc .mono { width: 26px; flex: none; color: var(--acc); }
+  .sub { color: rgba(28,26,23,.75); margin-bottom: 4px; }
+  .box { padding: 16px 18px; margin-top: 14px; }
+  .box h3 { font-size: 18px; margin-bottom: 8px; }
+  .list { display: grid; gap: 8px; margin-top: 4px; }
+  .list div { position: relative; padding-left: 18px; }
+  .list div::before { content: ""; position: absolute; left: 0; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--acc); }
+  .list.no div::before { background: transparent; border: 1.5px solid var(--dim); box-sizing: border-box; }
+  .list.ok div::before { background: var(--grn); }
+  .item { padding: 16px 18px; margin-top: 12px; }
+  .item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .item h3 { font-size: 18px; line-height: 1.15; }
+  .item .when { display: block; font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 12px; color: var(--dim); margin-top: 4px; letter-spacing: .02em; }
+  .item p { margin-top: 8px; }
+  .lvl { flex: none; font-size: 12px; font-weight: 800; border-radius: 8px; padding: 3px 9px; white-space: nowrap; }
+  .l-budget { background: #e8f0e3; color: var(--grn); }
+  .l-mid { background: #faecd2; color: #9a6514; }
+  .l-top { background: #f6e1d6; color: var(--acc); }
+  .pick { background: var(--acc); color: #fff; }
+  .specs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+  .specs div { background: #f3eee5; border-radius: 12px; padding: 8px 10px; }
+  .specs .mono { font-size: 10.5px; display: block; }
+  .specs b { font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 14px; }
+  .flag { display: inline-block; font-size: 11.5px; font-weight: 800; color: #9a6514; background: #faecd2; border-radius: 7px; padding: 2px 8px; margin: 10px 6px 0 0; }
+  .pm { margin-top: 10px; display: grid; gap: 4px; font-size: 15.5px; }
+  .pm div { display: flex; gap: 8px; }
+  .pm .s { flex: none; width: 16px; font-family: "JetBrains Mono", monospace; font-weight: 700; }
+  .pm .plus .s { color: var(--grn); }
+  .pm .minus .s { color: var(--acc); }
+  .note { margin-top: 10px; font-size: 14px; color: var(--dim); }
+  .callout { margin-top: 14px; padding: 14px 16px; border-radius: 16px; background: #f3eee5; border: 1.5px solid var(--line); }
+  .bottom { margin-top: 14px; padding: 16px 18px; border-radius: 18px; background: var(--ink); color: #fff; }
+  .bottom b { color: #f0a56f; }
+  .tbl { padding: 4px 16px; }
+  .tbl .row { padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .tbl .row:first-child { border-top: 0; }
+  .tbl .row .mono { display: block; margin-bottom: 2px; }
+  .gl { padding: 4px 16px; }
+  .gl div { padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .gl div:first-child { border-top: 0; }
+  .gl b { display: block; font-family: Unbounded, sans-serif; font-weight: 700; font-size: 15px; margin-bottom: 2px; }
+  .cta p + p { margin-top: 10px; }
+  .cta .big { color: #fff; font-size: 18px; }
+  .foot { line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">guide · october 2026</span></div>
+    <h1>RUNNING<br><em>WATCHES 2026</em></h1>
+    <p class="lead">Which watch to buy for running in 2026. What really matters, where you can save, and which model fits what you need.</p>
+  </header>
+
+  <section class="r">
+    <h2>First, <em>the main thing</em></h2>
+    <p>A watch won't make you faster. Training will. You need a watch to:</p>
+    <div class="box card"><div class="list">
+      <div>measure pace and distance accurately</div>
+      <div>hold the right heart rate or pace in a workout</div>
+      <div>get workouts from your coach straight to your wrist</div>
+      <div>see your fitness grow</div>
+    </div></div>
+    <p style="margin-top:14px">So don't choose by the number of features. Choose by four things.</p>
+  </section>
+
+  <section class="r">
+    <h2>4 things <em>that matter</em></h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div><b>Accurate GPS.</b> Look for dual-band GPS (L1+L5). In the city, near tall buildings and in the woods your pace won't jump around, and the distance will match the real one.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>Workouts on the watch.</b> Intervals come from your coach or an app, and the watch guides you through each segment: how long to run and at what pace. Check that the watch works with TrainingPeaks.</div></div>
+      <div class="rule card"><div class="n">3</div><div><b>Battery.</b> 20 hours or more with GPS is enough for a week of training and a marathon without charging.</div></div>
+      <div class="rule card"><div class="n">4</div><div><b>Comfort.</b> Light, under 50 g. A bright screen. Buttons, not only a touchscreen: in the rain and with gloves on, touch lets you down.</div></div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Don't <em>overpay</em> for</h2>
+    <div class="box card"><div class="list no">
+      <div>maps, if you run familiar routes</div>
+      <div>titanium, sapphire and solar charging</div>
+      <div>dozens of "smart" metrics: stress, "body age" and so on</div>
+      <div>ECG, flashlight, LTE</div>
+      <div>music, if you run with your phone or without music</div>
+    </div></div>
+    <p style="margin-top:14px">Put the money you save into good running shoes or a chest heart rate strap.</p>
+  </section>
+
+  <section class="r">
+    <h2>Just <em>starting out</em></h2>
+    <div class="item card"><div class="item-top"><h3>Garmin Forerunner 70</h3></div><p>Bright AMOLED screen and all of Garmin's training features. The best way into the Garmin world. No contactless payments and no dual-band GPS.</p></div>
+    <div class="item card"><div class="item-top"><h3>Coros Pace 4</h3></div><p>Dual-band GPS, up to 31 hours with GPS, only 32 g, offline maps. No payments and no music. The best accuracy for the money.</p></div>
+    <div class="item card"><div class="item-top"><h3>Huawei Watch GT Runner 2</h3></div><p>34.5 g, up to 32 hours with dual-band GPS. The downside: it doesn't work with TrainingPeaks directly. You can send workouts to it through Intervals.icu.</p></div>
+    <div class="item card"><div class="item-top"><h3>Garmin Forerunner 165</h3></div><p>The previous generation, but it has everything you need for running. A good option if you find it on sale for less than the 70.</p></div>
+  </section>
+
+  <section class="r">
+    <h2>Running regularly, <em>training for races</em></h2>
+    <div class="item card"><div class="item-top"><h3>Garmin Forerunner 170</h3></div><p>Everything the 70 has, plus contactless payments and a barometer. There's also a Music version.</p></div>
+    <div class="item card"><div class="item-top"><h3>Suunto Run 2</h3></div><p>35 g, dual-band GPS, bright screen, free offline maps.</p></div>
+    <div class="item card"><div class="item-top"><h3>Polar Vantage M3</h3></div><p>Dual-band GPS, AMOLED, strong analysis of training load and recovery.</p></div>
+    <div class="item card"><div class="item-top"><h3>Amazfit Cheetah 2 Pro</h3></div><p>Maps, titanium, payments, works with TrainingPeaks. In dense city areas its GPS is weaker than the competition.</p></div>
+  </section>
+
+  <section class="r">
+    <h2>Serious training, <em>triathlon</em></h2>
+    <div class="item card"><div class="item-top"><h3>Garmin Forerunner 570</h3><span class="lvl pick">my pick</span></div><p>My pick for most runners. Dual-band GPS, bright screen, all of Garmin's training metrics. No full maps.</p></div>
+    <div class="item card"><div class="item-top"><h3>Garmin Forerunner 970</h3></div><p>Same, plus maps, a bigger battery, a flashlight and ECG. If you want maps and everything else.</p></div>
+    <div class="item card"><div class="item-top"><h3>Coros Pace 4 Pro</h3></div><p>New in September 2026: a very bright screen, maps, titanium and sapphire. Similar features, but cheaper than Garmin.</p></div>
+  </section>
+
+  <section class="r">
+    <h2>Trail <em>and ultra</em></h2>
+    <div class="item card"><div class="item-top"><h3>Coros Apex 4</h3></div><p>A mountain watch with offline maps and a big battery. The best price in its class.</p></div>
+    <div class="item card"><div class="item-top"><h3>Garmin Enduro 4</h3></div><p>New in October 2026. Solar charging and enough battery for multi-day races.</p></div>
+    <div class="item card"><div class="item-top"><h3>Garmin Fenix 9</h3></div><p>Maps, flashlight, tough case. For people who want one watch for everything. More than you need for road running.</p></div>
+  </section>
+
+  <section class="r">
+    <h2>What about <em>Apple Watch?</em></h2>
+    <div class="box card">
+      <p>You can run with it, and the GPS is good. But you'll charge it every 1-2 days, workouts from a coach only arrive through third-party apps, and the touchscreen is awkward in the rain and with gloves.</p>
+      <p>If you already have one, start with it. If you're buying a watch for running, get a sports watch.</p>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Do you need a <em>chest strap?</em></h2>
+    <div class="box card">
+      <p>The wrist sensor works well on steady easy runs. It gets it wrong on intervals, in the cold and with tattoos on the wrist.</p>
+      <p>If you train by heart rate, a chest strap gives you accurate numbers. Any strap with Bluetooth and ANT+ works, for example the Polar H10.</p>
+      <p>If you're new, you can start without one and buy it later.</p>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>In short: <em>what to pick</em></h2>
+    <div class="tbl card">
+      <div class="row"><span class="mono">just starting</span>Garmin Forerunner 70 or Coros Pace 4</div>
+      <div class="row"><span class="mono">training for races</span>Garmin Forerunner 170 or Suunto Run 2</div>
+      <div class="row"><span class="mono">the most for running</span>Garmin Forerunner 570</div>
+      <div class="row"><span class="mono">trail and ultra</span>Coros Apex 4</div>
+    </div>
+    <p style="margin-top:14px">Before you buy, compare prices from a few sellers and check the warranty.</p>
+  </section>
+
+  <section class="r">
+    <h2>Got the watch. <em>What next?</em></h2>
+    <p>A watch shows you numbers. To make the numbers improve, you need a plan.</p>
+  </section>
+
+  <div class="cta r">
+    <h2>Want me to look at <em style="color:#f0a56f">your training?</em></h2>
+    <p class="big">Comment STRAVA under any of my reels on @runnigor and I'll send you a free Strava breakdown.</p>
+    <a class="btn" href="https://www.instagram.com/runnigor/">Open @runnigor</a>
+  </div>
+  <p class="foot mono">Igor Potseluev · running coach · 10 years coaching, 500+ races finished by my athletes · @runnigor on Instagram</p>
+</div>
+<script>
+  (function () {
+    var els = document.querySelectorAll('.r');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
+</body>
+</html>

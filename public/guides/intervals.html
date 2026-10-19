@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Warm-Up Before Hard Sessions · igorp.run</title>
+<meta name="description" content="A simple warm-up before intervals and other hard sessions: easy running, two steady blocks and two short sprints. A guide by Igor Potseluev.">
+<meta property="og:title" content="Warm-Up Before Hard Sessions">
+<meta property="og:description" content="Easy running, two steady blocks, two short sprints, then the main set">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(40px, 11vw, 60px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(26px, 7vw, 34px); margin-bottom: 14px; }
+  h3 { font-size: 21px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 44px; }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .hero-vid { margin-top: 22px; position: relative; border-radius: 26px; overflow: hidden; aspect-ratio: 1; background: var(--bg2); border: 1.5px solid var(--line); }
+  .hero-vid video, .ex video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; text-align: left; }
+  .stat .disp { font-size: 28px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+
+  /* why */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 2px solid var(--ink); background: #fff; font-weight: 800; font-size: 15px; }
+  .chip.ok { border-color: var(--grn); color: var(--grn); }
+  .chip.no { border-color: var(--line); color: var(--dim); text-decoration: line-through; }
+
+  /* week */
+  .week { display: grid; gap: 0; padding: 4px 16px; }
+  .day { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1.5px solid var(--line); }
+  .day:first-child { border-top: 0; }
+  .day .mono { width: 34px; font-size: 13px; }
+  .pill { font-size: 14px; font-weight: 800; border-radius: 9px; padding: 5px 12px; }
+  .p-easy { background: #e8f0e3; color: var(--grn); }
+  .p-hard { background: #f6e1d6; color: var(--acc); }
+  .p-long { background: #faecd2; color: #9a6514; }
+  .p-sila { background: var(--acc); color: #fff; }
+  .p-rest { color: var(--dim); padding-left: 0; }
+  .rules { margin-top: 14px; display: grid; gap: 10px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; }
+  .rule .n { flex: none; width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* warmup */
+  .warm { padding: 6px 16px; }
+  .warm li { list-style: none; display: flex; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .warm li:first-child { border-top: 0; }
+  .warm span:last-child { font-family: "JetBrains Mono"; font-size: 14px; color: var(--acc); white-space: nowrap; }
+
+  /* exercises */
+  .ex { overflow: hidden; margin-top: 16px; }
+  .ex .vid { position: relative; aspect-ratio: 1; background: var(--bg2); }
+  .ex .num { position: absolute; top: 14px; left: 14px; width: 46px; height: 46px; border-radius: 14px; background: var(--acc); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 22px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 20px rgba(184,71,31,.3); }
+  .ex .dose { position: absolute; right: 14px; bottom: 14px; background: #fff; border-radius: 14px; padding: 8px 14px; box-shadow: 0 8px 24px rgba(28,26,23,.12); text-align: right; }
+  .ex .dose .disp { font-size: 22px; }
+  .ex .dose .mono { font-size: 10.5px; }
+  .ex .body { padding: 16px 18px 18px; }
+  .ex .tag { display: inline-block; font-size: 12px; font-weight: 800; color: var(--acc); background: #f6e1d6; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; }
+  .cues { margin-top: 10px; display: grid; gap: 6px; }
+  .cues div { display: flex; gap: 10px; align-items: flex-start; }
+  .cues div::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 8px; border-radius: 50%; background: var(--acc); }
+  .home { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: #f3eee5; font-size: 15px; }
+  .home b { color: var(--grn); }
+
+  /* weight */
+  .rpe { padding: 16px; }
+  .scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 12px; }
+  .scale div { border-radius: 12px; padding: 10px 4px; text-align: center; font-size: 12.5px; font-weight: 800; background: #f3eee5; color: var(--dim); }
+  .scale .on { background: var(--acc); color: #fff; }
+
+  /* plan */
+  .plan { padding: 8px 16px 16px; }
+  .phase { padding: 14px 0; border-top: 1.5px solid var(--line); display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; }
+  .phase:first-child { border-top: 0; }
+  .phase .disp { font-size: 17px; }
+  .bar { height: 12px; border-radius: 6px; background: #efe9de; overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: var(--acc); transition: width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .in .bar i { width: var(--w); }
+  .phase small { display: block; color: var(--dim); font-size: 14px; margin-top: 2px; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+
+  /* reveal */
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .r { opacity: 1; transform: none; transition: none; } .bar i { transition: none; } }
+
+  /* warm-up steps (intervals guide) */
+  .warm li .what small { display: block; color: var(--dim); font-size: 14.5px; font-weight: 600; margin-top: 2px; }
+  .warm li.main span:last-child { color: var(--grn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">guide · warm-up</span></div>
+    <h1>WARM UP<br><em>BEFORE HARD RUNS</em></h1>
+    <p class="lead">Do this before intervals, tempo runs and races. Your first hard rep will feel like running, not like a shock.</p>
+    <div class="stats">
+      <div class="stat card"><div class="disp">10-15</div><div class="mono">min easy</div></div>
+      <div class="stat card"><div class="disp">4+2</div><div class="mono">min building</div></div>
+      <div class="stat card"><div class="disp">2×15s</div><div class="mono">sprints</div></div>
+    </div>
+  </header>
+
+  <section class="r">
+    <h2>The <em>warm-up</em></h2>
+    <ul class="warm card">
+      <li><span class="what">Easy running<small>You can talk in full sentences.</small></span><span>10-15 min</span></li>
+      <li><span class="what">Steady, effort 5 out of 10<small>A bit quicker. Breathing is deeper, you can still talk.</small></span><span>4 min</span></li>
+      <li><span class="what">Faster, effort 7 out of 10<small>Comfortably hard. You can say a few words, but not chat.</small></span><span>2 min</span></li>
+      <li><span class="what">Sprints<small>Fast and relaxed. Walk or jog easy between them.</small></span><span>2 × 15 s</span></li>
+      <li><span class="what">Rest<small>Catch your breath before you start.</small></span><span>short</span></li>
+      <li class="main"><span class="what"><b>Main set</b><small>Now the real work begins.</small></span><span>go</span></li>
+    </ul>
+  </section>
+
+  <section class="r">
+    <h2>How hard <em>is 5 and 7?</em></h2>
+    <div class="rpe card">
+      <p>Effort on a scale from 1 to 10. One is a walk. Ten is everything you've got.</p>
+      <div class="scale"><div>1-3</div><div>4</div><div class="on">5</div><div class="on">7</div><div>10</div></div>
+      <p style="margin-top:12px">The 5 and the 7 are a ramp, not a workout. You should finish them feeling ready, not tired.</p>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Why <em>bother</em></h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div>Your heart rate and breathing go up step by step, instead of jumping from rest to hard in one rep.</div></div>
+      <div class="rule card"><div class="n">2</div><div>Warm muscles move more easily. Your stride feels smoother from the first rep.</div></div>
+      <div class="rule card"><div class="n">3</div><div>The sprints remind your legs what fast feels like. The first rep at target pace won't feel so strange.</div></div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Common <em>mistakes</em></h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div><b>The easy part isn't easy.</b> If you can't talk, slow down. It's a warm-up, not training.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>The 7 turns into a 9.</b> Then you start the main set already tired.</div></div>
+      <div class="rule card"><div class="n">3</div><div><b>Sprinting all out.</b> Fifteen seconds, fast but loose. No straining.</div></div>
+      <div class="rule card"><div class="n">4</div><div><b>Skipping it when short on time.</b> Do 10 minutes of easy running, not 15, and keep the rest.</div></div>
+    </div>
+  </section>
+
+  <div class="cta r">
+    <h2>Want me to look at <em style="color:#f0a56f">your training?</em></h2>
+    <p>Comment STRAVA under any of my reels on @runnigor and I'll send you a free Strava breakdown.</p>
+    <a class="btn" href="https://www.instagram.com/runnigor/">Open @runnigor</a>
+  </div>
+  <p class="foot mono">Igor Potseluev · running coach · 10 years coaching, 500+ races finished by my athletes · @runnigor on Instagram</p>
+</div>
+<script>
+  (function () {
+    var els = document.querySelectorAll('.r');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(function (e) { io.observe(e); });
+  })();
+</script>
+</body>
+</html>
