@@ -9,11 +9,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { buildBody, loadPrograms, signatureOf, studentText } from "./strength-body.ts";
+import { buildBody, loadPrograms, signatureOf, studentText, type PlanWeek } from "./strength-body.ts";
 
 const CANON = "/Users/igor/igor-tp-reports-bot";
 const RUNS = path.join(CANON, "reports", "strength", "runs");
-export type PlanItem = { athleteId: number; label: string; programId: string; format: "classic" | "circuit"; week: number; date: string };
+/** inline — разовая тренировка вне программ (свой состав); hidden=false — видимой ученику (только по слову Игоря). */
+export type PlanItem = { athleteId: number; label: string; programId: string; format: "classic" | "circuit"; week: number; date: string; inline?: PlanWeek; hidden?: boolean };
 type Run = { runId: string; mode: "dry" | "real"; items: Array<PlanItem & { workoutId: string | null; verified: boolean }>; deleted: string[] };
 
 const args = process.argv.slice(2); const arg = (n: string): string | null => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] ?? null : null; };
@@ -39,13 +40,14 @@ const run: Run = { runId: `strength-${Date.now()}`, mode: real ? "real" : "dry",
 const progs = loadPrograms();
 const bodies: Record<string, unknown>[] = [];
 for (const it of run.items) {
-  const prog = progs.programs.find((p) => p.id === it.programId); if (!prog) throw new Error(`нет программы ${it.programId}`);
-  const wk = prog.formats[it.format].find((w) => w.week === it.week); if (!wk) throw new Error(`нет недели ${it.week}`);
-  const b = await buildBody(wk, { athleteId: it.athleteId, date: it.date, hidden: true, get }); bodies.push(b);
-  console.log(`\n======== ${it.label} · программа «${prog.title}», ${it.format === "classic" ? "классика" : "круговая"}, неделя ${it.week} ========\n${studentText(b)}`);
+  const prog = it.inline ? null : progs.programs.find((p) => p.id === it.programId); if (!it.inline && !prog) throw new Error(`нет программы ${it.programId}`);
+  const wk = it.inline ?? prog!.formats[it.format].find((w) => w.week === it.week); if (!wk) throw new Error(`нет недели ${it.week}`);
+  const b = await buildBody(wk, { athleteId: it.athleteId, date: it.date, hidden: it.hidden !== false, get }); bodies.push(b);
+  console.log(`\n======== ${it.label} · ${it.inline ? "разовая тренировка" : `программа «${prog!.title}», ${it.format === "classic" ? "классика" : "круговая"}, неделя ${it.week}`} · ${it.hidden === false ? "ВИДИМОЙ ученику" : "скрыто"} ========\n${studentText(b)}`);
 }
-if (!real) { console.log(`\nСУХО, ничего не записано. Живой: TP_ACTIONS_REAL_EXECUTION=true tsx strength-place.ts --plan ${arg("plan")} --execute-real --confirm "ПОСТАВИТЬ СИЛОВЫЕ СКРЫТО"`); process.exit(0); }
-if (arg("confirm") !== "ПОСТАВИТЬ СИЛОВЫЕ СКРЫТО" || process.env.TP_ACTIONS_REAL_EXECUTION !== "true") { console.error("ОТКАЗ: нужна фраза и TP_ACTIONS_REAL_EXECUTION=true"); process.exit(2); }
+const PHRASE = run.items.some((x) => x.hidden === false) ? "ПОСТАВИТЬ СИЛОВЫЕ ВИДИМЫМИ" : "ПОСТАВИТЬ СИЛОВЫЕ СКРЫТО";
+if (!real) { console.log(`\nСУХО, ничего не записано. Живой: TP_ACTIONS_REAL_EXECUTION=true tsx strength-place.ts --plan ${arg("plan")} --execute-real --confirm "${PHRASE}"`); process.exit(0); }
+if (arg("confirm") !== PHRASE || process.env.TP_ACTIONS_REAL_EXECUTION !== "true") { console.error("ОТКАЗ: нужна фраза и TP_ACTIONS_REAL_EXECUTION=true"); process.exit(2); }
 save(run);
 const rollback = async (why: string): Promise<never> => {
   console.error(`СТОП: ${why}. Откат всего прогона:`);
@@ -60,9 +62,9 @@ for (let i = 0; i < run.items.length; i++) {
   it.workoutId = String(saved.id); save(run);
   const got = await tp.getStrengthWorkout(it.workoutId);
   if (signatureOf(got) !== signatureOf(b)) await rollback(`${it.label} ${it.date} ${it.workoutId}: прочитанное не совпало с записанным`);
-  if (got.isHidden !== true) await rollback(`${it.label} ${it.date} ${it.workoutId}: не скрыта`);
+  if (got.isHidden !== (it.hidden !== false)) await rollback(`${it.label} ${it.date} ${it.workoutId}: isHidden=${String(got.isHidden)}, ждали ${String(it.hidden !== false)}`);
   const after = await dayList(it.athleteId, it.date); if (after.length !== 1) await rollback(`${it.label} ${it.date}: силовых в дне ${after.length}, ждали 1 (дубль от повтора POST?)`);
   it.verified = true; save(run);
-  console.log(`поставлена ${it.label} ${it.date} id=${it.workoutId} · isHidden=true · сверка совпала · в дне ровно одна силовая`);
+  console.log(`поставлена ${it.label} ${it.date} id=${it.workoutId} · isHidden=${String(got.isHidden)} · сверка совпала · в дне ровно одна силовая`);
 }
 console.log(`\nМанифест: ${path.join(RUNS, `${run.runId}.json`)}`);
