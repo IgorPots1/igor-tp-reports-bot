@@ -19,7 +19,9 @@ export const restLine = (): string => `Отдых: ${REST_EXERCISES} между 
 
 type ExParam = { parameter: string; title: string; unit: unknown; category: string; range?: unknown; id: string };
 export type Exercise = { id: string; ownerId: number; title: string; videoUrl: string | null; instructions: string | null; parameters: ExParam[]; canEdit: boolean };
-export type PlanPrescription = { exerciseId: string; title: string; parameter: string; libraryParameterId: string | null; sets: number; prescribedValue: string; coachNotes: string | null };
+/** extra — дополнительные параметры подхода (вес в кг рядом с повторами). Значение одно на все подходы. */
+export type ExtraParam = { parameter: string; libraryParameterId: string | null; prescribedValue: string };
+export type PlanPrescription = { exerciseId: string; title: string; parameter: string; libraryParameterId: string | null; sets: number; prescribedValue: string; coachNotes: string | null; extra?: ExtraParam[] };
 export type PlanBlock = { blockType: "SingleExercise" | "Circuit"; coachNotes: string | null; rounds?: number; prescriptions: PlanPrescription[] };
 export type PlanWeek = { week: number; phase: string; workoutTitle: string; instructions: string | null; blocks: PlanBlock[] };
 export type Programs = { programs: Array<{ id: string; title: string; formats: { classic: PlanWeek[]; circuit: PlanWeek[] } }> };
@@ -40,7 +42,7 @@ export async function loadExercise(id: string, get?: (p: string) => Promise<{ st
   return { id: String(d.id ?? id), ownerId: d.ownerId, title: d.title, videoUrl: d.videoUrl ?? null, instructions: d.instructions ?? null, parameters: d.parameters, canEdit: !!d.canEdit };
 }
 
-function paramObject(ex: Exercise, p: PlanPrescription): ExParam {
+function paramObject(ex: Exercise, p: { parameter: string; libraryParameterId: string | null }): ExParam {
   const lib = ex.parameters.find((x) => x.parameter === p.parameter);
   if (lib) { if (p.libraryParameterId && lib.id !== p.libraryParameterId) throw new Error(`${ex.title}: id параметра ${p.parameter} в библиотеке ${lib.id}, в программе ${p.libraryParameterId}`); return lib; }
   // параметр «добавленный» (вне набора упражнения, как Duration у моста с удержанием) — определение из parameters/exercise
@@ -52,8 +54,8 @@ export function signatureOf(w: Record<string, unknown>): string {
   const bl = (w.blocks as Array<Record<string, unknown>>) ?? [];
   return JSON.stringify({ title: w.title, cal: Number(w.calendarId), date: String(w.prescribedDate).slice(0, 10), hidden: w.isHidden, instr: w.instructions ?? null,
     blocks: bl.map((b) => ({ t: b.blockType, n: b.coachNotes ?? null, p: ((b.prescriptions as Array<Record<string, unknown>>) ?? []).map((p) => ({
-      ex: String((p.exercise as Record<string, unknown>)?.id), n: p.coachNotes ?? null, par: String(((p.parameters as Array<Record<string, unknown>>) ?? [])[0]?.parameter),
-      v: ((p.sets as Array<Record<string, unknown>>) ?? []).map((s) => String(((s.parameterValues as Array<Record<string, unknown>>) ?? [])[0]?.prescribedValue)) })) })) });
+      ex: String((p.exercise as Record<string, unknown>)?.id), n: p.coachNotes ?? null, par: ((p.parameters as Array<Record<string, unknown>>) ?? []).map((x) => String(x.parameter)).sort().join("+"),
+      v: ((p.sets as Array<Record<string, unknown>>) ?? []).map((s) => ((s.parameterValues as Array<Record<string, unknown>>) ?? []).map((pv) => `${String(pv.parameter)}=${String(pv.prescribedValue)}`).sort().join(",")) })) })) });
 }
 
 export async function buildBody(week: PlanWeek, o: { athleteId: number; date: string; hidden: boolean; get?: (p: string) => Promise<{ status: number; body: unknown }> }): Promise<Record<string, unknown>> {
@@ -62,12 +64,15 @@ export async function buildBody(week: PlanWeek, o: { athleteId: number; date: st
   for (const b of week.blocks) {
     const prescriptions = [];
     for (const p of b.prescriptions) {
-      const ex = await loadExercise(p.exerciseId, o.get); const par = paramObject(ex, p);
-      const fmt = p.parameter === "Duration" ? "Time" : "Integer";
+      const ex = await loadExercise(p.exerciseId, o.get);
+      const all = [{ parameter: p.parameter, libraryParameterId: p.libraryParameterId, prescribedValue: p.prescribedValue }, ...(p.extra ?? [])];
+      const pars = all.map((x) => ({ x, par: paramObject(ex, x) }));
+      const fmt = (name: string): string => (name === "Duration" ? "Time" : /^Weight/.test(name) ? "Decimal" : "Integer");
+      const tmpl = pars.map(({ x, par }) => (x.parameter === "Duration" ? "{Duration}" : /^Weight/.test(x.parameter) ? `@ {${x.parameter}} ${(par.unit as { abbreviation?: string })?.abbreviation ?? ""}`.trim() : `{${x.parameter}} ${par.title}`)).join(" ");
       prescriptions.push({
-        id: randomUUID(), exercise: ex, parameters: [{ parameter: par.parameter, title: par.title, unit: par.unit, category: par.category, range: par.range ?? null, id: randomUUID() }],
-        sets: Array.from({ length: p.sets }, () => ({ id: randomUUID(), isComplete: false, setOrigin: "Prescribed", parameterValues: [{ id: randomUUID(), parameter: p.parameter, inputFormat: fmt, range: par.range ?? null, prescribedValue: p.prescribedValue, executedValue: null }] })),
-        coachNotes: p.coachNotes, compliancePercent: 0, setSummaryTemplate: p.parameter === "Duration" ? "{Duration}" : `{${p.parameter}} ${par.title}`,
+        id: randomUUID(), exercise: ex, parameters: pars.map(({ par }) => ({ parameter: par.parameter, title: par.title, unit: par.unit, category: par.category, range: par.range ?? null, id: randomUUID() })),
+        sets: Array.from({ length: p.sets }, () => ({ id: randomUUID(), isComplete: false, setOrigin: "Prescribed", parameterValues: pars.map(({ x, par }) => ({ id: randomUUID(), parameter: x.parameter, inputFormat: fmt(x.parameter), range: par.range ?? null, prescribedValue: x.prescribedValue, executedValue: null })) })),
+        coachNotes: p.coachNotes, compliancePercent: 0, setSummaryTemplate: tmpl,
       });
     }
     const notes = b.blockType === "Circuit" ? `${b.coachNotes ?? `${b.rounds} круга`}. ${restLine()}` : b.coachNotes;
@@ -92,9 +97,11 @@ export function studentText(w: Record<string, unknown>): string {
     if (b.blockType === "Circuit") out.push(`КРУГ — ${String(b.coachNotes ?? "")}`);
     for (const p of ps) {
       const sets = (p.sets as Array<Record<string, unknown>>) ?? []; const par = String(((p.parameters as Array<Record<string, unknown>>) ?? [])[0]?.parameter);
-      const v = String(((sets[0]?.parameterValues as Array<Record<string, unknown>>) ?? [])[0]?.prescribedValue);
-      const unit = par === "Duration" ? " с" : par === "RepsPerSide" ? " на сторону" : " повт.";
-      out.push(`${b.blockType === "Circuit" ? "  " : ""}${String((p.exercise as Record<string, unknown>)?.title)} — ${sets.length} × ${v}${unit}${p.coachNotes ? ` · ${String(p.coachNotes)}` : ""}`);
+      const pvs = (sets[0]?.parameterValues as Array<Record<string, unknown>>) ?? [];
+      const main = pvs.find((x) => !/^Weight/.test(String(x.parameter))) ?? pvs[0]; const w = pvs.find((x) => /^Weight/.test(String(x.parameter)));
+      const v = String(main?.prescribedValue); const unit = par === "Duration" ? " с" : String(main?.parameter) === "RepsPerSide" ? " на сторону" : " повт.";
+      const wTxt = w ? ` · ${String(w.prescribedValue)} ${/Kg$/.test(String(w.parameter)) ? "кг" : "lb"}${/PerSide/.test(String(w.parameter)) ? " на сторону" : ""}` : "";
+      out.push(`${b.blockType === "Circuit" ? "  " : ""}${String((p.exercise as Record<string, unknown>)?.title)} — ${sets.length} × ${v}${unit}${wTxt}${p.coachNotes ? ` · ${String(p.coachNotes)}` : ""}`);
     }
     if (b.blockType !== "Circuit" && b.coachNotes) out.push(`  (${String(b.coachNotes)})`);
   }
