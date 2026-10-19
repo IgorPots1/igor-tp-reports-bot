@@ -1,0 +1,8707 @@
+{
+ "source": "GET /rx/activity/v1/libraryContent (2026-10-18) + GET /rx/activity/v1/exercises/{id} (78 used: 2026-10-19 recon; rest: fetch-exercise-details.ts 2026-10-19). Read-only.",
+ "libraryCount": 946,
+ "library": [
+  {
+   "exerciseId": "396",
+   "title": "90 Degree Iso Chin Up Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5178",
+   "title": "90-90",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5179",
+   "title": "90-90 to Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5180",
+   "title": "Ab Wheel",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "1",
+   "title": "Air Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "397",
+   "title": "Alternating DB Bent Over Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "398",
+   "title": "Alternating DB Floor Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "128",
+   "title": "Alternating DB Hammer Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "399",
+   "title": "Alternating DB Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "400",
+   "title": "Alternating DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5181",
+   "title": "Alternating Foot Jump Rope",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "401",
+   "title": "Alternating Heel Touch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "402",
+   "title": "Alternating Incline DB Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "403",
+   "title": "Alternating KB Hang Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5182",
+   "title": "Alternating KB Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "404",
+   "title": "Alternating KB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "405",
+   "title": "Alternating KB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "406",
+   "title": "Alternating Leg Swing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "129",
+   "title": "Alternating Reverse DB Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "407",
+   "title": "Alternating Superman",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "130",
+   "title": "American KB Swing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5183",
+   "title": "Anderson Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5184",
+   "title": "Ankle Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "387588",
+   "title": "Anterior Tibialis Raise",
+   "coachOwn": true,
+   "primaryMuscleGroups": []
+  },
+  {
+   "exerciseId": "5185",
+   "title": "Archer Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5186",
+   "title": "Archer Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5187",
+   "title": "Arm Circle",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "408",
+   "title": "Arm Climb",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "409",
+   "title": "Arnold Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "131",
+   "title": "Back Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5188",
+   "title": "Backward Jogging",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "410",
+   "title": "Bam Bam",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "411",
+   "title": "Band Abduction",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5189",
+   "title": "Band Around the World",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "412",
+   "title": "Band Assisted Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "413",
+   "title": "Band Assisted Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5190",
+   "title": "Band Chest Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5191",
+   "title": "Band Crab Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5192",
+   "title": "Band Crossbody Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "6",
+   "title": "Band Face Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5193",
+   "title": "Band Pass Through",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "7",
+   "title": "Band Pull Apart",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "414",
+   "title": "Band Pull Through",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5194",
+   "title": "Band Reverse Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "8",
+   "title": "Band Rotation Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5195",
+   "title": "Band Scapular Retraction",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5196",
+   "title": "Band Seated Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5197",
+   "title": "Band Single Arm Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "415",
+   "title": "Band Skull Crusher",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5198",
+   "title": "Band Squat and Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "416",
+   "title": "Band Tricep Push Down",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5199",
+   "title": "Banded Ankle Mobility",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "5200",
+   "title": "Banded Bear Crawl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5201",
+   "title": "Banded Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "417",
+   "title": "Banded Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5202",
+   "title": "Banded Bicycle Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5203",
+   "title": "Banded Bird Dog",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "418",
+   "title": "Banded Clam Shell",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5204",
+   "title": "Banded Diagonal Lift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5205",
+   "title": "Banded Donkey Kick",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5206",
+   "title": "Banded Front Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "419",
+   "title": "Banded Glute Bridge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "420",
+   "title": "Banded Good Morning",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5207",
+   "title": "Banded Hip Abduction",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5208",
+   "title": "Banded Hip Flexor Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5209",
+   "title": "Banded Hip Mobility",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5210",
+   "title": "Banded Lat Pull Down",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5211",
+   "title": "Banded Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "421",
+   "title": "Banded Low Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "422",
+   "title": "Banded Monster Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5212",
+   "title": "Banded Overhead Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5213",
+   "title": "Banded Overhead Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5214",
+   "title": "Banded Overhead Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "423",
+   "title": "Banded Plank Jack",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5215",
+   "title": "Banded Plank Leg Lift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5216",
+   "title": "Banded Plank Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5217",
+   "title": "Banded Psoas Distraction",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5218",
+   "title": "Banded Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5219",
+   "title": "Banded Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5220",
+   "title": "Banded Shin Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5221",
+   "title": "Banded Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5222",
+   "title": "Banded Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5223",
+   "title": "Banded Tricep Kick Back",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5224",
+   "title": "Banded Upright Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "424",
+   "title": "Banded V Adduction",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5225",
+   "title": "Banded Wood Chopper",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "425",
+   "title": "Bar Facing Burpee",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "426",
+   "title": "Barbell Ab Rollout",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "427",
+   "title": "Barbell Bent Over Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "9",
+   "title": "Barbell Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "24",
+   "title": "Barbell Bulgarian Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "428",
+   "title": "Barbell Front Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "429",
+   "title": "Barbell Hip Thrust",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "11",
+   "title": "Barbell Overhead Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "10",
+   "title": "Barbell Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "12",
+   "title": "Barbell Rollout",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "13",
+   "title": "Barbell Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "430",
+   "title": "Barbell Shrug Behind the Back",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "431",
+   "title": "Barbell Squat Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "432",
+   "title": "Barbell Step Ups",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "14",
+   "title": "Barbell Thruster",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "433",
+   "title": "Barbell Upright Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5226",
+   "title": "Bear Crawl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5227",
+   "title": "Behind the Neck Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "434",
+   "title": "Behind the Neck Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "132",
+   "title": "Bench Dip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "16",
+   "title": "Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "435",
+   "title": "Bent Arm Barbell Pull Over",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "436",
+   "title": "Bent Knee Hip Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "134",
+   "title": "Bent Over Barbell Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "437",
+   "title": "Bent Over DB Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "439",
+   "title": "Bicep Curl to Shoulder Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "135",
+   "title": "Bicycle Sit-Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "440",
+   "title": "Bird Dog",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5228",
+   "title": "Bird Dog Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "441",
+   "title": "Body Saw",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "442",
+   "title": "Body Weight Alternating Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "443",
+   "title": "Body Weight Bulgarian Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5229",
+   "title": "Body Weight Good Morning",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "63",
+   "title": "Body Weight Lateral Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "444",
+   "title": "Body Weight Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "445",
+   "title": "Body Weight Reverse Alternating Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "446",
+   "title": "Body Weight Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "447",
+   "title": "Body Weight Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "448",
+   "title": "Body Weight Walking Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "449",
+   "title": "Bosu Ball Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "450",
+   "title": "Bosu Ball Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "451",
+   "title": "Bosu Ball Plank with Leg Lift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "452",
+   "title": "Bosu Ball Push Up V1",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "453",
+   "title": "Bosu Ball Push Up V2",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "454",
+   "title": "Bosu Ball Side Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "455",
+   "title": "Bosu Ball Sit Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5230",
+   "title": "Box Dip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5231",
+   "title": "Box Donkey Kick",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "21",
+   "title": "Box Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "456",
+   "title": "Box Jump Over",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5232",
+   "title": "Box Jump to Tuck Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5233",
+   "title": "Box Pigeon Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5234",
+   "title": "Box Pike Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5235",
+   "title": "Box Plank with Leg Lift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5236",
+   "title": "Box Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5237",
+   "title": "Box Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5238",
+   "title": "Box Seated Leg Tuck",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "22",
+   "title": "Box Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5239",
+   "title": "Box Thruster",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "457",
+   "title": "Box Toe Tap",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5240",
+   "title": "Box V Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5241",
+   "title": "Bridge Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "23",
+   "title": "Broad Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "25",
+   "title": "Burpee",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "458",
+   "title": "Burpee Box Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5242",
+   "title": "Burpee Box Jump Over",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "459",
+   "title": "Burpee Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "460",
+   "title": "Burpee Tuck Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5243",
+   "title": "Butt Kick Rope Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "461",
+   "title": "Butt Kicker",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "462",
+   "title": "Butt Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5244",
+   "title": "Butterfly Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5245",
+   "title": "Butterfly Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5246",
+   "title": "Butterfly Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "438",
+   "title": "Cable Bent Over Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "463",
+   "title": "Cable Cross Woodchop",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "464",
+   "title": "Cable Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "465",
+   "title": "Cable External Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "466",
+   "title": "Cable Facepull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "568",
+   "title": "Cable Flat Bench Single Arm Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "467",
+   "title": "Cable Hammer Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "468",
+   "title": "Cable Incline Triceps Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "469",
+   "title": "Cable Internal Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "660",
+   "title": "Cable Kneeling Triceps Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "470",
+   "title": "Cable Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "672",
+   "title": "Cable Low Crossover",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "678",
+   "title": "Cable Lying Triceps Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "702",
+   "title": "Cable Overhead Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "471",
+   "title": "Cable Overhead Triceps Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "472",
+   "title": "Cable Reverse Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "764",
+   "title": "Cable Seated Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "765",
+   "title": "Cable Seated Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "766",
+   "title": "Cable Seated Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "473",
+   "title": "Cable Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "801",
+   "title": "Cable Single Arm Crossover",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "802",
+   "title": "Cable Single Arm Shoulder Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "871",
+   "title": "Cable Standing Single Arm Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "858",
+   "title": "Cable Standing Wood Chop",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "474",
+   "title": "Cable Triceps Pushdown",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "907",
+   "title": "Cable Twisting Single Arm Chest Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "908",
+   "title": "Cable Twisting Single Arm Overhead Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "909",
+   "title": "Cable Twisting Single Arm Standing Chest Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5247",
+   "title": "Calf Foam Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "5248",
+   "title": "Carioca Drill",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "475",
+   "title": "Cat Cow",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5249",
+   "title": "Chain Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5250",
+   "title": "Chain Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5251",
+   "title": "Chair Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "476",
+   "title": "Childs Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "27",
+   "title": "Chin Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "477",
+   "title": "Clapping Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "137",
+   "title": "Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "478",
+   "title": "Clean & Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "479",
+   "title": "Clean Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "480",
+   "title": "Clean Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "481",
+   "title": "Clean Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "482",
+   "title": "Close Grip Barbell Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "483",
+   "title": "Close Grip DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "484",
+   "title": "Close Grip EZ Bar Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "485",
+   "title": "Close Grip Floor Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "486",
+   "title": "Close Grip Incline Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5252",
+   "title": "Close Grip Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "29",
+   "title": "Close Grip Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "487",
+   "title": "Close Grip Push Up Off Of DB",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "488",
+   "title": "Close Hand Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5253",
+   "title": "Cloud Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "489",
+   "title": "Cobra",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5254",
+   "title": "Cobra Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5255",
+   "title": "Commando Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "490",
+   "title": "Concentration Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5256",
+   "title": "Copenhagen Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5257",
+   "title": "Cossack Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5258",
+   "title": "Couch Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5259",
+   "title": "Counterbalance Pistol Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "491",
+   "title": "Crab Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "492",
+   "title": "Cross Body Hammer Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5260",
+   "title": "Cross Body Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5261",
+   "title": "Cross Over Double Under",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "5262",
+   "title": "Crossover",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "493",
+   "title": "Crossover Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "494",
+   "title": "Crossover Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "495",
+   "title": "Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "496",
+   "title": "Cuban Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5263",
+   "title": "Curtsy Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "497",
+   "title": "DB Alternating Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "30",
+   "title": "DB Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "138",
+   "title": "DB Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "499",
+   "title": "DB Box Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "500",
+   "title": "DB Bulgarian Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5264",
+   "title": "DB Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5265",
+   "title": "DB Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "501",
+   "title": "DB Curl Lying Against Incline",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "32",
+   "title": "DB Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "33",
+   "title": "DB Farmer's Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "142",
+   "title": "DB Floor Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "34",
+   "title": "DB Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "502",
+   "title": "DB Front Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "35",
+   "title": "DB Front Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "503",
+   "title": "DB Hang Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "504",
+   "title": "DB Incline Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "505",
+   "title": "DB Incline Front Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "506",
+   "title": "DB Incline Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "507",
+   "title": "DB Incline Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "36",
+   "title": "DB Jump Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "508",
+   "title": "DB Jump Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "509",
+   "title": "DB Lateral Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "37",
+   "title": "DB Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "510",
+   "title": "DB Lunge & Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "511",
+   "title": "DB Lying Rear Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "38",
+   "title": "DB Military Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "512",
+   "title": "DB Overhead Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "513",
+   "title": "DB Pistol Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "514",
+   "title": "DB Plank Pull Through",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "39",
+   "title": "DB Pullover",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "40",
+   "title": "DB Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "515",
+   "title": "DB Roll Back",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "516",
+   "title": "DB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5266",
+   "title": "DB Russian Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "517",
+   "title": "DB Scaption",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "518",
+   "title": "DB Seated Bent Over Double Arm Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "519",
+   "title": "DB Seated Box Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "520",
+   "title": "DB Seated Single Leg Calf Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "139",
+   "title": "DB Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "42",
+   "title": "DB Side Bend",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "521",
+   "title": "DB Side Step Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "522",
+   "title": "DB Single Arm Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "523",
+   "title": "DB Single Leg Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "43",
+   "title": "DB Skull Crusher",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5267",
+   "title": "DB Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "524",
+   "title": "DB Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "525",
+   "title": "DB Sumo Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "45",
+   "title": "DB Swing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "46",
+   "title": "DB Thruster",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "526",
+   "title": "DB Tricep Extension Pronated Grip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "47",
+   "title": "DB Walking Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "527",
+   "title": "DB Z Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5268",
+   "title": "Dead Hang",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "528",
+   "title": "DeadBug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "141",
+   "title": "Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "529",
+   "title": "Deadlift Block Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5269",
+   "title": "Decline Bench Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5270",
+   "title": "Decline Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "530",
+   "title": "Decline Forearm Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5271",
+   "title": "Decline Mountain Climber",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "531",
+   "title": "Decline Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "532",
+   "title": "Decline Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "533",
+   "title": "Decline Side Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5272",
+   "title": "Decline Sit Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "534",
+   "title": "Decline Spider",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "535",
+   "title": "Deficit Clean Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "536",
+   "title": "Deficit Clean Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "537",
+   "title": "Deficit Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5273",
+   "title": "Deficit Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "538",
+   "title": "Deficit Snatch Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "539",
+   "title": "Deficit Snatch Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "540",
+   "title": "Depth Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "49",
+   "title": "Diamond Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "541",
+   "title": "Dimel Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "543",
+   "title": "Dip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "542",
+   "title": "Dip Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "544",
+   "title": "Dive Bomber Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5274",
+   "title": "Double Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "50",
+   "title": "Double KB Clean & Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5275",
+   "title": "Double KB Clean & Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "51",
+   "title": "Double KB Front Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "545",
+   "title": "Double KB Push Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "52",
+   "title": "Double KB Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "546",
+   "title": "Double KB Racked Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5276",
+   "title": "Double KB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "547",
+   "title": "Double KB Split Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "548",
+   "title": "Double Pigeon Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5277",
+   "title": "Double Under",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "5278",
+   "title": "Downward Dog Lunge Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "549",
+   "title": "Drag Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5279",
+   "title": "Drop Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "550",
+   "title": "Dynamic Chest Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "551",
+   "title": "Dynamic Clam Shell",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5280",
+   "title": "Eagle Arms Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "552",
+   "title": "Elbow to Knee",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "553",
+   "title": "Elevated Body Weight Calf Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "554",
+   "title": "Elevated Single Leg Body Weight Calf Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "555",
+   "title": "Exercise Ball Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "556",
+   "title": "Exercise Ball DB Chest Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "557",
+   "title": "Exercise Ball DeadBug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "558",
+   "title": "Exercise Ball Decline Toe Tap",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "559",
+   "title": "Exercise Ball Forearm Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "560",
+   "title": "Exercise Ball Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "561",
+   "title": "Exercise Ball Pull In",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "562",
+   "title": "Extended High Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "563",
+   "title": "External Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "564",
+   "title": "EZ Bar Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "565",
+   "title": "EZ Bar Skull Crusher",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "53",
+   "title": "Feet Elevated Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5281",
+   "title": "Feet On Swiss Ball Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5282",
+   "title": "Feet On Swiss Ball Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5283",
+   "title": "Finger Tip Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "566",
+   "title": "Flat Bench Leg Pull In",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "567",
+   "title": "Flat Bench Lying Leg Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5284",
+   "title": "Floor L Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "569",
+   "title": "Floor Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "570",
+   "title": "Flutter Kicks",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "571",
+   "title": "Forearm Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "572",
+   "title": "Forearm Plank Hip Dip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "573",
+   "title": "Forearm Plank Jack",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5285",
+   "title": "Forward Leg Swing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "574",
+   "title": "Frankenstein Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5286",
+   "title": "Frankenstein Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5287",
+   "title": "Free Standing Hand Stand Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5288",
+   "title": "Frog Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "575",
+   "title": "Frog Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "576",
+   "title": "Frog Sit Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "577",
+   "title": "Front Raise & Pull Over",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "143",
+   "title": "Front Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5289",
+   "title": "Front Squat Static Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "578",
+   "title": "Full Saddle",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "579",
+   "title": "Glute Bridge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "580",
+   "title": "Glute Bridge Hamstring Walkout",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5290",
+   "title": "Glute Foam Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "581",
+   "title": "Glute Kick Back",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "582",
+   "title": "Goblet Lateral Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "144",
+   "title": "Goblet Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "145",
+   "title": "Good Morning",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5291",
+   "title": "Gorilla Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5292",
+   "title": "Hack Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "583",
+   "title": "Half Kneeling DB Shoulder Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "584",
+   "title": "Half Kneeling KB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "585",
+   "title": "Half Saddle",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "586",
+   "title": "Hamstring Slide",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "587",
+   "title": "Hand Release Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5293",
+   "title": "Hand Stand Pirouette",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5294",
+   "title": "Hand Stand Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5295",
+   "title": "Hand Stand Walk to Wall",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5296",
+   "title": "Hand Stand Walk with Step Obstacle",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5297",
+   "title": "Hands On Swiss Ball Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5298",
+   "title": "Hands On Swiss Ball Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "146",
+   "title": "Hang Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "589",
+   "title": "Hang Clean Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "591",
+   "title": "Hanging Knee Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5299",
+   "title": "Hanging L Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "590",
+   "title": "Hanging Leg Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "592",
+   "title": "Happy Baby",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5300",
+   "title": "Hat Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5301",
+   "title": "Head Stand",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "593",
+   "title": "Heaving Snatch Bounce",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5302",
+   "title": "Heel Elevated Back Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "594",
+   "title": "Heels Elevated Hip Thrust",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "595",
+   "title": "Hex Bar Bent Over Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "596",
+   "title": "High Hang Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5303",
+   "title": "High Knee",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5304",
+   "title": "High Knee Jump Rope",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "597",
+   "title": "High Plank Jack",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "598",
+   "title": "High Plank Shoulder Tap",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "599",
+   "title": "High Plank Toe Tap",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "600",
+   "title": "High Plank Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "807",
+   "title": "High Pulley Cable Single Arm Side Bend",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5305",
+   "title": "Hip Circle",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "601",
+   "title": "Hip Crossover",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "602",
+   "title": "Hip Flexion with Band",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5306",
+   "title": "Hip Flexor Knee Drive",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5307",
+   "title": "Hip Flexor Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5308",
+   "title": "Hip Thrust Band Around Knees",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5309",
+   "title": "Hollow Body Crunches",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5310",
+   "title": "Hollow Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5311",
+   "title": "Hollow Rock",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "603",
+   "title": "Ice Skater",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "604",
+   "title": "In & Out Box Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "605",
+   "title": "Inch Worm",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "606",
+   "title": "Incline Barbell Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "607",
+   "title": "Incline Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "608",
+   "title": "Incline Close Grip Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "609",
+   "title": "Incline DB Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "610",
+   "title": "Incline DB Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "611",
+   "title": "Incline DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "612",
+   "title": "Incline DB Press with Palms Facing In",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "613",
+   "title": "Incline Hammer Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "614",
+   "title": "Incline Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "615",
+   "title": "Incline Mountain Climber",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "616",
+   "title": "Incline Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "617",
+   "title": "Inverted Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5312",
+   "title": "Ipsilateral Dead Bug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "618",
+   "title": "Isometric Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "619",
+   "title": "Isometric Wiper",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5313",
+   "title": "IT Foam Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "620",
+   "title": "Janda Sit Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "621",
+   "title": "Jefferson Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "622",
+   "title": "Jerk Balance",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "623",
+   "title": "Jerk Dip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "624",
+   "title": "JM Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5314",
+   "title": "Jog In Place",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "625",
+   "title": "Jump Rope",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "147",
+   "title": "Jumping Jack",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "626",
+   "title": "KB Arnold Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "627",
+   "title": "KB Clean & Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "628",
+   "title": "KB Curtsy Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "629",
+   "title": "KB Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5315",
+   "title": "KB Farmer's Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5316",
+   "title": "KB Figure Eight",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5317",
+   "title": "KB Front Rack Carry",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "630",
+   "title": "KB Goblet Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5318",
+   "title": "KB Halo",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "631",
+   "title": "KB Hang Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "632",
+   "title": "KB High Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "633",
+   "title": "KB Jack Knife",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "634",
+   "title": "KB Lateral Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "635",
+   "title": "KB Low Windmill",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "636",
+   "title": "KB Lunge with Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5319",
+   "title": "KB Marching Farmer's Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5320",
+   "title": "KB Overhead Carry",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "637",
+   "title": "KB Overhead Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "638",
+   "title": "KB Overhead Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5321",
+   "title": "KB Pistol Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "639",
+   "title": "KB Pistol Squat - Box Assisted",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "640",
+   "title": "KB Plank Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "641",
+   "title": "KB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "642",
+   "title": "KB Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5322",
+   "title": "KB Push Up to Renegade Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5323",
+   "title": "KB Renegade Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "643",
+   "title": "KB Russian Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "644",
+   "title": "KB Seated Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "645",
+   "title": "KB Seesaw Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "646",
+   "title": "KB Shoulder Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "647",
+   "title": "KB Side Lunge Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "648",
+   "title": "KB Single Leg Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "61",
+   "title": "KB Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "649",
+   "title": "KB Squat High Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "650",
+   "title": "KB Sumo High Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "651",
+   "title": "KB Sumo Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "652",
+   "title": "KB Swing Change Hands",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5324",
+   "title": "KB Swing Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "653",
+   "title": "KB Thruster",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "654",
+   "title": "KB Waiter Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5325",
+   "title": "KB Windmill",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "655",
+   "title": "Kipping Handstand Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "656",
+   "title": "Kipping Muscle Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5326",
+   "title": "Kipping Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "657",
+   "title": "Kipping Toe to Bar",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "148",
+   "title": "Knee Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5327",
+   "title": "Knee Skip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "658",
+   "title": "Knee Tuck Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "659",
+   "title": "Kneeling Bench Shoulder Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "661",
+   "title": "Kneeling Forearm Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "662",
+   "title": "Kneeling Landmine Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "663",
+   "title": "Kneeling Single Arm High Pulley Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5328",
+   "title": "Knuckle Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "664",
+   "title": "L Sit Chin Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5329",
+   "title": "L Sit on DB",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "665",
+   "title": "Landmine Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "666",
+   "title": "Landmine Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5330",
+   "title": "Lat Foam Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5331",
+   "title": "Lateral Box Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "667",
+   "title": "Lateral Burpee Over Barbell",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5332",
+   "title": "Lateral Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "668",
+   "title": "Lateral Raise with Band",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5333",
+   "title": "Lateral Shuffle",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5334",
+   "title": "Lateral Toe Tap",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "5335",
+   "title": "Lateral Toe Tap on Elevated Surface",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "387590",
+   "title": "Leg curl machine",
+   "coachOwn": true,
+   "primaryMuscleGroups": []
+  },
+  {
+   "exerciseId": "669",
+   "title": "Leg Lift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "670",
+   "title": "Leg Pull In",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "671",
+   "title": "Leg Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5336",
+   "title": "Long Arm Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "673",
+   "title": "Low Hang Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "674",
+   "title": "Low Hang Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "675",
+   "title": "Lu Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "676",
+   "title": "Lunge Jumps",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "677",
+   "title": "Lunge with Twist Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "679",
+   "title": "Lying Close Grip Barbell Tricep Extension Behind the Head",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "680",
+   "title": "Lying DB Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "681",
+   "title": "Lying Figure Four Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "682",
+   "title": "Lying Hamstring Stretch with Band",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5337",
+   "title": "Lying Knee to Chest Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "683",
+   "title": "Lying Knees to Chest Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "684",
+   "title": "Lying Rear Delt Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "685",
+   "title": "Lying Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "686",
+   "title": "Manmaker",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5338",
+   "title": "Medicine Ball Alternating Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5339",
+   "title": "Medicine Ball Burpee",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5340",
+   "title": "Medicine Ball Chest Pass",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "687",
+   "title": "Medicine Ball Forearm Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "688",
+   "title": "Medicine Ball High Plank Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "689",
+   "title": "Medicine Ball Mountain Climber",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "690",
+   "title": "Medicine Ball Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5341",
+   "title": "Medicine Ball Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5342",
+   "title": "Medicine Ball Rainbow Slam",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5343",
+   "title": "Medicine Ball Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5344",
+   "title": "Medicine Ball Rotational Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "155",
+   "title": "Medicine Ball Russian Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5345",
+   "title": "Medicine Ball Sit Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "64",
+   "title": "Medicine Ball Slam",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5346",
+   "title": "Medicine Ball Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5347",
+   "title": "Medicine Ball Squat to Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5348",
+   "title": "Medicine Ball Toe Touch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5349",
+   "title": "Medicine Ball V Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5350",
+   "title": "Medicine Ball Walking Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5351",
+   "title": "Medicine Ball Wood Chopper",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "691",
+   "title": "Middle Back Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "692",
+   "title": "Mini Band Lateral Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5352",
+   "title": "Mixed Grip Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "693",
+   "title": "Modified Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "65",
+   "title": "Mountain Climber",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5353",
+   "title": "Mountain Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "694",
+   "title": "Muscle Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "695",
+   "title": "Narrow Grip Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "696",
+   "title": "Narrow Grip Easy Bar Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "697",
+   "title": "Negative Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "698",
+   "title": "No Push Up Burpee",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "699",
+   "title": "Oblique Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "60",
+   "title": "One Arm KB Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "700",
+   "title": "One Handed Hang",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5354",
+   "title": "One Legged L Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "701",
+   "title": "Otis Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "703",
+   "title": "Overhead Front Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "704",
+   "title": "Overhead Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "69",
+   "title": "Overhead Walking Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "705",
+   "title": "Paloff Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "706",
+   "title": "Paloff Press with Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5355",
+   "title": "Parallettes L Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5356",
+   "title": "Paused Back Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5357",
+   "title": "Paused Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5358",
+   "title": "Paused Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5359",
+   "title": "Paused Front Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5360",
+   "title": "Paused Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "707",
+   "title": "Pendlay Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "708",
+   "title": "Physio Ball Hip Bridge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "709",
+   "title": "Pigeon Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5361",
+   "title": "Pin Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "152",
+   "title": "Pistol Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "71",
+   "title": "Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5362",
+   "title": "Plank Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5363",
+   "title": "Plank to Down Dog",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "710",
+   "title": "Plank Walk front to back",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "711",
+   "title": "Plank with Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "712",
+   "title": "Plate Flip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "713",
+   "title": "Plate Hammer Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "714",
+   "title": "Plate Pinch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "715",
+   "title": "Plate Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "716",
+   "title": "Plate Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "717",
+   "title": "Plie DB Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "718",
+   "title": "Plyo Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "719",
+   "title": "Pop Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "153",
+   "title": "Power Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "720",
+   "title": "Power Clean & Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "721",
+   "title": "Power Clean from Blocks",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "722",
+   "title": "Power Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "723",
+   "title": "Power Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "724",
+   "title": "Power Snatch from Blocks",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "725",
+   "title": "Preacher Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5364",
+   "title": "Pretzel",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "73",
+   "title": "Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "726",
+   "title": "Pull Up Iso Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5365",
+   "title": "Pull Up Negative",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "727",
+   "title": "Puppy Dog Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "728",
+   "title": "Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5366",
+   "title": "Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "729",
+   "title": "Push Up to Down Dog",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "730",
+   "title": "Push Up to Side Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "731",
+   "title": "Push Up with Feet on Exercise Ball",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5367",
+   "title": "Quad Foam Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "732",
+   "title": "Quad Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5368",
+   "title": "Quad Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5369",
+   "title": "Quick Rebounding Heel Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "5370",
+   "title": "Raised Leg Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "733",
+   "title": "RDL to Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "734",
+   "title": "Rear Delt Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "75",
+   "title": "Renegade Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "735",
+   "title": "Resistance Band Lat Pull Down",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "736",
+   "title": "Resistance Band Row to External Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "737",
+   "title": "Reverse Barbell Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "738",
+   "title": "Reverse Barbell Preacher Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "739",
+   "title": "Reverse Burpee",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "740",
+   "title": "Reverse Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "741",
+   "title": "Reverse Fly with External Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "742",
+   "title": "Reverse Fly with Pronated Grip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5371",
+   "title": "Reverse Grip Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "743",
+   "title": "Reverse Grip Bent Over Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "744",
+   "title": "Reverse Grip Yates Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "745",
+   "title": "Reverse Incline DB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "76",
+   "title": "Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "746",
+   "title": "Reverse Plate Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5372",
+   "title": "Reverse Sled Drag",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5373",
+   "title": "Ring Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "747",
+   "title": "Ring Dip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5374",
+   "title": "Ring False Grip Hang",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5375",
+   "title": "Ring Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5376",
+   "title": "Ring Hamstring Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5377",
+   "title": "Ring Knee Tuck",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5378",
+   "title": "Ring L Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5379",
+   "title": "Ring Pike Pull Through",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5380",
+   "title": "Ring Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5381",
+   "title": "Ring Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5382",
+   "title": "Ring Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "5383",
+   "title": "Ring Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "748",
+   "title": "Rocker",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "749",
+   "title": "Rocket Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "750",
+   "title": "Rocking Standing Calf Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "154",
+   "title": "Romanian Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "751",
+   "title": "Romanian Deadlift from Deficit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "752",
+   "title": "Romanian Deadlift with DB",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "753",
+   "title": "Romanian Deadlift with KB",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5384",
+   "title": "Rowing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "754",
+   "title": "Runners Lunge Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "77",
+   "title": "Russian KB swing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "755",
+   "title": "Russian Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5385",
+   "title": "Safety Bar Box Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5386",
+   "title": "Safety Bar Bulgarian Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5387",
+   "title": "Safety Bar Front Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5388",
+   "title": "Safety Bar Good Morning",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5389",
+   "title": "Safety Bar Half Heeled Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5390",
+   "title": "Safety Bar Half Heeled Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5391",
+   "title": "Safety Bar Reverse Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5392",
+   "title": "Safety Bar Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5393",
+   "title": "Safety Bar Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "757",
+   "title": "Scapular Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "756",
+   "title": "Scapular Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "758",
+   "title": "Scissor Kick",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5394",
+   "title": "Seal Jack",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "759",
+   "title": "Seated Arnold DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "760",
+   "title": "Seated Band Hamstring Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "761",
+   "title": "Seated Banded Calf Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "762",
+   "title": "Seated Barbell Military Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "763",
+   "title": "Seated Bent Over Rear Delt Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "767",
+   "title": "Seated DB Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "768",
+   "title": "Seated DB Front Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "769",
+   "title": "Seated DB Palms Down Wrist Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "770",
+   "title": "Seated DB Palms Up Wrist Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "771",
+   "title": "Seated DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "772",
+   "title": "Seated DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "773",
+   "title": "Seated Double DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "774",
+   "title": "Seated Flat Bench Leg Pull In",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5395",
+   "title": "Seated Forward Fold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "775",
+   "title": "Seated Good Morning",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "776",
+   "title": "Seated Hammer Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "5396",
+   "title": "Seated L Sit Leg Lift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "777",
+   "title": "Seated Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "778",
+   "title": "Seated Leg Tuck",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "779",
+   "title": "Seated Overhead Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "780",
+   "title": "Seated Palm Up Barbell Wrist Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "781",
+   "title": "Seated Palms Down Barbell Wrist Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "782",
+   "title": "Seated Single Arm DB Palms Down Wrist Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "783",
+   "title": "Seated Single Arm DB Palms Up Wrist Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "784",
+   "title": "Seated Straight Leg Pull In",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "785",
+   "title": "Shoulder Press with Band",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5397",
+   "title": "Shoulder Stand",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5398",
+   "title": "Shoulder Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "786",
+   "title": "Shoulder Tap",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "787",
+   "title": "Side Bridge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "788",
+   "title": "Side Jack Knife",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5399",
+   "title": "Side Leg Swing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "789",
+   "title": "Side Lunge Touching Heel",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "790",
+   "title": "Side Lying External Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "79",
+   "title": "Side Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "792",
+   "title": "Side Plank Hip Drop",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "80",
+   "title": "Side Plank on Hand",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "793",
+   "title": "Side Plank with Clam Shell Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "794",
+   "title": "Side Plank with Dynamic Clam Shell",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "795",
+   "title": "Side Step Squat With Band",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5400",
+   "title": "Side Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "796",
+   "title": "Side to Side Box Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "797",
+   "title": "Side to Side Box Step",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "798",
+   "title": "Side to Side Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "133",
+   "title": "Single Arm Bent Over DB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "136",
+   "title": "Single Arm Bottom-Up KB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "799",
+   "title": "Single Arm Cable Bent Over Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "800",
+   "title": "Single Arm Cable Chest Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "808",
+   "title": "Single Arm Cable Incline Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "821",
+   "title": "Single Arm Cable Rear Delt Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "822",
+   "title": "Single Arm Cable Rear Delt Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "824",
+   "title": "Single Arm Cable Seated High Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "823",
+   "title": "Single Arm Cable Seated Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "825",
+   "title": "Single Arm Cable Standing Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "803",
+   "title": "Single Arm Cable Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "149",
+   "title": "Single Arm Curl + Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "150",
+   "title": "Single Arm DB Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "804",
+   "title": "Single Arm DB Clean & Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "805",
+   "title": "Single Arm DB Overhead Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "151",
+   "title": "Single Arm DB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "140",
+   "title": "Single Arm DB Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "806",
+   "title": "Single Arm DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "809",
+   "title": "Single Arm KB Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "810",
+   "title": "Single Arm KB Floor Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "811",
+   "title": "Single Arm KB Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "812",
+   "title": "Single Arm KB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "813",
+   "title": "Single Arm KB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "814",
+   "title": "Single Arm KB Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "815",
+   "title": "Single Arm KB Swing",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "816",
+   "title": "Single Arm Landmine Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "817",
+   "title": "Single Arm Lateral Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "818",
+   "title": "Single Arm Overhead KB Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "819",
+   "title": "Single Arm Pronated DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "820",
+   "title": "Single Arm Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5401",
+   "title": "Single KB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "826",
+   "title": "Single Leg Ball Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5402",
+   "title": "Single Leg Box Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "26",
+   "title": "Single Leg Calf Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "81",
+   "title": "Single Leg Glute Bridge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "827",
+   "title": "Single Leg Heels Elevated Hip Thrust",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "828",
+   "title": "Single Leg High Box Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5403",
+   "title": "Single Leg KB Pass Over",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5404",
+   "title": "Single Leg Pogo Hop",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "829",
+   "title": "Single Leg Push Off",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "156",
+   "title": "Single Leg Romanian Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "830",
+   "title": "Single Leg Skater Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5405",
+   "title": "Single Leg Standing Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5406",
+   "title": "Single Under",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "83",
+   "title": "Sit-Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "84",
+   "title": "Skull Crusher",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5407",
+   "title": "Sled Drag",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5408",
+   "title": "Sled Push",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "157",
+   "title": "Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "831",
+   "title": "Snatch Behind the Neck Overhead Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "832",
+   "title": "Snatch Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "833",
+   "title": "Snatch from Blocks",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "834",
+   "title": "Snatch Grip Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "835",
+   "title": "Snatch High Pull From Hang",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "836",
+   "title": "Snatch Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "837",
+   "title": "Snatch Push Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "838",
+   "title": "Snatch Shrug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "839",
+   "title": "Sots Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "840",
+   "title": "Spider Crawl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5409",
+   "title": "Spider Man Step",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "841",
+   "title": "Split Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "842",
+   "title": "Split Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "843",
+   "title": "Split Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "158",
+   "title": "Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "844",
+   "title": "Split Squat with KB",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5410",
+   "title": "Spoto Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "845",
+   "title": "Squat Abduction With Band",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "846",
+   "title": "Squat Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "159",
+   "title": "Squat Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5411",
+   "title": "Squat Walk Out",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "847",
+   "title": "Stability Ball Pike with Knee Tuck",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "848",
+   "title": "Staggered Hands Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "849",
+   "title": "Standing Alternating DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "850",
+   "title": "Standing Barbell Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "851",
+   "title": "Standing Barbell Calf Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "852",
+   "title": "Standing Barbell Press Behind the Neck",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "853",
+   "title": "Standing Bent Over Single Arm DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "854",
+   "title": "Standing Bent Over Two Arm DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "855",
+   "title": "Standing Bicep Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "856",
+   "title": "Standing Bradford Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "857",
+   "title": "Standing Broad Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "859",
+   "title": "Standing DB Calf Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "860",
+   "title": "Standing DB Hand Squeeze",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "88",
+   "title": "Standing DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "861",
+   "title": "Standing DB Reverse Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "862",
+   "title": "Standing DB Straight Arm Front Delt Raise Above Head",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "863",
+   "title": "Standing DB Upright Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5412",
+   "title": "Standing Forward Fold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "864",
+   "title": "Standing Front Barbell Raise Overhead",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5413",
+   "title": "Standing IT Band Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "89",
+   "title": "Standing KB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "865",
+   "title": "Standing Landmine Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "866",
+   "title": "Standing Overhead Barbell Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "867",
+   "title": "Standing Overhead DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "868",
+   "title": "Standing Palm In Single Arm DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "869",
+   "title": "Standing Palms Up Barbell Behind the Back Wrist Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "870",
+   "title": "Standing Quad Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "872",
+   "title": "Standing Single Arm DB Curl Over Incline Bench",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "873",
+   "title": "Standing Single Arm DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5414",
+   "title": "Star Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "874",
+   "title": "Star Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "875",
+   "title": "Static Clam Shell Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5415",
+   "title": "Stationary Bike",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "876",
+   "title": "Step Up with Knee Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "877",
+   "title": "Stiff Leg Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "878",
+   "title": "Stiff Legged DB Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "879",
+   "title": "Stir the Pot",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5416",
+   "title": "Straddle L Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "880",
+   "title": "Straight Leg Barbell Good Morning",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "881",
+   "title": "Straight Leg Bicycle Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "882",
+   "title": "Straight Leg Boat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "883",
+   "title": "Straight Leg Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "884",
+   "title": "Straight Legged Hip Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "885",
+   "title": "Strict Handstand Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "886",
+   "title": "Strict Toe to Bar",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5417",
+   "title": "Suitcase Carry",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Forearms"
+   ]
+  },
+  {
+   "exerciseId": "887",
+   "title": "Suitcase Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "888",
+   "title": "Suitcase Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "889",
+   "title": "Sumo Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "890",
+   "title": "Sumo Deadlift Block Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "891",
+   "title": "Sumo KB Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5418",
+   "title": "Sumo Romanian Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5419",
+   "title": "Sun Salutation A",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5420",
+   "title": "Sun Salutation B",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "90",
+   "title": "Superman",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "892",
+   "title": "Superman Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "893",
+   "title": "Supine Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "894",
+   "title": "Supported Calf Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Calves"
+   ]
+  },
+  {
+   "exerciseId": "895",
+   "title": "Svend Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "896",
+   "title": "Swimmer",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5421",
+   "title": "Swiss Ball Back Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5422",
+   "title": "Swiss Ball Bird Dog",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5423",
+   "title": "Swiss Ball Bridge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5424",
+   "title": "Swiss Ball Chest Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5425",
+   "title": "Swiss Ball Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5426",
+   "title": "Swiss Ball DB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "5427",
+   "title": "Swiss Ball Hip Thrust",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "5428",
+   "title": "Swiss Ball Jack Knife",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "897",
+   "title": "Swiss Ball Leg Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5429",
+   "title": "Swiss Ball Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5430",
+   "title": "Swiss Ball Pike",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5431",
+   "title": "Swiss Ball Russian Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "898",
+   "title": "Swiss Ball Single Leg Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5432",
+   "title": "Swiss Ball Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5433",
+   "title": "Swiss Ball Superman",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5434",
+   "title": "T Spine Foam Roll",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "899",
+   "title": "Tall Muscle Snatch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "900",
+   "title": "Tate Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "901",
+   "title": "Toe Tap",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "902",
+   "title": "Toe Touch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5435",
+   "title": "Torso Twist",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "903",
+   "title": "TrapBar Deadlift",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "904",
+   "title": "TrapBar Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5436",
+   "title": "Tree Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5437",
+   "title": "Triangle Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "5438",
+   "title": "Tricep Kick Back",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5439",
+   "title": "Triceps Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "160",
+   "title": "TRX Bicep Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "92",
+   "title": "TRX Body Saw",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "93",
+   "title": "TRX Bulgarian Split Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "94",
+   "title": "TRX Chest Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "95",
+   "title": "TRX Chest Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "96",
+   "title": "TRX Cross Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "97",
+   "title": "TRX Hip Hinge Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "98",
+   "title": "TRX Hip Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "100",
+   "title": "TRX Knee Tuck",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "99",
+   "title": "TRX Kneeing Rollout",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "101",
+   "title": "TRX Lateral Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "102",
+   "title": "TRX Low Back Stretch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "103",
+   "title": "TRX Lower Deltoid Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "161",
+   "title": "TRX Lunge with Hop",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "105",
+   "title": "TRX Mid Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "106",
+   "title": "TRX Mountain Climber",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "107",
+   "title": "TRX Oblique Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "108",
+   "title": "TRX Overhead Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "109",
+   "title": "TRX Pike",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "110",
+   "title": "TRX Pistol Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "111",
+   "title": "TRX Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "112",
+   "title": "TRX Power Pull",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "113",
+   "title": "TRX Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "114",
+   "title": "TRX Single Arm Mid Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "115",
+   "title": "TRX Single Leg Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "116",
+   "title": "TRX Single Leg Squat Jump",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "117",
+   "title": "TRX Sit-Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "118",
+   "title": "TRX Split Deltoid Fly",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "162",
+   "title": "TRX Standing Rollout",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "120",
+   "title": "TRX Torso Rotation",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "121",
+   "title": "TRX Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "905",
+   "title": "Tuck Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5440",
+   "title": "Tuck Hold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5441",
+   "title": "Tuck L Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "122",
+   "title": "Turkish Get Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "5442",
+   "title": "Twisting Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "906",
+   "title": "Twisting Mountain Climber",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "910",
+   "title": "Two Arm DB Preacher Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "911",
+   "title": "Two Arm KB Clean",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "912",
+   "title": "Two Arm KB Jerk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "913",
+   "title": "Two Arm KB Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "914",
+   "title": "Two Arm KB Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "915",
+   "title": "Two Arm Pronated DB Tricep Extension",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "5443",
+   "title": "Typewriter Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "916",
+   "title": "U Ab",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "917",
+   "title": "Underhand Front Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "918",
+   "title": "Upright Row with Band",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "919",
+   "title": "Upward Facing Dog",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "5444",
+   "title": "V Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "163",
+   "title": "V-Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5445",
+   "title": "Vertical Leg Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "920",
+   "title": "W Raise",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "921",
+   "title": "Waiter's Carry",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Shoulders"
+   ]
+  },
+  {
+   "exerciseId": "922",
+   "title": "Walking Barbell Lunge",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "923",
+   "title": "Walking Knee Hug",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "924",
+   "title": "Walking Lunge with Overhead Weight",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "164",
+   "title": "Wall Ball",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "125",
+   "title": "Wall Sit",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "925",
+   "title": "Wall Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "5446",
+   "title": "Warrior 1",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5447",
+   "title": "Warrior 2",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "926",
+   "title": "Weighted Bench Dip",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Triceps"
+   ]
+  },
+  {
+   "exerciseId": "927",
+   "title": "Weighted Chin Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "928",
+   "title": "Weighted Crunch",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "929",
+   "title": "Weighted Plank",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Abs"
+   ]
+  },
+  {
+   "exerciseId": "930",
+   "title": "Weighted Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "931",
+   "title": "Weighted Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "932",
+   "title": "Weighted Sissy Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "165",
+   "title": "Weighted Step Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "5448",
+   "title": "Wheel Pose",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Lower Back"
+   ]
+  },
+  {
+   "exerciseId": "933",
+   "title": "Wide Grip Barbell Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "934",
+   "title": "Wide Grip Bench Press",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "935",
+   "title": "Wide Grip Lat Pulldown",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "936",
+   "title": "Wide Grip Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "937",
+   "title": "Wide Grip Rear Pull Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "938",
+   "title": "Wide Grip Standing Barbell Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  },
+  {
+   "exerciseId": "939",
+   "title": "Wide Incline Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "940",
+   "title": "Wide Legged Forward Fold",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Hamstrings"
+   ]
+  },
+  {
+   "exerciseId": "941",
+   "title": "Wide Push Up",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Chest"
+   ]
+  },
+  {
+   "exerciseId": "942",
+   "title": "X Band Walk",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Glute"
+   ]
+  },
+  {
+   "exerciseId": "943",
+   "title": "Yates Row",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Upper Back"
+   ]
+  },
+  {
+   "exerciseId": "944",
+   "title": "Zercher Squat",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Quads"
+   ]
+  },
+  {
+   "exerciseId": "945",
+   "title": "Zottman Curl",
+   "coachOwn": false,
+   "primaryMuscleGroups": [
+    "Biceps"
+   ]
+  }
+ ],
+ "exerciseParameters": {
+  "1": {
+   "title": "Air Squat",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "63"
+    }
+   ]
+  },
+  "16": {
+   "title": "Bench Press",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "78"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "199"
+    }
+   ]
+  },
+  "26": {
+   "title": "Single Leg Calf Raise",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "88"
+    }
+   ]
+  },
+  "37": {
+   "title": "DB Lateral Raise",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "99"
+    },
+    {
+     "parameter": "WeightPerSideLb",
+     "id": "214"
+    }
+   ]
+  },
+  "63": {
+   "title": "Body Weight Lateral Lunge",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "125"
+    }
+   ]
+  },
+  "65": {
+   "title": "Mountain Climber",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "127"
+    }
+   ]
+  },
+  "76": {
+   "title": "Reverse Lunge",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "138"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "246"
+    }
+   ]
+  },
+  "79": {
+   "title": "Side Plank",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "141"
+    },
+    {
+     "parameter": "Duration",
+     "id": "249"
+    }
+   ]
+  },
+  "80": {
+   "title": "Side Plank on Hand",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "142"
+    },
+    {
+     "parameter": "Duration",
+     "id": "250"
+    }
+   ]
+  },
+  "81": {
+   "title": "Single Leg Glute Bridge",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "143"
+    }
+   ]
+  },
+  "125": {
+   "title": "Wall Sit",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "187"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "261"
+    },
+    {
+     "parameter": "Duration",
+     "id": "659"
+    }
+   ]
+  },
+  "131": {
+   "title": "Back Squat",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "67"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "193"
+    }
+   ]
+  },
+  "154": {
+   "title": "Romanian Deadlift",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "136"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "244"
+    }
+   ]
+  },
+  "156": {
+   "title": "Single Leg Romanian Deadlift",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "144"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "251"
+    }
+   ]
+  },
+  "159": {
+   "title": "Squat Jump",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "149"
+    }
+   ]
+  },
+  "165": {
+   "title": "Weighted Step Up",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "188"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "262"
+    }
+   ]
+  },
+  "399": {
+   "title": "Alternating DB Lunge",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "663"
+    },
+    {
+     "parameter": "WeightPerSideLb",
+     "id": "1685"
+    }
+   ]
+  },
+  "407": {
+   "title": "Alternating Superman",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "671"
+    }
+   ]
+  },
+  "408": {
+   "title": "Arm Climb",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "672"
+    }
+   ]
+  },
+  "411": {
+   "title": "Band Abduction",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "675"
+    }
+   ]
+  },
+  "412": {
+   "title": "Band Assisted Pull Up",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "676"
+    }
+   ]
+  },
+  "418": {
+   "title": "Banded Clam Shell",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "682"
+    }
+   ]
+  },
+  "419": {
+   "title": "Banded Glute Bridge",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "683"
+    }
+   ]
+  },
+  "422": {
+   "title": "Banded Monster Walk",
+   "parameters": [
+    {
+     "parameter": "DistanceFt",
+     "id": "686"
+    }
+   ]
+  },
+  "423": {
+   "title": "Banded Plank Jack",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "687"
+    }
+   ]
+  },
+  "427": {
+   "title": "Barbell Bent Over Row",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "691"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1693"
+    }
+   ]
+  },
+  "432": {
+   "title": "Barbell Step Ups",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "696"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1698"
+    }
+   ]
+  },
+  "440": {
+   "title": "Bird Dog",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "704"
+    }
+   ]
+  },
+  "443": {
+   "title": "Body Weight Bulgarian Split Squat",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "707"
+    }
+   ]
+  },
+  "446": {
+   "title": "Body Weight Reverse Lunge",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "710"
+    }
+   ]
+  },
+  "447": {
+   "title": "Body Weight Split Squat",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "711"
+    }
+   ]
+  },
+  "450": {
+   "title": "Bosu Ball Plank",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "714"
+    },
+    {
+     "parameter": "Duration",
+     "id": "1705"
+    }
+   ]
+  },
+  "454": {
+   "title": "Bosu Ball Side Plank",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "718"
+    },
+    {
+     "parameter": "Duration",
+     "id": "1706"
+    }
+   ]
+  },
+  "474": {
+   "title": "Cable Triceps Pushdown",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "738"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1718"
+    }
+   ]
+  },
+  "475": {
+   "title": "Cat Cow",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "739"
+    }
+   ]
+  },
+  "500": {
+   "title": "DB Bulgarian Split Squat",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "764"
+    },
+    {
+     "parameter": "WeightPerSideLb",
+     "id": "1734"
+    }
+   ]
+  },
+  "520": {
+   "title": "DB Seated Single Leg Calf Raise",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "784"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1754"
+    }
+   ]
+  },
+  "523": {
+   "title": "DB Single Leg Deadlift",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "787"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1757"
+    }
+   ]
+  },
+  "528": {
+   "title": "DeadBug",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "792"
+    }
+   ]
+  },
+  "530": {
+   "title": "Decline Forearm Plank",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "794"
+    },
+    {
+     "parameter": "Duration",
+     "id": "1763"
+    }
+   ]
+  },
+  "551": {
+   "title": "Dynamic Clam Shell",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "815"
+    }
+   ]
+  },
+  "553": {
+   "title": "Elevated Body Weight Calf Raise",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "817"
+    }
+   ]
+  },
+  "554": {
+   "title": "Elevated Single Leg Body Weight Calf Raise",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "818"
+    }
+   ]
+  },
+  "557": {
+   "title": "Exercise Ball DeadBug",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "821"
+    }
+   ]
+  },
+  "570": {
+   "title": "Flutter Kicks",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "834"
+    }
+   ]
+  },
+  "571": {
+   "title": "Forearm Plank",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "835"
+    },
+    {
+     "parameter": "Duration",
+     "id": "1785"
+    }
+   ]
+  },
+  "572": {
+   "title": "Forearm Plank Hip Dip",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "836"
+    }
+   ]
+  },
+  "579": {
+   "title": "Glute Bridge",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "843"
+    }
+   ]
+  },
+  "580": {
+   "title": "Glute Bridge Hamstring Walkout",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "844"
+    }
+   ]
+  },
+  "586": {
+   "title": "Hamstring Slide",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "850"
+    }
+   ]
+  },
+  "594": {
+   "title": "Heels Elevated Hip Thrust",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "858"
+    }
+   ]
+  },
+  "611": {
+   "title": "Incline DB Press",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "875"
+    },
+    {
+     "parameter": "WeightPerSideLb",
+     "id": "1800"
+    }
+   ]
+  },
+  "616": {
+   "title": "Incline Push Up",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "880"
+    }
+   ]
+  },
+  "625": {
+   "title": "Jump Rope",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "889"
+    }
+   ]
+  },
+  "644": {
+   "title": "KB Seated Press",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "908"
+    },
+    {
+     "parameter": "WeightPerSideLb",
+     "id": "1827"
+    }
+   ]
+  },
+  "648": {
+   "title": "KB Single Leg Deadlift",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "912"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1831"
+    }
+   ]
+  },
+  "681": {
+   "title": "Lying Figure Four Stretch",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "945"
+    }
+   ]
+  },
+  "682": {
+   "title": "Lying Hamstring Stretch with Band",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "946"
+    }
+   ]
+  },
+  "692": {
+   "title": "Mini Band Lateral Walk",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "956"
+    }
+   ]
+  },
+  "750": {
+   "title": "Rocking Standing Calf Raise",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "1014"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1890"
+    }
+   ]
+  },
+  "752": {
+   "title": "Romanian Deadlift with DB",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "1016"
+    },
+    {
+     "parameter": "WeightPerSideLb",
+     "id": "1892"
+    }
+   ]
+  },
+  "754": {
+   "title": "Runners Lunge Stretch",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "1018"
+    }
+   ]
+  },
+  "755": {
+   "title": "Russian Twist",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1019"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1894"
+    }
+   ]
+  },
+  "766": {
+   "title": "Cable Seated Row",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "1030"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "1900"
+    }
+   ]
+  },
+  "787": {
+   "title": "Side Bridge",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "1051"
+    },
+    {
+     "parameter": "Duration",
+     "id": "1916"
+    }
+   ]
+  },
+  "792": {
+   "title": "Side Plank Hip Drop",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1056"
+    }
+   ]
+  },
+  "793": {
+   "title": "Side Plank with Clam Shell Hold",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1057"
+    },
+    {
+     "parameter": "Duration",
+     "id": "1919"
+    }
+   ]
+  },
+  "794": {
+   "title": "Side Plank with Dynamic Clam Shell",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1058"
+    }
+   ]
+  },
+  "826": {
+   "title": "Single Leg Ball Curl",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1090"
+    }
+   ]
+  },
+  "827": {
+   "title": "Single Leg Heels Elevated Hip Thrust",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1091"
+    }
+   ]
+  },
+  "828": {
+   "title": "Single Leg High Box Squat",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1092"
+    }
+   ]
+  },
+  "859": {
+   "title": "Standing DB Calf Raise",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "1123"
+    },
+    {
+     "parameter": "WeightPerSideLb",
+     "id": "1970"
+    }
+   ]
+  },
+  "870": {
+   "title": "Standing Quad Stretch",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "1134"
+    }
+   ]
+  },
+  "875": {
+   "title": "Static Clam Shell Hold",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1139"
+    },
+    {
+     "parameter": "Duration",
+     "id": "1984"
+    }
+   ]
+  },
+  "876": {
+   "title": "Step Up with Knee Raise",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1140"
+    }
+   ]
+  },
+  "894": {
+   "title": "Supported Calf Stretch",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "1158"
+    }
+   ]
+  },
+  "942": {
+   "title": "X Band Walk",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "1206"
+    }
+   ]
+  },
+  "5184": {
+   "title": "Ankle Roll",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "8403"
+    }
+   ]
+  },
+  "5191": {
+   "title": "Band Crab Walk",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8410"
+    }
+   ]
+  },
+  "5203": {
+   "title": "Banded Bird Dog",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8422"
+    }
+   ]
+  },
+  "5207": {
+   "title": "Banded Hip Abduction",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8426"
+    }
+   ]
+  },
+  "5212": {
+   "title": "Banded Overhead Press",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "8431"
+    }
+   ]
+  },
+  "5215": {
+   "title": "Banded Plank Leg Lift",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8434"
+    }
+   ]
+  },
+  "5219": {
+   "title": "Banded Row",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "8438"
+    }
+   ]
+  },
+  "5220": {
+   "title": "Banded Shin Crunch",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8439"
+    }
+   ]
+  },
+  "5228": {
+   "title": "Bird Dog Row",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8447"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "8911"
+    }
+   ]
+  },
+  "5235": {
+   "title": "Box Plank with Leg Lift",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8454"
+    }
+   ]
+  },
+  "5247": {
+   "title": "Calf Foam Roll",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "8466"
+    }
+   ]
+  },
+  "5256": {
+   "title": "Copenhagen Plank",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8475"
+    },
+    {
+     "parameter": "Duration",
+     "id": "8922"
+    }
+   ]
+  },
+  "5266": {
+   "title": "DB Russian Twist",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8485"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "8928"
+    }
+   ]
+  },
+  "5290": {
+   "title": "Glute Foam Roll",
+   "parameters": [
+    {
+     "parameter": "Duration",
+     "id": "8509"
+    }
+   ]
+  },
+  "5307": {
+   "title": "Hip Flexor Stretch",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8526"
+    },
+    {
+     "parameter": "Duration",
+     "id": "8945"
+    }
+   ]
+  },
+  "5310": {
+   "title": "Hollow Hold",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "8529"
+    },
+    {
+     "parameter": "Duration",
+     "id": "8946"
+    }
+   ]
+  },
+  "5311": {
+   "title": "Hollow Rock",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "8530"
+    }
+   ]
+  },
+  "5312": {
+   "title": "Ipsilateral Dead Bug",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8531"
+    }
+   ]
+  },
+  "5313": {
+   "title": "IT Foam Roll",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8532"
+    },
+    {
+     "parameter": "Duration",
+     "id": "8947"
+    }
+   ]
+  },
+  "5367": {
+   "title": "Quad Foam Roll",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8586"
+    },
+    {
+     "parameter": "Duration",
+     "id": "8982"
+    }
+   ]
+  },
+  "5368": {
+   "title": "Quad Stretch",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8587"
+    },
+    {
+     "parameter": "Duration",
+     "id": "8983"
+    }
+   ]
+  },
+  "5369": {
+   "title": "Quick Rebounding Heel Raise",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8588"
+    }
+   ]
+  },
+  "5392": {
+   "title": "Safety Bar Split Squat",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8611"
+    },
+    {
+     "parameter": "WeightLb",
+     "id": "8995"
+    }
+   ]
+  },
+  "5396": {
+   "title": "Seated L Sit Leg Lift",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8615"
+    }
+   ]
+  },
+  "5402": {
+   "title": "Single Leg Box Squat",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8621"
+    }
+   ]
+  },
+  "5404": {
+   "title": "Single Leg Pogo Hop",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8623"
+    }
+   ]
+  },
+  "5405": {
+   "title": "Single Leg Standing Squat",
+   "parameters": [
+    {
+     "parameter": "RepsPerSide",
+     "id": "8624"
+    }
+   ]
+  },
+  "5423": {
+   "title": "Swiss Ball Bridge",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "8642"
+    }
+   ]
+  },
+  "387588": {
+   "title": "Anterior Tibialis Raise",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "680617"
+    }
+   ]
+  },
+  "387590": {
+   "title": "Leg curl machine",
+   "parameters": [
+    {
+     "parameter": "Reps",
+     "id": "680620"
+    },
+    {
+     "parameter": "WeightKg",
+     "id": "680621"
+    }
+   ]
+  }
+ }
+}
