@@ -21,7 +21,7 @@ export const restLine = (r: Rest = { exercises: REST_EXERCISES, rounds: REST_ROU
 type ExParam = { parameter: string; title: string; unit: unknown; category: string; range?: unknown; id: string };
 export type Exercise = { id: string; ownerId: number; title: string; videoUrl: string | null; instructions: string | null; parameters: ExParam[]; canEdit: boolean };
 /** extra — дополнительные параметры подхода (вес в кг рядом с повторами). Значение одно на все подходы. */
-export type ExtraParam = { parameter: string; libraryParameterId: string | null; prescribedValue: string };
+export type ExtraParam = { parameter: string; libraryParameterId: string | null; prescribedValue: string; allowEmpty?: boolean };
 export type PlanPrescription = { exerciseId: string; title: string; parameter: string; libraryParameterId: string | null; sets: number; prescribedValue: string; coachNotes: string | null; extra?: ExtraParam[] };
 export type PlanBlock = { blockType: "SingleExercise" | "Circuit"; coachNotes: string | null; rounds?: number; prescriptions: PlanPrescription[] };
 /** rest — свой отдых для круговой (по умолчанию 15–20 с / 90–120 с). */
@@ -77,8 +77,8 @@ export function signatureOf(w: Record<string, unknown>): string {
 }
 
 export async function buildBody(week: PlanWeek, o: { athleteId: number; date: string; hidden: boolean; forWrite?: boolean; get?: (p: string) => Promise<{ status: number; body: unknown }> }): Promise<Record<string, unknown>> {
-  if (o.forWrite) for (const b of week.blocks) for (const p of b.prescriptions) for (const v of [p.prescribedValue, ...(p.extra ?? []).map((x) => x.prescribedValue)])
-    if (!/^\d+(\.\d+)?$/.test(v)) throw new Error(`«${p.title}»: значение «${v}» не число — записывать нельзя`);
+  if (o.forWrite) for (const b of week.blocks) for (const p of b.prescriptions) for (const x of [{ prescribedValue: p.prescribedValue, allowEmpty: false }, ...(p.extra ?? [])])
+    if (!/^\d+(\.\d+)?$/.test(x.prescribedValue) && !(x.allowEmpty && x.prescribedValue === "")) throw new Error(`«${p.title}»: значение «${x.prescribedValue}» не число — записывать нельзя`);
   const circuit = week.blocks.some((b) => b.blockType === "Circuit");
   const blocks = [];
   for (const b of week.blocks) {
@@ -92,7 +92,7 @@ export async function buildBody(week: PlanWeek, o: { athleteId: number; date: st
       const tmpl = pars.map(({ x, par }) => (x.parameter === "Duration" ? "{Duration}" : /^Weight/.test(x.parameter) ? `@ {${x.parameter}} ${(par.unit as { abbreviation?: string })?.abbreviation ?? ""}`.trim() : `{${x.parameter}} ${par.title}`)).join(" ");
       prescriptions.push({
         id: randomUUID(), exercise: ex, parameters: pars.map(({ par }) => ({ parameter: par.parameter, title: par.title, unit: par.unit, category: par.category, range: par.range ?? null, id: randomUUID() })),
-        sets: Array.from({ length: p.sets }, () => ({ id: randomUUID(), isComplete: false, setOrigin: "Prescribed", parameterValues: pars.map(({ x, par }) => ({ id: randomUUID(), parameter: x.parameter, inputFormat: fmt(x.parameter), range: par.range ?? null, prescribedValue: x.prescribedValue, executedValue: null })) })),
+        sets: Array.from({ length: p.sets }, () => ({ id: randomUUID(), isComplete: false, setOrigin: "Prescribed", parameterValues: pars.map(({ x, par }) => ({ id: randomUUID(), parameter: x.parameter, inputFormat: fmt(x.parameter), range: par.range ?? null, prescribedValue: x.prescribedValue === "" ? null : x.prescribedValue, executedValue: null })) })),
         coachNotes: p.coachNotes, compliancePercent: 0, setSummaryTemplate: tmpl,
       });
     }
@@ -124,7 +124,7 @@ export function studentText(w: Record<string, unknown>): string {
       const pvs = (sets[0]?.parameterValues as Array<Record<string, unknown>>) ?? [];
       const main = pvs.find((x) => !/^Weight/.test(String(x.parameter))) ?? pvs[0]; const w = pvs.find((x) => /^Weight/.test(String(x.parameter)));
       const v = String(main?.prescribedValue); const unit = par === "Duration" ? " с" : String(main?.parameter) === "RepsPerSide" ? " на сторону" : " повт.";
-      const wTxt = w ? ` · ${String(w.prescribedValue)} ${/Kg$/.test(String(w.parameter)) ? "кг" : "lb"}${/PerSide/.test(String(w.parameter)) ? " на сторону" : ""}` : "";
+      const wTxt = w && w.prescribedValue == null ? " · вес — подбери сам" : w ? ` · ${String(w.prescribedValue)} ${/Kg$/.test(String(w.parameter)) ? "кг" : "lb"}${/PerSide/.test(String(w.parameter)) ? " на сторону" : ""}` : "";
       out.push(`${b.blockType === "Circuit" ? "  " : ""}${String((p.exercise as Record<string, unknown>)?.title)} — ${sets.length} × ${v}${unit}${wTxt}${p.coachNotes ? ` · ${String(p.coachNotes)}` : ""}`);
     }
     if (b.blockType !== "Circuit" && b.coachNotes) out.push(`  (${String(b.coachNotes)})`);

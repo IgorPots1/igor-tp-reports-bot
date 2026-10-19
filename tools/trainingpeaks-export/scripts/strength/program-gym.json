@@ -1,5 +1,5 @@
 {
- "doc": "Программа «Зал с весами» (Игорь 19.10). 1 раз в неделю, классика, вес в кг числом. Верх диапазона — 12 повторов (икры на тренажёре — 15). Прогрессия: повторы до верха, затем +вес (2,5 кг — верх тела, 5 кг — ноги), разгрузка на 4-й и 8-й неделе — вес минус 10%. Старт — от отчёта атлета 17.10 минус 10–15% (числа дал Игорь). Упражнения custom:* — своих упражнений тренера ещё нет в библиотеке TP, создаются перед постановкой (custom-exercises.json сопоставляет их с id). Значение «?» — Игорь не дал вес; запись с «?» запрещена.",
+ "doc": "Программа «Зал с весами» (Игорь 19.10). 1 раз в неделю, классика, вес в кг числом. Верх диапазона — 12 повторов (икры на тренажёре — 15). Прогрессия: повторы до верха, затем +вес (2,5 кг — верх тела, 5 кг — ноги), разгрузка на 4-й и 8-й неделе — вес минус 10%. Старт — от отчёта атлета 17.10 минус 10–15% (числа дал Игорь). Упражнения custom:* — своих упражнений тренера ещё нет в библиотеке TP, создаются перед постановкой (custom-exercises.json сопоставляет их с id). Разгибание и сгибание ног — вес числом НЕ задаётся (решение Игоря 19.10): параметр веса пустой (null, как у Игоря во всех 1740 назначениях), заметка «подбери вес на 12 повторов с запасом 2–3»; дальше прогрессия от выполненного веса. Пустое значение разрешено только с allowEmpty.",
  "custom": {
   "custom:leg_press": {
    "title": "Жим ногами в тренажёре",
@@ -69,12 +69,13 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": null,
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "?"
+            "prescribedValue": "",
+            "allowEmpty": true
            }
           ]
          }
@@ -91,12 +92,13 @@
           "libraryParameterId": "680620",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": null,
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": "680621",
-            "prescribedValue": "?"
+            "prescribedValue": "",
+            "allowEmpty": true
            }
           ]
          }
@@ -254,12 +256,13 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": null,
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "?"
+            "prescribedValue": "",
+            "allowEmpty": true
            }
           ]
          }
@@ -276,12 +279,13 @@
           "libraryParameterId": "680620",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": null,
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": "680621",
-            "prescribedValue": "?"
+            "prescribedValue": "",
+            "allowEmpty": true
            }
           ]
          }
