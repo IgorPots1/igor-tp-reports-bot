@@ -116,6 +116,7 @@ type Draft = {
   hr_strap: string;
   power_meter: string;
   indoor: string[];
+  heart_screen: string;
   health_injuries: string;
   health_chronic: string;
   sleep_hours: string;
@@ -131,6 +132,7 @@ type ErrorKey =
   | "goal"
   | "sports"
   | "total_hours"
+  | "heart_screen"
   | "health_injuries"
   | "health_chronic"
   | "health_disclaimer_accepted"
@@ -171,6 +173,7 @@ const EMPTY: Draft = {
   hr_strap: "",
   power_meter: "",
   indoor: [],
+  heart_screen: "",
   health_injuries: "",
   health_chronic: "",
   sleep_hours: "",
@@ -183,7 +186,13 @@ const EMPTY: Draft = {
 
 type ListKey = "available_days" | "time_of_day" | "gadgets" | "platforms" | "indoor";
 
-type OneKey = "hr_strap" | "power_meter" | "energy_level" | "sex" | "coaching_experience";
+type OneKey =
+  | "hr_strap"
+  | "power_meter"
+  | "energy_level"
+  | "sex"
+  | "coaching_experience"
+  | "heart_screen";
 
 function blank(value: string): boolean {
   return value.trim().length === 0;
@@ -320,6 +329,9 @@ export default function StartForm() {
       }
     }
     if (current === 5) {
+      if (draft.heart_screen !== "yes" && draft.heart_screen !== "no") {
+        found.heart_screen = "Please choose Yes or No";
+      }
       if (blank(draft.health_injuries)) {
         found.health_injuries = "Please answer. If you have no injuries, write \"no\"";
       }
@@ -392,6 +404,7 @@ export default function StartForm() {
       "recent_results",
       "strava_url",
       "hr_strap",
+      "heart_screen",
       "health_injuries",
       "health_chronic",
       "sleep_hours",
@@ -589,7 +602,7 @@ export default function StartForm() {
           <div className="row">
             <div className="f">
               <label htmlFor="birth_date">Date of birth</label>
-              <div className="hint">Optional. I use your age to set heart rate zones</div>
+              <div className="hint">Optional. I use it to plan your training load and recovery</div>
               <input
                 id="birth_date"
                 type="date"
@@ -1016,6 +1029,25 @@ export default function StartForm() {
               </span>
             </div>
 
+            <div className={`f${bad("heart_screen")}`}>
+              <label id="heart_screen-label">
+                Has a doctor ever told you that you have a heart condition, or do you get
+                chest pain, dizziness or fainting when you exercise?{" "}
+                <span className="req">*</span>
+              </label>
+              {chipsOne("heart_screen", YES_NO, "heart_screen-label")}
+              {err("heart_screen")}
+              {draft.heart_screen === "yes" ? (
+                <div className="note">
+                  <span className="i" aria-hidden="true">!</span>
+                  <span>
+                    Please check with your doctor before we start. Tell me what they said in
+                    the health conditions question below.
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
             <div className={`f${bad("health_injuries")}`}>
               <label htmlFor="health_injuries">
                 Any injuries now or in the last 12 months? <span className="req">*</span>
@@ -1077,9 +1109,13 @@ export default function StartForm() {
               <label htmlFor="health_discomfort">
                 {draft.sex === "male"
                   ? "Anything else about your health or energy I should know?"
-                  : "Anything else about your health, energy or menstrual cycle I should know?"}
+                  : "Optional: anything about your menstrual cycle or menopause that affects your training or energy?"}
               </label>
-              <div className="hint">Optional</div>
+              <div className="hint">
+                {draft.sex === "male"
+                  ? "Optional"
+                  : "For example, irregular or missed periods, or days you feel much worse"}
+              </div>
               <textarea
                 id="health_discomfort"
                 placeholder="Anything that helps me plan your training load"

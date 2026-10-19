@@ -158,6 +158,16 @@ function coachingSportWeek(form: FormData): string | null {
 }
 
 /**
+ * Скрининг сердца клиента 1:1 (сердечный диагноз, боль в груди, головокружение
+ * или обмороки на нагрузке). Обязательный yes/no; отдельной колонки нет, идёт
+ * строкой в шапку why_intensive, а "yes" ещё и предупреждением в Telegram.
+ */
+function coachingHeartScreen(form: FormData): "yes" | "no" | null {
+  const value = text(form, "heart_screen", 5);
+  return value === "yes" || value === "no" ? value : null;
+}
+
+/**
  * Читаемый блок анкеты клиента 1:1 для why_intensive: id чата (если был),
  * согласие на обработку данных и все ответы, у которых нет своей колонки.
  * Пустые строки пропускаются.
@@ -180,6 +190,7 @@ function coachingEnBlock(form: FormData, consentedAt: string): string {
   add("Chat id (c)", coachingChatId(form));
   add("Time zone", text(form, "timezone", 80));
   lines.push(privacyConsentLine(consentedAt));
+  add("Heart/chest/dizziness screen", coachingHeartScreen(form));
 
   section("Goals");
   add("What they want from a coach", text(form, "coach_expectations"));
@@ -228,7 +239,7 @@ async function notifyTelegram(params: {
   /** Английская пробная неделя: WhatsApp, где идёт сама неделя 1:1. */
   trialEnWhatsapp?: string | null;
   /** Новый клиент 1:1: виды спорта и id чата из ссылки (?c=), если был. */
-  coachingEn?: { chatId: string | null; sports: string };
+  coachingEn?: { chatId: string | null; sports: string; heartScreenYes: boolean };
 }): Promise<void> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const leadsChat = process.env.LEADS_CHAT_ID;
@@ -246,6 +257,7 @@ async function notifyTelegram(params: {
   const message = params.coachingEn
     ? [
         "🇬🇧 COACHING EN · new client · 60 EUR/month",
+        ...(params.coachingEn.heartScreenYes ? ["⚠️ heart screen: yes"] : []),
         "📋 Новая анкета клиента 1:1 (/coaching/start)",
         `Имя: ${params.fullName}`,
         `Город: ${params.city ?? "—"}`,
@@ -362,6 +374,12 @@ export async function POST(req: NextRequest) {
     }
     if (!text(form, "health_injuries") || !text(form, "health_chronic")) {
       return json({ ok: false, error: "Please answer the health questions" }, 422);
+    }
+    if (!coachingHeartScreen(form)) {
+      return json(
+        { ok: false, error: "Please answer the heart, chest pain and dizziness question" },
+        422
+      );
     }
   }
 
@@ -495,6 +513,7 @@ export async function POST(req: NextRequest) {
               sports: coachingSports(form)
                 .map((code) => coachingSportLabel(form, code))
                 .join(", "),
+              heartScreenYes: coachingHeartScreen(form) === "yes",
             },
           }
         : {}),

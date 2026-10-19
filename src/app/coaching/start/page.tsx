@@ -16,6 +16,19 @@ export const metadata: Metadata = {
   description:
     "Onboarding form for 1:1 coaching: your goals, your training week, your tools and your health.",
   robots: { index: false, follow: false },
+  openGraph: {
+    title: "Start your coaching with Igor",
+    description: "A short form: your goals, your training week and your health.",
+    url: "https://igorp.run/coaching/start",
+    siteName: "igorp.run",
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Start your coaching with Igor",
+    description: "A short form: your goals, your training week and your health.",
+  },
 };
 
 export default function CoachingStartPage() {
