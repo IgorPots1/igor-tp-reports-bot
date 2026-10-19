@@ -357,4 +357,24 @@ await test("дыра orderOnDay, которую закрывает силова�
   assert.deepEqual(noOrder.incompleteDays, ["2026-10-21"]);
 });
 
+await test("прошлую и скрытую силовую не пишем, но дыру в нумерации они объясняют (живой случай 09.10)", async () => {
+  const body = [tpapiRun({ workoutId: 4012345680, workoutDay: "2026-10-10T00:00:00", orderOnDay: 2 }), tpapiRun({ workoutId: 4012345681, workoutDay: "2026-10-25T00:00:00", orderOnDay: 2 })];
+  const off = await harness({ tpapiBody: body }).run();
+  assert.deepEqual(off.incompleteDays, ["2026-10-10", "2026-10-25"]);
+  const { calls, run } = harness({
+    tpapiBody: body,
+    strength: { items: [
+      coachStrength({ id: "35300010", prescribedDate: "2026-10-10", orderOnDay: 1 }),
+      coachStrength({ id: "35300011", prescribedDate: "2026-10-25", orderOnDay: 1, isHidden: true }),
+      watchFile({ id: "35300012", prescribedDate: "2026-10-25", orderOnDay: 1 }),
+    ] },
+  });
+  const on = await run();
+  assert.deepEqual(on.incompleteDays, []);
+  assert.equal(calls.filter((call) => call.kind === "upsert").length, 1, "ни одной строки силовых — второго upsert нет");
+  // файл с часов дыру НЕ закрывает (его номер — не про тренерскую силовую)
+  const watchOnly = await harness({ tpapiBody: body, strength: { items: [watchFile({ prescribedDate: "2026-10-25", orderOnDay: 1 })] } }).run();
+  assert.deepEqual(watchOnly.incompleteDays, ["2026-10-10", "2026-10-25"]);
+});
+
 console.log(`[check-strength-cache-scan] PASS (${passed})`);

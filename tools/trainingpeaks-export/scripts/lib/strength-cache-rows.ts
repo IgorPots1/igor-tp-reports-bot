@@ -116,7 +116,10 @@ export type StrengthRowsCounts = {
 
 export type StrengthRowsResult = {
   rows: TrainingPeaksWorkoutCacheUpsertRow[];
-  /** Для поиска дыр в orderOnDay: день + номер в дне, если TP его дал. */
+  /**
+   * Для поиска дыр в orderOnDay: день + номер в дне у КАЖДОЙ тренерской силовой окна (в т.ч.
+   * скрытой и прошлой, которые не пишутся), если TP номер дал.
+   */
   orderItems: Array<{ workoutDate: string; orderOnDay: number | null }>;
   counts: StrengthRowsCounts;
 };
@@ -143,9 +146,14 @@ export function buildStrengthCacheRows(input: {
 
   for (const item of input.items) {
     if (!isCoachPrescribedStrength(item)) { counts.watchFiles += 1; continue; }
-    if (item.isHidden === true) { counts.hidden += 1; continue; }
     const date = isoDatePart(item.prescribedDate);
     if (!date || date > input.to || date < input.from) { counts.outOfWindow += 1; continue; }
+    const orderRaw = num(item.orderOnDay);
+    const orderOnDay = orderRaw !== null && Number.isInteger(orderRaw) && orderRaw >= 1 ? orderRaw : null;
+    // Номер в дне — правда календаря TP, даже если строку мы не пишем (скрытая, прошлая): дыру
+    // в нумерации ленты такая силовая объясняет так же.
+    orderItems.push({ workoutDate: date, orderOnDay });
+    if (item.isHidden === true) { counts.hidden += 1; continue; }
     if (date < firstDay) { counts.past += 1; continue; }
     const id = num(item.id);
     if (id === null || !Number.isInteger(id) || id <= 0 || id >= STRENGTH_ID_EXCLUSIVE_MAX) { counts.badId += 1; continue; }
@@ -153,8 +161,6 @@ export function buildStrengthCacheRows(input: {
     if (seen.has(id)) { counts.duplicate += 1; continue; }
     seen.add(id);
 
-    const orderRaw = num(item.orderOnDay);
-    const orderOnDay = orderRaw !== null && Number.isInteger(orderRaw) && orderRaw >= 1 ? orderRaw : null;
     const sequence = Array.isArray(item.sequenceSummary)
       ? item.sequenceSummary.filter(isRec).map((s) => ({
         order: str(s.sequenceOrder),
@@ -213,7 +219,6 @@ export function buildStrengthCacheRows(input: {
         sequence,
       },
     });
-    orderItems.push({ workoutDate: date, orderOnDay });
   }
   counts.rows = rows.length;
   return { rows, orderItems, counts };
