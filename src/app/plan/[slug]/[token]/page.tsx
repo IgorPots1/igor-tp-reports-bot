@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 
-import { resolvePlanToken } from "@/features/athlete-plans/repository";
+import { loadPlanView, resolvePlanToken } from "@/features/athlete-plans/repository";
 import { jetbrains, onest } from "@/lib/fonts";
 
 import PlanView from "./PlanView";
@@ -17,12 +18,18 @@ export const viewport: Viewport = {
 };
 
 export const dynamic = "force-dynamic";
+// Функция рядом с базой (Supabase eu-west-1): из iad1 каждый запрос летал через
+// Атлантику, и страница открывалась секунды. Как в /races.
+export const preferredRegion = "dub1";
+
+// generateMetadata и страница резолвят токен в одном запросе: cache() делает это один раз.
+const resolve = cache((slug: string, token: string) => resolvePlanToken(slug, token).catch(() => null));
 
 type Props = { params: Promise<{ slug: string; token: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, token } = await params;
-  const access = await resolvePlanToken(slug, token).catch(() => null);
+  const access = await resolve(slug, token);
   const title = access ? `${access.athleteName} · тренировки` : "Тренировки";
   const description = "План тренировок и отчёты для тренера";
   // Своя карточка ссылки: без неё Telegram берёт брендовую карточку клуба из
@@ -40,12 +47,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PlanPage({ params }: Props) {
   const { slug, token } = await params;
-  const access = await resolvePlanToken(slug, token).catch(() => null);
+  const access = await resolve(slug, token);
   if (!access) notFound();
+  // План и отчёты отдаём сразу в HTML, без второго запроса из браузера после загрузки.
+  const initialView = await loadPlanView(access).catch(() => null);
 
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
-      <PlanView slug={slug} token={token} />
+      <PlanView slug={slug} token={token} initialView={initialView} />
     </div>
   );
 }

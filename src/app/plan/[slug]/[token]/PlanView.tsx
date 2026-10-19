@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- скриншоты приходят подписанными
    ссылками Supabase Storage, next/image тут только мешает. */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import type {
   PlanDoc,
@@ -51,16 +51,23 @@ const fmtD = (x: string) => {
   const d = pd(x);
   return `${d.getDate()} ${MON[d.getMonth()]}`;
 };
+// «Сегодня» берём только в браузере: на сервере (UTC, Дублин) дата может не совпасть
+// с датой ученика, и статусы карточек разошлись бы при гидрации. На сервере null.
+const noopSubscribe = () => () => {};
+function useTodayMs(): number | null {
+  return useSyncExternalStore(noopSubscribe, () => today().getTime(), () => null);
+}
+
 const cx = (...a: (string | false | null | undefined)[]) => a.filter(Boolean).join(" ");
 
-function statusOf(sess: PlanSession, r: PlanReport | undefined): { c: string; t: string } {
+function statusOf(sess: PlanSession, r: PlanReport | undefined, todayMs: number | null): { c: string; t: string } {
   if (r?.status === "done") return { c: s.s_done, t: r.coachReply ? "Выполнено · есть ответ" : "Выполнено" };
   if (r?.status === "partial") return { c: s.s_skipped, t: r.coachReply ? "Частично · есть ответ" : "Частично" };
   if (r?.status === "skipped") return { c: s.s_skipped, t: "Пропущено" };
-  if (sess.date && sess.kind !== "strength") {
+  if (todayMs !== null && sess.date && sess.kind !== "strength") {
     const d = pd(sess.date).getTime();
-    if (d < today().getTime()) return { c: s.s_missing, t: "Ждёт отчёт" };
-    if (d === today().getTime()) return { c: s.s_missing, t: "Сегодня" };
+    if (d < todayMs) return { c: s.s_missing, t: "Ждёт отчёт" };
+    if (d === todayMs) return { c: s.s_missing, t: "Сегодня" };
   }
   return { c: "", t: "Впереди" };
 }
@@ -78,11 +85,12 @@ async function shrinkToDataUrl(file: File): Promise<string> {
 
 type Api = (body: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
 
-export default function PlanView({ slug, token }: { slug: string; token: string }) {
-  const [view, setView] = useState<View | null>(null);
+export default function PlanView({ slug, token, initialView }: { slug: string; token: string; initialView: View | null }) {
+  const [view, setView] = useState<View | null>(initialView);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [week, setWeek] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const todayMs = useTodayMs();
   const url = `/api/plan/${slug}/${token}`;
 
   const load = useCallback(async () => {
@@ -98,12 +106,12 @@ export default function PlanView({ slug, token }: { slug: string; token: string 
   }, [url]);
 
   useEffect(() => {
-    load();
+    if (!initialView) load();
     const t = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, POLL_MS);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, initialView]);
 
   const api: Api = useCallback(
     async (body) => {
@@ -135,10 +143,10 @@ export default function PlanView({ slug, token }: { slug: string; token: string 
   let cur = week;
   if (!cur || !weeks.some((w) => w.id === cur)) {
     cur = weeks[0]?.id ?? null;
-    for (const w of weeks) if (w.start && pd(w.start) <= today()) cur = w.id;
+    if (todayMs !== null) for (const w of weeks) if (w.start && pd(w.start).getTime() <= todayMs) cur = w.id;
   }
   const w = weeks.find((x) => x.id === cur);
-  const daysToRace = plan.raceDate ? Math.round((pd(plan.raceDate).getTime() - today().getTime()) / 864e5) : null;
+  const daysToRace = plan.raceDate && todayMs !== null ? Math.round((pd(plan.raceDate).getTime() - todayMs) / 864e5) : null;
 
   return (
     <div className={s.wrap}>
@@ -202,6 +210,7 @@ export default function PlanView({ slug, token }: { slug: string; token: string 
                 sess={q}
                 report={view.reports[q.id]}
                 role={view.role}
+                todayMs={todayMs}
                 isOpen={open === q.id}
                 onToggle={() => {
                   const next = open === q.id ? null : q.id;
@@ -228,13 +237,14 @@ function Card(props: {
   sess: PlanSession;
   report: PlanReport | undefined;
   role: PlanRole;
+  todayMs: number | null;
   isOpen: boolean;
   onToggle: () => void;
   api: Api;
 }) {
-  const { sess, report, role, isOpen, onToggle, api } = props;
+  const { sess, report, role, todayMs, isOpen, onToggle, api } = props;
   const [editing, setEditing] = useState(false);
-  const st = statusOf(sess, report);
+  const st = statusOf(sess, report, todayMs);
   const d = sess.date ? pd(sess.date) : null;
   return (
     <article className={s.card} id={`c-${sess.id}`}>

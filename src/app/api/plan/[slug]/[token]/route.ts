@@ -12,6 +12,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const preferredRegion = "dub1";
 
 // Ответы личные и зависят от токена в пути: ни CDN, ни браузер не кэшируют.
 const headers = { "Content-Type": "application/json", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
