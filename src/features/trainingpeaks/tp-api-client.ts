@@ -752,3 +752,25 @@ export async function createStrengthWorkout(payload: CreateStrengthWorkoutReques
   assertString(data.id, "data.id", endpoint);
   return data;
 }
+
+/**
+ * Own (coach) strength exercise in the TP exercise library -- two calls, mirroring the TP web client
+ * (release-20261016: getNewExerciseModel / createNewExercise): POST .../exercises returns an empty exercise
+ * model, PUT .../exercises with the filled model creates it. Plain capability functions like the ones above:
+ * the caller decides whether a write happens. Not proven live as of 2026-10-19.
+ */
+export async function newStrengthExerciseModel(): Promise<Record<string, unknown>> {
+  const endpoint = "/rx/activity/v1/exercises";
+  const body = await writeJsonOrThrow(`${TP_STRENGTH_HOST}${endpoint}`, "POST", {});
+  const wrapper = assertRecord(body, endpoint);
+  return wrapper.data !== undefined ? assertRecord(wrapper.data, endpoint) : wrapper;
+}
+
+export async function createStrengthExercise(model: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const endpoint = "/rx/activity/v1/exercises";
+  const body = await writeJsonOrThrow(`${TP_STRENGTH_HOST}${endpoint}`, "PUT", model);
+  const wrapper = assertRecord(body, endpoint);
+  const data = wrapper.data !== undefined ? assertRecord(wrapper.data, endpoint) : wrapper;
+  assertString(String(data.id ?? ""), "data.id", endpoint);
+  return data;
+}

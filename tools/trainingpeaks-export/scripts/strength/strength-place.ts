@@ -42,7 +42,7 @@ const bodies: Record<string, unknown>[] = [];
 for (const it of run.items) {
   const prog = it.inline ? null : progs.programs.find((p) => p.id === it.programId); if (!it.inline && !prog) throw new Error(`нет программы ${it.programId}`);
   const wk = it.inline ?? prog!.formats[it.format].find((w) => w.week === it.week); if (!wk) throw new Error(`нет недели ${it.week}`);
-  const b = await buildBody(wk, { athleteId: it.athleteId, date: it.date, hidden: it.hidden !== false, get }); bodies.push(b);
+  const b = await buildBody(wk, { athleteId: it.athleteId, date: it.date, hidden: it.hidden !== false, forWrite: real, get }); bodies.push(b);
   console.log(`\n======== ${it.label} · ${it.inline ? "разовая тренировка" : `программа «${prog!.title}», ${it.format === "classic" ? "классика" : "круговая"}, неделя ${it.week}`} · ${it.hidden === false ? "ВИДИМОЙ ученику" : "скрыто"} ========\n${studentText(b)}`);
 }
 const PHRASE = run.items.some((x) => x.hidden === false) ? "ПОСТАВИТЬ СИЛОВЫЕ ВИДИМЫМИ" : "ПОСТАВИТЬ СИЛОВЫЕ СКРЫТО";

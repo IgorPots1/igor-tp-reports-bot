@@ -1,0 +1,407 @@
+{
+ "doc": "Программа «Зал с весами» (Игорь 19.10). 1 раз в неделю, классика, вес в кг числом. Верх диапазона — 12 повторов (икры на тренажёре — 15). Прогрессия: повторы до верха, затем +вес (2,5 кг — верх тела, 5 кг — ноги), разгрузка на 4-й и 8-й неделе — вес минус 10%. Старт — от отчёта атлета 17.10 минус 10–15% (числа дал Игорь). Упражнения custom:* — своих упражнений тренера ещё нет в библиотеке TP, создаются перед постановкой (custom-exercises.json сопоставляет их с id). Значение «?» — Игорь не дал вес; запись с «?» запрещена.",
+ "custom": {
+  "custom:leg_press": {
+   "title": "Жим ногами в тренажёре",
+   "parameters": [
+    "Reps",
+    "WeightKg"
+   ]
+  },
+  "custom:leg_extension": {
+   "title": "Разгибание ног в тренажёре",
+   "parameters": [
+    "Reps",
+    "WeightKg"
+   ]
+  },
+  "custom:calf_machine": {
+   "title": "Подъём на носки в тренажёре",
+   "parameters": [
+    "Reps",
+    "WeightKg"
+   ]
+  }
+ },
+ "programs": [
+  {
+   "id": "gym",
+   "title": "Зал с весами",
+   "formats": {
+    "circuit": [],
+    "classic": [
+     {
+      "week": 1,
+      "phase": "start",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "60"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_extension",
+          "title": "Разгибание ног в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "?"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "?"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "17.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "35"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "42.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "73",
+          "title": "Pull Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "4",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 2,
+      "phase": "start",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "60"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_extension",
+          "title": "Разгибание ног в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "?"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "?"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "17.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "35"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "42.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "73",
+          "title": "Pull Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "4",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

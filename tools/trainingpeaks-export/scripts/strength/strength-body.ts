@@ -28,12 +28,28 @@ export type PlanBlock = { blockType: "SingleExercise" | "Circuit"; coachNotes: s
 export type PlanWeek = { week: number; phase: string; workoutTitle: string; instructions: string | null; blocks: PlanBlock[]; rest?: Rest };
 export type Programs = { programs: Array<{ id: string; title: string; formats: { classic: PlanWeek[]; circuit: PlanWeek[] } }> };
 
-export const loadPrograms = (): Programs => JSON.parse(readFileSync(path.join(HERE, "programs.json"), "utf8")) as Programs;
+export const loadPrograms = (): Programs => {
+  const base = JSON.parse(readFileSync(path.join(HERE, "programs.json"), "utf8")) as Programs;
+  const gym = JSON.parse(readFileSync(path.join(HERE, "program-gym.json"), "utf8")) as Programs; // «Зал с весами» — отдельный файл (вес в кг, свои упражнения тренера)
+  return { ...base, programs: [...base.programs, ...gym.programs] };
+};
+/** Свои упражнения тренера: custom:* → id в библиотеке TP (после создания). Нет записи — заглушка, писать с ней нельзя. */
+const CUSTOM_MAP = path.join(CANON, "reports", "strength", "custom-exercises.json");
+const customDefs = (): Record<string, { title: string; parameters: string[] }> => (JSON.parse(readFileSync(path.join(HERE, "program-gym.json"), "utf8")) as { custom: Record<string, { title: string; parameters: string[] }> }).custom;
+export const customMap = (): Record<string, string> => (existsSync(CUSTOM_MAP) ? JSON.parse(readFileSync(CUSTOM_MAP, "utf8")) as Record<string, string> : {});
+export const isStub = (ex: Exercise): boolean => ex.id.startsWith("custom:");
 
 type ParamDef = { parameter: string; title: string; unit: unknown; category: string; range: unknown };
 const PARAM_DEFS: ParamDef[] = (() => { const p = JSON.parse(readFileSync(path.join(CANON, "reports", "strength", "probe", "parameters-exercise.json"), "utf8")); const b = p.body ?? p; return (b.data ?? b) as ParamDef[]; })();
 
-export async function loadExercise(id: string, get?: (p: string) => Promise<{ status: number; body: unknown }>): Promise<Exercise> {
+export async function loadExercise(id0: string, get?: (p: string) => Promise<{ status: number; body: unknown }>): Promise<Exercise> {
+  let id = id0;
+  if (id.startsWith("custom:")) {
+    const mapped = customMap()[id];
+    if (!mapped) { const def = customDefs()[id]; if (!def) throw new Error(`нет описания ${id}`);
+      return { id, ownerId: 5457637, title: def.title, videoUrl: null, instructions: null, canEdit: true, parameters: def.parameters.map((n) => { const p = PARAM_DEFS.find((x) => x.parameter === n)!; return { parameter: p.parameter, title: p.title, unit: p.unit, category: p.category, range: p.range, id: "" }; }) }; }
+    id = mapped;
+  }
   const f = path.join(EXDIR, `${id}.json`);
   if (!existsSync(f)) {
     if (!get) throw new Error(`нет локального описания упражнения ${id} и не дан клиент чтения`);
@@ -60,13 +76,16 @@ export function signatureOf(w: Record<string, unknown>): string {
       v: ((p.sets as Array<Record<string, unknown>>) ?? []).map((s) => ((s.parameterValues as Array<Record<string, unknown>>) ?? []).map((pv) => `${String(pv.parameter)}=${String(pv.prescribedValue)}`).sort().join(",")) })) })) });
 }
 
-export async function buildBody(week: PlanWeek, o: { athleteId: number; date: string; hidden: boolean; get?: (p: string) => Promise<{ status: number; body: unknown }> }): Promise<Record<string, unknown>> {
+export async function buildBody(week: PlanWeek, o: { athleteId: number; date: string; hidden: boolean; forWrite?: boolean; get?: (p: string) => Promise<{ status: number; body: unknown }> }): Promise<Record<string, unknown>> {
+  if (o.forWrite) for (const b of week.blocks) for (const p of b.prescriptions) for (const v of [p.prescribedValue, ...(p.extra ?? []).map((x) => x.prescribedValue)])
+    if (!/^\d+(\.\d+)?$/.test(v)) throw new Error(`«${p.title}»: значение «${v}» не число — записывать нельзя`);
   const circuit = week.blocks.some((b) => b.blockType === "Circuit");
   const blocks = [];
   for (const b of week.blocks) {
     const prescriptions = [];
     for (const p of b.prescriptions) {
       const ex = await loadExercise(p.exerciseId, o.get);
+      if (o.forWrite && isStub(ex)) throw new Error(`«${ex.title}»: своё упражнение ещё не создано в библиотеке TP — записывать нельзя`);
       const all = [{ parameter: p.parameter, libraryParameterId: p.libraryParameterId, prescribedValue: p.prescribedValue }, ...(p.extra ?? [])];
       const pars = all.map((x) => ({ x, par: paramObject(ex, x) }));
       const fmt = (name: string): string => (name === "Duration" ? "Time" : /^Weight/.test(name) ? "Decimal" : "Integer");
