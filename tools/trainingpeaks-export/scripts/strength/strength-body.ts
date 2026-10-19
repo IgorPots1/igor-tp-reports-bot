@@ -101,7 +101,8 @@ export async function buildBody(week: PlanWeek, o: { athleteId: number; date: st
   }
   // «Начинай с более слабой ноги…» — только если в тренировке есть упражнения на одну ногу (параметр «на сторону»); решение Игоря 19.10
   const unilateral = week.blocks.some((b) => b.prescriptions.some((p) => p.parameter === "RepsPerSide" || (p.extra ?? []).some((x) => x.parameter === "RepsPerSide")));
-  const base = week.instructions && /слабой ноги/i.test(week.instructions) && !unilateral ? null : week.instructions;
+  // убирается только АБЗАЦ про слабую ногу, остальное описание (разминка и т.п.) остаётся
+  const base = week.instructions && !unilateral ? week.instructions.split(/\n\s*\n/).filter((x) => !/слабой ноги/i.test(x)).join("\n\n") || null : week.instructions;
   const instructions = [base, circuit ? restLine(week.rest) : null].filter(Boolean).join("\n\n") || null;
   const totalSets = week.blocks.reduce((a, b) => a + b.prescriptions.reduce((x, p) => x + p.sets, 0), 0); const totalPres = week.blocks.reduce((a, b) => a + b.prescriptions.length, 0);
   return {
