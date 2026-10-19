@@ -9,6 +9,7 @@ import {
   type ApplicationStatus,
   type Screenshot,
 } from "@/features/intensive/repository";
+import { PRIVACY_EN_PATH, PRIVACY_EN_VERSION } from "@/lib/privacy-en";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,15 +72,26 @@ function dateOrNull(form: FormData, key: string): string | null {
 const TRIAL_EN_SOURCE = "trial-en";
 
 /**
+ * Согласие на обработку данных (английские анкеты, решение Игоря 19.10.2026).
+ * Чекбокс обязателен на /coaching/start и /trial/apply, сервер проверяет его
+ * заново. Отдельной колонки нет, поэтому флаг, время (серверное, не из
+ * браузера) и версия текста /privacy/en идут строкой в шапку why_intensive.
+ */
+function privacyConsentLine(consentedAt: string): string {
+  return `Privacy consent: yes · ${consentedAt} · notice ${PRIVACY_EN_VERSION} (${PRIVACY_EN_PATH})`;
+}
+
+/**
  * Контакты английской анкеты (Instagram обязателен, email и Strava нет).
  * Отдельных колонок под них нет, поэтому они идут блоком в начало
  * why_intensive — свободного текстового поля, которое тренер и так читает.
  */
-function trialEnContactBlock(form: FormData): string {
+function trialEnContactBlock(form: FormData, consentedAt: string): string {
   const lines = [
     `[${TRIAL_EN_SOURCE}] 7 days · 10 EUR`,
     `Instagram: @${text(form, "instagram", 100) ?? ""}`,
     `WhatsApp: ${text(form, "whatsapp", 40) ?? ""}`,
+    privacyConsentLine(consentedAt),
   ];
   const email = text(form, "email", 200);
   if (email) lines.push(`Email: ${email}`);
@@ -106,21 +118,15 @@ const COACHING_SPORTS: Record<string, string> = {
   other: "Other",
 };
 
-type CoachingContact = { channel: "WhatsApp" | "Telegram"; value: string };
-
-/** Предпочитаемый канал клиента 1:1 и номер/username. null, если не заполнено. */
-function coachingContact(form: FormData): CoachingContact | null {
-  const channel = text(form, "preferred_contact", 20);
-  const raw = text(form, "contact_handle", 100);
-  if (!raw) return null;
-  if (channel === "whatsapp") {
-    return raw.replace(/\D/gu, "").length >= 7 ? { channel: "WhatsApp", value: raw } : null;
-  }
-  if (channel === "telegram") {
-    const handle = raw.replace(/^@+/u, "");
-    return handle ? { channel: "Telegram", value: `@${handle}` } : null;
-  }
-  return null;
+/**
+ * id чата из ссылки /coaching/start?c=<id> (как у /breakdown): Игорь шлёт
+ * ссылку в директ, и по c анкета сопоставляется с перепиской. Контактов в
+ * анкете больше нет: клиент и так известен тренеру. Чистим так же, как клиент.
+ */
+function coachingChatId(form: FormData): string | null {
+  const raw = text(form, "c", 200);
+  const clean = (raw ?? "").replace(/[^\w-]/gu, "").slice(0, 64);
+  return clean || null;
 }
 
 /** Выбранные виды спорта клиента 1:1 (только известные коды). */
@@ -152,11 +158,11 @@ function coachingSportWeek(form: FormData): string | null {
 }
 
 /**
- * Читаемый блок анкеты клиента 1:1 для why_intensive: контакты и все ответы,
- * у которых нет своей колонки. Пустые строки пропускаются.
+ * Читаемый блок анкеты клиента 1:1 для why_intensive: id чата (если был),
+ * согласие на обработку данных и все ответы, у которых нет своей колонки.
+ * Пустые строки пропускаются.
  */
-function coachingEnBlock(form: FormData): string {
-  const contact = coachingContact(form);
+function coachingEnBlock(form: FormData, consentedAt: string): string {
   const lines: string[] = [];
   const add = (label: string, value: string | null | undefined) => {
     if (value) lines.push(`${label}: ${value}`);
@@ -171,10 +177,9 @@ function coachingEnBlock(form: FormData): string {
   };
 
   lines.push(`[${COACHING_EN_SOURCE}] new 1:1 client · 60 EUR/month`);
-  add("Instagram", `@${text(form, "instagram", 100)?.replace(/^@+/u, "") ?? ""}`);
-  add("Preferred contact", contact ? `${contact.channel} ${contact.value}` : null);
-  add("Email", text(form, "email", 200));
+  add("Chat id (c)", coachingChatId(form));
   add("Time zone", text(form, "timezone", 80));
+  lines.push(privacyConsentLine(consentedAt));
 
   section("Goals");
   add("What they want from a coach", text(form, "coach_expectations"));
@@ -222,8 +227,8 @@ async function notifyTelegram(params: {
   trialEnInstagram?: string | null;
   /** Английская пробная неделя: WhatsApp, где идёт сама неделя 1:1. */
   trialEnWhatsapp?: string | null;
-  /** Новый клиент 1:1: Instagram и предпочитаемый канал связи. */
-  coachingEn?: { instagram: string | null; contact: CoachingContact | null; sports: string };
+  /** Новый клиент 1:1: виды спорта и id чата из ссылки (?c=), если был. */
+  coachingEn?: { chatId: string | null; sports: string };
 }): Promise<void> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const leadsChat = process.env.LEADS_CHAT_ID;
@@ -243,15 +248,10 @@ async function notifyTelegram(params: {
         "🇬🇧 COACHING EN · new client · 60 EUR/month",
         "📋 Новая анкета клиента 1:1 (/coaching/start)",
         `Имя: ${params.fullName}`,
-        `Instagram: @${params.coachingEn.instagram ?? "—"}`,
-        `Связь: ${
-          params.coachingEn.contact
-            ? `${params.coachingEn.contact.channel} ${params.coachingEn.contact.value}`
-            : "—"
-        }`,
         `Город: ${params.city ?? "—"}`,
         `Спорт: ${params.coachingEn.sports || "—"}`,
         `Цель: ${goalShort}`,
+        ...(params.coachingEn.chatId ? [`Чат (c): ${params.coachingEn.chatId}`] : []),
         "Собрать первую неделю и написать клиенту в течение 24 часов",
       ].join("\n")
     : isTrialEn
@@ -324,6 +324,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Английские анкеты: явное согласие на обработку данных, включая здоровье
+  // (/privacy/en). Без него анкету не принимаем.
+  if (isEnglish && form.get("privacy_consent") !== "true") {
+    return json(
+      {
+        ok: false,
+        error:
+          "Please tick the box to agree to the processing of your data (Privacy notice)",
+      },
+      422
+    );
+  }
+  const consentedAt = new Date().toISOString();
+
   // Английской анкете Instagram обязателен: туда уходит ссылка на оплату.
   const trialEnInstagram = isTrialEn
     ? (text(form, "instagram", 100)?.replace(/^@+/u, "") || null)
@@ -337,25 +351,9 @@ export async function POST(req: NextRequest) {
     return json({ ok: false, error: "Please add your WhatsApp number with country code" }, 422);
   }
 
-  // Клиенту 1:1 обязательны Instagram и канал связи (WhatsApp или Telegram):
-  // туда тренер пишет с первой неделей.
-  const coachingInstagram = isCoachingEn
-    ? (text(form, "instagram", 100)?.replace(/^@+/u, "") || null)
-    : null;
-  const coachingContactValue = isCoachingEn ? coachingContact(form) : null;
+  // Клиенту 1:1 контакты не нужны: ссылку он получает от Игоря в директе.
+  // Обязательны только цель, вид спорта и ответы о здоровье (имя проверено выше).
   if (isCoachingEn) {
-    if (!coachingInstagram) {
-      return json({ ok: false, error: "Please add your Instagram handle" }, 422);
-    }
-    if (!coachingContactValue) {
-      return json(
-        { ok: false, error: "Please add your WhatsApp number or Telegram username" },
-        422
-      );
-    }
-    if (!text(form, "city", 120)) {
-      return json({ ok: false, error: "Please add your city and country" }, 422);
-    }
     if (!text(form, "goal")) {
       return json({ ok: false, error: "Please add your main goal" }, 422);
     }
@@ -429,9 +427,9 @@ export async function POST(req: NextRequest) {
       goal: text(form, "goal"),
       racesThisYear: text(form, "races_this_year"),
       whyIntensive: isCoachingEn
-        ? coachingEnBlock(form)
+        ? coachingEnBlock(form, consentedAt)
         : isTrialEn
-          ? trialEnContactBlock(form)
+          ? trialEnContactBlock(form, consentedAt)
           : text(form, "why_intensive"),
       availableDays: list(form, "available_days"),
       sessionDuration: isCoachingEn
@@ -493,8 +491,7 @@ export async function POST(req: NextRequest) {
       ...(isCoachingEn
         ? {
             coachingEn: {
-              instagram: coachingInstagram,
-              contact: coachingContactValue,
+              chatId: coachingChatId(form),
               sports: coachingSports(form)
                 .map((code) => coachingSportLabel(form, code))
                 .join(", "),

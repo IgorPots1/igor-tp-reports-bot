@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { PRIVACY_EN_PATH } from "@/lib/privacy-en";
+
 // English application for the 7-day trial (/trial). Same look as the Russian
 // /camp/apply (apply.css), but shorter: 3 steps, no screenshots (a Strava link
 // instead), Instagram handle required because Igor sends the payment link in
@@ -53,6 +55,7 @@ type Draft = {
   health_injuries: string;
   health_discomfort: string;
   health_disclaimer_accepted: boolean;
+  privacy_consent: boolean;
   weekly_km: string;
   current_training: string;
   strava_url: string;
@@ -75,6 +78,7 @@ const EMPTY: Draft = {
   health_injuries: "",
   health_discomfort: "",
   health_disclaimer_accepted: false,
+  privacy_consent: false,
   weekly_km: "",
   current_training: "",
   strava_url: "",
@@ -96,6 +100,7 @@ const REQUIRED: Record<number, { key: keyof Draft; message: string }[]> = {
     { key: "health_chronic", message: "Please answer. If you have no health problems, write \"no\"" },
     { key: "health_injuries", message: "Please answer. If you have no injuries, write \"no\"" },
     { key: "health_disclaimer_accepted", message: "I can't accept the form without this" },
+    { key: "privacy_consent", message: "Please tick this box. I can't plan your training without it" },
   ],
   3: [
     { key: "weekly_km", message: "Choose how much you run now" },
@@ -179,7 +184,15 @@ export default function TrialApplyForm() {
   }
 
   async function submit() {
-    if (!validate(3)) return;
+    // Check every step again: a required answer may have been cleared after
+    // going back.
+    for (let index = 1; index <= TOTAL_STEPS; index += 1) {
+      if (!validate(index)) {
+        setStep(index);
+        scrollTop();
+        return;
+      }
+    }
     setSending(true);
     setSendError(null);
 
@@ -450,6 +463,31 @@ export default function TrialApplyForm() {
             </span>
           </label>
           {err("health_disclaimer_accepted")}
+
+          <label
+            className={`check${errors.privacy_consent ? " bad" : ""}`}
+            style={{ marginTop: 10 }}
+          >
+            <input
+              type="checkbox"
+              checked={draft.privacy_consent}
+              onChange={(event) => set("privacy_consent", event.target.checked)}
+            />
+            <span>
+              I agree to the processing of my data, including health information, to
+              plan my training, as described in the{" "}
+              <a
+                href={PRIVACY_EN_PATH}
+                target="_blank"
+                rel="noopener"
+                style={{ color: "var(--accent)", fontWeight: 600, textDecoration: "underline" }}
+              >
+                Privacy notice
+              </a>
+              . <span className="req">*</span>
+            </span>
+          </label>
+          {err("privacy_consent")}
 
           <div className="nav">
             <button className="btn ghost" type="button" onClick={() => goBack(1)}>

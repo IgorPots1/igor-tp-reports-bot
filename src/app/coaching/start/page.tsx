@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import StartForm from "./StartForm";
 import HtmlLang from "../HtmlLang";
@@ -7,7 +8,9 @@ import { jetbrains, onest } from "@/lib/fonts";
 
 // Onboarding form for new 1:1 coaching clients (English, @runnigor).
 // Same design as /trial/apply and /camp/apply (apply.css).
-// Posts to /api/intensive/apply with source=coaching-en.
+// Posts to /api/intensive/apply with source=coaching-en. Igor sends the link
+// in DMs, optionally with ?c=<chat id> (read in StartForm via useSearchParams,
+// hence the Suspense boundary, same as /breakdown).
 export const metadata: Metadata = {
   title: "Start coaching · 1:1 with coach Igor",
   description:
@@ -19,7 +22,9 @@ export default function CoachingStartPage() {
   return (
     <div lang="en" className={`apply-root ${onest.variable} ${jetbrains.variable}`}>
       <HtmlLang lang="en" />
-      <StartForm />
+      <Suspense>
+        <StartForm />
+      </Suspense>
     </div>
   );
 }

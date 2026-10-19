@@ -65,6 +65,7 @@ export const PUBLIC_PAGES: PublicPage[] = [
   { path: "/tools/shoes", changeFrequency: "monthly", priority: 0.7 },
   { path: "/tools/dress", changeFrequency: "monthly", priority: 0.7 },
   { path: "/privacy", changeFrequency: "yearly", priority: 0.3 },
+  { path: "/privacy/en", changeFrequency: "yearly", priority: 0.3 },
 ];
 
 /**
