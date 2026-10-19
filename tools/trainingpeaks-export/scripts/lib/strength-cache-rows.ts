@@ -224,6 +224,29 @@ export function buildStrengthCacheRows(input: {
   return { rows, orderItems, counts };
 }
 
+/**
+ * Дни недели (0 = Пн … 6 = Вс) с тренерской силовой из кэша для недели weekStart (понедельник).
+ * Вход — строки кэша в любом виде (snake из Supabase или camel из repository); для
+ * placeRolesByPractice(…, strengthDays). Берутся только строки сервиса силовых: силовая из
+ * ленты tpapi (простая, без структуры) правилу тоже подлежит, но её здесь не трогаем — см. отчёт.
+ */
+export function strengthWeekdaysFromCacheRows(
+  rows: ReadonlyArray<Record<string, unknown>>,
+  weekStart: string,
+): Set<number> {
+  const days = new Set<number>();
+  const startMs = Date.parse(`${weekStart}T00:00:00Z`);
+  if (!Number.isFinite(startMs)) return days;
+  for (const row of rows) {
+    if (!isStrengthServiceCacheRow(row as { source_snapshot?: unknown })) continue;
+    const date = isoDatePart(row.workout_date ?? row.workoutDate);
+    if (!date) continue;
+    const offset = Math.round((Date.parse(`${date}T00:00:00Z`) - startMs) / 86_400_000);
+    if (offset >= 0 && offset <= 6) days.add(offset);
+  }
+  return days;
+}
+
 /** Строка кэша — тренерская силовая из сервиса силовых (а не из ленты tpapi). */
 export function isStrengthServiceCacheRow(row: { source_snapshot?: unknown } | { sourceSnapshot?: unknown }): boolean {
   const snapshot = "source_snapshot" in row ? row.source_snapshot : (row as { sourceSnapshot?: unknown }).sourceSnapshot;

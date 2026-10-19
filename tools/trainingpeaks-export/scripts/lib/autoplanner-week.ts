@@ -293,6 +293,15 @@ export function placeRolesByPractice(
    * бессмыслицы, а пожелание — предпочтение про образ жизни. Спор виден в pref.notes.
    */
   pref?: PreferenceEffect | null,
+  /**
+   * ДНИ НЕДЕЛИ С ТРЕНЕРСКОЙ СИЛОВОЙ (0 = Пн), из кэша (строки source_snapshot.source =
+   * tp_strength_service, наряд 19.10). Не переданы — поведение ровно прежнее.
+   * Правило тренера: силовая не в день качественной и не накануне длительной. Со стороны бега
+   * силовая уже стоит, поэтому: качественная в день силовой НЕ ставится (уходит на следующий свой
+   * день, как при смежности); длительная назавтра после силовой не двигается — это вопрос места
+   * силовой, тренеру пометка.
+   */
+  strengthDays?: ReadonlySet<number> | null,
 ): { days: number[]; roles: Map<number, Role>; conflicts: string[] } {
   const roles = new Map<number, Role>();
   const conflicts: string[] = [];
@@ -348,13 +357,17 @@ export function placeRolesByPractice(
   for (const d of qPref) {
     if (picked.length >= counts.quality || used.size >= n) break;
     if (used.has(d) || !allowed(d)) continue;
+    if (strengthDays?.has(d)) continue;
     if (longDay != null && adjacentDays(d, longDay)) continue;
     if (picked.some((p) => adjacentDays(p, d))) continue;
     picked.push(d); take(d, "quality");
   }
   if (wantQ != null && !picked.includes(wantQ)) {
     conflicts.push(`✋ качественная не встала в ${DAY_RU[wantQ]}, как просило пожелание:`
-      + ` ${blocked.has(wantQ) ? "день закрыт другим пожеланием" : "нарушился бы инвариант (смежность с длительной или другой качественной)"}`);
+      + ` ${blocked.has(wantQ) ? "день закрыт другим пожеланием" : strengthDays?.has(wantQ) ? "в этот день силовая тренера" : "нарушился бы инвариант (смежность с длительной или другой качественной)"}`);
+  }
+  if (strengthDays && longDay != null && longDay >= 1 && strengthDays.has(longDay - 1)) {
+    conflicts.push(`✋ силовая в ${DAY_RU[longDay - 1]} — накануне длительной (${DAY_RU[longDay]}): по правилу силовых её место не здесь`);
   }
 
   // (3) ЛЁГКИЕ — остаток по своей гистограмме, затем по общей, затем любые свободные дни.
