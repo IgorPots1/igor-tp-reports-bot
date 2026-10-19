@@ -23,10 +23,18 @@ type Props = { params: Promise<{ slug: string; token: string }> };
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug, token } = await params;
   const access = await resolvePlanToken(slug, token).catch(() => null);
+  const title = access ? `${access.athleteName} · тренировки` : "Тренировки";
+  const description = "План тренировок и отчёты для тренера";
+  // Своя карточка ссылки: без неё Telegram берёт брендовую карточку клуба из
+  // корневого layout, и ученик видит в чате «беговой клуб» вместо своего плана.
+  // Картинку не даём (images: []), url не даём, чтобы токен не светился в og:url.
   return {
-    title: access?.plan.title || (access ? `${access.athleteName} · план` : "План"),
+    title: access?.plan.title || title,
+    description,
     robots: { index: false, follow: false },
     referrer: "no-referrer",
+    openGraph: { type: "website", siteName: "igorp.run", title, description, images: [] },
+    twitter: { card: "summary", title, description, images: [] },
   };
 }
 
