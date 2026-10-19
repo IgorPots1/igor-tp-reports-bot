@@ -61,6 +61,34 @@ function dateOrNull(form: FormData, key: string): string | null {
   return Number.isNaN(Date.parse(raw)) ? null : raw;
 }
 
+/**
+ * Метка английской пробной недели (/trial/apply, решение Игоря 19.10.2026).
+ * Такие анкеты НЕ относятся к русскому потоку: в flow_number пишется эта
+ * строка вместо номера потока, места русского набора они не занимают и
+ * getFlowConfig/getSeatsLeft для них не вызываются. Колонка flow_number —
+ * text, так что миграция не нужна; в админке метка видна в фильтре потоков.
+ */
+const TRIAL_EN_SOURCE = "trial-en";
+
+/**
+ * Контакты английской анкеты (Instagram обязателен, email и Strava нет).
+ * Отдельных колонок под них нет, поэтому они идут блоком в начало
+ * why_intensive — свободного текстового поля, которое тренер и так читает.
+ */
+function trialEnContactBlock(form: FormData): string {
+  const lines = [
+    `[${TRIAL_EN_SOURCE}] 7 days · 10 EUR`,
+    `Instagram: @${text(form, "instagram", 100) ?? ""}`,
+    `WhatsApp: ${text(form, "whatsapp", 40) ?? ""}`,
+  ];
+  const email = text(form, "email", 200);
+  if (email) lines.push(`Email: ${email}`);
+  const strava = text(form, "strava_url", 300);
+  if (strava) lines.push(`Strava: ${strava}`);
+  const note = text(form, "why_intensive");
+  return note ? `${lines.join("\n")}\n\n${note}` : lines.join("\n");
+}
+
 async function notifyTelegram(params: {
   fullName: string;
   city: string | null;
@@ -68,6 +96,10 @@ async function notifyTelegram(params: {
   screenshotCount: number;
   seatsLeft: number;
   isWaitlist: boolean;
+  /** Английская пробная неделя: Instagram для ссылки на оплату, без счётчика мест. */
+  trialEnInstagram?: string | null;
+  /** Английская пробная неделя: WhatsApp, где идёт сама неделя 1:1. */
+  trialEnWhatsapp?: string | null;
 }): Promise<void> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const leadsChat = process.env.LEADS_CHAT_ID;
@@ -81,15 +113,27 @@ async function notifyTelegram(params: {
   const goalShort = params.goal ? params.goal.slice(0, 100) : "—";
   // Пометка листа ожидания идёт ПЕРВОЙ строкой: в потоке уведомлений разницу
   // надо видеть с первого взгляда, не дочитывая до счётчика мест.
-  const message = [
-    ...(params.isWaitlist ? ["⏳ ЛИСТ ОЖИДАНИЯ"] : []),
-    "📋 Новая анкета на интенсив",
-    `Имя: ${params.fullName}`,
-    `Город: ${params.city ?? "—"}`,
-    `Цель: ${goalShort}`,
-    `Скриншотов: ${params.screenshotCount}`,
-    `Мест осталось: ${params.seatsLeft}`,
-  ].join("\n");
+  const isTrialEn = params.trialEnInstagram !== undefined;
+  const message = isTrialEn
+    ? [
+        "🇬🇧 TRIAL EN · 7 дней · 10 EUR",
+        "📋 Новая английская анкета (/trial)",
+        `Имя: ${params.fullName}`,
+        `Instagram: @${params.trialEnInstagram ?? "—"}`,
+        `WhatsApp: ${params.trialEnWhatsapp ?? "—"}`,
+        `Город: ${params.city ?? "—"}`,
+        `Цель: ${goalShort}`,
+        "Отправить ссылку на оплату в Instagram DM в течение 24 часов",
+      ].join("\n")
+    : [
+        ...(params.isWaitlist ? ["⏳ ЛИСТ ОЖИДАНИЯ"] : []),
+        "📋 Новая анкета на интенсив",
+        `Имя: ${params.fullName}`,
+        `Город: ${params.city ?? "—"}`,
+        `Цель: ${goalShort}`,
+        `Скриншотов: ${params.screenshotCount}`,
+        `Мест осталось: ${params.seatsLeft}`,
+      ].join("\n");
 
   // Без parse_mode: текст целиком приходит от постороннего человека, и любая
   // разметка в нём — это в лучшем случае сломанное сообщение, в худшем инъекция.
@@ -114,17 +158,40 @@ export async function POST(req: NextRequest) {
 
   // ── Валидация на сервере. Клиентскую проверку обходят, поэтому обязательное
   // здесь проверяется заново, а не «раз дошло — значит валидно».
+  const isTrialEn = text(form, "source", 40) === TRIAL_EN_SOURCE;
+
   const fullName = text(form, "full_name", 200);
   if (!fullName) {
-    return json({ ok: false, error: "Укажи имя и фамилию" }, 422);
+    return json(
+      { ok: false, error: isTrialEn ? "Please add your name" : "Укажи имя и фамилию" },
+      422
+    );
   }
 
   const disclaimer = form.get("health_disclaimer_accepted");
   if (disclaimer !== "true") {
     return json(
-      { ok: false, error: "Без подтверждения об отсутствии противопоказаний записать не могу" },
+      {
+        ok: false,
+        error: isTrialEn
+          ? "Please confirm you have no medical reasons not to exercise"
+          : "Без подтверждения об отсутствии противопоказаний записать не могу",
+      },
       422
     );
+  }
+
+  // Английской анкете Instagram обязателен: туда уходит ссылка на оплату.
+  const trialEnInstagram = isTrialEn
+    ? (text(form, "instagram", 100)?.replace(/^@+/u, "") || null)
+    : null;
+  if (isTrialEn && !trialEnInstagram) {
+    return json({ ok: false, error: "Please add your Instagram handle" }, 422);
+  }
+  // И WhatsApp: сама неделя идёт 1:1 в WhatsApp.
+  const trialEnWhatsapp = isTrialEn ? text(form, "whatsapp", 40) : null;
+  if (isTrialEn && (trialEnWhatsapp ?? "").replace(/\D/gu, "").length < 7) {
+    return json({ ok: false, error: "Please add your WhatsApp number with country code" }, 422);
   }
 
   // ── Места. Отказа здесь НЕТ и быть не должно. Раньше при нуле мест роут
@@ -132,8 +199,11 @@ export async function POST(req: NextRequest) {
   // таблице, ни файлов в bucket, ни уведомления тренеру, ни записи в логе.
   // Теперь мест нет → анкета всё равно сохраняется, но со статусом waitlist;
   // кого пустить в поток, решает тренер в админке.
-  const flow = await getFlowConfig();
-  const seatsBefore = await getSeatsLeft(flow);
+  //
+  // Английская пробная неделя к русскому потоку не привязана: ни номер потока,
+  // ни счётчик мест её не касаются, статус всегда new.
+  const flow = isTrialEn ? null : await getFlowConfig();
+  const seatsBefore = flow ? await getSeatsLeft(flow) : 1;
   const status: ApplicationStatus = seatsBefore > 0 ? "new" : "waitlist";
 
   // ── Файлы. Проверяем до вставки, чтобы не плодить анкеты с мусором.
@@ -156,7 +226,7 @@ export async function POST(req: NextRequest) {
   let applicationId: string;
   try {
     applicationId = await createIntensiveApplication({
-      flowNumber: String(flow.number),
+      flowNumber: flow ? String(flow.number) : TRIAL_EN_SOURCE,
       fullName,
       birthDate: dateOrNull(form, "birth_date"),
       sex: text(form, "sex", 20),
@@ -177,7 +247,7 @@ export async function POST(req: NextRequest) {
       otherSports: text(form, "other_sports"),
       goal: text(form, "goal"),
       racesThisYear: text(form, "races_this_year"),
-      whyIntensive: text(form, "why_intensive"),
+      whyIntensive: isTrialEn ? trialEnContactBlock(form) : text(form, "why_intensive"),
       availableDays: list(form, "available_days"),
       sessionDuration: text(form, "session_duration", 50),
       surfaces: list(form, "surfaces"),
@@ -188,7 +258,15 @@ export async function POST(req: NextRequest) {
     }, status);
   } catch (error) {
     console.error("[intensive-apply] insert failed:", error);
-    return json({ ok: false, error: "Не удалось сохранить анкету. Попробуй ещё раз." }, 500);
+    return json(
+      {
+        ok: false,
+        error: isTrialEn
+          ? "Could not save the form. Please try again."
+          : "Не удалось сохранить анкету. Попробуй ещё раз.",
+      },
+      500
+    );
   }
 
   // ── Файлы кладём ПОСЛЕ вставки: путь в bucket строится от id анкеты.
@@ -212,7 +290,7 @@ export async function POST(req: NextRequest) {
 
   // ── Уведомление независимо от базы: анкета уже сохранена, и упавший
   // Telegram не должен превращаться в ошибку для человека.
-  const seatsLeft = await getSeatsLeft(flow);
+  const seatsLeft = flow ? await getSeatsLeft(flow) : 0;
   try {
     await notifyTelegram({
       fullName,
@@ -221,6 +299,7 @@ export async function POST(req: NextRequest) {
       screenshotCount: uploaded.length,
       seatsLeft,
       isWaitlist: status === "waitlist",
+      ...(isTrialEn ? { trialEnInstagram, trialEnWhatsapp } : {}),
     });
   } catch (error) {
     console.error("[intensive-apply] Telegram failed:", error);

@@ -1,0 +1,28 @@
+/* /trial: English trial week. Base styles come from ../camp/camp.css
+   (.intensive-root). Only what is new here: text review cards with the
+   original screenshot behind "Show original", the translation note and the
+   "after the week" box. */
+
+.trial-root .tr-note{display:inline-block;margin-top:12px;font-family:var(--font-jetbrains),monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line-2);border-radius:6px;padding:4px 8px}
+
+/* review cards: English text first, Russian screenshot as proof */
+.trial-root .track .slide.rev-en{width:min(80vw,330px);padding:20px 20px 16px;display:flex;flex-direction:column;gap:12px}
+.trial-root .rev-name{font-weight:700;font-size:15px;letter-spacing:-.01em}
+.trial-root .rev-text{display:grid;gap:8px;font-size:14.5px;line-height:1.5;color:var(--ink-2)}
+.trial-root .rev-foot{font-family:var(--font-jetbrains),monospace;font-size:10.5px;letter-spacing:.05em;color:var(--muted)}
+.trial-root .rev-orig{border-top:1px solid var(--line);padding-top:10px}
+.trial-root .rev-orig summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent-ink);list-style:none}
+.trial-root .rev-orig summary::-webkit-details-marker{display:none}
+.trial-root .rev-orig summary::after{content:" +"}
+.trial-root .rev-orig[open] summary::after{content:" \2212"}
+.trial-root .track .slide.rev-en .rev-orig img{margin-top:10px;width:100%;height:auto;border-radius:10px;border:1px solid var(--line)}
+
+/* after the week: soft next step, no urgency */
+.trial-root .next-step{margin-top:18px;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);padding:22px 22px}
+.trial-root .next-step .ns-t{font-family:var(--font-jetbrains),monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--green);margin-bottom:8px}
+.trial-root .next-step p{color:var(--ink-2);font-size:15.5px;max-width:60ch}
+.trial-root .next-step .ns-link{display:inline-block;margin-top:10px;font-weight:600;font-size:15px;color:var(--ink);border-bottom:1.5px solid var(--line-2)}
+
+@media (hover:hover) and (pointer:fine){
+.trial-root .next-step .ns-link:hover{border-color:var(--ink)}
+}
