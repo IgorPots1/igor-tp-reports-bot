@@ -89,6 +89,128 @@ function trialEnContactBlock(form: FormData): string {
   return note ? `${lines.join("\n")}\n\n${note}` : lines.join("\n");
 }
 
+/**
+ * Метка анкеты нового клиента 1:1 (/coaching/start, 60 EUR/месяц, английский
+ * аккаунт @runnigor). Как и trial-en, к русскому потоку не относится: в
+ * flow_number пишется эта строка, места и getFlowConfig/getSeatsLeft не
+ * трогаются. Миграции нет: ответы, у которых есть колонка, идут в неё, а
+ * остальное читаемым блоком в why_intensive.
+ */
+const COACHING_EN_SOURCE = "coaching-en";
+
+const COACHING_SPORTS: Record<string, string> = {
+  run: "Run",
+  bike: "Bike",
+  swim: "Swim",
+  gym: "Gym",
+  other: "Other",
+};
+
+type CoachingContact = { channel: "WhatsApp" | "Telegram"; value: string };
+
+/** Предпочитаемый канал клиента 1:1 и номер/username. null, если не заполнено. */
+function coachingContact(form: FormData): CoachingContact | null {
+  const channel = text(form, "preferred_contact", 20);
+  const raw = text(form, "contact_handle", 100);
+  if (!raw) return null;
+  if (channel === "whatsapp") {
+    return raw.replace(/\D/gu, "").length >= 7 ? { channel: "WhatsApp", value: raw } : null;
+  }
+  if (channel === "telegram") {
+    const handle = raw.replace(/^@+/u, "");
+    return handle ? { channel: "Telegram", value: `@${handle}` } : null;
+  }
+  return null;
+}
+
+/** Выбранные виды спорта клиента 1:1 (только известные коды). */
+function coachingSports(form: FormData): string[] {
+  return list(form, "sports").filter((code) => code in COACHING_SPORTS);
+}
+
+/** Название вида спорта; для "other" то, что человек вписал сам. */
+function coachingSportLabel(form: FormData, code: string): string {
+  if (code === "other") {
+    const name = text(form, "other_sport_name", 80);
+    return name ? `Other (${name})` : "Other";
+  }
+  return COACHING_SPORTS[code] ?? code;
+}
+
+/** "Run: 4 sessions/week, 5 h/week" по строке на каждый выбранный вид. */
+function coachingSportWeek(form: FormData): string | null {
+  const lines = coachingSports(form).map((code) => {
+    const sessions = text(form, `sessions_${code}`, 20);
+    const hours = text(form, `hours_${code}`, 20);
+    const parts = [
+      sessions ? `${sessions} sessions/week` : null,
+      hours ? `${hours} h/week` : null,
+    ].filter(Boolean);
+    return `${coachingSportLabel(form, code)}: ${parts.length ? parts.join(", ") : "not given"}`;
+  });
+  return lines.length ? lines.join("\n") : null;
+}
+
+/**
+ * Читаемый блок анкеты клиента 1:1 для why_intensive: контакты и все ответы,
+ * у которых нет своей колонки. Пустые строки пропускаются.
+ */
+function coachingEnBlock(form: FormData): string {
+  const contact = coachingContact(form);
+  const lines: string[] = [];
+  const add = (label: string, value: string | null | undefined) => {
+    if (value) lines.push(`${label}: ${value}`);
+  };
+  const section = (title: string) => {
+    if (lines.length) lines.push("");
+    lines.push(`## ${title}`);
+  };
+  const joined = (key: string) => {
+    const values = list(form, key);
+    return values.length ? values.join(", ") : null;
+  };
+
+  lines.push(`[${COACHING_EN_SOURCE}] new 1:1 client · 60 EUR/month`);
+  add("Instagram", `@${text(form, "instagram", 100)?.replace(/^@+/u, "") ?? ""}`);
+  add("Preferred contact", contact ? `${contact.channel} ${contact.value}` : null);
+  add("Email", text(form, "email", 200));
+  add("Time zone", text(form, "timezone", 80));
+
+  section("Goals");
+  add("What they want from a coach", text(form, "coach_expectations"));
+  add("Coaching experience", text(form, "coaching_experience", 20));
+
+  section("Week now");
+  add("Sports", coachingSports(form).map((code) => coachingSportLabel(form, code)).join(", ") || null);
+  const week = coachingSportWeek(form);
+  if (week) lines.push(week);
+  add("Total hours/week available", text(form, "total_hours", 50));
+  add("Time of day", joined("time_of_day"));
+  add("Long session days", text(form, "long_session_days", 300));
+  add("Longest run", text(form, "longest_run", 100));
+  add("Longest ride", text(form, "longest_ride", 100));
+  add("Longest swim", text(form, "longest_swim", 100));
+  add("Recent results / PBs", text(form, "recent_results"));
+
+  section("Tools");
+  add("Platforms", joined("platforms"));
+  add("Strava", text(form, "strava_url", 300));
+  add("HR strap", text(form, "hr_strap", 10));
+  add("Power meter", text(form, "power_meter", 10));
+  add("Indoor", joined("indoor"));
+
+  section("Health extra");
+  add("Sleep (h/night)", text(form, "sleep_hours", 20));
+  add("Energy (1-5)", text(form, "energy_level", 5));
+
+  const note = text(form, "why_intensive");
+  if (note) {
+    section("Anything else");
+    lines.push(note);
+  }
+  return lines.join("\n").slice(0, 8000);
+}
+
 async function notifyTelegram(params: {
   fullName: string;
   city: string | null;
@@ -100,6 +222,8 @@ async function notifyTelegram(params: {
   trialEnInstagram?: string | null;
   /** Английская пробная неделя: WhatsApp, где идёт сама неделя 1:1. */
   trialEnWhatsapp?: string | null;
+  /** Новый клиент 1:1: Instagram и предпочитаемый канал связи. */
+  coachingEn?: { instagram: string | null; contact: CoachingContact | null; sports: string };
 }): Promise<void> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const leadsChat = process.env.LEADS_CHAT_ID;
@@ -114,7 +238,23 @@ async function notifyTelegram(params: {
   // Пометка листа ожидания идёт ПЕРВОЙ строкой: в потоке уведомлений разницу
   // надо видеть с первого взгляда, не дочитывая до счётчика мест.
   const isTrialEn = params.trialEnInstagram !== undefined;
-  const message = isTrialEn
+  const message = params.coachingEn
+    ? [
+        "🇬🇧 COACHING EN · new client · 60 EUR/month",
+        "📋 Новая анкета клиента 1:1 (/coaching/start)",
+        `Имя: ${params.fullName}`,
+        `Instagram: @${params.coachingEn.instagram ?? "—"}`,
+        `Связь: ${
+          params.coachingEn.contact
+            ? `${params.coachingEn.contact.channel} ${params.coachingEn.contact.value}`
+            : "—"
+        }`,
+        `Город: ${params.city ?? "—"}`,
+        `Спорт: ${params.coachingEn.sports || "—"}`,
+        `Цель: ${goalShort}`,
+        "Собрать первую неделю и написать клиенту в течение 24 часов",
+      ].join("\n")
+    : isTrialEn
     ? [
         "🇬🇧 TRIAL EN · 7 дней · 10 EUR",
         "📋 Новая английская анкета (/trial)",
@@ -158,12 +298,15 @@ export async function POST(req: NextRequest) {
 
   // ── Валидация на сервере. Клиентскую проверку обходят, поэтому обязательное
   // здесь проверяется заново, а не «раз дошло — значит валидно».
-  const isTrialEn = text(form, "source", 40) === TRIAL_EN_SOURCE;
+  const source = text(form, "source", 40);
+  const isTrialEn = source === TRIAL_EN_SOURCE;
+  const isCoachingEn = source === COACHING_EN_SOURCE;
+  const isEnglish = isTrialEn || isCoachingEn;
 
   const fullName = text(form, "full_name", 200);
   if (!fullName) {
     return json(
-      { ok: false, error: isTrialEn ? "Please add your name" : "Укажи имя и фамилию" },
+      { ok: false, error: isEnglish ? "Please add your name" : "Укажи имя и фамилию" },
       422
     );
   }
@@ -173,7 +316,7 @@ export async function POST(req: NextRequest) {
     return json(
       {
         ok: false,
-        error: isTrialEn
+        error: isEnglish
           ? "Please confirm you have no medical reasons not to exercise"
           : "Без подтверждения об отсутствии противопоказаний записать не могу",
       },
@@ -194,6 +337,36 @@ export async function POST(req: NextRequest) {
     return json({ ok: false, error: "Please add your WhatsApp number with country code" }, 422);
   }
 
+  // Клиенту 1:1 обязательны Instagram и канал связи (WhatsApp или Telegram):
+  // туда тренер пишет с первой неделей.
+  const coachingInstagram = isCoachingEn
+    ? (text(form, "instagram", 100)?.replace(/^@+/u, "") || null)
+    : null;
+  const coachingContactValue = isCoachingEn ? coachingContact(form) : null;
+  if (isCoachingEn) {
+    if (!coachingInstagram) {
+      return json({ ok: false, error: "Please add your Instagram handle" }, 422);
+    }
+    if (!coachingContactValue) {
+      return json(
+        { ok: false, error: "Please add your WhatsApp number or Telegram username" },
+        422
+      );
+    }
+    if (!text(form, "city", 120)) {
+      return json({ ok: false, error: "Please add your city and country" }, 422);
+    }
+    if (!text(form, "goal")) {
+      return json({ ok: false, error: "Please add your main goal" }, 422);
+    }
+    if (coachingSports(form).length === 0) {
+      return json({ ok: false, error: "Please choose at least one sport" }, 422);
+    }
+    if (!text(form, "health_injuries") || !text(form, "health_chronic")) {
+      return json({ ok: false, error: "Please answer the health questions" }, 422);
+    }
+  }
+
   // ── Места. Отказа здесь НЕТ и быть не должно. Раньше при нуле мест роут
   // возвращал 409 ДО вставки, и анкета исчезала без единого следа: ни строки в
   // таблице, ни файлов в bucket, ни уведомления тренеру, ни записи в логе.
@@ -202,7 +375,7 @@ export async function POST(req: NextRequest) {
   //
   // Английская пробная неделя к русскому потоку не привязана: ни номер потока,
   // ни счётчик мест её не касаются, статус всегда new.
-  const flow = isTrialEn ? null : await getFlowConfig();
+  const flow = isEnglish ? null : await getFlowConfig();
   const seatsBefore = flow ? await getSeatsLeft(flow) : 1;
   const status: ApplicationStatus = seatsBefore > 0 ? "new" : "waitlist";
 
@@ -226,7 +399,11 @@ export async function POST(req: NextRequest) {
   let applicationId: string;
   try {
     applicationId = await createIntensiveApplication({
-      flowNumber: flow ? String(flow.number) : TRIAL_EN_SOURCE,
+      flowNumber: flow
+        ? String(flow.number)
+        : isCoachingEn
+          ? COACHING_EN_SOURCE
+          : TRIAL_EN_SOURCE,
       fullName,
       birthDate: dateOrNull(form, "birth_date"),
       sex: text(form, "sex", 20),
@@ -238,18 +415,31 @@ export async function POST(req: NextRequest) {
       healthDiscomfort: text(form, "health_discomfort"),
       healthDisclaimerAccepted: true,
       weeklyKm: text(form, "weekly_km", 50),
-      maxDistance: text(form, "max_distance", 50),
+      maxDistance: isCoachingEn
+        ? text(form, "longest_run", 50)
+        : text(form, "max_distance", 50),
       pr5k: text(form, "pr_5k", 20),
       pr10k: text(form, "pr_10k", 20),
       pr21k: text(form, "pr_21k", 20),
       pr42k: text(form, "pr_42k", 20),
-      currentTraining: text(form, "current_training"),
-      otherSports: text(form, "other_sports"),
+      currentTraining: isCoachingEn ? coachingSportWeek(form) : text(form, "current_training"),
+      otherSports: isCoachingEn
+        ? coachingSports(form).map((code) => coachingSportLabel(form, code)).join(", ") || null
+        : text(form, "other_sports"),
       goal: text(form, "goal"),
       racesThisYear: text(form, "races_this_year"),
-      whyIntensive: isTrialEn ? trialEnContactBlock(form) : text(form, "why_intensive"),
+      whyIntensive: isCoachingEn
+        ? coachingEnBlock(form)
+        : isTrialEn
+          ? trialEnContactBlock(form)
+          : text(form, "why_intensive"),
       availableDays: list(form, "available_days"),
-      sessionDuration: text(form, "session_duration", 50),
+      sessionDuration: isCoachingEn
+        ? (() => {
+            const hours = text(form, "total_hours", 40);
+            return hours ? `${hours} h/week total` : null;
+          })()
+        : text(form, "session_duration", 50),
       surfaces: list(form, "surfaces"),
       gadgets: list(form, "gadgets"),
       shoes: text(form, "shoes", 200),
@@ -261,7 +451,7 @@ export async function POST(req: NextRequest) {
     return json(
       {
         ok: false,
-        error: isTrialEn
+        error: isEnglish
           ? "Could not save the form. Please try again."
           : "Не удалось сохранить анкету. Попробуй ещё раз.",
       },
@@ -300,6 +490,17 @@ export async function POST(req: NextRequest) {
       seatsLeft,
       isWaitlist: status === "waitlist",
       ...(isTrialEn ? { trialEnInstagram, trialEnWhatsapp } : {}),
+      ...(isCoachingEn
+        ? {
+            coachingEn: {
+              instagram: coachingInstagram,
+              contact: coachingContactValue,
+              sports: coachingSports(form)
+                .map((code) => coachingSportLabel(form, code))
+                .join(", "),
+            },
+          }
+        : {}),
     });
   } catch (error) {
     console.error("[intensive-apply] Telegram failed:", error);
