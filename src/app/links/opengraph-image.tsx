@@ -8,7 +8,7 @@ export default function Image() {
   return renderOgCard({
     label: "IGORP.RUN · @RUNNIGOR",
     title: "Igor, running coach",
-    subtitle: "1:1 coaching, a 7-day trial for 10 EUR and free guides",
+    subtitle: "1:1 coaching, a trial week and free guides",
     motif: "track",
   });
 }
