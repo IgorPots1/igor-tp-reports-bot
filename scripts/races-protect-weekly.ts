@@ -4,6 +4,8 @@
  * формулировок («Возможная копия: адрес, фраза»). Зовёт его понедельничный раннер
  * run-races-weekly.sh после поиска копий. Ничего не блокирует и никуда не отправляет:
  * блокировки — только по «да» Игоря, правилом в Vercel Firewall.
+ * Заодно чистит счётчик race_guard_hits от окон старше суток: race_guard_hit убирает их сама,
+ * но случайно (примерно раз на 200 вызовов), и при малом трафике строки копятся.
  *
  *   npx tsx scripts/races-protect-weekly.ts [--copies <copies.json>]            — напечатать
  *   npx tsx scripts/races-protect-weekly.ts [--copies <copies.json>] --ops-log  — и записать новый файл в ~/ops-log/igor-tp-reports-bot/
@@ -42,6 +44,17 @@ async function loadLog(since: Date): Promise<GuardLogRow[]> {
   }
 }
 
+/** Окна счётчика старше суток: их значения уже ни на что не влияют (окна — минута и час). */
+async function purgeOldHits(now: Date): Promise<string> {
+  const sb = createSupabaseServerClient();
+  const { count, error } = await sb
+    .from("race_guard_hits")
+    .delete({ count: "exact" })
+    .lt("window_start", new Date(now.getTime() - 86400_000).toISOString());
+  if (error) return `Счётчик частоты: очистка не прошла (${error.message}).`;
+  return `Счётчик частоты: удалено окон старше суток — ${count ?? 0}.`;
+}
+
 /** Итог поиска копий: файл агента [{url, phrase}]. Нет файла или он битый — null («не выполнен»). */
 function loadCopies(file: string | undefined): CopyHit[] | null {
   if (!file || !existsSync(file)) return null;
@@ -70,6 +83,7 @@ async function main() {
     "Задача: еженедельный итог защиты календаря забегов (/races) от выкачивания",
     guard,
     ...copyLines(loadCopies(arg("copies")), phrases.own),
+    await purgeOldHits(now),
     "Блокировки — только по «да» Игоря (Vercel → Firewall → правило Deny по IP/подсети).",
     "Ветка: нет (сводка из базы)",
   ];
