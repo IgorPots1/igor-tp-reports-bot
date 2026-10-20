@@ -50,6 +50,36 @@ const GUIDES: { title: string; text: string; href: string; tag: string }[] = [
     tag: "Guide",
   },
   {
+    title: "Marathon readiness test",
+    text: "7 questions, 1 minute: from which month a marathon is realistic for you and what to work on first.",
+    href: "/tools/en/marathon",
+    tag: "Tool",
+  },
+  {
+    title: "Marathon calendar",
+    text: "Enter your race date and get every date of your build: off-season, key sessions and taper.",
+    href: "/tools/en/calendar",
+    tag: "Tool",
+  },
+  {
+    title: "Week template and pace calculator",
+    text: "A week for 3 or 4 runs and your paces for every session, from a recent 5K or 10K.",
+    href: "/tools/en/plan",
+    tag: "Tool",
+  },
+  {
+    title: "Fuel calculator",
+    text: "How many grams of carbs and protein to eat before and after your run, for your weight.",
+    href: "/tools/en/nutrition",
+    tag: "Tool",
+  },
+  {
+    title: "What to wear for a run",
+    text: "Set the weather and your session, get a full outfit from head to feet.",
+    href: "/tools/en/dress",
+    tag: "Tool",
+  },
+  {
     title: "Free Strava breakdown",
     text: "Comment STRAVA under any of my reels and I'll look at your training and your goal myself.",
     href: "https://www.instagram.com/runnigor/",

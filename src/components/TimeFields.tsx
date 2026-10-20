@@ -33,12 +33,19 @@ export default function TimeFields({
   onChange,
   idPrefix,
   label,
+  lang = "ru",
 }: {
   value: TimeParts;
   onChange: (next: TimeParts) => void;
   idPrefix: string;
   label: string;
+  /** Подписи полей: русские по умолчанию, английские для /tools/en/*. */
+  lang?: "ru" | "en";
 }) {
+  const t =
+    lang === "en"
+      ? { h: "h", m: "min", s: "sec", ha: "hours", ma: "minutes", sa: "seconds" }
+      : { h: "ч", m: "мин", s: "сек", ha: "часы", ma: "минуты", sa: "секунды" };
   const mRef = useRef<HTMLInputElement | null>(null);
   const sRef = useRef<HTMLInputElement | null>(null);
 
@@ -91,15 +98,15 @@ export default function TimeFields({
 
   return (
     <div className={styles.row} role="group" aria-label={label}>
-      {cell("h", "ч", `${label}: часы`)}
+      {cell("h", t.h, `${label}: ${t.ha}`)}
       <span className={styles.colon} aria-hidden="true">
         :
       </span>
-      {cell("m", "мин", `${label}: минуты`, mRef)}
+      {cell("m", t.m, `${label}: ${t.ma}`, mRef)}
       <span className={styles.colon} aria-hidden="true">
         :
       </span>
-      {cell("s", "сек", `${label}: секунды`, sRef)}
+      {cell("s", t.s, `${label}: ${t.sa}`, sRef)}
     </div>
   );
 }
