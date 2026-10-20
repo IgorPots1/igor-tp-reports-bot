@@ -1,16 +1,14 @@
 import type { Metadata } from "next";
-import { Activity, BookOpen, Calculator, CalendarCheck, FileText, MessageCircle, UserRound } from "lucide-react";
 import { publicPageMetadata } from "@/lib/site";
 import { jetbrains, onest } from "@/lib/fonts";
 import HtmlLang from "../coaching/HtmlLang";
-import "../_hub/hub.css";
 import "./links.css";
 
 // English link-in-bio page for the international Instagram account (@runnigor).
-// Same look as the root hub (src/app/page.tsx, _hub/hub.css): three simple
-// cards, Coaching 1:1, Trial week and Free materials. No prices on the faces:
-// they live on /coaching and /trial. The free list sits below (#free), then a
-// free consultation button that opens Igor's WhatsApp.
+// The earlier card design (99f11bd), stacked vertically instead of tabs, with no
+// prices on the page (they live on /coaching and /trial). Sections: 1:1 coaching,
+// trial week, then all free guides and tools, open by default at the bottom.
+// Consultation buttons open Igor's WhatsApp.
 
 export const metadata: Metadata = publicPageMetadata({
   path: "/links",
@@ -99,98 +97,89 @@ const GUIDES: { title: string; text: string; href: string; tag: string }[] = [
   },
 ];
 
-function GuideIcon({ tag }: { tag: string }) {
-  if (tag === "Tool") return <Calculator size={20} strokeWidth={2} aria-hidden="true" />;
-  if (tag === "Instagram") return <Activity size={20} strokeWidth={2} aria-hidden="true" />;
-  return <FileText size={20} strokeWidth={2} aria-hidden="true" />;
+function Consult({ text }: { text: string }) {
+  return (
+    <div className="links-consult">
+      <p>{text}</p>
+      <a className="links-btn" href={WA_URL} target="_blank" rel="noopener noreferrer">
+        Book a free consultation
+      </a>
+      <span className="links-hint mono">opens WhatsApp</span>
+    </div>
+  );
 }
 
 export default function LinksPage() {
   return (
-    <div lang="en" className={`start-root ${onest.variable} ${jetbrains.variable}`}>
+    <div lang="en" className={`links-root ${onest.variable} ${jetbrains.variable}`}>
       <HtmlLang lang="en" />
-      <main>
-        <div className="wrap">
-          <div className="prof">
-            <h1>Igor Potseluev</h1>
-            <div className="role">Running coach · online</div>
-            <div className="facts">
-              <span>
-                <b>10+ years</b> coaching
-              </span>
-              <span>
-                <b>300+</b> athletes coached
-              </span>
+      <main className="links-wrap">
+        <header className="links-head">
+          <div className="links-badge mono">@runnigor</div>
+          <h1>
+            Igor, <em>running coach</em>
+          </h1>
+          <p className="links-sub">
+            10+ years coaching. 300+ athletes coached. From your first 5K to the marathon.
+          </p>
+        </header>
+
+        <nav className="links-tabs" aria-label="Sections">
+          <a href="#coaching">Coaching 1:1</a>
+          <a href="#trial">Trial week</a>
+          <a href="#free">Free guides</a>
+        </nav>
+
+        <div className="links-panel">
+          <section id="coaching" className="links-card big">
+            <div className="links-kicker mono">Monthly · cancel anytime</div>
+            <h2>1:1 online coaching</h2>
+            <ul>
+              <li>A personal plan built around your goal and your week</li>
+              <li>Feedback on every run</li>
+              <li>I&apos;m in touch every day and adjust the plan when life gets in the way</li>
+              <li>Technique and strength work without overload</li>
+            </ul>
+            <a className="links-btn" href="/coaching">
+              See how coaching works
+            </a>
+          </section>
+
+          <section id="trial" className="links-card big">
+            <div className="links-kicker mono">7 days · then you decide</div>
+            <h2>Trial week</h2>
+            <ul>
+              <li>A personal week of training for your goal and level</li>
+              <li>Technique and strength work</li>
+              <li>Feedback on every run, 1:1 on WhatsApp</li>
+              <li>After the week you decide if you want to continue</li>
+            </ul>
+            <a className="links-btn" href="/trial">
+              Try a week
+            </a>
+          </section>
+
+          <Consult text={"Not sure what fits you? Let's talk about your running and your goal."} />
+
+          <section id="free" className="links-free">
+            <h2 className="links-section">Free guides and tools</h2>
+            <div className="links-grid">
+              {GUIDES.map((g) => (
+                <a key={g.href} className="links-card guide" href={g.href} target="_blank" rel="noopener noreferrer">
+                  <span className="links-tag mono">{g.tag}</span>
+                  <h3>{g.title}</h3>
+                  <p>{g.text}</p>
+                  <span className="links-open">Open &rarr;</span>
+                </a>
+              ))}
             </div>
-          </div>
+          </section>
 
-          <div className="links">
-            <a className="card primary" href="/coaching">
-              <span className="ic int">
-                <UserRound size={22} strokeWidth={2} aria-hidden="true" />
-              </span>
-              <span className="txt">
-                <span className="t">Coaching 1:1</span>{" "}
-                <span className="s">A plan built for you and a coach who checks every run</span>
-              </span>
-              <span className="ar">&rsaquo;</span>
-            </a>
-
-            <a className="card" href="/trial">
-              <span className="ic club">
-                <CalendarCheck size={22} strokeWidth={2} aria-hidden="true" />
-              </span>
-              <span className="txt">
-                <span className="t">Trial week</span>{" "}
-                <span className="s">7 days of coaching to see how it works for you</span>
-              </span>
-              <span className="ar">&rsaquo;</span>
-            </a>
-
-            <a className="card" href="#free">
-              <span className="ic free">
-                <BookOpen size={22} strokeWidth={2} aria-hidden="true" />
-              </span>
-              <span className="txt">
-                <span className="t">Free materials</span>{" "}
-                <span className="s">Guides, PDFs and calculators: workouts, taper, strength, shoes and more</span>
-              </span>
-              <span className="ar">&rsaquo;</span>
-            </a>
-          </div>
-
-          <h2 className="sep" id="free">
-            Free materials
-          </h2>
-          <div className="links">
-            {GUIDES.map((g) => (
-              <a key={g.href} className="card sm" href={g.href} target="_blank" rel="noopener noreferrer">
-                <span className="ic free">
-                  <GuideIcon tag={g.tag} />
-                </span>
-                <span className="txt">
-                  <span className="t">{g.title}</span> <span className="s">{g.text}</span>
-                </span>
-                <span className="tag">{g.tag}</span>
-              </a>
-            ))}
-          </div>
-
-          <div className="consult">
-            <p className="consult-t">Not sure where to start?</p>
-            <p className="consult-s">
-              Book a free consultation. We&apos;ll talk about your running, your goal and what to change first.
-            </p>
-            <a className="consult-btn" href={WA_URL} target="_blank" rel="noopener noreferrer">
-              <MessageCircle size={18} strokeWidth={2} aria-hidden="true" />
-              Book a free consultation
-            </a>
-            <p className="consult-hint">opens WhatsApp</p>
-          </div>
+          <Consult text="Questions about your training? Write me, the first talk is free." />
         </div>
-      </main>
 
-      <footer>© 2026 · Igor Potseluev · igorp.run</footer>
+        <p className="links-foot mono">igorp.run · smart running, fewer injuries</p>
+      </main>
     </div>
   );
 }
