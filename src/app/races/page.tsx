@@ -4,9 +4,13 @@ import { publicPageMetadata } from "@/lib/site";
 import SiteHeader from "@/components/SiteHeader";
 import { jetbrains, onest } from "@/lib/fonts";
 
+import { publicExpected } from "@/features/races-bot/core";
+
 import RacesCalendar from "./RacesCalendar";
+import RacesFooter from "./RacesFooter";
 import { loadExpected } from "./expected";
-import { loadListExtras, loadRaces } from "./load";
+import { loadDateFixed, loadRaces } from "./load";
+import { publicRace } from "./races-logic";
 import "./races-page.css";
 import styles from "./races.module.css";
 
@@ -27,13 +31,11 @@ export const viewport: Viewport = {
 export const revalidate = 3600;
 
 export default async function RacesPage() {
-  // На сайте строки «Важное» в списке нет (вариант Б, 15.10.2026). Данные едут в браузер для
-  // мини-приложения: там «Важное» и «Всё о старте» в блоке старта (16.10.2026).
-  const [loaded, expected, extras] = await Promise.all([loadRaces(), loadExpected(), loadListExtras()]);
-  const races = (loaded ?? []).map((r) => {
-    const d = extras.details.get(r.id);
-    return { ...r, important: d?.line ?? null, detailsN: d?.n ?? 0, dateFixed: extras.dateFixed.has(r.id) };
-  });
+  // В HTML — только то, что показывается (наряд 20.10.2026, защита от выкачивания): предстоящие
+  // старты (прошедшие отсекает prepare) и ожидаемые, без ссылок на страницы-источники и прошлые
+  // проведения. «Важное» и число полей выжимки мини-приложение берёт из /api/races/list по initData.
+  const [loaded, expected, dateFixed] = await Promise.all([loadRaces(), loadExpected(), loadDateFixed()]);
+  const races = (loaded ?? []).map((r) => ({ ...publicRace(r), dateFixed: dateFixed.has(r.id) }));
 
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
@@ -41,9 +43,10 @@ export default async function RacesPage() {
       <RacesCalendar
         races={races}
         failed={loaded === null}
-        expected={expected}
+        expected={expected.map(publicExpected)}
         botUsername={(process.env.RACES_BOT_USERNAME || "ruruns_bot").trim().replace(/^@/, "") || null}
       />
+      <RacesFooter />
     </div>
   );
 }

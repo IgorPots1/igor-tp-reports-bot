@@ -6,7 +6,8 @@
  *   npx tsx --env-file=<.env.local> scripts/race-course/relite.ts [--data-dir <dir>] [--apply]
  *
  * Без --apply — холостой прогон: печатает, что выйдет, ничего не пишет. Сеть — Overpass через
- * politeFetch (кэш ~/ops-log/races/osm-surface-cache) и тип старта из race_events (публичное чтение).
+ * politeFetch (кэш ~/ops-log/races/osm-surface-cache) и тип старта из race_events (ключ сервисной роли:
+ * с 20.10.2026 публичному ключу race_* закрыты).
  */
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,8 +21,8 @@ import { fetchSurface, liteEligible, litePublishable, liteShortPoints, liteThinR
 const arg = (k: string) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : undefined; };
 
 async function raceType(id: string): Promise<string | null> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL, key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) throw new Error("нет NEXT_PUBLIC_SUPABASE_URL / ANON_KEY (--env-file)");
+  const url = process.env.SUPABASE_URL, key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) throw new Error("нет SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (--env-file)");
   const res = await politeFetch(`${url}/rest/v1/race_events?select=race_type&id=eq.${encodeURIComponent(id)}`, { headers: { apikey: key, Authorization: `Bearer ${key}` } });
   const rows = (await res.json()) as { race_type: string | null }[];
   return rows[0]?.race_type ?? null;

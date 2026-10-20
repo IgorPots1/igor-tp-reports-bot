@@ -18,6 +18,7 @@ import { CourseMap, ProfileChart, WindStrip } from "./CourseViews";
 import "../../races-page.css";
 import pageStyles from "../../races.module.css";
 import styles from "./trassa.module.css";
+import RacesFooter from "../../RacesFooter";
 
 export const dynamicParams = false;
 
@@ -170,6 +171,7 @@ export default async function TrassaPage({ params }: { params: Promise<{ id: str
           . Высоты: Copernicus DEM через Open-Meteo. Погода: архив Open-Meteo. Карта: © OpenStreetMap.
         </p>
       </main>
+      <RacesFooter />
     </div>
   );
 }

@@ -1,7 +1,8 @@
 /* Страница старта igorp.run/races/<id> (вариант Б, наряд 15.10.2026): дата, место, дистанции и блок
  * «Что важно знать» — строка «Важное» наверху и те же разделы, что экран «Всё о старте» в боте
  * (src/features/race-details/full.ts). В списке /races строки «Важное» нет. <id> — id старта как в
- * календаре (probeg:71741); форма probeg_71741 тоже принимается. Данные — публичным ключом. */
+ * календаре (probeg:71741); форма probeg_71741 тоже принимается. Данные — на сервере ключом сервисной
+ * роли (с 20.10.2026 публичному ключу race_* закрыты). */
 
 import { nbsp } from "@/lib/typography";
 import type { Metadata } from "next";
@@ -23,6 +24,7 @@ import pageStyles from "../races.module.css";
 import styles from "./trassa/trassa.module.css";
 import own from "../details.module.css";
 import DetailsSections, { courseRefs } from "../DetailsSections";
+import RacesFooter from "../RacesFooter";
 
 export const revalidate = 3600;
 // Регион функции — Дублин, рядом с базой (Supabase eu-west-1) и серверами Telegram (18.10.2026):
@@ -99,6 +101,7 @@ export default async function RacePage({ params }: { params: Promise<{ id: strin
           {r.site ? <a href={r.site}>Сайт старта</a> : null}
         </p>
       </main>
+      <RacesFooter />
     </div>
   );
 }

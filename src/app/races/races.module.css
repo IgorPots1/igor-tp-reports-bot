@@ -880,3 +880,14 @@
 .compact .resetBtn {
   display: none;
 }
+
+/* Подвал с запретом копирования (20.10.2026): тихо, под списком, над плашкой подписки. */
+.copyright {
+  margin: 32px auto 0;
+  padding: 16px 16px 96px;
+  max-width: 760px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted, #6b7280);
+  text-align: center;
+}

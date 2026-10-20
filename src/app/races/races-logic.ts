@@ -61,8 +61,10 @@ export type Race = {
   site: string;
   reg: string;
   vk: string;
-  src: string;
-  srcName: string;
+  /** Страница-источник и её название. Только на сервере (бот, /go): в HTML /races не отдаются
+   *  с 20.10.2026 (защита от выкачивания), см. publicRace. */
+  src?: string;
+  srcName?: string;
   nSources: number;
   linkBad: boolean;
   altDates: string[];
@@ -212,6 +214,17 @@ export function toRace(r: RaceRow): Race {
     geo,
     noCity,
   };
+}
+
+/** Старт для HTML /races (наряд 20.10.2026): без ссылки на страницу-источник и её названия, без
+ *  «Важного» и числа полей выжимки — их мини-приложение берёт из /api/races/list по initData. */
+export function publicRace(r: Race): Race {
+  const { src: _src, srcName: _srcName, important: _important, detailsN: _detailsN, ...rest } = r;
+  void _src;
+  void _srcName;
+  void _important;
+  void _detailsN;
+  return rest;
 }
 
 export function fmtKm(k: number): string {

@@ -5,6 +5,7 @@
 import { parseTelegramInitDataUser, validateTelegramInitDataWithToken } from "@/features/telegram/validate-init-data";
 import { MINIAPP_ACTIONS, type MiniappAction } from "@/features/races-bot/bot";
 import { botToken, productionBot } from "@/features/races-bot/runtime";
+import { clientIp, logRefusal } from "@/features/race-guard/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,13 +41,15 @@ export async function POST(request: Request) {
   } catch {
     return Response.json({ ok: false, error: "misconfigured" }, { status: 500 });
   }
-  if (!initData || !validateTelegramInitDataWithToken(initData, token)) {
-    return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  }
+  // Отказы — в журнал защиты (наряд 20.10.2026), в недельный итог.
+  const refuse = async (kind: "no_init_data" | "bad_init_data", error: string) => {
+    await logRefusal(kind, clientIp(request.headers), request.headers.get("user-agent") ?? "", "/api/races-bot/miniapp");
+    return Response.json({ ok: false, error }, { status: 401 });
+  };
+  if (!initData) return refuse("no_init_data", "unauthorized");
+  if (!validateTelegramInitDataWithToken(initData, token)) return refuse("bad_init_data", "unauthorized");
   const authDate = Number(new URLSearchParams(initData).get("auth_date") || 0);
-  if (!authDate || Date.now() / 1000 - authDate > MAX_AGE_S) {
-    return Response.json({ ok: false, error: "expired" }, { status: 401 });
-  }
+  if (!authDate || Date.now() / 1000 - authDate > MAX_AGE_S) return refuse("bad_init_data", "expired");
   const user = parseTelegramInitDataUser(initData);
   if (!user) return Response.json({ ok: false, error: "unauthorized" }, { status: 401 });
   try {

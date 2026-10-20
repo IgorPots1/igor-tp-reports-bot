@@ -630,10 +630,23 @@ export function seasons(today: string): Season[] {
 
 /** Ожидаемая дата: прошлое проведение, перенесённое на ближайший год не раньше сегодня. */
 export function expectedDate(e: { lastDate: string }, today: string): string {
-  let y = Number(e.lastDate.slice(0, 4)) + 1;
-  const md = e.lastDate.slice(4);
+  return expectedDateMd(e.lastDate.slice(4), today, Number(e.lastDate.slice(0, 4)) + 1);
+}
+
+/** То же по «-ММ-ДД» без года: в HTML /races дата прошлого проведения целиком не отдаётся (20.10.2026). */
+export function expectedDateMd(md: string, today: string, from = Number(today.slice(0, 4))): string {
+  let y = from;
   while (`${y}${md}` < today) y += 1;
   return `${y}${md}`;
+}
+
+/** Ожидаемый старт для HTML /races: без ссылки на прошлое проведение и его полной даты. */
+export type PublicExpected = Omit<ExpectedItem, "lastUrl" | "lastDate"> & { md: string };
+
+export function publicExpected(e: ExpectedItem): PublicExpected {
+  const { lastUrl: _lastUrl, lastDate, ...rest } = e;
+  void _lastUrl;
+  return { ...rest, md: lastDate.slice(4) };
 }
 
 export type SeasonItem =

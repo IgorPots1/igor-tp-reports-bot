@@ -103,5 +103,19 @@ fi
 # Сводка бота «Забеги России» в ops-log теми же цифрами, что /stats. Сбой сводки не роняет прогон.
 npx --prefix "$REPO" tsx "$REPO/scripts/races-bot-stats.ts" --ops-log || echo "сводка бота: не получилась"
 
+# Защита календаря (наряд 20.10.2026): поиск копий наших формулировок и итог по отказам.
+# Поиск — отдельный короткий агент: только WebSearch и запись ./copies.json в своей папке, без
+# базы и без отправок. Итог (отказы из race_guard_log + «Возможная копия: …») — новым файлом в
+# ops-log. Блокировок здесь нет: только предложение Игорю. Сбой не роняет прогон.
+COPIES="$WORK/copies"
+mkdir -p "$COPIES" && cp "$REPO/src/features/race-guard/copy-phrases.json" "$COPIES/copy-phrases.json" && rm -f "$COPIES/copies.json"
+COPIES_PROMPT="$(sed -e "s|{{TODAY}}|$TODAY|g" "$REPO/scripts/races-copies-prompt.md")"
+( cd "$COPIES" && "$CLAUDE_BIN" -p "$COPIES_PROMPT" \
+    --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+    --no-session-persistence \
+    --allowedTools "Read(./**)" "Write(./copies.json)" "WebSearch" \
+    > "$COPIES/agent.out.log" 2> "$COPIES/agent.err.log" ) || echo "поиск копий: агент упал, см. $COPIES/agent.err.log"
+npx --prefix "$REPO" tsx "$REPO/scripts/races-protect-weekly.ts" --copies "$COPIES/copies.json" --ops-log || echo "итог защиты: не получился"
+
 npm --prefix "$REPO/tools/trainingpeaks-export" run --silent tp-heartbeat -- --job=races_weekly --status="$STATUS" || true
 echo "races weekly: готово ($STATUS)"

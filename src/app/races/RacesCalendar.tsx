@@ -3,7 +3,7 @@
 import { nbsp } from "@/lib/typography";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { NEARBY_KM, areaRaces, citySlug, expectedDate, inCity, raceCode, seasons, usuallyIn, type ExpectedItem } from "@/features/races-bot/core";
+import { NEARBY_KM, areaRaces, citySlug, expectedDateMd, inCity, raceCode, seasons, usuallyIn, type PublicExpected } from "@/features/races-bot/core";
 
 import {
   DISTS,
@@ -58,13 +58,15 @@ function allLabel(subject: string): string {
 /** «Всё о старте» в мини-приложении (16.10.2026): раскрывающийся блок, выжимка грузится при первом
  *  раскрытии (/api/races/details), раскрытие — событие details_open с via: miniapp. */
 /** Выжимка, уже загруженная или в пути: блок, появившийся на экране, грузит её заранее (18.10.2026),
- *  и раскрытие «Всё о старте» показывает готовое без ожидания. */
+ *  и раскрытие «Всё о старте» показывает готовое без ожидания. Адрес только для мини-приложения:
+ *  подписанный initData в заголовке (20.10.2026), без него сервер отвечает 401. */
 type DetailsData = { important: string | null; details: FullDetails; courses: CourseRef[] };
 const detailsCache = new Map<string, Promise<DetailsData>>();
 function loadDetails(id: string): Promise<DetailsData> {
   let p = detailsCache.get(id);
   if (!p) {
-    p = fetch(`/api/races/details?id=${encodeURIComponent(id)}`).then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))));
+    const initData = telegramWebApp()?.initData ?? "";
+    p = fetch(`/api/races/details?id=${encodeURIComponent(id)}`, { headers: { "X-Telegram-Init-Data": initData } }).then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))));
     p.catch(() => detailsCache.delete(id)); // сбой — следующая попытка заново
     detailsCache.set(id, p);
   }
@@ -228,11 +230,6 @@ function RaceItem({
               ВКонтакте
             </a>
           ) : null}
-          {r.src && r.src !== r.reg && r.src !== r.site ? (
-            <a className={`${styles.btn} ${styles.quiet}`} href={r.src} target="_blank" rel="noopener noreferrer">
-              {r.srcName}
-            </a>
-          ) : null}
         </div>
         {follow.mode === "site" && follow.bot ? (
           <div className={styles.follow}>
@@ -342,7 +339,7 @@ function LazyMonth({ summary, children }: { summary: ReactNode; children: () => 
 const BANNER_KEY = "races_tg_city_banner_closed";
 
 export default function RacesCalendar({
-  races,
+  races: racesIn,
   failed,
   botUsername,
   expected = [],
@@ -350,7 +347,7 @@ export default function RacesCalendar({
   races: Race[];
   failed: boolean;
   botUsername: string | null;
-  expected?: ExpectedItem[];
+  expected?: PublicExpected[];
 }) {
   const [f, setF] = useState<Filters>(NO_FILTERS);
   const [query, setQuery] = useState("");
@@ -359,6 +356,13 @@ export default function RacesCalendar({
   const [open, setOpen] = useState<Record<string, boolean>>({});
   /* Внутри Telegram (мини-апп бота): initData есть, звёздочка вместо ссылки в бота. */
   const [initData, setInitData] = useState<string | null>(null);
+  /* «Важное» и число полей выжимки — только в мини-приложении, из /api/races/list по initData
+     (20.10.2026: в HTML страницы их больше нет). До ответа список без них. */
+  const [extras, setExtras] = useState<Record<string, [string | null, number]> | null>(null);
+  const races = useMemo(
+    () => (extras ? racesIn.map((r) => (extras[r.id] ? { ...r, important: extras[r.id][0], detailsN: extras[r.id][1] } : r)) : racesIn),
+    [racesIn, extras],
+  );
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [onlyMine, setOnlyMine] = useState(false);
@@ -438,6 +442,16 @@ export default function RacesCalendar({
   useEffect(() => {
     if (initData) void miniapp("list");
   }, [initData, miniapp]);
+
+  useEffect(() => {
+    if (!initData) return;
+    void fetch("/api/races/list", { headers: { "X-Telegram-Init-Data": initData } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((j: { ok?: boolean; details?: Record<string, [string | null, number]> } | null) => {
+        if (j?.ok && j.details) setExtras(j.details);
+      })
+      .catch(() => undefined);
+  }, [initData]);
 
   async function toggle(r: Race) {
     const on = !saved.has(r.id);
@@ -530,13 +544,13 @@ export default function RacesCalendar({
       if (f.dist !== "all" && !distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)) return false;
       if (f.region && e.subject !== f.region) return false;
       if (season) {
-        const d = expectedDate(e, today);
+        const d = expectedDateMd(e.md, today);
         if (d < season.from || d > season.to) return false;
       }
       const hay = norm(`${e.name} ${e.city} ${e.region} ${e.subject ?? ""}`);
       return words.every((w) => hay.includes(w));
     });
-    const by = new Map<number, ExpectedItem[]>();
+    const by = new Map<number, PublicExpected[]>();
     for (const e of shown) by.set(e.lastMonth, [...(by.get(e.lastMonth) || []), e]);
     // С ближайшего месяца: сейчас октябрь — сначала ноябрь, декабрь, потом весна.
     const startM = new Date().getMonth() + 1;
@@ -861,9 +875,6 @@ export default function RacesCalendar({
                         ))}
                       </div>
                       <div className={styles.links}>
-                        <a className={`${styles.btn} ${styles.quiet}`} href={e.lastUrl} target="_blank" rel="noopener noreferrer">
-                          Прошлый старт
-                        </a>
                         {e.site ? (
                           <a className={styles.btn} href={e.site} target="_blank" rel="noopener noreferrer">
                             Организатор

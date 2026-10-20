@@ -10,26 +10,33 @@ const COLUMNS =
   "id,source,source_url,name,date_start,date_end,city,region,distances,dist_km,race_type,tags,site_url,reg_url,vk_url,sources,link_ok,alt_dates,checked_note,subject,lat,lon";
 const PAGE = 1000;
 
-/* Чтение view public.race_calendar публичным ключом (anon / publishable):
-   view открыт на select для anon, и сайту больше ничего не нужно. Ключ
-   сервисной роли сюда сознательно не берётся, хотя он есть в окружении:
-   публичной странице хватает публичных прав.
+/* Чтение на сервере ключом сервисной роли (наряд 20.10.2026, защита от выкачивания): публичному
+   ключу race_* закрыты миграцией 20261020120100_race_public_revoke. Ключ только в окружении
+   сервера, в браузер не уходит. Запросы — обычным fetch, чтобы работал кэш данных Next
+   (revalidate), как и раньше.
 
    PostgREST отдаёт не больше 1000 строк за запрос и молча обрезает остальное,
    поэтому читаем страницами до короткой. */
-export async function loadRows(): Promise<RaceRow[] | null> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+function db(): { url: string; headers: Record<string, string> } | null {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
-    console.error("[races] NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY не заданы");
+    console.error("[races] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY не заданы");
     return null;
   }
+  return { url, headers: { apikey: key, Authorization: `Bearer ${key}` } };
+}
+
+export async function loadRows(): Promise<RaceRow[] | null> {
+  const c = db();
+  if (!c) return null;
+  const { url, headers } = c;
   const rows: RaceRow[] = [];
   for (let from = 0; ; from += PAGE) {
     const res = await fetch(
       `${url}/rest/v1/race_calendar?select=${COLUMNS}&order=date_start.asc,name.asc`,
       {
-        headers: { apikey: key, Authorization: `Bearer ${key}`, Range: `${from}-${from + PAGE - 1}` },
+        headers: { ...headers, Range: `${from}-${from + PAGE - 1}` },
         next: { revalidate: 3600 },
       },
     );
@@ -44,14 +51,13 @@ export async function loadRows(): Promise<RaceRow[] | null> {
 }
 
 /** Для мини-приложения (16.10.2026): по каждому старту строка «Важное» и число заполненных полей
- *  выжимки (кнопка «Всё о старте» — от 3), плюс старты с правкой даты в race_overrides (их расхождение
- *  дат разрешено — оранжевое предупреждение не показываем). Сбой — пустые карты, список работает. */
-export async function loadListExtras(): Promise<{ details: Map<string, { line: string | null; n: number }>; dateFixed: Set<string> }> {
-  const out = { details: new Map<string, { line: string | null; n: number }>(), dateFixed: new Set<string>() };
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return out;
-  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+ *  выжимки (кнопка «Всё о старте» — от 3). С 20.10.2026 в HTML /races не едет: мини-приложение берёт
+ *  её из /api/races/list по подписанному initData. Сбой — пустая карта, список работает. */
+export async function loadDetailsIndex(): Promise<Map<string, { line: string | null; n: number }>> {
+  const out = new Map<string, { line: string | null; n: number }>();
+  const c = db();
+  if (!c) return out;
+  const { url, headers } = c;
   try {
     const byRace = new Map<string, FullRow[]>();
     for (let from = 0; ; from += PAGE) {
@@ -64,23 +70,35 @@ export async function loadListExtras(): Promise<{ details: Map<string, { line: s
       for (const r of chunk) byRace.set(r.race_id, [...(byRace.get(r.race_id) ?? []), { ...r, distance: r.distance == null ? null : Number(r.distance) }]);
       if (chunk.length < PAGE) break;
     }
-    for (const [id, rows] of byRace) out.details.set(id, { line: importantLine(rows), n: fieldCount(rows) });
-    const o = await fetch(`${url}/rest/v1/race_overrides?select=id&date_start=not.is.null`, { headers, next: { revalidate: 3600 } });
-    if (o.ok) for (const r of (await o.json()) as { id: string }[]) out.dateFixed.add(r.id);
+    for (const [id, rows] of byRace) out.set(id, { line: importantLine(rows), n: fieldCount(rows) });
   } catch (e) {
     console.error(`[races] выжимка для списка недоступна: ${e instanceof Error ? e.message : String(e)}`);
   }
   return out;
 }
 
+/** Старты с правкой даты в race_overrides: их расхождение дат разрешено, на сайте — «Дата сверена
+ *  с организатором» вместо оранжевого предупреждения. Сбой — пустое множество. */
+export async function loadDateFixed(): Promise<Set<string>> {
+  const out = new Set<string>();
+  const c = db();
+  if (!c) return out;
+  try {
+    const o = await fetch(`${c.url}/rest/v1/race_overrides?select=id&date_start=not.is.null`, { headers: c.headers, next: { revalidate: 3600 } });
+    if (o.ok) for (const r of (await o.json()) as { id: string }[]) out.add(r.id);
+  } catch (e) {
+    console.error(`[races] race_overrides недоступна: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return out;
+}
+
 /** Страница старта /races/<id> (вариант Б, 15.10.2026): сам старт из race_calendar и его выжимка
- *  из race_details, тем же публичным ключом. Старта нет — null (страница 404); выжимки нет или чтение
- *  упало — пустой список, страница без блока «Что важно знать». */
+ *  из race_details. Старта нет — null (страница 404); выжимки нет или чтение
+ *  упало — пустой список, страница без блока «Что важно знать». Ключ — сервисной роли (см. db()). */
 export async function loadRacePage(id: string): Promise<{ race: Race; rows: FullRow[] } | null> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const c = db();
+  if (!c) return null;
+  const { url, headers } = c;
   // Старт и выжимка — параллельно (18.10.2026: было по очереди, два обращения к базе подряд).
   const detailsP = fetch(`${url}/rest/v1/race_details?select=distance,field,value,source_url,checked_at&race_id=eq.${encodeURIComponent(id)}&order=id.asc`, { headers, next: { revalidate: 3600 } })
     .then(async (d) => {
