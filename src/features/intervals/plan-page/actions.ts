@@ -136,7 +136,7 @@ export async function submitPageReport(
    * число в форме оставило бы тренировку переехавшей на сегодня без отчёта.
    */
   if (isManualEntry && input.minutes === null) throw new PlanPageInputError("Укажите минуты.");
-  const problem = isManualEntry ? validateManualEntry(entry) : null;
+  const problem = isManualEntry ? validateManualEntry(entry, todayIso) : null;
   if (problem) throw new PlanPageInputError(problem);
   if (!effortByCode(input.effortCode) || !painByCode(input.painCode)) {
     throw new PlanPageInputError("Отметьте, как далась и болело ли.");

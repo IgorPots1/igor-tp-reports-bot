@@ -29,6 +29,7 @@ import { resolveCheckinDay, submitCheckin, type SubmitCheckinResult } from "./lo
 import { deriveIntervals, deriveSteady, plannedParts } from "./loop/derive-distance";
 import { SPEED_MAX_KMH, SPEED_MIN_KMH } from "./loop/manual-entry-parse";
 import { getSessionById } from "./loop/repository";
+import { todayIsoInZone } from "./loop/clock";
 
 /**
  * Префикс activity_id у строк, которые завёл ручной ввод.
@@ -239,9 +240,14 @@ export type ManualEntryResult =
  * там отчёт о будущей тренировке сначала переносит её на сегодня, и перенос
  * должен случиться только под отчёт, который точно запишется.
  */
-export function validateManualEntry(input: ManualEntryInput): string | null {
+export function validateManualEntry(input: ManualEntryInput, todayIso: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return "Дата не похожа на дату.";
-  if (input.date > new Date().toISOString().slice(0, 10)) return "Дата в будущем — так не бывает.";
+  /**
+   * «СЕГОДНЯ» — ПО ЕЁ ЧАСОВОМУ ПОЯСУ, НЕ ПО UTC [решение Игоря, 21.10.2026].
+   * Было `new Date().toISOString()`: с 00:00 до 03:00 по Москве UTC ещё живёт
+   * вчерашним днём, и сегодняшняя пробежка отбивалась как «дата в будущем».
+   */
+  if (input.date > todayIso) return "Дата в будущем — так не бывает.";
   if (!Number.isFinite(input.durationMinutes) || input.durationMinutes < MIN_DURATION_MIN || input.durationMinutes > MAX_DURATION_MIN) {
     return `Время тренировки — от ${MIN_DURATION_MIN} минут до ${MAX_DURATION_MIN / 60} часов.`;
   }
@@ -308,16 +314,17 @@ export function validateManualEntry(input: ManualEntryInput): string | null {
  * заново тем же экраном.
  */
 export async function submitManualEntry(input: ManualEntryInput): Promise<ManualEntryResult> {
-  const problem = validateManualEntry(input);
-  if (problem) return { ok: false, code: "bad_input", messageRu: problem };
-
   const supabase = createSupabaseServerClient();
   const { data: sourceRow, error: sourceError } = await supabase
     .from("student_data_sources")
-    .select("student_id, auth_method")
+    .select("student_id, auth_method, trainingpeaks_students(timezone)")
     .eq("id", input.sourceId)
     .maybeSingle();
   if (sourceError) return { ok: false, code: "db_error", messageRu: describeSupabaseError(sourceError) };
+  const timezone =
+    (sourceRow as { trainingpeaks_students?: { timezone?: string | null } | null } | null)?.trainingpeaks_students?.timezone ?? null;
+  const problem = validateManualEntry(input, todayIsoInZone(timezone));
+  if (problem) return { ok: false, code: "bad_input", messageRu: problem };
   if (!sourceRow) return { ok: false, code: "no_source", messageRu: "Источник не найден." };
 
   const movingTimeS = Math.round(input.durationMinutes * 60);

@@ -35,6 +35,8 @@ import {
 import { linkOpens } from "@/features/intervals/plan-page/links";
 import { buildScheme, weekRangeLabel } from "@/features/intervals/plan-page/view";
 import { reportDayFor } from "@/features/intervals/plan-page/report-day";
+import { todayIsoInZone } from "@/features/intervals/loop/clock";
+import { validateManualEntry } from "@/features/intervals/manual-entry";
 
 // ── Первая содержательная строка ответа ──────────────────────────────────────
 // Начала — дословно из её настоящих ответов тренера (intervals_coach_messages).
@@ -174,5 +176,22 @@ for (const d of ["2026-10-22", "2026-10-25"]) {
 }
 assert.equal(reportDayFor({ sessionDate: "2026-10-28", weekStart: "2026-10-26", todayIso: today }).ok, false,
   "следующая неделя заранее не отмечается: перенос между неделями запрещён (move.ts)");
+
+// ── «Сегодня» в ручном вводе — по её поясу, не по UTC [21.10.2026] ──────────
+// БЫЛО: сравнение с new Date().toISOString() — с 00:00 до 03:00 по Москве UTC
+// ещё «вчера», и сегодняшняя пробежка отбивалась как «дата в будущем». Держим
+// строже, чем «не падает»: в 00:30 МСК её сегодняшний день ПРИНИМАЕТСЯ, а
+// завтрашний по-прежнему ОТБИВАЕТСЯ.
+const at0030msk = new Date("2026-10-21T21:30:00Z"); // 22.10, 00:30 по Москве; в UTC ещё 21.10
+const todayMsk = todayIsoInZone("Europe/Moscow", at0030msk);
+assert.equal(todayMsk, "2026-10-22", "в 00:30 по Москве у неё уже 22-е");
+assert.equal(at0030msk.toISOString().slice(0, 10), "2026-10-21", "а UTC ещё живёт 21-м — ровно та ловушка");
+const entryOn = (date: string) => ({
+  sourceId: "x", date, durationMinutes: 35, distanceKm: null, averageHeartrate: null, averagePaceSecPerKm: null,
+  planSessionId: null, effortCode: "simple_good", painCode: "no_pain", commentText: null,
+});
+assert.equal(validateManualEntry(entryOn("2026-10-22"), todayMsk), null, "в 00:30 МСК сегодняшняя пробежка (22.10) принимается");
+assert.ok(validateManualEntry(entryOn("2026-10-23"), todayMsk)?.includes("будущем"), "завтрашняя (23.10) по-прежнему отбивается");
+assert.equal(validateManualEntry(entryOn("2026-10-21"), todayMsk), null, "вчерашняя принимается");
 
 console.log("check:plan-page — все проверки пройдены");
