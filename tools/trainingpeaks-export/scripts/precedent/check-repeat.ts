@@ -16,7 +16,7 @@ import { recent, LEVEL_MAX_RATIO, MAX_GAP_WEEKS, MIN_RECENT_WEEKS } from "./rece
 import { validateWeek, type VSess } from "./validate.ts";
 import { signalWindow, staleReason } from "../lib/signal-closure.ts";
 import { addedByCoach, diffPlaced, toPublish, type Placed } from "./plan-edits.ts";
-import { buildRepeatWeek, selectDonor, useExplicitParams } from "./build-week.ts";
+import { buildRepeatWeek, selectDonor, resolveExplicitParams } from "./build-week.ts";
 import { runProbeCycle } from "./hidden-flow.ts";
 import { hasQualityContent } from "./validate.ts";
 import { fakeClient, probeBody, probeGate, PROBE_ATHLETE_ID, PROBE_CONFIRM } from "./probe-hidden-via-client.ts";
@@ -177,7 +177,7 @@ const W8: Weights = { phase: 2.5, dist: 1.4, vol: 0.9, prev: 0.5, prevDays: 0.2,
 // БОЕВЫЕ УМОЛЧАНИЯ снимаются ДО того, как проверки зададут свои значения: именно они работают в «раскидать».
 const PROD = { lookback: LOOKBACK_WEEKS, peak: PEAK_RATIO, skip: [...SKIP_REASONS].sort().join(), recovery: RECOVERY_ON, qs: QUALITY_SHARE_MIN, bm: BEYOND_MAIN };
 setRepeatParams({ normal: 0.6, gap: 2, skip: ["старт", "после старта", "подводка", "пик", "провал объёма"], peak: 1.5, recovery: true });
-useExplicitParams();
+resolveExplicitParams();
 
 console.log("\n── форма: защита от наследования ──");
 {
@@ -358,6 +358,33 @@ console.log("\n── структура из образца в собранно
   check("дельта цикла меняет минуты лёгких — длительность их шага пересчитана под новые минуты, а рецепт интервалов НЕ тронут (3540 с, 8 повторов)", ge.length > 0 && ge.every((x) => x.structure != null && totalSeconds(x.structure) === x.minutes * 60) && ge.some((x) => x.minutes !== 50 && x.minutes !== 100) && !!gq && totalSeconds(gq.structure!) === 3540 && gq.structure!.structure[1].length.value === 8, JSON.stringify(ge.map((x) => [x.minutes, x.structure ? totalSeconds(x.structure) : null])));
   const none = buildRepeatWeek(ix, T(1, 7), W8, null, undefined, new Map());
   check("в образце структуры нет — structure=null и пометка «шагов на часах не будет», а не выдуманные шаги", !!none && none.sessions.every((x) => x.structure === null && x.flags.some((f) => /структуры в образце нет/.test(f))));
+}
+
+console.log("\n── БЛОК: качественная в день силовой тренера (наряд Игоря 21.10) ──");
+{
+  const Qs = { dayIdx: 3, kind: "quality" as const, title: "6 х 5 мин", minutes: 54, work: 30, description: "" };
+  const Ez = { dayIdx: 1, kind: "easy" as const, title: "Бег по темпу", minutes: 50, work: 0, description: "" };
+  const Lg = { dayIdx: 6, kind: "long" as const, title: "Длительный", minutes: 90, work: 0, description: "" };
+  const v = (strength?: Array<{ dayIdx: number; date: string; title: string }>) => validateWeek([Ez, Qs, Lg], null, { hasActiveIllness: false, checkText: false, strength });
+  const hit = v([{ dayIdx: 3, date: "2026-10-22", title: "Силовая — основная" }]).find((x) => /силовой тренера/.test(x.name));
+  check("качественная в день силовой — нарушение ЖЁСТКОЕ (неделя не ставится), в причине дата, название беговой и название силовой",
+    !!hit && !hit.ok && hit.severity === "hard" && hit.detail === "22.10: качественная «6 х 5 мин» в день силовой «Силовая — основная»", JSON.stringify(hit));
+  const easyDay = v([{ dayIdx: 1, date: "2026-10-20", title: "Силовая" }, { dayIdx: 6, date: "2026-10-25", title: "Силовая" }]).find((x) => /силовой тренера/.test(x.name));
+  check("силовая в день лёгкой или длительной — не блок (правило только про качественную)", !!easyDay && easyDay.ok);
+  check("силовых на неделе нет — правило не выводится вовсе (прочие проверки недели не меняются)", !v().some((x) => /силовой тренера/.test(x.name)) && !v([]).some((x) => /силовой тренера/.test(x.name)));
+  // сквозной: сборка недели с силовой в контексте атлета (скрытая тоже — у контекста нет признака скрытия, он видит всё)
+  const base = buildRepeatWeek(ix, T(42, 6), W8, null, undefined, new Map());
+  const qDay = base?.sessions.find((x) => x.kind === "quality")?.dayIdx ?? -1; const qDate = addDays(wk(6), qDay);
+  const ctx = { envelope: null, hasActiveIllness: false, plannedStrength: [{ date: qDate, title: "Силовая — зал" }], plannedStrengthDates: [qDate] } as unknown as Parameters<typeof buildRepeatWeek>[4];
+  const blocked = buildRepeatWeek(ix, T(42, 6), W8, null, ctx, new Map());
+  check("сборка недели: силовая тренера в день качественной → неделя ОТКАЗАНА с причиной (дата, беговая, силовая)",
+    !!blocked && blocked.refused && /качественная «.+» в день силовой «Силовая — зал»/.test(blocked.refusedWhy ?? ""), JSON.stringify(blocked?.refusedWhy));
+  const other = { ...(ctx as object), plannedStrength: [{ date: addDays(wk(6), (qDay + 1) % 7), title: "Силовая — зал" }], plannedStrengthDates: [] } as unknown as Parameters<typeof buildRepeatWeek>[4];
+  const okWeek = buildRepeatWeek(ix, T(42, 6), W8, null, other, new Map());
+  check("силовая в другой день — неделя не блокируется этим правилом", !!okWeek && !okWeek.validator.some((x) => /силовой тренера/.test(x.name) && !x.ok));
+  const onlyDates = { ...(ctx as object), plannedStrength: undefined } as unknown as Parameters<typeof buildRepeatWeek>[4];
+  const viaDates = buildRepeatWeek(ix, T(42, 6), W8, null, onlyDates, new Map());
+  check("в контексте только даты (без названий) — блок всё равно срабатывает, силовая названа «силовая»", !!viaDates && viaDates.refused && /в день силовой «силовая»/.test(viaDates.refusedWhy ?? ""), JSON.stringify(viaDates?.refusedWhy));
 }
 
 console.log("\n── переносы строк в описаниях (18.10, Ярулина: «склеились в один абзац») ──");

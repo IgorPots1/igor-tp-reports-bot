@@ -40,7 +40,7 @@ export function loadRepeatParams(): void {
   setRepeatParams({ normal: p.normal, gap: p.gap, lookback: p.lookback }); paramsLoaded = true;
 }
 /** Тесты и бэктест задают параметры сами: файл читать не нужно. */
-export function useExplicitParams(): void { paramsLoaded = true; }
+export function resolveExplicitParams(): void { paramsLoaded = true; }
 
 const med = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 
@@ -118,8 +118,11 @@ export function buildRepeatWeek(ix: Index, t: CWeek, W: Weights, cycle: CycleDel
   }).sort((a, b) => a.dayIdx - b.dayIdx);
   const hist = (ix.byAid.get(t.aid) ?? []).filter((w) => w.weekStart < t.weekStart);
   const prior = hist.slice(-8).map((w) => w.total);
+  // силовые тренера на целевой неделе (наряд 21.10): из контекста атлета — кэш, включая скрытые; без названия — «силовая»
+  const strengthSrc = c?.plannedStrength ?? (c?.plannedStrengthDates ?? []).map((d) => ({ date: d, title: "силовая" }));
+  const strength = strengthSrc.map((x) => ({ ...x, dayIdx: Math.round((Date.parse(x.date) - Date.parse(t.weekStart)) / 86400000) })).filter((x) => x.dayIdx >= 0 && x.dayIdx <= 6);
   const validator = validateWeek(sessions, c?.envelope ?? null, {
-    hasActiveIllness: c?.hasActiveIllness ?? t.illAtStart, checkText: true,
+    hasActiveIllness: c?.hasActiveIllness ?? t.illAtStart, checkText: true, strength,
     normalLevel: prior.length >= 4 ? med(prior) : undefined, raceDayIdx: t.nextRaceIsMain ? t.raceDayIdx : null,
     recent: recent(ix, t.aid, t.weekStart),
     postMarathonWeek: t.lastRaceKm != null && t.lastRaceKm >= 30 && t.weeksSinceRace != null ? t.weeksSinceRace : null,

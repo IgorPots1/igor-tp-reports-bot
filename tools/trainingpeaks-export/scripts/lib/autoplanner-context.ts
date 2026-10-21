@@ -169,6 +169,8 @@ export type AthleteContext = AthleteAnchors & {
    * buildWeek не ставит качественную в день силовой (наряд 21.10).
    */
   plannedStrengthDates: string[];
+  /** то же с названиями (для причины блока в проверке недели precedent/validate.ts) */
+  plannedStrength?: Array<{ date: string; title: string }>;
 };
 
 /**
@@ -270,19 +272,19 @@ async function pullRuns(sb: SupabaseClient, sinceDays: number): Promise<Row[]> {
  * выполненные, не плановые, сюда не попадают. Скрытые тренерские — попадают: это цель.
  */
 export const STRENGTH_LOOKAHEAD_DAYS = 56;
-async function pullPlannedStrengthDates(sb: SupabaseClient, asOf: string): Promise<Map<number, string[]>> {
+async function pullPlannedStrengthDates(sb: SupabaseClient, asOf: string): Promise<Map<number, Array<{ date: string; title: string }>>> {
   const from = mondayOf(asOf);
   const to = addDays(from, STRENGTH_LOOKAHEAD_DAYS);
-  const out = new Map<number, string[]>();
+  const out = new Map<number, Array<{ date: string; title: string }>>();
   for (let f = 0; ; f += 1000) {
     const { data, error } = await sb.from("trainingpeaks_workout_cache")
-      .select("trainingpeaks_athlete_id, workout_date")
+      .select("trainingpeaks_athlete_id, workout_date, title")
       .eq("workout_type_value_id", 9).eq("is_planned", true)
       .gte("workout_date", from).lte("workout_date", to)
       .order("trainingpeaks_athlete_id").order("workout_date").order("id").range(f, f + 999);
     if (error) throw error;
-    for (const r of (data ?? []) as Array<{ trainingpeaks_athlete_id: number; workout_date: string }>) {
-      (out.get(r.trainingpeaks_athlete_id) ?? out.set(r.trainingpeaks_athlete_id, []).get(r.trainingpeaks_athlete_id)!).push(r.workout_date);
+    for (const r of (data ?? []) as Array<{ trainingpeaks_athlete_id: number; workout_date: string; title: string | null }>) {
+      (out.get(r.trainingpeaks_athlete_id) ?? out.set(r.trainingpeaks_athlete_id, []).get(r.trainingpeaks_athlete_id)!).push({ date: r.workout_date, title: r.title ?? "силовая" });
     }
     if (!data || data.length < 1000) break;
   }
@@ -700,7 +702,8 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       athleteId: aid, tier, easy, threshold: thresholds.get(aid) ?? null,
       quality: qAnchor ? { fastSec: qAnchor.fast, slowSec: qAnchor.slow, confidence: anchorConfidence(qAnchor.effectiveN) as Confidence, effectiveN: qAnchor.effectiveN } : null,
       illness, hasActiveIllness, tierNote,
-      plannedStrengthDates: strengthByAthlete.get(aid) ?? [],
+      plannedStrengthDates: (strengthByAthlete.get(aid) ?? []).map((x) => x.date),
+      plannedStrength: strengthByAthlete.get(aid) ?? [],
       envelope: {
         rolling4wWeeklyMin, rolling4wFrequency: Math.round(avgPlanned(weekFreq) * 10) / 10,
         rolling4wQuality: Math.round(avgPlanned(weekQual) * 10) / 10,

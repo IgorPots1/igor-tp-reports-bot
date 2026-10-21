@@ -42,6 +42,11 @@ export const POST_MARATHON_NO_QUALITY_WEEKS = 3;
 
 export type VOpts = {
   hasActiveIllness: boolean; checkText: boolean;
+  /**
+   * Силовые тренера на этой неделе (кэш: тип 9 + is_planned, включая СКРЫТЫЕ и сервис силовых TP). Наряд Игоря 21.10:
+   * качественная в день силовой — БЛОК (неделя не ставится), в причине дата, беговая и силовая. Не задано — правило не проверяется.
+   */
+  strength?: Array<{ dayIdx: number; date: string; title: string }>;
   /** медиана объёма 8 прошлых недель — база для жёсткой защиты от скачка */
   normalLevel?: number;
   /** день старта относительно понедельника недели (0..6; 7 = понедельник следующей); null — старта рядом нет */
@@ -74,6 +79,10 @@ export function validateWeek(ss: VSess[], env: Envelope | null, o: VOpts): VResu
   const work = q.reduce((s, x) => s + x.work, 0);
 
   // ── жёсткие ──
+  if (o.strength && o.strength.length) {
+    const clash = q.flatMap((s) => o.strength!.filter((x) => x.dayIdx === s.dayIdx).map((x) => `${x.date.slice(8, 10)}.${x.date.slice(5, 7)}: качественная «${s.title}» в день силовой «${x.title}»`));
+    add("ЖЁСТКО: качественная не в день силовой тренера", clash.length === 0, clash.join("; "), "hard");
+  }
   if (total > 0 && q.length) add("ЖЁСТКО: доля работы не выше 0.85 недели", work / total <= HARD_WORK_SHARE, `${work} из ${total}`, "hard");
   add("ЖЁСТКО: ни одна лёгкая не короче 20 мин", e.every((x) => x.minutes >= HARD_EASY_MIN), `лёгкие ${e.map((x) => x.minutes)}`, "hard");
   if (o.normalLevel && o.normalLevel > 0) add("ЖЁСТКО: объём не выше 2.3 × обычного", total <= HARD_GROWTH_VS_NORMAL * o.normalLevel, `${total} при обычном ${o.normalLevel}`, "hard");

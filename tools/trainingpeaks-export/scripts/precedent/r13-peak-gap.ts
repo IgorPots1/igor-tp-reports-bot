@@ -15,11 +15,11 @@ import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import { indexCorpus, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Side } from "./metrics.ts";
 import { setRepeatParams, planRepeat, type PeakRule } from "./repeat.ts";
-import { buildRepeatWeek, setDonorPeakFilter, stateFor, useExplicitParams } from "./build-week.ts";
+import { buildRepeatWeek, setDonorPeakFilter, stateFor, resolveExplicitParams } from "./build-week.ts";
 import { setGuardParams } from "./recent-level.ts";
 import { GROUP12 } from "./assemble.ts";
 
-useExplicitParams();
+resolveExplicitParams();
 const SPLIT = "2026-03-02"; const TRAIN_FROM = "2025-06-02"; const VALID_TO = "2026-08-17";
 const arg = (n: string): string | null => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] ?? null : null; };
 const L = load(); const ix = indexCorpus(L.corpus); const roster = new Set(L.rosterActive);

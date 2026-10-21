@@ -7,10 +7,10 @@ import path from "node:path";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import { findPrecedent, indexCorpus, type Weights } from "./precedent.ts";
 import { abnormalReason, planRepeat, setRepeatParams } from "./repeat.ts";
-import { useExplicitParams } from "./build-week.ts";
+import { resolveExplicitParams } from "./build-week.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
 
-useExplicitParams();
+resolveExplicitParams();
 const L = load(); const ix = indexCorpus(L.corpus);
 const W = JSON.parse(readFileSync(path.join(DATA_DIR, "tuned-weights.json"), "utf8")) as Weights;
 setRepeatParams({ normal: 0.8, gap: 2, lookback: 10, peak: 1.25, recovery: true });

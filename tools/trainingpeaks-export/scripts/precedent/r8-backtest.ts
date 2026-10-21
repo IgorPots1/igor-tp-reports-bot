@@ -17,11 +17,11 @@ import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import { adapt, findPrecedent, indexCorpus, type PSess, type Weights } from "./precedent.ts";
 import { aggregate, err, summarise, type Agg, type Err, type Side } from "./metrics.ts";
 import { setRepeatParams, NORMAL_MIN_RATIO, RETURN_GAP_WEEKS, LOOKBACK_WEEKS, type Abnormal, type CycleDelta } from "./repeat.ts";
-import { buildRepeatWeek, setDonorPeakFilter, useExplicitParams, type BuiltWeek } from "./build-week.ts";
+import { buildRepeatWeek, setDonorPeakFilter, resolveExplicitParams, type BuiltWeek } from "./build-week.ts";
 import { setGuardParams } from "./recent-level.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
 
-useExplicitParams();
+resolveExplicitParams();
 const SPLIT = "2026-03-02"; const TRAIN_FROM = "2025-06-02"; const VALID_TO = "2026-08-17";
 const L = load(); const ix = indexCorpus(L.corpus);
 const roster = new Set(L.rosterActive);

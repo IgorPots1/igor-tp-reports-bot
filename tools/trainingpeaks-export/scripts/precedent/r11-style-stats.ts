@@ -10,12 +10,12 @@ import path from "node:path";
 import { load, DATA_DIR, OUT_DIR } from "./load.ts";
 import { adapt, indexCorpus, type PSess, type Weights } from "./precedent.ts";
 import { planRepeat, setRepeatParams } from "./repeat.ts";
-import { selectDonor, stateFor, useExplicitParams } from "./build-week.ts";
+import { selectDonor, stateFor, resolveExplicitParams } from "./build-week.ts";
 import { substituteDonorStyle } from "./donor-style.ts";
 import { addDays } from "./corpus.ts";
 import type { RulesWeek } from "./rules-backtest.ts";
 
-useExplicitParams();
+resolveExplicitParams();
 const L = load(); const ix = indexCorpus(L.corpus);
 const W = JSON.parse(readFileSync(path.join(DATA_DIR, "tuned-weights.json"), "utf8")) as Weights;
 setRepeatParams({ normal: 0.8, gap: 2, lookback: 10, peak: 1.25, recovery: true, recoveryTable: "train" });
