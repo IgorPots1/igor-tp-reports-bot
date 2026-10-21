@@ -192,7 +192,8 @@
          }
         ]
        }
-      ]
+      ],
+      "keepOrder": true
      },
      {
       "week": 2,
@@ -356,7 +357,8 @@
          }
         ]
        }
-      ]
+      ],
+      "keepOrder": true
      },
      {
       "week": 3,
@@ -520,7 +522,8 @@
          }
         ]
        }
-      ]
+      ],
+      "keepOrder": true
      },
      {
       "week": 4,
@@ -684,7 +687,8 @@
          }
         ]
        }
-      ]
+      ],
+      "keepOrder": true
      },
      {
       "week": 5,
@@ -692,6 +696,28 @@
       "workoutTitle": "Силовая — зал",
       "instructions": "Разминка: дорожка 5 мин + динамика (выпады, мост, подъёмы на носки).\n\nНачинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
       "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели 6 кг в каждой руке",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
+         }
+        ]
+       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -719,18 +745,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "500",
-          "title": "DB Bulgarian Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "764",
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "8",
-          "coachNotes": "гантели 6 кг в каждой руке",
+          "coachNotes": null,
           "extra": [
            {
-            "parameter": "WeightPerSideKg",
+            "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "6"
+            "prescribedValue": "47.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "37.5"
            }
           ]
          }
@@ -776,50 +824,6 @@
             "parameter": "WeightKg",
             "libraryParameterId": null,
             "prescribedValue": "22.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": null,
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "47.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "exerciseId": "16",
-          "title": "Bench Press",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "+ 1 разминочный подход с лёгким весом",
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "37.5"
            }
           ]
          }
@@ -868,6 +872,28 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели 6 кг в каждой руке",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "exerciseId": "custom:leg_press",
           "title": "Жим ногами в тренажёре",
           "parameter": "Reps",
@@ -890,18 +916,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "500",
-          "title": "DB Bulgarian Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "764",
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "8",
-          "coachNotes": "гантели 6 кг в каждой руке",
+          "coachNotes": null,
           "extra": [
            {
-            "parameter": "WeightPerSideKg",
+            "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "6"
+            "prescribedValue": "47.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "37.5"
            }
           ]
          }
@@ -957,50 +1005,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": null,
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "47.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "exerciseId": "16",
-          "title": "Bench Press",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "+ 1 разминочный подход с лёгким весом",
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "37.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "exerciseId": "571",
           "title": "Forearm Plank",
           "parameter": "Duration",
@@ -1039,6 +1043,28 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантели 6 кг в каждой руке",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "exerciseId": "custom:leg_press",
           "title": "Жим ногами в тренажёре",
           "parameter": "Reps",
@@ -1061,18 +1087,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "500",
-          "title": "DB Bulgarian Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "764",
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "гантели 6 кг в каждой руке",
+          "coachNotes": null,
           "extra": [
            {
-            "parameter": "WeightPerSideKg",
+            "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "6"
+            "prescribedValue": "47.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "37.5"
            }
           ]
          }
@@ -1128,50 +1176,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": null,
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "47.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "exerciseId": "16",
-          "title": "Bench Press",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "+ 1 разминочный подход с лёгким весом",
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "37.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "exerciseId": "571",
           "title": "Forearm Plank",
           "parameter": "Duration",
@@ -1210,6 +1214,28 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели 6 кг в каждой руке; разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "exerciseId": "custom:leg_press",
           "title": "Жим ногами в тренажёре",
           "parameter": "Reps",
@@ -1232,18 +1258,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "500",
-          "title": "DB Bulgarian Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "764",
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "гантели 6 кг в каждой руке; разгрузка",
+          "prescribedValue": "10",
+          "coachNotes": "разгрузка",
           "extra": [
            {
-            "parameter": "WeightPerSideKg",
+            "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "6"
+            "prescribedValue": "42.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом; разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "32.5"
            }
           ]
          }
@@ -1289,50 +1337,6 @@
             "parameter": "WeightKg",
             "libraryParameterId": null,
             "prescribedValue": "22.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "разгрузка",
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "42.5"
-           }
-          ]
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "exerciseId": "16",
-          "title": "Bench Press",
-          "parameter": "Reps",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "+ 1 разминочный подход с лёгким весом; разгрузка",
-          "extra": [
-           {
-            "parameter": "WeightKg",
-            "libraryParameterId": null,
-            "prescribedValue": "32.5"
            }
           ]
          }

@@ -324,6 +324,25 @@ def step_obj(chain_id: str, idx: int) -> dict:
     }
 
 
+ORDER = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "exercise-order.json"), encoding="utf-8"))["classes"]
+
+
+def order_class(ex_id: str) -> int:
+    if ex_id not in ORDER:
+        raise SystemExit(f"нет класса порядка у упражнения {ex_id} (exercise-order.json)")
+    return ORDER[ex_id]["class"]
+
+
+def sort_classic(prescriptions: list) -> list:
+    """Классика: по возрастанию класса порядка, внутри класса — прежний порядок (sorted стабилен). Решение Игоря 21.10."""
+    return sorted(prescriptions, key=lambda pr: order_class(pr["exerciseId"]))
+
+
+def sort_circuit(prescriptions: list) -> list:
+    """Круговая: порядок свой, но класс 2 (сложнокоординационное на одной ноге) — в начале круга."""
+    return sorted(prescriptions, key=lambda pr: 0 if order_class(pr["exerciseId"]) == 2 else 1)
+
+
 def build() -> dict:
     chains_out = {}
     for cid, c in CHAINS.items():
@@ -373,7 +392,7 @@ def build() -> dict:
                 "week": week, "phase": phase,
                 "workoutTitle": p["workoutTitle"]["classic"],
                 "instructions": instructions,
-                "blocks": [{"blockType": "SingleExercise", "coachNotes": None, "prescriptions": [pr]} for pr in prescriptions],
+                "blocks": [{"blockType": "SingleExercise", "coachNotes": None, "prescriptions": [pr]} for pr in sort_classic(prescriptions)],
             })
             # Circuit: one block, rounds = sets of EVERY exercise (TP has no separate rounds field —
             # live probe 2026-10-19), label in block coachNotes.
@@ -386,7 +405,7 @@ def build() -> dict:
                     "blockType": "Circuit",
                     "coachNotes": plural_krug(rounds),
                     "rounds": rounds,
-                    "prescriptions": [dict(pr, sets=rounds) for pr in prescriptions],
+                    "prescriptions": [dict(pr, sets=rounds) for pr in sort_circuit(prescriptions)],
                 }],
             })
         programs_out.append({

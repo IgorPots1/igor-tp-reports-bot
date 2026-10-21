@@ -25,7 +25,32 @@ export type ExtraParam = { parameter: string; libraryParameterId: string | null;
 export type PlanPrescription = { exerciseId: string; title: string; parameter: string; libraryParameterId: string | null; sets: number; prescribedValue: string; coachNotes: string | null; extra?: ExtraParam[] };
 export type PlanBlock = { blockType: "SingleExercise" | "Circuit"; coachNotes: string | null; rounds?: number; prescriptions: PlanPrescription[] };
 /** rest — свой отдых для круговой (по умолчанию 15–20 с / 90–120 с). */
-export type PlanWeek = { week: number; phase: string; workoutTitle: string; instructions: string | null; blocks: PlanBlock[]; rest?: Rest };
+/** keepOrder — не сортировать по классам (исключение, решение Игоря: «Зал» недели 1–4). */
+export type PlanWeek = { week: number; phase: string; workoutTitle: string; instructions: string | null; blocks: PlanBlock[]; rest?: Rest; keepOrder?: boolean };
+
+/**
+ * ПОРЯДОК УПРАЖНЕНИЙ (решение Игоря 21.10): класс 0 разминка/активация, 1 прыжковое, 2 сложнокоординационное на одной ноге, 3 базовое,
+ * 4 изолирующее/мелкие, 5 корпус (exercise-order.json). Классика — по возрастанию класса, внутри класса прежний порядок; круговая — свой порядок,
+ * но класс 2 в начале круга. Нет класса — при сборке для записи отказ.
+ */
+const ORDER = (JSON.parse(readFileSync(path.join(HERE, "exercise-order.json"), "utf8")) as { classes: Record<string, { class: number }> }).classes;
+export const orderClass = (exerciseId: string): number | null => ORDER[exerciseId]?.class ?? null;
+export function orderWeek(week: PlanWeek): PlanWeek {
+  if (week.keepOrder) return week;
+  const cls = (b: PlanBlock): number => orderClass(b.prescriptions[0]?.exerciseId ?? "") ?? 99;
+  const blocks = week.blocks.map((b, i) => ({ b, i }));
+  const classic = [...blocks].sort((x, y) => (x.b.blockType === "Circuit" || y.b.blockType === "Circuit" ? x.i - y.i : cls(x.b) - cls(y.b) || x.i - y.i)).map((x) => x.b);
+  return { ...week, blocks: classic.map((b) => (b.blockType !== "Circuit" ? b : { ...b, prescriptions: b.prescriptions.map((p, i) => ({ p, i })).sort((x, y) => (orderClass(x.p.exerciseId) === 2 ? 0 : 1) - (orderClass(y.p.exerciseId) === 2 ? 0 : 1) || x.i - y.i).map((x) => x.p) })) };
+}
+/** Нарушения порядка: классика — «класс идёт после большего»; круг — класс 2 не в начале; нет класса. */
+export function orderViolations(week: PlanWeek): string[] {
+  const out: string[] = []; if (week.keepOrder) return out;
+  const singles = week.blocks.filter((b) => b.blockType !== "Circuit").map((b) => b.prescriptions[0]);
+  for (const p of week.blocks.flatMap((b) => b.prescriptions)) if (orderClass(p.exerciseId) == null) out.push(`нет класса порядка: ${p.exerciseId} «${p.title}»`);
+  for (let i = 1; i < singles.length; i++) { const a = orderClass(singles[i - 1].exerciseId) ?? 99, b = orderClass(singles[i].exerciseId) ?? 99; if (b < a) out.push(`класс идёт после большего: «${singles[i].title}» (${b}) после «${singles[i - 1].title}» (${a})`); }
+  for (const c of week.blocks.filter((b) => b.blockType === "Circuit")) { const k = c.prescriptions.map((p) => orderClass(p.exerciseId)); const n2 = k.filter((x) => x === 2).length; if (k.slice(0, n2).some((x) => x !== 2)) out.push(`круг: класс 2 не в начале (${k.join(",")})`); }
+  return out;
+}
 export type Programs = { programs: Array<{ id: string; title: string; formats: { classic: PlanWeek[]; circuit: PlanWeek[] } }> };
 
 export const loadPrograms = (): Programs => {
@@ -76,7 +101,9 @@ export function signatureOf(w: Record<string, unknown>): string {
       v: ((p.sets as Array<Record<string, unknown>>) ?? []).map((s) => ((s.parameterValues as Array<Record<string, unknown>>) ?? []).map((pv) => `${String(pv.parameter)}=${String(pv.prescribedValue)}`).sort().join(",")) })) })) });
 }
 
-export async function buildBody(week: PlanWeek, o: { athleteId: number; date: string; hidden: boolean; forWrite?: boolean; get?: (p: string) => Promise<{ status: number; body: unknown }> }): Promise<Record<string, unknown>> {
+export async function buildBody(week0: PlanWeek, o: { athleteId: number; date: string; hidden: boolean; forWrite?: boolean; get?: (p: string) => Promise<{ status: number; body: unknown }> }): Promise<Record<string, unknown>> {
+  const week = orderWeek(week0);
+  if (o.forWrite) { const v = orderViolations(week); if (v.length) throw new Error(`порядок упражнений: ${v.join("; ")} — записывать нельзя`); }
   if (o.forWrite) for (const b of week.blocks) for (const p of b.prescriptions) for (const x of [{ prescribedValue: p.prescribedValue, allowEmpty: false }, ...(p.extra ?? [])])
     if (!/^\d+(\.\d+)?$/.test(x.prescribedValue) && !(x.allowEmpty && x.prescribedValue === "")) throw new Error(`«${p.title}»: значение «${x.prescribedValue}» не число — записывать нельзя`);
   const circuit = week.blocks.some((b) => b.blockType === "Circuit");

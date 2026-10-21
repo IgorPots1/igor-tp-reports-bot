@@ -25,6 +25,7 @@ snap = json.load(open(os.path.join(HERE, "library-snapshot.json"), encoding="utf
 prog = json.load(open(os.path.join(HERE, "programs.json"), encoding="utf-8"))
 LIB = {e["exerciseId"] for e in snap["library"]}
 PARAMS = snap["exerciseParameters"]
+ORDER = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "exercise-order.json"), encoding="utf-8"))["classes"]
 errors: list[str] = []
 
 
@@ -108,8 +109,17 @@ for p in prog["programs"]:
         a = [(b["prescriptions"][0]["exerciseId"], b["prescriptions"][0]["prescribedValue"], b["prescriptions"][0]["sets"])
              for b in c[wn]["blocks"]]
         bb = [(pr["exerciseId"], pr["prescribedValue"], pr["sets"]) for pr in k[wn]["blocks"][0]["prescriptions"]]
-        if a != bb:
-            err(f"{pid}/w{wn}: classic and circuit differ")
+        # БЫЛО (до 21.10): классика и круг — один и тот же порядок. Отменено решением Игоря о порядке упражнений:
+        # классика сортируется по классу, круг — свой порядок, но класс 2 в начале круга. Теперь строже:
+        # тот же НАБОР упражнений с теми же значениями и подходами, а порядок каждого формата — по своему правилу.
+        if sorted(a) != sorted(bb):
+            err(f"{pid}/w{wn}: classic and circuit differ in exercises/values/sets")
+        ca = [ORDER[x[0]]["class"] for x in a]
+        if ca != sorted(ca):
+            err(f"{pid}/w{wn}: classic — класс идёт после большего: {ca}")
+        kb = [ORDER[x[0]]["class"] for x in bb]
+        if 2 in kb and any(kb[i] != 2 for i in range(kb.count(2))):
+            err(f"{pid}/w{wn}: circuit — класс 2 не в начале круга: {kb}")
 
     # progression per exercise (classic)
     if sorted(c) != list(range(1, 9)):
@@ -134,6 +144,15 @@ for p in prog["programs"]:
         # step change in exactly one direction per cycle: never more than +1 step
         if max(k_[0] for k_ in key) - key[0][0] > 1:
             err(f"{name}: more than one chain step in 8 weeks")
+
+# каждый exerciseId программ и цепочек — с классом порядка
+for p_ in prog["programs"]:
+    for fmt_, ws_ in p_["formats"].items():
+        for w_ in ws_:
+            for b_ in w_["blocks"]:
+                for pr_ in b_["prescriptions"]:
+                    if pr_["exerciseId"] not in ORDER:
+                        err(f"{p_['id']}/{fmt_}/w{w_['week']}: нет класса порядка у {pr_['exerciseId']} {pr_['title']}")
 
 if errors:
     print("FAIL")

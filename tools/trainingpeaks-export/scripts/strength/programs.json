@@ -685,6 +685,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, колено над стопой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -711,23 +728,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, колено над стопой"
          }
         ]
        },
@@ -795,6 +795,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, колено над стопой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -821,23 +838,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, колено над стопой"
          }
         ]
        },
@@ -905,6 +905,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -931,23 +948,6 @@
           "sets": 3,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          }
         ]
        },
@@ -1015,6 +1015,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, колено над стопой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1041,23 +1058,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, колено над стопой"
          }
         ]
        },
@@ -1125,6 +1125,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 4,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1151,23 +1168,6 @@
           "sets": 4,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 4,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          }
         ]
        },
@@ -1235,6 +1235,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 4,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1261,23 +1278,6 @@
           "sets": 4,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 4,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          }
         ]
        },
@@ -1345,6 +1345,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 1,
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, глубоко не опускайтесь"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 1,
           "exerciseId": "81",
@@ -1371,23 +1388,6 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 1,
-          "exerciseId": "443",
-          "title": "Body Weight Bulgarian Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "707",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, глубоко не опускайтесь"
          }
         ]
        },
@@ -1455,6 +1455,23 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1481,23 +1498,6 @@
           "sets": 3,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          }
         ]
        },
@@ -1568,6 +1568,17 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, колено над стопой"
+         },
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1588,17 +1599,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, колено над стопой"
          },
          {
           "chainId": "front_plank",
@@ -1649,6 +1649,17 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, колено над стопой"
+         },
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1669,17 +1680,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, колено над стопой"
          },
          {
           "chainId": "front_plank",
@@ -1730,6 +1730,17 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         },
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1750,17 +1761,6 @@
           "sets": 3,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          },
          {
           "chainId": "front_plank",
@@ -1811,6 +1811,17 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, колено над стопой"
+         },
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1831,17 +1842,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, колено над стопой"
          },
          {
           "chainId": "front_plank",
@@ -1892,6 +1892,17 @@
         "rounds": 4,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 4,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         },
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1912,17 +1923,6 @@
           "sets": 4,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 4,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          },
          {
           "chainId": "front_plank",
@@ -1973,6 +1973,17 @@
         "rounds": 4,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 4,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         },
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -1993,17 +2004,6 @@
           "sets": 4,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 4,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          },
          {
           "chainId": "front_plank",
@@ -2054,6 +2054,17 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 1,
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса, глубоко не опускайтесь"
+         },
+         {
           "chainId": "bridge",
           "step": 1,
           "exerciseId": "81",
@@ -2074,17 +2085,6 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "на ровном"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 1,
-          "exerciseId": "443",
-          "title": "Body Weight Bulgarian Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "707",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса, глубоко не опускайтесь"
          },
          {
           "chainId": "front_plank",
@@ -2135,6 +2135,17 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "split_squat",
+          "step": 0,
+          "exerciseId": "447",
+          "title": "Body Weight Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "711",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, колено над стопой"
+         },
+         {
           "chainId": "bridge",
           "step": 0,
           "exerciseId": "579",
@@ -2155,17 +2166,6 @@
           "sets": 3,
           "prescribedValue": "20",
           "coachNotes": "без веса"
-         },
-         {
-          "chainId": "split_squat",
-          "step": 0,
-          "exerciseId": "447",
-          "title": "Body Weight Split Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "711",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, колено над стопой"
          },
          {
           "chainId": "front_plank",
@@ -2287,40 +2287,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, таз держи ровно"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -2364,6 +2330,40 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
          }
         ]
        },
@@ -2414,40 +2414,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, таз держи ровно"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -2491,6 +2457,40 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
          }
         ]
        },
@@ -2541,40 +2541,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -2626,6 +2592,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "side_plank",
           "step": 0,
           "exerciseId": "79",
@@ -2663,40 +2663,6 @@
       "workoutTitle": "Силовая — основная",
       "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу. Разгрузочная неделя — легче, чем прошлая",
       "blocks": [
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, таз держи ровно"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -2753,6 +2719,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "side_plank",
           "step": 0,
           "exerciseId": "79",
@@ -2790,40 +2790,6 @@
       "workoutTitle": "Силовая — основная",
       "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
       "blocks": [
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 4,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -2872,6 +2838,40 @@
           "sets": 4,
           "prescribedValue": "15",
           "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 4,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
          }
         ]
        },
@@ -2922,40 +2922,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 4,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -3007,6 +2973,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 4,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "side_plank",
           "step": 0,
           "exerciseId": "79",
@@ -3044,40 +3044,6 @@
       "workoutTitle": "Силовая — основная",
       "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
       "blocks": [
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "bridge",
-          "step": 2,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "Duration",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "удержание наверху, на каждую ногу"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 2,
-          "exerciseId": "554",
-          "title": "Elevated Single Leg Body Weight Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "818",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "с возвышения, пятка опускается ниже опоры"
-         }
-        ]
-       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -3134,6 +3100,40 @@
         "coachNotes": null,
         "prescriptions": [
          {
+          "chainId": "bridge",
+          "step": 2,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "удержание наверху, на каждую ногу"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 2,
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "с возвышения, пятка опускается ниже опоры"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
           "chainId": "side_plank",
           "step": 1,
           "exerciseId": "792",
@@ -3171,40 +3171,6 @@
       "workoutTitle": "Силовая — основная",
       "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу. Разгрузочная неделя — легче, чем прошлая",
       "blocks": [
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -3253,6 +3219,40 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
          }
         ]
        },
@@ -3306,28 +3306,6 @@
         "rounds": 3,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, таз держи ровно"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         },
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -3359,6 +3337,28 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "без веса"
+         },
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
          },
          {
           "chainId": "side_plank",
@@ -3398,28 +3398,6 @@
         "rounds": 3,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, таз держи ровно"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         },
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -3451,6 +3429,28 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "без веса"
+         },
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
          },
          {
           "chainId": "side_plank",
@@ -3490,28 +3490,6 @@
         "rounds": 3,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         },
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -3543,6 +3521,28 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
+         },
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
          },
          {
           "chainId": "side_plank",
@@ -3582,28 +3582,6 @@
         "rounds": 3,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса, таз держи ровно"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         },
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -3635,6 +3613,28 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "без веса"
+         },
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса, таз держи ровно"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
          },
          {
           "chainId": "side_plank",
@@ -3674,28 +3674,6 @@
         "rounds": 4,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 4,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         },
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -3727,6 +3705,28 @@
           "sets": 4,
           "prescribedValue": "15",
           "coachNotes": "без веса"
+         },
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 4,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
          },
          {
           "chainId": "side_plank",
@@ -3766,28 +3766,6 @@
         "rounds": 4,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 4,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         },
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -3819,6 +3797,28 @@
           "sets": 4,
           "prescribedValue": "15",
           "coachNotes": "без веса"
+         },
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 4,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
          },
          {
           "chainId": "side_plank",
@@ -3858,28 +3858,6 @@
         "rounds": 3,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 2,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "Duration",
-          "libraryParameterId": null,
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "удержание наверху, на каждую ногу"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 2,
-          "exerciseId": "554",
-          "title": "Elevated Single Leg Body Weight Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "818",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "с возвышения, пятка опускается ниже опоры"
-         },
-         {
           "chainId": "split_squat",
           "step": 2,
           "exerciseId": "500",
@@ -3911,6 +3889,28 @@
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": "1й разминочный без веса, дальше с гантелями"
+         },
+         {
+          "chainId": "bridge",
+          "step": 2,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "удержание наверху, на каждую ногу"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 2,
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "с возвышения, пятка опускается ниже опоры"
          },
          {
           "chainId": "side_plank",
@@ -3950,28 +3950,6 @@
         "rounds": 3,
         "prescriptions": [
          {
-          "chainId": "bridge",
-          "step": 1,
-          "exerciseId": "81",
-          "title": "Single Leg Glute Bridge",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "143",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "без веса, таз держи ровно"
-         },
-         {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         },
-         {
           "chainId": "split_squat",
           "step": 1,
           "exerciseId": "443",
@@ -4003,6 +3981,28 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса"
+         },
+         {
+          "chainId": "bridge",
+          "step": 1,
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "без веса, таз держи ровно"
+         },
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
          },
          {
           "chainId": "side_plank",
@@ -4113,57 +4113,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_bent",
-          "step": 0,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "колено чуть согнуто, на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "tibialis",
-          "step": 0,
-          "exerciseId": "387588",
-          "title": "Anterior Tibialis Raise",
-          "parameter": "Reps",
-          "libraryParameterId": "680617",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "спиной к стене, поднимай носки"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "hops",
           "step": 0,
           "exerciseId": "5369",
@@ -4224,6 +4173,57 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_bent",
+          "step": 0,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "колено чуть согнуто, на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "tibialis",
+          "step": 0,
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "спиной к стене, поднимай носки"
          }
         ]
        }
@@ -4240,57 +4240,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_bent",
-          "step": 0,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "колено чуть согнуто, на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "tibialis",
-          "step": 0,
-          "exerciseId": "387588",
-          "title": "Anterior Tibialis Raise",
-          "parameter": "Reps",
-          "libraryParameterId": "680617",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "спиной к стене, поднимай носки"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "hops",
           "step": 0,
           "exerciseId": "5369",
@@ -4351,6 +4300,57 @@
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_bent",
+          "step": 0,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "колено чуть согнуто, на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "tibialis",
+          "step": 0,
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "спиной к стене, поднимай носки"
          }
         ]
        }
@@ -4367,57 +4367,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_bent",
-          "step": 0,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "колено чуть согнуто, на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "tibialis",
-          "step": 0,
-          "exerciseId": "387588",
-          "title": "Anterior Tibialis Raise",
-          "parameter": "Reps",
-          "libraryParameterId": "680617",
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "спиной к стене, поднимай носки"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "hops",
           "step": 0,
           "exerciseId": "5369",
@@ -4480,15 +4429,7 @@
           "coachNotes": "без веса, таз держи ровно"
          }
         ]
-       }
-      ]
-     },
-     {
-      "week": 4,
-      "phase": "deload",
-      "workoutTitle": "Силовая — стопа и икры",
-      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу. Разгрузочная неделя — легче, чем прошлая",
-      "blocks": [
+       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -4501,7 +4442,7 @@
           "parameter": "RepsPerSide",
           "libraryParameterId": "88",
           "sets": 3,
-          "prescribedValue": "15",
+          "prescribedValue": "20",
           "coachNotes": "на ровном"
          }
         ]
@@ -4518,7 +4459,7 @@
           "parameter": "RepsPerSide",
           "libraryParameterId": "88",
           "sets": 3,
-          "prescribedValue": "12",
+          "prescribedValue": "15",
           "coachNotes": "колено чуть согнуто, на ровном"
          }
         ]
@@ -4535,11 +4476,19 @@
           "parameter": "Reps",
           "libraryParameterId": "680617",
           "sets": 3,
-          "prescribedValue": "15",
+          "prescribedValue": "20",
           "coachNotes": "спиной к стене, поднимай носки"
          }
         ]
-       },
+       }
+      ]
+     },
+     {
+      "week": 4,
+      "phase": "deload",
+      "workoutTitle": "Силовая — стопа и икры",
+      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу. Разгрузочная неделя — легче, чем прошлая",
+      "blocks": [
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -4607,15 +4556,7 @@
           "coachNotes": "без веса, таз держи ровно"
          }
         ]
-       }
-      ]
-     },
-     {
-      "week": 5,
-      "phase": "sets_up",
-      "workoutTitle": "Силовая — стопа и икры",
-      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
-      "blocks": [
+       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -4627,8 +4568,8 @@
           "title": "Single Leg Calf Raise",
           "parameter": "RepsPerSide",
           "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "20",
+          "sets": 3,
+          "prescribedValue": "15",
           "coachNotes": "на ровном"
          }
         ]
@@ -4644,8 +4585,8 @@
           "title": "Single Leg Calf Raise",
           "parameter": "RepsPerSide",
           "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "15",
+          "sets": 3,
+          "prescribedValue": "12",
           "coachNotes": "колено чуть согнуто, на ровном"
          }
         ]
@@ -4661,12 +4602,20 @@
           "title": "Anterior Tibialis Raise",
           "parameter": "Reps",
           "libraryParameterId": "680617",
-          "sets": 4,
-          "prescribedValue": "20",
+          "sets": 3,
+          "prescribedValue": "15",
           "coachNotes": "спиной к стене, поднимай носки"
          }
         ]
-       },
+       }
+      ]
+     },
+     {
+      "week": 5,
+      "phase": "sets_up",
+      "workoutTitle": "Силовая — стопа и икры",
+      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -4732,6 +4681,57 @@
           "sets": 4,
           "prescribedValue": "15",
           "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_bent",
+          "step": 0,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "15",
+          "coachNotes": "колено чуть согнуто, на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "tibialis",
+          "step": 0,
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "спиной к стене, поднимай носки"
          }
         ]
        }
@@ -4748,57 +4748,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "calf_bent",
-          "step": 0,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
-          "sets": 4,
-          "prescribedValue": "15",
-          "coachNotes": "колено чуть согнуто, на ровном"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
-          "chainId": "tibialis",
-          "step": 0,
-          "exerciseId": "387588",
-          "title": "Anterior Tibialis Raise",
-          "parameter": "Reps",
-          "libraryParameterId": "680617",
-          "sets": 4,
-          "prescribedValue": "20",
-          "coachNotes": "спиной к стене, поднимай носки"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "hops",
           "step": 0,
           "exerciseId": "5369",
@@ -4861,29 +4810,21 @@
           "coachNotes": "без веса, таз держи ровно"
          }
         ]
-       }
-      ]
-     },
-     {
-      "week": 7,
-      "phase": "variant_up",
-      "workoutTitle": "Силовая — стопа и икры",
-      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
-      "blocks": [
+       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
         "prescriptions": [
          {
           "chainId": "calf_straight",
-          "step": 2,
-          "exerciseId": "554",
-          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "818",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "с возвышения, пятка опускается ниже опоры"
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
          }
         ]
        },
@@ -4893,14 +4834,14 @@
         "prescriptions": [
          {
           "chainId": "calf_bent",
-          "step": 1,
-          "exerciseId": "520",
-          "title": "DB Seated Single Leg Calf Raise",
+          "step": 0,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "784",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "сидя, гантель на колене, носок на возвышении"
+          "libraryParameterId": "88",
+          "sets": 4,
+          "prescribedValue": "15",
+          "coachNotes": "колено чуть согнуто, на ровном"
          }
         ]
        },
@@ -4910,17 +4851,25 @@
         "prescriptions": [
          {
           "chainId": "tibialis",
-          "step": 1,
+          "step": 0,
           "exerciseId": "387588",
           "title": "Anterior Tibialis Raise",
           "parameter": "Reps",
           "libraryParameterId": "680617",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "на каждую ногу, спиной к стене"
+          "sets": 4,
+          "prescribedValue": "20",
+          "coachNotes": "спиной к стене, поднимай носки"
          }
         ]
-       },
+       }
+      ]
+     },
+     {
+      "week": 7,
+      "phase": "variant_up",
+      "workoutTitle": "Силовая — стопа и икры",
+      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -4988,29 +4937,21 @@
           "coachNotes": "удержание наверху, на каждую ногу"
          }
         ]
-       }
-      ]
-     },
-     {
-      "week": 8,
-      "phase": "deload",
-      "workoutTitle": "Силовая — стопа и икры",
-      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу. Разгрузочная неделя — легче, чем прошлая",
-      "blocks": [
+       },
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
         "prescriptions": [
          {
           "chainId": "calf_straight",
-          "step": 1,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
+          "step": 2,
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
+          "libraryParameterId": "818",
           "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "на ровном"
+          "prescribedValue": "12",
+          "coachNotes": "с возвышения, пятка опускается ниже опоры"
          }
         ]
        },
@@ -5020,14 +4961,14 @@
         "prescriptions": [
          {
           "chainId": "calf_bent",
-          "step": 0,
-          "exerciseId": "26",
-          "title": "Single Leg Calf Raise",
+          "step": 1,
+          "exerciseId": "520",
+          "title": "DB Seated Single Leg Calf Raise",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "88",
+          "libraryParameterId": "784",
           "sets": 3,
-          "prescribedValue": "15",
-          "coachNotes": "колено чуть согнуто, на ровном"
+          "prescribedValue": "12",
+          "coachNotes": "сидя, гантель на колене, носок на возвышении"
          }
         ]
        },
@@ -5037,17 +4978,25 @@
         "prescriptions": [
          {
           "chainId": "tibialis",
-          "step": 0,
+          "step": 1,
           "exerciseId": "387588",
           "title": "Anterior Tibialis Raise",
           "parameter": "Reps",
           "libraryParameterId": "680617",
           "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "спиной к стене, поднимай носки"
+          "prescribedValue": "12",
+          "coachNotes": "на каждую ногу, спиной к стене"
          }
         ]
-       },
+       }
+      ]
+     },
+     {
+      "week": 8,
+      "phase": "deload",
+      "workoutTitle": "Силовая — стопа и икры",
+      "instructions": "Начинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу. Разгрузочная неделя — легче, чем прошлая",
+      "blocks": [
        {
         "blockType": "SingleExercise",
         "coachNotes": null,
@@ -5113,6 +5062,57 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "без веса, таз держи ровно"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_straight",
+          "step": 1,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "calf_bent",
+          "step": 0,
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": "колено чуть согнуто, на ровном"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "tibialis",
+          "step": 0,
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "спиной к стене, поднимай носки"
          }
         ]
        }
@@ -5132,6 +5132,28 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "sl_deadlift",
+          "step": 0,
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 0,
+          "exerciseId": "828",
+          "title": "Single Leg High Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1092",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "высокая опора, глубоко не садись"
+         },
+         {
           "chainId": "calf_straight",
           "step": 1,
           "exerciseId": "26",
@@ -5174,28 +5196,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "быстрые короткие подъёмы на носок, одна стопа на опоре"
-         },
-         {
-          "chainId": "sl_deadlift",
-          "step": 0,
-          "exerciseId": "523",
-          "title": "DB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "787",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 0,
-          "exerciseId": "828",
-          "title": "Single Leg High Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "1092",
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "высокая опора, глубоко не садись"
          },
          {
           "chainId": "bridge",
@@ -5224,6 +5224,28 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "sl_deadlift",
+          "step": 0,
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 0,
+          "exerciseId": "828",
+          "title": "Single Leg High Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1092",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "высокая опора, глубоко не садись"
+         },
+         {
           "chainId": "calf_straight",
           "step": 1,
           "exerciseId": "26",
@@ -5266,28 +5288,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "быстрые короткие подъёмы на носок, одна стопа на опоре"
-         },
-         {
-          "chainId": "sl_deadlift",
-          "step": 0,
-          "exerciseId": "523",
-          "title": "DB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "787",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 0,
-          "exerciseId": "828",
-          "title": "Single Leg High Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "1092",
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "высокая опора, глубоко не садись"
          },
          {
           "chainId": "bridge",
@@ -5316,6 +5316,28 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "sl_deadlift",
+          "step": 0,
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 0,
+          "exerciseId": "828",
+          "title": "Single Leg High Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1092",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "высокая опора, глубоко не садись"
+         },
+         {
           "chainId": "calf_straight",
           "step": 1,
           "exerciseId": "26",
@@ -5358,28 +5380,6 @@
           "sets": 3,
           "prescribedValue": "20",
           "coachNotes": "быстрые короткие подъёмы на носок, одна стопа на опоре"
-         },
-         {
-          "chainId": "sl_deadlift",
-          "step": 0,
-          "exerciseId": "523",
-          "title": "DB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "787",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 0,
-          "exerciseId": "828",
-          "title": "Single Leg High Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "1092",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "высокая опора, глубоко не садись"
          },
          {
           "chainId": "bridge",
@@ -5408,6 +5408,28 @@
         "rounds": 3,
         "prescriptions": [
          {
+          "chainId": "sl_deadlift",
+          "step": 0,
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 0,
+          "exerciseId": "828",
+          "title": "Single Leg High Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1092",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "высокая опора, глубоко не садись"
+         },
+         {
           "chainId": "calf_straight",
           "step": 1,
           "exerciseId": "26",
@@ -5450,28 +5472,6 @@
           "sets": 3,
           "prescribedValue": "15",
           "coachNotes": "быстрые короткие подъёмы на носок, одна стопа на опоре"
-         },
-         {
-          "chainId": "sl_deadlift",
-          "step": 0,
-          "exerciseId": "523",
-          "title": "DB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "787",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 0,
-          "exerciseId": "828",
-          "title": "Single Leg High Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "1092",
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "высокая опора, глубоко не садись"
          },
          {
           "chainId": "bridge",
@@ -5500,6 +5500,28 @@
         "rounds": 4,
         "prescriptions": [
          {
+          "chainId": "sl_deadlift",
+          "step": 0,
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 4,
+          "prescribedValue": "12",
+          "coachNotes": "без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 0,
+          "exerciseId": "828",
+          "title": "Single Leg High Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1092",
+          "sets": 4,
+          "prescribedValue": "10",
+          "coachNotes": "высокая опора, глубоко не садись"
+         },
+         {
           "chainId": "calf_straight",
           "step": 1,
           "exerciseId": "26",
@@ -5542,28 +5564,6 @@
           "sets": 4,
           "prescribedValue": "20",
           "coachNotes": "быстрые короткие подъёмы на носок, одна стопа на опоре"
-         },
-         {
-          "chainId": "sl_deadlift",
-          "step": 0,
-          "exerciseId": "523",
-          "title": "DB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "787",
-          "sets": 4,
-          "prescribedValue": "12",
-          "coachNotes": "без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 0,
-          "exerciseId": "828",
-          "title": "Single Leg High Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "1092",
-          "sets": 4,
-          "prescribedValue": "10",
-          "coachNotes": "высокая опора, глубоко не садись"
          },
          {
           "chainId": "bridge",
@@ -5592,6 +5592,28 @@
         "rounds": 4,
         "prescriptions": [
          {
+          "chainId": "sl_deadlift",
+          "step": 0,
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 4,
+          "prescribedValue": "12",
+          "coachNotes": "без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 0,
+          "exerciseId": "828",
+          "title": "Single Leg High Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1092",
+          "sets": 4,
+          "prescribedValue": "10",
+          "coachNotes": "высокая опора, глубоко не садись"
+         },
+         {
           "chainId": "calf_straight",
           "step": 1,
           "exerciseId": "26",
@@ -5636,28 +5658,6 @@
           "coachNotes": "быстрые короткие подъёмы на носок, одна стопа на опоре"
          },
          {
-          "chainId": "sl_deadlift",
-          "step": 0,
-          "exerciseId": "523",
-          "title": "DB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "787",
-          "sets": 4,
-          "prescribedValue": "12",
-          "coachNotes": "без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 0,
-          "exerciseId": "828",
-          "title": "Single Leg High Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "1092",
-          "sets": 4,
-          "prescribedValue": "10",
-          "coachNotes": "высокая опора, глубоко не садись"
-         },
-         {
           "chainId": "bridge",
           "step": 1,
           "exerciseId": "81",
@@ -5683,6 +5683,28 @@
         "coachNotes": "3 круга",
         "rounds": 3,
         "prescriptions": [
+         {
+          "chainId": "sl_deadlift",
+          "step": 1,
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "с гантелью + 1 разминочный сделай без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 1,
+          "exerciseId": "5402",
+          "title": "Single Leg Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8621",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "глубоко не опускайтесь"
+         },
          {
           "chainId": "calf_straight",
           "step": 2,
@@ -5728,28 +5750,6 @@
           "coachNotes": "можно без скакалки — прыжки на месте на носках"
          },
          {
-          "chainId": "sl_deadlift",
-          "step": 1,
-          "exerciseId": "648",
-          "title": "KB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "912",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "с гантелью + 1 разминочный сделай без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 1,
-          "exerciseId": "5402",
-          "title": "Single Leg Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "8621",
-          "sets": 3,
-          "prescribedValue": "8",
-          "coachNotes": "глубоко не опускайтесь"
-         },
-         {
           "chainId": "bridge",
           "step": 2,
           "exerciseId": "81",
@@ -5775,6 +5775,28 @@
         "coachNotes": "3 круга",
         "rounds": 3,
         "prescriptions": [
+         {
+          "chainId": "sl_deadlift",
+          "step": 0,
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "без веса"
+         },
+         {
+          "chainId": "single_leg_squat",
+          "step": 0,
+          "exerciseId": "828",
+          "title": "Single Leg High Box Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1092",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "высокая опора, глубоко не садись"
+         },
          {
           "chainId": "calf_straight",
           "step": 1,
@@ -5818,28 +5840,6 @@
           "sets": 3,
           "prescribedValue": "20",
           "coachNotes": "быстрые короткие подъёмы на носок, одна стопа на опоре"
-         },
-         {
-          "chainId": "sl_deadlift",
-          "step": 0,
-          "exerciseId": "523",
-          "title": "DB Single Leg Deadlift",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "787",
-          "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "без веса"
-         },
-         {
-          "chainId": "single_leg_squat",
-          "step": 0,
-          "exerciseId": "828",
-          "title": "Single Leg High Box Squat",
-          "parameter": "RepsPerSide",
-          "libraryParameterId": "1092",
-          "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "высокая опора, глубоко не садись"
          },
          {
           "chainId": "bridge",
@@ -6718,23 +6718,6 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "chainId": "clam",
-          "step": 1,
-          "exerciseId": "793",
-          "title": "Side Plank with Clam Shell Hold",
-          "parameter": "Duration",
-          "libraryParameterId": "1919",
-          "sets": 3,
-          "prescribedValue": "20",
-          "coachNotes": "резинка над коленями, колено держи вверху"
-         }
-        ]
-       },
-       {
-        "blockType": "SingleExercise",
-        "coachNotes": null,
-        "prescriptions": [
-         {
           "chainId": "band_walk",
           "step": 1,
           "exerciseId": "942",
@@ -6744,6 +6727,23 @@
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": "шаги короткие, резинка все время в натяжении"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "chainId": "clam",
+          "step": 1,
+          "exerciseId": "793",
+          "title": "Side Plank with Clam Shell Hold",
+          "parameter": "Duration",
+          "libraryParameterId": "1919",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": "резинка над коленями, колено держи вверху"
          }
         ]
        },
