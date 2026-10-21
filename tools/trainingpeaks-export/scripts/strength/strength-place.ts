@@ -14,7 +14,8 @@ import { buildBody, loadPrograms, signatureOf, studentText, type PlanWeek } from
 const CANON = "/Users/igor/igor-tp-reports-bot";
 const RUNS = path.join(CANON, "reports", "strength", "runs");
 /** inline — разовая тренировка вне программ (свой состав); hidden=false — видимой ученику (только по слову Игоря). */
-export type PlanItem = { athleteId: number; label: string; programId: string; format: "classic" | "circuit"; week: number; date: string; inline?: PlanWeek; hidden?: boolean };
+/** replaces — id старой силовой, которую новая заменяет: новая ставится и сверяется ДО удаления старой (решение Игоря 21.10: «поставить новую, сверка, удалить старую»). */
+export type PlanItem = { athleteId: number; label: string; programId: string; format: "classic" | "circuit"; week: number; date: string; inline?: PlanWeek; hidden?: boolean; replaces?: string };
 type Run = { runId: string; mode: "dry" | "real"; items: Array<PlanItem & { workoutId: string | null; verified: boolean }>; deleted: string[] };
 
 const args = process.argv.slice(2); const arg = (n: string): string | null => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] ?? null : null; };
@@ -57,13 +58,20 @@ const rollback = async (why: string): Promise<never> => {
 };
 for (let i = 0; i < run.items.length; i++) {
   const it = run.items[i]; const b = bodies[i];
-  const before = await dayList(it.athleteId, it.date); if (before.length) await rollback(`${it.label} ${it.date}: в календаре силовых уже есть ${before.map((x) => `«${x.title}»`).join(", ")}`);
+  const before = (await dayList(it.athleteId, it.date)).filter((x) => x.id !== it.replaces);
+  if (it.replaces && !(await dayList(it.athleteId, it.date)).some((x) => x.id === it.replaces)) await rollback(`${it.label} ${it.date}: заменяемой силовой ${it.replaces} в этом дне нет`);
+  if (before.length) await rollback(`${it.label} ${it.date}: в календаре силовых уже есть ${before.map((x) => `«${x.title}»`).join(", ")}`);
   let saved: Record<string, unknown>;
   try { saved = await tp.createStrengthWorkout(b); } catch (e) { await rollback(`${it.label} ${it.date}: POST упал: ${e instanceof Error ? e.message.slice(0, 200) : e}`); throw e; }
   it.workoutId = String(saved.id); save(run);
   const got = await tp.getStrengthWorkout(it.workoutId);
   if (signatureOf(got) !== signatureOf(b)) await rollback(`${it.label} ${it.date} ${it.workoutId}: прочитанное не совпало с записанным`);
   if (got.isHidden !== (it.hidden !== false)) await rollback(`${it.label} ${it.date} ${it.workoutId}: isHidden=${String(got.isHidden)}, ждали ${String(it.hidden !== false)}`);
+  if (it.replaces) { // новая сверена — теперь удаляем старую; не удалилась — откат новой (в дне снова одна старая)
+    const gone = await del(it.athleteId, it.replaces);
+    if (!gone) await rollback(`${it.label} ${it.date}: старая ${it.replaces} не удалилась`);
+    console.log(`заменена ${it.label} ${it.date}: старая ${it.replaces} удалена (404)`);
+  }
   const after = await dayList(it.athleteId, it.date); if (after.length !== 1) await rollback(`${it.label} ${it.date}: силовых в дне ${after.length}, ждали 1 (дубль от повтора POST?)`);
   it.verified = true; save(run);
   console.log(`поставлена ${it.label} ${it.date} id=${it.workoutId} · isHidden=${String(got.isHidden)} · сверка совпала · в дне ровно одна силовая`);
