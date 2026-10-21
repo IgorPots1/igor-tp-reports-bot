@@ -1,7 +1,7 @@
 /**
  * ПОСТАНОВКА СИЛОВЫХ АТЛЕТАМ (наряд Игоря 19.10). По умолчанию СУХО: показывает тренировки полным текстом, сети на запись нет.
  * Живой: TP_ACTIONS_REAL_EXECUTION=true tsx strength-place.ts --plan <plan.json> --execute-real --confirm "ПОСТАВИТЬ СИЛОВЫЕ СКРЫТО"
- * Снести по манифесту: TP_ACTIONS_REAL_EXECUTION=true tsx strength-place.ts --snesti <run.json> --confirm "СНЕСТИ СИЛОВЫЕ"
+ * Снести по манифесту: TP_ACTIONS_REAL_EXECUTION=true tsx strength-place.ts --snesti <run.json> [--only <workoutId>] --confirm "СНЕСТИ СИЛОВЫЕ"
  * Гарантии: только атлеты из плана; перед каждой — в календаре силовых на этот день пусто; создаётся СКРЫТОЙ; после каждой — GET и
  * сверка (название, описание, заметки, упражнения, значения подходов, скрытие, атлет, дата); любое расхождение — откат ВСЕГО прогона
  * (удаление и проверка 404). Манифест пишется после каждой записи.
@@ -30,7 +30,8 @@ async function del(aid: number, id: string): Promise<boolean> { await tp.deleteW
 if (arg("snesti")) {
   if (arg("confirm") !== "СНЕСТИ СИЛОВЫЕ" || process.env.TP_ACTIONS_REAL_EXECUTION !== "true") { console.error("ОТКАЗ: нужна фраза и TP_ACTIONS_REAL_EXECUTION=true"); process.exit(2); }
   const r = JSON.parse(readFileSync(arg("snesti")!, "utf8")) as Run;
-  for (const it of r.items.filter((x) => x.workoutId && !r.deleted.includes(x.workoutId))) { const ok = await del(it.athleteId, it.workoutId!); if (ok) r.deleted.push(it.workoutId!); save(r); console.log(`${it.label} ${it.date} ${it.workoutId}: ${ok ? "удалена (404)" : "НЕ УДАЛЕНА — убрать вручную"}`); }
+  const only = arg("only"); // снести только один id из манифеста (перенос: новая уже поставлена)
+  for (const it of r.items.filter((x) => x.workoutId && !r.deleted.includes(x.workoutId) && (!only || x.workoutId === only))) { const ok = await del(it.athleteId, it.workoutId!); if (ok) r.deleted.push(it.workoutId!); save(r); console.log(`${it.label} ${it.date} ${it.workoutId}: ${ok ? "удалена (404)" : "НЕ УДАЛЕНА — убрать вручную"}`); }
   process.exit(0);
 }
 
