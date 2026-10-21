@@ -28,6 +28,8 @@ import {
 } from "@/features/intervals/loop/repository";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { deleteIntervalsStudentCompletely } from "@/features/intervals/delete-student";
+import { saveMyDays } from "@/features/intervals/plan-page/actions";
+import { issuePlanLink, planPageEntry, revokePlanLink, syncPlanMenuButton } from "@/features/intervals/plan-page/links";
 import { redirect } from "next/navigation";
 
 // Действия тренера. КАЖДОЕ вызывается кнопкой — ни одно не срабатывает само.
@@ -56,12 +58,14 @@ export async function publishPlanAction(formData: FormData): Promise<void> {
   } | null;
   // Первая публикация цикла — всегда «план готов»: до неё плана у человека не
   // было вовсе, сравнивать не с чем.
+  const page = await planPageEntry(sourceId);
   const notice = await notifyWeekReleased({
     sourceId,
     chatId: row?.telegram_chat_id ?? null,
     telegramDeliveryEnabled: row?.telegram_delivery_enabled === true,
     todayIso: todayIsoInZone(row?.timezone ?? null),
-    notice: weekNoticeOf({ wasReleased: false, sessionsBefore: null, sessionsAfter: 0 }),
+    notice: weekNoticeOf({ wasReleased: false, sessionsBefore: null, sessionsAfter: 0, onPage: page !== null }),
+    pageUrl: page ? page({ kind: "home" }) : null,
   });
   console.info("[intervals.publish] уведомление о плане", { studentUuid, result: notice.kind });
 
@@ -128,6 +132,9 @@ export async function sendCoachMessageAction(formData: FormData): Promise<void> 
   const body = String(formData.get("body") ?? "").trim();
   const checkinId = String(formData.get("checkinId") ?? "") || null;
   const planSessionId = String(formData.get("planSessionId") ?? "") || null;
+  // Разбор недели, а не ответ на одну тренировку: в боте кнопка ведёт на
+  // вкладку «Тренер», в ленте — подпись «разбор недели».
+  const isWeekReview = formData.get("isWeekReview") === "on";
   if (!studentUuid || !sourceId || body.length === 0) return;
 
   const [progression, checkins] = await Promise.all([
@@ -158,14 +165,27 @@ export async function sendCoachMessageAction(formData: FormData): Promise<void> 
     .eq("id", studentUuid)
     .maybeSingle();
 
-  // Отдаём ученице: с этого момента текст виден в приложении.
+  if (isWeekReview) {
+    await supabase.from("intervals_coach_messages").update({ is_week_review: true }).eq("id", saved.id);
+  }
+
+  // Отдаём ученице: с этого момента текст виден в приложении (и на странице).
   await markCoachMessageVisibleToStudent(saved.id);
+
+  // Ученица на странице: кнопка ведёт к самому ответу — карточке той
+  // тренировки, а разбор недели — на вкладку «Тренер».
+  const page = await planPageEntry(sourceId);
+  const aboutSession = session?.id ?? checkin?.planSessionId ?? null;
+  const pageUrl = page
+    ? page(isWeekReview || !aboutSession ? { kind: "coach" } : { kind: "session", sessionId: aboutSession })
+    : null;
 
   const result = await deliverCoachMessage({
     body,
     chatId: (studentRow as { telegram_chat_id?: string | null } | null)?.telegram_chat_id ?? null,
     telegramDeliveryEnabled:
       (studentRow as { telegram_delivery_enabled?: boolean } | null)?.telegram_delivery_enabled === true,
+    pageUrl,
   });
 
   if (result.kind === "sent") {
@@ -262,6 +282,7 @@ export async function releaseWeekAction(formData: FormData): Promise<void> {
     telegram_delivery_enabled?: boolean;
     timezone?: string | null;
   } | null;
+  const page = await planPageEntry(sourceId);
   const notice = await notifyWeekReleased({
     sourceId,
     chatId: row?.telegram_chat_id ?? null,
@@ -271,7 +292,9 @@ export async function releaseWeekAction(formData: FormData): Promise<void> {
       wasReleased: weekBefore?.status === "released",
       sessionsBefore: weekBefore?.releasedSessionCount ?? null,
       sessionsAfter,
+      onPage: page !== null,
     }),
+    pageUrl: page ? page({ kind: "week", weekStart }) : null,
   });
   console.info("[intervals.week] неделя отдана", { studentUuid, weekStart, result: notice.kind });
 
@@ -366,5 +389,64 @@ export async function takeWeekIntoWorkAction(formData: FormData): Promise<void> 
   const weekStart = String(formData.get("weekStart") ?? "");
   if (!studentUuid || !cycleId || !weekStart) return;
   await setPlanWeekStatus({ cycleId, weekStart, status: "editing" });
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+// ── Страница плана (plan-page) ──────────────────────────────────────────────
+
+/**
+ * Выпустить ссылку на страницу плана. Живая прежняя отзывается в том же шаге:
+ * утекла — выпускаешь новую, старая перестаёт открываться. Ссылку ученице
+ * тренер отправляет сам; бот её не рассылает.
+ */
+export async function issuePlanLinkAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  if (!studentUuid || !sourceId) return;
+  await issuePlanLink({ sourceId, by: "coach:admin" });
+  await syncPlanMenuButton(sourceId);
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+export async function revokePlanLinkAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  if (!studentUuid || !sourceId) return;
+  await revokePlanLink({ sourceId, by: "coach:admin" });
+  await syncPlanMenuButton(sourceId);
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+/** «Прочитал» — гасит её сообщения на карточке. */
+export async function markStudentMessagesReadAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  if (!studentUuid || !sourceId) return;
+  const supabase = createSupabaseServerClient();
+  await supabase
+    .from("intervals_student_messages")
+    .update({ coach_read_at: new Date().toISOString() })
+    .eq("source_id", sourceId)
+    .is("coach_read_at", null);
+  revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+/**
+ * «Мои дни» со слов тренера: та же запись в анкету, что со страницы, только
+ * провенанс coach_words. Отданную неделю не трогает.
+ */
+export async function saveCoachDaysAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  if (!studentUuid || !sourceId) return;
+  const available = formData.getAll("day").map(Number);
+  const longRaw = String(formData.get("long") ?? "");
+  await saveMyDays({
+    sourceId,
+    available,
+    long: longRaw === "" ? null : Number(longRaw),
+    changedBy: "coach:admin",
+    origin: "coach_words",
+  });
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
 }

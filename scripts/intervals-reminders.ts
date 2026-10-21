@@ -28,7 +28,10 @@ import { getPublishedCycle, listPauses, listPlanWeeks, listSessionsInRange } fro
 import { pauseCovering, pauseLabelRu } from "@/features/intervals/loop/pause";
 import { flushPendingInboundNotices } from "@/features/intervals/loop/inbound-notify";
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
+import { sendTelegramMessageStrict, sendTelegramWebAppButton } from "@/features/telegram/telegram-client";
+import { isPlanPageEnabled, reminderForPage } from "@/features/intervals/plan-page/core";
+import { flushCoachAlerts } from "@/features/intervals/plan-page/coach-alerts";
+import { planPageEntry } from "@/features/intervals/plan-page/links";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
@@ -263,9 +266,36 @@ async function main(): Promise<void> {
       continue;
     }
 
+    /**
+     * УЧЕНИЦА НА СТРАНИЦЕ ПЛАНА [21.10.2026]. Решение «слать» общее, но кнопка
+     * ведёт на карточку тренировки, а недельная форма не уходит вовсе. Пропуск
+     * формы пишется следом со статусом skipped: иначе следующий проход раннера
+     * снова выберет форму и до утреннего «сегодня по плану» дело не дойдёт.
+     */
+    const page = await planPageEntry(student.sourceId);
+    const yesterdayId = sessions.find((session) => session.sessionDate === shiftIso(today, -1))?.id ?? null;
+    const onPage = page
+      ? reminderForPage({ kind: decision.kind, textRu: decision.textRu, todaySessionId: todaySession?.id ?? null, yesterdaySessionId: yesterdayId })
+      : null;
+    if (onPage && !onPage.send) {
+      if (!DRY_RUN) {
+        await supabase.from("intervals_reminders").insert({
+          source_id: student.sourceId,
+          kind: decision.kind,
+          local_date: today,
+          status: "skipped",
+          detail: onPage.reason,
+          chat_id: null,
+        });
+      }
+      console.log(`  · ${who}: ${decision.kind} не шлём — ${onPage.reason}`);
+      continue;
+    }
+    const textRu = onPage && onPage.send ? onPage.textRu : decision.textRu;
+
     if (DRY_RUN) {
       console.log(`  · ${who}: ОТПРАВИЛИ БЫ ${decision.kind}`);
-      console.log(`      ${decision.textRu.split("\n")[0]}`);
+      console.log(`      ${textRu.split("\n")[0]}${page ? " [страница]" : ""}`);
       continue;
     }
 
@@ -287,7 +317,15 @@ async function main(): Promise<void> {
       detail = "у карточки выключена доставка";
     } else {
       try {
-        await sendTelegramMessageStrict(student.chatId, decision.textRu);
+        if (page && onPage && onPage.send) {
+          await sendTelegramWebAppButton({
+            chatId: student.chatId,
+            text: textRu,
+            buttons: [{ label: "Открыть тренировку", url: page(onPage.target) }],
+          });
+        } else {
+          await sendTelegramMessageStrict(student.chatId, decision.textRu);
+        }
       } catch (error) {
         status = "failed";
         detail = error instanceof Error ? error.message : String(error);
@@ -326,6 +364,15 @@ async function main(): Promise<void> {
   if (!DRY_RUN) {
     const flushed = await flushPendingInboundNotices();
     if (flushed > 0) console.log(`Отложенных уведомлений тренеру отдано: ${flushed}`);
+    // Боль и сообщения со страницы плана, отложенные тихими часами: утром
+    // боль первой (orderCoachAlerts). Под флагом страницы, как всё её новое.
+    if (isPlanPageEnabled()) {
+      const alerts = await flushCoachAlerts().catch((error) => {
+        console.log(`  ⚠ досылка тренеру со страницы плана: ${error instanceof Error ? error.message : String(error)}`);
+        return { sent: 0 };
+      });
+      if (alerts.sent > 0) console.log(`Тренеру дослано со страницы плана: ${alerts.sent}`);
+    }
   }
 
   console.log("Готово.");

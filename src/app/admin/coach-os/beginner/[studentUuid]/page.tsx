@@ -22,6 +22,8 @@ import { formatRuDay } from "@/features/intervals/loop/student-view";
 
 import { previewStudentDeletion } from "@/features/intervals/delete-student";
 
+import { PlanPageAdminBlock } from "./plan-page-block";
+
 import {
   deleteStudentAction,
   pauseStudentAction,
@@ -231,6 +233,8 @@ export default async function BeginnerStudentPage({
           </div>
         )
       ) : null}
+
+      {student.sourceId ? <PlanPageAdminBlock studentUuid={studentUuid} sourceId={student.sourceId} /> : null}
 
       {/* ── Ступень ── ТОЛЬКО ДЛЯ ТЕХ, КТО НА ЛЕСТНИЦЕ [20.09.2026].
           Раньше блок стоял всегда и у остальных сообщал «Состояния нет». Это
@@ -625,7 +629,10 @@ export default async function BeginnerStudentPage({
                                   placeholder="Что ответить"
                                   style={{ width: "100%", minWidth: 220, padding: 6, fontFamily: "inherit" }}
                                 />
-                                <div style={{ marginTop: 4 }}>
+                                <div style={{ marginTop: 4, display: "flex", gap: 10, alignItems: "center" }}>
+                                  <label style={{ fontSize: 13 }}>
+                                    <input type="checkbox" name="isWeekReview" /> разбор недели
+                                  </label>
                                   <FormActionButton
                                     confirmMessage={
                                       sendEnabled && student.telegramDeliveryEnabled
@@ -796,7 +803,10 @@ export default async function BeginnerStudentPage({
                       placeholder="Что написать ученице"
                       style={{ width: "100%", maxWidth: 700, padding: 8, fontFamily: "inherit" }}
                     />
-                    <div style={{ marginTop: 6 }}>
+                    <div style={{ marginTop: 6, display: "flex", gap: 10, alignItems: "center" }}>
+                      <label style={{ fontSize: 13 }}>
+                        <input type="checkbox" name="isWeekReview" /> разбор недели
+                      </label>
                       <FormActionButton
                         confirmMessage={
                           sendEnabled && student.telegramDeliveryEnabled

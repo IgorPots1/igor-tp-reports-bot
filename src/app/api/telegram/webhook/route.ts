@@ -30,6 +30,7 @@ import {
   isIntervalsStudent,
   RUN_START_PARAM,
 } from "@/features/intervals/run-start-onboarding";
+import { relayStudentBotText } from "@/features/intervals/plan-page/bot-relay";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { listActiveStudentsByTelegramUserId } from "@/features/trainingpeaks/repository";
 import {
@@ -524,6 +525,12 @@ export async function POST(request: Request) {
   const rawMessage = update.message;
   const observerEnabled = isTrainingPeaksContextObserverEnabled();
 
+  // УЧЕНИЦА НА СТРАНИЦЕ ПЛАНА ПИШЕТ БОТУ ТЕКСТОМ [21.10.2026]: передаём тренеру
+  // и отвечаем «Передал тренеру». Обсервер ниже всё равно видит сообщение —
+  // наблюдения пишутся, как раньше. Личку с тренером и всех остальных это не
+  // касается (см. plan-page/bot-relay.ts).
+  const relayedToCoach = rawMessage ? await relayStudentBotText(rawMessage, isCoachChat) : false;
+
   if (rawMessage && observerEnabled) {
     try {
       const observerResult = await handleTrainingPeaksContextObserverMessage(rawMessage);
@@ -538,6 +545,8 @@ export async function POST(request: Request) {
       });
     }
   }
+
+  if (relayedToCoach) return okResponse();
 
   if (rawMessage && isTelegramGroupChat(rawMessage) && !getTelegramMessageTextOrCaption(rawMessage).startsWith("/")) {
     try {

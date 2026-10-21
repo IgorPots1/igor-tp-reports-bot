@@ -30,6 +30,7 @@ import process from "node:process";
 import { todayIsoInZone } from "@/features/intervals/loop/clock";
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { sendTelegramMessageStrict } from "@/features/telegram/telegram-client";
+import { planPageEntry } from "@/features/intervals/plan-page/links";
 
 const COMMIT = process.argv.includes("--commit");
 
@@ -92,6 +93,13 @@ async function main(): Promise<void> {
       `Форма за ${localDate} уже уходила (${a.status}, ${String(a.created_at).slice(0, 16)}). ` +
         "Второй раз в тот же день не шлём — это правило раннера, и ручная отправка его не отменяет."
     );
+  }
+
+  // Ученице на странице плана форму не шлём [решение Игоря, 21.10.2026]: на
+  // странице её нет, а мини-апп показывает «План переехал». Ручной запуск это
+  // правило не обходит — оно про то, куда человек может ответить.
+  if (await planPageEntry(sourceId)) {
+    fail(`«${row.student_name}» на странице плана: недельной формы там нет, её заменяет «Написать тренеру».`);
   }
 
   if (row.telegram_delivery_enabled !== true) {

@@ -92,6 +92,14 @@ async function storeFile(sourceId: string, sessionId: string, dataUrl: string): 
   return path;
 }
 
+/**
+ * Звонить ли тренеру про боль. Отчёт без боли не звонит НИКОГДА [решение Игоря,
+ * 21.10.2026: отчёт виден в админке], правка того же отчёта второй раз — тоже.
+ */
+export function shouldAlertPain(painCode: string, alreadyNotifiedAt: string | null): boolean {
+  return painCode === "pain" && !alreadyNotifiedAt;
+}
+
 export async function submitPageReport(access: PlanLinkAccess, input: ReportInput, isManualEntry: boolean): Promise<void> {
   const session = await ownReleasedSession(access, input.sessionId);
 
@@ -145,7 +153,7 @@ export async function submitPageReport(access: PlanLinkAccess, input: ReportInpu
 
   // Тревога о боли — один раз на отчёт: правка того же отчёта второй раз не звонит.
   const alreadyNotified = (prevRow as { pain_coach_notified_at?: string | null } | null)?.pain_coach_notified_at;
-  if (input.painCode === "pain" && !alreadyNotified) {
+  if (shouldAlertPain(input.painCode, alreadyNotified ?? null)) {
     await alertCoachPain({
       sourceId: access.sourceId,
       studentUuid: access.studentUuid,
@@ -220,7 +228,7 @@ export async function saveMyDays(input: {
   if (!saved.ok) throw new Error(`анкета: ${saved.message}`);
 }
 
-export async function sendStudentMessage(access: PlanLinkAccess, body: string, origin: "page" | "bot", telegramMessageId: string | null = null): Promise<void> {
+export async function sendStudentMessage(access: Pick<PlanLinkAccess, "sourceId" | "studentUuid" | "studentName">, body: string, origin: "page" | "bot", telegramMessageId: string | null = null): Promise<void> {
   const text = body.trim().slice(0, 4000);
   if (!text) throw new PlanPageInputError("Пустое сообщение.");
   const supabase = createSupabaseServerClient();

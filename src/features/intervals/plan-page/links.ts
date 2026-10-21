@@ -6,6 +6,7 @@
  * со строкой токена, иначе 404.
  */
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
+import { SITE_URL } from "@/lib/site";
 
 import {
   PLAN_SLUG_RE,
@@ -27,6 +28,15 @@ export type PlanLinkAccess = {
   link: PlanLinkRef;
 };
 
+/**
+ * Открывает ли строка ссылки страницу по этому адресу. Чистая: её гоняет
+ * check:plan-page. Отозванная — нет. Чужое имя в адресе при верном токене —
+ * нет: адрес с подставленным именем не должен открывать чужую страницу.
+ */
+export function linkOpens(row: { slug: string; revoked_at: string | null }, slug: string): boolean {
+  return row.revoked_at === null && row.slug === slug;
+}
+
 /** По адресу страницы. null — нет такой живой ссылки (или имя не то), это 404. */
 export async function resolvePlanLink(slug: string, token: string): Promise<PlanLinkAccess | null> {
   if (!PLAN_SLUG_RE.test(slug) || !PLAN_TOKEN_RE.test(token)) return null;
@@ -38,7 +48,7 @@ export async function resolvePlanLink(slug: string, token: string): Promise<Plan
     .maybeSingle();
   if (error) throw new Error(`intervals_plan_links: ${describeSupabaseError(error)}`);
   const row = data as { id: string; source_id: string; slug: string; token: string; revoked_at: string | null } | null;
-  if (!row || row.revoked_at !== null || row.slug !== slug) return null;
+  if (!row || !linkOpens(row, slug)) return null;
 
   const { data: src, error: srcError } = await supabase
     .from("student_data_sources")
@@ -141,4 +151,35 @@ export async function revokePlanLink(input: { sourceId: string; by: string }): P
     .eq("source_id", input.sourceId)
     .is("revoked_at", null);
   if (error) throw new Error(`отзыв ссылки: ${describeSupabaseError(error)}`);
+}
+
+/**
+ * Личная кнопка меню в её чате с ботом. Ставится при выпуске и отзыве ссылки:
+ * /start она второй раз не нажмёт, а кнопка должна вести туда, где план.
+ * Выпущена и флаг включён — «Мой план» на страницу; иначе — в мини-апп.
+ * НИКОГДА НЕ БРОСАЕТ: кнопка меню вторична, ссылку тренер отправит сам.
+ */
+export async function syncPlanMenuButton(sourceId: string): Promise<"page" | "miniapp" | "skipped"> {
+  try {
+    const supabase = createSupabaseServerClient();
+    const { data } = await supabase
+      .from("student_data_sources")
+      .select("trainingpeaks_students(telegram_chat_id)")
+      .eq("id", sourceId)
+      .maybeSingle();
+    const chatId = (data as { trainingpeaks_students: { telegram_chat_id: string | null } | null } | null)?.trainingpeaks_students
+      ?.telegram_chat_id;
+    if (!chatId) return "skipped";
+    const { setTelegramChatMenuButtonWebApp } = await import("@/features/telegram/telegram-client");
+    const page = await planPageEntry(sourceId);
+    const url = page ? page() : `${SITE_URL.replace(/\/+$/, "")}/m/run`;
+    await setTelegramChatMenuButtonWebApp({ chatId, text: "Мой план", url });
+    return page ? "page" : "miniapp";
+  } catch (error) {
+    console.warn("[plan-page] кнопка меню не переставилась", {
+      sourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "skipped";
+  }
 }

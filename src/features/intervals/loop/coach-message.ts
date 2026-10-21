@@ -14,6 +14,7 @@ import { stepByIndex } from "@/features/methodology/beginner";
 // доставке. sendTelegramWebAppButton бьёт наружу так же строго.
 import { sendTelegramWebAppButton } from "@/features/telegram/telegram-client";
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { coachReplyNoticeRu } from "@/features/intervals/plan-page/core";
 import { SITE_URL } from "@/lib/site";
 
 import type { ActivityRow } from "./repository";
@@ -129,6 +130,11 @@ export async function notifyWeekReleased(input: {
   telegramDeliveryEnabled: boolean;
   todayIso: string;
   notice: WeekNotice;
+  /**
+   * Адрес недели на странице плана, если ученица на ней (plan-page). Тогда
+   * кнопка — обычная ссылка на страницу, а не вход в мини-апп.
+   */
+  pageUrl?: string | null;
 }): Promise<CoachSendResult> {
   const supabase = createSupabaseServerClient();
   const { kind: noticeKind, textRu: text } = input.notice;
@@ -164,12 +170,14 @@ export async function notifyWeekReleased(input: {
         chatId: input.chatId,
         text,
         buttons: [
-          {
-            // Подпись под текст: «план готов» ведёт к плану, «добавил
-            // тренировку» — туда же, но обещать «план» второй раз незачем.
-            label: noticeKind === "plan_published" ? "Открыть план" : "Открыть приложение",
-            webAppUrl: coachAppUrl(),
-          },
+          input.pageUrl
+            ? { label: "Открыть план", url: input.pageUrl }
+            : {
+                // Подпись под текст: «план готов» ведёт к плану, «добавил
+                // тренировку» — туда же, но обещать «план» второй раз незачем.
+                label: noticeKind === "plan_published" ? "Открыть план" : "Открыть приложение",
+                webAppUrl: coachAppUrl(),
+              },
         ],
       });
       result = { kind: "sent", chatId: input.chatId };
@@ -212,6 +220,12 @@ export async function deliverCoachMessage(input: {
   body: string;
   chatId: string | null;
   telegramDeliveryEnabled: boolean;
+  /**
+   * Адрес ответа на странице плана (карточка тренировки или вкладка «Тренер»),
+   * если ученица на ней. Тогда в бот уходит НЕ весь текст, а первая
+   * содержательная строка и кнопка к ответу (coachReplyNoticeRu).
+   */
+  pageUrl?: string | null;
 }): Promise<CoachSendResult> {
   if (input.body.trim().length === 0) {
     return { kind: "refused", code: "empty_body", messageRu: "Пустой текст отправлять нечего." };
@@ -251,11 +265,19 @@ export async function deliverCoachMessage(input: {
      * Кнопка та же самая, что у notifyWeekReleased, и ведёт в то же место:
      * два входа в одно приложение с разных сообщений сбивали бы с толку.
      */
-    await sendTelegramWebAppButton({
-      chatId: input.chatId,
-      text: input.body,
-      buttons: [{ label: "Открыть приложение", webAppUrl: coachAppUrl() }],
-    });
+    await sendTelegramWebAppButton(
+      input.pageUrl
+        ? {
+            chatId: input.chatId,
+            text: coachReplyNoticeRu(input.body),
+            buttons: [{ label: "Открыть ответ", url: input.pageUrl }],
+          }
+        : {
+            chatId: input.chatId,
+            text: input.body,
+            buttons: [{ label: "Открыть приложение", webAppUrl: coachAppUrl() }],
+          },
+    );
     return { kind: "sent", chatId: input.chatId };
   } catch (error) {
     return {

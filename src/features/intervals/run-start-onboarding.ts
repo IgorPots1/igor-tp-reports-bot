@@ -25,6 +25,8 @@
 
 import { SITE_URL } from "@/lib/site";
 import { isManualEntryStudent } from "@/features/intervals/manual-entry";
+import { getStudentSourceId } from "@/features/intervals/loop/service";
+import { planPageEntry } from "@/features/intervals/plan-page/links";
 import { listActiveStudentsByTelegramUserId } from "@/features/trainingpeaks/repository";
 import {
   sendTelegramMessageStrict,
@@ -85,6 +87,10 @@ const POST_ENROLL_RU =
   "часов, и ответить на несколько вопросов про расписание. Это займёт минут десять.\n\n" +
   "Откройте приложение кнопкой ниже — оно само проведёт по шагам.";
 
+const GREETING_PAGE_RU =
+  "Привет! Здесь ваш план: тренировки на неделю, отметка после пробежки и ответы тренера.\n\n" +
+  "Открывайте его кнопкой ниже или кнопкой «Мой план» слева от поля ввода.";
+
 function appUrl(): string {
   return `${SITE_URL.replace(/\/+$/, "")}/m/run`;
 }
@@ -103,14 +109,41 @@ export async function handleRunStartCommand(input: {
   // Разное здесь — только слова, которые видит человек, а слова решают, придёт
   // ли он вообще: «Открыть приложение» ничего не говорит про то, зачем.
   let manual = false;
+  let page: Awaited<ReturnType<typeof planPageEntry>> = null;
   try {
     const cards = await listActiveStudentsByTelegramUserId(input.from.id);
     const card = cards.find((c) => c.coachingPlatform === "intervals");
     if (card) manual = await isManualEntryStudent(card.id);
+    if (card) page = await planPageEntry(await getStudentSourceId(card.id));
   } catch (error) {
     console.warn("[run.start] не удалось проверить способ ведения тренировок", {
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+
+  /**
+   * УЧЕНИЦА НА СТРАНИЦЕ ПЛАНА [21.10.2026]. Обе двери ведут на страницу: кнопка
+   * меню «Мой план» (в Telegram она бывает только web_app — страница откроется
+   * внутри Telegram) и обычная кнопка-ссылка в сообщении.
+   */
+  if (page) {
+    try {
+      await setTelegramChatMenuButtonWebApp({ chatId: input.chatId, text: "Мой план", url: page() });
+    } catch (error) {
+      console.warn("[run.start] кнопка меню не поставилась", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      await sendTelegramWebAppButton({
+        chatId: input.chatId,
+        text: GREETING_PAGE_RU,
+        buttons: [{ label: "Открыть план", url: page() }],
+      });
+    } catch {
+      await sendTelegramMessageStrict(input.chatId, `${GREETING_PAGE_RU}\n\n${page()}`).catch(() => undefined);
+    }
+    return true;
   }
 
   // СНАЧАЛА КНОПКА МЕНЮ, ПОТОМ СООБЩЕНИЕ. Она не зависит от того, примет ли чат

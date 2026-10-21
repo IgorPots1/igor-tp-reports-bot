@@ -99,6 +99,49 @@ export function firstMeaningfulLine(body: string): string {
 }
 
 /**
+ * «Тренер ответил» в бот для ученицы на странице: не весь ответ, а его суть
+ * одной строкой. Весь текст — на странице, по кнопке.
+ */
+export function coachReplyNoticeRu(body: string): string {
+  const line = firstMeaningfulLine(body);
+  return line ? `Тренер ответил:\n${line}` : "Тренер ответил.";
+}
+
+/**
+ * Напоминание бота для ученицы на странице [решение Игоря, 21.10.2026].
+ *
+ * Решение «слать или нет» остаётся за decideReminder — общее для всех. Здесь
+ * только то, чем страница отличается:
+ * - НЕДЕЛЬНУЮ ФОРМУ НЕ ШЛЁМ ВОВСЕ: на странице её нет, а мини-апп показывает
+ *   «План переехал». Её заменяет «Написать тренеру»;
+ * - у каждого напоминания кнопка на КАРТОЧКУ ТРЕНИРОВКИ, о которой речь;
+ * - «приложение» в тексте заменено: его у неё больше нет.
+ */
+export type PageReminder =
+  | { send: true; textRu: string; target: PlanTarget }
+  | { send: false; reason: string };
+
+export function reminderForPage(input: {
+  kind: "today_session" | "checkin_nudge" | "missed_nudge" | "weekly_form" | string;
+  textRu: string;
+  todaySessionId: string | null;
+  yesterdaySessionId: string | null;
+}): PageReminder {
+  if (input.kind === "weekly_form") {
+    return { send: false, reason: "недельная форма ей не идёт: на странице плана её нет" };
+  }
+  const sessionId = input.kind === "missed_nudge" ? input.yesterdaySessionId : input.todaySessionId;
+  const textRu = input.textRu
+    .replace("прямо в приложении", "прямо в плане: нажмите на дату тренировки")
+    .replace(/в приложении/gu, "в плане");
+  return {
+    send: true,
+    textRu,
+    target: sessionId ? { kind: "session", sessionId } : { kind: "home" },
+  };
+}
+
+/**
  * Утренняя очередь уведомлений тренеру [решение Игоря, 21.10.2026].
  *
  * Боль и сообщения ученицы подчиняются тем же тихим часам, что и остальное

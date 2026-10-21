@@ -55,6 +55,15 @@ function plural(n: number, one: string, few: string, many: string): string {
   return many;
 }
 
+/**
+ * ДЛЯ СТРАНИЦЫ ПЛАНА — СВОИ СЛОВА [21.10.2026]. У ученицы со ссылкой на
+ * страницу (plan-page) приложения больше нет: мини-апп показывает ей «План
+ * переехал». «Откройте приложение» было бы указанием в тупик, поэтому здесь
+ * говорим «план» и «кнопка ниже» — кнопка ведёт прямо на нужную неделю.
+ */
+const PLAN_READY_PAGE =
+  "План готов. Тренировки на неделю — по кнопке ниже, там же отметиться после пробежки и перенести день, если не подходит.";
+
 export function weekNoticeOf(input: {
   /** Отдавали ли эту неделю раньше. */
   wasReleased: boolean;
@@ -62,9 +71,12 @@ export function weekNoticeOf(input: {
   sessionsBefore: number | null;
   /** Сколько тренировок в ней сейчас. */
   sessionsAfter: number;
+  /** Ученица ведёт план на странице, а не в мини-аппе. */
+  onPage?: boolean;
 }): WeekNotice {
+  const page = input.onPage === true;
   if (!input.wasReleased) {
-    return { kind: "plan_published", textRu: PLAN_READY };
+    return { kind: "plan_published", textRu: page ? PLAN_READY_PAGE : PLAN_READY };
   }
 
   const added =
@@ -76,15 +88,21 @@ export function weekNoticeOf(input: {
      * в уже отданную будущую — «в эту неделю» во втором случае было бы враньём
      * про сроки, а даты человеку тут и не нужно: он сейчас откроет план.
      */
-    const what =
-      added === 1
-        ? "тренировку. Откройте приложение, она уже в плане."
-        : `${added} ${plural(added, "тренировку", "тренировки", "тренировок")}. Откройте приложение, они уже в плане.`;
-    return { kind: "week_updated", textRu: `Добавил вам ${what}` };
+    const count = added === 1 ? "тренировку" : `${added} ${plural(added, "тренировку", "тренировки", "тренировок")}`;
+    const where = page
+      ? added === 1
+        ? "Она уже в плане, кнопка ниже."
+        : "Они уже в плане, кнопка ниже."
+      : added === 1
+        ? "Откройте приложение, она уже в плане."
+        : "Откройте приложение, они уже в плане.";
+    return { kind: "week_updated", textRu: `Добавил вам ${count}. ${where}` };
   }
 
   return {
     kind: "week_updated",
-    textRu: "Поправил вашу неделю. Откройте приложение, там свежая версия.",
+    textRu: page
+      ? "Поправил вашу неделю. Свежая версия в плане, кнопка ниже."
+      : "Поправил вашу неделю. Откройте приложение, там свежая версия.",
   };
 }

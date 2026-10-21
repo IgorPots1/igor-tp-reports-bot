@@ -200,6 +200,7 @@ export default function RunAppPage() {
   const [error, setError] = useState<string | null>(null);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [needsConnection, setNeedsConnection] = useState(false);
+  const [movedTo, setMovedTo] = useState<string | null>(null);
   const [connectionLost, setConnectionLost] = useState<string | null>(null);
   // Поля, которые ученица вообще увидит. Приходят с сервера списком того, что
   // ПОКАЗАТЬ, а не того, что скрыть: скрывать на клиенте значит сначала отдать
@@ -264,12 +265,14 @@ export default function RunAppPage() {
         timezoneOptions?: Array<{ zone: string; labelRu: string }>;
         isManualEntry?: boolean;
         view?: View;
+        movedTo?: string;
       };
       if (!json.ok) {
         setError(json.error ?? "Не получилось загрузить.");
         return;
       }
       setError(null);
+      setMovedTo(json.movedTo ?? null);
       setNeedsOnboarding(json.needsOnboarding === true);
       setNeedsConnection(json.needsConnection === true);
       setConnectionLost(json.connectionLostRu ?? null);
@@ -295,6 +298,16 @@ export default function RunAppPage() {
   }
   if (error) {
     return <Shell><p style={{ color: ACCENT, fontWeight: 600 }}>{error}</p></Shell>;
+  }
+  if (movedTo) {
+    return (
+      <Shell>
+        <p style={{ fontWeight: 600, margin: "0 0 14px" }}>План переехал.</p>
+        <a href={movedTo} style={{ display: "inline-block", background: ACCENT, color: "#fff", borderRadius: 10, padding: "11px 18px", fontWeight: 600, textDecoration: "none" }}>
+          Открыть план
+        </a>
+      </Shell>
+    );
   }
   if (needsConnection && initData) {
     return (

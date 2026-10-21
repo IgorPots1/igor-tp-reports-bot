@@ -11,6 +11,7 @@ import { visibleFormFields } from "@/features/intervals/loop/prefill";
 import { loadStudentView } from "@/features/intervals/loop/service";
 import { FALLBACK_TIMEZONES, todayIsoInZone } from "@/features/intervals/loop/clock";
 import { AUTH_FAILURE_MESSAGE_RU } from "@/features/intervals/oauth";
+import { planPageEntry } from "@/features/intervals/plan-page/links";
 
 export const runtime = "nodejs";
 
@@ -60,6 +61,14 @@ export async function POST(request: NextRequest): Promise<Response> {
       });
     }
     const sourceId = auth.sourceId;
+
+    // УЧЕНИЦА НА СТРАНИЦЕ ПЛАНА [21.10.2026]: мини-апп не удаляем, но и не
+    // ведём её сюда. Старые сообщения с кнопкой в мини-апп не тупиковые: экран
+    // говорит одной строкой, что план переехал, и даёт кнопку на страницу.
+    const page = await planPageEntry(sourceId);
+    if (page) {
+      return jsonResponse(200, { ok: true, movedTo: page(), studentName: auth.studentName });
+    }
 
     const answers = await getOnboardingAnswers(sourceId);
     if (!answers) {

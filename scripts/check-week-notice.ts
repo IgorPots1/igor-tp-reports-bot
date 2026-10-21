@@ -69,4 +69,34 @@ for (const notice of [fresh, added, addedTwo, addedFive, edited]) {
   assert.ok(notice.textRu.includes("приложение"), "в каждом тексте сказано, куда идти");
 }
 
+// ── Ученица на странице плана: «приложение» — указание в тупик ───────────────
+//
+// БЫЛО [до 21.10.2026]: утверждение выше держало «приложение» в КАЖДОМ тексте.
+// ОТМЕНЕНО для учениц со ссылкой на страницу плана (plan-page): у них мини-апп
+// показывает «План переехал», и «откройте приложение» отправляло бы в тупик.
+// Для мини-аппа утверждение выше осталось как было. Здесь — строже, чем
+// «не упоминает»: слова «приложени» нет НИ В ОДНОМ виде текста, и в каждом
+// сказано, куда идти («план»), — кнопка ведёт прямо на неделю.
+const onPage = [
+  weekNoticeOf({ wasReleased: false, sessionsBefore: null, sessionsAfter: 3, onPage: true }),
+  weekNoticeOf({ wasReleased: true, sessionsBefore: 3, sessionsAfter: 4, onPage: true }),
+  weekNoticeOf({ wasReleased: true, sessionsBefore: 3, sessionsAfter: 5, onPage: true }),
+  weekNoticeOf({ wasReleased: true, sessionsBefore: 3, sessionsAfter: 3, onPage: true }),
+  weekNoticeOf({ wasReleased: true, sessionsBefore: null, sessionsAfter: 7, onPage: true }),
+];
+assert.deepEqual(
+  onPage.map((n) => n.kind),
+  ["plan_published", "week_updated", "week_updated", "week_updated", "week_updated"],
+  "виды уведомлений у страницы те же, что у мини-аппа: меняются только слова"
+);
+assert.ok(onPage[0].textRu.startsWith("План готов."), "у страницы новая неделя — тоже «план готов»");
+assert.ok(onPage[1].textRu.startsWith("Добавил вам тренировку."), "у страницы «добавил» — та же граница");
+assert.ok(onPage[3].textRu.startsWith("Поправил"), "у страницы «поправил» — та же граница");
+assert.equal(onPage[4].textRu, onPage[3].textRu, "у страницы без счётчика «добавил» тоже не утверждаем");
+for (const notice of onPage) {
+  assert.ok(!/приложени/iu.test(notice.textRu), `«${notice.textRu}» зовёт в приложение, которого у неё нет`);
+  assert.ok(/план/iu.test(notice.textRu), `«${notice.textRu}» не говорит, куда идти`);
+  assert.ok(!notice.textRu.includes("сегодня"), `«${notice.textRu}» обещает сегодняшний день`);
+}
+
 console.log("check:week-notice — все проверки пройдены");

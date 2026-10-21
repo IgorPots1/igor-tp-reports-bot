@@ -15,6 +15,7 @@ import {
   MORNING_WINDOW,
   type ReminderInput,
 } from "@/features/intervals/loop/reminders";
+import { reminderForPage } from "@/features/intervals/plan-page/core";
 
 let failures = 0;
 function expect(condition: boolean, message: string): void {
@@ -253,6 +254,40 @@ function main(): void {
   // тренировку, форма — про неделю целиком.
   expect(sunday({ hasCheckinToday: true }).kind === "weekly_form",
     "отметка о сегодняшней тренировке не должна съедать недельную форму");
+
+  step("УЧЕНИЦА НА СТРАНИЦЕ ПЛАНА");
+  // БЫЛО [до 21.10.2026]: утверждения выше — форма уходит в воскресенье, текст
+  // зовёт перенести «прямо в приложении» — держали ВСЕХ. ОТМЕНЕНО для учениц со
+  // ссылкой на страницу плана: мини-апп у них показывает «План переехал», а
+  // недельной формы на странице нет [решение Игоря, 21.10.2026: её заменяет
+  // «Написать тренеру»]. Для мини-аппа всё выше осталось как было. Здесь —
+  // строже, чем «в этот раз не ушла»: форма не уходит НИ В ОДНОМ окне, слова
+  // «приложени» нет НИ В ОДНОМ тексте, и у каждого напоминания кнопка ведёт на
+  // КАРТОЧКУ той тренировки, о которой речь.
+  const viaPage = (d: ReturnType<typeof decideReminder>) =>
+    d.send ? reminderForPage({ kind: d.kind, textRu: d.textRu, todaySessionId: "today-id", yesterdaySessionId: "yesterday-id" }) : null;
+  for (const hour of [8, 10, 11, 12, 13, 20]) {
+    const d = sunday({ localHour: hour });
+    const p = viaPage(d);
+    expect(!d.send || d.kind !== "weekly_form" || (p !== null && p.send === false),
+      `в воскресенье в ${hour}:00 недельная форма ей не уходит`);
+  }
+  const pageMorning = viaPage(at({ localHour: 8 }));
+  expect(pageMorning !== null && pageMorning.send && !/приложени/iu.test(pageMorning.textRu) && pageMorning.textRu.includes("перенести"),
+    "утром у страницы про перенос сказано, без «приложения»");
+  expect(pageMorning !== null && pageMorning.send && pageMorning.target.kind === "session" && pageMorning.target.sessionId === "today-id",
+    "утреннее ведёт на карточку сегодняшней тренировки");
+  const pageEvening = viaPage(at({ localHour: 20, hasActivityToday: true }));
+  expect(pageEvening !== null && pageEvening.send && !/приложени/iu.test(pageEvening.textRu),
+    "вечернее «отметьтесь» у страницы без «приложения»");
+  const pageNextDay = viaPage(at({
+    localHour: 12, todaySession: null,
+    yesterdaySession: { title: "Бег/шаг", minutes: 30 }, yesterdayClosed: false,
+  } as Partial<ReminderInput>));
+  expect(pageNextDay !== null && pageNextDay.send && pageNextDay.target.kind === "session" && pageNextDay.target.sessionId === "yesterday-id",
+    "«вчера не видно» ведёт на карточку ВЧЕРАШНЕЙ тренировки, а не на главную");
+  expect(pageNextDay !== null && pageNextDay.send && !/приложени/iu.test(pageNextDay.textRu),
+    "«вчера не видно» у страницы без «приложения»");
 
   console.log("");
   if (failures === 0) {
