@@ -604,7 +604,7 @@
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "15"
+            "prescribedValue": "17.5"
            }
           ]
          }
@@ -719,13 +719,20 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "443",
-          "title": "Body Weight Bulgarian Split Squat",
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "707",
+          "libraryParameterId": "764",
           "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса"
+          "prescribedValue": "8",
+          "coachNotes": "гантели 6 кг в каждой руке",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
          }
         ]
        },
@@ -883,13 +890,20 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "443",
-          "title": "Body Weight Bulgarian Split Squat",
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "707",
+          "libraryParameterId": "764",
           "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса"
+          "prescribedValue": "8",
+          "coachNotes": "гантели 6 кг в каждой руке",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
          }
         ]
        },
@@ -1047,13 +1061,20 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "443",
-          "title": "Body Weight Bulgarian Split Squat",
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "707",
+          "libraryParameterId": "764",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "без веса"
+          "coachNotes": "гантели 6 кг в каждой руке",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
          }
         ]
        },
@@ -1211,13 +1232,20 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "443",
-          "title": "Body Weight Bulgarian Split Squat",
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "707",
+          "libraryParameterId": "764",
           "sets": 3,
-          "prescribedValue": "10",
-          "coachNotes": "без веса"
+          "prescribedValue": "8",
+          "coachNotes": "гантели 6 кг в каждой руке; разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightPerSideKg",
+            "libraryParameterId": null,
+            "prescribedValue": "6"
+           }
+          ]
          }
         ]
        },
