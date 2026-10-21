@@ -91,7 +91,7 @@ async function main(): Promise<void> {
   }
   console.log("[dry-run] strength rows that WOULD be upserted:");
   for (const row of strengthRows) {
-    console.log(asJson ? JSON.stringify(row) : `  → ${row.workout_date} id=${row.trainingpeaks_workout_id} type=${row.workout_type_value_id} planned=${row.is_planned} completed=${row.is_completed} order=${row.order_on_day} title=${JSON.stringify(row.title)}`);
+    console.log(asJson ? JSON.stringify(row) : `  → ${row.workout_date} id=${row.trainingpeaks_workout_id} type=${row.workout_type_value_id} planned=${row.is_planned} completed=${row.is_completed} order=${row.order_on_day} hidden=${(row.source_snapshot as Record<string, unknown>).isHidden} title=${JSON.stringify(row.title)}`);
   }
 }
 
