@@ -24,6 +24,7 @@ import {
   isStrengthServiceCacheRow,
   STRENGTH_CACHE_SOURCE,
 } from "./lib/strength-cache-rows.ts";
+import { isHiddenCoachStrengthCacheRow } from "../../../src/features/trainingpeaks/coach-strength-visibility.ts";
 import { scanOneStudent, type StrengthScanInput } from "./lib/workout-cache-scan-student.ts";
 
 let passed = 0;
@@ -172,19 +173,32 @@ await test("выполненная тренерская всё равно is_com
   assert.equal((rows[0]!.source_snapshot as Record<string, unknown>).complianceState, "Compliant");
 });
 
-await test("отсев: файл с часов, скрытая, прошлая, вне окна", () => {
+// БЫЛО (19.10): скрытая отсеивалась вместе с файлом часов, прошлой и вне окна. ОТМЕНЕНО решением
+// Игоря 21.10: скрытая тренерская силовая ПИШЕТСЯ — автопланировщик должен видеть её в дне, — но с
+// пометкой isHidden=true, по которой её прячут от ученика (coach-strength-visibility.ts). Утверждение
+// сильнее прежнего: не только «строка есть», но и «пометка стоит, у видимой — false».
+await test("отсев: файл с часов, прошлая, вне окна; скрытая ПИШЕТСЯ с пометкой isHidden=true", () => {
   const { rows, counts } = build([
     coachStrength(),
     watchFile(),
     coachStrength({ id: "35409762", isHidden: true, prescribedDate: "2026-10-23" }),
     coachStrength({ id: "35300000", prescribedDate: "2026-10-18" }),
+    coachStrength({ id: "35300003", prescribedDate: "2026-10-18", isHidden: true }),
     coachStrength({ id: "35300001", prescribedDate: "2026-11-30" }),
     coachStrength({ id: "35300002", prescribedDate: null }),
   ]);
-  assert.deepEqual(rows.map((row) => row.trainingpeaks_workout_id), [35367145]);
+  assert.deepEqual(rows.map((row) => row.trainingpeaks_workout_id), [35367145, 35409762]);
   assert.deepEqual(
-    { watchFiles: counts.watchFiles, hidden: counts.hidden, past: counts.past, outOfWindow: counts.outOfWindow },
-    { watchFiles: 1, hidden: 1, past: 1, outOfWindow: 2 },
+    rows.map((row) => (row.source_snapshot as Record<string, unknown>).isHidden),
+    [false, true],
+    "пометка скрытия — в каждой строке силовой, явным true/false",
+  );
+  assert.equal(isHiddenCoachStrengthCacheRow(rows[1]), true);
+  assert.equal(isHiddenCoachStrengthCacheRow(rows[0]), false);
+  assert.deepEqual(
+    { watchFiles: counts.watchFiles, hidden: counts.hidden, past: counts.past, outOfWindow: counts.outOfWindow, rows: counts.rows },
+    { watchFiles: 1, hidden: 1, past: 2, outOfWindow: 2, rows: 2 },
+    "прошлая скрытая по-прежнему НЕ пишется (прошлое не пишем вообще)",
   );
 });
 
@@ -299,12 +313,27 @@ await test("сверка: живая силовая переживает сле�
   assert.equal(db.table.size, 3);
 });
 
-await test("сверка: силовую сняли/скрыли в TP — строка удаляется, как фантом ленты", async () => {
+await test("сверка: силовую сняли в TP — строка удаляется, как фантом ленты", async () => {
   const db = modelTable();
   await scanInto(db, "2026-10-19T10:00:00.000Z", strengthOf([coachStrength()]));
-  const second = await scanInto(db, "2026-10-19T10:30:00.000Z", strengthOf([coachStrength({ isHidden: true })]));
+  const second = await scanInto(db, "2026-10-19T10:30:00.000Z", strengthOf([]));
   assert.deepEqual(strengthIds(db), []);
   assert.equal(second.reconciledDeleted, 1);
+});
+
+// БЫЛО (19.10): «скрыли в TP → строка удаляется сверкой». ОТМЕНЕНО 21.10: скрытая пишется. Теперь
+// скрытие/открытие в TP — это смена пометки в ТОЙ ЖЕ строке, без удаления и без дубля.
+await test("сверка: силовую скрыли в TP — строка остаётся, пометка isHidden=true; открыли — false", async () => {
+  const db = modelTable();
+  const hiddenFlag = () => [...db.table.values()].filter((row) => isStrengthServiceCacheRow(row)).map((row) => (row.source_snapshot as Record<string, unknown>).isHidden);
+  await scanInto(db, "2026-10-19T10:00:00.000Z", strengthOf([coachStrength()]));
+  const hiddenRun = await scanInto(db, "2026-10-19T10:30:00.000Z", strengthOf([coachStrength({ isHidden: true })]));
+  assert.deepEqual(strengthIds(db), [35367145]);
+  assert.deepEqual(hiddenFlag(), [true]);
+  assert.equal(hiddenRun.reconciledDeleted, 0);
+  await scanInto(db, "2026-10-19T11:00:00.000Z", strengthOf([coachStrength({ isHidden: false })]));
+  assert.deepEqual(hiddenFlag(), [false]);
+  assert.equal(db.table.size, 3, "ни дубля, ни потери строк ленты");
 });
 
 await test("сверка: силовые НЕ прочитались — сверка пропущена, живая силовая на месте, ученик ok", async () => {
@@ -357,7 +386,7 @@ await test("дыра orderOnDay, которую закрывает силова�
   assert.deepEqual(noOrder.incompleteDays, ["2026-10-21"]);
 });
 
-await test("прошлую и скрытую силовую не пишем, но дыру в нумерации они объясняют (живой случай 09.10)", async () => {
+await test("прошлую силовую не пишем, скрытую пишем; дыру в нумерации объясняют обе (живой случай 09.10)", async () => {
   const body = [tpapiRun({ workoutId: 4012345680, workoutDay: "2026-10-10T00:00:00", orderOnDay: 2 }), tpapiRun({ workoutId: 4012345681, workoutDay: "2026-10-25T00:00:00", orderOnDay: 2 })];
   const off = await harness({ tpapiBody: body }).run();
   assert.deepEqual(off.incompleteDays, ["2026-10-10", "2026-10-25"]);
@@ -371,7 +400,10 @@ await test("прошлую и скрытую силовую не пишем, н�
   });
   const on = await run();
   assert.deepEqual(on.incompleteDays, []);
-  assert.equal(calls.filter((call) => call.kind === "upsert").length, 1, "ни одной строки силовых — второго upsert нет");
+  // БЫЛО: «ни одной строки силовых — второго upsert нет» (скрытая не писалась). С 21.10 скрытая
+  // будущая пишется: ровно одна строка силовых — скрытая 25.10, прошлая 10.10 и файл часов — нет.
+  const strengthUpserts = calls.filter((call): call is Extract<Call, { kind: "upsert" }> => call.kind === "upsert").slice(1);
+  assert.deepEqual(strengthUpserts.flatMap((call) => call.rows.map((row) => [row.trainingpeaks_workout_id, (row.source_snapshot as Record<string, unknown>).isHidden])), [[35300011, true]]);
   // файл с часов дыру НЕ закрывает (его номер — не про тренерскую силовую)
   const watchOnly = await harness({ tpapiBody: body, strength: { items: [watchFile({ prescribedDate: "2026-10-25", orderOnDay: 1 })] } }).run();
   assert.deepEqual(watchOnly.incompleteDays, ["2026-10-10", "2026-10-25"]);

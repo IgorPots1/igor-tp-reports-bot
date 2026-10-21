@@ -90,6 +90,9 @@ export async function buildTrainingPeaksReplyDraftContext(
       // product — one reply draft per incoming student message. Skipping the jsonb payload cuts the
       // bytes per draft by roughly an order of magnitude.
       includeSourceSnapshot: false,
+      // Черновик ответа уходит УЧЕНИКУ: скрытую тренерскую силовую (черновик тренера, решение
+      // 21.10) он в TP не видит — и в ответе её быть не должно. Фильтр на стороне базы.
+      athleteVisibleOnly: true,
     }),
     listTrainingPeaksStudentHealthMetricProfiles(),
   ]);

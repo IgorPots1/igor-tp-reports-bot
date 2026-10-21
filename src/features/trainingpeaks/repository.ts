@@ -7,6 +7,7 @@ import {
 } from "@/features/supabase/server";
 import { chunkIds, fetchAllInChunks, fetchAllRows, SUPABASE_MAX_ROWS } from "@/features/supabase/paginate";
 import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
+import { ATHLETE_VISIBLE_CACHE_ROWS_OR_FILTER } from "@/features/trainingpeaks/coach-strength-visibility";
 import type { ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
 import {
   buildTelegramContextTextPreview,
@@ -2654,18 +2655,27 @@ export async function listTrainingPeaksWorkoutCacheForStudentDateRange(input: {
    * for row.sourceSnapshot would silently get null instead of failing loudly.
    */
   includeSourceSnapshot?: boolean;
+  /**
+   * true — только то, что видит УЧЕНИК: без скрытых тренерских силовых (source_snapshot.source =
+   * tp_strength_service и isHidden = true; решение Игоря 21.10). Фильтр на стороне базы, поэтому
+   * работает и при includeSourceSnapshot:false. По умолчанию выкл. — тренерские пути видят всё.
+   */
+  athleteVisibleOnly?: boolean;
 }): Promise<TrainingPeaksWorkoutCacheRow[]> {
   const supabase = createSupabaseServerClient();
   const columns =
     input.includeSourceSnapshot === false ? TRAININGPEAKS_WORKOUT_CACHE_COLUMNS_WITHOUT_SNAPSHOT : "*";
-  const { data, error } = await withSupabaseNetworkRetry(() => supabase
-    .from("trainingpeaks_workout_cache")
-    .select(columns)
-    .eq("student_id", input.studentId)
-    .gte("workout_date", input.from)
-    .lte("workout_date", input.to)
-    .order("workout_date", { ascending: true })
-    .order("trainingpeaks_workout_id", { ascending: true }));
+  const { data, error } = await withSupabaseNetworkRetry(() => {
+    const query = supabase
+      .from("trainingpeaks_workout_cache")
+      .select(columns)
+      .eq("student_id", input.studentId)
+      .gte("workout_date", input.from)
+      .lte("workout_date", input.to);
+    return (input.athleteVisibleOnly ? query.or(ATHLETE_VISIBLE_CACHE_ROWS_OR_FILTER) : query)
+      .order("workout_date", { ascending: true })
+      .order("trainingpeaks_workout_id", { ascending: true });
+  });
 
   if (error) {
     throw new Error(

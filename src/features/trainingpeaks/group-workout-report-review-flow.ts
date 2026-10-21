@@ -560,6 +560,8 @@ export async function processGroupWorkoutReportReviewPipeline(
     studentId: input.student.id,
     from: dateIso,
     to: dateIso,
+    // Ответ на отчёт уходит ученику: скрытая тренерская силовая не кандидат (решение 21.10).
+    athleteVisibleOnly: true,
   });
 
   const match = matchGroupWorkoutReportWorkoutFromCache({

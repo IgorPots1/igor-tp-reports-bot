@@ -726,7 +726,7 @@ async function main(): Promise<void> {
         strengthOk.reduce((acc, item) => acc + (item.strength?.ok ? item.strength.counts[key] : 0), 0);
       console.log(
         `strength: students_ok=${strengthOk.length}, students_failed=${summaries.filter((item) => item.strength && !item.strength.ok).length}, ` +
-          `rows=${sum("rows")}, watch_files_skipped=${sum("watchFiles")}, hidden_skipped=${sum("hidden")}, past_skipped=${sum("past")}, ` +
+          `rows=${sum("rows")}, watch_files_skipped=${sum("watchFiles")}, hidden_included=${sum("hidden")}, past_skipped=${sum("past")}, ` +
           `bad_id=${sum("badId")}, id_collision=${sum("idCollision")}`,
       );
     }

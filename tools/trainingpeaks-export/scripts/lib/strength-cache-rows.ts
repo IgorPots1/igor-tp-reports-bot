@@ -10,9 +10,11 @@
 // Решения (все — в пользу «не навредить потребителям кэша»):
 //  • Берём только ТРЕНЕРСКИЕ: сервис листает и файлы с часов («Strength»/«Yoga»: Unplanned, без
 //    назначенных подходов). Их и так видно в tpapi (completed type 9) — второй раз не пишем.
-//  • Только видимые атлету (isHidden=false). Скрытая — черновик тренера до «покажи»; кэш читают
-//    и экраны ученика (клуб «следующая тренировка», план питания) — показывать там то, чего
-//    ученик в TP не видит, нельзя.
+//  • Скрытые от атлета (isHidden=true) ТОЖЕ пишутся — с пометкой source_snapshot.isHidden=true
+//    (решение Игоря 21.10: автопланировщик должен видеть и силовую-черновик). Было: скрытые не
+//    писались вовсе (19.10). Ученику скрытая не показывается — фильтр в местах, которые видит
+//    ученик (src/features/trainingpeaks/coach-strength-visibility.ts: клуб «следующая
+//    тренировка», план питания, черновики ответов ученику).
 //  • Только сегодня и вперёд (по Белграду). Цель — планирование. Прошлое закрыто часами
 //    (completed type 9 из tpapi); прошлая силовая как «план не выполнен» давала бы ложь, а как
 //    «выполнена» — двойной счёт с файлом часов (физио-нагрузка, расход в разборе питания) и
@@ -24,12 +26,13 @@
 //    силовой >= 1e9 НЕ пишем (вошёл бы в пространство tpapi), и id, совпавший с workoutId из
 //    того же ответа tpapi, тоже (защита в глубину).
 
+import { COACH_STRENGTH_CACHE_SOURCE, isCoachStrengthCacheRow } from "../../../../src/features/trainingpeaks/coach-strength-visibility.ts";
 import type {
   TrainingPeaksStudent,
   TrainingPeaksWorkoutCacheUpsertRow,
 } from "../../../../src/features/trainingpeaks/repository.ts";
 
-export const STRENGTH_CACHE_SOURCE = "tp_strength_service";
+export const STRENGTH_CACHE_SOURCE = COACH_STRENGTH_CACHE_SOURCE;
 export const STRENGTH_CACHE_WORKOUT_TYPE_VALUE_ID = 9;
 /** id силовой должен быть строго ниже: выше начинается пространство tpapi workoutId. */
 export const STRENGTH_ID_EXCLUSIVE_MAX = 1_000_000_000;
@@ -105,6 +108,7 @@ export function extractStrengthCalendarItems(body: unknown): Rec[] | null {
 export type StrengthRowsCounts = {
   returned: number;
   watchFiles: number;
+  /** Скрытых от атлета среди ЗАПИСАННЫХ (с 21.10 скрытые пишутся, а не отсеиваются). */
   hidden: number;
   past: number;
   outOfWindow: number;
@@ -153,13 +157,14 @@ export function buildStrengthCacheRows(input: {
     // Номер в дне — правда календаря TP, даже если строку мы не пишем (скрытая, прошлая): дыру
     // в нумерации ленты такая силовая объясняет так же.
     orderItems.push({ workoutDate: date, orderOnDay });
-    if (item.isHidden === true) { counts.hidden += 1; continue; }
     if (date < firstDay) { counts.past += 1; continue; }
     const id = num(item.id);
     if (id === null || !Number.isInteger(id) || id <= 0 || id >= STRENGTH_ID_EXCLUSIVE_MAX) { counts.badId += 1; continue; }
     if (input.tpapiWorkoutIds.has(id)) { counts.idCollision += 1; continue; }
     if (seen.has(id)) { counts.duplicate += 1; continue; }
     seen.add(id);
+    // Скрытая пишется (с пометкой isHidden в снимке) — здесь только счёт для итога скана.
+    if (item.isHidden === true) counts.hidden += 1;
 
     const sequence = Array.isArray(item.sequenceSummary)
       ? item.sequenceSummary.filter(isRec).map((s) => ({
@@ -249,6 +254,5 @@ export function strengthWeekdaysFromCacheRows(
 
 /** Строка кэша — тренерская силовая из сервиса силовых (а не из ленты tpapi). */
 export function isStrengthServiceCacheRow(row: { source_snapshot?: unknown } | { sourceSnapshot?: unknown }): boolean {
-  const snapshot = "source_snapshot" in row ? row.source_snapshot : (row as { sourceSnapshot?: unknown }).sourceSnapshot;
-  return isRec(snapshot) && snapshot.source === STRENGTH_CACHE_SOURCE;
+  return isCoachStrengthCacheRow(row);
 }

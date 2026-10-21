@@ -16,6 +16,7 @@ import { logClubDbError } from "./db-errors";
 import { formatDuration } from "./format-time";
 import { listClubStarts } from "./cabinet";
 import { getTrainingPeaksWorkoutCacheFreshness } from "@/features/trainingpeaks/repository";
+import { ATHLETE_VISIBLE_CACHE_ROWS_OR_FILTER } from "@/features/trainingpeaks/coach-strength-visibility";
 import {
   classifyTrainingPeaksWorkoutActivity,
   type TrainingPeaksWorkoutActivityFamily,
@@ -2466,6 +2467,9 @@ export async function getClubNextWorkout(input: { currentStudentId: string }): P
     .eq("student_id", input.currentStudentId)
     .eq("is_planned", true)
     .gte("workout_date", today)
+    // Экран УЧЕНИКА: скрытая тренерская силовая (черновик до «покажи», решение 21.10) не «следующая
+    // тренировка». Фильтр в базе, а не после limit(1) — иначе скрытая съела бы единственное место.
+    .or(ATHLETE_VISIBLE_CACHE_ROWS_OR_FILTER)
     .order("workout_date", { ascending: true })
     .order("order_on_day", { ascending: true, nullsFirst: true })
     .limit(1);

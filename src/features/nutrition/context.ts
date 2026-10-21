@@ -4,6 +4,7 @@ import {
   type ResolvedStudentCommunicationProfile,
 } from "@/features/trainingpeaks/communication-profile";
 import { classifyTrainingPeaksWorkoutActivity } from "@/features/trainingpeaks/workout-activity-classification";
+import { isHiddenCoachStrengthCacheRow } from "@/features/trainingpeaks/coach-strength-visibility";
 // Phase A: pure detector to drop club marker workouts from nutrition plan-week context.
 import { isClubMarkerTitle } from "@/features/club/cache-guard";
 import { getNutritionAdminLocalDate } from "@/features/nutrition/plan-week-policy";
@@ -1131,7 +1132,9 @@ export async function buildNutritionTrainingPeaksWeekContext(
   // Phase 11, type Other=100) — they are not real training. Without this, when a student's
   // excludeOtherActivities profile flag is OFF, a marker leaks into totalSessions /
   // plannedSessions / runningSessions / keyWorkouts of the nutrition plan-week context.
-  const baseRows = allRows.filter((row) => !isClubMarkerTitle(row.title));
+  // Скрытая тренерская силовая (черновик тренера до «покажи», решение 21.10) — не для плана
+  // питания ученицы: она её в TP не видит. Видимая силовая остаётся и делает день силовым.
+  const baseRows = allRows.filter((row) => !isClubMarkerTitle(row.title) && !isHiddenCoachStrengthCacheRow(row));
   const plannedRows = options?.plannedOnly ? baseRows.filter((row) => row.isPlanned) : baseRows;
   const rows = options?.excludeOtherActivities
     ? plannedRows.filter(
