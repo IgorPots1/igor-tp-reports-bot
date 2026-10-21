@@ -7,14 +7,16 @@
  * из токена, никогда из тела запроса.
  */
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
-import { submitManualEntry } from "@/features/intervals/manual-entry";
+import { submitManualEntry, validateManualEntry } from "@/features/intervals/manual-entry";
 
 import { getOnboardingAnswers, getPublishedCycle, getSessionById, listPlanWeeks, saveOnboardingAnswers } from "../loop/repository";
+import { effortByCode, painByCode } from "../loop/effort-scale";
 import { moveStudentSession, submitCheckin } from "../loop/service";
 
 import { alertCoachMessage, alertCoachPain } from "./coach-alerts";
 import type { Surface } from "./core";
 import type { PlanLinkAccess } from "./links";
+import { reportDayFor } from "./report-day";
 import { CHECKIN_FILE_BUCKET } from "./view";
 
 export class PlanPageInputError extends Error {}
@@ -100,33 +102,68 @@ export function shouldAlertPain(painCode: string, alreadyNotifiedAt: string | nu
   return painCode === "pain" && !alreadyNotifiedAt;
 }
 
-export async function submitPageReport(access: PlanLinkAccess, input: ReportInput, isManualEntry: boolean): Promise<void> {
+export async function submitPageReport(
+  access: PlanLinkAccess,
+  input: ReportInput,
+  isManualEntry: boolean,
+  todayIso: string,
+): Promise<void> {
   const session = await ownReleasedSession(access, input.sessionId);
+
+  // Отметила будущую тренировку этой недели — пробежка была сегодня: отчёт
+  // сегодняшним днём, тренировка переезжает на сегодня (report-day.ts).
+  const day = reportDayFor({ sessionDate: session.sessionDate, weekStart: session.weekStart, todayIso });
+  if (!day.ok) throw new PlanPageInputError(day.reason);
+
+  const entry = {
+    sourceId: access.sourceId,
+    date: day.reportDate,
+    durationMinutes: input.minutes ?? NaN,
+    distanceKm: input.distanceKm,
+    averageHeartrate: null,
+    averagePaceSecPerKm: null,
+    speedKmh: input.speedKmh,
+    recoverySpeedKmh: session.role === "quality" ? input.recoverySpeedKmh : null,
+    planSessionId: session.id,
+    effortCode: input.effortCode,
+    painCode: input.painCode,
+    commentText: input.comment,
+  };
+
+  /**
+   * ПЕРЕНОС ТОЛЬКО ПОД ОТЧЁТ, КОТОРЫЙ ЗАПИШЕТСЯ. Всё, что может отбить запись
+   * (минуты, числа, варианты ответа), проверяется ДО переноса: иначе неверное
+   * число в форме оставило бы тренировку переехавшей на сегодня без отчёта.
+   */
+  if (isManualEntry && input.minutes === null) throw new PlanPageInputError("Укажите минуты.");
+  const problem = isManualEntry ? validateManualEntry(entry) : null;
+  if (problem) throw new PlanPageInputError(problem);
+  if (!effortByCode(input.effortCode) || !painByCode(input.painCode)) {
+    throw new PlanPageInputError("Отметьте, как далась и болело ли.");
+  }
+
+  if (day.moveToToday) {
+    const moved = await moveStudentSession({
+      sourceId: access.sourceId,
+      sessionId: session.id,
+      toDate: todayIso,
+      todayIso,
+      movedBy: "student:page",
+      ignoreUnavailableWeekdays: true,
+    });
+    if (!moved.ok) throw new PlanPageInputError(moved.messageRu);
+  }
 
   let checkinId: string;
   if (isManualEntry) {
-    if (input.minutes === null) throw new PlanPageInputError("Укажите минуты.");
-    const result = await submitManualEntry({
-      sourceId: access.sourceId,
-      date: session.sessionDate,
-      durationMinutes: input.minutes,
-      distanceKm: input.distanceKm,
-      averageHeartrate: null,
-      averagePaceSecPerKm: null,
-      speedKmh: input.speedKmh,
-      recoverySpeedKmh: session.role === "quality" ? input.recoverySpeedKmh : null,
-      planSessionId: session.id,
-      effortCode: input.effortCode,
-      painCode: input.painCode,
-      commentText: input.comment,
-    });
+    const result = await submitManualEntry(entry);
     if (!result.ok) throw new PlanPageInputError(result.messageRu);
     checkinId = result.checkin.checkinId;
   } else {
     const result = await submitCheckin({
       sourceId: access.sourceId,
       planSessionId: session.id,
-      sessionDate: session.sessionDate,
+      sessionDate: day.reportDate,
       effortCode: input.effortCode,
       painCode: input.painCode,
       commentText: input.comment,
@@ -159,7 +196,7 @@ export async function submitPageReport(access: PlanLinkAccess, input: ReportInpu
       studentUuid: access.studentUuid,
       studentName: access.studentName,
       checkinId,
-      sessionDate: session.sessionDate,
+      sessionDate: day.reportDate,
       sessionTitle: session.title,
       comment: input.comment,
     });

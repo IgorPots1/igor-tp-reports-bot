@@ -44,7 +44,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     switch (body.op) {
       case "report": {
         const view = await load();
-        await submitPageReport(access, parseReportInput((body.report ?? {}) as Record<string, unknown>), view.isManualEntry);
+        await submitPageReport(access, parseReportInput((body.report ?? {}) as Record<string, unknown>), view.isManualEntry, todayIso);
         break;
       }
       case "move":

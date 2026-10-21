@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { reportDayFor } from "@/features/intervals/plan-page/report-day";
 import type { PageSession, PageWeek, PlanPageView } from "@/features/intervals/plan-page/view";
 
 import s from "./plan.module.css";
@@ -247,7 +248,10 @@ function Card(props: { sess: PageSession; week: PageWeek; view: PlanPageView; is
   const d = pd(sess.date);
   const kind = KIND[sess.role];
   const canMove = !sess.report && sess.date >= view.todayIso;
-  const canReport = sess.date <= view.todayIso;
+  // «Отметить» на каждой карточке текущей недели, как у Ильи: бегает она не
+  // всегда в день из плана (report-day.ts).
+  const reportDay = reportDayFor({ sessionDate: sess.date, weekStart: sess.weekStart, todayIso: view.todayIso });
+  const canReport = reportDay.ok;
 
   return (
     <article className={s.card} id={`c-${sess.id}`}>
@@ -474,6 +478,7 @@ function ReportForm({ sess, view, api, onDone }: { sess: PageSession; view: Plan
   return (
     <div className={s.report}>
       <h4>Отметить</h4>
+      {!prev && sess.date > view.todayIso && <p className={s.msg}>Запишется сегодняшним днём, {dayShort(view.todayIso)}</p>}
       <div className={s.fld}>
         <label>Где бегала</label>
         {seg([["street", "Улица"], ["treadmill", "Дорожка"]], surface, (v) => setSurface(v as Surface))}

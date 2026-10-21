@@ -234,7 +234,12 @@ export type ManualEntryResult =
   | { ok: true; activityId: string; checkin: SubmitCheckinResult & { ok: true } }
   | { ok: false; code: string; messageRu: string };
 
-function validate(input: ManualEntryInput): string | null {
+/**
+ * Проверка формы ручного ввода без записи. Экспортирована для страницы плана:
+ * там отчёт о будущей тренировке сначала переносит её на сегодня, и перенос
+ * должен случиться только под отчёт, который точно запишется.
+ */
+export function validateManualEntry(input: ManualEntryInput): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return "Дата не похожа на дату.";
   if (input.date > new Date().toISOString().slice(0, 10)) return "Дата в будущем — так не бывает.";
   if (!Number.isFinite(input.durationMinutes) || input.durationMinutes < MIN_DURATION_MIN || input.durationMinutes > MAX_DURATION_MIN) {
@@ -303,7 +308,7 @@ function validate(input: ManualEntryInput): string | null {
  * заново тем же экраном.
  */
 export async function submitManualEntry(input: ManualEntryInput): Promise<ManualEntryResult> {
-  const problem = validate(input);
+  const problem = validateManualEntry(input);
   if (problem) return { ok: false, code: "bad_input", messageRu: problem };
 
   const supabase = createSupabaseServerClient();

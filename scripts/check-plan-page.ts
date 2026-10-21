@@ -34,6 +34,7 @@ import {
 } from "@/features/intervals/plan-page/core";
 import { linkOpens } from "@/features/intervals/plan-page/links";
 import { buildScheme, weekRangeLabel } from "@/features/intervals/plan-page/view";
+import { reportDayFor } from "@/features/intervals/plan-page/report-day";
 
 // ── Первая содержательная строка ответа ──────────────────────────────────────
 // Начала — дословно из её настоящих ответов тренера (intervals_coach_messages).
@@ -151,5 +152,27 @@ assert.equal(intervals.warm.length, 1);
 assert.equal(intervals.cool.length, 1);
 assert.equal(weekRangeLabel("2026-10-19"), "19–25 октября", "вверху даты недели");
 assert.equal(weekRangeLabel("2026-09-28"), "28 сентября – 4 октября", "через границу месяца");
+
+// ── «Отметить» на каждой карточке текущей недели [решение Игоря, 21.10.2026] ─
+// Раньше кнопка была только у прошедших и сегодняшних карточек: пробежку в
+// среду вместо пятницы отметить было нечем. Сама пробежка в будущем быть не
+// может, поэтому будущая тренировка отмечается СЕГОДНЯШНИМ днём и переезжает
+// на сегодня. Неделя Валентины 19–25.10, сегодня ср 21.10.
+const wk = "2026-10-19";
+const today = "2026-10-21";
+assert.deepEqual(reportDayFor({ sessionDate: "2026-10-22", weekStart: wk, todayIso: today }), { ok: true, reportDate: today, moveToToday: true },
+  "чт 22.10 отмечается: отчёт сегодняшним днём, тренировка переезжает на сегодня");
+assert.deepEqual(reportDayFor({ sessionDate: "2026-10-25", weekStart: wk, todayIso: today }), { ok: true, reportDate: today, moveToToday: true },
+  "вс 25.10 отмечается так же");
+assert.deepEqual(reportDayFor({ sessionDate: today, weekStart: wk, todayIso: today }), { ok: true, reportDate: today, moveToToday: false },
+  "сегодняшняя — без переноса");
+assert.deepEqual(reportDayFor({ sessionDate: "2026-10-19", weekStart: wk, todayIso: today }), { ok: true, reportDate: "2026-10-19", moveToToday: false },
+  "прошедшая — своим днём, как было, никакого переноса");
+for (const d of ["2026-10-22", "2026-10-25"]) {
+  const r = reportDayFor({ sessionDate: d, weekStart: wk, todayIso: today });
+  assert.ok(r.ok && r.reportDate <= today, `отчёт о ${d} никогда не ложится в будущее`);
+}
+assert.equal(reportDayFor({ sessionDate: "2026-10-28", weekStart: "2026-10-26", todayIso: today }).ok, false,
+  "следующая неделя заранее не отмечается: перенос между неделями запрещён (move.ts)");
 
 console.log("check:plan-page — все проверки пройдены");

@@ -601,6 +601,12 @@ export async function moveStudentSession(input: {
   toDate: string;
   todayIso: string;
   movedBy: string;
+  /**
+   * Перенос под отчёт о пробежке, которая УЖЕ была (страница плана: отметила
+   * будущую тренировку — пробежка была сегодня). Факт сильнее анкеты: «в этот
+   * день не могу» не отменяет того, что она в этот день пробежала.
+   */
+  ignoreUnavailableWeekdays?: boolean;
 }): Promise<MoveResult> {
   const session = await getSessionById(input.sessionId);
   if (!session) {
@@ -626,7 +632,7 @@ export async function moveStudentSession(input: {
     },
     toDate: input.toDate,
     todayIso: input.todayIso,
-    unavailableWeekdays: answers?.unavailableWeekdays ?? [],
+    unavailableWeekdays: input.ignoreUnavailableWeekdays ? [] : answers?.unavailableWeekdays ?? [],
     siblingSessions: siblings.map((other) => ({
       id: other.id,
       sessionDate: other.sessionDate,
