@@ -18,6 +18,7 @@
 import process from "node:process";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { loadLiveStepTextEtalons } from "@/features/intervals/step-texts/repository";
 import {
   computeStartingPointFromHistory,
   hasUsableHistory,
@@ -36,7 +37,7 @@ import {
 
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
 import type { BeginnerWeekInput } from "./lib/beginner-week.ts";
-import { buildWeek, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
+import { buildWeek, setStepTextEtalons, DAY_RU, type CycleWeekTarget, type Week } from "./lib/autoplanner-week.ts";
 import { decideLadderStep, rungByCode, rungByWorkMinutes } from "./lib/interval-ladder.ts";
 import { releasedWorkFloor, sessionWorkMinutes } from "@/features/intervals/loop/released-work-volume";
 import { buildWeekSignal } from "@/features/intervals/loop/week-signal";
@@ -144,6 +145,8 @@ async function main(): Promise<void> {
   if (!athleteId) fail("Нужен --athlete=<i38500>");
 
   const supabase = createSupabaseServerClient();
+  // Эталоны текстов шагов тренера: генератор берёт текст из них, иначе свой (step-texts).
+  setStepTextEtalons(await loadLiveStepTextEtalons(supabase));
 
   // Берём только идентификатор и вид источника: ключ доступа здесь не нужен, а
   // тянуть секрет в память ради генерации плана незачем.

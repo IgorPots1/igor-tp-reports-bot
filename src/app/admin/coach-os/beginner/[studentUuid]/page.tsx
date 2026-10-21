@@ -23,6 +23,10 @@ import { formatRuDay } from "@/features/intervals/loop/student-view";
 import { previewStudentDeletion } from "@/features/intervals/delete-student";
 
 import { PlanPageAdminBlock } from "./plan-page-block";
+import { SessionEditor } from "./session-editor";
+import { listSessionEdits } from "@/features/intervals/step-texts/repository";
+import type { EditableSession } from "@/features/intervals/step-texts/edit";
+import { runSurfacesIncludeTreadmill } from "@/features/intervals/onboarding/starting-point";
 
 import {
   deleteStudentAction,
@@ -53,10 +57,10 @@ export default async function BeginnerStudentPage({
   searchParams,
 }: {
   params: Promise<{ studentUuid: string }>;
-  searchParams: Promise<{ delete_error?: string }>;
+  searchParams: Promise<{ delete_error?: string; edited?: string; etalon_skipped?: string }>;
 }) {
   const { studentUuid } = await params;
-  const { delete_error: deleteError } = await searchParams;
+  const { delete_error: deleteError, edited: editedSessionId, etalon_skipped: etalonSkippedRaw } = await searchParams;
   const students = await listIntervalsStudents();
   const student = students.find((row) => row.studentUuid === studentUuid);
   if (!student) notFound();
@@ -71,6 +75,11 @@ export default async function BeginnerStudentPage({
 
   const draftCycle =
     view.latestCycle && view.latestCycle.status === "draft" ? view.latestCycle : null;
+
+  // Правка тренировок (step-texts): история по всем тренировкам цикла одним запросом.
+  const sessionEdits = await listSessionEdits(view.sessions.map((s) => s.id));
+  const onTreadmill = runSurfacesIncludeTreadmill(view.answers?.runSurfaces ?? null);
+  const releasedWeekStarts = new Set(view.planWeeks.filter((w) => w.status === "released").map((w) => w.weekStart));
 
   const activePause = openPause(view.pauses);
   const pastPauses = view.pauses.filter((pause) => pause.endedOn !== null).slice(0, 3);
@@ -438,7 +447,8 @@ export default async function BeginnerStudentPage({
               </form>
             ) : (
               <p style={{ margin: "0 0 12px", color: "#2E7D45" }}>
-                Опубликован {view.latestCycle.publishedAt ?? "—"}. Что именно она видит — по неделям ниже.
+                Опубликован {view.latestCycle.publishedAt ?? "—"}. Что именно она видит — по неделям ниже.{" "}
+                <Link href="/admin/coach-os/step-texts">Эталоны текстов шагов</Link>
               </p>
             )}
 
@@ -588,6 +598,18 @@ export default async function BeginnerStudentPage({
                       <td style={cell}>
                         <strong>{session.title}</strong>
                         <SessionContent session={session} />
+                        {student.sourceId ? (
+                          <SessionEditor
+                            studentUuid={studentUuid}
+                            sourceId={student.sourceId}
+                            session={session as unknown as EditableSession & { cycleId: string; weekStart: string }}
+                            onTreadmill={onTreadmill}
+                            weekReleased={releasedWeekStarts.has(session.weekStart)}
+                            history={sessionEdits.filter((e) => e.session_id === session.id) as never}
+                            justEdited={editedSessionId === session.id}
+                            etalonSkipped={editedSessionId === session.id ? Number(etalonSkippedRaw ?? 0) : 0}
+                          />
+                        ) : null}
                       </td>
                       <td style={cell}>{session.minutes}</td>
                       {/* ОТВЕТ ЦЕЛИКОМ И ФОРМА ОТВЕТА — ЗДЕСЬ ЖЕ [22.09.2026].
@@ -1022,7 +1044,8 @@ function targetText(target: StepTarget | undefined): string | null {
   if (!target) return null;
   if (target.kind === "pace") return `${paceText(target.fastSec)}–${paceText(target.slowSec)} /км`;
   if (target.kind === "rpe") return `усилие ${target.rpe} из 10`;
-  if (target.kind === "self_discovery") return target.hint ? `подобрать: ${target.hint}` : "подобрать самой";
+  // «По ощущению», а не «подобрать самой» [решение Игоря, 21.10.2026].
+  if (target.kind === "self_discovery") return target.hint ? `по ощущению: ${target.hint}` : "по ощущению";
   return target.text;
 }
 

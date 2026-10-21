@@ -125,7 +125,7 @@ assert.equal(isRelayCandidate({ ...msg, text: "  " }, coach), false, "пусто
 const handBuilt = buildScheme({
   steps: [
     { name: "Ходьба", detail: "5-6 км/ч.", target: { kind: "free", text: "шагом" }, minutes: 5 },
-    { name: "Лёгкий бег", detail: "Скорость подобрать самой, разговорный темп.", target: { kind: "self_discovery" }, minutes: 30 },
+    { name: "Лёгкий бег", detail: "Разговорный темп: можете говорить предложениями.", target: { kind: "self_discovery" }, minutes: 30 },
   ],
   segments: null,
   description: null,

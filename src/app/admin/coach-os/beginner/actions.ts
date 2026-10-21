@@ -11,6 +11,7 @@ import {
 import { weekNoticeOf } from "@/features/intervals/loop/week-notice";
 import {
   countSessionsInWeek,
+  getOnboardingAnswers,
   getProgression,
   getSessionById,
   listPlanWeeks,
@@ -29,6 +30,9 @@ import {
 import { createSupabaseServerClient } from "@/features/supabase/server";
 import { deleteIntervalsStudentCompletely } from "@/features/intervals/delete-student";
 import { saveMyDays } from "@/features/intervals/plan-page/actions";
+import { runSurfacesIncludeTreadmill } from "@/features/intervals/onboarding/starting-point";
+import { applySessionEdit, parseRowKey, type EditableSession } from "@/features/intervals/step-texts/edit";
+import { recordSessionEdits, retireEtalon, setEtalon } from "@/features/intervals/step-texts/repository";
 import { issuePlanLink, planPageEntry, revokePlanLink, syncPlanMenuButton } from "@/features/intervals/plan-page/links";
 import { redirect } from "next/navigation";
 
@@ -449,4 +453,87 @@ export async function saveCoachDaysAction(formData: FormData): Promise<void> {
     origin: "coach_words",
   });
   revalidatePath(`/admin/coach-os/beginner/${studentUuid}`);
+}
+
+// ── Правка тренировки и эталоны текстов шагов (step-texts) ──────────────────
+
+/**
+ * «Править» у тренировки: название, заметка, текст и минуты шагов.
+ *
+ * Пишет строку тренировки, историю «было → стало, кто, когда» и эталоны: текст
+ * шага с выбранным ключом становится эталоном для всех учеников [решение
+ * Игоря, 21.10.2026]. Текст с диапазоном чисел в тренировку сохраняется, но
+ * эталоном не становится — карточка скажет об этом.
+ *
+ * Отданная неделя видна ей сразу (это та же строка), но уведомление
+ * «Поправил неделю» — ТОЛЬКО ПО КНОПКЕ рядом, не отсюда.
+ */
+export async function editSessionAction(formData: FormData): Promise<void> {
+  const studentUuid = String(formData.get("studentUuid") ?? "");
+  const sourceId = String(formData.get("sourceId") ?? "");
+  const sessionId = String(formData.get("sessionId") ?? "");
+  if (!studentUuid || !sourceId || !sessionId) return;
+
+  const session = await getSessionById(sessionId);
+  if (!session) return;
+  const supabase = createSupabaseServerClient();
+  const { data: cycleRow } = await supabase.from("intervals_plan_cycles").select("source_id").eq("id", session.cycleId).maybeSingle();
+  if ((cycleRow as { source_id?: string } | null)?.source_id !== sourceId) return;
+
+  const answers = await getOnboardingAnswers(sourceId);
+  const onTreadmill = runSurfacesIncludeTreadmill(answers?.runSurfaces ?? null);
+  const paths = formData.getAll("path").map(String);
+  const rows = paths.map((path) => ({
+    path,
+    text: String(formData.get(`text:${path}`) ?? ""),
+    minutes: Number(String(formData.get(`min:${path}`) ?? "").replace(",", ".")),
+    key: parseRowKey(formData.get(`key:${path}`)),
+  }));
+  const result = applySessionEdit(
+    session as unknown as EditableSession,
+    { title: String(formData.get("title") ?? ""), note: String(formData.get("note") ?? ""), rows },
+    onTreadmill,
+  );
+  if (result.changes.length === 0) return;
+
+  const p = result.patch;
+  const update: Record<string, unknown> = {};
+  if (p.title !== undefined) update.title = p.title;
+  if (p.notes !== undefined) update.notes = p.notes;
+  if (p.segments !== undefined) update.segments = p.segments;
+  if (p.steps !== undefined) update.steps = p.steps;
+  if (p.description !== undefined) update.description = p.description;
+  if (p.minutes !== undefined) update.minutes = p.minutes;
+  const { error } = await supabase.from("intervals_plan_sessions").update(update).eq("id", sessionId);
+  if (error) throw new Error(`правка тренировки: ${error.message}`);
+
+  const by = "coach:admin";
+  for (const change of result.changes) {
+    if (change.etalon) await setEtalon({ key: change.etalon.key, text: change.etalon.text, by, sourceSessionId: sessionId });
+  }
+  await recordSessionEdits(
+    result.changes.map((c) => ({
+      sourceId,
+      sessionId,
+      sessionDate: session.sessionDate,
+      field: c.field,
+      stepIndex: c.stepIndex,
+      stepKey: c.stepKey,
+      before: c.before,
+      after: c.after,
+      becameEtalon: c.etalon !== null,
+    })),
+    by,
+  );
+
+  const skipped = result.changes.filter((c) => c.etalonSkipped).length;
+  redirect(`/admin/coach-os/beginner/${studentUuid}?edited=${sessionId}${skipped ? `&etalon_skipped=${skipped}` : ""}#s-${sessionId}`);
+}
+
+/** Снять эталон: генератор вернётся к своему тексту для этого ключа. */
+export async function retireEtalonAction(formData: FormData): Promise<void> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  await retireEtalon(id, "coach:admin");
+  revalidatePath("/admin/coach-os/step-texts");
 }

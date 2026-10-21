@@ -31,9 +31,10 @@
 import process from "node:process";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
+import { loadLiveStepTextEtalons } from "@/features/intervals/step-texts/repository";
 
 import { loadCatalog } from "./lib/autoplanner-catalog.ts";
-import { buildWeek, DAY_RU, type CycleWeekTarget, type Session, type Week } from "./lib/autoplanner-week.ts";
+import { buildWeek, setStepTextEtalons, DAY_RU, type CycleWeekTarget, type Session, type Week } from "./lib/autoplanner-week.ts";
 import {
   buildAnchors,
   buildEnvelope,
@@ -117,6 +118,8 @@ async function main(): Promise<void> {
   if (!athleteId) fail("Нужен --athlete=<id атлета в Intervals>");
 
   const supabase = createSupabaseServerClient();
+  // Эталоны текстов шагов тренера: генератор берёт текст из них, иначе свой (step-texts).
+  setStepTextEtalons(await loadLiveStepTextEtalons(supabase));
   const { data: sourceRow, error: sourceError } = await supabase
     .from("student_data_sources")
     .select("id, student_id, threshold_pace_sec_per_km, threshold_source, threshold_set_at, diagnostic_test_declined_at, easy_pace_sec_per_km")

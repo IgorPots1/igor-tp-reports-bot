@@ -1866,7 +1866,9 @@ function stepAimText(target: StepTarget | undefined): string {
   if (!target) return "";
   if (target.kind === "pace") return `${formatPace(target.fastSec)}–${formatPace(target.slowSec)}`;
   if (target.kind === "rpe") return `усилие ${target.rpe} из 10`;
-  if (target.kind === "self_discovery") return target.hint ?? "подобрать";
+  // ПЛАШКИ «ПОДОБРАТЬ» НЕТ [решение Игоря, 21.10.2026]: шаг без цифры говорит
+  // сам за себя текстом шага.
+  if (target.kind === "self_discovery") return "";
   return target.text;
 }
 

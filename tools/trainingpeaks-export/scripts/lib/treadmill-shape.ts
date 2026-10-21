@@ -25,7 +25,10 @@
  * ЧИСТЫЕ ФУНКЦИИ, БЕЗ КАТАЛОГА И БЕЗ БАЗЫ: их гоняет check:treadmill-shape.
  */
 
-export type ShapePart = { minutes: number; label: string; text: string };
+import type { StepKey } from "@/features/intervals/step-texts/keys";
+
+/** key — ключ шага для эталона текста (step-texts/keys.ts); без ключа шаг эталоном не правится. */
+export type ShapePart = { minutes: number; label: string; text: string; key?: StepKey };
 
 /** Ходьба в начале — фиксированные пять минут: это разогрев, а не тренировка. */
 export const WALK_IN_MIN = 5;
@@ -41,9 +44,9 @@ export const EASY_MIN = 5;
  * сегментом не только длительность, но и ДИСТАНЦИЮ: «6 км» внутри «5-6 км/ч»
  * добавляло лишний сегмент, и неделя уходила в round_trip_mismatch.
  */
-const WALK: ShapePart = { minutes: WALK_IN_MIN, label: "Ходьба", text: "Спокойный шаг, пять-шесть км/ч." };
+const WALK: ShapePart = { minutes: WALK_IN_MIN, label: "Ходьба", text: "Спокойный шаг, пять-шесть км/ч.", key: "warmup_walk" };
 const EASY = (minutes: number): ShapePart => ({
-  minutes, label: "Лёгкий бег", text: "Та же скорость, что на прошлой лёгкой.",
+  minutes, label: "Лёгкий бег", text: "Та же скорость, что на прошлой лёгкой.", key: "warmup_easy",
 });
 /**
  * ЧИСЛА ЗДЕСЬ СЛОВАМИ, И ЭТО НЕ СТИЛЬ [28.09.2026].
@@ -57,10 +60,10 @@ const EASY = (minutes: number): ShapePart => ({
  */
 const STRIDES: ShapePart = {
   minutes: STRIDES_MIN, label: "Перед работой",
-  text: "Три ускорения по двадцать секунд, между ними сорок секунд отдыха.",
+  text: "Три ускорения по двадцать секунд, между ними сорок секунд отдыха.", key: "warmup_strides",
 };
 const SETTLE: ShapePart = {
-  minutes: SETTLE_MIN, label: "Спокойный бег", text: "Вернуться в ровный ритм и начинать.",
+  minutes: SETTLE_MIN, label: "Спокойный бег", text: "Вернуться в ровный ритм и начинать.", key: "warmup_settle",
 };
 
 /**
@@ -88,6 +91,7 @@ export function treadmillCooldown(minutes: number): ShapePart {
     minutes: Math.round(minutes),
     label: "Заминка, спокойный бег или шаг",
     text: "Пока дыхание не вернётся в норму.",
+    key: "cooldown",
   };
 }
 
@@ -104,14 +108,15 @@ export function treadmillAerobicParts(input: {
   minutes: number;
   label: string;
   text: string;
+  key?: StepKey;
 }): ShapePart[] {
   const total = Math.round(input.minutes);
   const cooldown = 3;
   const main = total - WALK_IN_MIN - cooldown;
-  if (main < 15) return [{ minutes: total, label: input.label, text: input.text }];
+  if (main < 15) return [{ minutes: total, label: input.label, text: input.text, key: input.key }];
   return [
-    { minutes: WALK_IN_MIN, label: "Ходьба", text: "Спокойный шаг, пять-шесть км/ч, разогреться." },
-    { minutes: main, label: input.label, text: input.text },
+    { minutes: WALK_IN_MIN, label: "Ходьба", text: "Спокойный шаг, пять-шесть км/ч, разогреться.", key: "warmup_walk" },
+    { minutes: main, label: input.label, text: input.text, key: input.key },
     treadmillCooldown(cooldown),
   ];
 }

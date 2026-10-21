@@ -16,6 +16,8 @@ import { LONG_DAY_FALLBACK, confidentLongDay, qualityCountWanted } from "./pract
 import { availableDayCount, resolvePreferences, type AthletePreference, type PreferenceEffect, type PreferenceRole } from "./athlete-preferences.ts";
 import { composeBeginnerWeek, type BeginnerWeekInput } from "./beginner-week.ts";
 import type { Band } from "./band-collision.ts";
+import { renderSegmentsDescription } from "@/features/intervals/step-texts/describe";
+import { applyStepText, type StepKey, type StepTextEtalons } from "@/features/intervals/step-texts/keys";
 
 export const DAY_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 export type Role = "quality" | "long" | "easy" | "easy_strides" | "recovery" | "rest";
@@ -396,7 +398,25 @@ export type Segment = {
   minutes: number; fastSec: number | null; slowSec: number | null; label: string;
   /** чем заменить «по ощущениям» у сегмента без темпа (пауза, ускорения) */
   noPaceText?: string;
+  /** Ключ шага для эталона текста (step-texts/keys.ts). Без ключа эталон не применяется. */
+  key?: StepKey;
 };
+
+/**
+ * ЭТАЛОНЫ ТЕКСТОВ ШАГОВ [решение Игоря, 21.10.2026]. Тренер правит текст шага в
+ * админке — правка становится эталоном для ключа, общим для всех. Генератор
+ * берёт текст из эталона, если он есть, иначе свой. Загружает их раннер
+ * (intervals-regenerate / intervals-onboarding-plan) до сборки: сама сборка
+ * остаётся чистой и без базы. Числа (минуты, повторы, «усилие N из 10»)
+ * эталоном не становятся — их ставит генератор.
+ */
+let STEP_TEXT_ETALONS: StepTextEtalons = {};
+export function setStepTextEtalons(etalons: StepTextEtalons): void {
+  STEP_TEXT_ETALONS = { ...etalons };
+}
+function withStepTexts(segs: Segment[]): Segment[] {
+  return segs.map((s) => applyStepText(s, STEP_TEXT_ETALONS));
+}
 
 /**
  * Усилие словами. Нужен, когда темпов нет: «усилие 7 из 10» само по себе
@@ -420,14 +440,10 @@ export const fp = (sec: number): string => {
   const m = Math.floor(sec / 60), s = Math.round(sec % 60);
   return s === 60 ? `${m + 1}:00` : `${m}:${String(s).padStart(2, "0")}`;
 };
-const rangeText = (f: number, s: number): string => `${fp(f)}–${fp(s)}`;
 
+/** Одна реализация с админкой (редактор тренировки): step-texts/describe.ts. */
 export function renderDescription(segs: Segment[]): string {
-  return segs.map((s) => {
-    const dur = `${s.minutes} ${s.minutes === 1 ? "минута" : s.minutes < 5 ? "минуты" : "минут"}`;
-    if (s.fastSec != null && s.slowSec != null) return `${s.label}: ${dur} ${rangeText(s.fastSec, s.slowSec)}`;
-    return `${s.label}: ${dur} ${s.noPaceText ?? "по ощущениям"}`;
-  }).join(". ") + ".";
+  return renderSegmentsDescription(segs);
 }
 
 export type RoundTrip = { ok: boolean; expected: number; parsedRanges: number; parsedSegments: number; problems: string[] };
@@ -499,17 +515,25 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
    * «просто беги 55 минут» не говорит, с чего начать.
    */
   const treadmillLabel = role === "long" ? "Длительный ровный бег" : "Ровный лёгкий бег";
+  /**
+   * БЕЗ «ПОДОБРАТЬ САМОЙ» [решение Игоря, 21.10.2026]. Тексты — те же, что
+   * тренер поставил эталонами 21.10; эталон из базы, если есть, перекроет их
+   * в withStepTexts.
+   */
   const treadmillText =
     role === "long"
-      ? "Скорость подобрать самой, чуть спокойнее обычной лёгкой. Задача не быстрее, а ровно до конца."
-      : "Скорость подобрать самой: разговорный темп, когда можете говорить предложениями и не задыхаетесь.";
-  const segs: Segment[] = a.runsOnTreadmill
-    ? shapeToSegments(treadmillAerobicParts({ minutes, label: treadmillLabel, text: treadmillText }))
+      ? "Спокойнее обычной лёгкой. Задача не быстрее, а ровно до конца: к концу должно оставаться ощущение, что можете ещё."
+      : "Разговорный темп: можете говорить предложениями. Если тяжело дышать, сбавьте или перейдите на шаг.";
+  const mainKey: StepKey = role === "long"
+    ? (a.runsOnTreadmill ? "long_main_treadmill" : "long_main_street")
+    : (a.runsOnTreadmill ? "easy_main_treadmill" : "easy_main_street");
+  const segs: Segment[] = withStepTexts(a.runsOnTreadmill
+    ? shapeToSegments(treadmillAerobicParts({ minutes, label: treadmillLabel, text: treadmillText, key: mainKey }))
     : [
         byFeel
-          ? { minutes, label: title, fastSec: null, slowSec: null }
-          : zone2Segment(a, minutes, title, { fast: band.fast, slow: band.slow }),
-      ];
+          ? { minutes, label: title, fastSec: null, slowSec: null, key: mainKey }
+          : { ...zone2Segment(a, minutes, title, { fast: band.fast, slow: band.slow }), key: mainKey },
+      ]);
   if (role === "easy_strides") segs.push({ minutes: 2, label: "Ускорения в конце, 4–6 коротких по пятнадцать секунд, свободно", fastSec: null, slowSec: null });
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);
@@ -551,8 +575,8 @@ function aerobicSession(dayIdx: number, role: Role, a: AthleteAnchors, cat: Cata
  * остаётся, но связка слов — та, которую он не ловит ни одним из трёх правил.
  */
 /** Форма тренировки на дорожке — чистые функции, см. treadmill-shape.ts. */
-function shapeToSegments(parts: Array<{ minutes: number; label: string; text: string }>): Segment[] {
-  return parts.map((p) => ({ minutes: p.minutes, label: p.label, fastSec: null, slowSec: null, noPaceText: p.text }));
+function shapeToSegments(parts: Array<{ minutes: number; label: string; text: string; key?: StepKey }>): Segment[] {
+  return parts.map((p) => ({ minutes: p.minutes, label: p.label, fastSec: null, slowSec: null, noPaceText: p.text, ...(p.key ? { key: p.key } : {}) }));
 }
 
 export function zone2Segment(a: AthleteAnchors, minutes: number, label: string, eb: { fast: number; slow: number }): Segment {
@@ -571,7 +595,7 @@ export function zone2Segment(a: AthleteAnchors, minutes: number, label: string, 
      * разное: темп там не значит ничего в принципе. Поэтому числа уходят, а
      * остаётся описание того, что человек может проверить на себе.
      */
-    return { minutes, label, fastSec: null, slowSec: null, noPaceText: "скорость подобрать самой: спокойно, дыхание ровное, говорить можно предложениями" };
+    return { minutes, label, fastSec: null, slowSec: null, noPaceText: "спокойно, дыхание ровное, говорить можно предложениями" };
   }
   return { minutes, label, fastSec: eb.fast, slowSec: eb.slow };
 }
@@ -675,9 +699,9 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
     : [zone2Segment(a, warmMin, "Разминка", eb)];
   for (let i = 0; i < p.reps; i++) {
     segs.push(w
-      ? { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS }
+      ? { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: w.absPaceMinS, slowSec: w.absPaceMaxS, key: "interval_work" }
       : { minutes: p.workMinutes, label: workSegmentLabel(isTempo, i), fastSec: null, slowSec: null,
-          noPaceText: effortText(p.rpeTarget) });
+          noPaceText: effortText(p.rpeTarget), key: "interval_work" });
     // ПОДПИСЬ ВОССТАНОВЛЕНИЯ ИЗ ПРЕСЕТА, А НЕ ЗАШИТАЯ [22.09.2026]. У форматов
     // семейства int_walk восстановление идёт ШАГОМ, и называть его трусцой —
     // прямая неправда в тексте, который человек читает на бегу.
@@ -691,7 +715,7 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
       segs.push(
         p.recoveryType === "walk"
           ? { minutes: p.recoveryMinutes, label: "Шагом", fastSec: null, slowSec: null,
-              noPaceText: "Просто идти. С дорожки не сходить." }
+              noPaceText: "Просто идти. С дорожки не сходить.", key: "interval_rest" }
           : zone2Segment(a, p.recoveryMinutes, "Трусца", eb)
       );
     }
@@ -704,8 +728,10 @@ function qualitySession(dayIdx: number, a: AthleteAnchors, dec: Extract<QualityD
   segs.push(
     a.runsOnTreadmill
       ? shapeToSegments([treadmillCooldown(p.cooldownMinutes)])[0]
-      : zone2Segment(a, p.cooldownMinutes, "Заминка: спокойный бег или шаг", eb)
+      : { ...zone2Segment(a, p.cooldownMinutes, "Заминка: спокойный бег или шаг", eb), key: "cooldown" as const }
   );
+  const keyed = withStepTexts(segs);
+  segs.splice(0, segs.length, ...keyed);
   const total = segs.reduce((s, x) => s + x.minutes, 0);
   const description = renderDescription(segs);
   const rt = verifyRoundTrip(description, segs);
