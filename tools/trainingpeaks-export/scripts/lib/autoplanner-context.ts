@@ -163,6 +163,12 @@ export type AthleteContext = AthleteAnchors & {
   hasActiveIllness: boolean;
   /** null — тир по объёму не понижался. Иначе почему понижен (видно в отчёте и в сессии). */
   tierNote: string | null;
+  /**
+   * Даты плановых силовых (тип 9, is_planned) от понедельника недели asOf и вперёд — и тренерские
+   * из сервиса силовых (в т.ч. СКРЫТЫЕ: сборщик видит черновик тренера), и простые из ленты tpapi.
+   * buildWeek не ставит качественную в день силовой (наряд 21.10).
+   */
+  plannedStrengthDates: string[];
 };
 
 /**
@@ -250,6 +256,34 @@ async function pullRuns(sb: SupabaseClient, sinceDays: number): Promise<Row[]> {
       .eq("workout_type_value_id", 3).gte("workout_date", since).order("workout_date").range(f, f + 999);
     if (error) throw error;
     out.push(...((data ?? []) as unknown as Row[]));
+    if (!data || data.length < 1000) break;
+  }
+  return out;
+}
+
+/**
+ * Плановые силовые для раскладки недели (наряд 21.10): тип 9 + is_planned, с понедельника недели
+ * asOf на STRENGTH_LOOKAHEAD_DAYS вперёд. Источник не фильтруем: правило тренера «качественная не в
+ * день силовой» — про силовую вообще, а не про то, каким путём она попала в TP. Простых плановых
+ * силовых из ленты tpapi в кэше единицы (4 строки за всё время, 0 за 60 дней на 21.10), тренерские
+ * структурные приходят из сервиса силовых (скан за TP_SCAN_STRENGTH=1). Файлы часов (тип 9) —
+ * выполненные, не плановые, сюда не попадают. Скрытые тренерские — попадают: это цель.
+ */
+export const STRENGTH_LOOKAHEAD_DAYS = 56;
+async function pullPlannedStrengthDates(sb: SupabaseClient, asOf: string): Promise<Map<number, string[]>> {
+  const from = mondayOf(asOf);
+  const to = addDays(from, STRENGTH_LOOKAHEAD_DAYS);
+  const out = new Map<number, string[]>();
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await sb.from("trainingpeaks_workout_cache")
+      .select("trainingpeaks_athlete_id, workout_date")
+      .eq("workout_type_value_id", 9).eq("is_planned", true)
+      .gte("workout_date", from).lte("workout_date", to)
+      .order("trainingpeaks_athlete_id").order("workout_date").order("id").range(f, f + 999);
+    if (error) throw error;
+    for (const r of (data ?? []) as Array<{ trainingpeaks_athlete_id: number; workout_date: string }>) {
+      (out.get(r.trainingpeaks_athlete_id) ?? out.set(r.trainingpeaks_athlete_id, []).get(r.trainingpeaks_athlete_id)!).push(r.workout_date);
+    }
     if (!data || data.length < 1000) break;
   }
   return out;
@@ -372,8 +406,9 @@ const LONG_TITLE_RE = /длительн|длинн/i;
  * пробежки в кэше», и недели уходили архивным, ушедшим и служебному аккаунту тренера.
  */
 export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = todayIso()): Promise<Map<number, AthleteContext>> {
-  const [rows, thresholds, zone2, baselines, illnessByStudent, roster] = await Promise.all([
+  const [rows, thresholds, zone2, baselines, illnessByStudent, roster, strengthByAthlete] = await Promise.all([
     pullRuns(sb, 200), pullThresholds(sb), pullZone2(sb), pullBaselines(sb), pullIllness(sb), loadRoster(sb),
+    pullPlannedStrengthDates(sb, asOf),
   ]);
 
   const byAth = new Map<number, Row[]>();
@@ -665,6 +700,7 @@ export async function loadAthleteContexts(sb: SupabaseClient, asOf: string = tod
       athleteId: aid, tier, easy, threshold: thresholds.get(aid) ?? null,
       quality: qAnchor ? { fastSec: qAnchor.fast, slowSec: qAnchor.slow, confidence: anchorConfidence(qAnchor.effectiveN) as Confidence, effectiveN: qAnchor.effectiveN } : null,
       illness, hasActiveIllness, tierNote,
+      plannedStrengthDates: strengthByAthlete.get(aid) ?? [],
       envelope: {
         rolling4wWeeklyMin, rolling4wFrequency: Math.round(avgPlanned(weekFreq) * 10) / 10,
         rolling4wQuality: Math.round(avgPlanned(weekQual) * 10) / 10,

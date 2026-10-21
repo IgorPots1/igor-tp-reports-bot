@@ -846,7 +846,25 @@ export type CycleWeekTarget = {
   intent?: string;
 };
 
-export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
+/**
+ * Даты плановых силовых атлета (ISO), которые сборщик учитывает при раскладке ролей. Кладёт их
+ * loadAthleteContexts (autoplanner-context.ts) из кэша; анкеры, собранные руками (чеки, Intervals),
+ * поля не имеют — для них раскладка ровно прежняя.
+ */
+export type PlannedStrengthAware = { plannedStrengthDates?: readonly string[] | null };
+
+/** Дни недели (0 = Пн) с силовой в неделе weekStart..weekStart+6. Пусто — силовых нет. */
+export function strengthDaysOfWeek(dates: readonly string[] | null | undefined, weekStart: string): Set<number> {
+  const days = new Set<number>();
+  const start = Date.parse(`${weekStart}T00:00:00Z`);
+  for (const date of dates ?? []) {
+    const offset = Math.round((Date.parse(`${date.slice(0, 10)}T00:00:00Z`) - start) / 86_400_000);
+    if (offset >= 0 && offset <= 6) days.add(offset);
+  }
+  return days;
+}
+
+export function buildWeek(a: AthleteAnchors & PlannedStrengthAware, env: Envelope, cat: Catalog, weekStart: string, hasActiveIllness: boolean,
   tierNote: string | null = null, cycle: CycleWeekTarget | null = null,
   /** Пожелания тренера. Не переданы — поведение ровно прежнее. */
   prefs: AthletePreference[] | null = null,
@@ -873,6 +891,13 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
   // ПОЖЕЛАНИЯ СВОДЯТСЯ ОДИН РАЗ, ДО ВСЕГО. Их пометки идут в заметки недели ДАЖЕ ЕСЛИ
   // неделя потом окажется отказной: тренер должен видеть, что его правило прочитано.
   const pref = prefs && prefs.length ? resolvePreferences(prefs, weekStart) : null;
+  // СИЛОВЫЕ НЕДЕЛИ (наряд 21.10): качественная в день силовой не ставится. Нет силовых — null,
+  // и placeRolesByPractice раскладывает ровно как раньше.
+  const strengthDaysRaw = strengthDaysOfWeek(a.plannedStrengthDates, weekStart);
+  const strengthDays = strengthDaysRaw.size > 0 ? strengthDaysRaw : null;
+  if (strengthDays) {
+    notes.push(`силовая тренера: ${[...strengthDays].sort((x, y) => x - y).map((d) => DAY_RU[d]).join(", ")} — качественная в этот день не ставится`);
+  }
   if (pref) notes.push(...pref.notes);
   if (tierNote) notes.push(tierNote);
   // ГЕЙТЫ — инварианты, ЦЕЛИ — перцентили. Минимальная неделя считается по инвариантам,
@@ -1226,7 +1251,7 @@ export function buildWeek(a: AthleteAnchors, env: Envelope, cat: Catalog, weekSt
     // РАЗМЕЩЕНИЕ — ПОСЛЕ ОТБОРА: если второй слот не собрался, роль качества на его день
     // не заводится вовсе, и день сразу уходит лёгким. Раньше роли расставлялись до отбора
     // и лишний качественный день приходилось переименовывать задним числом.
-    const { days, roles, conflicts } = placeRolesByPractice(n, counts, dayHists, pref);
+    const { days, roles, conflicts } = placeRolesByPractice(n, counts, dayHists, pref, strengthDays);
     const qDays = [...roles.entries()].filter(([, r]) => r === "quality").map(([d]) => d).sort((x, y) => x - y);
     // Число лёгких дней берём ИЗ ФАКТИЧЕСКОЙ раскладки: правило смежности могло не дать
     // поставить второе качество, и тогда его день стал лёгким. Считать по counts значило бы
