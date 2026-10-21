@@ -1,5 +1,5 @@
 {
- "doc": "Программа «Зал с весами», версия 2 (Игорь 19.10): прыжков нет, в корпусе планка; разминка — текстом в описании (дорожка 5 мин + динамика). Убраны: разгибание ног, подтягивания, мост и икры на одну ногу (болгарский закрывает работу на одну ногу). Прогрессия: недели 1–4 — 8–10 повторов, с 5-й жим ногами 4×5–6 с большим весом; шаг веса +5 кг ноги, +2,5 кг верх и икры; разгрузка на 4-й и 8-й — вес минус 10%. Пока расписаны недели 1–2 (наряд оборвался на правиле разгрузки). Leg curl — вес пустой (null) с заметкой, разрешено только с allowEmpty. Свои упражнения тренера custom:* сопоставлены в reports/strength/custom-exercises.json.",
+ "doc": "Программа «Зал с весами», версия 2 (Игорь 19.10): прыжков нет, в корпусе планка; разминка — текстом в описании (дорожка 5 мин + динамика). Убраны: разгибание ног, подтягивания, мост и икры на одну ногу (болгарский закрывает работу на одну ногу). Прогрессия: недели 1–4 — 8–10 повторов, с 5-й жим ногами 4×5–6 с большим весом; шаг веса +5 кг ноги, +2,5 кг верх и икры; разгрузка на 4-й и 8-й — вес минус 10%. Расписаны все 8 недель (наряд 21.10): недели 1–4 — 8–10 повторов; с 5-й жим ногами 4×5–6 с большим весом; шаг +5 кг жим ногами, +2,5 кг остальное; разгрузка 4 и 8 — вес −10%, округление до 2,5 кг; планка +10 с раз в 2 недели до 60 с; Pallof +2 повтора раз в 2 недели. Leg curl — вес пустой (null) с заметкой, разрешено только с allowEmpty. Свои упражнения тренера custom:* сопоставлены в reports/strength/custom-exercises.json.",
  "custom": {
   "custom:leg_press": {
    "title": "Жим ногами в тренажёре",
@@ -352,6 +352,990 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
+          "coachNotes": "на блоке; корпус не поворачивается"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 3,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Разминка: дорожка 5 мин + динамика (выпады, мост, подъёмы на носки).\n\nНачинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 4,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "55"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "20"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "45"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "35"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "50",
+          "coachNotes": "поясница не прогибается"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "705",
+          "title": "Paloff Press",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "на блоке; корпус не поворачивается"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 4,
+      "phase": "deload",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Разминка: дорожка 5 мин + динамика (выпады, мост, подъёмы на носки).\n\nНачинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 4,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом; разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "50"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3; разгрузка — вес на 10% легче прошлой недели",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "15"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "40"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом; разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "32.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "50",
+          "coachNotes": "поясница не прогибается"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "705",
+          "title": "Paloff Press",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "на блоке; корпус не поворачивается"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 5,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Разминка: дорожка 5 мин + динамика (выпады, мост, подъёмы на носки).\n\nНачинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 4,
+          "prescribedValue": "6",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом; 5–6 повторов, вес больше",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "60"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "22.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "47.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "37.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "60",
+          "coachNotes": "поясница не прогибается"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "705",
+          "title": "Paloff Press",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "на блоке; корпус не поворачивается"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 6,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Разминка: дорожка 5 мин + динамика (выпады, мост, подъёмы на носки).\n\nНачинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 4,
+          "prescribedValue": "6",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом; 5–6 повторов, вес больше",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "60"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "22.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "47.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "37.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "60",
+          "coachNotes": "поясница не прогибается"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "705",
+          "title": "Paloff Press",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "на блоке; корпус не поворачивается"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 7,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Разминка: дорожка 5 мин + динамика (выпады, мост, подъёмы на носки).\n\nНачинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 4,
+          "prescribedValue": "6",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "65"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "25"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "47.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "37.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "60",
+          "coachNotes": "поясница не прогибается"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "705",
+          "title": "Paloff Press",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "16",
+          "coachNotes": "на блоке; корпус не поворачивается"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 8,
+      "phase": "deload",
+      "workoutTitle": "Силовая — зал",
+      "instructions": "Разминка: дорожка 5 мин + динамика (выпады, мост, подъёмы на носки).\n\nНачинай с более слабой ноги, важно делать одинаковое кол-во повторений на каждую ногу",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:leg_press",
+          "title": "Жим ногами в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 4,
+          "prescribedValue": "6",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом; 5–6 повторов; разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "57.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "подбери вес на 12 повторов с запасом 2–3; разгрузка — вес на 10% легче прошлой недели",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "22.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "42.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "16",
+          "title": "Bench Press",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "+ 1 разминочный подход с лёгким весом; разгрузка",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "32.5"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "60",
+          "coachNotes": "поясница не прогибается"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "705",
+          "title": "Paloff Press",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "16",
           "coachNotes": "на блоке; корпус не поворачивается"
          }
         ]
