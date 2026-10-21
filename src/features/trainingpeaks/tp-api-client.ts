@@ -776,6 +776,11 @@ export async function newStrengthExerciseModel(): Promise<Record<string, unknown
   return wrapper.data !== undefined ? assertRecord(wrapper.data, endpoint) : wrapper;
 }
 
+/** Delete own (coach) strength exercise -- DELETE .../exercises/{id}, as the TP web client's deleteExercise. Capability function. */
+export async function deleteStrengthExercise(exerciseId: number | string): Promise<{ status: number; body: unknown }> {
+  return fetchJsonWithRetry(`${TP_STRENGTH_HOST}/rx/activity/v1/exercises/${exerciseId}`, { method: "DELETE" });
+}
+
 export async function createStrengthExercise(model: Record<string, unknown>): Promise<Record<string, unknown>> {
   const endpoint = "/rx/activity/v1/exercises";
   const body = await writeJsonOrThrow(`${TP_STRENGTH_HOST}${endpoint}`, "PUT", model);
