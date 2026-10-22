@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Тест на ПАНО за 30 минут и твои пульсовые зоны · igorp.run</title>
+<meta name="description" content="Как за одну тренировку найти свой пульс на пороге и посчитать от него зоны. Гайд Игоря Поцелуева с калькулятором зон.">
+<meta property="og:title" content="Тест на ПАНО за 30 минут и твои пульсовые зоны">
+<meta property="og:description" content="30 минут теста, 7 зон от пульса на пороге и калькулятор">
+<meta property="og:image" content="https://igorp.run/guides/pulse/og.png">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff; --track: #efe9de;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; overflow-x: hidden; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, system-ui, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(34px, 9.6vw, 54px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(25px, 6.8vw, 34px); margin-bottom: 14px; }
+  h3 { font-size: 19px; margin-bottom: 8px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 44px; }
+  .note { margin-top: 12px; font-size: 15px; color: rgba(28,26,23,.72); }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; gap: 10px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded, system-ui, sans-serif; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .beat { margin-top: 22px; padding: 18px 16px 12px; overflow: hidden; }
+  .beat svg { display: block; width: 100%; height: auto; }
+  .beat .ln { fill: none; stroke: var(--acc); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; animation: drawln 2.6s cubic-bezier(.4,.1,.2,1) .3s forwards; }
+  .beat .dot { fill: var(--acc); opacity: 0; animation: pop .4s ease 2.8s forwards, pulse 1.2s ease-in-out 3.2s infinite; transform-box: fill-box; transform-origin: center; }
+  .beat .mono { display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; }
+  @keyframes drawln { to { stroke-dashoffset: 0; } }
+  @keyframes pop { to { opacity: 1; } }
+  @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.5); } }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; text-align: left; }
+  .stat .disp { font-size: 28px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+
+  /* lists */
+  .rules { margin-top: 14px; display: grid; gap: 10px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; }
+  .rule .n { flex: none; width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: #fff; font-family: Unbounded, system-ui, sans-serif; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+  .rule.key { background: #fff7e8; border-color: #f0d3a0; }
+  .rule.key .n { background: var(--amb); color: var(--ink); }
+  .dot-list { display: grid; gap: 8px; margin-top: 8px; }
+  .dot-list div { display: flex; gap: 10px; align-items: flex-start; }
+  .dot-list div::before { content: ""; flex: none; width: 8px; height: 8px; margin-top: 9px; border-radius: 50%; background: var(--acc); }
+  .stop { padding: 16px; }
+  .stop + .stop { margin-top: 10px; }
+  .stop .tag { display: inline-block; font-size: 12px; font-weight: 800; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; }
+  .tag.red { color: var(--acc); background: #f6e1d6; }
+  .tag.amb { color: #9a6514; background: #faecd2; }
+  .rows { padding: 4px 16px; }
+  .rows li { list-style: none; padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .rows li:first-child { border-top: 0; }
+  .rows .mono { display: block; font-size: 12px; color: var(--acc); margin-bottom: 2px; }
+
+  /* anim 1: thresholds */
+  .thr { padding: 18px 16px 14px; overflow: hidden; }
+  .thr-row + .thr-row { margin-top: 22px; }
+  .thr-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 26px; }
+  .thr-head b { font-size: 16px; }
+  .verdict { font-size: 13px; font-weight: 800; border-radius: 8px; padding: 3px 9px; opacity: 0; transform: translateY(6px); transition: opacity .4s ease 2.3s, transform .4s ease 2.3s; white-space: nowrap; }
+  .a .verdict { color: var(--acc); background: #f6e1d6; }
+  .b .verdict { color: var(--grn); background: #e8f0e3; }
+  .track { position: relative; height: 14px; border-radius: 7px; background: var(--track); }
+  .mk { position: absolute; top: -6px; left: 0; width: 4px; height: 26px; margin-left: -2px; border-radius: 2px; background: var(--amb); box-shadow: 0 0 0 3px rgba(227,161,58,.25); transition: left 1.1s cubic-bezier(.2,.8,.2,1) .2s; }
+  .mk span { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; font-weight: 700; color: #9a6514; white-space: nowrap; }
+  .thr .anim.in .mk, .thr.in .mk { left: var(--p); }
+  .band { position: absolute; top: -2px; height: 18px; left: 86%; width: 8%; border-radius: 6px; background: var(--ink); opacity: 0; transform: translateX(90px); transition: transform .8s cubic-bezier(.2,.8,.2,1) 1.3s, opacity .5s ease 1.3s, background-color .5s ease 2.1s; }
+  .thr.in .band { opacity: .92; transform: none; }
+  .thr.in .a .band { background: var(--acc); }
+  .thr.in .b .band { background: var(--grn); }
+  .thr.in .verdict { opacity: 1; transform: none; }
+  .axis { display: flex; justify-content: space-between; margin-top: 18px; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 11px; color: var(--dim); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; font-size: 13px; color: var(--dim); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+
+  /* anim 2: test chart */
+  .test { padding: 16px 12px 14px; overflow: hidden; }
+  .test svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .test .grid line { stroke: var(--line); stroke-width: 1; }
+  .test .lbl { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 10px; fill: rgba(28,26,23,.55); }
+  .test .hr { fill: none; stroke: var(--acc); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 2.6s cubic-bezier(.45,.05,.3,1) .2s; }
+  .test.in .hr { stroke-dashoffset: 0; }
+  .test .win { fill: var(--amb); opacity: .24; transform: scaleX(0); transform-box: fill-box; transform-origin: left; transition: transform 1.2s cubic-bezier(.2,.8,.2,1) 2.9s; }
+  .test.in .win { transform: scaleX(1); }
+  .test .lap, .test .lapt { opacity: 0; transition: opacity .3s ease 1.1s; }
+  .test.in .lap, .test.in .lapt { opacity: 1; }
+  .test .lap { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 4 4; }
+  .test .lapflag { fill: var(--ink); }
+  .test .lapt { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 10px; font-weight: 700; fill: #fff; }
+  .test .avg { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 3 3; opacity: 0; transition: opacity .4s ease 3.8s; }
+  .test.in .avg { opacity: 1; }
+  .plate { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 4px 0; padding: 10px 12px; border-radius: 14px; background: #fff4df; border: 1.5px solid #f0d3a0; opacity: 0; transform: translateY(10px); transition: opacity .5s ease 3.6s, transform .5s cubic-bezier(.2,.8,.2,1) 3.6s; }
+  .test.in .plate { opacity: 1; transform: none; }
+  .plate small { display: block; font-size: 13px; color: rgba(28,26,23,.7); line-height: 1.3; }
+  .plate .disp { font-size: 30px; color: var(--ink); white-space: nowrap; }
+  .plate .disp .u { font-size: 13px; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 400; color: var(--dim); margin-left: 4px; }
+  .pace { margin: 14px 4px 0; }
+  .pace .ptrack { position: relative; height: 12px; border-radius: 6px; background: var(--track); margin-left: 8.8%; width: 88.2%; overflow: hidden; }
+  .pace .ptrack i { position: absolute; inset: 0; border-radius: 6px; background: var(--ink); transform: scaleX(0); transform-origin: left; transition: transform 2.6s cubic-bezier(.45,.05,.3,1) .2s; }
+  .test.in .pace .ptrack i { transform: scaleX(1); }
+  .pace p { margin-top: 8px; font-size: 14px; opacity: 0; transition: opacity .5s ease 4.2s; }
+  .test.in .pace p { opacity: 1; }
+
+  /* zones table */
+  .ztable { width: 100%; border-collapse: collapse; font-size: 16px; }
+  .ztable th { text-align: left; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 400; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); padding: 0 0 8px; }
+  .ztable td { padding: 9px 0; border-top: 1.5px solid var(--line); }
+  .ztable td:first-child { font-family: Unbounded, system-ui, sans-serif; font-weight: 900; font-size: 15px; width: 64px; }
+  .ztable td:last-child { text-align: right; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 700; font-size: 15px; white-space: nowrap; }
+  .tcard { padding: 14px 16px 6px; }
+  .math { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: #f3eee5; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+
+  /* anim 3: zone bars */
+  .zbars { padding: 16px 14px 14px; overflow: hidden; }
+  .zb { display: grid; grid-template-columns: 94px 1fr 76px; align-items: center; gap: 6px; padding: 5px 0; }
+  .zl, .zv { opacity: 0; transition: opacity .4s ease; transition-delay: calc(var(--i) * .2s + .3s); }
+  .zl { font-size: 12.5px; color: var(--dim); white-space: nowrap; }
+  .zl b { font-family: Unbounded, system-ui, sans-serif; font-weight: 900; font-size: 14px; color: var(--ink); margin-right: 4px; }
+  .zv { text-align: right; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 700; font-size: 13.5px; white-space: nowrap; }
+  .zt { height: 18px; border-radius: 6px; background: var(--track); overflow: hidden; }
+  .zt i { display: block; height: 100%; width: var(--w); border-radius: 6px; background: var(--c, var(--acc)); transform: scaleX(0); transform-origin: left; transition: transform .7s cubic-bezier(.2,.8,.2,1); transition-delay: calc(var(--i) * .2s); }
+  .zbars.in .zt i { transform: scaleX(1); }
+  .zbars.in .zl, .zbars.in .zv { opacity: 1; }
+  .zb.main .zt i { background: var(--amb); }
+  .zbars.in .zb.main .zt i { box-shadow: 0 0 14px rgba(227,161,58,.75); transition: transform .7s cubic-bezier(.2,.8,.2,1) calc(var(--i) * .2s), box-shadow .6s ease 1.8s; }
+  .mainnote { margin-top: 10px; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 800; color: #9a6514; opacity: 0; transition: opacity .5s ease 1.9s; }
+  .mainnote i { width: 14px; height: 14px; border-radius: 4px; background: var(--amb); box-shadow: 0 0 10px rgba(227,161,58,.8); }
+  .zbars.in .mainnote { opacity: 1; }
+
+  /* calculator */
+  .calc { padding: 18px 16px 10px; border-color: var(--ink); border-width: 2px; }
+  .calc label { display: block; font-weight: 800; }
+  .calc-in { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .calc input { width: 120px; font: 900 26px Unbounded, sans-serif; color: var(--ink); background: var(--bg2); border: 2px solid var(--line); border-radius: 14px; padding: 10px 12px; -moz-appearance: textfield; }
+  .calc input::-webkit-outer-spin-button, .calc input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .calc input:focus { outline: none; border-color: var(--acc); }
+  .calc input[aria-invalid="true"] { border-color: var(--acc); background: #fbefe8; }
+  .calc-err { margin-top: 8px; font-size: 14px; color: var(--acc); font-weight: 800; }
+  .calc .ztable { margin-top: 14px; transition: opacity .2s; }
+  .calc .ztable.off { opacity: .3; }
+  .calc .ztable tr.main td { background: #fff7e8; }
+  .calc .ztable tr.main td:first-child { box-shadow: inset 4px 0 0 var(--amb); padding-left: 10px; }
+  .calc .ztable td.flash { animation: flash .6s ease; }
+  @keyframes flash { from { color: var(--acc); } to { color: inherit; } }
+
+  /* anim 5: conditions */
+  .wx { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .wxc { padding: 12px 12px 10px; overflow: hidden; }
+  .wxc b { font-size: 15px; }
+  .wxc svg { display: block; width: 100%; height: auto; margin: 6px 0 4px; }
+  .wxc .base { stroke: rgba(28,26,23,.25); stroke-width: 1.5; stroke-dasharray: 3 4; fill: none; }
+  .wxc .ln { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 1.8s cubic-bezier(.45,.05,.3,1); transition-delay: calc(var(--i) * .35s); }
+  .wx.in .ln { stroke-dashoffset: 0; }
+  .wxc small { display: block; font-size: 12.5px; color: rgba(28,26,23,.7); line-height: 1.35; }
+  .wxc .ax { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 9px; fill: rgba(28,26,23,.5); }
+  .heat { padding: 16px; margin-top: 10px; }
+  .hrow { display: grid; grid-template-columns: 62px 1fr 48px; align-items: center; gap: 10px; margin-top: 10px; }
+  .hrow .mono { font-size: 13px; color: var(--ink); }
+  .hrow .disp { font-size: 17px; text-align: right; }
+  .htrack { height: 16px; border-radius: 6px; background: var(--track); overflow: hidden; }
+  .htrack i { display: block; height: 100%; width: var(--w); border-radius: 6px; background: var(--c); transform: scaleX(0); transform-origin: left; transition: transform 1.4s cubic-bezier(.2,.8,.2,1) .2s; }
+  .heat.in .htrack i { transform: scaleX(1); }
+  .dehyd { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-top: 10px; }
+  .dehyd .disp { font-size: 30px; color: var(--acc); white-space: nowrap; }
+  .drops { display: flex; gap: 4px; margin-top: 4px; }
+  .drops i { width: 10px; height: 14px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; background: #8fb3c9; opacity: .25; transition: opacity .3s; }
+  .dehyd.in .drops i { opacity: 1; }
+  .dehyd.in .drops i:nth-child(2) { transition-delay: .25s; } .dehyd.in .drops i:nth-child(3) { transition-delay: .5s; }
+  .dehyd.in .drops i:nth-child(4) { transition-delay: .75s; } .dehyd.in .drops i:nth-child(5) { transition-delay: 1s; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded, system-ui, sans-serif; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+
+  /* reveal */
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  .rm *, .rm *::before, .rm *::after { transition: none !important; animation: none !important; }
+  .rm .beat .ln { stroke-dashoffset: 0; } .rm .beat .dot { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+    .r { opacity: 1; transform: none; }
+    .beat .ln { stroke-dashoffset: 0; } .beat .dot { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">гайд · пульс</span></div>
+    <h1>ТЕСТ НА ПАНО<br><em>ЗА 30 МИНУТ</em></h1>
+    <p class="lead">Как за одну тренировку найти свой пульс на пороге и посчитать от него зоны, по которым удобно бегать каждый день.</p>
+    <div class="beat card" aria-hidden="true">
+      <svg viewBox="0 0 340 90">
+        <path class="ln" pathLength="1" d="M4,62 L60,62 L72,62 L80,40 L88,78 L96,18 L104,70 L112,62 L170,62 L182,62 L190,40 L198,78 L206,18 L214,70 L222,62 L280,62 L292,62 L300,40 L308,78 L316,18 L324,62 L334,62"/>
+        <circle class="dot" cx="334" cy="62" r="5"/>
+      </svg>
+      <div class="mono"><span>разминка</span><span>30 минут теста</span><span>зоны</span></div>
+    </div>
+    <div class="stats">
+      <div class="stat card"><div class="disp">30</div><div class="mono">минут теста</div></div>
+      <div class="stat card"><div class="disp">20</div><div class="mono">минут в счёт</div></div>
+      <div class="stat card"><div class="disp">7</div><div class="mono">зон от порога</div></div>
+    </div>
+  </header>
+
+  <section class="r">
+    <h2>Почему не <em>«220 минус возраст»</em></h2>
+    <p>Формулу 220 минус возраст вывели почти на глаз, по сводке старых данных. Как точный инструмент для одного человека её никто не проверял.</p>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div>Для конкретного человека она обычно ошибается <b>примерно на 10 ударов</b>, а у части людей на 20 и больше. Примерно у каждого третьего ошибка больше 10 ударов.</div></div>
+      <div class="rule card"><div class="n">2</div><div>После 40 лет она чаще <b>занижает</b> максимум.</div></div>
+      <div class="rule card"><div class="n">3</div><div>Новые формулы по возрасту точнее в среднем по людям, но для одного человека ошибаются почти так же. <b>Любая формула по возрасту даёт среднее, а не твой пульс.</b></div></div>
+    </div>
+    <p style="margin-top:18px">И даже точный максимум не спасает зоны. Порог у одного человека около 85% от максимума, у другого около 95%. Зоны в процентах от максимума ставят их в одну зону, хотя нагрузка у них разная.</p>
+
+    <div class="thr card anim" style="margin-top:16px" role="img" aria-label="Два бегуна: порог у первого на 85% от максимума, у второго на 95%. Одна и та же зона от максимума у первого выше порога, у второго ниже.">
+      <div class="thr-row a">
+        <div class="thr-head"><b>Бегун А</b><span class="verdict">выше порога</span></div>
+        <div class="track"><i class="band"></i><i class="mk" style="--p:85%"><span>ПАНО 85%</span></i></div>
+      </div>
+      <div class="thr-row b">
+        <div class="thr-head"><b>Бегун Б</b><span class="verdict">ниже порога</span></div>
+        <div class="track"><i class="band"></i><i class="mk" style="--p:95%"><span>ПАНО 95%</span></i></div>
+      </div>
+      <div class="axis"><span>0%</span><span>50%</span><span>100% от макс. пульса</span></div>
+      <div class="legend"><span><i style="background:var(--amb)"></i>порог (ПАНО)</span><span><i style="background:var(--ink)"></i>одна и та же зона от максимума</span></div>
+    </div>
+    <p class="note">Поэтому зоны лучше считать от пульса на пороге.</p>
+  </section>
+
+  <section class="r">
+    <h2>Что такое <em>пульс на ПАНО</em></h2>
+    <p><b>ПАНО</b> (порог анаэробного обмена) это самая высокая интенсивность, которую ты можешь держать ровно и долго, примерно как в забеге на час. Чуть быстрее, и усталость начинает копиться быстро.</p>
+    <p><b>Пульс на ПАНО</b> (по-английски LTHR) это твоя личная точка отсчёта. Все зоны ниже считаются в процентах от него, поэтому они учитывают, где порог именно у тебя.</p>
+    <p>Тест ниже даёт оценку этого пульса в поле. Это не лабораторное измерение, но для тренировок по зонам его хватает, а повторный тест показывает, как ты меняешься.</p>
+  </section>
+
+  <section class="r">
+    <h2>Кому <em>не делать</em> тест</h2>
+    <p>Тест это 30 минут почти соревновательного усилия. Это серьёзная нагрузка.</p>
+    <div class="stop card" style="margin-top:14px">
+      <span class="tag red">сначала к врачу, только с допуском</span>
+      <div class="dot-list">
+        <div>Есть заболевания сердца и сосудов, диабет или болезни почек.</div>
+        <div>Бывает боль или дискомфорт в груди, шее, челюсти или руке, одышка в покое или при лёгкой нагрузке, головокружение, обмороки, необычная усталость.</div>
+      </div>
+      <p class="note"><b>Если что-то из этого появится во время теста, сразу остановись и иди к врачу.</b></p>
+    </div>
+    <div class="stop card">
+      <span class="tag amb">подожди с тестом</span>
+      <div class="dot-list">
+        <div>Ты не тренируешься регулярно или бегаешь первые месяцы. Сначала лёгкий и умеренный бег по ощущениям: на лёгкой пробежке можешь говорить предложениями. Тест имеет смысл, когда бегаешь регулярно и умеешь держать ровный темп.</div>
+        <div>Ты болеешь или только что после болезни.</div>
+        <div>На улице жара.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Подготовка</h2>
+    <ul class="rows card">
+      <li><span class="mono">отдых 48 часов</span>Два дня до теста без тяжёлых и интенсивных тренировок. Лёгкий бег можно.</li>
+      <li><span class="mono">сон и еда</span>Выспись и поешь по своей обычной схеме перед тренировкой, не на пустой желудок и без нехватки углеводов.</li>
+      <li><span class="mono">вода</span>Пей как обычно, чтобы на старте теста не было жажды. Обезвоживание поднимает пульс.</li>
+      <li><span class="mono">кофеин как обычно</span>Пьёшь кофе перед тренировками, пей ту же дозу и перед тестом. Не пьёшь, то и тут не пей. Дело не в том, что кофе разгоняет пульс: он может добавить результата в тесте на максимум, и тогда тесты будет нельзя сравнить.</li>
+      <li><span class="mono">нагрудный датчик</span>Ремень на груди почти совпадает с ЭКГ, а датчик на запястье теряет точность, когда нагрузка растёт. Ремня нет? Делай тест на часах, но всегда на одних и тех же.</li>
+      <li><span class="mono">обувь и экипировка</span>Те же, что будут в следующих тестах.</li>
+    </ul>
+  </section>
+
+  <section class="r">
+    <h2>Одинаковые условия <em>для повторов</em></h2>
+    <p>Тест нужен не один раз. Чтобы цифры можно было сравнивать, условия должны совпадать.</p>
+    <ul class="rows card" style="margin-top:14px">
+      <li><span class="mono">маршрут</span>Ровный, лучше стадион или плоская трасса без светофоров и пешеходов.</li>
+      <li><span class="mono">погода</span>Похожая температура и влажность. В жару пульс выше при том же темпе, в холод такой же или немного ниже.</li>
+      <li><span class="mono">время суток</span>Одно и то же.</li>
+      <li><span class="mono">устройство</span>Тот же датчик и те же часы.</li>
+      <li><span class="mono">разминка</span>Одинаковая каждый раз.</li>
+      <li><span class="mono">один, не в забеге</span>Без партнёров и не на старте: в забеге и в компании ты бежишь иначе, и тест перестаёт быть сравнимым.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2 class="r">Тест, <em>шаг за шагом</em></h2>
+    <div class="rules r">
+      <div class="rule card"><div class="n">1</div><div><b>Разминка 10-15 минут.</b> Лёгкий бег, каждый раз одинаковый.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>Старт теста.</b> Нажми старт на часах и беги 30 минут в одиночку, как в забеге: максимально, но ровно все 30 минут.</div></div>
+      <div class="rule card"><div class="n">3</div><div><b>Не стартуй слишком быстро.</b> Самая частая ошибка: рвануть, а потом затухать к концу. Первые минуты должны казаться чуть легче, чем хочется.</div></div>
+      <div class="rule card"><div class="n">4</div><div><b>На 10-й минуте нажми «круг» (lap).</b> Не останавливайся, просто нажми кнопку.</div></div>
+      <div class="rule card"><div class="n">5</div><div><b>Добеги до 30:00</b> и останови запись. Потом лёгкая заминка трусцой.</div></div>
+      <div class="rule card key"><div class="n">6</div><div><b>Пульс на ПАНО = средний пульс за последние 20 минут</b> (круг с 10-й по 30-ю минуту).</div></div>
+      <div class="rule card key"><div class="n">7</div><div><b>Пороговый темп = средний темп за все 30 минут</b> (не за последние 20, это частая путаница).</div></div>
+    </div>
+
+    <div class="test card anim r" style="margin-top:16px" role="img" aria-label="Пример теста: пульс быстро растёт в первые минуты и выходит почти на плато. На 10-й минуте нажат круг. Средний пульс с 10-й по 30-ю минуту, в примере 168, это пульс на ПАНО. Средний темп за все 30 минут это пороговый темп.">
+      <svg viewBox="0 0 340 196">
+        <g class="grid"><line x1="30" y1="170" x2="330" y2="170"/><line x1="30" y1="20" x2="30" y2="170"/></g>
+        <rect class="win" x="130" y="20" width="200" height="150" rx="4"/>
+        <line class="lap" x1="130" y1="14" x2="130" y2="170"/>
+        <g class="lapt"><rect class="lapflag" x="130" y="4" width="62" height="18" rx="4"/><text x="136" y="17" style="fill:#fff">LAP 10:00</text></g>
+        <line class="avg" x1="130" y1="54" x2="330" y2="54"/>
+        <path class="hr" pathLength="1" d="M30,154 C36,140 40,128 50,112 C58,98 64,88 72,80 C80,72 86,66 96,62 C106,59 116,57 130,56 C150,55 162,57 180,55 C200,53 214,56 232,54 C252,52 266,55 284,53 C302,51 316,53 330,52"/>
+        <text class="lbl" x="30" y="186" text-anchor="middle">0</text>
+        <text class="lbl" x="130" y="186" text-anchor="middle">10</text>
+        <text class="lbl" x="230" y="186" text-anchor="middle">20</text>
+        <text class="lbl" x="330" y="186" text-anchor="end">30 мин</text>
+        <text class="lbl" x="34" y="30">пульс</text>
+      </svg>
+      <div class="plate"><small><b>Средний пульс с 10-й по 30-ю минуту</b><br>это и есть пульс на ПАНО</small><div class="disp"><span data-to="168" data-from="120" data-delay="3700" data-dur="1100">168</span><span class="u">уд/мин</span></div></div>
+      <div class="pace"><div class="ptrack"><i></i></div><p><b>Средний темп за все 30 минут</b> = пороговый темп</p></div>
+    </div>
+    <p class="note r">Сомневаешься, правильно ли посчитали часы? Открой тренировку в приложении и посмотри средний пульс второго круга.</p>
+  </section>
+
+  <section>
+    <h2 class="r">Твои зоны: <em>таблица и пример</em></h2>
+    <p class="r">Беговые зоны в процентах от пульса на ПАНО. Пример для пульса на ПАНО 168.</p>
+
+    <div class="zbars card anim r" style="margin-top:14px" role="img" aria-label="Зоны при пульсе на ПАНО 168: Z1 до 142, Z2 143-151, Z3 152-159, Z4 160-167, Z5a 168-173, Z5b 174-178, Z5c 179 и выше. Z1 и Z2 это основная часть бега.">
+      <div class="zb" style="--i:6;--w:100%;--c:#8f2f12"><span class="zl"><b>Z5c</b>&gt;106%</span><span class="zt"><i></i></span><span class="zv">179+</span></div>
+      <div class="zb" style="--i:5;--w:92%;--c:#a33c19"><span class="zl"><b>Z5b</b>103-106%</span><span class="zt"><i></i></span><span class="zv">174-178</span></div>
+      <div class="zb" style="--i:4;--w:84%;--c:var(--acc)"><span class="zl"><b>Z5a</b>100-102%</span><span class="zt"><i></i></span><span class="zv">168-173</span></div>
+      <div class="zb" style="--i:3;--w:74%;--c:#c96a3d"><span class="zl"><b>Z4</b>95-99%</span><span class="zt"><i></i></span><span class="zv">160-167</span></div>
+      <div class="zb" style="--i:2;--w:62%;--c:#d98d62"><span class="zl"><b>Z3</b>90-94%</span><span class="zt"><i></i></span><span class="zv">152-159</span></div>
+      <div class="zb main" style="--i:1;--w:50%"><span class="zl"><b>Z2</b>85-89%</span><span class="zt"><i></i></span><span class="zv">143-151</span></div>
+      <div class="zb main" style="--i:0;--w:38%"><span class="zl"><b>Z1</b>&lt;85%</span><span class="zt"><i></i></span><span class="zv">до 142</span></div>
+      <div class="mainnote"><i></i>Z1 и Z2: основная часть бега</div>
+    </div>
+
+    <div class="math r">168 × 0,85 = 142,8<br>168 × 0,90 = 151,2<br>168 × 0,95 = 159,6<br>168 × 1,00 = 168<br>168 × 1,03 = 173,04<br>168 × 1,06 = 178,08</div>
+    <p class="note r">Зона начинается с первого целого удара, где пульс дорос до её нижнего процента. Для своего числа умножь пульс на ПАНО на 0,85, 0,90, 0,95, 1,00, 1,03 и 1,06 и округли вверх до целого. Или просто введи его ниже.</p>
+
+    <div class="calc card r" style="margin-top:16px">
+      <label for="lthr">Твой пульс на ПАНО</label>
+      <div class="calc-in"><input id="lthr" type="number" inputmode="numeric" min="100" max="220" step="1" value="168" aria-describedby="lthr-err"><span class="mono">уд/мин</span></div>
+      <p class="calc-err" id="lthr-err" hidden>Введи целое число от 100 до 220</p>
+      <table class="ztable" id="calc-out"><thead><tr><th>Зона</th><th>% от ПАНО</th><th style="text-align:right">Пульс</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Как пользоваться <em>зонами</em></h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div><b>Большая часть бега в Z1-Z2.</b> Лёгкие пробежки, длинные пробежки, восстановление. Если на лёгкой пробежке пульс уходит в Z3, замедлись, даже если темп кажется смешным.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>Работа выше Z2</b> (темповые, пороговые, интервалы) идёт по плану, а не на каждой тренировке.</div></div>
+      <div class="rule card"><div class="n">3</div><div><b>Пороговый темп</b> из теста тоже пригодится: от него считаются темповые зоны, и по нему удобно бегать там, где пульс врёт (жара, высота, первые минуты интервала).</div></div>
+    </div>
+  </section>
+
+  <section class="r">
+    <h2>Когда <em>повторять</em> тест</h2>
+    <div class="rules">
+      <div class="rule card"><div class="n">1</div><div>В начале каждого нового этапа подготовки: в начале базового периода и в начале развивающего блока к старту.</div></div>
+      <div class="rule card"><div class="n">2</div><div>Пороговый темп полезно перепроверять <b>примерно раз в 4-6 недель</b>. Чем регулярнее тест, тем точнее твои зоны.</div></div>
+      <div class="rule card key"><div class="n">!</div><div><b>Совет тренера:</b> после болезни или долгого перерыва не бери старые зоны, а через 2-3 недели обычных тренировок сделай тест заново.</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="r">Что сдвигает пульс: <em>жара, вода, высота</em></h2>
+    <p class="r">Зоны считаются в нормальных условиях. В других условиях тот же темп даёт другой пульс.</p>
+
+    <div class="wx anim r" style="margin-top:14px" role="img" aria-label="Одна и та же пробежка в одном темпе: в прохладу пульс ровный, в жару ползёт вверх, в холод ровный и чуть ниже, на высоте выше в первые дни и опускается к третьей неделе.">
+      <div class="wxc card"><b>Прохлада</b>
+        <svg viewBox="0 0 140 64"><path class="base" d="M6,34 H134"/><path class="ln" style="--i:0;stroke:var(--grn)" pathLength="1" d="M6,34 C30,33 50,35 70,34 C90,33 110,35 134,34"/></svg>
+        <small>Пульс ровный</small></div>
+      <div class="wxc card"><b>Жара</b>
+        <svg viewBox="0 0 140 64"><path class="base" d="M6,34 H134"/><path class="ln" style="--i:1;stroke:var(--acc)" pathLength="1" d="M6,32 C30,30 50,26 70,22 C90,18 110,14 134,8"/></svg>
+        <small>Выше и ползёт вверх по ходу пробежки</small></div>
+      <div class="wxc card"><b>Холод</b>
+        <svg viewBox="0 0 140 64"><path class="base" d="M6,34 H134"/><path class="ln" style="--i:2;stroke:#4f7ea3" pathLength="1" d="M6,40 C30,39 50,41 70,40 C90,39 110,41 134,40"/></svg>
+        <small>Такой же или немного ниже</small></div>
+      <div class="wxc card"><b>Высота</b>
+        <svg viewBox="0 0 140 64"><path class="base" d="M6,34 H134"/><path class="ln" style="--i:3;stroke:#7a5aa6" pathLength="1" d="M6,16 C40,18 70,24 100,31 C114,33 124,34 134,34"/><text class="ax" x="6" y="60">1-й день</text><text class="ax" x="134" y="60" text-anchor="end">3 нед.</text></svg>
+        <small>Выше в первые дни, к 3-й неделе как обычно</small></div>
+    </div>
+    <p class="note r" style="margin-top:8px">Пунктир: обычный пульс на этом темпе.</p>
+
+    <div class="heat card anim r">
+      <h3>Жара: пульс ползёт вверх</h3>
+      <small class="note" style="display:block;margin-top:0">В одном исследовании пульс с 15-й по 45-ю минуту одинаковой работы вырос:</small>
+      <div class="hrow"><span class="mono">+22 °C</span><span class="htrack"><i style="--w:18%;--c:var(--grn)"></i></span><span class="disp">+<span data-to="2" data-from="0" data-delay="200" data-dur="1400">2</span>%</span></div>
+      <div class="hrow"><span class="mono">+35 °C</span><span class="htrack"><i style="--w:100%;--c:var(--acc)"></i></span><span class="disp">+<span data-to="11" data-from="0" data-delay="200" data-dur="1400">11</span>%</span></div>
+      <p class="note">В жару бегай по зонам и смирись, что темп будет медленнее.</p>
+    </div>
+
+    <div class="dehyd card anim r">
+      <div class="disp">+3-5</div>
+      <div><b>уд/мин на каждый 1% потерянного веса</b><div class="drops" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><small class="note" style="display:block;margin-top:4px">Длинная пробежка в жару без воды легко даёт заметный рост пульса.</small></div>
+    </div>
+
+    <ul class="rows card r" style="margin-top:10px">
+      <li><span class="mono">жара</span>Кровь уходит к коже, чтобы охлаждать тело, и сердце бьётся чаще при том же темпе. По ходу пробежки пульс ещё и ползёт вверх.</li>
+      <li><span class="mono">влажность</span>Пот хуже испаряется, тело хуже охлаждается, сил хватает меньше. Точной цифры «плюс столько-то ударов» нет, но во влажную жару держи нагрузку ниже.</li>
+      <li><span class="mono">холод</span>Пульс при том же темпе обычно такой же или немного ниже, и максимум может быть ниже. Но тёплая одежда, снег и ветер могут его поднять.</li>
+      <li><span class="mono">высота</span>В первые дни пульс на том же темпе выше на несколько ударов, а максимальный пульс ниже. Через 2-3 недели тело привыкает, и пульс на том же темпе возвращается к обычному.</li>
+    </ul>
+  </section>
+
+  <div class="cta r">
+    <h2>Хочешь план <em style="color:#f0a56f">под твои зоны?</em></h2>
+    <p>Зоны это только начало. Дальше вопрос, сколько бегать в каждой зоне, как часто и как это растёт от недели к неделе под твою цель. Напиши мне, и я составлю персональный план под твои зоны и твой старт.</p>
+    <a class="btn" href="https://t.me/IgorPotseluev?text=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%21%20%D0%A5%D0%BE%D1%87%D1%83%20%D0%BF%D0%BB%D0%B0%D0%BD%20%D0%BF%D0%BE%20%D0%BF%D1%83%D0%BB%D1%8C%D1%81%D0%BE%D0%B2%D1%8B%D0%BC%20%D0%B7%D0%BE%D0%BD%D0%B0%D0%BC">Написать в Telegram</a><br>
+    <a class="btn ghost" href="https://instagram.com/igorp.run">@igorp.run</a>
+  </div>
+  <p class="foot mono">igorp.run · бег с умом и без лишних травм</p>
+</div>
+<script>
+  (function () {
+    var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (reduce) document.documentElement.classList.add('rm');
+
+    function countUp(el) {
+      var to = +el.getAttribute('data-to'), from = +(el.getAttribute('data-from') || 0);
+      var dur = +(el.getAttribute('data-dur') || 1200), delay = +(el.getAttribute('data-delay') || 0);
+      if (reduce) { el.textContent = to; return; }
+      el.textContent = from;
+      setTimeout(function () {
+        var t0 = performance.now();
+        (function step(t) {
+          var k = Math.min(1, (t - t0) / dur); k = 1 - Math.pow(1 - k, 3);
+          el.textContent = Math.round(from + (to - from) * k);
+          if (k < 1) requestAnimationFrame(step);
+        })(t0);
+      }, delay);
+    }
+    function show(e) {
+      if (e.classList.contains('in')) return;
+      e.classList.add('in');
+      if (e.classList.contains('anim')) e.querySelectorAll('[data-to]').forEach(countUp);
+    }
+    var reveal = document.querySelectorAll('.r'), anims = document.querySelectorAll('.anim');
+    if (reduce || !('IntersectionObserver' in window)) {
+      reveal.forEach(show); anims.forEach(show);
+    } else {
+      var io = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+      }, { threshold: 0.12 });
+      reveal.forEach(function (e) { if (!e.classList.contains('anim')) io.observe(e); });
+      // graphics start only when a good part of them is on screen
+      var aio = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) { show(e.target); aio.unobserve(e.target); } });
+      }, { threshold: 0.35 });
+      anims.forEach(function (e) { aio.observe(e); });
+    }
+
+    // Zone calculator.
+    // Rounding rule (same as the worked example): a zone starts at the first whole beat
+    // that reaches its lower percent, i.e. lower bound = ceil(LTHR * pct / 100), and the
+    // zone below ends one beat earlier. Integer percents keep the math exact
+    // (e.g. 200 * 85 / 100 is exactly 170, no float drift before ceil).
+    var ZONES = [
+      ['Z1', '&lt;85%', null], ['Z2', '85-89%', 85], ['Z3', '90-94%', 90], ['Z4', '95-99%', 95],
+      ['Z5a', '100-102%', 100], ['Z5b', '103-106%', 103], ['Z5c', '&gt;106%', 106]
+    ];
+    function zonesFor(l) {
+      var lows = ZONES.map(function (z) { return z[2] === null ? null : Math.ceil(l * z[2] / 100); });
+      return ZONES.map(function (z, i) {
+        var lo = lows[i], hi = i + 1 < lows.length ? lows[i + 1] - 1 : null;
+        var txt = lo === null ? 'до ' + hi : hi === null ? lo + ' и выше' : lo + '-' + hi;
+        return { name: z[0], pct: z[1], txt: txt };
+      });
+    }
+    window.__zonesFor = zonesFor;
+    var input = document.getElementById('lthr'), err = document.getElementById('lthr-err');
+    var table = document.getElementById('calc-out'), body = table.querySelector('tbody');
+    function render() {
+      var raw = String(input.value).trim(), v = Number(raw);
+      var ok = raw !== '' && Number.isInteger(v) && v >= 100 && v <= 220;
+      input.setAttribute('aria-invalid', ok ? 'false' : 'true');
+      err.hidden = ok;
+      table.classList.toggle('off', !ok);
+      if (!ok) return;
+      body.innerHTML = zonesFor(v).map(function (z, i) {
+        return '<tr' + (i < 2 ? ' class="main"' : '') + '><td>' + z.name + '</td><td>' + z.pct + '</td><td class="flash">' + z.txt + '</td></tr>';
+      }).join('');
+    }
+    input.addEventListener('input', render);
+    render();
+  })();
+</script>
+</body>
+</html>
