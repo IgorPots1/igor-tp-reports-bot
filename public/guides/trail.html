@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Трейл для асфальтовых бегунов · igorp.run</title>
+<meta name="description" content="Трейл для асфальтовых бегунов: когда идти в гору шагом, как спускаться, нужны ли палки, сила для гор и первый трейловый старт. Гайд Игоря Поцелуева.">
+<meta property="og:title" content="Трейл для асфальтовых бегунов">
+<meta property="og:description" content="Подъёмы, спуски, палки, сила и первый трейл">
+<meta name="theme-color" content="#f4f1ea">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Manrope:wght@500;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f4f1ea; --bg2: #fbf9f4; --ink: #1c1a17; --dim: rgba(28,26,23,.55); --line: #e2dccf;
+    --acc: #b8471f; --amb: #e3a13a; --grn: #3f7d3a; --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-weight: 600; line-height: 1.5; font-size: 17px; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+    background-image: linear-gradient(rgba(28,26,23,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(28,26,23,.045) 1px, transparent 1px);
+    background-size: 44px 44px; mask-image: radial-gradient(90% 70% at 50% 30%, #000 30%, transparent 100%); }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 56px; }
+  .mono { font-family: "JetBrains Mono", monospace; font-weight: 400; font-size: 13px; letter-spacing: .04em; color: var(--dim); text-transform: uppercase; }
+  h1, h2, h3, .disp { font-family: Unbounded, sans-serif; font-weight: 900; letter-spacing: -.02em; line-height: 1.05; }
+  h1 { font-size: clamp(36px, 10vw, 56px); }
+  h1 em, h2 em { font-style: normal; color: var(--acc); }
+  h2 { font-size: clamp(26px, 7vw, 34px); margin-bottom: 14px; }
+  h3 { font-size: 20px; margin-bottom: 6px; }
+  p + p { margin-top: 10px; }
+  b, strong { font-weight: 800; }
+  .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 22px; box-shadow: 0 14px 40px rgba(28,26,23,.07); }
+  section { margin-top: 48px; }
+  .kicker { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .kicker .n { width: 30px; height: 30px; border-radius: 10px; background: var(--ink); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+
+  /* hero */
+  .hero { padding-top: 28px; }
+  .brand { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand a { color: var(--ink); text-decoration: none; font-family: Unbounded; font-weight: 700; font-size: 15px; }
+  .hero .lead { margin-top: 16px; font-size: 18px; color: rgba(28,26,23,.8); }
+  .ridge { margin-top: 22px; border-radius: 26px; overflow: hidden; background: var(--bg2); border: 1.5px solid var(--line); }
+  .ridge svg { display: block; width: 100%; height: auto; }
+  .ridge .path { stroke-dasharray: 1400; stroke-dashoffset: 1400; animation: draw 2.4s .3s cubic-bezier(.3,.7,.2,1) forwards; }
+  .ridge .dot { offset-path: path("M20,214 C70,206 92,170 130,160 S190,96 236,92 S300,150 340,150 S410,58 452,50 S520,108 580,118"); animation: walk 9s 2.4s linear infinite; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes walk { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .stat { padding: 14px 12px 12px; }
+  .stat .disp { font-size: 26px; color: var(--acc); }
+  .stat .mono { margin-top: 4px; font-size: 11px; }
+  .toc { margin-top: 14px; padding: 6px 16px; }
+  .toc a { display: flex; justify-content: space-between; gap: 10px; padding: 11px 0; border-top: 1.5px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 800; }
+  .toc a:first-child { border-top: 0; }
+  .toc a span:last-child { color: var(--acc); font-family: "JetBrains Mono"; font-size: 14px; }
+
+  /* chips, rules, notes */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; border: 2px solid var(--ink); background: #fff; font-weight: 800; font-size: 15px; }
+  .chip.ok { border-color: var(--grn); color: var(--grn); }
+  .chip.no { border-color: var(--line); color: var(--dim); text-decoration: line-through; }
+  .rules { margin-top: 14px; display: grid; gap: 10px; }
+  .rule { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; }
+  .rule .n { flex: none; width: 30px; height: 30px; border-radius: 10px; background: var(--acc); color: #fff; font-family: Unbounded; font-weight: 900; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+  .note { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: #f3eee5; font-size: 15px; }
+  .note b { color: var(--acc); }
+  .src { margin-top: 10px; font-size: 13px; color: var(--dim); }
+  .tag { display: inline-block; font-size: 12px; font-weight: 800; border-radius: 8px; padding: 3px 9px; margin-bottom: 8px; }
+  .t-sci { color: var(--grn); background: #e8f0e3; }
+  .t-prac { color: #9a6514; background: #faecd2; }
+
+  /* grade tool */
+  .grade { padding: 18px 16px 16px; }
+  .grade svg { display: block; width: 100%; height: auto; }
+  .grade .wedge { transition: d .25s; }
+  .grade input[type=range] { width: 100%; margin-top: 12px; accent-color: var(--acc); height: 32px; }
+  .readout { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .readout .box { border-radius: 14px; background: #f3eee5; padding: 10px 12px; }
+  .readout .disp { font-size: 26px; }
+  .verdict { margin-top: 10px; border-radius: 14px; padding: 12px 14px; font-weight: 800; transition: background .3s, color .3s; }
+  .v-run { background: #e8f0e3; color: var(--grn); }
+  .v-mid { background: #faecd2; color: #8a5a10; }
+  .v-walk { background: var(--acc); color: #fff; }
+
+  /* technique list */
+  .steps { padding: 6px 16px; }
+  .steps li { list-style: none; display: flex; gap: 12px; align-items: flex-start; padding: 13px 0; border-top: 1.5px solid var(--line); }
+  .steps li:first-child { border-top: 0; }
+  .steps li::before { content: ""; flex: none; width: 10px; height: 10px; margin-top: 8px; border-radius: 50%; background: var(--acc); }
+
+  /* soreness chart */
+  .sore { padding: 16px; }
+  .sore svg { display: block; width: 100%; height: auto; }
+  .sore .curve { stroke-dasharray: 900; stroke-dashoffset: 900; transition: stroke-dashoffset 1.8s cubic-bezier(.3,.7,.2,1); }
+  .sore.in .curve { stroke-dashoffset: 0; }
+
+  /* poles */
+  .yn { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .yn .card { padding: 16px 14px; }
+  .yn .disp { font-size: 30px; }
+  .yn ul { margin-top: 10px; display: grid; gap: 8px; }
+  .yn li { list-style: none; font-size: 15px; display: flex; gap: 8px; }
+  .yes .disp { color: var(--grn); } .yes li::before { content: "✓"; color: var(--grn); font-weight: 900; }
+  .no .disp { color: var(--acc); } .no li::before { content: "×"; color: var(--acc); font-weight: 900; }
+  .facts { margin-top: 14px; padding: 6px 16px; }
+  .fact { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-top: 1.5px solid var(--line); }
+  .fact:first-child { border-top: 0; }
+  .meter { width: 92px; height: 10px; border-radius: 5px; background: #efe9de; overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; border-radius: 5px; transition: width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .in .meter i { width: var(--w); }
+  .fact small { display: block; color: var(--dim); font-size: 13.5px; font-weight: 600; }
+
+  /* week */
+  .week { padding: 4px 16px; }
+  .day { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1.5px solid var(--line); flex-wrap: wrap; }
+  .day:first-child { border-top: 0; }
+  .day .mono { width: 34px; font-size: 13px; }
+  .pill { font-size: 14px; font-weight: 800; border-radius: 9px; padding: 5px 12px; }
+  .p-easy { background: #e8f0e3; color: var(--grn); }
+  .p-hill { background: #f6e1d6; color: var(--acc); }
+  .p-long { background: #faecd2; color: #9a6514; }
+  .p-sila { background: var(--acc); color: #fff; }
+  .p-rest { color: var(--dim); padding-left: 0; }
+
+  /* checklist */
+  .check { padding: 6px 16px; }
+  .check label { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1.5px solid var(--line); cursor: pointer; }
+  .check label:first-child { border-top: 0; }
+  .check input { flex: none; width: 22px; height: 22px; margin-top: 2px; accent-color: var(--grn); }
+  .check input:checked + span { color: var(--dim); text-decoration: line-through; }
+  .progress { margin-top: 10px; height: 12px; border-radius: 6px; background: #efe9de; overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--grn); border-radius: 6px; transition: width .4s; }
+
+  /* cta */
+  .cta { margin-top: 48px; padding: 26px 20px; text-align: center; background: var(--ink); color: #fff; border-radius: 26px; }
+  .cta h2 { color: #fff; }
+  .cta p { color: rgba(255,255,255,.75); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; padding: 16px 26px; border-radius: 999px; background: var(--acc); color: #fff; text-decoration: none; font-family: Unbounded; font-weight: 900; font-size: 16px; box-shadow: 0 14px 34px rgba(184,71,31,.35); }
+  .btn.ghost { background: transparent; border: 2px solid rgba(255,255,255,.3); box-shadow: none; font-size: 14px; padding: 12px 20px; margin-top: 10px; }
+  .foot { margin-top: 26px; text-align: center; }
+  a.inl { color: var(--acc); font-weight: 800; }
+
+  /* reveal */
+  .r { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1); }
+  .r.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .r { opacity: 1; transform: none; transition: none; }
+    .ridge .path { animation: none; stroke-dashoffset: 0; } .ridge .dot { animation: none; }
+    .sore .curve, .meter i { transition: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="brand"><a href="https://igorp.run">igorp.run</a><span class="mono">гайд · гора</span></div>
+    <h1>ТРЕЙЛ ДЛЯ<br><em>АСФАЛЬТОВЫХ</em> БЕГУНОВ</h1>
+    <p class="lead">На трейле считают не только километры, но и набор. В гору иногда выгоднее идти, спуск нагружает ноги сильнее подъёма, а палки помогают не всем. Здесь всё, что стоит знать до первого горного старта.</p>
+    <div class="ridge" aria-hidden="true">
+      <svg viewBox="0 0 600 240">
+        <path d="M20,214 C70,206 92,170 130,160 S190,96 236,92 S300,150 340,150 S410,58 452,50 S520,108 580,118 L580,240 L20,240 Z" fill="#efe7da"/>
+        <path class="path" d="M20,214 C70,206 92,170 130,160 S190,96 236,92 S300,150 340,150 S410,58 452,50 S520,108 580,118" fill="none" stroke="#b8471f" stroke-width="5" stroke-linecap="round"/>
+        <g font-family="Unbounded" font-weight="900" font-size="15" stroke="#fbf9f4" stroke-width="5" paint-order="stroke" stroke-linejoin="round">
+          <text x="112" y="128" fill="#b8471f">ШАГ</text><text x="360" y="84" fill="#b8471f">ШАГ</text>
+          <text x="262" y="178" fill="#3f7d3a">БЕГ</text><text x="40" y="226" fill="#3f7d3a">БЕГ</text>
+        </g>
+        <circle class="dot" r="9" fill="#1c1a17" stroke="#fff" stroke-width="3"/>
+      </svg>
+    </div>
+    <div class="stats">
+      <div class="stat card"><div class="disp">~15°</div><div class="mono">≈27%, тут шаг</div></div>
+      <div class="stat card"><div class="disp">1-2</div><div class="mono">суток до пика боли</div></div>
+      <div class="stat card"><div class="disp">5</div><div class="mono">разделов</div></div>
+    </div>
+    <nav class="toc card">
+      <a href="#up"><span>Подъём: когда идти шагом</span><span>01</span></a>
+      <a href="#down"><span>Спуск: как не убить ноги</span><span>02</span></a>
+      <a href="#poles"><span>Палки: да или нет</span><span>03</span></a>
+      <a href="#sila"><span>Сила для гор</span><span>04</span></a>
+      <a href="#race"><span>Первый трейловый старт</span><span>05</span></a>
+    </nav>
+  </header>
+
+  <!-- 1. CLIMB -->
+  <section id="up">
+    <div class="r">
+      <div class="kicker"><div class="n">01</div><span class="mono">подъём</span></div>
+      <h2>Шагом в гору <em>не стыдно</em></h2>
+      <p>Сразу честно: шаг в гору не быстрее бега. Но на крутом подъёме и на медленной скорости шагом ты тратишь <b>меньше энергии при той же скорости</b>. Силы остаются на остаток дистанции и на спуск.</p>
+      <p>По исследованиям, граница примерно <b>15-16 градусов</b>. Это около 27% уклона: очень крутой склон, а не горка в парке. В соцсетях градусы и проценты часто путают, проверь сам ниже.</p>
+    </div>
+
+    <div class="grade card r" id="gradeTool">
+      <span class="mono">подвигай уклон</span>
+      <svg viewBox="0 0 560 220" aria-hidden="true">
+        <path id="wedge" d="M20,200 L540,200 L540,60 Z" fill="#f6e1d6"/>
+        <path id="slopeLine" d="M20,200 L540,60" stroke="#b8471f" stroke-width="5" stroke-linecap="round"/>
+        <line x1="20" y1="200" x2="540" y2="200" stroke="#1c1a17" stroke-width="3"/>
+        <path id="arc" d="" fill="none" stroke="#1c1a17" stroke-width="3"/>
+        <circle id="hiker" r="11" fill="#1c1a17" stroke="#fff" stroke-width="3"/>
+      </svg>
+      <input id="deg" type="range" min="0" max="30" step="1" value="15" aria-label="Уклон в градусах">
+      <div class="readout">
+        <div class="box"><div class="mono">градусы</div><div class="disp" id="degOut">15°</div></div>
+        <div class="box"><div class="mono">проценты уклона</div><div class="disp" id="pctOut">27%</div></div>
+      </div>
+      <div class="verdict v-walk" id="verdict">Шагом, если поднимаешься медленно.</div>
+    </div>
+
+    <div class="rules r">
+      <div class="rule card"><div class="n">1</div><div><b>Медленно и круто: иди.</b> Выигрыш шага доказан на медленной скорости. Быстрые элитные бегуны могут бежать и там: на их скорости выигрыш пропадает. Любителю на крутом подъёме шаг почти всегда выгоднее.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>Полого: бегуны переходят на бег раньше, чем выгодно.</b> Если твой бег в горку уже почти не быстрее шага, смело иди.</div></div>
+      <div class="rule card"><div class="n">3</div><div><b>Между 10° и 15° серая зона.</b> Точный порог там не измерен. Ориентир простой: темп бега почти как у шага, дыхание сбивается, значит, пора на шаг.</div></div>
+    </div>
+    <p class="src r">Тег «наука»: несколько лабораторных работ сходятся на 15-16°, выборки небольшие, на беговой дорожке, не на тропе.</p>
+
+    <div class="r" style="margin-top:22px">
+      <span class="tag t-prac">практика тренеров</span>
+      <h3>Как идти силовой ходьбой</h3>
+      <ul class="steps card">
+        <li><div><b>Короткий частый шаг.</b> Не тянись длинным шагом на крутую ступень.</div></li>
+        <li><div><b>Корпус чуть вперёд от голеностопа,</b> а не сгибом в пояснице. Спина ровная.</div></li>
+        <li><div><b>Ладони чуть выше колена.</b> Можно давить ими на бёдра на каждом шаге. Это приём из практики, точных цифр экономии по нему нет.</div></li>
+        <li><div><b>Взгляд на пару метров вперёд,</b> выбирай, куда поставить стопу.</div></li>
+      </ul>
+      <div class="note"><b>Тренируй заранее.</b> На длительной с холмами иди на каждом крутом подъёме и сразу беги, когда стало положе. Переход «шаг-бег» тоже навык.</div>
+    </div>
+  </section>
+
+  <!-- 2. DESCENT -->
+  <section id="down">
+    <div class="r">
+      <div class="kicker"><div class="n">02</div><span class="mono">спуск</span></div>
+      <h2>Спуск это <em>не отдых</em></h2>
+      <p>На спуске квадрицепс работает как тормоз: мышца напрягается и при этом растягивается. Это называется эксцентрическая работа. По исследованиям, тормозящая нагрузка на спуске намного выше, чем на ровном, и мышечных повреждений от неё больше.</p>
+    </div>
+    <div class="sore card r">
+      <span class="mono">боль в бёдрах после горного забега</span>
+      <svg viewBox="0 0 560 230" aria-hidden="true">
+        <line x1="30" y1="190" x2="540" y2="190" stroke="#1c1a17" stroke-width="3"/>
+        <rect x="128" y="20" width="170" height="170" fill="#f6e1d6"/>
+        <path class="curve" d="M30,186 C80,184 110,60 170,40 S240,34 270,64 S360,170 420,182 S500,188 540,188" fill="none" stroke="#b8471f" stroke-width="6" stroke-linecap="round"/>
+        <g font-family="Manrope" font-weight="800" font-size="15" fill="rgba(28,26,23,.55)">
+          <text x="30" y="214">финиш</text><text x="128" y="214">+1 день</text><text x="250" y="214">+2 дня</text><text x="410" y="214">+4 дня</text>
+        </g>
+        <text x="150" y="16" font-family="Unbounded" font-weight="900" font-size="15" fill="#b8471f">пик через 1-2 суток</text>
+      </svg>
+      <p style="margin-top:8px">Поэтому больно не сразу, а через сутки-двое, и лестница в эти дни становится испытанием.</p>
+    </div>
+    <div class="rules r">
+      <div class="rule card"><div class="n">1</div><div><b>Хорошая новость:</b> один такой спуск защищает ноги на несколько недель. В следующий раз болеть будет гораздо меньше.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>Но защищает он в основном от боли.</b> Уставать на длинном спуске ноги всё равно будут, так что сила тоже нужна.</div></div>
+    </div>
+    <div class="r" style="margin-top:22px">
+      <h3>Техника спуска</h3>
+      <ul class="steps card">
+        <li><div><span class="tag t-sci">исследования</span><br><b>Короткий частый шаг.</b> Чем короче шаг, тем меньше нагрузка на колено.</div></li>
+        <li><div><span class="tag t-prac">практика</span><br><b>Корпус чуть вперёд,</b> перпендикулярно склону. Не откидывайся назад: шаг удлиняется, и ты тормозишь сильнее.</div></li>
+        <li><div><span class="tag t-prac">практика</span><br><b>Руки шире</b> для баланса, шаги тихие, стопа ставится мягко.</div></li>
+      </ul>
+      <div class="note"><b>Как готовиться:</b> добавь спуски в тренировки раз в неделю-две. Начни с коротких и пологих, потом длиннее и круче.</div>
+    </div>
+  </section>
+
+  <!-- 3. POLES -->
+  <section id="poles">
+    <div class="r">
+      <div class="kicker"><div class="n">03</div><span class="mono">палки</span></div>
+      <h2>Палки: <em>да или нет</em></h2>
+      <p>Начну с неожиданного: энергию палки почти не экономят. Маленькая экономия есть только на очень крутых подъёмах. Берут их ради другого.</p>
+    </div>
+    <div class="facts card r">
+      <div class="fact"><div>Экономия энергии на крутом подъёме<small>есть, но очень маленькая</small></div><div class="meter"><i style="--w:12%;background:var(--amb)"></i></div></div>
+      <div class="fact"><div>Расход на ровном и пологом<small>с палками больше: работают ещё и руки</small></div><div class="meter"><i style="--w:70%;background:var(--acc)"></i></div></div>
+      <div class="fact"><div>Ощущение тяжести на крутом<small>с палками легче или так же</small></div><div class="meter"><i style="--w:55%;background:var(--grn)"></i></div></div>
+      <div class="fact"><div>Скорость на максимальном усилии<small>чуть быстрее</small></div><div class="meter"><i style="--w:22%;background:var(--grn)"></i></div></div>
+      <div class="fact"><div>Нагрузка на ноги<small>меньше: часть уходит в руки</small></div><div class="meter"><i style="--w:50%;background:var(--grn)"></i></div></div>
+    </div>
+    <p class="src r">Шкалы схематичные, без процентов: эффекты по исследованиям небольшие и разные. Данные о меньшей крепатуре после похода с палками есть, но их проверяли на ходьбе с рюкзаком, а не на беге.</p>
+    <div class="yn r">
+      <div class="card yes"><div class="disp">ДА</div><ul><li>длинные крутые подъёмы</li><li>ультра</li><li>тяжёлый рюкзак</li><li>ты заранее тренируешься с ними</li></ul></div>
+      <div class="card no"><div class="disp">НЕТ</div><ul><li>трасса в основном ровная и беговая</li><li>гонка короткая</li><li>палки для тебя в новинку</li></ul></div>
+    </div>
+    <div class="rules r">
+      <div class="rule card"><div class="n">!</div><div><b>Правила решает организатор.</b> На некоторых стартах так: палки были с тобой на старте, значит, неси их до финиша. А на отдельных участках они бывают запрещены. Перед стартом всегда читай положение про палки.</div></div>
+      <div class="rule card"><div class="n">✓</div><div><b>Как носить, когда бежишь:</b> обе палки в одной руке посередине, вдоль тела. На подъёме ставь палку напротив противоположной ноги и толкайся назад, а не опирайся на неё как на трость.</div></div>
+    </div>
+  </section>
+
+  <!-- 4. STRENGTH -->
+  <section id="sila">
+    <div class="r">
+      <div class="kicker"><div class="n">04</div><span class="mono">сила</span></div>
+      <h2>Сила <em>для гор</em></h2>
+      <p>Для спусков нужна сила с медленным опусканием: она готовит квадрицепс к той самой тормозящей работе. Для подъёмов хорошо заходят зашагивания. Начинай без веса.</p>
+    </div>
+    <ul class="steps card r">
+      <li><div><b>Шаг вниз со ступеньки</b>, медленно, на 3 счёта. 3 × 8 на ногу.</div></li>
+      <li><div><b>Медленные выпады назад</b>, вниз на 3 счёта. 3 × 8 на ногу.</div></li>
+      <li><div><b>Присед</b> с медленным опусканием. 3 × 10.</div></li>
+      <li><div><b>Зашагивания на тумбу</b> высотой с колено. 3 × 8 на ногу.</div></li>
+      <li><div><b>Подъёмы на носок на одной ноге</b>, вниз медленно. 3 × 12.</div></li>
+    </ul>
+    <div class="r" style="margin-top:14px">
+      <span class="mono">пример недели перед горным стартом</span>
+      <div class="week card" style="margin-top:8px">
+        <div class="day"><span class="mono">пн</span><span class="pill p-easy">лёгкий бег</span><span class="pill p-sila">силовая</span></div>
+        <div class="day"><span class="mono">вт</span><span class="pill p-rest">отдых</span></div>
+        <div class="day"><span class="mono">ср</span><span class="pill p-hill">холмы: вверх быстро, вниз спокойно</span></div>
+        <div class="day"><span class="mono">чт</span><span class="pill p-easy">лёгкий бег</span><span class="pill p-sila">силовая</span></div>
+        <div class="day"><span class="mono">пт</span><span class="pill p-rest">отдых</span></div>
+        <div class="day"><span class="mono">сб</span><span class="pill p-long">длительная по холмам: шаг на крутом</span></div>
+        <div class="day"><span class="mono">вс</span><span class="pill p-easy">лёгкий бег</span></div>
+      </div>
+      <div class="note">Полный план силовой с видео упражнений: <a class="inl" href="https://igorp.run/guides/sila.html">гайд «Силовая для бегуна»</a>.</div>
+    </div>
+  </section>
+
+  <!-- 5. FIRST RACE -->
+  <section id="race">
+    <div class="r">
+      <div class="kicker"><div class="n">05</div><span class="mono">первый старт</span></div>
+      <h2>Первый трейл: <em>чек-лист</em></h2>
+      <p>Отмечай пункты, когда готово. Это советы из практики тренера, а не из исследований.</p>
+    </div>
+    <div class="check card r" id="checklist">
+      <label><input type="checkbox"><span><b>Положение прочитано</b>: обязательное снаряжение, лимиты на пунктах, палки.</span></label>
+      <label><input type="checkbox"><span><b>Считай время, а не темп.</b> Километр в гору идёт в разы дольше, чем по асфальту. Смотри на набор и лимиты.</span></label>
+      <label><input type="checkbox"><span><b>Обувь и жилет проверены</b> на длинных тренировках, ничего нового в день старта.</span></label>
+      <label><input type="checkbox"><span><b>Питание по плану.</b> На трейле ты на ногах дольше, чем на шоссе. С полумарафона и длиннее ориентир около двух гелей в час, вода и электролиты по погоде.</span></label>
+      <label><input type="checkbox"><span><b>С первого крутого подъёма иди шагом.</b> В начале все бегут, к середине идут все. Ты экономишь силы раньше.</span></label>
+      <label><input type="checkbox"><span><b>На спусках первой половины не гони.</b> Квадрицепсы понадобятся до финиша.</span></label>
+      <label><input type="checkbox"><span><b>Спуски были в тренировках</b> раз в неделю-две, от коротких к длинным.</span></label>
+    </div>
+    <div class="progress r"><i id="prog"></i></div>
+  </section>
+
+  <div class="cta r">
+    <h2>Готовишься <em style="color:#f0a56f">к горам?</em></h2>
+    <p>Распишу подготовку к трейлу под твою гонку: подъёмы, спуски, силовую и питание. Напиши мне в Telegram.</p>
+    <a class="btn" href="https://t.me/IgorPotseluev?text=%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%21%20%D0%A5%D0%BE%D1%87%D1%83%20%D0%BF%D0%BE%D0%B4%D0%B3%D0%BE%D1%82%D0%BE%D0%B2%D0%BA%D1%83%20%D0%BA%20%D1%82%D1%80%D0%B5%D0%B9%D0%BB%D1%83">Написать в Telegram</a><br>
+    <a class="btn ghost" href="https://instagram.com/igorp.run">@igorp.run</a>
+  </div>
+  <p class="foot mono">igorp.run · бег с умом и без лишних травм</p>
+</div>
+<script>
+  (function () {
+    var els = document.querySelectorAll('.r');
+    if (!('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); }
+    else {
+      var io = new IntersectionObserver(function (es) {
+        es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+      }, { threshold: 0.12 });
+      els.forEach(function (e) { io.observe(e); });
+    }
+
+    // grade tool: degrees -> percent grade (tan), slope drawing and a verdict
+    var deg = document.getElementById('deg');
+    var wedge = document.getElementById('wedge'), line = document.getElementById('slopeLine'), arc = document.getElementById('arc'), hiker = document.getElementById('hiker');
+    var degOut = document.getElementById('degOut'), pctOut = document.getElementById('pctOut'), verdict = document.getElementById('verdict');
+    var t0 = 0;
+    function draw() {
+      var d = +deg.value, a = d * Math.PI / 180, L = 520, rise = Math.min(180, Math.tan(a) * L);
+      var x1 = 20 + L, y1 = 200 - rise;
+      wedge.setAttribute('d', 'M20,200 L' + x1 + ',200 L' + x1 + ',' + y1 + ' Z');
+      line.setAttribute('d', 'M20,200 L' + x1 + ',' + y1);
+      var r = 90; arc.setAttribute('d', 'M' + (20 + r) + ',200 A' + r + ',' + r + ' 0 0,0 ' + (20 + r * Math.cos(a)) + ',' + (200 - r * Math.sin(a)));
+      degOut.textContent = d + '°';
+      pctOut.textContent = Math.round(Math.tan(a) * 100) + '%';
+      if (d < 10) { verdict.className = 'verdict v-run'; verdict.textContent = 'Обычно беги. На пологом бегуны и так переходят на шаг раньше, чем выгодно.'; }
+      else if (d < 15) { verdict.className = 'verdict v-mid'; verdict.textContent = 'Серая зона. Если бег уже почти не быстрее шага, иди.'; }
+      else { verdict.className = 'verdict v-walk'; verdict.textContent = 'Шагом, если поднимаешься медленно. Силы останутся на спуск.'; }
+    }
+    function tick(ts) {
+      // the dot walks up the slope; on a steep slope it moves in short steps
+      if (!t0) t0 = ts;
+      var d = +deg.value, a = d * Math.PI / 180, L = 520, rise = Math.min(180, Math.tan(a) * L);
+      var u = ((ts - t0) / 6000) % 1;
+      hiker.setAttribute('cx', 20 + u * L); hiker.setAttribute('cy', 200 - u * rise - 12);
+      requestAnimationFrame(tick);
+    }
+    deg.addEventListener('input', draw);
+    draw();
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) requestAnimationFrame(tick);
+    else { hiker.setAttribute('cx', 280); hiker.setAttribute('cy', 120); }
+
+    // checklist progress, remembered on this device
+    var boxes = document.querySelectorAll('#checklist input'), prog = document.getElementById('prog'), KEY = 'trail-checklist';
+    var saved = []; try { saved = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) {}
+    boxes.forEach(function (b, i) { b.checked = !!saved[i]; });
+    function upd() {
+      var n = 0, s = []; boxes.forEach(function (b) { s.push(b.checked); if (b.checked) n++; });
+      prog.style.width = (n / boxes.length * 100) + '%';
+      try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {}
+    }
+    boxes.forEach(function (b) { b.addEventListener('change', upd); });
+    upd();
+  })();
+</script>
+</body>
+</html>
