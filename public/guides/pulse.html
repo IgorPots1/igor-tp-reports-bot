@@ -6,7 +6,7 @@
 <title>Тест на ПАНО за 30 минут и твои пульсовые зоны · igorp.run</title>
 <meta name="description" content="Как за одну тренировку найти свой пульс на пороге и посчитать от него зоны. Гайд Игоря Поцелуева с калькулятором зон.">
 <meta property="og:title" content="Тест на ПАНО за 30 минут и твои пульсовые зоны">
-<meta property="og:description" content="30 минут теста, 7 зон от пульса на пороге и калькулятор">
+<meta property="og:description" content="30 минут теста, 6 зон от пульса на пороге и калькулятор">
 <meta property="og:image" content="https://igorp.run/guides/pulse/og.png">
 <meta name="theme-color" content="#f4f1ea">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -126,17 +126,17 @@
   .ztable { width: 100%; border-collapse: collapse; font-size: 16px; }
   .ztable th { text-align: left; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 400; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--dim); padding: 0 0 8px; }
   .ztable td { padding: 9px 0; border-top: 1.5px solid var(--line); }
-  .ztable td:first-child { font-family: Unbounded, system-ui, sans-serif; font-weight: 900; font-size: 15px; width: 64px; }
+  .ztable td:first-child { font-weight: 800; font-size: 15px; }
   .ztable td:last-child { text-align: right; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 700; font-size: 15px; white-space: nowrap; }
   .tcard { padding: 14px 16px 6px; }
   .math { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: #f3eee5; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 
   /* anim 3: zone bars */
   .zbars { padding: 16px 14px 14px; overflow: hidden; }
-  .zb { display: grid; grid-template-columns: 94px 1fr 76px; align-items: center; gap: 6px; padding: 5px 0; }
+  .zb { display: grid; grid-template-columns: 116px 1fr 72px; align-items: center; gap: 6px; padding: 5px 0; }
   .zl, .zv { opacity: 0; transition: opacity .4s ease; transition-delay: calc(var(--i) * .2s + .3s); }
-  .zl { font-size: 12.5px; color: var(--dim); white-space: nowrap; }
-  .zl b { font-family: Unbounded, system-ui, sans-serif; font-weight: 900; font-size: 14px; color: var(--ink); margin-right: 4px; }
+  .zl { font-size: 12px; color: var(--dim); white-space: nowrap; line-height: 1.25; }
+  .zl b { display: block; font-weight: 800; font-size: 13.5px; color: var(--ink); }
   .zv { text-align: right; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-weight: 700; font-size: 13.5px; white-space: nowrap; }
   .zt { height: 18px; border-radius: 6px; background: var(--track); overflow: hidden; }
   .zt i { display: block; height: 100%; width: var(--w); border-radius: 6px; background: var(--c, var(--acc)); transform: scaleX(0); transform-origin: left; transition: transform .7s cubic-bezier(.2,.8,.2,1); transition-delay: calc(var(--i) * .2s); }
@@ -226,7 +226,7 @@
     <div class="stats">
       <div class="stat card"><div class="disp">30</div><div class="mono">минут теста</div></div>
       <div class="stat card"><div class="disp">20</div><div class="mono">минут в счёт</div></div>
-      <div class="stat card"><div class="disp">7</div><div class="mono">зон от порога</div></div>
+      <div class="stat card"><div class="disp">6</div><div class="mono">зон от порога</div></div>
     </div>
   </header>
 
@@ -342,21 +342,29 @@
 
   <section>
     <h2 class="r">Твои зоны: <em>таблица и пример</em></h2>
-    <p class="r">Беговые зоны в процентах от пульса на ПАНО. Пример для пульса на ПАНО 168.</p>
+    <p class="r">Зоны считаем в процентах от пульса на ПАНО. Единой общепринятой таблицы нет, разные системы дают чуть разные границы, но все сходятся в главном. Я предлагаю такой вариант. Пример для пульса на ПАНО 168.</p>
 
-    <div class="zbars card anim r" style="margin-top:14px" role="img" aria-label="Зоны при пульсе на ПАНО 168: Z1 до 142, Z2 143-151, Z3 152-159, Z4 160-167, Z5a 168-173, Z5b 174-178, Z5c 179 и выше. Z1 и Z2 это основная часть бега.">
-      <div class="zb" style="--i:6;--w:100%;--c:#8f2f12"><span class="zl"><b>Z5c</b>&gt;106%</span><span class="zt"><i></i></span><span class="zv">179+</span></div>
-      <div class="zb" style="--i:5;--w:92%;--c:#a33c19"><span class="zl"><b>Z5b</b>103-106%</span><span class="zt"><i></i></span><span class="zv">174-178</span></div>
-      <div class="zb" style="--i:4;--w:84%;--c:var(--acc)"><span class="zl"><b>Z5a</b>100-102%</span><span class="zt"><i></i></span><span class="zv">168-173</span></div>
-      <div class="zb" style="--i:3;--w:74%;--c:#c96a3d"><span class="zl"><b>Z4</b>95-99%</span><span class="zt"><i></i></span><span class="zv">160-167</span></div>
-      <div class="zb" style="--i:2;--w:62%;--c:#d98d62"><span class="zl"><b>Z3</b>90-94%</span><span class="zt"><i></i></span><span class="zv">152-159</span></div>
-      <div class="zb main" style="--i:1;--w:50%"><span class="zl"><b>Z2</b>85-89%</span><span class="zt"><i></i></span><span class="zv">143-151</span></div>
-      <div class="zb main" style="--i:0;--w:38%"><span class="zl"><b>Z1</b>&lt;85%</span><span class="zt"><i></i></span><span class="zv">до 142</span></div>
-      <div class="mainnote"><i></i>Z1 и Z2: основная часть бега</div>
+    <div class="zbars card anim r" style="margin-top:14px" role="img" aria-label="Зоны при пульсе на ПАНО 168: восстановление до 134, лёгкий бег 135-151, средняя зона 152-159, порог 160-171, интервалы 172-178, анаэробная работа 179 и выше. Восстановление и лёгкий бег это основная часть бега.">
+      <div class="zb" style="--i:5;--w:100%;--c:#8f2f12"><span class="zl"><b>Анаэробная</b>&gt;106%</span><span class="zt"><i></i></span><span class="zv">179+</span></div>
+      <div class="zb" style="--i:4;--w:88%;--c:#a33c19"><span class="zl"><b>Интервалы</b>102-106%</span><span class="zt"><i></i></span><span class="zv">172-178</span></div>
+      <div class="zb" style="--i:3;--w:76%;--c:var(--acc)"><span class="zl"><b>Порог</b>95-102%</span><span class="zt"><i></i></span><span class="zv">160-171</span></div>
+      <div class="zb" style="--i:2;--w:62%;--c:#d98d62"><span class="zl"><b>Средняя</b>90-95%</span><span class="zt"><i></i></span><span class="zv">152-159</span></div>
+      <div class="zb main" style="--i:1;--w:50%"><span class="zl"><b>Лёгкий бег</b>80-90%</span><span class="zt"><i></i></span><span class="zv">135-151</span></div>
+      <div class="zb main" style="--i:0;--w:38%"><span class="zl"><b>Восстановление</b>&lt;80%</span><span class="zt"><i></i></span><span class="zv">до 134</span></div>
+      <div class="mainnote"><i></i>Восстановление и лёгкий бег: основная часть бега</div>
     </div>
 
-    <div class="math r">168 × 0,85 = 142,8<br>168 × 0,90 = 151,2<br>168 × 0,95 = 159,6<br>168 × 1,00 = 168<br>168 × 1,03 = 173,04<br>168 × 1,06 = 178,08</div>
-    <p class="note r">Зона начинается с первого целого удара, где пульс дорос до её нижнего процента. Для своего числа умножь пульс на ПАНО на 0,85, 0,90, 0,95, 1,00, 1,03 и 1,06 и округли вверх до целого. Или просто введи его ниже.</p>
+    <div class="dot-list r" style="margin-top:14px">
+      <div><span><b>Восстановление:</b> до 80% от пульса на ПАНО.</span></div>
+      <div><span><b>Лёгкий аэробный бег:</b> 80-90%.</span></div>
+      <div><span><b>Средняя зона</b> (темп марафона, длительная с блоками): 90-95%.</span></div>
+      <div><span><b>Порог:</b> 95-102%.</span></div>
+      <div><span><b>Выше порога, интервалы на VO2max:</b> 102-106%.</span></div>
+      <div><span><b>Анаэробная работа:</b> выше 106%.</span></div>
+    </div>
+
+    <div class="math r">168 × 0,80 = 134,4<br>168 × 0,90 = 151,2<br>168 × 0,95 = 159,6<br>168 × 1,02 = 171,36<br>168 × 1,06 = 178,08</div>
+    <p class="note r">Зона начинается с первого целого удара, где пульс дорос до её нижнего процента. Для своего числа умножь пульс на ПАНО на 0,80, 0,90, 0,95, 1,02 и 1,06 и округли вверх до целого. Или просто введи его ниже. Цифры в примере условные, твои будут по твоему тесту.</p>
 
     <div class="calc card r" style="margin-top:16px">
       <label for="lthr">Твой пульс на ПАНО</label>
@@ -369,8 +377,9 @@
   <section class="r">
     <h2>Как пользоваться <em>зонами</em></h2>
     <div class="rules">
-      <div class="rule card"><div class="n">1</div><div><b>Большая часть бега в Z1-Z2.</b> Лёгкие пробежки, длинные пробежки, восстановление. Если на лёгкой пробежке пульс уходит в Z3, замедлись, даже если темп кажется смешным.</div></div>
-      <div class="rule card"><div class="n">2</div><div><b>Работа выше Z2</b> (темповые, пороговые, интервалы) идёт по плану, а не на каждой тренировке.</div></div>
+      <div class="rule card"><div class="n">1</div><div><b>Основной объём держи в лёгкой зоне.</b> Лёгкие пробежки, длинные пробежки, восстановление. Если на лёгкой пробежке пульс уходит в среднюю зону, замедлись, даже если темп кажется смешным.</div></div>
+      <div class="rule card"><div class="n">2</div><div><b>Пороговую работу делай в зоне порога</b>, интервалы выше неё. Всё это идёт по плану, а не на каждой тренировке.</div></div>
+      <div class="rule card key"><div class="n">!</div><div><b>Среднюю зону не накапливай.</b> Она слишком тяжёлая для лёгких дней и слишком лёгкая для качественной работы.</div></div>
       <div class="rule card"><div class="n">3</div><div><b>Пороговый темп</b> из теста тоже пригодится: от него считаются темповые зоны, и по нему удобно бегать там, где пульс врёт (жара, высота, первые минуты интервала).</div></div>
     </div>
   </section>
@@ -478,8 +487,8 @@
     // zone below ends one beat earlier. Integer percents keep the math exact
     // (e.g. 200 * 85 / 100 is exactly 170, no float drift before ceil).
     var ZONES = [
-      ['Z1', '&lt;85%', null], ['Z2', '85-89%', 85], ['Z3', '90-94%', 90], ['Z4', '95-99%', 95],
-      ['Z5a', '100-102%', 100], ['Z5b', '103-106%', 103], ['Z5c', '&gt;106%', 106]
+      ['Восстановление', '&lt;80%', null], ['Лёгкий бег', '80-90%', 80], ['Средняя', '90-95%', 90],
+      ['Порог', '95-102%', 95], ['Интервалы', '102-106%', 102], ['Анаэробная', '&gt;106%', 106]
     ];
     function zonesFor(l) {
       var lows = ZONES.map(function (z) { return z[2] === null ? null : Math.ceil(l * z[2] / 100); });
