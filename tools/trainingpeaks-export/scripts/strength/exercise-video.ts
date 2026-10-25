@@ -13,7 +13,9 @@ import process from "node:process";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname); const REPO = path.resolve(HERE, "../../../..");
 const CANON = "/Users/igor/igor-tp-reports-bot"; const COACH = 5457637;
-export const MAP: Record<string, string> = { "664210": "https://www.youtube.com/shorts/EotSw18oR9w", "664212": "https://youtu.be/Zw6z2oXWfGA" };
+export const MAP: Record<string, string> = { "664210": "https://www.youtube.com/shorts/EotSw18oR9w", "664212": "https://youtu.be/Zw6z2oXWfGA",
+  // Ирина 6701419, выбор Игоря 25.10 — вариант 1 у всех трёх.
+  "670278": "https://www.youtube.com/watch?v=HUWWm1_CZxA", "670279": "https://www.youtube.com/watch?v=pdP0uJXvc44", "670280": "https://www.youtube.com/watch?v=sBww6q9Zybs" };
 const tp = await import(`${REPO}/src/features/trainingpeaks/tp-api-client.ts`) as {
   getTpApiJsonRaw: (h: "strength", p: string) => Promise<{ status: number; body: unknown }>;
   newStrengthExerciseModel: () => Promise<Record<string, unknown>>; createStrengthExercise: (m: Record<string, unknown>) => Promise<Record<string, unknown>>;
