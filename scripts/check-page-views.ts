@@ -32,8 +32,8 @@ for (const p of ["/wish", "/wish/0123456789abcdef0123456789abcdef"]) {
 }
 assert.ok(!isExcludedPath("/wishes"), "/wishes");
 for (const p of ["/media", "/marathon", "/tools", "/apiary", "/"]) assert.ok(!isExcludedPath(p), p);
-for (const p of ["/", "/tools", "/tools/dress", "/races", "/races/x", "/camp", "/club/a", "/start"]) assert.ok(isTrackedPath(p), p);
-for (const p of ["/privacy", "/toolsx", "/startup", "/connect", "/go/r1", "/admin"]) assert.ok(!isTrackedPath(p), p);
+for (const p of ["/", "/tools", "/tools/dress", "/races", "/races/x", "/camp", "/club/a", "/start", "/review/a", "/review/b"]) assert.ok(isTrackedPath(p), p);
+for (const p of ["/privacy", "/toolsx", "/startup", "/connect", "/go/r1", "/admin", "/reviews"]) assert.ok(!isTrackedPath(p), p);
 
 // боты
 for (const ua of ["TelegramBot (like TwitterBot)", "facebookexternalhit/1.1", "Googlebot/2.1", "vercel-screenshot/1.0", "Slack link preview", "", null]) {

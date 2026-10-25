@@ -18,7 +18,8 @@ export function isExcludedPath(pathname: string): boolean {
 }
 
 /** Публичные разделы, которые пишем в page_views. Главная — только ровно "/". */
-const TRACKED_PREFIXES = ["/tools", "/races", "/camp", "/club", "/start"];
+// /review: paid Strava breakdown price test (25.10.2026), views per variant a/b.
+const TRACKED_PREFIXES = ["/tools", "/races", "/camp", "/club", "/start", "/review"];
 
 export function isTrackedPath(pathname: string): boolean {
   if (pathname === "/") return true;
