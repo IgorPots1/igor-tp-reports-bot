@@ -6,13 +6,13 @@
  * Уже есть в custom-exercises.json или в библиотеке с тем же названием — не создаётся повторно.
  * По умолчанию СУХО. Живой: TP_ACTIONS_REAL_EXECUTION=true tsx create-custom-exercises.ts --execute-real --confirm "СОЗДАТЬ СВОИ УПРАЖНЕНИЯ"
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
 const CANON = "/Users/igor/igor-tp-reports-bot"; const HERE = path.dirname(new URL(import.meta.url).pathname);
 const MAP = path.join(CANON, "reports", "strength", "custom-exercises.json"); const COACH = 5457637; const CONFIRM = "СОЗДАТЬ СВОИ УПРАЖНЕНИЯ";
-const defs = (JSON.parse(readFileSync(path.join(HERE, "program-gym.json"), "utf8")) as { custom: Record<string, { title: string; parameters: string[] }> }).custom;
+const defs: Record<string, { title: string; parameters: string[] }> = Object.assign({}, ...readdirSync(HERE).filter((f) => /^program-.+\.json$/.test(f)).sort().map((f) => (JSON.parse(readFileSync(path.join(HERE, f), "utf8")) as { custom?: Record<string, { title: string; parameters: string[] }> }).custom ?? {}));
 const PDEF = ((): Array<Record<string, unknown>> => { const p = JSON.parse(readFileSync(path.join(CANON, "reports", "strength", "probe", "parameters-exercise.json"), "utf8")); const b = p.body ?? p; return (b.data ?? b) as Array<Record<string, unknown>>; })();
 const map: Record<string, string> = existsSync(MAP) ? JSON.parse(readFileSync(MAP, "utf8")) : {};
 const real = process.argv.includes("--execute-real"); const ci = process.argv.indexOf("--confirm");

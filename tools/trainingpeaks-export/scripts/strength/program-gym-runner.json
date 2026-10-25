@@ -1,0 +1,2235 @@
+{
+ "doc": "Программа «Силовая — зал, беговая» (Игорь 25.10). Пн и Чт, 8 недель, классика по подходам, порядок по классам. Недели 1–2 — вес подбирает ученица (2–3 повтора в запасе) и пишет в комментарий; 3 — те же веса, повторы +2; 4 — разгрузка, вес −10%, повторы как нед. 1; 5–7 — болгарский, румынская, зашагивание, гоблет 3×8 с весом +2,5 кг от её недели 3 (числа подставить после её ответа, пока вес пустой и текст в описании); 8 — разгрузка. Резинка, пресс, стопы — без прогрессии. Обращение на «вы».",
+ "custom": {
+  "custom:step_down": {
+   "title": "Сошагивание с тумбы",
+   "parameters": [
+    "RepsPerSide"
+   ]
+  },
+  "custom:band_kickback": {
+   "title": "Отведение ноги назад стоя с резинкой",
+   "parameters": [
+    "RepsPerSide"
+   ]
+  },
+  "custom:heel_walk": {
+   "title": "Ходьба на пятках",
+   "parameters": [
+    "Reps"
+   ]
+  }
+ },
+ "programs": [
+  {
+   "id": "gym_runner_mon",
+   "title": "Силовая — зал, беговая (Пн)",
+   "formats": {
+    "circuit": [],
+    "classic": [
+     {
+      "week": 1,
+      "phase": "start",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Вес подберите так, чтобы в конце подхода оставалось 2–3 повтора в запасе.\nЗапишите, пожалуйста, с каким весом делали каждое упражнение, в комментарий к тренировке. От этих цифр я буду строить следующие недели.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 2,
+      "phase": "start",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Вес подберите так, чтобы в конце подхода оставалось 2–3 повтора в запасе.\nЗапишите, пожалуйста, с каким весом делали каждое упражнение, в комментарий к тренировке. От этих цифр я буду строить следующие недели.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 3,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Вес тот же, что на неделях 1–2, повторов на 2 больше.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 4,
+      "phase": "deload",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Разгрузочная неделя: вес на 10% легче, чем на неделе 3, повторы как на первой неделе.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 5,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Болгарский, румынская тяга, зашагивание и гоблет-присед — 3×8 с весом на 2,5 кг больше, чем на неделе 3. Остальное как на неделях 1–2.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 6,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Болгарский, румынская тяга, зашагивание и гоблет-присед — 3×8 с весом на 2,5 кг больше, чем на неделе 3. Остальное как на неделях 1–2.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 7,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Болгарский, румынская тяга, зашагивание и гоблет-присед — 3×8 с весом на 2,5 кг больше, чем на неделе 3. Остальное как на неделях 1–2.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 8,
+      "phase": "deload",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Разгрузочная неделя: вес на 10% легче, чем на неделе 7.\n\nПосле тренировки: упражнения на стопы, 5 минут.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "500",
+          "title": "DB Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "764",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "523",
+          "title": "DB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "787",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантель в руке",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантель на бедре",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": "с резинкой"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:calf_machine",
+          "title": "Подъём на носки в тренажёре",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "408",
+          "title": "Arm Climb",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "gym_runner_thu",
+   "title": "Силовая — зал, беговая (Чт)",
+   "formats": {
+    "circuit": [],
+    "classic": [
+     {
+      "week": 1,
+      "phase": "start",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Вес подберите так, чтобы в конце подхода оставалось 2–3 повтора в запасе.\nЗапишите, пожалуйста, с каким весом делали каждое упражнение, в комментарий к тренировке. От этих цифр я буду строить следующие недели.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 2,
+      "phase": "start",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Вес подберите так, чтобы в конце подхода оставалось 2–3 повтора в запасе.\nЗапишите, пожалуйста, с каким весом делали каждое упражнение, в комментарий к тренировке. От этих цифр я буду строить следующие недели.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 3,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Вес тот же, что на неделях 1–2, повторов на 2 больше.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 4,
+      "phase": "deload",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Разгрузочная неделя: вес на 10% легче, чем на неделе 3, повторы как на первой неделе.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 5,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Болгарский, румынская тяга, зашагивание и гоблет-присед — 3×8 с весом на 2,5 кг больше, чем на неделе 3. Остальное как на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 6,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Болгарский, румынская тяга, зашагивание и гоблет-присед — 3×8 с весом на 2,5 кг больше, чем на неделе 3. Остальное как на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 7,
+      "phase": "step",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Болгарский, румынская тяга, зашагивание и гоблет-присед — 3×8 с весом на 2,5 кг больше, чем на неделе 3. Остальное как на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 8,
+      "phase": "deload",
+      "workoutTitle": "Силовая — зал, беговая",
+      "instructions": "Разгрузочная неделя: вес на 10% легче, чем на неделе 7.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "165",
+          "title": "Weighted Step Up",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "188",
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "гантели в руках",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сошагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": "3 секунды вниз, без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "144",
+          "title": "Goblet Squat",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "8",
+          "coachNotes": null,
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:band_kickback",
+          "title": "Отведение ноги назад стоя с резинкой",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:heel_walk",
+          "title": "Ходьба на пятках",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 шагов"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "135",
+          "title": "Bicycle Sit-Up",
+          "parameter": "Reps",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "20",
+          "coachNotes": "20 повторений"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 1,
+          "prescribedValue": "60",
+          "coachNotes": "после тренировки, 1 минута"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

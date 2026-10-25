@@ -6,7 +6,7 @@
  * Упражнения: объект из reports/strength/exercises/{id}.json; нет файла — один GET exercises/{id} (только чтение) и сохранить туда же.
  */
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const CANON = "/Users/igor/igor-tp-reports-bot";
@@ -55,12 +55,13 @@ export type Programs = { programs: Array<{ id: string; title: string; formats: {
 
 export const loadPrograms = (): Programs => {
   const base = JSON.parse(readFileSync(path.join(HERE, "programs.json"), "utf8")) as Programs;
-  const gym = JSON.parse(readFileSync(path.join(HERE, "program-gym.json"), "utf8")) as Programs; // «Зал с весами» — отдельный файл (вес в кг, свои упражнения тренера)
-  return { ...base, programs: [...base.programs, ...gym.programs] };
+  // отдельные программы с весом в кг и своими упражнениями тренера: program-gym.json («Зал с весами»), program-gym-runner.json («Силовая — зал, беговая») и т.п.
+  const extra = readdirSync(HERE).filter((f) => /^program-.+\.json$/.test(f)).sort().flatMap((f) => (JSON.parse(readFileSync(path.join(HERE, f), "utf8")) as Programs).programs);
+  return { ...base, programs: [...base.programs, ...extra] };
 };
 /** Свои упражнения тренера: custom:* → id в библиотеке TP (после создания). Нет записи — заглушка, писать с ней нельзя. */
 const CUSTOM_MAP = path.join(CANON, "reports", "strength", "custom-exercises.json");
-const customDefs = (): Record<string, { title: string; parameters: string[] }> => (JSON.parse(readFileSync(path.join(HERE, "program-gym.json"), "utf8")) as { custom: Record<string, { title: string; parameters: string[] }> }).custom;
+const customDefs = (): Record<string, { title: string; parameters: string[] }> => Object.assign({}, ...readdirSync(HERE).filter((f) => /^program-.+\.json$/.test(f)).sort().map((f) => (JSON.parse(readFileSync(path.join(HERE, f), "utf8")) as { custom?: Record<string, { title: string; parameters: string[] }> }).custom ?? {}));
 export const customMap = (): Record<string, string> => (existsSync(CUSTOM_MAP) ? JSON.parse(readFileSync(CUSTOM_MAP, "utf8")) as Record<string, string> : {});
 export const isStub = (ex: Exercise): boolean => ex.id.startsWith("custom:");
 
@@ -152,7 +153,7 @@ export function studentText(w: Record<string, unknown>): string {
       const pvs = (sets[0]?.parameterValues as Array<Record<string, unknown>>) ?? [];
       const main = pvs.find((x) => !/^Weight/.test(String(x.parameter))) ?? pvs[0]; const w = pvs.find((x) => /^Weight/.test(String(x.parameter)));
       const v = String(main?.prescribedValue); const unit = par === "Duration" ? " с" : String(main?.parameter) === "RepsPerSide" ? " на сторону" : " повт.";
-      const wTxt = w && w.prescribedValue == null ? " · вес — подбери сам" : w ? ` · ${String(w.prescribedValue)} ${/Kg$/.test(String(w.parameter)) ? "кг" : "lb"}${/PerSide/.test(String(w.parameter)) ? " на сторону" : ""}` : "";
+      const wTxt = w && w.prescribedValue == null ? " · вес не задан (подбирается)" : w ? ` · ${String(w.prescribedValue)} ${/Kg$/.test(String(w.parameter)) ? "кг" : "lb"}${/PerSide/.test(String(w.parameter)) ? " на сторону" : ""}` : "";
       out.push(`${b.blockType === "Circuit" ? "  " : ""}${String((p.exercise as Record<string, unknown>)?.title)} — ${sets.length} × ${v}${unit}${wTxt}${p.coachNotes ? ` · ${String(p.coachNotes)}` : ""}`);
     }
     if (b.blockType !== "Circuit" && b.coachNotes) out.push(`  (${String(b.coachNotes)})`);
