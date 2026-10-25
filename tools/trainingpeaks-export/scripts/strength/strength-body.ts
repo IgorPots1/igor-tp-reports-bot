@@ -22,7 +22,8 @@ type ExParam = { parameter: string; title: string; unit: unknown; category: stri
 export type Exercise = { id: string; ownerId: number; title: string; videoUrl: string | null; instructions: string | null; parameters: ExParam[]; canEdit: boolean };
 /** extra — дополнительные параметры подхода (вес в кг рядом с повторами). Значение одно на все подходы. */
 export type ExtraParam = { parameter: string; libraryParameterId: string | null; prescribedValue: string; allowEmpty?: boolean };
-export type PlanPrescription = { exerciseId: string; title: string; parameter: string; libraryParameterId: string | null; sets: number; prescribedValue: string; coachNotes: string | null; extra?: ExtraParam[] };
+/** warmup — разминочные подходы БЕЗ веса перед рабочими (решение Игоря 25.10): те же упражнение и параметр, вес пустой; в счёт sets не входят. */
+export type PlanPrescription = { exerciseId: string; title: string; parameter: string; libraryParameterId: string | null; sets: number; prescribedValue: string; coachNotes: string | null; extra?: ExtraParam[]; warmup?: { sets: number; value: string } };
 export type PlanBlock = { blockType: "SingleExercise" | "Circuit"; coachNotes: string | null; rounds?: number; prescriptions: PlanPrescription[] };
 /** rest — свой отдых для круговой (по умолчанию 15–20 с / 90–120 с). */
 /** keepOrder — не сортировать по классам (исключение, решение Игоря: «Зал» недели 1–4). */
@@ -120,7 +121,11 @@ export async function buildBody(week0: PlanWeek, o: { athleteId: number; date: s
       const tmpl = pars.map(({ x, par }) => (x.parameter === "Duration" ? "{Duration}" : /^Weight/.test(x.parameter) ? `@ {${x.parameter}} ${(par.unit as { abbreviation?: string })?.abbreviation ?? ""}`.trim() : `{${x.parameter}} ${par.title}`)).join(" ");
       prescriptions.push({
         id: randomUUID(), exercise: ex, parameters: pars.map(({ par }) => ({ parameter: par.parameter, title: par.title, unit: par.unit, category: par.category, range: par.range ?? null, id: randomUUID() })),
-        sets: Array.from({ length: p.sets }, () => ({ id: randomUUID(), isComplete: false, setOrigin: "Prescribed", parameterValues: pars.map(({ x, par }) => ({ id: randomUUID(), parameter: x.parameter, inputFormat: fmt(x.parameter), range: par.range ?? null, prescribedValue: x.prescribedValue === "" ? null : x.prescribedValue, executedValue: null })) })),
+        sets: [
+          // разминочные: основной параметр — своё значение, вес — пусто
+          ...Array.from({ length: p.warmup?.sets ?? 0 }, () => ({ id: randomUUID(), isComplete: false, setOrigin: "Prescribed", parameterValues: pars.map(({ x, par }, i) => ({ id: randomUUID(), parameter: x.parameter, inputFormat: fmt(x.parameter), range: par.range ?? null, prescribedValue: i === 0 ? p.warmup!.value : null, executedValue: null })) })),
+          ...Array.from({ length: p.sets }, () => ({ id: randomUUID(), isComplete: false, setOrigin: "Prescribed", parameterValues: pars.map(({ x, par }) => ({ id: randomUUID(), parameter: x.parameter, inputFormat: fmt(x.parameter), range: par.range ?? null, prescribedValue: x.prescribedValue === "" ? null : x.prescribedValue, executedValue: null })) })),
+        ],
         coachNotes: p.coachNotes, compliancePercent: 0, setSummaryTemplate: tmpl,
       });
     }
@@ -150,11 +155,14 @@ export function studentText(w: Record<string, unknown>): string {
     if (b.blockType === "Circuit") out.push(`КРУГ — ${String(b.coachNotes ?? "")}`);
     for (const p of ps) {
       const sets = (p.sets as Array<Record<string, unknown>>) ?? []; const par = String(((p.parameters as Array<Record<string, unknown>>) ?? [])[0]?.parameter);
-      const pvs = (sets[0]?.parameterValues as Array<Record<string, unknown>>) ?? [];
+      const valOf = (st: Record<string, unknown>): string => String(((st.parameterValues as Array<Record<string, unknown>>) ?? []).find((x) => !/^Weight/.test(String(x.parameter)))?.prescribedValue);
+      const last = sets[sets.length - 1]; const nWarm = sets.findIndex((st) => valOf(st) === valOf(last)); const warm = nWarm > 0 ? sets.slice(0, nWarm) : [];
+      const pvs = (last?.parameterValues as Array<Record<string, unknown>>) ?? [];
       const main = pvs.find((x) => !/^Weight/.test(String(x.parameter))) ?? pvs[0]; const w = pvs.find((x) => /^Weight/.test(String(x.parameter)));
       const v = String(main?.prescribedValue); const unit = par === "Duration" ? " с" : String(main?.parameter) === "RepsPerSide" ? " на сторону" : " повт.";
       const wTxt = w && w.prescribedValue == null ? " · вес не задан (подбирается)" : w ? ` · ${String(w.prescribedValue)} ${/Kg$/.test(String(w.parameter)) ? "кг" : "lb"}${/PerSide/.test(String(w.parameter)) ? " на сторону" : ""}` : "";
-      out.push(`${b.blockType === "Circuit" ? "  " : ""}${String((p.exercise as Record<string, unknown>)?.title)} — ${sets.length} × ${v}${unit}${wTxt}${p.coachNotes ? ` · ${String(p.coachNotes)}` : ""}`);
+      const warmTxt = warm.length ? `${warm.length} × ${valOf(warm[0])}${unit} разминочный без веса, затем ` : "";
+      out.push(`${b.blockType === "Circuit" ? "  " : ""}${String((p.exercise as Record<string, unknown>)?.title)} — ${warmTxt}${sets.length - warm.length} × ${v}${unit}${wTxt}${p.coachNotes ? ` · ${String(p.coachNotes)}` : ""}`);
     }
     if (b.blockType !== "Circuit" && b.coachNotes) out.push(`  (${String(b.coachNotes)})`);
   }
