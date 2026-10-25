@@ -154,6 +154,27 @@ for p_ in prog["programs"]:
                     if pr_["exerciseId"] not in ORDER:
                         err(f"{p_['id']}/{fmt_}/w{w_['week']}: нет класса порядка у {pr_['exerciseId']} {pr_['title']}")
 
+# Длинное тире «—» в тексте, который видит ученик (решение Игоря 25.10): перефразировать, не менять на дефис.
+# Поля: название тренировки, описание, заметки блока и упражнения, строка отдыха. Диапазоны «2–3» (короткое тире) не трогаем.
+# Проверяются ВСЕ файлы программ, не только programs.json; служебные doc/source/title-метки ученик не видит.
+VISIBLE = {"workoutTitle", "instructions", "coachNotes"}
+
+
+def dash_walk(o, where: str, key: "str | None" = None, in_rest: bool = False) -> None:
+    if isinstance(o, dict):
+        for k, v in o.items():
+            vis_key = key if key == "workoutTitle" and k in ("classic", "circuit") else k
+            dash_walk(v, f"{where}.{k}", vis_key, in_rest or k == "rest")
+    elif isinstance(o, list):
+        for i, v in enumerate(o):
+            dash_walk(v, f"{where}[{i}]", key, in_rest)
+    elif isinstance(o, str) and "—" in o and (key in VISIBLE or in_rest):
+        err(f"{where}: «—» в тексте для ученика: {o!r}")
+
+
+for f_ in ["programs.json"] + sorted(x for x in os.listdir(HERE) if x.startswith("program-") and x.endswith(".json")):
+    dash_walk(json.load(open(os.path.join(HERE, f_), encoding="utf-8")), f_)
+
 if errors:
     print("FAIL")
     for e in errors:
