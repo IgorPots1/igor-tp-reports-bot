@@ -1,0 +1,2217 @@
+{
+ "doc": "Программа «Силовая для трейла» для Анны Денисовой 5488703 (Игорь 26.10, вариант В с правками). Пн и Пт, 8 недель с 02.11, классика. Тяги и сгибание ног: 1–2 3×12, 3 3×14, 4 3×12 и вес −10%, 5–7 3×10 тяжелее, 8 3×10 и вес −10% от 7. Упражнения со своим весом: +2 повтора на 3 и 5–7, на разгрузках как неделя 1. Резинки, тибиалис, корпус и стойка без прогрессии; планка 45 с с недели 5, на 8 снова 30 с. С недели 5 в Пн первым сшагивание 2×6 на ногу. Исключено из-за травм: стульчик (колено), боковая планка и мостики (спина), выпады и зашагивания (колено, голеностоп), наклоны больше 5 кг (спина), прыжки (надкостница, голеностоп). Обращение на «ты».",
+ "custom": {
+  "custom:hip_hike": {
+   "title": "Подъём таза стоя на ступеньке",
+   "parameters": [
+    "RepsPerSide"
+   ]
+  },
+  "custom:single_leg_balance": {
+   "title": "Стойка на одной ноге",
+   "parameters": [
+    "Duration"
+   ]
+  }
+ },
+ "programs": [
+  {
+   "id": "anna_trail_mon",
+   "title": "Силовая для трейла (Пн)",
+   "formats": {
+    "circuit": [],
+    "classic": [
+     {
+      "week": 1,
+      "phase": "start",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": null,
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 2,
+      "phase": "start",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": null,
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 3,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "Повторов на 2 больше, вес тот же.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 4,
+      "phase": "deload",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "Разгрузочная неделя: повторы как на неделе 1, вес на 10% легче.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 5,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "В тягах и сгибании ног вес на одну ступень тяжелее, чем на неделе 3, по 10 повторов. В остальных упражнениях повторов на 2 больше, чем на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сшагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "6",
+          "coachNotes": "Ступень 10–15 см, 3 секунды вниз. Если колено ноет, ступень ниже или пропускаем и пишешь мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 6,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "В тягах и сгибании ног вес на одну ступень тяжелее, чем на неделе 3, по 10 повторов. В остальных упражнениях повторов на 2 больше, чем на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сшагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "6",
+          "coachNotes": "Ступень 10–15 см, 3 секунды вниз. Если колено ноет, ступень ниже или пропускаем и пишешь мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 7,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "В тягах и сгибании ног вес на одну ступень тяжелее, чем на неделе 3, по 10 повторов. В остальных упражнениях повторов на 2 больше, чем на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сшагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "6",
+          "coachNotes": "Ступень 10–15 см, 3 секунды вниз. Если колено ноет, ступень ниже или пропускаем и пишешь мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 8,
+      "phase": "deload",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "Разгрузочная неделя: повторы как на неделе 1, вес на 10% легче, чем на неделе 7.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:step_down",
+          "title": "Сшагивание с тумбы",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 2,
+          "prescribedValue": "6",
+          "coachNotes": "Ступень 10–15 см, 3 секунды вниз. Если колено ноет, ступень ниже или пропускаем и пишешь мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "648",
+          "title": "KB Single Leg Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "912",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса, 3 секунды вниз"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "935",
+          "title": "Wide Grip Lat Pulldown",
+          "parameter": "Reps",
+          "libraryParameterId": "1199",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "554",
+          "title": "Elevated Single Leg Body Weight Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "818",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Со ступеньки, 4 секунды вниз. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "692",
+          "title": "Mini Band Lateral Walk",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "956",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "10 шагов в каждую сторону"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5207",
+          "title": "Banded Hip Abduction",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8426",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387588",
+          "title": "Anterior Tibialis Raise",
+          "parameter": "Reps",
+          "libraryParameterId": "680617",
+          "sets": 3,
+          "prescribedValue": "20",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Медленно"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "anna_trail_fri",
+   "title": "Силовая для трейла (Пт)",
+   "formats": {
+    "circuit": [],
+    "classic": [
+     {
+      "week": 1,
+      "phase": "start",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": null,
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 2,
+      "phase": "start",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": null,
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 3,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "Повторов на 2 больше, вес тот же.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 4,
+      "phase": "deload",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "Разгрузочная неделя: повторы как на неделе 1, вес на 10% легче.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 5,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "В тягах и сгибании ног вес на одну ступень тяжелее, чем на неделе 3, по 10 повторов. В остальных упражнениях повторов на 2 больше, чем на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 6,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "В тягах и сгибании ног вес на одну ступень тяжелее, чем на неделе 3, по 10 повторов. В остальных упражнениях повторов на 2 больше, чем на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 7,
+      "phase": "step",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "В тягах и сгибании ног вес на одну ступень тяжелее, чем на неделе 3, по 10 повторов. В остальных упражнениях повторов на 2 больше, чем на неделях 1–2.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "45",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 8,
+      "phase": "deload",
+      "workoutTitle": "Силовая для трейла",
+      "instructions": "Разгрузочная неделя: повторы как на неделе 1, вес на 10% легче, чем на неделе 7.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:hip_hike",
+          "title": "Подъём таза стоя на ступеньке",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "387590",
+          "title": "Leg curl machine",
+          "parameter": "Reps",
+          "libraryParameterId": "680620",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": "680621",
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "766",
+          "title": "Cable Seated Row",
+          "parameter": "Reps",
+          "libraryParameterId": "1030",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "",
+            "allowEmpty": true
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "custom:single_leg_balance",
+          "title": "Стойка на одной ноге",
+          "parameter": "Duration",
+          "libraryParameterId": null,
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "418",
+          "title": "Banded Clam Shell",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "682",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "На ровном. Если голеностоп или надкостница отзываются, переходи на две ноги и пиши мне"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "5203",
+          "title": "Banded Bird Dog",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "8422",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "571",
+          "title": "Forearm Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "1785",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": null
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}
