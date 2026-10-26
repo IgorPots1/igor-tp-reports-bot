@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.igor.intervals.notify-outbox</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/scripts/run-intervals-notify-outbox.sh</string>
+  </array>
+  <!-- Каждые 5 минут [решение Игоря, 26.10.2026]. Почти всегда очередь пуста
+       и раннер молчит; от повторов защищают уникальные индексы в базе. -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/intervals-notify-outbox.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/igor/igor-tp-reports-bot/tools/trainingpeaks-export/logs/intervals-notify-outbox.launchd.err.log</string>
+</dict>
+</plist>

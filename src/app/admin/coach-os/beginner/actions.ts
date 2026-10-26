@@ -165,7 +165,7 @@ export async function sendCoachMessageAction(formData: FormData): Promise<void> 
   const supabase = createSupabaseServerClient();
   const { data: studentRow } = await supabase
     .from("trainingpeaks_students")
-    .select("telegram_chat_id, telegram_delivery_enabled")
+    .select("telegram_chat_id, telegram_delivery_enabled, timezone")
     .eq("id", studentUuid)
     .maybeSingle();
 
@@ -190,6 +190,9 @@ export async function sendCoachMessageAction(formData: FormData): Promise<void> 
     telegramDeliveryEnabled:
       (studentRow as { telegram_delivery_enabled?: boolean } | null)?.telegram_delivery_enabled === true,
     pageUrl,
+    // Пауза — общий заслон: на паузе бот ей не пишет, текст виден на странице.
+    sourceId,
+    todayIso: todayIsoInZone((studentRow as { timezone?: string | null } | null)?.timezone ?? null),
   });
 
   if (result.kind === "sent") {

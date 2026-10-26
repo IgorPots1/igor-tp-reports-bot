@@ -17,7 +17,8 @@ import { createSupabaseServerClient } from "@/features/supabase/server";
 import { coachReplyNoticeRu } from "@/features/intervals/plan-page/core";
 import { SITE_URL } from "@/lib/site";
 
-import type { ActivityRow } from "./repository";
+import { pauseCovering, pauseLabelRu } from "./pause";
+import { listPauses, type ActivityRow } from "./repository";
 import type { Checkin, CoachMessageContext, PlanSession, ProgressionState } from "./types";
 import type { WeekNotice } from "./week-notice";
 
@@ -151,6 +152,7 @@ export async function notifyWeekReleased(input: {
   }
 
   let result: CoachSendResult;
+  let pausedResult: CoachSendResult | null = null;
   if (!input.chatId) {
     result = { kind: "refused", code: "no_chat", messageRu: "Чат не привязан — уведомить некуда." };
   } else if (!input.telegramDeliveryEnabled) {
@@ -159,6 +161,8 @@ export async function notifyWeekReleased(input: {
       code: "delivery_disabled",
       messageRu: "У карточки выключена доставка (telegram_delivery_enabled).",
     };
+  } else if ((pausedResult = await pauseRefusal(input.sourceId, input.todayIso))) {
+    result = pausedResult;
   } else if (!isCoachSendEnabled()) {
     result = {
       kind: "prepared",
@@ -206,7 +210,22 @@ export async function notifyWeekReleased(input: {
 export type CoachSendResult =
   | { kind: "sent"; chatId: string }
   | { kind: "prepared"; reason: string }
-  | { kind: "refused"; code: "no_chat" | "delivery_disabled" | "empty_body" | "failed"; messageRu: string };
+  | { kind: "refused"; code: "no_chat" | "delivery_disabled" | "empty_body" | "failed" | "paused"; messageRu: string };
+
+/**
+ * ПАУЗА — ОБЩИЙ ЗАСЛОН ДЛЯ ВСЕХ ОТПРАВОК [решение Игоря, 26.10.2026].
+ *
+ * Пока ученица на паузе (болезнь, отъезд), бот ей не пишет: ни «план готов»,
+ * ни ответ тренера. Стоит здесь, в общих функциях, а не в кнопке или раннере:
+ * её соблюдают и кнопки админки, и очередь уведомлений (intervals_notify_outbox).
+ * Ответ при этом сохраняется и виден ей на странице — молчит только бот.
+ */
+async function pauseRefusal(sourceId: string | null | undefined, todayIso: string | null | undefined): Promise<CoachSendResult | null> {
+  if (!sourceId || !todayIso) return null;
+  const pause = pauseCovering(todayIso, await listPauses(sourceId));
+  if (!pause) return null;
+  return { kind: "refused", code: "paused", messageRu: `На паузе (${pauseLabelRu(pause, todayIso)}): бот ей не пишет.` };
+}
 
 /**
  * Доставка текста ученице.
@@ -226,6 +245,9 @@ export async function deliverCoachMessage(input: {
    * содержательная строка и кнопка к ответу (coachReplyNoticeRu).
    */
   pageUrl?: string | null;
+  /** Для заслона паузы: чья и какой сегодня день у ученицы. Без них пауза не проверяется. */
+  sourceId?: string | null;
+  todayIso?: string | null;
 }): Promise<CoachSendResult> {
   if (input.body.trim().length === 0) {
     return { kind: "refused", code: "empty_body", messageRu: "Пустой текст отправлять нечего." };
@@ -244,6 +266,8 @@ export async function deliverCoachMessage(input: {
       messageRu: "У ученицы выключена доставка в Telegram (telegram_delivery_enabled).",
     };
   }
+  const paused = await pauseRefusal(input.sourceId, input.todayIso);
+  if (paused) return paused;
   if (!isCoachSendEnabled()) {
     return {
       kind: "prepared",

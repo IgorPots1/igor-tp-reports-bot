@@ -417,6 +417,7 @@
     "check:week-notice": "npx tsx scripts/check-week-notice.ts",
     "check:plan-page": "npx tsx scripts/check-plan-page.ts",
     "check:step-texts": "npx tsx scripts/check-step-texts.ts",
+    "check:notify-outbox": "npx tsx scripts/check-notify-outbox.ts",
     "check:week-notes": "npx tsx scripts/check-week-notes.ts",
     "check:week-signal": "npx tsx scripts/check-week-signal.ts",
     "check:onboarding-answers-not-overwritten": "npx tsx scripts/check-onboarding-answers-not-overwritten.ts",
