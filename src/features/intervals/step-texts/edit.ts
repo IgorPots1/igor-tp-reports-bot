@@ -126,7 +126,31 @@ export function studentNoteOf(session: EditableSession): string {
   return (session.notes ?? []).find((n) => (n.audience ?? "student") === "student")?.body ?? "";
 }
 
-export type RowInput = { path: string; text: string; minutes: number; key: StepKey | null };
+export type RowInput = {
+  path: string;
+  text: string;
+  minutes: number;
+  key: StepKey | null;
+  /**
+   * Какой ключ форма ПОКАЗАЛА в списке (свой или догадку). Нужен, чтобы отличить
+   * «тренер выбрал ключ» от «догадка просто стояла в списке»: догаданный ключ у
+   * шага, который тренер не трогал, в базу не пишется [наряд Игоря, 26.10.2026].
+   * undefined — форма старая, считаем показанным сохранённый ключ.
+   */
+  keyShown?: StepKey | null;
+};
+
+/**
+ * Ключ, который ляжет в шаг. Менялся текст — выбранный в списке (или прежний,
+ * если выбран «без ключа»). Текст не менялся — только если тренер ЯВНО сменил
+ * ключ относительно показанного; иначе прежний, догадка не записывается.
+ */
+export function keyToStore(stored: StepKey | null, next: RowInput, textChanged: boolean): StepKey | null {
+  if (textChanged) return next.key ?? stored;
+  const shown = next.keyShown === undefined ? stored : next.keyShown;
+  if ((next.key ?? null) !== (shown ?? null)) return next.key ?? null;
+  return stored;
+}
 
 export type EditChange = {
   field: "title" | "note" | "step_text" | "step_minutes";
@@ -214,16 +238,27 @@ export function applySessionEdit(
     });
   };
 
+  // Что в каждой строке изменилось на самом деле. Шаг без изменений при
+  // пересборке возвращается ТЕМ ЖЕ объектом: ни текст, ни минуты, ни ключ.
+  const changed = new Map<string, { text: boolean; minutes: number | null; key: StepKey | null; keyChanged: boolean }>();
   for (const row of before) {
     const next = byPath.get(row.path);
     if (!next) continue;
     const text = next.text.trim();
     const minutes = Number.isFinite(next.minutes) && next.minutes > 0 ? round1(next.minutes) : row.minutes;
-    if (text !== row.text.trim()) textChange(row, { ...next, text });
+    const textChanged = text !== row.text.trim();
+    const storeKey = keyToStore(row.key, next, textChanged);
+    // Эталон — только по ключу, ВЫБРАННОМУ в списке: «без ключа» эталоном не делает,
+    // даже если у шага свой ключ есть (он остаётся в шаге, см. keyToStore).
+    if (textChanged) textChange(row, { ...next, text });
     if (minutes !== row.minutes) {
-      changes.push({ field: "step_minutes", stepIndex: stepIndexOf(row.path), stepKey: next.key ?? row.key, before: String(row.minutes), after: String(minutes), etalon: null, etalonSkipped: null });
+      changes.push({ field: "step_minutes", stepIndex: stepIndexOf(row.path), stepKey: storeKey, before: String(row.minutes), after: String(minutes), etalon: null, etalonSkipped: null });
     }
-    if (text !== row.text.trim() || minutes !== row.minutes || (next.key ?? null) !== row.key) stepsChanged = true;
+    const keyChanged = storeKey !== row.key;
+    if (textChanged || minutes !== row.minutes || keyChanged) {
+      changed.set(row.path, { text: textChanged, minutes: minutes !== row.minutes ? minutes : null, key: storeKey, keyChanged });
+      stepsChanged = true;
+    }
   }
 
   if (stepsChanged) {
@@ -237,10 +272,15 @@ export function applySessionEdit(
             return { ...step, minutes: round1(per * step.repeat.count), repeat: { ...step.repeat, steps: children } };
           }
           const next = byPath.get(`h:${path}`);
-          if (!next) return step;
-          const minutes = Number.isFinite(next.minutes) && next.minutes > 0 ? round1(next.minutes) : step.minutes;
-          const out: Step = { ...step, detail: next.text.trim() || undefined, minutes };
-          if (next.key) out.key = next.key;
+          const c = changed.get(`h:${path}`);
+          if (!next || !c) return step;
+          const out: Step = { ...step };
+          if (c.text) out.detail = next.text.trim() || undefined;
+          if (c.minutes !== null) out.minutes = c.minutes;
+          if (c.keyChanged) {
+            if (c.key) out.key = c.key;
+            else delete out.key;
+          }
           return out;
         });
       const steps = rebuild(session.steps, "");
@@ -249,15 +289,21 @@ export function applySessionEdit(
     } else {
       const segs = (session.segments ?? []).map((seg, i) => {
         const key = segmentKey(seg, session.role);
-        const next = key === "interval_work" || key === "interval_rest" ? byPath.get(`g:${key}`) : byPath.get(`s:${i}`);
-        if (!next) return seg;
-        const minutes = Number.isFinite(next.minutes) && next.minutes > 0 ? round1(next.minutes) : seg.minutes;
-        const out: Segment = { ...seg, minutes };
-        const text = next.text.trim();
-        if ("noPaceText" in seg || !("text" in seg)) out.noPaceText = text || undefined;
-        else out.text = text || null;
-        const chosen = next.key ?? key;
-        if (chosen) out.key = chosen;
+        const path = key === "interval_work" || key === "interval_rest" ? `g:${key}` : `s:${i}`;
+        const next = byPath.get(path);
+        const c = changed.get(path);
+        if (!next || !c) return seg;
+        const out: Segment = { ...seg };
+        if (c.minutes !== null) out.minutes = c.minutes;
+        if (c.text) {
+          const text = next.text.trim();
+          if ("noPaceText" in seg || !("text" in seg)) out.noPaceText = text || undefined;
+          else out.text = text || null;
+        }
+        if (c.keyChanged) {
+          if (c.key) out.key = c.key;
+          else delete out.key;
+        }
         return out;
       });
       patch.segments = segs;

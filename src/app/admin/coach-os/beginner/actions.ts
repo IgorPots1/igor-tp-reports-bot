@@ -491,6 +491,7 @@ export async function editSessionAction(formData: FormData): Promise<void> {
     text: String(formData.get(`text:${path}`) ?? ""),
     minutes: Number(String(formData.get(`min:${path}`) ?? "").replace(",", ".")),
     key: parseRowKey(formData.get(`key:${path}`)),
+    keyShown: parseRowKey(formData.get(`keyshown:${path}`)),
   }));
   const result = applySessionEdit(
     session as unknown as EditableSession,

@@ -71,6 +71,8 @@ export function SessionEditor(props: {
               <label>
                 мин <input name={`min:${row.path}`} defaultValue={String(row.minutes)} inputMode="decimal" style={{ ...input, width: 56 }} />
               </label>
+              {/* Что форма показала: по нему видно, сменил ли тренер ключ сам или догадка просто стояла. */}
+              <input type="hidden" name={`keyshown:${row.path}`} value={row.key ?? row.guessedKey ?? ""} />
               <select name={`key:${row.path}`} defaultValue={row.key ?? row.guessedKey ?? ""} style={input}>
                 <option value="">без ключа — не эталон</option>
                 {STEP_KEYS.map((k) => (

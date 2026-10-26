@@ -188,4 +188,45 @@ assert.equal(handRes.patch.description, undefined, "у рукописной оп
 const noKey = applySessionEdit(hand, { title: "Лёгкий бег", note: "", rows: [{ path: "h:1", text: "другое", minutes: 30, key: null }] }, true);
 assert.equal(noKey.changes[0].etalon, null, "без ключа правка эталоном не становится");
 
+// ── Догаданный ключ в нетронутый шаг НЕ пишется [наряд Игоря, 26.10.2026] ────
+// БЫЛО: при сохранении ключ из выпадающего списка записывался в КАЖДЫЙ шаг, даже
+// нетронутый, — догадка становилась ключом без выбора тренера (поймано на
+// проверке 22.10: «Ходьба» тестовой карточки получила warmup_walk). Держим
+// строже, чем «ключа нет»: нетронутый шаг возвращается ТЕМ ЖЕ объектом.
+{
+  const rowsHand = editableRows(hand, true);
+  const shown = (i: number) => rowsHand[i].key ?? rowsHand[i].guessedKey;
+  const r = applySessionEdit(hand, { title: "Лёгкий бег", note: "", rows: [
+    { path: "h:0", text: "5-6 км/ч.", minutes: 5, key: shown(0), keyShown: shown(0) },
+    { path: "h:1", text: EASY, minutes: 30, key: "easy_main_treadmill", keyShown: shown(1) },
+  ] }, true);
+  assert.equal(r.patch.steps?.[0], hand.steps![0], "нетронутый шаг — тот же объект: ни текста, ни минут, ни догаданного ключа");
+  assert.equal(r.patch.steps?.[0].key, undefined, "догадка «Разминка: ходьба» в шаг не записана");
+  assert.equal(r.patch.steps?.[1].key, "easy_main_treadmill", "у правленого шага ключ записан");
+
+  const onlyKey = applySessionEdit(hand, { title: "Лёгкий бег", note: "", rows: [
+    { path: "h:0", text: "5-6 км/ч.", minutes: 5, key: "warmup_easy", keyShown: shown(0) },
+    { path: "h:1", text: "старый текст", minutes: 30, key: shown(1), keyShown: shown(1) },
+  ] }, true);
+  assert.equal(onlyKey.patch.steps?.[0].key, "warmup_easy", "ключ, ЯВНО сменённый тренером, записан");
+  assert.equal(onlyKey.patch.steps?.[0].detail, "5-6 км/ч.", "…текст не тронут");
+  assert.equal(onlyKey.patch.steps?.[0].minutes, 5, "…минуты не тронуты");
+  assert.equal(onlyKey.patch.steps?.[1], hand.steps![1], "второй шаг не трогали — тот же объект");
+  assert.equal(onlyKey.changes.length, 0, "смена одного ключа — не правка текста или минут, эталона нет");
+
+  const nothing = applySessionEdit(hand, { title: "Лёгкий бег", note: "", rows: [
+    { path: "h:0", text: "5-6 км/ч.", minutes: 5, key: shown(0), keyShown: shown(0) },
+    { path: "h:1", text: "старый текст", minutes: 30, key: shown(1), keyShown: shown(1) },
+  ] }, true);
+  assert.equal(nothing.patch.steps, undefined, "ничего не меняли — строку тренировки не пишем вовсе");
+
+  const keyed = applySessionEdit(generated, { title: generated.title, note: "старая заметка", rows: [
+    { path: "s:4", text: "Новый текст заминки.", minutes: 3, key: null, keyShown: "cooldown" },
+  ] }, true);
+  const cool = keyed.changes.find((c) => c.field === "step_text");
+  assert.equal(cool?.etalon, null, "«без ключа» при правке текста эталоном не делает");
+  assert.equal(keyed.patch.segments?.[4].key, "cooldown", "…но свой ключ шага остаётся в шаге");
+  assert.equal(keyed.patch.segments?.[0], generated.segments![0], "нетронутый сегмент — тот же объект");
+}
+
 console.log("check:step-texts — все проверки пройдены");
