@@ -142,7 +142,9 @@ export async function buildBody(week0: PlanWeek, o: { athleteId: number; date: s
     workoutType: "StructuredStrength", lastUpdatedAt: null, compliancePercent: 0, rpe: null, feel: null, blocks,
     snapshot: { totalBlocks: blocks.length, completedBlocks: 0, totalSets, completedSets: 0, totalPrescriptions: totalPres, completedPrescriptions: 0 },
     prescribedDate: o.date, prescribedStartTime: null, startDateTime: null, completedDateTime: null, calendarId: o.athleteId,
-    title: week.workoutTitle, instructions, prescribedDurationInSeconds: null, orderOnDay: null, executedDurationInSeconds: null,
+    title: week.workoutTitle, instructions, prescribedDurationInSeconds: null,
+    // БЫЛО orderOnDay: null — у ручных силовых тренера всегда 1; с null Игорь не мог править наши в интерфейсе TP (наряд 26.10, гипотеза; проба на 3102415)
+    orderOnDay: 1, executedDurationInSeconds: null,
     isLocked: false, isHidden: o.hidden, workoutSubTypeId: null, id: randomUUID(),
   };
 }

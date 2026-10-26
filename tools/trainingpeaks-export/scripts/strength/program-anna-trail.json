@@ -1,5 +1,5 @@
 {
- "doc": "Программа «Силовая для трейла» для Анны Денисовой 5488703 (Игорь 26.10, вариант В с правками). Пн и Пт, 8 недель с 02.11, классика. Тяги и сгибание ног: 1–2 3×12, 3 3×14, 4 3×12 и вес −10%, 5–7 3×10 тяжелее, 8 3×10 и вес −10% от 7. Упражнения со своим весом: +2 повтора на 3 и 5–7, на разгрузках как неделя 1. Резинки, тибиалис, корпус и стойка без прогрессии; планка 45 с с недели 5, на 8 снова 30 с. С недели 5 в Пн первым сшагивание 2×6 на ногу. Исключено из-за травм: стульчик (колено), боковая планка и мостики (спина), выпады и зашагивания (колено, голеностоп), наклоны больше 5 кг (спина), прыжки (надкостница, голеностоп). Обращение на «ты».",
+ "doc": "Программа «Силовая для трейла» для Анны Денисовой 5488703 (Игорь 26.10, вариант В с правками). Пн и Пт, 8 недель с 26.10, классика. Тяги и сгибание ног: 1–2 3×12, 3 3×14, 4 3×12 и вес −10%, 5–7 3×10 тяжелее, 8 3×10 и вес −10% от 7. Упражнения со своим весом: +2 повтора на 3 и 5–7, на разгрузках как неделя 1. Резинки, тибиалис, корпус и стойка без прогрессии; планка 45 с с недели 5, на 8 снова 30 с. С недели 5 в Пн первым сшагивание 2×6 на ногу. Исключено из-за травм: стульчик (колено), боковая планка и мостики (спина), выпады и зашагивания (колено, голеностоп), наклоны больше 5 кг (спина), прыжки (надкостница, голеностоп). Обращение на «ты». Правка 26.10: тяга верхнего блока узким хватом (своё упражнение, в библиотеке нет), старт перенесён на 26.10.",
  "custom": {
   "custom:hip_hike": {
    "title": "Подъём таза стоя на ступеньке",
@@ -11,6 +11,13 @@
    "title": "Стойка на одной ноге",
    "parameters": [
     "Duration"
+   ]
+  },
+  "custom:close_grip_pulldown": {
+   "title": "Тяга верхнего блока узким хватом",
+   "parameters": [
+    "Reps",
+    "WeightKg"
    ]
   }
  },
@@ -47,10 +54,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
@@ -168,10 +175,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
@@ -289,10 +296,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "14",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
@@ -410,10 +417,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "12",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
@@ -546,10 +553,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
@@ -682,10 +689,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
@@ -818,10 +825,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
@@ -954,10 +961,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "935",
-          "title": "Wide Grip Lat Pulldown",
+          "exerciseId": "custom:close_grip_pulldown",
+          "title": "Тяга верхнего блока узким хватом",
           "parameter": "Reps",
-          "libraryParameterId": "1199",
+          "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
