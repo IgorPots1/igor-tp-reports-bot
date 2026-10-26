@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { getSingleSearchParam } from "@/app/admin/lib";
+import { CONSULT_TOOL_LABELS, loadConsultClickStats, type ConsultClickStat } from "@/features/consult-clicks/stats";
 import { ALL_PATHS, loadPageViewStats, type DayPoint, type PageViewStats, type SourceCount } from "@/features/page-views/stats";
 
 // Просмотры публичных страниц igorp.run по своему счётчику (page_views, пишет /api/pv).
@@ -80,6 +81,14 @@ export default async function ToolsStatsAdminPage({
     error = e instanceof Error ? e.message : String(e);
   }
 
+  let consult: { rows: ConsultClickStat[]; truncated: boolean } | null = null;
+  let consultError: string | null = null;
+  try {
+    consult = await loadConsultClickStats();
+  } catch (e) {
+    consultError = e instanceof Error ? e.message : String(e);
+  }
+
   const selected = s && s.byDay[requested] ? requested : ALL_PATHS;
   const total = (d: DayPoint[]) => d.reduce((sum, x) => sum + x.n, 0);
 
@@ -97,6 +106,53 @@ export default async function ToolsStatsAdminPage({
       {s?.truncated ? (
         <div className="admin-alert admin-alert-warning">Строк за 30 дней больше лимита чтения, цифры неполные.</div>
       ) : null}
+
+      <div className="admin-card">
+        <h2 className="admin-card-header">Клики «Записаться на консультацию»</h2>
+        {consultError ? (
+          <div className="admin-alert admin-alert-error">Не удалось прочитать клики: {consultError}</div>
+        ) : null}
+        {consult ? (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Инструмент</th>
+                  <th>Сегодня</th>
+                  <th>7 дней</th>
+                  <th>30 дней</th>
+                  <th>Всего</th>
+                </tr>
+              </thead>
+              <tbody>
+                {consult.rows.length ? (
+                  consult.rows.map((r) => (
+                    <tr key={r.tool}>
+                      <td>{CONSULT_TOOL_LABELS[r.tool] ?? r.tool}</td>
+                      <td>{r.today}</td>
+                      <td>
+                        <strong>{r.d7}</strong>
+                      </td>
+                      <td>{r.d30}</td>
+                      <td>{r.total}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="admin-muted">
+                      Пока нет кликов
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        <p className="admin-hint">
+          Кнопка под бесплатными инструментами. Клик пишется до перехода в Telegram, поэтому это намерение, а не
+          состоявшаяся переписка. Считаем с 26.10.2026.
+        </p>
+      </div>
 
       {s ? (
         <>

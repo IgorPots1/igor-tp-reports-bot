@@ -221,7 +221,7 @@ export default function DressCalculator() {
         </p>
       </div>
 
-      <ConsultNotice />
+      <ConsultNotice tool="dress" />
 
       <footer className={styles.footer}>igorp.run</footer>
     </div>

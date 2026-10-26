@@ -452,7 +452,7 @@ export default function ShoePicker({ catalog }: { catalog: ClientCatalog }) {
           </section>
         ))}
 
-        <ConsultNotice />
+        <ConsultNotice tool="shoes" />
 
         <button
           type="button"

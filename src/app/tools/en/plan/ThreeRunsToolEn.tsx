@@ -209,7 +209,7 @@ export default function ThreeRunsToolEn() {
       </section>
 
       {cards ? (
-        <ConsultNoticeEn prefill="Hi Igor! I used your pace calculator and I'd like a free consultation" />
+        <ConsultNoticeEn tool="en-plan" prefill="Hi Igor! I used your pace calculator and I'd like a free consultation" />
       ) : null}
 
       <div className={styles.footer}>igorp.run</div>

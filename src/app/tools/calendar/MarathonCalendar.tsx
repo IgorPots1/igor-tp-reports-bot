@@ -207,7 +207,7 @@ export default function MarathonCalendar() {
               ))}
             </ol>
 
-            <ConsultNotice prefill={PREFILL} />
+            <ConsultNotice tool="calendar" prefill={PREFILL} />
           </>
         ) : null}
       </section>

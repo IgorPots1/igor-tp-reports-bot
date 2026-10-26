@@ -379,7 +379,7 @@ export default function MarathonTestEn() {
         {shared ? "Link copied" : "Share my result"}
       </button>
 
-      <ConsultNoticeEn prefill="Hi Igor! I took your marathon readiness test and I'd like a free consultation" />
+      <ConsultNoticeEn tool="en-marathon" prefill="Hi Igor! I took your marathon readiness test and I'd like a free consultation" />
       <p className={styles.planLink}>
         Your training paces: <a href="/tools/en/plan">igorp.run/tools/en/plan</a>
       </p>

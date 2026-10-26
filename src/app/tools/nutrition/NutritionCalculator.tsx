@@ -141,7 +141,7 @@ export default function NutritionCalculator() {
         </p>
       </div>
 
-      <ConsultNotice />
+      <ConsultNotice tool="nutrition" />
 
       <div className={styles.footer}>igorp.run · питание под тренировку</div>
     </div>

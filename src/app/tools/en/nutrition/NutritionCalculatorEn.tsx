@@ -123,7 +123,7 @@ export default function NutritionCalculatorEn() {
         </p>
       </div>
 
-      <ConsultNoticeEn prefill="Hi Igor! I used your fuel calculator and I'd like a free consultation" />
+      <ConsultNoticeEn tool="en-nutrition" prefill="Hi Igor! I used your fuel calculator and I'd like a free consultation" />
 
       <div className={styles.footer}>igorp.run · fuel for your run</div>
     </div>

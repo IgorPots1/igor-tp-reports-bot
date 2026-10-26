@@ -232,7 +232,7 @@ export default function ThreeRunsTool() {
       {/* Предложение консультации — только когда раскладка посчиталась.
           При нереалистичном вводе cards равен null, результата на экране нет,
           и звать на разбор несуществующих цифр незачем. */}
-      {cards ? <ConsultNotice /> : null}
+      {cards ? <ConsultNotice tool="plan" /> : null}
 
       <div className={styles.footer}>igorp.run</div>
     </div>

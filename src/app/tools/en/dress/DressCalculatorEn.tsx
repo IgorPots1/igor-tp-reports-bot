@@ -198,7 +198,7 @@ export default function DressCalculatorEn() {
         </p>
       </div>
 
-      <ConsultNoticeEn prefill="Hi Igor! I used your what-to-wear calculator and I'd like a free consultation" />
+      <ConsultNoticeEn tool="en-dress" prefill="Hi Igor! I used your what-to-wear calculator and I'd like a free consultation" />
 
       <footer className={styles.footer}>igorp.run</footer>
     </div>

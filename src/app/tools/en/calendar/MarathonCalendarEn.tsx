@@ -188,7 +188,7 @@ export default function MarathonCalendarEn() {
               ))}
             </ol>
 
-            <ConsultNoticeEn prefill={PREFILL} />
+            <ConsultNoticeEn tool="en-calendar" prefill={PREFILL} />
           </>
         ) : null}
       </section>

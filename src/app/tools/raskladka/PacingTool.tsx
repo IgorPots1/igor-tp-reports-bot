@@ -541,7 +541,7 @@ export default function PacingTool() {
               </div>
               {showText ? <pre className={styles.out}>{text}</pre> : null}
 
-              <ConsultNotice />
+              <ConsultNotice tool="raskladka" />
             </>
           ) : null}
 
