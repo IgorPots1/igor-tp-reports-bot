@@ -3,7 +3,6 @@ import { NextRequest } from "next/server";
 import {
   createIntensiveApplication,
   getFlowConfig,
-  getSeatsLeft,
   setApplicationScreenshots,
   uploadScreenshot,
   type ApplicationStatus,
@@ -66,7 +65,7 @@ function dateOrNull(form: FormData, key: string): string | null {
  * Метка английской пробной недели (/trial/apply, решение Игоря 19.10.2026).
  * Такие анкеты НЕ относятся к русскому потоку: в flow_number пишется эта
  * строка вместо номера потока, места русского набора они не занимают и
- * getFlowConfig/getSeatsLeft для них не вызываются. Колонка flow_number —
+ * getFlowConfig для них не вызываются. Колонка flow_number —
  * text, так что миграция не нужна; в админке метка видна в фильтре потоков.
  */
 const TRIAL_EN_SOURCE = "trial-en";
@@ -104,7 +103,7 @@ function trialEnContactBlock(form: FormData, consentedAt: string): string {
 /**
  * Метка анкеты нового клиента 1:1 (/coaching/start, 60 EUR/месяц, английский
  * аккаунт @runnigor). Как и trial-en, к русскому потоку не относится: в
- * flow_number пишется эта строка, места и getFlowConfig/getSeatsLeft не
+ * flow_number пишется эта строка, места и getFlowConfig не
  * трогаются. Миграции нет: ответы, у которых есть колонка, идут в неё, а
  * остальное читаемым блоком в why_intensive.
  */
@@ -232,8 +231,6 @@ async function notifyTelegram(params: {
   city: string | null;
   goal: string | null;
   screenshotCount: number;
-  seatsLeft: number;
-  isWaitlist: boolean;
   /** Английская пробная неделя: Instagram для ссылки на оплату, без счётчика мест. */
   trialEnInstagram?: string | null;
   /** Английская пробная неделя: WhatsApp, где идёт сама неделя 1:1. */
@@ -278,13 +275,11 @@ async function notifyTelegram(params: {
         "Отправить ссылку на оплату в Instagram DM в течение 24 часов",
       ].join("\n")
     : [
-        ...(params.isWaitlist ? ["⏳ ЛИСТ ОЖИДАНИЯ"] : []),
         "📋 Новая анкета на интенсив",
         `Имя: ${params.fullName}`,
         `Город: ${params.city ?? "—"}`,
         `Цель: ${goalShort}`,
         `Скриншотов: ${params.screenshotCount}`,
-        `Мест осталось: ${params.seatsLeft}`,
       ].join("\n");
 
   // Без parse_mode: текст целиком приходит от постороннего человека, и любая
@@ -383,17 +378,17 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Места. Отказа здесь НЕТ и быть не должно. Раньше при нуле мест роут
-  // возвращал 409 ДО вставки, и анкета исчезала без единого следа: ни строки в
-  // таблице, ни файлов в bucket, ни уведомления тренеру, ни записи в логе.
-  // Теперь мест нет → анкета всё равно сохраняется, но со статусом waitlist;
-  // кого пустить в поток, решает тренер в админке.
+  // ── Мест и листа ожидания больше НЕТ (решение Игоря, 26.10.2026). Интенсив
+  // стал индивидуальным и бессрочным: старт в любой день, без потоков. Раньше
+  // анкета при нуле свободных мест молча уходила в waitlist, а тренер получал
+  // «ЛИСТ ОЖИДАНИЯ», хотя ждать было нечего: конфиг потока остался от старого
+  // формата (поток 31, 6 мест), и все новые анкеты после 6-й падали в очередь.
+  // Теперь любая анкета получает статус new.
   //
-  // Английская пробная неделя к русскому потоку не привязана: ни номер потока,
-  // ни счётчик мест её не касаются, статус всегда new.
+  // Номер потока по-прежнему пишется в flow_number для истории и фильтров
+  // админки. Английская пробная неделя к русскому потоку не привязана.
   const flow = isEnglish ? null : await getFlowConfig();
-  const seatsBefore = flow ? await getSeatsLeft(flow) : 1;
-  const status: ApplicationStatus = seatsBefore > 0 ? "new" : "waitlist";
+  const status: ApplicationStatus = "new";
 
   // ── Файлы. Проверяем до вставки, чтобы не плодить анкеты с мусором.
   const files = form
@@ -496,15 +491,12 @@ export async function POST(req: NextRequest) {
 
   // ── Уведомление независимо от базы: анкета уже сохранена, и упавший
   // Telegram не должен превращаться в ошибку для человека.
-  const seatsLeft = flow ? await getSeatsLeft(flow) : 0;
   try {
     await notifyTelegram({
       fullName,
       city: text(form, "city", 120),
       goal: text(form, "goal"),
       screenshotCount: uploaded.length,
-      seatsLeft,
-      isWaitlist: status === "waitlist",
       ...(isTrialEn ? { trialEnInstagram, trialEnWhatsapp } : {}),
       ...(isCoachingEn
         ? {

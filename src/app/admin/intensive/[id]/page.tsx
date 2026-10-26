@@ -7,8 +7,6 @@ import {
   APPLICATION_STATUSES,
   createScreenshotUrls,
   getApplication,
-  getFlowConfig,
-  getSeatsLeft,
 } from "@/features/intensive/repository";
 import {
   dayLabels,
@@ -17,7 +15,6 @@ import {
   sexLabel,
   statusBadgeClass,
   statusLabel,
-  statusTakesSeat,
   strengthLabel,
 } from "../labels";
 import {
@@ -71,11 +68,8 @@ export default async function IntensiveApplicationPage({
 
   const screenshots = await createScreenshotUrls(application.screenshots);
 
-  // Сколько мест свободно СЕЙЧАС, без учёта этой анкеты, если она места не
-  // занимает. Нужно, чтобы предупредить о переполнении до нажатия, а не после.
-  const flow = await getFlowConfig();
-  const seatsLeft = await getSeatsLeft(flow);
-  const wouldExceedLimit = seatsLeft <= 0 && !statusTakesSeat(application.status);
+  // Предупреждения о переполнении потока больше нет: интенсив бессрочный и
+  // индивидуальный, лимита мест нет (решение Игоря, 26.10.2026).
 
   return (
     <section className="admin-section">
@@ -102,21 +96,9 @@ export default async function IntensiveApplicationPage({
             {statusLabel(application.status)}
           </span>
         </div>
-        {wouldExceedLimit ? (
-          <div className="admin-alert admin-alert-warning" style={{ marginTop: 10 }}>
-            Свободных мест нет. Если переведёшь эту анкету в «Новая» или
-            «Подтверждена», в потоке станет больше {flow.seatsTotal} человек.
-            Это разрешено — решение за тобой.
-          </div>
-        ) : null}
         <div className="admin-inline-actions" style={{ marginTop: 10, gap: 8, flexWrap: "wrap" }}>
           {APPLICATION_STATUSES.filter((value) => value !== application.status).map((value) => {
-            // Предупреждение вшито в само подтверждение: тренер увидит его в
-            // момент нажатия, даже если проскроллил плашку выше.
-            const overflows = wouldExceedLimit && statusTakesSeat(value);
-            const confirmMessage = overflows
-              ? `Свободных мест нет — в потоке станет больше ${flow.seatsTotal} человек. Всё равно перевести в «${statusLabel(value)}»?`
-              : `Перевести анкету в «${statusLabel(value)}»?`;
+            const confirmMessage = `Перевести анкету в «${statusLabel(value)}»?`;
 
             return (
               <form key={value} action={updateIntensiveApplicationStatusAction}>
@@ -133,7 +115,6 @@ export default async function IntensiveApplicationPage({
                   pendingText="…"
                 >
                   {statusLabel(value)}
-                  {overflows ? " (сверх лимита)" : ""}
                 </FormActionButton>
               </form>
             );

@@ -1,12 +1,11 @@
 import Link from "next/link";
 
 import { getSingleSearchParam } from "@/app/admin/lib";
-import { formatFlowStartDate, seatsWord } from "@/lib/flow";
+import { formatFlowStartDate } from "@/lib/flow";
 import FormActionButton from "@/app/admin/FormActionButton";
 import {
   APPLICATION_STATUSES,
   getActiveFlowConfigRow,
-  getSeatsLeft,
   getWaitlistCount,
   listApplications,
   listFlowNumbers,
@@ -56,7 +55,6 @@ export default async function IntensiveApplicationsPage({
   let applications: ApplicationListItem[] = [];
   let flows: string[] = [];
   let waitlistCount = 0;
-  let seatsLeft: number | null = null;
   let loadError: string | null = null;
 
   try {
@@ -68,28 +66,20 @@ export default async function IntensiveApplicationsPage({
     applications = apps;
     flows = flowNumbers;
     waitlistCount = waitlist;
-    // Мест без номера потока не посчитать — если сама настройка потока не
-    // прочиталась, оставляем seatsLeft пустым и показываем это явно, а не
-    // тихо считаем от константы, которую тренер мог уже сто раз поменять.
-    if (flowConfig) {
-      seatsLeft = await getSeatsLeft(flowConfig);
-    }
   } catch (err) {
     // Самый частый случай — миграция ещё не применена. Показываем это прямо,
     // а не пустым списком: пустой список читается как «заявок нет».
     loadError = err instanceof Error ? err.message : String(err);
   }
 
-  const seatsTaken = flowConfig && seatsLeft !== null ? flowConfig.seatsTotal - seatsLeft : null;
-
   return (
     <section className="admin-section">
       <div className="admin-section-header">
         <h1>Беговой интенсив</h1>
         <p className="admin-section-subtitle">
-          Анкеты участников. Место в потоке занимают «Новая» и «Подтверждена».
-          «Лист ожидания» и «Отменена» место не занимают — анкета сохранена и
-          ждёт твоего решения.
+          Анкеты участников. Интенсив бессрочный, лимита мест нет: каждая новая
+          анкета приходит со статусом «Новая». «Лист ожидания» остался только у
+          старых анкет, их стоит перевести вручную.
         </p>
       </div>
 
@@ -111,8 +101,8 @@ export default async function IntensiveApplicationsPage({
         {flowConfig ? (
           <>
             <p className="admin-hint" style={{ marginTop: -4, marginBottom: 12 }}>
-              Занято в {flowConfig.number}-м потоке ({formatFlowStartDate(flowConfig.startDateIso)}):{" "}
-              {seatsTaken ?? "—"} из {flowConfig.seatsTotal} · в листе ожидания: {waitlistCount}
+              Текущий поток в базе: {flowConfig.number}-й ({formatFlowStartDate(flowConfig.startDateIso)}) ·
+              в листе ожидания: {waitlistCount}
             </p>
 
             <form className="admin-form-inline" style={{ flexWrap: "wrap", gap: 12, alignItems: "flex-end" }}>
@@ -201,20 +191,6 @@ export default async function IntensiveApplicationsPage({
       </div>
 
       <div className="admin-summary-grid admin-summary-grid-compact">
-        <div className="admin-summary-card">
-          <span className="admin-summary-label">
-            {flowConfig ? `Занято в ${flowConfig.number}-м потоке` : "Занято"}
-          </span>
-          <span className="admin-summary-value">
-            {seatsTaken !== null && flowConfig ? `${seatsTaken} из ${flowConfig.seatsTotal}` : "—"}
-          </span>
-        </div>
-        <div className="admin-summary-card">
-          <span className="admin-summary-label">Свободно</span>
-          <span className="admin-summary-value">
-            {seatsLeft !== null ? `${seatsLeft} ${seatsWord(seatsLeft)}` : "—"}
-          </span>
-        </div>
         <div className="admin-summary-card">
           <span className="admin-summary-label">В листе ожидания (все потоки)</span>
           <span className="admin-summary-value">{waitlistCount}</span>
