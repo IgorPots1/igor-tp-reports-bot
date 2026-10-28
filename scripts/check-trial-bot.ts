@@ -63,7 +63,7 @@ function msk(date: string, hhmm: string): Date {
 
 type Sent = { chatId: string; text: string; kb?: T.Keyboard; method: "send" | "edit" | "answer" | "photo"; photo?: string };
 
-function setup(opts: { now: Date; library?: LibraryRows; landingUrl?: string | null; blocked?: Set<string>; photoFails?: boolean }) {
+function setup(opts: { now: Date; library?: LibraryRows; landingUrl?: string | null; blocked?: Set<string>; photoFails?: boolean; students?: Set<number> | "throw" }) {
   const mem = memStore();
   const out: Sent[] = [];
   let now = opts.now;
@@ -90,6 +90,10 @@ function setup(opts: { now: Date; library?: LibraryRows; landingUrl?: string | n
     library: async () => opts.library ?? new Map(),
     coachChatId: "999",
     landingUrl: opts.landingUrl ?? null,
+    isActiveStudent: async (id) => {
+      if (opts.students === "throw") throw new Error("supabase down");
+      return opts.students?.has(id) ?? false;
+    },
   });
   return { bot, mem, out, setNow: (d: Date) => { now = d; } };
 }
@@ -110,6 +114,17 @@ async function passTest(env: ReturnType<typeof setup>, answers: number[], from =
 }
 
 const idxOf = (n: number, code: string) => QUESTIONS[n - 1].options.findIndex((o) => o.code === code);
+
+/** Прогнать тики с шагом 30 минут по московским дням from..to (включительно). */
+async function tickDays(env: ReturnType<typeof setup>, from: string, days: number) {
+  for (let d = 0; d < days; d++) {
+    const date = new Date(Date.parse(`${from}T00:00:00Z`) + d * 86_400_000).toISOString().slice(0, 10);
+    for (let m = 0; m < 24 * 60; m += 30) {
+      env.setNow(msk(date, `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`));
+      await env.bot.runTick();
+    }
+  }
+}
 
 async function main() {
   // ── флаг и вебхук ──────────────────────────────────────────────────────────
@@ -326,7 +341,10 @@ async function main() {
     noEm(T.morningText(fb), "утро");
   }
   for (const n of [0, 1, 2, 3]) for (const y of [1, 2, 3]) noEm(T.day4Text(n, y), "день 4");
-  assert.match(T.day4Text(2, 3), /сделал\(а\) 2 из 3 тренировок/);
+  // [правка текстов 28.10.2026] было «ты сделал(а) 2 из 3» и «больше, чем у большинства тех, кто
+  // начинает с понедельника»: форма «(а)» убрана, сравнение без данных под ним снято.
+  assert.match(T.day4Text(2, 3), /^Половина недели позади, и у тебя уже 2 из 3 тренировок\. Если хочешь/);
+  for (const n of [1, 2, 3]) assert.ok(!/большинства|сделал/.test(T.day4Text(n, 3)), T.day4Text(n, 3));
   assert.match(T.day4Text(1, 1), /1 из 1 тренировки/);
   for (const a of [{ kind: "up", rung: 2 }, { kind: "same", rung: 1 }, { kind: "careful", rung: 1 }] as const) {
     noEm(T.day7Text(2, 1, { ok: 1, easy: 1, pain: 1 }, a, "x"), "день 7");
@@ -339,8 +357,32 @@ async function main() {
   assert.equal(T.doneLine(0, 1), "1 прогулка");
   assert.equal(T.doneLine(1, 2), "1 пробежка и 2 прогулки");
   assert.equal(T.doneLine(5, 0), "5 пробежек");
-  assert.match(T.day7Text(3, 0, { easy: 1, ok: 2 }, { kind: "up", rung: 2 }, "5 x 5 мин бег / 2 мин шаг"), /^Неделя закончилась\. Итог: 3 пробежки, по ощущениям легко 1, нормально 2\. Следующий шаг для тебя: перейти на ступень выше: 5 x 5 мин бег \/ 2 мин шаг\. Дальше можем идти вместе в Базе\.$/);
+  assert.match(T.day7Text(3, 0, { easy: 1, ok: 2 }, { kind: "up", rung: 2 }, "5 x 5 мин бег / 2 мин шаг"), /^Неделя закончилась\. Итог: 3 пробежки, по ощущениям легко 1, нормально 2\. Следующий шаг для тебя: немного добавить бега, следующая тренировка будет чуть длиннее: 5 x 5 мин бег \/ 2 мин шаг\. Дальше можем идти вместе в Базе\.$/);
   for (const c of ["easy", "ok", "hard", "miss", "pain"] as const) { noEm(T.CHECKIN_REPLIES[c], c); noEm(T.eveningAnswered(c), c); }
+  // [правка текстов 28.10.2026] «В следующий раз чуть прибавим» после одной «Легко» было неправдой:
+  // planNext прибавляет только после двух чистых подряд. «Больше шага» после «Тяжело» было
+  // неправдой на первой ступени, где облегчать некуда. Ответы обещают только то, что делает логика.
+  assert.equal(T.CHECKIN_REPLIES.easy, "Отлично. Если и дальше будет легко, прибавим.");
+  assert.ok(!/следующий раз чуть прибавим/.test(T.CHECKIN_REPLIES.easy));
+  assert.ok(!/больше шага/.test(T.CHECKIN_REPLIES.hard) && T.CHECKIN_REPLIES.hard.includes("Прибавлять не будем."), T.CHECKIN_REPLIES.hard);
+  assert.deepEqual(planNext(1, [{ planned: { kind: "rung", rung: 1 }, checkin: "hard" }]), { kind: "rung", rung: 1 }, "тяжело на первой: не прибавляем");
+  assert.deepEqual(planNext(1, [{ planned: { kind: "rung", rung: 1 }, checkin: "easy" }]), { kind: "rung", rung: 1 }, "одна «Легко» ещё не прибавка");
+  // Ноль тренировок за неделю: без выдуманной статистики («почти у всех, кто начинает без поддержки»).
+  assert.ok(T.day7Text(0, 0, {}, { kind: "same", rung: 1 }, "x").startsWith("Неделя закончилась. Итог: в этот раз тренировки не сложились. Так бывает, это не приговор."));
+  assert.equal(T.FOLLOWUP_10, "Самое трудное начинается, когда пропадает новизна. В Базе я рядом каждую неделю, чтобы бег не бросить.", "без «третья неделя» и без «(а)»");
+  // Ни одного «(а)»/«(ась)» в том, что видит человек: тексты, вопросы, варианты, заготовки сообщений.
+  // Тексты тренеру (coachHealth/coachPain/coachBase) не проверяются: их читает Игорь, не участник.
+  {
+    const userFacing = Object.entries(T).filter(([k, v]) => typeof v === "string" && !k.startsWith("coach")).map(([, v]) => v as string);
+    userFacing.push(...Object.values(T.CHECKIN_REPLIES), T.nudgeText(3), T.CASE_MARINA.text, T.CASE_LENA.text, T.CASE_NADYA.text, T.CASE_SASHA.text, T.FOLLOWUP_10);
+    for (const q of QUESTIONS) userFacing.push(q.text, ...q.options.map((o) => o.label));
+    for (const n of [0, 1, 2]) userFacing.push(T.day4Text(n, 3));
+    for (const t of userFacing) assert.ok(!/\((а|ась|ла|ён|на)\)/.test(t), `форма «(а)» в тексте: ${t}`);
+  }
+  assert.equal(T.PREFILL_HEALTH, "Привет! Я из теста в боте, хочу обсудить нагрузку с учётом здоровья");
+  // Кнопки теста влезают в экран телефона: было «Боль в груди или головокружение при нагрузке» (44 знака).
+  for (const q of QUESTIONS) for (const o of q.options) assert.ok(o.label.length <= 30, `кнопка длиннее 30 знаков: ${o.label}`);
+  assert.ok(QUESTIONS[5].options.some((o) => o.code === "chest" && o.label === "Боль в груди, головокружение"));
   const who = { firstName: "Аня", username: "anya", id: 1, source: "reel12" };
   noEm(T.coachHealth(who) + T.coachPain(who, 1, "x") + T.coachBase(who, 1, 2), "тренеру");
   noEm(T.weekConfirmed(["2026-11-04", "2026-11-07"]) + T.alreadyInWeek("2026-11-04") + T.alreadyInWeek(null) + T.nudgeText(3), "прочее");
@@ -353,9 +395,22 @@ async function main() {
   noEm(voiced, "библиотека");
   assert.ok(voiced.includes("Шаг: это отдых"), voiced);
   assert.ok(voiced.includes("не смотрим, только ощущения"), voiced);
-  assert.ok(voiced.includes("усилие 2-4"), voiced);
-  assert.ok(voiced.includes("написать мне"), voiced);
-  assert.ok(voiced.includes("оцени усилие, от этой оценки"), voiced);
+  // [правка текстов 28.10.2026] было: «усилие 2-4» и «оцени усилие, от этой оценки» в голосе бота.
+  // «Ступень», «оценка усилия» новичку непонятны, а кнопки спрашивают легко/нормально/тяжело;
+  // «усилие 2-4» дублировало утреннее «Главное правило». Теперь жаргона нет ВООБЩЕ.
+  assert.ok(voiced.includes("напиши мне"), voiced);
+  assert.ok(voiced.includes("отметь, как прошло: легко, нормально или тяжело. От этого зависит следующая тренировка."), voiced);
+  assert.ok(voiced.includes("только ощущения: дыхание ровное, можно говорить полными фразами."), voiced);
+  const JARGON = /ступен|оцени|оценк|усили|по шкале|тренеру/i;
+  assert.ok(!JARGON.test(voiced), `жаргон в тексте бота: ${voiced}`);
+  for (const s of BEGINNER_LADDER) {
+    const body = fallbackWorkout(s.index).body;
+    assert.ok(!JARGON.test(body), `жаргон в запасном тексте ступени ${s.index}: ${body}`);
+    assert.ok(body.includes("легко, нормально или тяжело"), `ступень ${s.index}: просьба отметить, как прошло`);
+    if (s.kind === "continuous") assert.ok(body.includes("отметь «Тяжело»: следующая тренировка будет легче."), body);
+    // В утреннем сообщении правило про усилие ровно одно.
+    assert.equal(T.morningText(fallbackWorkout(s.index)).match(/усилие/g)?.length, 1, `ступень ${s.index}: «усилие» один раз`);
+  }
   const lib: LibraryRows = new Map([["rw_5x4_2walk", { title: "5 x 4 мин бег / 2 мин шаг", body: libText }]]);
   assert.equal(workoutFor({ kind: "rung", rung: 1 }, lib).body, voiced, "текст из библиотеки");
   assert.equal(workoutFor({ kind: "rung", rung: 1 }, new Map()).body, fallbackWorkout(1).body, "сбой библиотеки: текст методики");
@@ -364,7 +419,7 @@ async function main() {
   // ── сценарий: тест → результат → неделя → утро/вечер → день 4 → итог → База ──
   {
     const env = setup({ now: msk("2026-11-02", "15:00"), library: lib });
-    // Q1 «Пробовал(а), но бросил(а)», Q2 «Меньше 5 минут», Q3 «Задыхаюсь», Q4 «3 раза», Q5 «Прийти в форму», Q6 «Ничего».
+    // Q1 «Были попытки, но не пошло», Q2 «Меньше 5 минут», Q3 «Задыхаюсь», Q4 «3 раза», Q5 «Прийти в форму», Q6 «Ничего».
     await passTest(env, [idxOf(1, "quit"), idxOf(2, "lt5"), idxOf(3, "breath"), idxOf(4, "3"), idxOf(5, "shape"), idxOf(6, HEALTH_NONE)]);
     const u = env.mem.users.get(USER.id)!;
     assert.equal(u.stage, "result");
@@ -451,7 +506,8 @@ async function main() {
     await env.bot.runTick();
     const d4s = env.out.filter((o) => o.text.startsWith("Половина недели позади"));
     assert.equal(d4s.length, 1, "офер один раз");
-    assert.ok(d4s[0].text.includes("сделал(а) 2 из 2 тренировок"), d4s[0].text);
+    // [правка текстов 28.10.2026] было «сделал(а) 2 из 2»: формы «(а)» больше нет.
+    assert.ok(d4s[0].text.includes("у тебя уже 2 из 2 тренировок") && !d4s[0].text.includes("(а)"), d4s[0].text);
     assert.deepEqual(d4s[0].kb!.flat().map((b) => b.text), ["Сначала доделаю неделю"], "без TRIAL_BASE_LANDING_URL кнопки лендинга нет");
     // утро пн: две чистые → ступень 2 (текст из методики, библиотека его не знает)
     env.setNow(msk("2026-11-09", "08:11"));
@@ -560,9 +616,10 @@ async function main() {
     await env.bot.runTick();
     env.setNow(msk("2026-11-02", "14:11"));
     await env.bot.runTick();
-    const nudges = env.out.filter((o) => o.text.startsWith("Ты остановился(ась)"));
+    // [правка текстов 28.10.2026] было «Ты остановился(ась) на вопросе 3»: без рода.
+    const nudges = env.out.filter((o) => o.text.startsWith("Тест ждёт тебя"));
     assert.equal(nudges.length, 1, "напоминание один раз");
-    assert.equal(nudges[0].text, "Ты остановился(ась) на вопросе 3, осталось меньше минуты.");
+    assert.equal(nudges[0].text, "Тест ждёт тебя на вопросе 3, осталось меньше минуты.");
     await press(env, "tr:cont");
     assert.equal(env.out.at(-1)!.text, T.questionText(QUESTIONS[2]));
   }
@@ -600,6 +657,7 @@ async function main() {
       library: async () => new Map(),
       coachChatId: null,
       landingUrl: null,
+      isActiveStudent: async () => false,
     });
     const c1 = await flaky.runTick();
     assert.equal(c1.errors, 1);
@@ -622,6 +680,62 @@ async function main() {
     assert.equal(env.mem.users.get(USER.id)!.first_source, "reel12", "первый источник не перетирается");
   }
 
+  // ── действующий ученик по ссылке пробной недели [решение Игоря 28.10.2026] ──
+  // Раньше ученик проходил тот же путь, что и лид из рилса: тест, неделя, оферы Базы.
+  // Теперь: ровно один ответ без кнопок, строки участника нет, за две недели тиков ни звука.
+  {
+    const env = setup({ now: msk("2026-11-02", "10:00"), students: new Set([USER.id]) });
+    await env.bot.handleStart({ from: USER, chatId: USER.id, source: "reel12" });
+    assert.equal(env.out.length, 1, "ученику один ответ");
+    assert.equal(env.out[0].text, T.ALREADY_STUDENT);
+    assert.equal(env.out[0].text, "Ты уже тренируешься со мной, пробная неделя тебе не нужна. Если есть вопрос, просто напиши мне.");
+    assert.equal(env.out[0].kb, undefined, "без кнопок: ни теста, ни оферов");
+    assert.equal(env.mem.users.has(USER.id), false, "строка участника не заводится");
+    assert.ok(env.mem.events.some((e) => e.kind === "already_student"));
+    noEm(T.ALREADY_STUDENT, "ученику");
+    // Повторный тап: снова один короткий ответ, теста нет.
+    await env.bot.handleStart({ from: USER, chatId: USER.id, source: "reel13" });
+    assert.deepEqual(env.out.map((o) => o.text), [T.ALREADY_STUDENT, T.ALREADY_STUDENT]);
+    await tickDays(env, "2026-11-02", 14);
+    assert.equal(env.out.length, 2, "тик ученику ничего не шлёт");
+  }
+  {
+    // Человек был в пробной неделе и стал учеником: тап по ссылке закрывает неделю, дальше тишина.
+    const env = setup({ now: msk("2026-11-02", "15:00") });
+    await passTest(env, [idxOf(1, "no"), idxOf(2, "lt5"), idxOf(3, "never"), idxOf(4, "3"), idxOf(5, "regular"), idxOf(6, HEALTH_NONE)]);
+    await press(env, "tr:wk:y");
+    await press(env, "tr:days:m3a");
+    assert.equal(env.mem.users.get(USER.id)!.stage, "week");
+    const env2 = { ...env, bot: createTrialBot({
+      store: env.mem.store,
+      tg: { async send(chatId, text, kb) { env.out.push({ chatId: String(chatId), text, kb, method: "send" }); return 1; }, async edit() {}, async answer() {}, async sendPhoto(chatId, _u, caption) { env.out.push({ chatId: String(chatId), text: caption ?? "", method: "photo" }); return 1; } },
+      now: () => msk("2026-11-02", "16:00"),
+      library: async () => new Map(),
+      coachChatId: null,
+      landingUrl: null,
+      isActiveStudent: async () => true,
+    }) };
+    env.out.length = 0;
+    await env2.bot.handleStart({ from: USER, chatId: USER.id, source: "reel12" });
+    assert.deepEqual(env.out.map((o) => o.text), [T.ALREADY_STUDENT], "вместо «Ты уже в пробной неделе» ответ ученику");
+    assert.equal(env.mem.users.get(USER.id)!.stage, "done");
+    await tickDays(env, "2026-11-03", 14);
+    assert.equal(env.out.length, 1, "после этого ни утра, ни оферов");
+  }
+  {
+    // Сбой проверки «ученик ли»: вход обычным путём, лид из рилса не теряется.
+    const env = setup({ now: msk("2026-11-02", "10:00"), students: "throw" });
+    await env.bot.handleStart({ from: USER, chatId: USER.id, source: "reel12" });
+    assert.equal(env.out.at(-1)!.text, T.INTRO);
+    assert.equal(env.mem.users.get(USER.id)!.stage, "intro");
+  }
+  {
+    // Не ученик: обычный путь, проверка не мешает.
+    const env = setup({ now: msk("2026-11-02", "10:00"), students: new Set([777]) });
+    await env.bot.handleStart({ from: USER, chatId: USER.id, source: "reel12" });
+    assert.equal(env.out.at(-1)!.text, T.INTRO);
+  }
+
   // ── истории учеников: Марина день 2 (фото), Лена день 5, Надя после дожима дня 8, Саша после дня 10 ──
   {
     const stories = { marina: T.CASE_MARINA, lena: T.CASE_LENA, nadya: T.CASE_NADYA, sasha: T.CASE_SASHA };
@@ -632,7 +746,9 @@ async function main() {
     assert.ok(T.CASE_MARINA.text.startsWith("Расскажу про Марину.") && T.CASE_MARINA.text.endsWith("Ровно то, что ты делаешь на этой неделе."));
     assert.ok(T.CASE_MARINA.text.includes("не любит.\n\nПервое") && T.CASE_MARINA.text.includes("48:09, минус 14 минут."));
     assert.equal(T.CASE_MARINA.photoUrl, "https://igorp.run/landing/16-review-marina.jpg");
-    assert.ok(T.CASE_LENA.text.startsWith("Ещё одна история, Лена. В мае она пробежала десятку за 55:01.") && T.CASE_LENA.text.endsWith("чтобы ты не перегорел(а)."));
+    assert.ok(T.CASE_LENA.text.startsWith("Ещё одна история, Лена. В мае она пробежала десятку за 55:01.") && T.CASE_LENA.text.endsWith("кто-то следит, чтобы не было перегруза."));
+    // [правка текстов 28.10.2026] было «минус 6,5 минут»: 55:01 → 48:26 это 6:35, пишем точно.
+    assert.ok(T.CASE_LENA.text.includes("55:01. В сентябре уже за 48:26: минус 6 минут 35 секунд за четыре месяца."), T.CASE_LENA.text);
     assert.equal(T.CASE_NADYA.text, "Надя в сентябре 2025 пробежала полумарафон за 1:51:54. Через 11 месяцев за 1:39:29: минус 12 минут на той же дистанции.");
     assert.equal(T.CASE_SASHA.text, "Саша в ноябре пробежал 5 км за 26:35. В феврале уже за 22:49: почти 4 минуты за два месяца.");
     assert.equal(T.CASE_LENA.photoUrl, null, "фото Лены, Нади и Саши Игорь пришлёт позже");

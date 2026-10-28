@@ -103,6 +103,7 @@ async function runPersona(p: Persona, id: number): Promise<{ log: string[]; coac
     library: async () => new Map(), // запасной путь: тексты методики
     coachChatId: COACH,
     landingUrl: "https://igorp.run/baza",
+    isActiveStudent: async () => false, // симуляция ведёт лидов из рилса, не учеников
   });
 
   const from = { id, first_name: p.name.split(",")[0], username: null };

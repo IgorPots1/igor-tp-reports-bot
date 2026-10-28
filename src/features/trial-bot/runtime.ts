@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { getTrainingPeaksCoachChatIds } from "@/features/trainingpeaks/attention-telegram";
 import { fetchAllRows } from "@/features/supabase/paginate";
 import { createSupabaseServerClient, describeSupabaseError } from "@/features/supabase/server";
+import { listActiveStudentsByTelegramUserId } from "@/features/trainingpeaks/repository";
 import { assertNotPreviewEnvironment } from "@/lib/environment-guard";
 
 import { createTrialBot, TrialBlockedError, type TrialSession, type TrialStore, type TrialTg, type TrialUser } from "./bot";
@@ -201,6 +202,7 @@ export function productionTrialBot() {
     library: loadLibrary,
     coachChatId: getTrainingPeaksCoachChatIds()[0] ?? null,
     landingUrl: trialLandingUrl(),
+    isActiveStudent: async (id) => (await listActiveStudentsByTelegramUserId(id)).length > 0,
   });
 }
 

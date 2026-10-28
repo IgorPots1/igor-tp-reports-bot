@@ -81,6 +81,7 @@ export type TrialEventKind =
   | "answer"
   | "test_completed"
   | "health_stop"
+  | "already_student"
   | "already_runner"
   | "week_opted"
   | "week_declined"
@@ -140,6 +141,12 @@ export type TrialDeps = {
   library: () => Promise<LibraryRows>;
   coachChatId: string | null;
   landingUrl: string | null;
+  /**
+   * Действующий ли ученик (любая активная карточка на этом telegram id: TrainingPeaks,
+   * Intervals и прочие площадки). Ученику пробная неделя не нужна [решение Игоря 28.10.2026].
+   * Бросает при ошибке чтения: тогда вход идёт обычным путём (лид из рилса важнее).
+   */
+  isActiveStudent: (telegramUserId: number) => Promise<boolean>;
 };
 
 export type TrialFrom = { id: number; first_name?: string | null; username?: string | null };
@@ -203,6 +210,25 @@ export function createTrialBot(deps: TrialDeps) {
     const { from, chatId, source } = input;
     const existing = await store.getUser(from.id);
     await store.logEvent(from.id, "start", { source, returning: Boolean(existing) });
+
+    // ДЕЙСТВУЮЩИЙ УЧЕНИК [решение Игоря 28.10.2026]: пробную неделю не начинаем. Один короткий
+    // ответ и больше ничего: ни теста, ни расписания, ни оферов. Новую строку участника не
+    // заводим (тику некого будет будить); если строка осталась от прошлого прохода, она уходит
+    // в «done», и тик её больше не берёт.
+    let student = false;
+    try {
+      student = await deps.isActiveStudent(from.id);
+    } catch (e) {
+      console.warn(`[trial-bot] не удалось проверить, ученик ли ${from.id}, вход обычным путём: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (student) {
+      if (existing && existing.stage !== "done") {
+        await store.saveUser({ telegram_user_id: from.id, stage: "done", last_action_at: iso() });
+      }
+      await store.logEvent(from.id, "already_student", { source });
+      await tg.send(chatId, T.ALREADY_STUDENT);
+      return;
+    }
 
     // Посреди недели повторный вход не сбрасывает её: человек получает, где он сейчас.
     if (existing && existing.stage === "week" && !existing.stopped_at) {
