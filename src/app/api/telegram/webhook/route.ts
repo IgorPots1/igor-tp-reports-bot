@@ -47,6 +47,7 @@ import {
   updateTrainingPeaksTelegramContextObservationTextByChatMessage,
 } from "@/features/trainingpeaks/repository";
 import { handleManualVoiceTranscriptionRequest } from "@/features/voice-transcription/webhook";
+import { isTrialEnabled, parseTrialCallback, parseTrialStart } from "@/features/trial-bot/logic";
 import type { TelegramMessage, TelegramUpdate } from "@/features/telegram/types";
 
 export const runtime = "nodejs";
@@ -325,6 +326,28 @@ export async function POST(request: Request) {
   }
 
   if (parsedMessage.kind === "callback_query") {
+    // ПРОБНАЯ НЕДЕЛЯ (кнопки «tr:…»). Только при TRIAL_BOT_ENABLED и только в личке: без
+    // флага префикс не узнаётся и нажатие уходит по старому пути (ответ без действия).
+    // Состояние берётся по telegram id нажавшего, поэтому чужая кнопка ничего не меняет.
+    const trialCallback = isTrialEnabled() ? parseTrialCallback(parsedMessage.data) : null;
+    if (trialCallback && parsedMessage.userId && update.callback_query?.message?.chat.type === "private") {
+      try {
+        const { productionTrialBot } = await import("@/features/trial-bot/runtime");
+        await productionTrialBot().handleCallback({
+          from: { id: parsedMessage.userId, username: parsedMessage.username },
+          chatId: parsedMessage.chatId,
+          messageId: parsedMessage.messageId,
+          callbackQueryId: parsedMessage.callbackQueryId,
+          cb: trialCallback,
+        });
+      } catch (error) {
+        // 200 и без повтора: повтор нажатия от Telegram задвоил бы сообщения, человек нажмёт ещё раз.
+        console.error("Trial bot callback failed", { chatId: parsedMessage.chatId, error: describeSupabaseError(error) });
+        await answerTelegramCallbackQuery(parsedMessage.callbackQueryId);
+      }
+      return okResponse();
+    }
+
     // КНОПКИ ЗАВЕДЕНИЯ — ТОЛЬКО ТРЕНЕРУ. Идентификатор кнопки виден в клиенте,
     // и без этой проверки посторонний, подобрав callback_data, завёл бы себе
     // карточку ученика.
@@ -428,6 +451,31 @@ export async function POST(request: Request) {
 
   if (HELP_COMMAND_PATTERN.test(messageText)) {
     await handleTrainingPeaksTelegramHelp(parsedMessage);
+    return okResponse();
+  }
+
+  // ПРОБНАЯ НЕДЕЛЯ ИЗ РИЛСОВ: t.me/<bot>?start=trial или ?start=trial_<источник>.
+  // Только при TRIAL_BOT_ENABLED и только в личке. Стоит ДО /start run, /start club и
+  // маппинга в /tp_start: иначе незнакомец попал бы в noticeUnknownVisitor с ответом
+  // «Передал ваше сообщение тренеру», а тренер получил бы карточку «завести ученика» на
+  // каждого человека из рилса. Без флага ветка не срабатывает, и /start trial идёт старым путём.
+  const trialStart = isTrialEnabled() ? parseTrialStart(messageText) : null;
+  if (trialStart && update.message?.from?.id && update.message.chat.type === "private") {
+    try {
+      const { productionTrialBot } = await import("@/features/trial-bot/runtime");
+      await productionTrialBot().handleStart({
+        from: {
+          id: update.message.from.id,
+          first_name: update.message.from.first_name ?? null,
+          username: update.message.from.username ?? null,
+        },
+        chatId: parsedMessage.chatId,
+        source: trialStart.source,
+      });
+    } catch (error) {
+      // 200 без повтора, как и для кнопок: человек может нажать «Start» ещё раз.
+      console.error("Trial bot start failed", { chatId: parsedMessage.chatId, error: describeSupabaseError(error) });
+    }
     return okResponse();
   }
 
@@ -573,6 +621,17 @@ export async function POST(request: Request) {
         chatId: parsedMessage.chatId,
         coachChatId: getTrainingPeaksCoachChatIds()[0] ?? null,
       });
+    }
+
+    // Участник пробной недели пишет текстом: тренер уже увидел его выше (noticeUnknownVisitor,
+    // как и раньше), а человеку вместо «Не поняла команду» короткая подсказка голосом Игоря.
+    // Без флага или если человек не из пробной недели — старый ответ ниже.
+    if (isTrialEnabled()) {
+      const { productionTrialBot } = await import("@/features/trial-bot/runtime");
+      const hinted = await productionTrialBot()
+        .handleText({ from: { id: fromUser.id }, chatId: parsedMessage.chatId })
+        .catch(() => false);
+      if (hinted) return okResponse();
     }
   }
 

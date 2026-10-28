@@ -18,6 +18,7 @@ export const CONSULT_TOOL_LABELS: Record<string, string> = {
   dress: "Калькулятор одежды (ГРАДУС)",
   nutrition: "Калькулятор питания (БАНАН)",
   shoes: "Подборщик кроссовок",
+  trial: "Пробная неделя в боте",
   "en-marathon": "EN: marathon readiness test",
   "en-calendar": "EN: marathon calendar",
   "en-plan": "EN: pace calculator",

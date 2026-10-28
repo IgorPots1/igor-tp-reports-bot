@@ -20,6 +20,8 @@ export const CONSULT_TOOLS = [
   "raskladka",
   "calendar",
   "nutrition",
+  // Пробная неделя в основном боте (вход из рилсов): кнопки «Написать Игорю» и «Хочу в Базу».
+  "trial",
   // Английские инструменты /tools/en/*: ведут в WhatsApp, а не в Telegram.
   "en-plan",
   "en-dress",
