@@ -374,7 +374,7 @@ async function main() {
   // Тексты тренеру (coachHealth/coachPain/coachBase) не проверяются: их читает Игорь, не участник.
   {
     const userFacing = Object.entries(T).filter(([k, v]) => typeof v === "string" && !k.startsWith("coach")).map(([, v]) => v as string);
-    userFacing.push(...Object.values(T.CHECKIN_REPLIES), T.nudgeText(3), T.CASE_MARINA.text, T.CASE_LENA.text, T.CASE_NADYA.text, T.CASE_SASHA.text, T.FOLLOWUP_10);
+    userFacing.push(...Object.values(T.CHECKIN_REPLIES), T.nudgeText(3), T.CASE_MARINA.text, T.CASE_ANNA.text, T.CASE_NADYA.text, T.CASE_SASHA.text, T.FOLLOWUP_10);
     for (const q of QUESTIONS) userFacing.push(q.text, ...q.options.map((o) => o.label));
     for (const n of [0, 1, 2]) userFacing.push(T.day4Text(n, 3));
     for (const t of userFacing) assert.ok(!/\((а|ась|ла|ён|на)\)/.test(t), `форма «(а)» в тексте: ${t}`);
@@ -736,9 +736,10 @@ async function main() {
     assert.equal(env.out.at(-1)!.text, T.INTRO);
   }
 
-  // ── истории учеников: Марина день 2 (фото), Лена день 5, Надя после дожима дня 8, Саша после дня 10 ──
+  // ── истории учеников: Марина день 2, Аня день 5, Надя после дожима дня 8, Саша после дня 10, все с фото ──
+  // [28.10.2026] Лену (без фото) заменила Аня Кукушкина по решению Игоря; фото Ани, Нади и Саши прислал он же.
   {
-    const stories = { marina: T.CASE_MARINA, lena: T.CASE_LENA, nadya: T.CASE_NADYA, sasha: T.CASE_SASHA };
+    const stories = { marina: T.CASE_MARINA, anna: T.CASE_ANNA, nadya: T.CASE_NADYA, sasha: T.CASE_SASHA };
     for (const [k, c] of Object.entries(stories)) {
       noEm(c.text, `история ${k}`);
       assert.ok(c.text.length <= T.CAPTION_LIMIT, `подпись ${k} влезает в 1024`);
@@ -746,14 +747,14 @@ async function main() {
     assert.ok(T.CASE_MARINA.text.startsWith("Расскажу про Марину.") && T.CASE_MARINA.text.endsWith("Ровно то, что ты делаешь на этой неделе."));
     assert.ok(T.CASE_MARINA.text.includes("не любит.\n\nПервое") && T.CASE_MARINA.text.includes("48:09, минус 14 минут."));
     assert.equal(T.CASE_MARINA.photoUrl, "https://igorp.run/landing/16-review-marina.jpg");
-    assert.ok(T.CASE_LENA.text.startsWith("Ещё одна история, Лена. В мае она пробежала десятку за 55:01.") && T.CASE_LENA.text.endsWith("кто-то следит, чтобы не было перегруза."));
-    // [правка текстов 28.10.2026] было «минус 6,5 минут»: 55:01 → 48:26 это 6:35, пишем точно.
-    assert.ok(T.CASE_LENA.text.includes("55:01. В сентябре уже за 48:26: минус 6 минут 35 секунд за четыре месяца."), T.CASE_LENA.text);
+    // [28.10.2026] Лену заменила Аня; концовка в нейтральной по роду формулировке из правки текстов того же дня.
+    assert.ok(T.CASE_ANNA.text.startsWith("Ещё одна история, Аня. В мае она пробежала полумарафон за 2:03:57.") && T.CASE_ANNA.text.includes("с 49:59 до 47:02") && T.CASE_ANNA.text.endsWith("кто-то следит, чтобы не было перегруза."));
     assert.equal(T.CASE_NADYA.text, "Надя в сентябре 2025 пробежала полумарафон за 1:51:54. Через 11 месяцев за 1:39:29: минус 12 минут на той же дистанции.");
     assert.equal(T.CASE_SASHA.text, "Саша в ноябре пробежал 5 км за 26:35. В феврале уже за 22:49: почти 4 минуты за два месяца.");
-    assert.equal(T.CASE_LENA.photoUrl, null, "фото Лены, Нади и Саши Игорь пришлёт позже");
-    assert.equal(T.CASE_NADYA.photoUrl, null);
-    assert.equal(T.CASE_SASHA.photoUrl, null);
+    // Было: фото Нади и Саши null («пришлёт позже»). Теперь у всех четырёх историй фото, адреса фиксируем.
+    assert.equal(T.CASE_ANNA.photoUrl, "https://igorp.run/landing/cases/anna-kukushkina.jpg");
+    assert.equal(T.CASE_NADYA.photoUrl, "https://igorp.run/landing/cases/nadya-ponomareva.jpg");
+    assert.equal(T.CASE_SASHA.photoUrl, "https://igorp.run/landing/cases/sasha-lavrentyev.jpg");
 
     for (const photoFails of [false, true]) {
       const env = setup({ now: msk("2026-11-02", "15:00"), photoFails });
@@ -767,20 +768,22 @@ async function main() {
         await env.bot.runTick();
       }
       const photos = env.out.filter((o) => o.method === "photo");
-      const texts = env.out.filter((o) => o.method === "send" && (o.text === T.CASE_MARINA.text || o.text === T.CASE_LENA.text));
+      const texts = env.out.filter((o) => o.method === "send" && (o.text === T.CASE_MARINA.text || o.text === T.CASE_ANNA.text));
       if (!photoFails) {
-        assert.deepEqual(photos.map((p) => [p.photo, p.text]), [[T.CASE_MARINA.photoUrl, T.CASE_MARINA.text]], "Марина фото с подписью, один раз");
-        assert.deepEqual(texts.map((t) => t.text), [T.CASE_LENA.text], "Лена без фото: текст, один раз");
+        // Было: Лена без фото уходила текстом. Теперь обе истории недели фото с подписью, текстом ничего.
+        assert.deepEqual(photos.filter((p) => p.photo === T.CASE_MARINA.photoUrl || p.photo === T.CASE_ANNA.photoUrl).map((p) => [p.photo, p.text]), [[T.CASE_MARINA.photoUrl, T.CASE_MARINA.text], [T.CASE_ANNA.photoUrl, T.CASE_ANNA.text]], "Марина и Аня фото с подписью, по одному разу");
+        assert.deepEqual(texts.map((t) => t.text), [], "истории с фото не дублируются текстом");
       } else {
         assert.equal(photos.length, 0);
-        assert.deepEqual(texts.map((t) => t.text), [T.CASE_MARINA.text, T.CASE_LENA.text], "фото не принято: только текст, один раз");
+        assert.deepEqual(texts.map((t) => t.text), [T.CASE_MARINA.text, T.CASE_ANNA.text], "фото не принято: только текст, один раз");
       }
       // Дожимы дня 8 и 10: сначала дожим, следом история отдельным сообщением.
       for (const [d, t] of [["2026-11-11", "10:00"], ["2026-11-11", "12:11"], ["2026-11-11", "12:41"], ["2026-11-13", "12:11"], ["2026-11-13", "17:41"]] as const) {
         env.setNow(msk(d, t));
         await env.bot.runTick();
       }
-      const sent = env.out.filter((o) => o.method === "send").map((o) => o.text);
+      // Надя и Саша теперь с фото: подпись фото = текст истории, поэтому порядок проверяем по send и photo вместе.
+      const sent = env.out.filter((o) => o.method === "send" || o.method === "photo").map((o) => o.text);
       const i8 = sent.indexOf(T.FOLLOWUP_8);
       const i10 = sent.indexOf(T.FOLLOWUP_10);
       assert.ok(i8 >= 0 && sent[i8 + 1] === T.CASE_NADYA.text, "Надя сразу после дожима дня 8");

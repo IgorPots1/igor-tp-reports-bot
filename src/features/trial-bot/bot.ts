@@ -609,7 +609,7 @@ export function createTrialBot(deps: TrialDeps) {
       }
       case "case1":
       case "case2": {
-        const story = a.kind === "case1" ? T.CASE_MARINA : T.CASE_LENA;
+        const story = a.kind === "case1" ? T.CASE_MARINA : T.CASE_ANNA;
         const r = await sendCase(story);
         if (r === "blocked") return r;
         await store.logEvent(id, "case_sent", { which: a.kind, as: r });

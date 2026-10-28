@@ -242,22 +242,21 @@ export const CASE_MARINA: CaseStory = {
 };
 
 /** День 5. */
-export const CASE_LENA: CaseStory = {
-  photoUrl: null,
+export const CASE_ANNA: CaseStory = {
+  photoUrl: "https://igorp.run/landing/cases/anna-kukushkina.jpg",
   text:
-    "Ещё одна история, Лена. В мае она пробежала десятку за 55:01. В сентябре уже за 48:26: минус 6 минут 35 секунд за четыре месяца.\n\n" +
+    "Ещё одна история, Аня. В мае она пробежала полумарафон за 2:03:57. В августе в Самаре уже за 1:52 и второе место в своей категории. Десятка за то же лето: с 49:59 до 47:02.\n\n" +
     "Скорость не появляется от того, что каждую тренировку бежишь через силу. Она приходит, когда есть план и кто-то следит, чтобы не было перегруза.",
 };
 
-/** Отдельным сообщением после дожима дня 8. */
 export const CASE_NADYA: CaseStory = {
-  photoUrl: null,
+  photoUrl: "https://igorp.run/landing/cases/nadya-ponomareva.jpg",
   text: "Надя в сентябре 2025 пробежала полумарафон за 1:51:54. Через 11 месяцев за 1:39:29: минус 12 минут на той же дистанции.",
 };
 
 /** Отдельным сообщением после дожима дня 10. */
 export const CASE_SASHA: CaseStory = {
-  photoUrl: null,
+  photoUrl: "https://igorp.run/landing/cases/sasha-lavrentyev.jpg",
   text: "Саша в ноябре пробежал 5 км за 26:35. В феврале уже за 22:49: почти 4 минуты за два месяца.",
 };
 
