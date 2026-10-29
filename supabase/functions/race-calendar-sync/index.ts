@@ -124,50 +124,73 @@ async function probeg(from: Date, to: Date): Promise<Race[]> {
     } catch (_) { /* optional */ }
   }
   const out = new Map<string, Race>();
+  const capped: string[] = [];
   const cur = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
   while (cur <= to) {
     const mEnd = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 0));
-    // two half-month windows keep each page small and safely under any page cap
+    // окна по полмесяца; вне сезона это меньше сотни строк, в сезон — см. проверку предела ниже
     for (const [a, b] of [[1, 15], [16, mEnd.getUTCDate()]]) {
       const f = iso(new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), a)));
       const t = iso(new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), b)));
-      const html = await get(`https://probeg.org/races/?date_region=0&country=RU&date_from=${f}&date_to=${t}&hide_parkruns=on&btnSearchSubmit=1`);
-      const doc = new DOMParser().parseFromString(html, "text/html")!;
-      for (const tr of doc.querySelectorAll("table tr")) {
-        const tds = (tr as Element).querySelectorAll("td");
-        if (tds.length < 6) continue;
-        const a1 = (tds[1] as Element).querySelector('a[href^="/event/"]');
-        if (!a1) continue;
-        const sid = (a1.getAttribute("href")!.match(/\d+/) || [""])[0];
-        const dt = parseProbegDate(clean(tds[1].textContent));
-        if (!dt) continue;
-        const name = clean((tds[2] as Element).querySelector("a")?.textContent);
-        const location = clean(tds[3].textContent);
-        // distances are plain <span>s, or <a href="/race/N/"> once results are published
-        const dists = [...(tds[4] as Element).children].filter((c) =>
-          (c.tagName === "SPAN" && !(c as Element).classList.contains("label")) ||
-          (c.tagName === "A" && ((c as Element).getAttribute("href") || "").startsWith("/race/"))).map((c) => clean(c.textContent)).filter(Boolean);
-        // races with results get an extra column, so links always live in the LAST cell
-        const links = [...(tds[tds.length - 1] as Element).querySelectorAll("a")] as Element[];
-        const href = (pred: (a: Element) => boolean) => { const l = links.find(pred); const h = l?.getAttribute("href"); return h && h.length < 400 ? h : null; };
-        const site = href((a) => clean(a.textContent) === "Сайт");
-        const reg = href((a) => clean(a.textContent) === "Регистрация");
-        const vk = href((a) => /vk\.(com|ru)/.test(a.getAttribute("href") || ""));
-        const { city, region } = splitLocation(location);
-        const cls = classify(name, dists, "", trailIds.has(sid));
-        if (triIds.has(sid)) cls.race_type = "tri";
-        out.set(sid, {
-          id: `probeg:${sid}`, source: "probeg", source_id: sid, source_url: `https://probeg.org/event/${sid}/`, name,
-          date_start: dt[0], date_end: dt[1], date_text: clean(tds[1].textContent), city, region, location,
-          distances: dists, dist_km: dists.map(distToKm).filter((x): x is number => x !== null),
-          race_type: cls.race_type, tags: cls.tags, site_url: site, reg_url: reg, vk_url: vk,
-        });
+      // Таблица probeg режется на 100 строках («Показаны записи с 1 по 100»), и не по дате: срезаются
+      // строки из середины окна. Упёрлись — то же окно по дням. Было (до 29.10.2026): без проверки, и
+      // с мая по сентябрь (16–30.09.2026 — больше сотни) часть стартов молча не доходила до календаря.
+      if (takeProbegPage(await get(probegUrl(f, t)), out, trailIds, triIds) >= PROBEG_PAGE_CAP) {
+        capped.push(`${f}..${t}`);
+        for (let d = Math.max(Date.parse(f), from.getTime()); d <= Date.parse(t); d += 864e5) {
+          await sleep(1200);
+          const day = iso(new Date(d));
+          if (takeProbegPage(await get(probegUrl(day, day)), out, trailIds, triIds) >= PROBEG_PAGE_CAP) capped.push(day);
+        }
       }
       await sleep(1200);
     }
     cur.setUTCMonth(cur.getUTCMonth() + 1);
   }
+  if (capped.length) console.warn(`probeg: окна на пределе 100 строк: ${capped.join(", ")}`);
   return [...out.values()];
+}
+
+const PROBEG_PAGE_CAP = 100;
+const probegUrl = (f: string, t: string) =>
+  `https://probeg.org/races/?date_region=0&country=RU&date_from=${f}&date_to=${t}&hide_parkruns=on&btnSearchSubmit=1`;
+
+/** Строки одной страницы probeg в out; возвращает, сколько строк стартов было на странице. */
+function takeProbegPage(html: string, out: Map<string, Race>, trailIds: Set<string>, triIds: Set<string>): number {
+  let n = 0;
+  const doc = new DOMParser().parseFromString(html, "text/html")!;
+  for (const tr of doc.querySelectorAll("table tr")) {
+    const tds = (tr as Element).querySelectorAll("td");
+    if (tds.length < 6) continue;
+    const a1 = (tds[1] as Element).querySelector('a[href^="/event/"]');
+    if (!a1) continue;
+    n++;
+    const sid = (a1.getAttribute("href")!.match(/\d+/) || [""])[0];
+    const dt = parseProbegDate(clean(tds[1].textContent));
+    if (!dt) continue;
+    const name = clean((tds[2] as Element).querySelector("a")?.textContent);
+    const location = clean(tds[3].textContent);
+    // distances are plain <span>s, or <a href="/race/N/"> once results are published
+    const dists = [...(tds[4] as Element).children].filter((c) =>
+      (c.tagName === "SPAN" && !(c as Element).classList.contains("label")) ||
+      (c.tagName === "A" && ((c as Element).getAttribute("href") || "").startsWith("/race/"))).map((c) => clean(c.textContent)).filter(Boolean);
+    // races with results get an extra column, so links always live in the LAST cell
+    const links = [...(tds[tds.length - 1] as Element).querySelectorAll("a")] as Element[];
+    const href = (pred: (a: Element) => boolean) => { const l = links.find(pred); const h = l?.getAttribute("href"); return h && h.length < 400 ? h : null; };
+    const site = href((a) => clean(a.textContent) === "Сайт");
+    const reg = href((a) => clean(a.textContent) === "Регистрация");
+    const vk = href((a) => /vk\.(com|ru)/.test(a.getAttribute("href") || ""));
+    const { city, region } = splitLocation(location);
+    const cls = classify(name, dists, "", trailIds.has(sid));
+    if (triIds.has(sid)) cls.race_type = "tri";
+    out.set(sid, {
+      id: `probeg:${sid}`, source: "probeg", source_id: sid, source_url: `https://probeg.org/event/${sid}/`, name,
+      date_start: dt[0], date_end: dt[1], date_text: clean(tds[1].textContent), city, region, location,
+      distances: dists, dist_km: dists.map(distToKm).filter((x): x is number => x !== null),
+      race_type: cls.race_type, tags: cls.tags, site_url: site, reg_url: reg, vk_url: vk,
+    });
+  }
+  return n;
 }
 
 // ---------- source: myrace.info ----------

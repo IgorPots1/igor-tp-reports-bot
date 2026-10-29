@@ -38,6 +38,33 @@ assert.deepEqual(row.distances, ["12 км", "5 км", "500 м (дети)"]);
 assert.equal(row.finishers, 203);
 assert.equal(row.vk, "https://vk.com/simbirskiimarathon");
 
+// Многодневный старт: probeg оборачивает дату в <span class="nobr"> (живая вёрстка 29.10.2026). Было: такие
+// строки молча выпадали, и в ожидаемых не было ни Московского марафона, ни других стартов выходного дня.
+const multi = `<table><tr><td>26</td><td class="text-right"><a href="/event/71731/"><span class="nobr">26–27.09.2026</span></a></td><td><a href="/event/71731/">XIII Московский Марафон</a><span class="pull-right"><p>4.9, число оценивших&nbsp;—&nbsp;43</p></span></td><td><a href="/races/city/1/">Москва</a></td><td><a href="/race/1/">марафон</a><br/><a href="/race/2/">10 км</a></td><td class="text-center"> 16132 <br/> 25 </td><td><a href="https://moscowmarathon.org/">Сайт</a></td></tr>
+<tr><td>27</td><td><a href="/event/1/"><span class="nobr">31.10–01.11.2026</span></a></td><td><a href="/event/1/">Ночной трейл</a></td><td>Казань</td><td><span>10 км</span></td><td>40</td><td></td></tr></table>`;
+const [mm, cross] = parsePastProbeg(multi);
+assert.ok(mm, "многодневный старт не выпадает");
+assert.equal(mm.sid, "71731");
+assert.equal(mm.date, "2026-09-26", "дата — первый день");
+assert.equal(mm.name, "XIII Московский Марафон");
+assert.equal(mm.city, "Москва");
+assert.equal(mm.finishers, 16132);
+assert.equal(cross?.date, "2026-10-31", "через границу месяца — первый день со своим месяцем");
+
+// «Московский марафон» и «Московский полумарафон» — один ключ «московский» (марафон и полумарафон —
+// служебные слова). Было (до 29.10.2026): ожидаемые склеивали их по ключу и городу и оставляли только
+// свежий; полумарафон (21 тысяча финишёров) пропадал. Теперь это разные старты, и один не объявляет другой.
+const moscow = (sid: string, date: string, name: string): PastRace => ({ sid, date, name, city: "Москва", distances: [], finishers: 1, vk: null, site: null });
+const both = buildExpected([moscow("71731", "2026-09-26", "XIII Московский Марафон"), moscow("71677", "2026-04-25", "Московский полумарафон")], []);
+assert.deepEqual(both.expected.map((e) => e.id).sort(), ["probeg:71677", "probeg:71731"], "марафон и полумарафон — оба ожидаемые");
+assert.equal(findNextEdition({ name: "Московский полумарафон", city: "Москва", date: "2026-04-25" }, [{ id: "x", name: "Московский марафон", date_start: "2027-04-24", city: "Москва", region: null }]), null, "марафон не следующее проведение полумарафона");
+assert.equal(findNextEdition({ name: "XIII Московский Марафон", city: "Москва", date: "2026-09-26" }, [{ id: "y", name: "XIV Московский марафон", date_start: "2027-09-25", city: "Москва", region: null }])?.id, "y", "марафон — следующий марафон");
+
+// Название из одних служебных слов: ключ не пустой, старт не пропадает (ЗаБег.РФ, Москва 2026).
+assert.equal(nameKey("Всероссийский полумарафон «ЗаБег.РФ»"), "всероссийский забег полумарафон рф");
+assert.equal(nameKey("Всероссийский полумарафон «ЗаБег.РФ» 2027"), nameKey("Всероссийский полумарафон «ЗаБег.РФ»"));
+assert.equal(buildExpected([moscow("71439", "2026-05-23", "Всероссийский полумарафон «ЗаБег.РФ»")], []).expected.length, 1, "ЗаБег.РФ — в ожидаемых");
+
 // Ключ: без года, римских и порядковых номеров и служебных слов.
 assert.equal(nameKey("XIII Казанский марафон 2026"), nameKey("XIV Казанский марафон 2027"));
 assert.equal(nameKey("47-й Сормовский осенний пробег"), nameKey("48-й Сормовский осенний пробег"));

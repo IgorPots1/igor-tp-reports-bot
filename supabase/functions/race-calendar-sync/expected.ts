@@ -59,7 +59,10 @@ export function parsePastProbeg(html: string): PastRace[] {
   for (const m of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
     const tds = [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((x) => x[1]);
     if (tds.length < 6) continue;
-    const ev = tds[1].match(/href="\/event\/(\d+)\/"[^>]*>([^<]+)</);
+    // Дату многодневного старта probeg оборачивает в <span class="nobr">. Было (до 29.10.2026):
+    // ждали текст сразу за ссылкой, и ВСЕ многодневные старты молча выпадали из ожидаемых — среди
+    // них Московский марафон (26–27.09.2026, 16 тысяч финишёров).
+    const ev = tds[1].match(/href="\/event\/(\d+)\/"[^>]*>\s*(?:<span[^>]*>)?([^<]+)</);
     if (!ev) continue;
     const dm = ev[2].trim().match(/(\d{2})\.(\d{2})\.(\d{4})\s*$/) || ev[2].trim().match(/^(\d{2})(?:\.(\d{2}))?(?:\.(\d{4}))?/);
     const first = ev[2].trim().match(/^(\d{2})(?:\.(\d{2}))?(?:\.(\d{4}))?/);
@@ -85,7 +88,9 @@ export function parsePastProbeg(html: string): PastRace[] {
 
 // ── сопоставление «это то же событие, но в следующем году» ───────────────────
 
-const STOP = new Set(["забег", "пробег", "трейл", "trail", "марафон", "полумарафон", "кросс", "race", "run", "фестиваль", "бега", "по", "на", "и", "в", "the", "открытый", "чемпионат", "этап", "кубок", "г", "ежегодный", "традиционный", "международный", "всероссийский"]);
+const STOP = new Set(["забег", "пробег", "трейл", "trail", "марафон", "полумарафон", "кросс", "race", "run", "фестиваль", "бега", "по", "на", "и", "в", "the", "открытый", "чемпионат", "этап", "кубок", "г", "ежегодный", "традиционный", "международный", "всероссийский",
+  // Спонсорская приставка меняется от года к году: «Сочи Марафон» 2025 → «Альфа-Банк Сочи Марафон» 2026.
+  "банк", "альфа", "сбер", "сберпрайм"]);
 
 /** Ключ названия без года, номеров проведения и служебных слов: «XIII Казанский марафон 2026» → «казанский». */
 export function nameKey(name: string): string {
@@ -93,14 +98,16 @@ export function nameKey(name: string): string {
 }
 
 export function keyTokens(name: string): Set<string> {
-  return new Set(
-    name
-      .toLowerCase()
-      .replace(/ё/g, "е")
-      .replace(/[«»"'.,:;!?()|—–\-\/№]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length > 2 && !STOP.has(w) && !/^[ivxlc]+$/.test(w) && !/^\d+(-?(й|я|е|ый|ой|ий))?$/.test(w) && !/^20\d\d$/.test(w)),
-  );
+  const words = name
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[«»"'.,:;!?()|—–\-\/№]/g, " ")
+    .split(/\s+/)
+    .filter((w) => !/^[ivxlc]+$/.test(w) && !/^\d+(-?(й|я|е|ый|ой|ий))?$/.test(w) && !/^20\d\d$/.test(w));
+  const key = new Set(words.filter((w) => w.length > 2 && !STOP.has(w)));
+  // Название из одних служебных слов: «Всероссийский полумарафон «ЗаБег.РФ»» (Москва 2026, 46 тысяч
+  // финишёров). Было (до 29.10.2026): пустой ключ, и buildExpected такой старт пропускал.
+  return key.size ? key : new Set(words.filter((w) => w.length > 1));
 }
 
 /** Доля слов a, нашедшихся в b (точно или по общему началу из 5 букв). */
@@ -128,6 +135,10 @@ const VARIANTS: [string, RegExp][] = [
   ["spring", /spring|весенн|весна/i],
   ["summer", /summer|летн|лето/i],
   ["autumn", /autumn|осенн|осень/i],
+  // «Марафон» и «полумарафон» — служебные слова ключа, и «Московский марафон» с «Московским
+  // полумарафоном» давали один ключ «московский»: buildExpected оставлял один из двух (до 29.10.2026).
+  ["half", /полумарафон|half[\s-]?marathon/i],
+  ["marathon", /(?<!полу)марафон|(?<!half[\s-]?)marathon/i],
 ];
 const variants = (name: string) => VARIANTS.filter(([, re]) => re.test(name)).map(([k]) => k).join(",");
 
@@ -195,7 +206,7 @@ export function buildExpected(past: PastRace[], future: FutureRow[]): { expected
     if (type === "track") continue;
     const key = nameKey(p.name);
     if (!key) continue;
-    const k = `${key}|${norm(p.city)}`;
+    const k = `${key}|${norm(p.city)}|${variants(p.name)}`;
     if (seenKey.has(k)) continue;
     seenKey.add(k);
     const next = findNextEdition({ ...p, race_type: type }, future);
