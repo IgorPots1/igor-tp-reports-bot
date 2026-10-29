@@ -1105,6 +1105,18 @@ async function cmdDup(file: string) {
   }
 }
 
+export type DedupeHit = { id: string; reason: string; twinId: string | null };
+
+/**
+ * Что пишется в снимаемую ручную строку. Двойник из основного потока — в merged_into: по нему бот
+ * переносит подписку на живую строку (races-bot moveMergedFollows). Было (до 29.10.2026): только
+ * status = removed, и бот читал пропажу как отмену — 29.10 так чуть не ушло «отменён» подписчику
+ * «#курганбежит НОЧНАЯ версия» за два дня до старта (строка стала probeg:95329).
+ */
+export function dedupeUpdate(h: DedupeHit, now: string): { status: "removed"; updated_at: string; merged_into?: string } {
+  return h.twinId ? { status: "removed", updated_at: now, merged_into: h.twinId } : { status: "removed", updated_at: now };
+}
+
 async function cmdDedupe(apply: boolean, quiet = false) {
   const sb = db();
   const { data: manual, error } = await sb.from("race_events").select("id,name,date_start,city,region,distances").eq("source", "manual").eq("status", "active");
@@ -1115,20 +1127,20 @@ async function cmdDedupe(apply: boolean, quiet = false) {
   // «Осенним кроссом» в Североморске (merged_into = probeg:85636), во view его не было,
   // и старт пропал с сайта совсем. Строка, видимая во view под чужим id, такого не даст.
   const visible = (await calendarRows(sb)).filter((x) => !x.id.startsWith("manual:") && x.date_start >= todayBelgrade());
-  const hits: { id: string; reason: string }[] = [];
+  const hits: DedupeHit[] = [];
   for (const m of manual || []) {
     // Только плавание снимается тем же прогоном: так шлюз чистит и то, что вставлено до фильтра.
     if (isSwimOnly(m.name, (m.distances as string[] | null) ?? [])) {
-      hits.push({ id: m.id, reason: `${SWIM_ONLY_REASON}: «${m.name}»` });
+      hits.push({ id: m.id, reason: `${SWIM_ONLY_REASON}: «${m.name}»`, twinId: null });
       continue;
     }
     const twin = findVisibleTwin(m, visible);
-    if (twin) hits.push({ id: m.id, reason: `появился в основном потоке: ${twin.id} «${twin.name}»` });
+    if (twin) hits.push({ id: m.id, reason: `появился в основном потоке: ${twin.id} «${twin.name}»`, twinId: twin.id });
   }
   if (!quiet) console.log(JSON.stringify(hits, null, 2));
   if (apply) {
     for (const h of hits) {
-      const { error: ue } = await sb.from("race_events").update({ status: "removed", updated_at: new Date().toISOString() }).eq("id", h.id).eq("source", "manual");
+      const { error: ue } = await sb.from("race_events").update(dedupeUpdate(h, new Date().toISOString())).eq("id", h.id).eq("source", "manual");
       if (ue) throw ue;
     }
   }

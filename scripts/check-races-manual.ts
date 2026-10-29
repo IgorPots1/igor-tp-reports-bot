@@ -26,6 +26,7 @@ import {
   dueCities,
   dueSources,
   findDuplicate,
+  dedupeUpdate,
   findVisibleTwin,
   inWindow,
   isTwin,
@@ -119,6 +120,10 @@ const view = [
 ];
 assert.equal(findVisibleTwin(tw("ОСЕНЬ трейл", "Зеленая Поляна"), view), null, "склеенного двойника во view нет, ручную не трогаем");
 assert.equal(findVisibleTwin(tw("ОСЕНЬ трейл", "Зеленая Поляна"), [...view, { id: "myrace:2152", name: "ОСЕНЬ трейл", date_start: "2026-10-11", city: "Зеленая Поляна" }])?.id, "myrace:2152", "видимый двойник снимает");
+// Снятая ручная строка помнит двойника (merged_into) — бот переносит на него подписку, а не пишет «отменён».
+// Было (до 29.10.2026): только status = removed.
+assert.deepEqual(dedupeUpdate({ id: "manual:x", reason: "появился в основном потоке", twinId: "probeg:95329" }, "T"), { status: "removed", updated_at: "T", merged_into: "probeg:95329" });
+assert.deepEqual(dedupeUpdate({ id: "manual:y", reason: "только плавание", twinId: null }, "T"), { status: "removed", updated_at: "T" }, "плавание снимается без двойника");
 
 // Окно.
 assert.ok(inWindow("2026-10-11", TODAY) && inWindow("2027-12-31", TODAY));
