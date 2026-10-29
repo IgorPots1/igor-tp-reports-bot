@@ -14,7 +14,10 @@
 #   4. пишет итог в ops-log; если свободно меньше 15 ГБ — сообщение тренеру в Telegram с цифрой
 #      и самыми крупными папками.
 # ЧЕГО НЕ ДЕЛАЕТ: в основной папке ($REPO) удаляет только .next/cache — .next-admin там живая
-# сборка локальной админки; незакоммиченное не трогает нигде; detached-worktree не удаляет.
+# сборка локальной админки; незакоммиченное не трогает нигде; detached-worktree не удаляет;
+# ~/Library/Caches/ms-playwright не трогает никогда — это браузер шлюза чтения страниц
+# (races-manual.ts read) и раннеров TrainingPeaks: без него понедельничная разведка календаря
+# слепнет (29.10.2026 кэш оказался стёрт не этим раннером, но защита — здесь, см. remove_dir).
 #
 #   run-disk-cleanup.sh            — уборка
 #   run-disk-cleanup.sh --dry-run  — только показать, что было бы удалено
@@ -41,6 +44,9 @@ remove_dir() {
     *) echo "  пропуск (вне домашней папки): $d"; return ;;
   esac
   [ "$d" = "$REPO" ] && { echo "  пропуск (основная папка): $d"; return; }
+  case "$d" in
+    "$HOME/Library/Caches/ms-playwright"|"$HOME/Library/Caches/ms-playwright/"*) echo "  пропуск (браузер Playwright): $d"; return ;;
+  esac
   [ -e "$d" ] || return
   local size
   size="$(du -sk "$d" 2>/dev/null | cut -f1)"

@@ -448,7 +448,8 @@
     "intervals:prefill": "npx tsx scripts/intervals-prefill-update.ts",
     "check:races-bot-screens": "npx tsx scripts/check-races-bot-screens.ts",
     "check:races-protect": "npx tsx scripts/check-races-protect.ts",
-    "check:races-search": "npx tsx scripts/check-races-search.ts"
+    "check:races-search": "npx tsx scripts/check-races-search.ts",
+    "check:races-runc": "npx tsx scripts/check-races-runc.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",

@@ -60,6 +60,7 @@ import {
   validateSuggestionVerdict,
   validateUpdate,
   weeklySummary,
+  selectAll,
   type CalendarRow,
   type RaceInsert,
   type Source,
@@ -282,6 +283,30 @@ assert.match(sum, /Кандидаты в автосбор:\n- https:\/\/cal\.exa
 assert.ok(!/[—–]/.test(sum), "без длинных тире");
 assert.match(sum, /Заявки с сайта: разобрано 0/);
 assert.match(sum, /ВК: не искали/);
+
+// Шлюз чтения страниц не работал (29.10.2026): итог первой строкой «ШЛЮЗ НЕ РАБОТАЛ», и сразу за ней —
+// что агент не дал предложения. Слепая неделя не должна читаться как спокойная.
+const blind = weeklySummary({
+  apply: true,
+  today: TODAY,
+  proposal: { agent_failed: "агент не запускался: шлюз чтения страниц не работал", gateway_down: "браузер не запустился: Executable doesn't exist" },
+  out: [],
+  merged: { added: [], changed: [], rejected: [] },
+  activeTotal: 12,
+});
+assert.equal(blind.split("\n")[0], "ШЛЮЗ НЕ РАБОТАЛ, разведка не проводилась: браузер не запустился: Executable doesn't exist");
+assert.match(blind, /АГЕНТ НЕ ДАЛ ПРЕДЛОЖЕНИЯ/);
+assert.ok(!sum.includes("ШЛЮЗ НЕ РАБОТАЛ"), "в обычную неделю строки нет");
+
+// Все строки запроса страницами по 1000 (29.10.2026): ожидаемых ~1700, без страниц проверка дублей
+// не видела старые строки. 2500 строк — три страницы, последняя короткая.
+{
+  const rows = Array.from({ length: 2500 }, (_, i) => i);
+  const asked: [number, number][] = [];
+  const got = await selectAll<number>(async (a, b) => (asked.push([a, b]), { data: rows.slice(a, b + 1), error: null }));
+  assert.equal(got.length, 2500);
+  assert.deepEqual(asked, [[0, 999], [1000, 1999], [2000, 2999]]);
+}
 
 // --- ВК (наряд 12.10): только открытые сообщества, без данных людей, лимит 3 запроса в секунду.
 // groups.search сервисному ключу недоступен (15 Access denied) — его нет в списке методов.

@@ -65,11 +65,25 @@ if [ "$VK_MODE" = "есть" ]; then
 fi
 rm -f "$WORK/proposal.json"
 
+# Шлюз чтения страниц жив? (29.10.2026: кэш браузера Playwright оказался стёрт, и `read` падал на
+# каждом адресе — разведка шла бы вслепую.) Не жив — агента не запускаем: итог недели первой строкой
+# «ШЛЮЗ НЕ РАБОТАЛ…», а шлюз сам пишет тренеру в Telegram (только тренеру, TELEGRAM_COACH_CHAT_IDS).
+GATEWAY_DOWN=""
+if ! "${GATE[@]}" gateway-check > "$WORK/gateway-check.log" 2>&1; then
+  GATEWAY_DOWN="$(grep -m1 'ШЛЮЗ НЕ РАБОТАЕТ' "$WORK/gateway-check.log" | sed 's/^ШЛЮЗ НЕ РАБОТАЕТ: //' | cut -c1-300)"
+  [ -n "$GATEWAY_DOWN" ] || GATEWAY_DOWN="проверка упала, см. $WORK/gateway-check.log"
+  echo "шлюз чтения страниц не работает: $GATEWAY_DOWN"
+fi
+
 PROMPT="$(sed -e "s|{{TODAY}}|$TODAY|g" -e "s|{{REPO}}|$REPO|g" -e "s|{{VK}}|$VK_MODE|g" "$REPO/scripts/races-weekly-prompt.md")"
 
 # Права агента: читать и писать только в своей папке, сеть, и только безопасные режимы шлюза.
 # apply и dedupe с --apply агенту НЕ разрешены: их зовёт эта обёртка после него.
 echo "агент: старт (заявок $(python3 -c "import json;print(len(json.load(open('$WORK/suggestions.json'))))"), точек $(python3 -c "import json;print(len(json.load(open('$WORK/cities.json'))))"), ВК: $VK_MODE)"
+if [ -n "$GATEWAY_DOWN" ]; then
+  AGENT_CODE=99
+  echo "агент: не запускался — шлюз не работает"
+else
 ( cd "$WORK" && "$CLAUDE_BIN" -p "$PROMPT" \
     --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
     --no-session-persistence \
@@ -83,6 +97,12 @@ echo "агент: старт (заявок $(python3 -c "import json;print(len(j
     > "$WORK/agent.out.log" 2> "$WORK/agent.err.log" )
 AGENT_CODE=$?
 echo "агент: код выхода $AGENT_CODE, лог $WORK/agent.out.log"
+fi
+
+# Шлюз не работал: в предложении обе пометки — итог начнётся строкой «ШЛЮЗ НЕ РАБОТАЛ».
+if [ -n "$GATEWAY_DOWN" ]; then
+  GATEWAY_DOWN="$GATEWAY_DOWN" python3 -c 'import json,os,sys; r=os.environ["GATEWAY_DOWN"]; json.dump({"agent_failed": "агент не запускался: шлюз чтения страниц не работал", "gateway_down": r}, open(sys.argv[1], "w"), ensure_ascii=False)' "$WORK/proposal.json"
+fi
 
 # Нет валидного предложения: шлюз всё равно снимает дубли и пишет итог с пометкой.
 if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$WORK/proposal.json" 2>/dev/null; then
@@ -92,6 +112,8 @@ if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$WORK/proposal.
 else
   STATUS=sent
 fi
+# Шлюз не работал — неделя провалена, даже если пометочное предложение валидно (heartbeat failed).
+[ -n "$GATEWAY_DOWN" ] && STATUS=failed
 
 if "${GATE[@]}" apply "$WORK/proposal.json" --apply; then
   echo "шлюз: применено"

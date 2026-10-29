@@ -21,6 +21,7 @@
  * Команды:
  *   npx tsx scripts/races-manual.ts list                     активные ручные старты с датой от сегодня
  *   npx tsx scripts/races-manual.ts read <url>               текст страницы из настоящего браузера
+ *   npx tsx scripts/races-manual.ts gateway-check [--no-notify]  шлюз жив? (браузер открывает известную страницу; нет — Telegram тренеру, код 3)
  *   npx tsx scripts/races-manual.ts dup <proposal.json>      проверка дублей для вставок
  *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке, и только плавание → removed
  *   npx tsx scripts/races-manual.ts recheck                  старты «под вопросом» (race_overrides), у которых подошла перепроверка
@@ -163,6 +164,8 @@ export function validateSuggestionVerdict(v: SuggestionVerdict): string | null {
 export type Proposal = {
   /** Ставит обёртка раннера, если агент не оставил предложения: в итоге это видно явно. */
   agent_failed?: string;
+  /** Ставит обёртка раннера, если проверка шлюза чтения страниц упала (29.10.2026): агент не запускался. */
+  gateway_down?: string;
   checked?: string[];
   sources?: Partial<Source>[];
   candidates?: Candidate[];
@@ -605,7 +608,11 @@ export const ROBOTS: Record<string, string> = {
   orgeo: "https://orgeo.ru", where2run: "https://where2run.ru", myrace: "https://myrace.info",
   sportsauce: "https://sportsauce.ru", racetime: "https://racetime.online", regplace: "https://reg.place",
   otime: "https://reg.o-time.ru", heroleague: "https://heroleague.ru",
+  // Беговое сообщество (29.10.2026): Московский марафон, полумарафон, «Белые ночи» и др.
+  runc: "https://runc.run",
 };
+/** Сезонные роботы: ноль предстоящих стартов между сезонами — норма, не тревога (вёрстку стережёт сам робот). */
+const SEASONAL_ROBOTS = new Set(["runc"]);
 /** Сайты, которые робот покрывает через другой адрес: забег.рф отдаёт данные heroleague.ru. */
 const ROBOT_ALIASES = ["xn--80acghh.xn--p1ai"];
 export const AUTO_COLLECTED = [...Object.values(ROBOTS).map((u) => new URL(u).hostname), ...ROBOT_ALIASES];
@@ -822,6 +829,7 @@ export function robotHealth(robots: string[], runs: RobotRun[], todayIso: string
     let alert: string | null = null;
     if (ranAt < addDays(todayIso, -8)) alert = `не собирался с ${ranAt}`;
     else if (last.error || typeof st === "string") alert = `ошибка: ${String(last.error || st).slice(0, 160)}`;
+    else if (SEASONAL_ROBOTS.has(robot)) alert = null;
     else if (rows === 0) alert = "0 строк";
     else if (rows !== null && prevRows && rows < prevRows * 0.5) alert = `строк ${rows} против ${prevRows} в прошлый раз (падение больше 50%)`;
     return { robot, rows, new: fresh, prevRows, ranAt, alert };
@@ -956,12 +964,28 @@ async function futureLinkRows(sb: SupabaseClient, todayIso: string): Promise<Lin
   }
 }
 
+/**
+ * Все строки запроса, страницами по 1000 (29.10.2026). PostgREST молча отдаёт не больше 1000 строк:
+ * ожидаемых ~1700, и без страниц проверка дублей в apply не видела старые строки — Полуниха трейл
+ * прошла бы вторым ожидаемым при дословно том же названии и городе.
+ */
+export async function selectAll<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await page(from, from + 999);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
 /** Источники C, у которых близко прошлогодняя дата старта (race_expected): их смотрим каждую неделю. */
 async function expectedSoonKeys(sb: SupabaseClient, reg: Source[], todayIso: string): Promise<Set<string>> {
-  const { data, error } = await sb.from("race_expected").select("last_date,site_url,last_url").eq("status", "expected");
-  if (error) throw error;
+  const data = await selectAll<{ last_date: string | null; site_url: string | null; last_url: string | null }>((a, b) =>
+    sb.from("race_expected").select("last_date,site_url,last_url").eq("status", "expected").order("id").range(a, b),
+  );
   const soon = new Set<string>();
-  for (const e of data || []) {
+  for (const e of data) {
     if (!e.last_date || !expectedIsSoon(e.last_date as string, todayIso)) continue;
     for (const s of reg) if (s.tier === "C" && (sourceMatches(s.url, e.site_url as string | null) || sourceMatches(s.url, e.last_url as string | null))) soon.add(sourceKey(s.url));
   }
@@ -1009,6 +1033,58 @@ async function cmdRead(url: string) {
   } finally {
     await browser.close();
   }
+}
+
+/**
+ * Проверка шлюза чтения страниц перед понедельничным прогоном (29.10.2026): настоящий браузер
+ * открывает известную страницу. 29.10 кэш браузера Playwright оказался стёрт, и `read` падал на
+ * каждом адресе — агент разведки в таком состоянии работает вслепую. Успех — хотя бы одна страница
+ * отдала HTTP 200 с текстом. Провал — причина в stdout, сообщение тренеру в Telegram (без
+ * --no-notify) и код выхода 3.
+ */
+export const GATEWAY_CHECK_URLS = ["https://probeg.org/", "https://igorp.run/races"];
+
+async function cmdGatewayCheck(notify: boolean) {
+  loadScriptEnv();
+  const local = path.join(process.cwd(), "tools/trainingpeaks-export/node_modules/playwright");
+  const base = existsSync(local) ? process.cwd() : path.join(os.homedir(), "igor-tp-reports-bot");
+  const errors: string[] = [];
+  try {
+    const require = createRequire(path.join(base, "tools/trainingpeaks-export/package.json"));
+    const { chromium } = require("playwright") as typeof import("playwright");
+    const browser = await chromium.launch();
+    try {
+      for (const url of GATEWAY_CHECK_URLS) {
+        try {
+          await assertRobotsAllowed(url);
+          const page = await browser.newPage({ locale: "ru-RU" });
+          const res = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+          const text = (await page.evaluate(() => document.body.innerText)).trim();
+          await page.close();
+          if (res?.status() === 200 && text.length > 200) {
+            console.log(`шлюз работает: ${url} HTTP 200, ${text.length} знаков`);
+            return;
+          }
+          errors.push(`${url}: HTTP ${res?.status() ?? 0}, ${text.length} знаков`);
+        } catch (e) {
+          errors.push(`${url}: ${e instanceof Error ? e.message.split("\n")[0].slice(0, 160) : String(e)}`);
+        }
+      }
+    } finally {
+      await browser.close();
+    }
+  } catch (e) {
+    errors.push(`браузер не запустился: ${e instanceof Error ? e.message.split("\n")[0].slice(0, 200) : String(e)}`);
+  }
+  const reason = errors.join("; ");
+  console.log(`ШЛЮЗ НЕ РАБОТАЕТ: ${reason}`);
+  if (notify) {
+    const { sendCoachTelegramMessage } = await import("../tools/trainingpeaks-export/scripts/lib/coach-telegram-notify.ts");
+    await sendCoachTelegramMessage(
+      `Календарь /races: шлюз чтения страниц не работает, понедельничная разведка не проводилась.\n${reason}\nПочинить: cd ~/igor-tp-reports-bot/tools/trainingpeaks-export && npx playwright install chromium-headless-shell`,
+    );
+  }
+  process.exit(3);
 }
 
 function readProposal(file: string): Proposal {
@@ -1272,9 +1348,7 @@ async function cmdApply(file: string, apply: boolean) {
   // числе строки probeg) не трогаем: дубль по названию и городу — отказ; дата уже в календаре —
   // отказ (это не ожидаемый, а объявленный старт).
   if (expected.length) {
-    const { data: exRows, error: exErr } = await sb.from("race_expected").select("id,name,city,status");
-    if (exErr) throw exErr;
-    const known = (exRows || []) as ExpectedRowLite[];
+    const known = await selectAll<ExpectedRowLite>((a, b) => sb.from("race_expected").select("id,name,city,status").order("id").range(a, b));
     for (const r of expected) {
       const errs = validateExpected(r, today);
       const id = manualId(r.name, r.last_date);
@@ -1541,6 +1615,8 @@ export function weeklySummary(a: {
     if (t.failed) lines.push(`Уровни: не посчитаны, ${t.failed.slice(0, 160)}`);
   }
   if (a.proposal.agent_failed) lines.splice(2, 0, `АГЕНТ НЕ ДАЛ ПРЕДЛОЖЕНИЯ: ${a.proposal.agent_failed}. Проверки и поиск этой недели не сделаны, сняты только дубли с основным потоком.`);
+  // Первой строкой итога — чтобы слепую неделю нельзя было принять за спокойную (29.10.2026).
+  if (a.proposal.gateway_down) lines.unshift(`ШЛЮЗ НЕ РАБОТАЛ, разведка не проводилась: ${a.proposal.gateway_down}`);
   const sg = a.suggestions || [];
   const sgn = (st: string) => sg.filter((x) => x.status === st).length;
   lines.push(`Заявки с сайта: разобрано ${sg.length - sgn("skipped")} (добавлено ${sgn("added")}, дубль ${sgn("duplicate")}, отклонено ${sgn("rejected")})${sgn("skipped") ? `, не принято шлюзом ${sgn("skipped")}` : ""}`);
@@ -1912,6 +1988,7 @@ async function main() {
   if (cmd === "cities") return cmdCities(Number(rawArg) || CITIES_PER_WEEK);
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
+  if (cmd === "gateway-check") return cmdGatewayCheck(!process.argv.includes("--no-notify"));
   if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
   console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | recheck | tracks-due | details-due | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);

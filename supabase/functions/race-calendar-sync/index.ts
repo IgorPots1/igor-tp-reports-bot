@@ -7,6 +7,7 @@ import { buildExpected, findNextEdition, parsePastProbeg, probegPastUrl, weekWin
 import { findMatch, isSwimOnly } from "./match.ts";
 import { textDayInRange } from "./dates.ts";
 import { fillRegion, type GeoSubjectRow } from "./geo.ts";
+import { parseRuncEvent, parseRuncMenu, runcCity } from "./runc.ts";
 
 const UA = "igorp.run race calendar (+https://igorp.run)";
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -765,6 +766,34 @@ async function russiarunning(today: Date, horizon: Date, maxRequests = 300): Pro
 // ---------- duplicate detection across sources: см. ./match.ts ----------
 
 // ---------- link checking ----------
+// ---------- runc.run (Беговое сообщество), подробности и проверка разрешений — в ./runc.ts ----------
+async function runc(today: Date, horizon: Date): Promise<Race[]> {
+  // Ноль предстоящих — норма зимой (сезон прошёл, следующий не выложен), а не тревога. Тревога —
+  // если не разобралось само меню или ни у одного события нет даты: значит, сменилась вёрстка.
+  const menu = parseRuncMenu(await get("https://runc.run/"));
+  if (!menu.length) throw new Error("runc.run: меню событий не разобрано (сменилась вёрстка?)");
+  const out: Race[] = [];
+  let dated = 0;
+  for (const m of menu) {
+    await sleep(1500); // поддомены — один сервер: вежливая пауза между страницами
+    let ev;
+    try { ev = parseRuncEvent(await get(m.url), m.label); } catch { continue; }
+    if (ev) dated++;
+    if (!ev || ev.date_end < iso(today) || ev.date_start > iso(horizon)) continue;
+    const city = runcCity(m.host);
+    const id = `${m.host}-${ev.date_start.slice(0, 4)}`;
+    const dist_km = ev.distances.map(distToKm).filter((x): x is number => x !== null);
+    const { race_type, tags } = classify(m.name, ev.distances, "", false);
+    out.push({
+      id: `runc:${id}`, source: "runc", source_id: id, source_url: m.url, name: m.name,
+      date_start: ev.date_start, date_end: ev.date_end, date_text: m.label, city, region: city, location: city,
+      distances: ev.distances, dist_km, race_type, tags, site_url: m.url, reg_url: null, vk_url: null,
+    });
+  }
+  if (!dated) throw new Error(`runc.run: ни у одного из ${menu.length} событий не разобрана дата (сменилась вёрстка?)`);
+  return out;
+}
+
 async function checkLinks(limit: number) {
   const { data } = await sb.from("race_events").select("id,site_url,reg_url")
     .eq("status", "active").gte("date_end", iso(new Date()))
@@ -797,13 +826,14 @@ async function checkLinks(limit: number) {
 // merge order: richer sources first, so a race seen in several places keeps the most detailed row
 // russiarunning - последним: новый источник не меняет уже сложившиеся склейки остальных.
 // russiarunning в бою с 12.10.2026: cron race-calendar-scrape-russiarunning, воскресенье 22:29 UTC.
-const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime", "heroleague", "russiarunning"];
+const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime", "heroleague", "russiarunning", "runc"];
 const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> = {
   probeg: (t, h) => probeg(t, h), marathonec: (t, h) => marathonec(t, h), ironstar: (t, h) => ironstar(t, h),
   orgeo: (t, h) => orgeo(t, h), where2run: (t, h) => where2run(t, h), myrace: (t, h) => myrace(t, h),
   sportsauce: (t, h) => sportsauce(t, h), racetime: (t, h) => racetime(t, h), regplace: (t) => regplace(t),
   otime: (t) => otime(t), heroleague: (t, h) => heroleague(t, h),
   russiarunning: (t, h) => russiarunning(t, h),
+  runc: (t, h) => runc(t, h),
 };
 
 // Субъекты городов (race_geo): пустой region строки заполняется субъектом, city не меняется.
