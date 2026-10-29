@@ -11,6 +11,7 @@
  */
 
 import { nbsp } from "@/lib/typography";
+import { matchesQuery, queryWords, searchText } from "@/features/race-search/search";
 import { FEDERAL_CITIES, canonicalSubject, isSubjectName } from "./subjects";
 
 export type RaceType = "road" | "trail" | "tri" | "track";
@@ -175,7 +176,9 @@ export function stripStaleYear(name: string, dateStart: string): string {
   if (!years.every((x) => Number(x) < y)) return name;
   const out = name
     .replace(/\s*[-–—]?\s*[(\[]?(?<!\d)20\d\d(?!\d)[)\]]?/g, " ")
-    .replace(/\s+([»"),.])/g, "$1")
+    // пробел перед закрывающей кавычкой и знаком — убрать; перед открывающей «"» (за ней буква) — оставить
+    // (29.10.2026: «Ночной забег "Laser Night Run" 2026» показывался как «Ночной забег"Laser Night Run"»)
+    .replace(/\s+([»),.]|"(?=\s|$|[),.]))/g, "$1")
     .replace(/\s+[-–—,.:]\s*$/, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -274,19 +277,20 @@ export function distMatch(r: Race, d: DistFilter): boolean {
 export type Filters = { q: string; type: TypeFilter; dist: DistFilter; region: string; season?: string };
 export const NO_FILTERS: Filters = { q: "", type: "all", dist: "all", region: "", season: "" };
 
+/** Строка поиска старта: название, место, транслит и народные названия (src/features/race-search). */
 export function haystack(r: Race): string {
-  return norm([r.name, r.city, r.region, r.subject].join(" "));
+  return searchText(r.name, r.city, r.region, r.subject);
 }
 
 /** skip: не применять один из фильтров (для счётчиков на его же чипах). */
 export function applyFilters(races: Race[], f: Filters, skip?: "type" | "dist"): Race[] {
-  const words = norm(f.q).split(/[\s,]+/).filter(Boolean);
+  const words = queryWords(f.q);
   return races.filter(
     (r) =>
       (skip === "type" || f.type === "all" || r.type === f.type) &&
       (skip === "dist" || distMatch(r, f.dist)) &&
       (!f.region || r.subject === f.region) &&
-      words.every((w) => haystack(r).includes(w)),
+      matchesQuery(haystack(r), words),
   );
 }
 

@@ -8,7 +8,7 @@ type State = "closed" | "open" | "sending" | "sent";
 
 /* «Знаете старт, которого нет? Добавьте»: заявка уходит в race_suggestions, её
    разбирает еженедельный раннер. Обязательна только ссылка. */
-export default function SuggestRace({ prefillCity = "" }: { prefillCity?: string }) {
+export default function SuggestRace({ prefillCity = "", label = "Знаете старт, которого нет? Добавьте" }: { prefillCity?: string; label?: string }) {
   const [state, setState] = useState<State>("closed");
   const [error, setError] = useState("");
   const [form, setForm] = useState({ url: "", name: "", city: prefillCity, date_text: "", contact: "", is_organizer: false, website: "" });
@@ -48,7 +48,7 @@ export default function SuggestRace({ prefillCity = "" }: { prefillCity?: string
   if (state === "closed") {
     return (
       <button type="button" className={styles.suggestOpen} onClick={() => setState("open")}>
-        Знаете старт, которого нет? Добавьте
+        {label}
       </button>
     );
   }

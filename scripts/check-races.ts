@@ -74,6 +74,7 @@ assert.equal(toRace(row({ name: "Т-Банк Rosa Wild Fest 2026", date_start: "
 assert.equal(stripStaleYear("Golden Ring Ultra Trail 100 2026", "2027-07-23"), "Golden Ring Ultra Trail 100", "число 100 не год");
 assert.equal(stripStaleYear("Марафон-2026 «Белые ночи»", "2027-06-20"), "Марафон «Белые ночи»");
 assert.equal(stripStaleYear("Забег (2026)", "2027-01-10"), "Забег");
+assert.equal(stripStaleYear('Ночной забег "Laser Night Run" 2026', "2027-09-16"), 'Ночной забег "Laser Night Run"', "пробел перед открывающей кавычкой остаётся");
 assert.equal(
   stripStaleYear("87 Пробег-Марафон «Покровские Пруды — Здравствуй Новый Год 2027»", "2026-12-31"),
   "87 Пробег-Марафон «Покровские Пруды — Здравствуй Новый Год 2027»",

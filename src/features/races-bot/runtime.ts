@@ -316,7 +316,7 @@ export async function loadBotExpected(): Promise<ExpectedItem[]> {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb
       .from("race_expected")
-      .select("id,name,city,region,race_type,distances,last_month,last_date,last_url,site_url")
+      .select("id,name,city,region,race_type,distances,last_month,last_date,last_url,site_url,last_finishers")
       .eq("status", "expected")
       .range(from, from + 999);
     fail("race_expected", error);

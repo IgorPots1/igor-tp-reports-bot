@@ -3,7 +3,25 @@
 import { nbsp } from "@/lib/typography";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
-import { NEARBY_KM, areaRaces, citySlug, expectedDateMd, inCity, raceCode, seasons, usuallyIn, type PublicExpected } from "@/features/races-bot/core";
+import {
+  FEW_CITY_RACES,
+  NEARBY_KM,
+  areaRaces,
+  citySlug,
+  expectedCities,
+  expectedDateMd,
+  inCity,
+  inUserCity,
+  placeFromQuery,
+  placePoint,
+  placeSubject,
+  raceCode,
+  seasons,
+  sortCityExpected,
+  usuallyIn,
+  type PublicExpected,
+} from "@/features/races-bot/core";
+import { searchText, matchesQuery, queryWords } from "@/features/race-search/search";
 
 import {
   DISTS,
@@ -52,6 +70,53 @@ function StarIcon({ filled }: { filled: boolean }) {
 function allLabel(subject: string): string {
   if (/^(Москва|Санкт-Петербург|Севастополь)$/.test(subject)) return subject;
   return /(край|округ)$/i.test(subject) ? `Весь ${subject}` : `Вся ${subject}`;
+}
+
+/** Ожидаемый старт города наверху (29.10.2026): «~16 авг», плашка «дата 2027 ещё не объявлена, в 2026
+ *  было 16 августа» и «Следить» — бот напишет, когда объявят дату. */
+function ExpectedTopItem({ e, today, bot }: { e: PublicExpected; today: string; bot: string | null }) {
+  const date = expectedDateMd(e.md, today);
+  const d = Number(date.slice(8, 10));
+  const m = Number(date.slice(5, 7));
+  return (
+    <li className={`${styles.race} ${styles.expectedItem}`}>
+      <div className={styles.stub}>
+        <div className={styles.d}>~{d}</div>
+        <div className={styles.w}>{MONTHS[m - 1].slice(0, 3).toLowerCase()}</div>
+      </div>
+      <div className={styles.body}>
+        <div className={styles.title}>{e.name}</div>
+        <div className={styles.where}>
+          <b>{e.city || "место уточняется"}</b>
+          {e.region && e.region !== e.city ? `, ${e.region}` : null}
+        </div>
+        <p className={`${styles.note} ${styles.notAnnounced}`}>
+          {nbsp(`Дата ${date.slice(0, 4)} ещё не объявлена, в ${e.lastYear} было ${dayMonth(`${e.lastYear}${e.md}`)}`)}
+        </p>
+        <div className={styles.meta}>
+          <span className={`${styles.pill} ${styles.expectedPill}`}>ожидается</span>
+          {e.distances.slice(0, 5).map((x, i) => (
+            <span key={`${x}-${i}`} className={`${styles.pill} ${styles.dist}`}>
+              {x}
+            </span>
+          ))}
+        </div>
+        <div className={styles.links}>
+          {bot ? (
+            <a className={`${styles.btn} ${styles.primary}`} href={tgLink(bot, `e_${raceCode(e.id)}`)} target="_blank" rel="noopener noreferrer">
+              <StarIcon filled={false} />
+              Следить: сообщим, когда объявят
+            </a>
+          ) : null}
+          {e.site ? (
+            <a className={styles.btn} href={e.site} target="_blank" rel="noopener noreferrer">
+              Организатор
+            </a>
+          ) : null}
+        </div>
+      </div>
+    </li>
+  );
 }
 
 /** away — для блока «Рядом в области»: «Старица, 71 км» вместо обычной строки места. */
@@ -530,16 +595,48 @@ export default function RacesCalendar({
   const today = useMemo(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date()), []);
   const seasonTabs = useMemo(() => seasons(today), [today]);
   const season = seasonTabs.find((s) => s.key === f.season && s.key !== "all") ?? null;
+  const cities = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of races) if (r.city) counts.set(r.city, (counts.get(r.city) || 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+  }, [races]);
+  // «Страница города» (29.10.2026): запрос — ровно город, в том числе без своих стартов, только с
+  // ожидаемыми (Иваново, Владимир), или его сокращение. Тогда в списке старты самого города, а
+  // соседние — блоком «Рядом» ниже (было: «Владимир» находил всю Владимирскую область по слову в
+  // регионе, а «Иваново» — «ничего не нашлось»).
+  const placeCities = useMemo(() => [...new Set([...cities, ...expectedCities(expected)])], [cities, expected]);
+  const place = useMemo(() => placeFromQuery(f.q, placeCities), [f.q, placeCities]);
+  const filt = useCallback(
+    (rs: Race[], skip?: "type" | "dist") => (place ? applyFilters(rs, { ...f, q: "" }, skip).filter((r) => inUserCity(r, place)) : applyFilters(rs, f, skip)),
+    [f, place],
+  );
   const list = useMemo(() => {
-    const base = applyFilters(races, f).filter((r) => !season || inRange(r, season.from, season.to));
+    const base = filt(races).filter((r) => !season || inRange(r, season.from, season.to));
     return onlyMine ? base.filter((r) => saved.has(r.id)) : base;
-  }, [races, f, onlyMine, saved, season]);
+  }, [races, filt, onlyMine, saved, season]);
+  // Ожидаемые самого города наверху, развёрнутыми, если стартов с датой мало: крупные первыми,
+  // потом по дате, с плашкой «дата 2027 ещё не объявлена, в 2026 было 16 августа».
+  // Сколько у города своих стартов с датой — без вкладки сезона: «мало» про город, а не про вкладку.
+  const cityCount = useMemo(() => (place ? filt(races).length : 0), [place, filt, races]);
+  const cityExpected = useMemo(() => {
+    if (!place || onlyMine || cityCount >= FEW_CITY_RACES) return [];
+    const c = norm(place);
+    const xs = expected.filter(
+      (e) =>
+        (norm(e.city) === c || norm(e.region) === c) &&
+        (f.type === "all" || e.type === f.type) &&
+        (f.dist === "all" || distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)),
+    );
+    return sortCityExpected(xs, (e) => e.big, (e) => expectedDateMd(e.md, today));
+  }, [place, onlyMine, cityCount, expected, f.type, f.dist, today]);
   const months = useMemo(() => groupByMonth(list), [list]);
   // Ожидаемые: те же поиск и фильтры, что у стартов (дистанции — по километрам из строк).
   const expectedByMonth = useMemo(() => {
     if (onlyMine) return [];
-    const words = norm(f.q).split(/[\s,]+/).filter(Boolean);
+    const words = queryWords(f.q);
+    const top = new Set(cityExpected.map((e) => e.id));
     const shown = expected.filter((e) => {
+      if (top.has(e.id)) return false;
       if (f.type !== "all" && e.type !== f.type) return false;
       if (f.dist !== "all" && !distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)) return false;
       if (f.region && e.subject !== f.region) return false;
@@ -547,23 +644,17 @@ export default function RacesCalendar({
         const d = expectedDateMd(e.md, today);
         if (d < season.from || d > season.to) return false;
       }
-      const hay = norm(`${e.name} ${e.city} ${e.region} ${e.subject ?? ""}`);
-      return words.every((w) => hay.includes(w));
+      return matchesQuery(searchText(e.name, e.city, e.region, e.subject), words);
     });
     const by = new Map<number, PublicExpected[]>();
     for (const e of shown) by.set(e.lastMonth, [...(by.get(e.lastMonth) || []), e]);
     // С ближайшего месяца: сейчас октябрь — сначала ноябрь, декабрь, потом весна.
     const startM = new Date().getMonth() + 1;
     return [...by.entries()].sort((a, b) => ((a[0] - startM + 12) % 12) - ((b[0] - startM + 12) % 12));
-  }, [expected, f, onlyMine, season, today]);
+  }, [expected, f, onlyMine, season, today, cityExpected]);
   const expectedCount = expectedByMonth.reduce((n, [, xs]) => n + xs.length, 0);
-  const typeBase = useMemo(() => applyFilters(races, f, "type"), [races, f]);
-  const distBase = useMemo(() => applyFilters(races, f, "dist"), [races, f]);
-  const cities = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const r of races) if (r.city) counts.set(r.city, (counts.get(r.city) || 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-  }, [races]);
+  const typeBase = useMemo(() => filt(races, "type"), [races, filt]);
+  const distBase = useMemo(() => filt(races, "dist"), [races, filt]);
 
   const searching = f.q.trim() !== "";
   const nCities = new Set(races.map((r) => r.city).filter(Boolean)).size;
@@ -572,21 +663,19 @@ export default function RacesCalendar({
   const subjects = useMemo(() => subjectsOf(races), [races]);
   const inTg = initData !== null;
   // Плашка подписки — когда в поиске ровно город из календаря.
-  const bannerCity = useMemo(() => {
-    const q = f.q.trim().toLowerCase().replace(/ё/g, "е");
-    return q ? cities.find((c) => c.toLowerCase().replace(/ё/g, "е") === q) ?? null : null;
-  }, [f.q, cities]);
+  const bannerCity = place;
   // Страница города (в поиске ровно город): блок «Рядом в области» — та же область и 150 км,
   // ближайшие первыми, «Старица, 71 км». Тип и дистанция применяются, поиск и область — нет.
   const [areaShown, setAreaShown] = useState(8);
   const area = useMemo(() => {
     if (!bannerCity || onlyMine) return { subject: "", items: [] as { race: Race; km: number | null }[] };
-    const a = areaRaces(races, bannerCity, [], []);
+    // Город без своих стартов (Иваново): точка и область — по его ожидаемым.
+    const a = areaRaces(races, bannerCity, [], [], placePoint(races, expected, bannerCity), placeSubject(races, expected, bannerCity));
     return { subject: a.subject, items: a.items.filter(({ race }) => applyFilters([race], { ...f, q: "", region: "" }).length > 0) };
-  }, [bannerCity, races, f, onlyMine]);
+  }, [bannerCity, races, expected, f, onlyMine]);
   useEffect(() => setAreaShown(8), [bannerCity]);
   // Счётчик на вкладке сезона: те же фильтры, без самого сезона.
-  const seasonBase = useMemo(() => applyFilters(races, { ...f, season: "" }), [races, f]);
+  const seasonBase = useMemo(() => filt(races), [races, filt]);
   const seasonCount = (s: { from: string; to: string } | null) => (s ? seasonBase.filter((r) => inRange(r, s.from, s.to)).length : seasonBase.length);
   const onRaceAct = (a: "open" | "reg" | "site", r: Race) => act(a, null, r.id);
   const onDetails = (r: Race) => act("details", null, r.id);
@@ -753,11 +842,36 @@ export default function RacesCalendar({
         </div>
       ) : null}
 
+      {cityExpected.length && place ? (
+        <section className={styles.expected} aria-label="Ожидаются в городе">
+          <h2 className={styles.expectedTitle}>{nbsp(`Ожидаются ${inCity(place)}`)}</h2>
+          <p className={styles.expectedLede}>
+            {cityCount
+              ? `Стартов с датой ${inCity(place)} пока ${cityCount}. `
+              : `Стартов с датой ${inCity(place)} пока нет. `}
+            Эти проходят каждый год, а дату следующего ещё не объявили. «Следить» — напишем в Telegram, когда объявят.
+          </p>
+          <ol className={styles.races}>
+            {cityExpected.map((e) => (
+              <ExpectedTopItem key={e.id} e={e} today={today} bot={botUsername} />
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
       <div ref={listTop} className={styles.months}>
         {failed ? (
           <div className={styles.state}>Не получилось загрузить календарь. Обновите страницу через минуту.</div>
         ) : !races.length ? (
           <div className={styles.state}>Календарь пока пуст. Данные появятся после ближайшего обновления.</div>
+        ) : !list.length && place ? (
+          <div className={styles.state}>
+            <p>
+              {`${inCity(place).replace(/^в/, "В")} пока нет стартов с датой`}
+              {area.items.length ? `. Ниже ближайшие в радиусе ${NEARBY_KM} км` : ""}
+              {f.type !== "all" || f.dist !== "all" ? " с этими фильтрами" : ""}.
+            </p>
+          </div>
         ) : !list.length ? (
           <div className={styles.state}>
             <p>
@@ -807,7 +921,7 @@ export default function RacesCalendar({
 
       {area.items.length ? (
         <section className={styles.expected} aria-label="Рядом в области">
-          <h2 className={styles.expectedTitle}>Рядом в области</h2>
+          <h2 className={styles.expectedTitle}>{cityCount ? "Рядом в области" : `Ближайшие старты в радиусе ${NEARBY_KM} км`}</h2>
           <p className={styles.expectedLede}>
             {area.subject ? `${area.subject} и` : "В"} радиусе {NEARBY_KM} км от города {bannerCity}: {area.items.length}{" "}
             {plural(area.items.length, "старт", "старта", "стартов")}, ближайшие первыми.
@@ -830,6 +944,13 @@ export default function RacesCalendar({
             </button>
           ) : null}
         </section>
+      ) : null}
+
+      {/* Город без своих стартов (29.10.2026): после ожидаемых и соседей — позвать добавить свой старт. */}
+      {place && !cityCount && !onlyMine ? (
+        <div className={styles.suggestBar}>
+          <SuggestRace key={place} prefillCity={place} label="Знаете старт в вашем городе? Добавьте" />
+        </div>
       ) : null}
 
       {expectedCount ? (

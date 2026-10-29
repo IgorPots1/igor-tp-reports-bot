@@ -978,10 +978,28 @@ async function main() {
     assert.equal(expectedDate({ lastDate: "2026-04-05" }, "2026-10-13"), "2027-04-05");
     assert.equal(expectedDate({ lastDate: "2026-10-20" }, "2026-10-13"), "2027-10-20", "в этом году уже прошёл — следующий год");
     let c = calls.length;
+    // Город по геолокации без своих стартов, но с ожидаемыми (29.10.2026, «нет Иваново вообще»): было —
+    // «Не нашёл» и кнопки ближайших городов; стало — город выбирается, точка — геолокация, а в развилке
+    // прямо сказано, что своих стартов с датой нет и в списке ожидаемые и старты в 150 км.
+    const GEO0 = { id: 6303, first_name: "Иваново", username: "pt6303" };
+    await bot.handleUpdate(msg(GEO0, "/start"));
+    await bot.handleUpdate({ message: { message_id: mid++, chat: { id: GEO0.id, type: "private" }, from: GEO0, location: { latitude: 55.79, longitude: 49.12 } } } as never);
+    assert.deepEqual([store.users.get(GEO0.id)?.city, store.users.get(GEO0.id)?.geo_lat], ["Казань", 55.79], "город только с ожидаемыми — выбран по геолокации, точка — геолокация");
+    assert.ok(!sent(GEO0.id).some((x) => /Ближайшие города со стартами|Не нашёл город/.test(String(x.params.text))), "без «не нашёл» и без кнопок ближайших");
+    c = calls.length;
+    await bot.handleUpdate(cbm(GEO0, "show"));
+    const fork0 = calls.slice(c).find((x) => /Казань и рядом/.test(String(x.params.text)))!;
+    assert.ok(fork0, "развилка по сезонам");
+    assert.match(String(fork0.params.text), /В самом городе стартов с датой пока нет/);
+    assert.ok(buttons(fork0).some((x) => x.text === "Знаете старт в городе? Добавьте"), "кнопка «Добавьте»");
+    // Город без своих стартов и без ожидаемых — по-прежнему ближайшие города кнопками (Казань спрятана
+    // из ожидаемых на время шага: ANNOUNCED убирает её из списка, как объявленную).
+    ANNOUNCED.set(EXP_KAZAN.id, "probeg:0");
     const GEO = { id: 6302, first_name: "Точка", username: "pt6302" };
     await bot.handleUpdate(msg(GEO, "/start"));
     await bot.handleUpdate({ message: { message_id: mid++, chat: { id: GEO.id, type: "private" }, from: GEO, location: { latitude: 56.85, longitude: 35.9 } } } as never);
-    // reverseGeocode в чеке отвечает «Казань» — её нет в pool: ближайшие города кнопками cityg:
+    ANNOUNCED.delete(EXP_KAZAN.id);
+    // reverseGeocode в чеке отвечает «Казань» — её нет ни в pool, ни в ожидаемых: ближайшие города кнопками cityg:
     const near = sent(GEO.id).at(-1)!;
     assert.match(String(near.params.text), /Ближайшие города со стартами/);
     assert.equal(buttons(near)[0].text, "Тверь");

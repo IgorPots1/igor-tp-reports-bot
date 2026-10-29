@@ -16,7 +16,9 @@ import { versionBelow } from "./rich";
 import { importantLine } from "@/features/race-details/important";
 
 import {
+  cityPoint,
   consultAllowed,
+  expectedCities,
   findExpectedByCode,
   findCityBySlug,
   findRaceByCode,
@@ -26,7 +28,6 @@ import {
   knownRegions,
   localParts,
   matchCity,
-  matchUser,
   browseItems,
   expectedDate,
   seasonCounts,
@@ -40,8 +41,10 @@ import {
   parseStart,
   resolveCity,
   startSource,
+  placePoint,
   planUser,
   raceCode,
+  searchExpected,
   searchRaces,
   type BotRace,
   type ExpectedItem,
@@ -494,6 +497,11 @@ export function createBot(deps: BotDeps) {
   }
 
   /** Точка «Рядом»: своя геолокация (только для своего города), иначе город. */
+  /** Города только с ожидаемыми стартами: их тоже узнаём (Иваново, Владимир — 29.10.2026). */
+  async function expectedOnlyCities(): Promise<string[]> {
+    return expectedCities(await expectedFor(() => true));
+  }
+
   function userPoint(u: BotUser, city: string): { lat: number; lon: number } | null {
     return norm(city) === norm(u.city) && u.geo_lat != null && u.geo_lon != null ? { lat: u.geo_lat, lon: u.geo_lon } : null;
   }
@@ -518,11 +526,9 @@ export function createBot(deps: BotDeps) {
     const t = today(u);
     if (b.q !== null) {
       const s = parseSearch(b.q);
-      const words = s.q.split(/\s+/).filter(Boolean);
       return [
         ...searchRaces(all, s).filter((r) => r.de >= t).map((race) => ({ kind: "race" as const, race, km: null, date: race.ds < t ? t : race.ds, near: false })),
-        ...exp
-          .filter((e) => words.length && words.every((w) => norm(`${e.name} ${e.city} ${e.region}`).includes(w)) && matchUser({ type: e.type, km: e.km, tags: [] } as unknown as BotRace, s.types, s.dists))
+        ...searchExpected(exp, s)
           .map((e) => ({ kind: "exp" as const, e, km: null, date: expectedDate(e, t), near: false })),
       ];
     }
@@ -544,7 +550,9 @@ export function createBot(deps: BotDeps) {
     if (!b) return pickCity(u.tg_id);
     const items = await itemsOf(u, b);
     const rows = seasons(today(u)).map((s) => ({ s, ...seasonCounts(items, s) }));
-    await screen(u, T.seasonFork(browseTitle(b), rows, filtersOf(b)), origin);
+    // В самом городе нет стартов с датой (Иваново): сказать прямо, что в списке, и позвать добавить свой.
+    const own = b.q === null && !items.some((x) => x.kind === "race" && !x.near);
+    await screen(u, T.seasonFork(browseTitle(b), rows, filtersOf(b), own ? b.city : null), origin);
     await track(u.tg_id, "list_shown", { meta: { city: b.city || null, q: b.q, fork: true, n: items.length } });
   }
 
@@ -612,7 +620,7 @@ export function createBot(deps: BotDeps) {
   async function showSearch(u: BotUser, text: string) {
     const all = await deps.races();
     const s = parseSearch(text);
-    const city = s.q ? matchCity(knownCities(all), s.q) : null;
+    const city = s.q ? matchCity([...knownCities(all), ...(await expectedOnlyCities())], s.q) : null;
     const found = city ? all.filter((r) => inUserCity(r, city)) : searchRaces(all, s);
     await track(u.tg_id, "search", { meta: { q: text.trim().slice(0, 80), n: found.length } });
     if (city) {
@@ -720,7 +728,7 @@ export function createBot(deps: BotDeps) {
     if (u.city) return welcomeBack(u);
     if (p.kind === "city") {
       const races = await deps.races();
-      const city = findCityBySlug(knownCities(races), p.slug);
+      const city = findCityBySlug([...knownCities(races), ...(await expectedOnlyCities())], p.slug);
       if (city) {
         u = await store.saveUser({ tg_id: u.tg_id, city, digest_on: true, state: null, source: u.source ?? `c_${p.slug}` });
         await track(u.tg_id, "city_chosen", { meta: { city, via: "deeplink" } });
@@ -736,6 +744,12 @@ export function createBot(deps: BotDeps) {
 
   /** point — геолокация человека (только из onLocation); город кнопкой или текстом её сбрасывает. */
   async function setCity(u: BotUser, city: string, lead?: string, point?: { lat: number; lon: number }) {
+    // Город без своих стартов (Иваново): точка по ожидаемым — от неё «рядом, 150 км» в списке и в
+    // понедельничной подборке (planUser берёт geo_lat/geo_lon), иначе там было бы пусто.
+    if (!point) {
+      const races = await deps.races();
+      if (!cityPoint(races, city)) point = placePoint(races, await expectedFor(() => true), city) ?? undefined;
+    }
     u = await store.saveUser({ tg_id: u.tg_id, city, state: null, geo_lat: point?.lat ?? null, geo_lon: point?.lon ?? null });
     await track(u.tg_id, "city_chosen", { meta: { city } });
     await send(u.tg_id, T.prefs(u.types, u.distances, lead));
@@ -769,7 +783,7 @@ export function createBot(deps: BotDeps) {
     if (u.state === "await_city") {
       // Сокращения («спб», «екб»), опечатки, область. Не узнал — варианты кнопками, состояние
       // остаётся: город можно написать ещё раз (было: любой текст становился городом).
-      const { city, suggestions } = resolveCity(await deps.races(), t);
+      const { city, suggestions } = resolveCity(await deps.races(), t, await expectedOnlyCities());
       if (city) return setCity(u, city);
       return send(u.tg_id, T.cityNotFound(t, suggestions));
     }
@@ -777,7 +791,7 @@ export function createBot(deps: BotDeps) {
     if (!u.city) {
       const s = parseSearch(t);
       if (!s.types.length && !s.dists.length && !s.month) {
-        const { city } = resolveCity(await deps.races(), t);
+        const { city } = resolveCity(await deps.races(), t, await expectedOnlyCities());
         if (city) return setCity(u, city);
       }
     }
@@ -790,7 +804,7 @@ export function createBot(deps: BotDeps) {
     // Ближайшие города со стартами по координатам: подсказки, если сам город не узнан.
     const nearest = nearestCities(races, point);
     const name = deps.reverseGeocode ? await deps.reverseGeocode(lat, lon) : null;
-    const { city, suggestions } = name ? resolveCity(races, name) : { city: null, suggestions: [] as string[] };
+    const { city, suggestions } = name ? resolveCity(races, name, await expectedOnlyCities()) : { city: null, suggestions: [] as string[] };
     if (!city) {
       await send(u.tg_id, { text: name ? `По геолокации: ${T.esc(name)}.` : "Не получилось определить город по геолокации.", reply_markup: { remove_keyboard: true } });
       await store.saveUser({ tg_id: u.tg_id, state: "await_city", geo_lat: lat, geo_lon: lon });
@@ -823,7 +837,7 @@ export function createBot(deps: BotDeps) {
       }
       case "city": {
         const races = await deps.races();
-        const city = findCityBySlug([...T.TOP_CITIES, ...knownCities(races), ...knownRegions(races)], arg);
+        const city = findCityBySlug([...T.TOP_CITIES, ...knownCities(races), ...knownRegions(races), ...(await expectedOnlyCities())], arg);
         return city ? setCity(u, city) : pickCity(u.tg_id);
       }
       case "pick":

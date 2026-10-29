@@ -7,7 +7,8 @@
  */
 
 import { distMatch, norm, plural, type Race } from "@/app/races/races-logic";
-import { canonicalSubject } from "@/app/races/subjects";
+import { canonicalSubject, isSubjectName } from "@/app/races/subjects";
+import { matchesQuery, queryWords, searchText } from "@/features/race-search/search";
 
 export type GeoPoint = { lat: number; lon: number };
 
@@ -195,14 +196,54 @@ export function matchCity(cities: string[], text: string): string | null {
   return cities.find((c) => norm(c) === t) ?? cities.find((c) => norm(c).startsWith(t) && t.length >= 4) ?? null;
 }
 
+/** Города, где есть только ожидаемые старты (Иваново, Владимир): их тоже можно выбрать и найти. */
+export function expectedCities(expected: { city: string }[]): string[] {
+  const counts = new Map<string, number>();
+  for (const e of expected) if (e.city && !isSubjectName(e.city)) counts.set(e.city, (counts.get(e.city) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+}
+
+/** «Страница города»: запрос — ровно город (со стартами или только с ожидаемыми) или его сокращение
+ *  («спб»). Только точное совпадение: пока человек печатает «Ива…», страницы города нет. */
+export function placeFromQuery(q: string, cities: string[]): string | null {
+  const t = cleanCityText(q);
+  if (!t) return null;
+  const alias = CITY_ALIASES[t];
+  const want = alias ? norm(alias) : t;
+  return cities.find((c) => norm(c) === want) ?? null;
+}
+
+/** Точка города без стартов — по ожидаемым (race_geo). Город со стартами — cityPoint. */
+export function placePoint(races: Race[], expected: { city: string; geo?: GeoPoint | null }[], city: string): GeoPoint | null {
+  const c = norm(city);
+  return cityPoint(races, city) ?? expected.find((e) => norm(e.city) === c && e.geo)?.geo ?? null;
+}
+
+/** Субъект города: по стартам, иначе по ожидаемым («Иваново» → «Ивановская область»). */
+export function placeSubject(races: Race[], expected: { city: string; subject?: string }[], city: string): string {
+  const byRaces = citySubject(races, city);
+  if (byRaces && norm(byRaces) !== norm(city)) return byRaces;
+  const c = norm(city);
+  return expected.find((e) => norm(e.city) === c && e.subject)?.subject ?? byRaces;
+}
+
+/** Ожидаемые города в показе: крупные (от BIG_FINISHERS) первыми, внутри — по ожидаемой дате. */
+export function sortCityExpected<E>(items: E[], isBig: (e: E) => boolean, dateOf: (e: E) => string): E[] {
+  return [...items].sort((a, b) => Number(isBig(b)) - Number(isBig(a)) || dateOf(a).localeCompare(dateOf(b)));
+}
+
+/** Сколько стартов с датой нужно городу, чтобы ожидаемые не выносить наверх (наряд 29.10.2026). */
+export const FEW_CITY_RACES = 5;
+
 /**
  * Город, который человек написал словами (онбординг, геолокация): сокращения, опечатки, область.
  * Нет уверенного совпадения — city: null и до трёх ближайших вариантов для кнопок; молча
  * подставлять написанное нельзя (было: «Тверьь» становилась городом, и список был пуст).
  */
-export function resolveCity(races: BotRace[], text: string): { city: string | null; suggestions: string[] } {
+export function resolveCity(races: BotRace[], text: string, extra: string[] = []): { city: string | null; suggestions: string[] } {
   const cities = knownCities(races);
-  const places = [...cities, ...knownRegions(races)];
+  // extra — города только с ожидаемыми стартами (Иваново): 29.10.2026 «Не нашёл город» на них.
+  const places = [...new Set([...cities, ...knownRegions(races), ...extra])];
   const t = cleanCityText(text);
   if (!t) return { city: null, suggestions: [] };
   const direct = matchCity(places, text);
@@ -230,9 +271,11 @@ export function inCity(city: string): string {
   const key = norm(city).trim();
   if (PREP[key]) return `в ${PREP[key]}`;
   if (/[\s-]/.test(key)) return `в городе ${city}`;
-  if (/а$/.test(key)) return `в ${city.slice(0, -1)}е`;
-  if (/ь$/.test(key)) return `в ${city.slice(0, -1)}и`;
-  if (/[бвгджзклмнпрстфхцчшщ]$/.test(key)) return `в ${city}е`;
+  // «во Владимире», «во Всеволожске»: «в» перед «в/ф» и согласной (29.10.2026: было «в Владимире»)
+  const v = /^[вф][бвгджзклмнпрстфхцчшщ]/.test(key) ? "во" : "в";
+  if (/а$/.test(key)) return `${v} ${city.slice(0, -1)}е`;
+  if (/ь$/.test(key)) return `${v} ${city.slice(0, -1)}и`;
+  if (/[бвгджзклмнпрстфхцчшщ]$/.test(key)) return `${v} ${city}е`;
   return `в городе ${city}`;
 }
 
@@ -284,8 +327,10 @@ export function areaRaces<R extends Race>(
   types: string[],
   dists: string[],
   origin?: GeoPoint | null,
+  subjectHint?: string,
 ): { subject: string; items: AreaItem<R>[] } {
-  const subject = citySubject(races, city);
+  // subjectHint — субъект города без своих стартов (по ожидаемым), см. placeSubject.
+  const subject = subjectHint || citySubject(races, city);
   const from = origin ?? cityPoint(races, city);
   const items: AreaItem<R>[] = [];
   for (const r of races) {
@@ -338,13 +383,24 @@ export function parseSearch(text: string): ParsedSearch {
 }
 
 export function searchRaces(races: BotRace[], s: ParsedSearch): BotRace[] {
-  const words = s.q.split(/\s+/).filter(Boolean);
+  const words = queryWords(s.q);
   return races.filter((r) => {
     if (!matchUser(r, s.types, s.dists)) return false;
     if (s.month && Number(r.ds.slice(5, 7)) !== s.month) return false;
-    const hay = norm(`${r.name} ${r.city} ${r.region}`);
-    return words.every((w) => hay.includes(w));
+    // народные названия и транслит — общий поиск бота и сайта (29.10.2026: «грут» не находил ГРУТ)
+    return matchesQuery(searchText(r.name, r.city, r.region, r.subject), words);
   });
+}
+
+/** Ожидаемые по тому же запросу, что searchRaces: название, место, транслит, народные названия. */
+export function searchExpected(expected: ExpectedItem[], s: ParsedSearch): ExpectedItem[] {
+  const words = queryWords(s.q);
+  if (!words.length) return [];
+  return expected.filter(
+    (e) =>
+      matchesQuery(searchText(e.name, e.city, e.region, e.subject), words) &&
+      matchUser({ type: e.type, km: e.km, tags: [] } as unknown as Race, s.types, s.dists),
+  );
 }
 
 // ── даты и местное время ─────────────────────────────────────────────────────
@@ -550,7 +606,12 @@ export type ExpectedItem = {
   lastDate: string;
   lastUrl: string;
   site: string;
+  /** Финишёров прошлого проведения (race_expected.last_finishers): от BIG_FINISHERS — «крупный». */
+  finishers?: number | null;
 };
+
+/** Крупный ожидаемый старт: показывается первым в городе (наряд 29.10.2026). */
+export const BIG_FINISHERS = 500;
 
 const MONTH_PREP = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
 
@@ -641,12 +702,14 @@ export function expectedDateMd(md: string, today: string, from = Number(today.sl
 }
 
 /** Ожидаемый старт для HTML /races: без ссылки на прошлое проведение и его полной даты. */
-export type PublicExpected = Omit<ExpectedItem, "lastUrl" | "lastDate"> & { md: string };
+export type PublicExpected = Omit<ExpectedItem, "lastUrl" | "lastDate" | "finishers"> & { md: string; lastYear: number; big: boolean };
 
 export function publicExpected(e: ExpectedItem): PublicExpected {
-  const { lastUrl: _lastUrl, lastDate, ...rest } = e;
+  const { lastUrl: _lastUrl, lastDate, finishers, ...rest } = e;
   void _lastUrl;
-  return { ...rest, md: lastDate.slice(4) };
+  // Год прошлого проведения и признак «крупный» — для плашки «в 2026 было 16 августа» и порядка;
+  // ссылка и полная дата по-прежнему не отдаются (защита от выкачивания, 20.10.2026).
+  return { ...rest, md: lastDate.slice(4), lastYear: Number(lastDate.slice(0, 4)), big: (finishers ?? 0) >= BIG_FINISHERS };
 }
 
 export type SeasonItem =
@@ -667,17 +730,18 @@ export function browseItems(
   origin: GeoPoint | null,
   today: string,
 ): SeasonItem[] {
-  const from = origin ?? cityPoint(races, city);
+  // Город без своих стартов (Иваново): точка и субъект — по его ожидаемым (29.10.2026).
+  const from = origin ?? placePoint(races, expected, city);
+  const subject = placeSubject(races, expected, city);
   const out: SeasonItem[] = [];
   for (const r of races) {
     if (!inUserCity(r, city) || !matchUser(r, types, dists) || r.de < today) continue;
     out.push({ kind: "race", race: r, km: null, date: r.ds < today ? today : r.ds, near: false });
   }
-  for (const { race, km } of areaRaces(races, city, types, dists, origin).items) {
+  for (const { race, km } of areaRaces(races, city, types, dists, from, subject).items) {
     if (race.de < today) continue;
     out.push({ kind: "race", race, km, date: race.ds < today ? today : race.ds, near: true });
   }
-  const subject = citySubject(races, city);
   for (const e of expected) {
     if (!expectedInArea(e, city, subject, from) || !matchUser({ type: e.type, km: e.km, tags: [] } as unknown as Race, types, dists)) continue;
     const near = !expectedInCity(e, city);

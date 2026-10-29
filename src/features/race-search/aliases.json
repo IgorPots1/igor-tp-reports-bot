@@ -1,0 +1,678 @@
+{
+ "_comment": "Народные названия стартов для поиска (наряд 29.10.2026, фидбек «нет ГРУТа»). targets — кусок официального названия, aliases — как пишут люди; источник и цитата у каждой строки (сбор 29.10.2026, в основном заголовки публикаций). Совпадение без регистра, кавычек и разницы тире. Новая строка — только с источником.",
+ "entries": [
+  {
+   "aliases": [
+    "грут",
+    "grut",
+    "золотое кольцо ультра трейл"
+   ],
+   "targets": [
+    "golden ring ultra trail"
+   ],
+   "event": "Golden Ring Ultra Trail (Суздаль)",
+   "source": "https://itra.run/Races/RaceDetails/Golden.Ring.Ultra.Trail.100.Sprint.GRUT.5k/2026/117699",
+   "evidence": "ITRA: «Golden Ring Ultra Trail 100 – Sprint GRUT 5k»; сайт организатора goldenultra.ru/grut"
+  },
+  {
+   "aliases": [
+    "мм",
+    "moscow marathon"
+   ],
+   "targets": [
+    "московский марафон",
+    "moscow marathon"
+   ],
+   "event": "Московский марафон",
+   "source": "https://teletype.in/@mogogol/YKS5hKxLTFN",
+   "evidence": "«Сережа (тренер) постоянно напоминал о ММ… Паника, паника, паника и вот, ММ уже пройден.»"
+  },
+  {
+   "aliases": [
+    "мпм",
+    "mhm",
+    "moscow half"
+   ],
+   "targets": [
+    "московский полумарафон",
+    "moscow half"
+   ],
+   "event": "Московский полумарафон",
+   "source": "https://klstrb.substack.com/p/mpm",
+   "evidence": "«За МПМ стоит команда, которая сделала большущую работу…»; «…приносил необходимое на экспо МПМ»"
+  },
+  {
+   "aliases": [
+    "сим",
+    "sim"
+   ],
+   "targets": [
+    "сибирский международный марафон",
+    "siberian international marathon"
+   ],
+   "event": "Сибирский международный марафон (Омск)",
+   "source": "https://news.mail.ru/society/67272070/",
+   "evidence": "«В Омске прошёл SIM-2025: на старт вышло более 7 000 человек»"
+  },
+  {
+   "aliases": [
+    "европа азия",
+    "европа-азия",
+    "europe-asia"
+   ],
+   "targets": [
+    "европа-азия",
+    "европа – азия",
+    "europe-asia"
+   ],
+   "event": "Марафон «Европа-Азия» (Екатеринбург)",
+   "source": "https://www.e1.ru/text/theme/3408/",
+   "evidence": "E1.ru, тема «Марафон Европа-Азия» (аббревиатура «ЕАМ» в источниках не найдена — не включена)"
+  },
+  {
+   "aliases": [
+    "конжак",
+    "konzhak"
+   ],
+   "targets": [
+    "конжак"
+   ],
+   "event": "Международный горный марафон «Конжак» / Конжаковский марафон (Краснотурьинск)",
+   "source": "https://news.rambler.ru/community/56707729-irakli-vystupil-na-gornom-marafone-konzhak/",
+   "evidence": "«Иракли выступил на горном марафоне «Конжак»»"
+  },
+  {
+   "aliases": [
+    "эльтон",
+    "elton",
+    "эльтон ультра"
+   ],
+   "targets": [
+    "elton",
+    "эльтон"
+   ],
+   "event": "Elton Ultra (озеро Эльтон, Волгоградская обл.)",
+   "source": "https://itra.run/Races/RaceDetails/Elton.Ultra..Elton.Salt.Ultra/2021/72383",
+   "evidence": "ITRA: «Elton Ultra – Elton Salt Ultra», 2 круга вокруг озера Эльтон"
+  },
+  {
+   "aliases": [
+    "белые ночи",
+    "wn",
+    "white nights"
+   ],
+   "targets": [
+    "белые ночи",
+    "white nights"
+   ],
+   "event": "Марафон «Белые ночи» (Санкт-Петербург)",
+   "source": "https://runc.run/uploads/page_section_card_files/Handbook_WN2024_25062024.pdf",
+   "evidence": "Организатор: «Handbook WN2024»; Спортмастер: «Марафон Белые ночи: почему все хотят его пробежать»"
+  },
+  {
+   "aliases": [
+    "дорога жизни",
+    "road of life"
+   ],
+   "targets": [
+    "дорога жизни"
+   ],
+   "event": "Международный зимний марафон «Дорога жизни» (Всеволожский р-н)",
+   "source": "https://www.dp.ru/a/2024/01/28/v-jubilejnom-marafone-doroga",
+   "evidence": "«В юбилейном марафоне \"Дорога жизни\" приняли участие 4,5 тысячи бегунов»"
+  },
+  {
+   "aliases": [
+    "пушкин петербург",
+    "пушкин-петербург",
+    "пушкинран",
+    "pushkinrun"
+   ],
+   "targets": [
+    "пушкин – санкт-петербург",
+    "пушкин - санкт-петербург",
+    "пушкин – петербург",
+    "пушкин-петербург",
+    "пушкинран"
+   ],
+   "event": "Пробег «Пушкин – Санкт-Петербург» (серия ПушкинРан)",
+   "source": "https://www.dp.ru/a/2022/09/04/Zabeg_Pushkin__Sankt-Pet",
+   "evidence": "«Забег \"Пушкин – Санкт-Петербург\" вызвал пробки в центре и на юге города»"
+  },
+  {
+   "aliases": [
+    "сочи марафон",
+    "sochi marathon",
+    "альфа сочи марафон"
+   ],
+   "targets": [
+    "сочи марафон",
+    "sochi marathon"
+   ],
+   "event": "Сочи Марафон (спонсорское: Альфа-Банк Сочи Марафон)",
+   "source": "https://ru.ruwiki.ru/wiki/%D0%A1%D0%BE%D1%87%D0%B8_%D0%9C%D0%B0%D1%80%D0%B0%D1%84%D0%BE%D0%BD",
+   "evidence": "Рувики, статья «Сочи Марафон»: проходит каждый ноябрь с 2016 года",
+   "note": "написание без источника (наше): сочи марафон"
+  },
+  {
+   "aliases": [
+    "роза вайлд",
+    "розавайлд",
+    "rosa wild",
+    "роза вайлд фест"
+   ],
+   "targets": [
+    "rosa wild"
+   ],
+   "event": "Т-Банк Rosa Wild Fest / Rosa Wild Trail (Красная Поляна)",
+   "source": "https://t-j.ru/news/rosa-wild-fest-2026/",
+   "evidence": "«Rosa Wild Fest открыл регистрацию на 2026 год»; ITRA: «Т.Банк Rosa Wild Trail»",
+   "note": "написание без источника (наше): роза вайлд, розавайлд"
+  },
+  {
+   "aliases": [
+    "айронстар",
+    "ironstar",
+    "iron star"
+   ],
+   "targets": [
+    "ironstar",
+    "iron star"
+   ],
+   "event": "Серия триатлонов IRONSTAR",
+   "source": "https://expert.ru/obshchestvo/triatlon-eto-premialnaya-sotsialnaya-set",
+   "evidence": "«…увлечение триатлоном под названием Ironstar» (кириллица «Айронстар» — от заказчика)",
+   "note": "написание без источника (наше): айронстар"
+  },
+  {
+   "aliases": [
+    "ред фокс",
+    "red fox",
+    "редфокс"
+   ],
+   "targets": [
+    "red fox elbrus"
+   ],
+   "event": "Red Fox Elbrus Race (Приэльбрусье)",
+   "source": "https://inbusiness.kz/ru/news/red-fox-elbrus-race-bajkashev-operedil-rekordsmena-mira",
+   "evidence": "«Red Fox Elbrus Race: Байкашев опередил рекордсмена мира»",
+   "note": "написание без источника (наше): ред фокс"
+  },
+  {
+   "aliases": [
+    "казанский марафон",
+    "kazan marathon",
+    "казань марафон"
+   ],
+   "targets": [
+    "казанский марафон",
+    "kazan marathon"
+   ],
+   "event": "Казанский марафон",
+   "source": "https://www.evening-kazan.ru/obshhestvo/news/na-kazanskiy-marafon-zayavilis-30-tysyach-chelovek",
+   "evidence": "«На Казанский марафон заявились 30 тысяч человек»"
+  },
+  {
+   "aliases": [
+    "зелёный марафон",
+    "зеленый марафон",
+    "сбер марафон"
+   ],
+   "targets": [
+    "зелёный марафон",
+    "зеленый марафон"
+   ],
+   "event": "СберПрайм Зелёный Марафон (спонсор опускается)",
+   "source": "https://aif.ru/society/charity/zabeg-protiv-raka-zelyonyy-marafon-sbera-sobral-bolee-150-tysyach-uchastnikov",
+   "evidence": "«Забег против рака: Зелёный марафон Сбера собрал более 150 тысяч участников»"
+  },
+  {
+   "aliases": [
+    "северная столица",
+    "спб полумарафон",
+    "spbhalf"
+   ],
+   "targets": [
+    "северная столица"
+   ],
+   "event": "СПБ полумарафон «Северная столица»",
+   "source": "https://snob.ru/news/180488/",
+   "evidence": "«В Санкт-Петербурге во второй раз пройдет полумарафон «Северная столица»»; регламент: SpbHalf"
+  },
+  {
+   "aliases": [
+    "забег рф",
+    "забег.рф",
+    "забегрф",
+    "zabeg"
+   ],
+   "targets": [
+    "забег.рф",
+    "забег рф",
+    "забегрф"
+   ],
+   "event": "Всероссийский полумарафон «ЗаБег.РФ»",
+   "source": "https://360.ru/news/mosobl/bolee-1000-zhitelej-podmoskovja-vyshli-na-start-polumarafona-zabegrf/",
+   "evidence": "«Более 1000 жителей Подмосковья вышли на старт полумарафона «ЗаБег.РФ»»"
+  },
+  {
+   "aliases": [
+    "x-waters",
+    "xwaters",
+    "x waters"
+   ],
+   "targets": [
+    "x-waters",
+    "x waters"
+   ],
+   "event": "X-Waters — серия заплывов на открытой воде",
+   "source": "https://360.ru/tekst/mosobl/zaplyv-x-waters-projdet-na-istrinskom-vodohranilische-17-avgusta/",
+   "evidence": "«Заплыв X-Waters пройдет на Истринском водохранилище 17 августа»"
+  },
+  {
+   "aliases": [
+    "хибины",
+    "khibiny",
+    "хибины трейл"
+   ],
+   "targets": [
+    "khibiny",
+    "хибины"
+   ],
+   "event": "Трейл «Хибины» / Khibiny Trail (Кировск)",
+   "source": "https://360.ru/tekst/proisshestviya/zabeg-v-odin-konets/",
+   "evidence": "«Кто виноват в гибели двух участников трейла «Хибины»»"
+  },
+  {
+   "aliases": [
+    "байкальский ледовый",
+    "baikal ice marathon",
+    "baikal ice"
+   ],
+   "targets": [
+    "baikal ice",
+    "байкальский ледовый"
+   ],
+   "event": "Байкальский ледовый марафон / Baikal Ice Marathon",
+   "source": "https://themoscowtimes.com/2020/02/18/russia-hosts-bone-chilling-ice-marathon-on-lake-baikal-a69323",
+   "evidence": "«Russia Hosts Bone-Chilling Ice Marathon on Lake Baikal»"
+  },
+  {
+   "aliases": [
+    "кросс нации"
+   ],
+   "targets": [
+    "кросс нации"
+   ],
+   "event": "Всероссийский день бега «Кросс нации»",
+   "source": "https://riamo.ru/news/sport/bolee-1000-uchastnikov-vyshli-na-start-krossa-natsii-2023-v-shature/",
+   "evidence": "«Более 1000 участников вышли на старт «Кросса нации-2023» в Шатуре»"
+  },
+  {
+   "aliases": [
+    "гонка героев",
+    "лига героев"
+   ],
+   "targets": [
+    "гонка героев"
+   ],
+   "event": "«Гонка героев» (серия забегов с препятствиями, Лига Героев)",
+   "source": "https://www.sport-express.net/others/news/1284339/",
+   "evidence": "«На курорте \"Игора\" пройдет культовый забег \"Гонка героев. Новая высота\"»"
+  },
+  {
+   "aliases": [
+    "тюменский марафон",
+    "врата сибири"
+   ],
+   "targets": [
+    "врата сибири"
+   ],
+   "event": "Марафон «Врата Сибири» (Тюмень)",
+   "source": "https://abnews.ru/ural/news/tyumen/2026/6/14/marafon-v-tyumeni-sobral-uchastnikov-iz-desyatkov-stran",
+   "evidence": "«В Тюмени прошел марафон «Врата Сибири»»"
+  },
+  {
+   "aliases": [
+    "пермский марафон"
+   ],
+   "targets": [
+    "пермский марафон",
+    "пермский международный марафон"
+   ],
+   "event": "Пермский международный марафон",
+   "source": "https://e-gorod.ru/wp-content/uploads/2023/07/Пермский-марафон_2022.pdf",
+   "evidence": "«Всероссийские соревнования по лёгкой атлетике «Пермский марафон»» (2022)"
+  },
+  {
+   "aliases": [
+    "ewr",
+    "elbrus world race",
+    "альпиндустрия эльбрус",
+    "alpindustria elbrus race"
+   ],
+   "targets": [
+    "elbrus world race",
+    "alpindustria elbrus"
+   ],
+   "event": "Elbrus World Race / Alpindustria Elbrus Race",
+   "source": "https://www.elbrusworldrace.com/en/?p=5091",
+   "evidence": "Elbrus World Race (EWR) — главный старт серии Alpindustria Elbrus Race, ~127 км вокруг Эльбруса"
+  },
+  {
+   "aliases": [
+    "aut",
+    "алтай ультра трейл",
+    "altai ultra"
+   ],
+   "targets": [
+    "altai ultra",
+    "алтай ультра"
+   ],
+   "event": "Altai Ultra Trail (Акташ, Республика Алтай)",
+   "source": "https://itra.run/Races/RaceResults/AUT2025.S/2025/98105",
+   "evidence": "ITRA: «AUT2025»; Спортмастер: Altai Ultra Trail — «самый «дикий» трейл России»"
+  },
+  {
+   "aliases": [
+    "ярыш",
+    "иремель",
+    "iremel yarish"
+   ],
+   "targets": [
+    "iremel",
+    "иремель"
+   ],
+   "event": "Фестиваль скайраннинга «Иремель Ярыш» (Челябинская обл./Башкирия)",
+   "source": "https://itra.run/Races/RaceDetails/Iremel.Yarish.Iremel.Foothills/2026/116567",
+   "evidence": "ITRA: «Iremel Yarish – Iremel Foothills» 2026"
+  },
+  {
+   "aliases": [
+    "эльбрусман",
+    "elbrusman"
+   ],
+   "targets": [
+    "elbrusman",
+    "эльбрусман"
+   ],
+   "event": "Триатлон Elbrusman (Приэльбрусье)",
+   "source": "https://rg.ru/2026/08/01/reg-skfo/na-elbruse-startoval-sezon-vysokogornyh-zabegov.html",
+   "evidence": "РГ: «…триатлон Elbrusman стартует 19 августа»"
+  },
+  {
+   "aliases": [
+    "уфимский марафон"
+   ],
+   "targets": [
+    "уфимский международный марафон",
+    "уфимский марафон"
+   ],
+   "event": "Уфимский международный марафон",
+   "source": "https://alrf.ru/news/mezhdunarodnyy-marafon-provedut-v-ufe-v-sentyabre/",
+   "evidence": "ВФЛА: «Международный марафон проведут в Уфе в сентябре»; АНО «Уфимский марафон»"
+  },
+  {
+   "aliases": [
+    "сибирский фестиваль бега",
+    "полумарафон раевича",
+    "новосибирский полумарафон"
+   ],
+   "targets": [
+    "раевич",
+    "сибирский фестиваль бега"
+   ],
+   "event": "Новосибирский полумарафон им. А. Раевича (Сибирский фестиваль бега)",
+   "source": "https://www.vesti.ru/article/2458091",
+   "evidence": "«XXIII Новосибирский полумарафон Александра Раевича проходил как Сибирский фестиваль бега»"
+  },
+  {
+   "aliases": [
+    "мосты владивостока",
+    "владивостокский марафон",
+    "vladivostok marathon",
+    "galaxy marathon"
+   ],
+   "targets": [
+    "мосты владивостока",
+    "vladivostok marathon",
+    "владивостокский марафон"
+   ],
+   "event": "Международный марафон «Мосты Владивостока» / Galaxy Vladivostok Marathon",
+   "source": "https://visit-primorye.ru/en/what-to-do/mezhdunarodnyj-marafon-mosty-vladivostoka",
+   "evidence": "«International Marathon \"Bridges of Vladivostok\"»; «IX International Galaxy Vladivostok Marathon»"
+  },
+  {
+   "aliases": [
+    "ярославский полумарафон",
+    "бегом по золотому кольцу"
+   ],
+   "targets": [
+    "ярославский полумарафон",
+    "бегом по золотому кольцу"
+   ],
+   "event": "Ярославский полумарафон «Золотое кольцо» (серия «Бегом по Золотому кольцу»)",
+   "source": "https://www.sport-express.ru/running/news/713851/",
+   "evidence": "Спорт-Экспресс о Ярославском полумарафоне 2014 (участие А. Мерзликина); серия «Фармэко – Бегом по Золотому кольцу»"
+  },
+  {
+   "aliases": [
+    "dwt",
+    "dagestan wild trail"
+   ],
+   "targets": [
+    "dagestan wild trail"
+   ],
+   "event": "Dagestan Wild Trail (Гуниб)",
+   "source": "https://t-j.ru/news/dwt-2026/",
+   "evidence": "Т—Ж, /news/dwt-2026: Dagestan Wild Trail 10–12 апреля 2026 у Гуниба"
+  },
+  {
+   "aliases": [
+    "elbrus wild trail"
+   ],
+   "targets": [
+    "elbrus wild trail"
+   ],
+   "event": "Elbrus Wild Trail (поляна Азау)",
+   "source": "https://t-j.ru/news/elbrus-wild-trail-2026/",
+   "evidence": "Т—Ж: Elbrus Wild Trail 8–9 августа 2026 у подножия Эльбруса"
+  },
+  {
+   "aliases": [
+    "лужники",
+    "полумарафон лужники",
+    "luzhniki half"
+   ],
+   "targets": [
+    "полумарафон «лужники»",
+    "полумарафон лужники",
+    "luzhniki half"
+   ],
+   "event": "Полумарафон «Лужники» (Москва)",
+   "source": "https://snob.ru/news/181507/",
+   "evidence": "«В полумарафоне «Лужники» приняли участие шесть тысяч человек»"
+  },
+  {
+   "aliases": [
+    "беги герой",
+    "беги, герой"
+   ],
+   "targets": [
+    "беги, герой",
+    "беги герой"
+   ],
+   "event": "Полумарафон «Беги, герой!» (Нижний Новгород)",
+   "source": "https://news.rambler.ru/weather/45913705-otkrylas-registratsiya-na-polumarafon-begi-geroy/",
+   "evidence": "«Открылась регистрация на полумарафон «Беги, Герой!»»"
+  },
+  {
+   "aliases": [
+    "марафон-800",
+    "нижегородский марафон",
+    "марафон нижний новгород"
+   ],
+   "targets": [
+    "марафон «нижний новгород»",
+    "марафон нижний новгород",
+    "марафон-800"
+   ],
+   "event": "Марафон «Нижний Новгород» (бывш. «Марафон-800»)",
+   "source": "https://cyclowiki.org/wiki/%D0%9C%D0%B0%D1%80%D0%B0%D1%84%D0%BE%D0%BD_%D0%9D%D0%B8%D0%B6%D0%BD%D0%B8%D0%B9_%D0%9D%D0%BE%D0%B2%D0%B3%D0%BE%D1%80%D0%BE%D0%B4",
+   "evidence": "«В 2022 году забег вновь прошёл под названием «Марафон-800»… в 2023 — марафон «Нижний Новгород»»"
+  },
+  {
+   "aliases": [
+    "тагил ультра трейл",
+    "tagil ultra trail"
+   ],
+   "targets": [
+    "тагил ультра"
+   ],
+   "event": "«Тагил ультра Трейл» (гора Белая, Уралец)",
+   "source": "https://news.mail.ru/society/71033299/",
+   "evidence": "«В поселке Уралец Свердловской области пройдет марафон «Тагил ультра Трейл»»"
+  },
+  {
+   "aliases": [
+    "ергаки",
+    "skyrunfest",
+    "ergaki"
+   ],
+   "targets": [
+    "skyrunfest",
+    "ергаки",
+    "ergaki"
+   ],
+   "event": "Skyrunfest (природный парк Ергаки, Красноярский край)",
+   "source": "https://itra.run/Races/RaceDetails/77819",
+   "evidence": "ITRA: трейл/скайраннинг-фестиваль «Skyrunfest» в парке Ergaki, ~23 км"
+  },
+  {
+   "aliases": [
+    "mad fox",
+    "mad fox ultra"
+   ],
+   "targets": [
+    "mad fox"
+   ],
+   "event": "Mad Fox Ultra (Переславль-Залесский)",
+   "source": "https://www.sportmaster.ru/media/articles/top-10-rossijskih-ultramarafonov/",
+   "evidence": "«Mad Fox Ultra… знаменитый «стомильник» в середине декабря»"
+  },
+  {
+   "aliases": [
+    "ural ultra trail",
+    "урал ультра трейл"
+   ],
+   "targets": [
+    "ural ultra"
+   ],
+   "event": "Ural Ultra-Trail",
+   "source": "https://www.sportmaster.ru/media/articles/top-10-rossijskih-ultramarafonov/",
+   "evidence": "«Ural Ultra-trail… проводится с 2016 года… В 2022 году была Кубком России по трейлу»"
+  },
+  {
+   "aliases": [
+    "армагеддон",
+    "armageddon 1000"
+   ],
+   "targets": [
+    "армагеддон",
+    "armageddon"
+   ],
+   "event": "Ультрамарафон «Армагеддон 1000» (Северный Кавказ, старт в Грозном)",
+   "source": "https://www.sportmaster.ru/media/articles/top-10-rossijskih-ultramarafonov/",
+   "evidence": "«Армагеддон 1000… одна из самых сложных гонок в мире; маршруты начинаются в Грозном»"
+  },
+  {
+   "aliases": [
+    "манжерок",
+    "manzherok trail",
+    "манжерок трейл"
+   ],
+   "targets": [
+    "манжерок",
+    "manzherok"
+   ],
+   "event": "Sportmaster PRO Манжерок трейл (Республика Алтай)",
+   "source": "https://www.sportmaster.ru/media/articles/kalendar-letnih-trejlov-v-rossii-v-2025-godu/",
+   "evidence": "«Sportmaster PRO Манжерок трейл… новое название майского трейлового фестиваля AUT Team»"
+  },
+  {
+   "aliases": [
+    "ночная казань",
+    "ночной забег казань"
+   ],
+   "targets": [
+    "ночная казань"
+   ],
+   "event": "Ночной забег «Ночная Казань»",
+   "source": "https://www.business-gazeta.ru/article/566569",
+   "evidence": "«Ночная Казань» приятна не только для бегунов… забег на 10 км стартовал в полночь"
+  },
+  {
+   "aliases": [
+    "енисей батюшка",
+    "енисей-батюшка"
+   ],
+   "targets": [
+    "енисей-батюшка",
+    "енисей батюшка"
+   ],
+   "event": "Пробег/полумарафон «Енисей-Батюшка» (Красноярск)",
+   "source": "https://news.mail.ru/society/68233645/",
+   "evidence": "«В Красноярске состоится традиционный забег «Енисей-батюшка»»"
+  },
+  {
+   "aliases": [
+    "самарский марафон",
+    "марафон самара"
+   ],
+   "targets": [
+    "самарский международный марафон",
+    "самарский марафон"
+   ],
+   "event": "Самарский международный марафон на кубок Главы г. Самары (орг. VOLGAMAN)",
+   "source": "https://www.sportmaster.ru/afisha/events/1478/",
+   "evidence": "«Команда VOLGAMAN приглашает… в Самарском Международном Марафоне на кубок Главы города Самара»"
+  },
+  {
+   "aliases": [
+    "lwt",
+    "ladoga winter trail"
+   ],
+   "targets": [
+    "ladoga winter trail"
+   ],
+   "event": "Ladoga Winter Trail (Берёзово, лёд Ладоги)",
+   "source": "https://itra.run/Races/RaceDetails/Ladoga.Winter.Trail.LWT.22/2026/111986",
+   "evidence": "ITRA: «Ladoga Winter Trail LWT 22» — «полумарафон по льдам Ладоги»"
+  },
+  {
+   "aliases": [
+    "crazy owl",
+    "crazyowl",
+    "crazyowl50"
+   ],
+   "targets": [
+    "crazyowl",
+    "crazy owl"
+   ],
+   "event": "CrazyOwl50 — ночной ультра у Старой Ладоги (Golden Ultra)",
+   "source": "https://goldenultra.ru/crazyowl/?lang=en",
+   "evidence": "CrazyOwl50 night ultra, 50k, Ленинградская обл., 13 июня 2026"
+  },
+  {
+   "aliases": [
+    "казанский полумарафон"
+   ],
+   "targets": [
+    "казанский национальный полумарафон"
+   ],
+   "event": "Казанский национальный полумарафон",
+   "source": "https://www.business-gazeta.ru/article/566569",
+   "evidence": "«Казанский национальный полумарафон» стал последним мероприятием бегового сезона в городе"
+  }
+ ]
+}

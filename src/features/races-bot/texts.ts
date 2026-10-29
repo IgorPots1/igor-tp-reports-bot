@@ -10,6 +10,7 @@ import { cardRich, listRich, menuRich, myRich, periodText, shortName, type ListR
 
 import {
   DIST_BUTTONS,
+  NEARBY_KM,
   TYPE_BUTTONS,
   citySlug,
   countdown,
@@ -818,20 +819,26 @@ export function seasonFork(
   city: string,
   rows: { s: Season; dated: number; expected: number }[],
   filters: string | null,
+  /** Город без своих стартов с датой (Иваново, 29.10.2026): строка, что в списке, и кнопка «Добавьте». */
+  emptyCity: string | null = null,
 ): Msg {
   const shown = rows.filter((r) => r.dated + r.expected > 0);
-  const head = `<b>${esc(city)} и рядом.</b> На какой сезон ищешь старт?${filters ? `\nФильтры: ${esc(filters)}.` : ""}`;
+  const empty = emptyCity
+    ? `\nВ самом городе стартов с датой пока нет: в списке ожидаемые, у которых дата ещё не объявлена, и старты в радиусе ${NEARBY_KM} км.`
+    : "";
+  const head = `<b>${esc(city)} и рядом.</b> На какой сезон ищешь старт?${empty}${filters ? `\nФильтры: ${esc(filters)}.` : ""}`;
+  const add: Button[][] = emptyCity ? [[calendarButton("Знаете старт в городе? Добавьте", emptyCity, "list")]] : [];
   if (!shown.length) {
     return {
       text: `${head}\n\nПока ни одного старта${filters ? " по этим фильтрам" : ""}: ни с датой, ни ожидаемого.`,
-      reply_markup: { inline_keyboard: [[{ text: "Снять фильтры", callback_data: "nf" }, { text: "Сменить город", callback_data: "s:city" }], navRow(city)] },
+      reply_markup: { inline_keyboard: [[{ text: "Снять фильтры", callback_data: "nf" }, { text: "Сменить город", callback_data: "s:city" }], ...add, navRow(city)] },
     };
   }
   const lines = shown.map((r) => `${r.s.label}: ${r.dated} с датой, ${r.expected} ${plural(r.expected, "ожидается", "ожидаются", "ожидаются")}`);
   return {
     text: `${head}\n\n${lines.join("\n")}`,
     reply_markup: {
-      inline_keyboard: [...shown.map((r) => [{ text: `${r.s.label} · ${r.dated + r.expected}`, callback_data: `sn:${r.s.key}:0` }]), navRow(city)],
+      inline_keyboard: [...shown.map((r) => [{ text: `${r.s.label} · ${r.dated + r.expected}`, callback_data: `sn:${r.s.key}:0` }]), ...add, navRow(city)],
     },
   };
 }

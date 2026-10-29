@@ -23,7 +23,9 @@ export async function loadGeoRows(): Promise<Map<string, GeoRow>> {
 
 /** Субъект и точка ожидаемого: из race_geo по «город, регион»; нет — субъект из написания региона. */
 export function withGeo(e: ExpectedItem, geo: Map<string, GeoRow>): ExpectedItem {
-  const g = geo.get(geoKey(e.city, e.region));
+  // Запасной ключ — город без региона: «иваново, » есть в race_geo, «иваново, ивановская область» нет
+  // (29.10.2026: у Иваново не было точки, и «рядом, 150 км» не считалось).
+  const g = geo.get(geoKey(e.city, e.region)) ?? geo.get(geoKey(e.city, ""));
   return {
     ...e,
     subject: g?.subject || canonicalSubject(e.region) || canonicalSubject(e.city) || "",
@@ -42,6 +44,7 @@ type Row = {
   last_date: string;
   last_url: string;
   site_url: string | null;
+  last_finishers?: number | null;
 };
 
 export function toExpected(r: Row): ExpectedItem {
@@ -59,6 +62,7 @@ export function toExpected(r: Row): ExpectedItem {
     lastDate: r.last_date,
     lastUrl: r.last_url,
     site: /^https?:\/\//i.test(r.site_url || "") ? (r.site_url as string) : "",
+    finishers: r.last_finishers ?? null,
   };
 }
 
@@ -71,7 +75,7 @@ export async function loadExpected(): Promise<ExpectedItem[]> {
     for (let from = 0; ; from += 1000) {
       const { data, error } = await sb
         .from("race_expected")
-        .select("id,name,city,region,race_type,distances,last_month,last_date,last_url,site_url")
+        .select("id,name,city,region,race_type,distances,last_month,last_date,last_url,site_url,last_finishers")
         .eq("status", "expected")
         .order("last_month")
         .order("name")

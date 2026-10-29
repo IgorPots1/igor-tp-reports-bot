@@ -445,7 +445,8 @@
     "intervals:regenerate": "node --experimental-strip-types --loader ./scripts/_alias-loader.mjs --env-file=.env.local tools/trainingpeaks-export/scripts/intervals-regenerate.ts",
     "intervals:prefill": "npx tsx scripts/intervals-prefill-update.ts",
     "check:races-bot-screens": "npx tsx scripts/check-races-bot-screens.ts",
-    "check:races-protect": "npx tsx scripts/check-races-protect.ts"
+    "check:races-protect": "npx tsx scripts/check-races-protect.ts",
+    "check:races-search": "npx tsx scripts/check-races-search.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",
