@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { createTrialBot } from "@/features/trial-bot/bot";
-import { DAY_PATTERNS, QUESTIONS, mskNow, parseTrialCallback, patternsFor, type Checkin } from "@/features/trial-bot/logic";
+import { ALL_DAY_PATTERNS, QUESTIONS, mskNow, parseTrialCallback, patternsFor, type Checkin } from "@/features/trial-bot/logic";
 import type { Keyboard } from "@/features/trial-bot/texts";
 
 import { memStore } from "./lib/trial-bot-memstore";
@@ -25,21 +25,27 @@ const END = new Date("2026-11-16T23:59:00+03:00");
 
 type Persona = {
   name: string;
-  answers: [string, string, string, string, string, string]; // коды вариантов Q1..Q6
+  /** Коды ответов по пути анкеты своей цели, последний про здоровье (none = «Ничего из этого»). */
+  answers: string[];
   week: boolean; // «Да, веди» или «Пока только посмотрю»
   pattern?: string; // по умолчанию первый набор дней
   checkins: Checkin[];
   base?: "y" | "n"; // ответ на итог дня 7
 };
 
+/* По персонажу на каждую ветку анкеты [29.10.2026]: начать, вернуться, регулярно, к старту,
+ * плюс здоровье и «только посмотрю». Максим раньше получал «неделя тебе не нужна». */
 const PERSONAS: Persona[] = [
-  { name: "Анна, с нуля", answers: ["no", "lt5", "never", "3", "regular", "none"], week: true, checkins: ["ok", "easy", "ok"], base: "y" },
-  { name: "Ольга, бросала, задыхается", answers: ["quit", "5_15", "breath", "3", "5k", "none"], week: true, checkins: ["easy", "easy", "easy"], base: "n" },
-  { name: "Сергей, нет времени", answers: ["quit", "15_30", "time", "2", "shape", "none"], week: true, checkins: ["hard", "miss"] },
-  { name: "Ирина, возвращение, колени", answers: ["quit", "5_15", "knees", "3", "return", "none"], week: true, checkins: ["ok", "pain", "ok"] },
-  { name: "Максим, бегает регулярно", answers: ["regular", "gt30", "progress", "3", "shape", "none"], week: true, checkins: [] },
-  { name: "Елена, давление", answers: ["no", "lt5", "never", "3", "regular", "heart"], week: true, checkins: [] },
-  { name: "Катя, только смотрит", answers: ["no", "lt5", "never", "3", "regular", "none"], week: false, checkins: [] },
+  { name: "Анна, с нуля", answers: ["start", "rarely", "lt5", "3", "none", "none"], week: true, checkins: ["ok", "easy", "ok"], base: "y" },
+  { name: "Ольга, бегает без режима, 5-30 минут", answers: ["start", "sometimes", "5_30", "3", "past", "none"], week: true, checkins: ["easy", "easy", "easy"], base: "n" },
+  { name: "Ирина, возвращение после полугода", answers: ["return", "6m_plus", "5k", "3", "now", "none"], week: true, checkins: ["ok", "pain", "ok"] },
+  { name: "Сергей, возвращение, 2 раза", answers: ["return", "3_6m", "10k", "2", "none", "none"], week: true, checkins: ["hard", "miss"] },
+  { name: "Максим, бегает регулярно, без интервалов", answers: ["regular", "15_30", "10_15", "easy_only", "4", "none", "none"], week: true, checkins: ["ok", "easy", "ok"], base: "y" },
+  { name: "Дина, регулярно 2 раза", answers: ["regular", "5_15", "5_10", "sometimes", "2", "past", "none"], week: true, checkins: ["ok", "ok"] },
+  { name: "Павел, полумарафон, интервалы регулярно", answers: ["race", "21k", "t2", "30_50", "regularly", "4", "none", "none"], week: true, checkins: ["easy", "hard", "ok"] },
+  { name: "Света, 10 км, дискомфорт", answers: ["race", "10k", "t3", "15_30", "sometimes", "3", "now", "none"], week: true, checkins: ["ok", "ok", "ok"] },
+  { name: "Елена, давление", answers: ["start", "rarely", "lt5", "3", "none", "heart"], week: true, checkins: [] },
+  { name: "Катя, только смотрит", answers: ["regular", "30_50", "15_21", "regularly", "3", "none", "none"], week: false, checkins: [] },
 ];
 
 const WD = ["", "пн", "вт", "ср", "чт", "пт", "сб", "вс"];
@@ -123,11 +129,16 @@ async function runPersona(p: Persona, id: number): Promise<{ log: string[]; coac
   await bot.handleStart({ from, chatId: id, source: "sim" });
   later(1);
   await press("tr:go");
-  for (let n = 1; n <= 6; n++) {
+  for (const code of p.answers) {
     later(1);
-    const idx = QUESTIONS[n - 1].options.findIndex((o) => o.code === p.answers[n - 1]);
-    if (idx < 0) throw new Error(`${p.name}: нет варианта ${p.answers[n - 1]} в вопросе ${n}`);
-    await press(`tr:a:${n}:${idx}`);
+    // Вопрос берётся с последних кнопок бота: путь анкеты ведёт бот, а не сценарий.
+    const b = (lastKb ?? []).flat().find((x) => {
+      if (!("data" in x) || !x.data.startsWith("tr:a:")) return false;
+      const [, , qid, i] = x.data.split(":");
+      return QUESTIONS[qid]?.options[Number(i)]?.code === code;
+    });
+    if (!b || !("data" in b)) throw new Error(`${p.name}: на экране нет варианта ${code}`);
+    await press(b.data);
   }
   const u = mem.users.get(id)!;
   if (u.stage === "result") {
@@ -137,7 +148,7 @@ async function runPersona(p: Persona, id: number): Promise<{ log: string[]; coac
       later(1);
       const runs = u.weekly_runs === 2 ? 2 : 3;
       const pattern = p.pattern ?? patternsFor(runs)[0];
-      if (!DAY_PATTERNS[pattern]) throw new Error(pattern);
+      if (!ALL_DAY_PATTERNS[pattern]) throw new Error(pattern);
       await press(`tr:days:${pattern}`);
     } else {
       await press("tr:wk:n");

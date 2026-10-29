@@ -5,14 +5,14 @@
 import { SITE_URL } from "@/lib/site";
 
 import {
-  DAY_PATTERNS,
-  QUESTION_COUNT,
+  ALL_DAY_PATTERNS,
   plural,
   type Checkin,
   type NextStepAdvice,
   type Question,
   type ResultType,
 } from "./logic";
+import type { RunnerAdvice } from "./runner-week";
 import type { WorkoutText } from "./workouts";
 
 export type Button = { text: string; data: string } | { text: string; url: string };
@@ -27,22 +27,24 @@ export function consultUrl(text: string): string {
 }
 
 export const PREFILL_HEALTH = "Привет! Я из теста в боте, хочу обсудить нагрузку с учётом здоровья";
-export const PREFILL_ALREADY = "Привет! Я уже бегаю и хочу обсудить свою цель";
 export const PREFILL_BASE = "Хочу в Базу после пробной недели";
 export const PREFILL_HINT = "Привет! Пишу из пробной недели в боте";
 
 // ── вход и тест ──────────────────────────────────────────────────────────────
 
+/* [29.10.2026, правка Игоря] было «разберёмся, почему бег у тебя не держится»: это про новичка,
+ * а неделя теперь для любого уровня. Обещание бесплатной недели осталось. */
 export const INTRO =
-  "Привет, это Игорь, тренер по бегу. За 2 минуты разберёмся, почему бег у тебя не держится, и я дам тебе первую неделю тренировок. Начинаем?";
+  "Привет, это Игорь, тренер по бегу. За 2 минуты разберёмся, почему нет прогресса в беге, и я дам тебе неделю тренировок бесплатно. Начинаем?";
 export const INTRO_KB: Keyboard = [[{ text: "Поехали", data: "tr:go" }]];
 
-export function questionText(q: Question): string {
-  return `Вопрос ${q.n} из ${QUESTION_COUNT}\n\n${q.text}`;
+/** total: сколько вопросов у этой цели; null, пока цель не выбрана (первый вопрос без «из»). */
+export function questionText(q: Question, n: number, total: number | null): string {
+  return `${total ? `Вопрос ${n} из ${total}` : `Вопрос ${n}`}\n\n${q.text}`;
 }
 
 export function questionKb(q: Question): Keyboard {
-  return q.options.map((o, i) => [{ text: o.label, data: `tr:a:${q.n}:${i}` }]);
+  return q.options.map((o, i) => [{ text: o.label, data: `tr:a:${q.id}:${i}` }]);
 }
 
 export const TEST_DONE = "Готово, спасибо за ответы. Вот что получилось.";
@@ -59,19 +61,19 @@ export const HEALTH_STOP =
   "Спасибо, что честно. В такой ситуации я не дам план вслепую: сначала стоит обсудить нагрузку с врачом. Если хочешь, напиши мне, разберём твою ситуацию лично.";
 export const HEALTH_KB: Keyboard = [[{ text: "Написать Игорю", url: consultUrl(PREFILL_HEALTH) }]];
 
-export const ALREADY_RUNNER =
-  "Ты уже бегаешь\n\n" +
-  "Больше 30 минут без остановки и регулярно: неделя для начинающих тебе не нужна, она будет слишком лёгкой. " +
-  "Если есть цель, например первые 10 км, полумарафон или 5 км быстрее, напиши мне, разберём, как к ней идти.";
-export const ALREADY_KB: Keyboard = [[{ text: "Написать Игорю", url: consultUrl(PREFILL_ALREADY) }]];
+/* [29.10.2026] Был исход «Ты уже бегаешь: неделя для начинающих тебе не нужна» без недели.
+ * Отменён: никому не отказываем, бегающий получает неделю бегуна (runner-week.ts). */
 
 /** Вход по ссылке пробной недели от действующего ученика: без кнопок, без теста, без оферов. */
 export const ALREADY_STUDENT =
   "Ты уже тренируешься со мной, пробная неделя тебе не нужна. Если есть вопрос, просто напиши мне.";
 
+/* [29.10.2026] Коды результата прежние (их держит check в базе), смысл теперь по цели анкеты
+ * (logic.classifyResult). «Слишком быстро» переименовано в «Всё в одном темпе»: так оно читается
+ * у бегающего, у которого нет прогресса. */
 export const RESULT_NAMES: Record<ResultType, string> = {
   clean_start: "Чистый старт",
-  too_fast: "Слишком быстро",
+  too_fast: "Всё в одном темпе",
   no_system: "Нет системы",
   comeback: "Возвращение",
 };
@@ -80,26 +82,37 @@ const RESULT_ABOUT: Record<ResultType, string> = {
   clean_start:
     "Ты начинаешь с нуля, и это хорошая точка: нет привычки бегать на износ и нет старых ошибок. Главное сейчас не торопиться и дать телу привыкнуть.",
   too_fast:
-    "Бег не держится, потому что ты бежишь быстрее, чем готовы сердце и дыхание. Отсюда одышка и ощущение, что бег не твоё, а лечится это темпом, а не силой воли.",
+    "Похоже, почти все пробежки у тебя в одном и том же среднем темпе: для лёгкого бега это слишком быстро, а для работы на скорость слишком медленно. Тело к этому привыкает, и прогресс встаёт.",
   no_system:
-    "Тело справляется, но бег держится на настроении, а не на плане. Без расписания любая загруженная неделя ломает привычку.",
+    "Тело к бегу готово, но нагрузка держится на настроении, а не на плане: то много, то мало, без чередования лёгких дней и работы. Без системы прогресс быстро упирается в потолок.",
   comeback:
     "Дыхание и мышцы вспоминают бег быстро, а связки и суставы медленнее. Поэтому возвращаться нужно постепенно, иначе всё упрётся в боль.",
 };
 
 const RESULT_ERRORS: Record<ResultType, [string, string, string]> = {
   clean_start: ["Бежать сразу долго", "Ставить цель по темпу", "Бегать каждый день в первую неделю"],
-  too_fast: ["Темп выше разговорного", "Стыдно переходить на шаг", "Сравнивать себя с другими"],
-  no_system: ["Нет дней в календаре", "Каждый раз одна и та же пробежка", "После пропуска бросать совсем"],
+  too_fast: ["Лёгкие пробежки слишком быстрые", "Нет отдельного дня на скорость", "Длительная то есть, то нет"],
+  no_system: ["Нагрузка скачет от недели к неделе", "Тяжёлые дни идут подряд", "После пропуска наверстывать"],
   comeback: ["Сразу вернуть прежний объём", "Терпеть боль", "Пропускать разминку"],
 };
 
-export function resultCard(type: ResultType, first: WorkoutText): string {
+/**
+ * Карточка результата. week: план недели бегуна по порядку (у лестницы null: там тренировки
+ * растут по отметкам, список заранее был бы неправдой). moreDays: ответ «4 и больше» (бот ведёт
+ * 4 тренировки, остальные дни, если они есть, лёгкие).
+ */
+export function resultCard(type: ResultType, first: WorkoutText, week: string[] | null = null, moreDays = false): string {
   const errors = RESULT_ERRORS[type].map((e, i) => `${i + 1}. ${e}`).join("\n");
+  const plan = week
+    ? `Твоя неделя:\n${week.map((t, i) => `${i + 1}. ${t}`).join("\n")}\n` +
+      (moreDays ? `Я веду ${week.length} главные тренировки недели. Если бегаешь чаще, в остальные дни только спокойный лёгкий бег.\n` : "") +
+      "\n"
+    : "";
   return (
     `Твой результат: ${RESULT_NAMES[type]}\n\n` +
     `${RESULT_ABOUT[type]}\n\n` +
     `3 ошибки, которые держат тебя на месте:\n${errors}\n\n` +
+    plan +
     `Первая тренировка: ${first.title}\n${first.body}`
   );
 }
@@ -115,12 +128,12 @@ export const DECLINED =
   "Договорились. Первая тренировка у тебя уже есть, сделай её в удобный день. Если захочешь, чтобы я провёл тебя всю неделю, нажми кнопку.";
 export const DECLINED_KB: Keyboard = [[{ text: "Да, веди", data: "tr:wk:y" }]];
 
-export function chooseDaysText(runs: 2 | 3): string {
+export function chooseDaysText(runs: 2 | 3 | 4): string {
   return `${runs} ${plural(runs, "тренировка", "тренировки", "тренировок")} в неделю. В какие дни тебе удобно?`;
 }
 
 export function chooseDaysKb(patterns: string[]): Keyboard {
-  return patterns.map((p) => [{ text: DAY_PATTERNS[p].label, data: `tr:days:${p}` }]);
+  return patterns.map((p) => [{ text: ALL_DAY_PATTERNS[p].label, data: `tr:days:${p}` }]);
 }
 
 const WEEKDAYS_SHORT = ["", "пн", "вт", "ср", "чт", "пт", "сб", "вс"];
@@ -150,13 +163,18 @@ export function alreadyInWeek(nextDate: string | null): string {
 
 // ── неделя ───────────────────────────────────────────────────────────────────
 
-/** immediate: первая тренировка, отправленная сразу после выбора дней (может быть и днём, без «Доброе утро!»). */
-export function morningText(w: WorkoutText, immediate = false): string {
+export const EASY_RULE = "Главное правило: усилие 2-4 из 10, можешь говорить фразами. Если что-то заболит, переходи на шаг.";
+/* У интервалов правило своё: «усилие 2-4» под отрезками на 6 из 10 было бы прямым противоречием
+ * заданию. Слово «усилие» в тексте ровно одно, в самом отрезке. */
+export const INTERVALS_RULE = "Главное правило: разминка и заминка легко, отрезки ровно и не на максимум. Если что-то заболит, остановись и переходи на шаг.";
+
+/**
+ * immediate: первая тренировка, отправленная сразу после выбора дней (может быть и днём, без «Доброе утро!»).
+ * intervals: тренировка с отрезками, у неё своё главное правило.
+ */
+export function morningText(w: WorkoutText, immediate = false, intervals = false): string {
   const head = immediate ? `Первая тренировка сегодня: ${w.title}.` : `Доброе утро! Сегодня тренировка: ${w.title}.`;
-  return (
-    `${head}\n\n${w.body}\n\n` +
-    "Главное правило: усилие 2-4 из 10, можешь говорить фразами. Если что-то заболит, переходи на шаг."
-  );
+  return `${head}\n\n${w.body}\n\n${intervals ? INTERVALS_RULE : EASY_RULE}`;
 }
 
 /** Утро дня ходьбы после «Что-то болело»: без «переходи на шаг» и без второго напоминания про врача. */
@@ -283,20 +301,28 @@ export function doneLine(runs: number, walks: number): string {
   return walks > 0 ? w : r;
 }
 
-export function day7Text(
-  runs: number,
-  walks: number,
-  counts: Partial<Record<Checkin, number>>,
-  advice: NextStepAdvice,
-  nextTitle: string,
-): string {
+/** Совет недели бегуна: прибавка между неделями, как в методике, а не внутри пробной недели. */
+export function runnerAdviceText(advice: RunnerAdvice): string {
+  if (advice.kind === "careful") return "сначала убедиться, что ничего не болит, и повторить неделю без прибавки и без интервалов";
+  if (advice.kind === "same") return "повторить эту неделю без прибавки, чтобы тело её освоило";
+  return advice.nextIntervals
+    ? `чуть больше работы, интервалы ${advice.nextIntervals}, и длительная на 5-10 минут дольше`
+    : "длительная на 5-10 минут дольше, остальное как было";
+}
+
+/** step: что дальше, уже словами (adviceText у лестницы, runnerAdviceText у недели бегуна). */
+export function day7Text(runs: number, walks: number, counts: Partial<Record<Checkin, number>>, step: string): string {
   const done = runs + walks;
   const head =
     done === 0
       ? "Неделя закончилась. Итог: в этот раз тренировки не сложились. Так бывает, это не приговор."
       : `Неделя закончилась. Итог: ${doneLine(runs, walks)}, ${checkinsLine(counts)}.`;
-  const step = done === 0 ? `начать заново с ${nextTitle}` : adviceText(advice, nextTitle);
   return `${head} Следующий шаг для тебя: ${step}. Дальше можем идти вместе в Базе.`;
+}
+
+/** Ноль сделанных: начать заново с первой тренировки. */
+export function restartStep(firstTitle: string): string {
+  return `начать заново с ${firstTitle}`;
 }
 
 export const BASE_KB: Keyboard = [
