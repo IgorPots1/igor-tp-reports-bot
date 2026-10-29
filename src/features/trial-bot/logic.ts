@@ -61,7 +61,7 @@ export type TrialAnswers = {
   goal?: Goal;
   // «начать бегать»
   now_running?: "rarely" | "sometimes" | "weekly";
-  can_run?: "lt5" | "5_15" | "15_30" | "gt30";
+  can_run?: "lt5" | "5_30" | "gt30";
   // «вернуться после перерыва»
   last_run?: "recent" | "3_6m" | "6m_plus";
   prev_level?: "3k" | "5k" | "10k";
@@ -112,7 +112,8 @@ export const QUESTIONS: Record<string, Question> = {
     id: "canrun",
     key: "can_run",
     text: "Сколько сейчас можешь пробежать без остановки?",
-    options: [opt("lt5", "Меньше 5 минут"), opt("5_15", "5-15 минут"), opt("15_30", "15-30 минут"), opt("gt30", "Больше 30 минут")],
+    // [29.10.2026, Игорь] было четыре варианта (меньше 5, 5-15, 15-30, больше 30); стало три.
+    options: [opt("lt5", "Не дольше 5 минут"), opt("5_30", "5-30 минут"), opt("gt30", "Больше 30 минут")],
   },
   brk: {
     id: "brk",
@@ -292,9 +293,37 @@ const RETURN_RUNG: Record<NonNullable<TrialAnswers["last_run"]>, Record<NonNulla
 };
 
 /**
+ * НОВИЧОК: ступень по «сколько без остановки» и сдвиг по «как сейчас с бегом» [решение Игоря,
+ * 29.10.2026; было: только длительность, ответ про режим на неделю не влиял].
+ *   длительность задаёт базу и потолок:
+ *     не дольше 5 минут → база 1 (5 x 4 / 2 шаг),      потолок 2 (отрезки бега до 5 минут);
+ *     5-30 минут        → база 4 (5 x 5 / 1 шаг),      потолок 5 (ещё бег с шагом: 5 минут без
+ *                          остановки не значит 25 непрерывно);
+ *     больше 30 минут   → база 6 (25 минут непрерывно), потолок 7 (30 минут непрерывно);
+ *   режим сдвигает на ступень: «Почти не бегаю» −1, «Бывает, но без режима» 0,
+ *     «Бегаю 1-2 раза в неделю» +1; не ниже 1 и не выше потолка длительности.
+ * Середина 5-30 — ступень 4: между прежними 5-15 (3) и 15-30 (6), но ещё с шагом.
+ */
+const START_BY_DURATION: Record<NonNullable<TrialAnswers["can_run"]>, { base: number; cap: number }> = {
+  lt5: { base: 1, cap: 2 },
+  "5_30": { base: 4, cap: 5 },
+  gt30: { base: 6, cap: 7 },
+};
+const START_SHIFT_BY_HABIT: Record<NonNullable<TrialAnswers["now_running"]>, number> = { rarely: -1, sometimes: 0, weekly: 1 };
+
+export function beginnerRung(a: TrialAnswers): number {
+  // Старые коды (до 29.10.2026) у тех, кто начал анкету раньше: 5-15 и 15-30 → «5-30».
+  const raw = a.can_run as string | undefined;
+  const key = raw === "5_15" || raw === "15_30" ? "5_30" : (raw as NonNullable<TrialAnswers["can_run"]> | undefined) ?? "lt5";
+  const d = START_BY_DURATION[key] ?? START_BY_DURATION.lt5;
+  const shift = a.now_running ? START_SHIFT_BY_HABIT[a.now_running] : 0;
+  return Math.min(d.cap, Math.max(1, d.base + shift));
+}
+
+/**
  * СТУПЕНЬ ПЕРВОЙ НЕДЕЛИ на лестнице бега с шагом (src/features/methodology/beginner.ts).
  * null: человек идёт неделей бегуна, лестница не нужна.
- *   начать бегать: меньше 5 минут → 1, 5-15 → 3, 15-30 → 6 (25 минут непрерывно), больше 30 → 7;
+ *   начать бегать: beginnerRung выше;
  *   вернуться: таблица RETURN_RUNG;
  *   регулярно или старт без базы (до 5 км в неделю или самая длинная до 3 км) → 6;
  *   «бывает лёгкий дискомфорт» → ступенью ниже (не ниже первой).
@@ -302,7 +331,7 @@ const RETURN_RUNG: Record<NonNullable<TrialAnswers["last_run"]>, Record<NonNulla
 export function startRungFor(a: TrialAnswers): number | null {
   if (isRunnerTrack(a)) return null;
   let rung = 6;
-  if (a.goal === "start") rung = a.can_run === "lt5" ? 1 : a.can_run === "5_15" ? 3 : a.can_run === "gt30" ? 7 : 6;
+  if (a.goal === "start") rung = beginnerRung(a);
   if (a.goal === "return") rung = RETURN_RUNG[a.last_run ?? "6m_plus"][a.prev_level ?? "3k"];
   if (a.injury === "now") rung -= 1;
   return Math.max(1, rung);

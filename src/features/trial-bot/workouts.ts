@@ -154,9 +154,10 @@ function stepText(key: RunnerStepKey, library: LibraryRows): string {
 const minutesWord = (m: number) => `${m} ${plural(m, "минута", "минуты", "минут")}`;
 const minutesGen = (m: number) => `${m} ${plural(m, "минуту", "минуты", "минут")}`;
 
-/** «через минуту шагом» / «через 1:30 шагом». */
+/** «через 2 мин шагом» / «через 1:30 шагом». */
 function restLabel(sec: number): string {
-  return sec === 60 ? "минуту" : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+  if (sec === 60) return "минуту";
+  return sec % 60 === 0 ? `${sec / 60} мин` : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 }
 
 export function intervalsTitle(step: number): string {
@@ -185,7 +186,7 @@ export function runnerWorkout(s: RunnerSession, library: LibraryRows): WorkoutTe
     return { presetCode, title: runnerTitle(s), body: `Основная часть: ${minutesWord(s.minutes)} ровного лёгкого бега. ${stepText("long_main_street", library)}` };
   }
   const r = TRIAL_INTERVAL_LADDER[clampStep(s.step)];
-  const rest = r.restSec === 60 ? "1 минута" : "1:30";
+  const rest = r.restSec % 60 === 0 ? minutesWord(r.restSec / 60) : `${Math.floor(r.restSec / 60)}:${String(r.restSec % 60).padStart(2, "0")}`;
   const body =
     `Разминка: ${minutesWord(INTERVAL_WARMUP_MIN)} лёгкого бега, ${stepText("warmup_easy", library)}\n` +
     `Основная часть: ${r.reps} ${plural(r.reps, "отрезок", "отрезка", "отрезков")} по ${minutesGen(r.workMin)}, усилие ${INTERVAL_RPE} из 10, ${stepText("interval_work", library)} ` +

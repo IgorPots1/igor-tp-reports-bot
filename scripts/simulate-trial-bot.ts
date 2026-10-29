@@ -37,7 +37,7 @@ type Persona = {
  * плюс здоровье и «только посмотрю». Максим раньше получал «неделя тебе не нужна». */
 const PERSONAS: Persona[] = [
   { name: "Анна, с нуля", answers: ["start", "rarely", "lt5", "3", "none", "none"], week: true, checkins: ["ok", "easy", "ok"], base: "y" },
-  { name: "Ольга, бегает без режима, 5-15 минут", answers: ["start", "sometimes", "5_15", "3", "past", "none"], week: true, checkins: ["easy", "easy", "easy"], base: "n" },
+  { name: "Ольга, бегает без режима, 5-30 минут", answers: ["start", "sometimes", "5_30", "3", "past", "none"], week: true, checkins: ["easy", "easy", "easy"], base: "n" },
   { name: "Ирина, возвращение после полугода", answers: ["return", "6m_plus", "5k", "3", "now", "none"], week: true, checkins: ["ok", "pain", "ok"] },
   { name: "Сергей, возвращение, 2 раза", answers: ["return", "3_6m", "10k", "2", "none", "none"], week: true, checkins: ["hard", "miss"] },
   { name: "Максим, бегает регулярно, без интервалов", answers: ["regular", "15_30", "10_15", "easy_only", "4", "none", "none"], week: true, checkins: ["ok", "easy", "ok"], base: "y" },

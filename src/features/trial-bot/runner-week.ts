@@ -23,26 +23,25 @@ import type { Checkin } from "./logic";
 // ── лестница интервалов ──────────────────────────────────────────────────────
 
 /**
- * Первые ступени WALK_INTERVAL_LADDER из tools/trainingpeaks-export/scripts/lib/interval-ladder.ts.
- * Копия, а не импорт: src/ не тянет код из tools/ (раннеры и Next собираются по-разному).
- * Расхождение с оригиналом ловит check:trial-bot. Отдых: на трёхминутках минута шагом,
- * с четырёх минут полторы (миграции 20260918_short_interval_presets и 20260922_int_walk_ladder).
- * Выше 7 x 4 пробная неделя не поднимает: это уже работа, к которой подводят, а не первая неделя.
- * У цели «старт» потолок первой недели ниже, 6 x 4 (RACE_START_CAP_STEP).
+ * ИНТЕРВАЛЫ ПЕРВОЙ НЕДЕЛИ [решение Игоря, 29.10.2026, второй заход]. Было: первые пять ступеней
+ * лестницы генератора, от 3 x 3 до 7 x 4. Игорь: 3 x 3 не давать, в первую неделю три размера и
+ * потолок 6 x 4 у всех (и «регулярно», и «старт»):
+ *   5 x 3 мин, отдых 2 мин шагом   — интервалов не было или «не знаю»;
+ *   5 x 4 мин, отдых 1:30 шагом    — «иногда были»;
+ *   6 x 4 мин, отдых 1:30 шагом    — «регулярно».
+ * «Тяжело» на интервалах: ступенью ниже в этих же размерах, ниже 5 x 3 некуда.
+ * Отдых 1:30 на четырёхминутках как на лестнице генератора (миграция 20260922_int_walk_ladder).
+ * Код: у 6 x 4 тот же пресет, что в базе (int_walk_6x4). 5 x 4 в базе нет, а 5 x 3 там с минутой
+ * отдыха, поэтому у них свои коды trial_int_*: чужой пресет с другим отдыхом был бы неправдой.
  */
 export const TRIAL_INTERVAL_LADDER: ReadonlyArray<{ code: string; reps: number; workMin: number; restSec: number; labelRu: string }> = [
-  { code: "int_walk_3x3", reps: 3, workMin: 3, restSec: 60, labelRu: "3 x 3 мин" },
-  { code: "int_walk_4x3", reps: 4, workMin: 3, restSec: 60, labelRu: "4 x 3 мин" },
-  { code: "int_walk_5x3", reps: 5, workMin: 3, restSec: 60, labelRu: "5 x 3 мин" },
+  { code: "trial_int_5x3_r2", reps: 5, workMin: 3, restSec: 120, labelRu: "5 x 3 мин" },
+  { code: "trial_int_5x4", reps: 5, workMin: 4, restSec: 90, labelRu: "5 x 4 мин" },
   { code: "int_walk_6x4", reps: 6, workMin: 4, restSec: 90, labelRu: "6 x 4 мин" },
-  { code: "int_walk_7x4", reps: 7, workMin: 4, restSec: 90, labelRu: "7 x 4 мин" },
 ];
 
-/** Следующая ступень после всей лестницы пробной недели: в совете на следующую неделю. */
-export const NEXT_AFTER_TRIAL_LADDER = "6 x 5 мин";
-
-/** Потолок первой недели у цели «Подготовиться к старту»: 6 x 4 [решение Игоря, 29.10.2026]. */
-export const RACE_START_CAP_STEP = 3;
+/** Следующая ступень после 6 x 4 на лестнице генератора: в совете на следующую неделю. */
+export const NEXT_AFTER_TRIAL_LADDER = "7 x 4 мин";
 
 /** Усилие отрезка: rpe_target пресетов int_walk_* в базе. */
 export const INTERVAL_RPE = 6;
@@ -118,26 +117,15 @@ export const LONG_MINUTES_BY_WEEKLY: Record<WeeklyKm, number> = {
 export const LONG_CAP_BY_RACE: Record<RaceDistance, number> = { "5k": 70, "10k": 90, "21k": 110, "42k": 110 };
 
 /**
- * Ступень интервалов на первую неделю:
- *   не было интервалов или «не знаю» → 3 x 3;
- *   иногда → 4 x 3, при объёме от 15 км в неделю 5 x 3;
- *   регулярно → 5 x 3, от 15 км 6 x 4, от 30 км 7 x 4;
- *   у цели «старт» лучший результат сдвигает на ступень: быстрые две трети шкалы (t1, t2)
- *   на одну вверх, если интервалы уже были, медленная (t4) и «стартов не было» на одну вниз;
- *   у цели «старт» не выше 6 x 4 (raceDistance задан).
+ * Ступень интервалов на первую неделю: только по опыту интервалов [решение Игоря, 29.10.2026].
+ *   не было или «не знаю» → 5 x 3; «иногда» → 5 x 4; «регулярно» → 6 x 4.
+ * Было: ещё объём и лучший результат двигали ступень до 7 x 4. Отменено: потолок 6 x 4 у всех,
+ * а объём и результат и так задают длительности лёгкой и длительной.
  */
-export function startIntervalStep(input: Pick<RunnerInput, "weeklyKm" | "intervals" | "raceResult"> & { raceDistance?: RaceDistance | null }): number {
-  const big = input.weeklyKm === "15_30" || input.weeklyKm === "30_50" || input.weeklyKm === "50_plus";
-  const huge = input.weeklyKm === "30_50" || input.weeklyKm === "50_plus";
-  let step = 0;
-  if (input.intervals === "sometimes") step = big ? 2 : 1;
-  if (input.intervals === "regularly") step = huge ? 4 : big ? 3 : 2;
-  if (input.raceResult === "t1" || input.raceResult === "t2") {
-    if (input.intervals === "sometimes" || input.intervals === "regularly") step += 1;
-  }
-  if (input.raceResult === "t4" || input.raceResult === "none") step -= 1;
-  if (input.raceDistance) step = Math.min(step, RACE_START_CAP_STEP);
-  return clampStep(step);
+export function startIntervalStep(input: Pick<RunnerInput, "intervals">): number {
+  if (input.intervals === "regularly") return 2;
+  if (input.intervals === "sometimes") return 1;
+  return 0;
 }
 
 export function clampStep(step: number): number {
@@ -183,7 +171,7 @@ export function softerMinutes(m: number): number {
  *     конца недели работы на скорость нет: интервалы становятся лёгким бегом (методика:
  *     при боли качество отключается);
  *   «Тяжело» → следующая тренировка легче: лёгкая и длительная на пятую часть короче,
- *     интервалы ступенью ниже (ниже 3 x 3 некуда). «Легко» или «Нормально» после этого
+ *     интервалы ступенью ниже (ниже 5 x 3 некуда). «Легко» или «Нормально» после этого
  *     возвращают план как был;
  *   «Легко», «Нормально», «Не получилось», молчание → по плану. Внутри пробной недели не
  *     прибавляем: прибавка по методике между неделями, о ней итог дня 7.
