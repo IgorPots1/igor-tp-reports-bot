@@ -6,7 +6,7 @@
  * (вебхук и cron-маршрут): при выключенном флаге сюда никто не заходит. */
 
 import {
-  DAY_PATTERNS,
+  ALL_DAY_PATTERNS,
   buildWeek,
   dueActions,
   isDone,
@@ -165,6 +165,11 @@ export function createTrialBot(deps: TrialDeps) {
     } catch (e) {
       console.warn(`[trial-bot] уведомление тренеру не ушло: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  /** Сколько тренировок в неделе человека: 2, 3 или 4 (4 только у бегуна с «4 и больше»). */
+  function runsOf(u: TrialUser): 2 | 3 | 4 {
+    return u.weekly_runs === 2 ? 2 : u.weekly_runs === 4 ? 4 : 3;
   }
 
   function whoOf(u: TrialUser): T.Who {
@@ -344,7 +349,7 @@ export function createTrialBot(deps: TrialDeps) {
         if (u.stage !== "result" && u.stage !== "declined") return;
         if (cb.yes) {
           await store.saveUser({ ...touch, stage: "choose_days" });
-          const runs = u.weekly_runs === 2 ? 2 : 3;
+          const runs = runsOf(u);
           await tg.send(chatId, T.chooseDaysText(runs), T.chooseDaysKb(patternsFor(runs)));
         } else {
           if (u.stage === "declined") return;
@@ -357,8 +362,8 @@ export function createTrialBot(deps: TrialDeps) {
       case "days": {
         await tg.answer(callbackQueryId);
         if (u.stage !== "choose_days") return;
-        const pattern = DAY_PATTERNS[cb.pattern];
-        if (!pattern || pattern.runs !== (u.weekly_runs === 2 ? 2 : 3)) return;
+        const pattern = ALL_DAY_PATTERNS[cb.pattern];
+        if (!pattern || pattern.runs !== runsOf(u)) return;
         const nowMsk = mskNow(deps.now());
         const week = buildWeek(nowMsk.date, cb.pattern, nowMsk.minutes);
         if (!week) return;

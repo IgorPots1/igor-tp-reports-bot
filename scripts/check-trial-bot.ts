@@ -29,6 +29,7 @@ import path from "node:path";
 
 import { createTrialBot, TrialBlockedError } from "@/features/trial-bot/bot";
 import {
+  ALL_DAY_PATTERNS,
   DAY_PATTERNS,
   HEALTH_NONE,
   QUESTIONS,
@@ -268,8 +269,10 @@ async function main() {
   });
   // Было: { q1: "regular", q2: "gt30" } → already_runner. Теперь у бегуна результат и неделя.
   assert.deepEqual(testOutcome({ goal: "regular", weekly_km: "30_50", longest: "10_15", intervals: "regularly", days: "4", injury: "none" }, HEALTH_NONE), {
-    kind: "result", resultType: "no_system", startRung: null, weeklyRuns: 3,
-  });
+    kind: "result", resultType: "no_system", startRung: null, weeklyRuns: 4,
+  }, "«4 и больше» у бегуна: 4 тренировки (было 3 [решение Игоря 29.10.2026])");
+  assert.equal(testOutcome({ goal: "return", last_run: "recent", prev_level: "10k", days: "4", injury: "none" }, HEALTH_NONE).kind === "result" &&
+    (testOutcome({ goal: "return", last_run: "recent", prev_level: "10k", days: "4", injury: "none" }, HEALTH_NONE) as { weeklyRuns: number }).weeklyRuns, 3, "на лестнице «4 и больше» = 3: методика новичка не больше 3");
 
   // ── неделя бегуна по методике (AI-coach, сегмент run_regularly) ─────────────
   {
@@ -282,7 +285,13 @@ async function main() {
     });
     const RI = (p: Partial<RunnerInput>): RunnerInput => ({ weeklyKm: "15_30", longest: "10_15", intervals: "sometimes", runs: 3, caution: false, raceDistance: null, raceResult: null, ...p });
     assert.deepEqual(buildRunnerWeek(RI({})), [{ kind: "easy", minutes: 40 }, { kind: "intervals", step: 2 }, { kind: "long", minutes: 75 }]);
-    assert.deepEqual(buildRunnerWeek(RI({ runs: 2 })), [{ kind: "easy", minutes: 40 }, { kind: "long", minutes: 75 }], "2 пробежки: лёгкий и длительная, без работы");
+    // [29.10.2026, решение Игоря] было: 2 пробежки = лёгкий + длительная без работы (AI-coach).
+    // Теперь у бегуна при 2 пробежках интервалы + длительная, лёгкой нет.
+    assert.deepEqual(buildRunnerWeek(RI({ runs: 2 })), [{ kind: "intervals", step: 2 }, { kind: "long", minutes: 75 }], "2 пробежки: интервалы и длительная");
+    assert.deepEqual(buildRunnerWeek(RI({ runs: 2, caution: true })), [{ kind: "easy", minutes: 40 }, { kind: "long", minutes: 75 }], "2 пробежки с дискомфортом: без интервалов");
+    // Было: «4 и больше» вело 3 тренировки. Теперь 4: лёгкий, интервалы, лёгкий, длительная.
+    assert.deepEqual(buildRunnerWeek(RI({ runs: 4 })), [{ kind: "easy", minutes: 40 }, { kind: "intervals", step: 2 }, { kind: "easy", minutes: 40 }, { kind: "long", minutes: 75 }]);
+    assert.deepEqual(buildRunnerWeek(RI({ runs: 4, caution: true })).map((x) => x.kind), ["easy", "easy", "easy", "long"]);
     assert.deepEqual(buildRunnerWeek(RI({ caution: true })).map((x) => x.kind), ["easy", "easy", "long"], "дискомфорт: интервалов нет совсем");
     assert.deepEqual(buildRunnerWeek(RI({ weeklyKm: "30_50", longest: "3_5" }))[2], { kind: "long", minutes: 55 }, "длительная длиннее лёгкой");
     assert.deepEqual(buildRunnerWeek(RI({ weeklyKm: "50_plus", longest: null, raceDistance: "5k" }))[2], { kind: "long", minutes: 70 }, "к пятёрке длительная не больше 70");
@@ -290,6 +299,13 @@ async function main() {
     assert.equal(startIntervalStep({ weeklyKm: "5_15", intervals: "regularly", raceResult: null }), 2);
     assert.equal(startIntervalStep({ weeklyKm: "30_50", intervals: "regularly", raceResult: null }), 4);
     assert.equal(startIntervalStep({ weeklyKm: "30_50", intervals: "regularly", raceResult: "t1" }), 4, "выше 7 x 4 пробная неделя не поднимает");
+    // [29.10.2026, решение Игоря] было: у цели «старт» тоже до 7 x 4. Теперь потолок первой недели 6 x 4.
+    for (const raceDistance of ["5k", "10k", "21k", "42k"] as const) {
+      for (const raceResult of ["t1", "t2", "t3", "t4", "none"] as const) {
+        assert.ok(startIntervalStep({ weeklyKm: "50_plus", intervals: "regularly", raceResult, raceDistance }) <= 3, `старт ${raceDistance}: не выше 6 x 4`);
+      }
+    }
+    assert.equal(startIntervalStep({ weeklyKm: "50_plus", intervals: "regularly", raceResult: "t1", raceDistance: "42k" }), 3, "старт: ровно 6 x 4 у сильного");
     assert.equal(startIntervalStep({ weeklyKm: "5_15", intervals: "sometimes", raceResult: "t2" }), 2);
     assert.equal(startIntervalStep({ weeklyKm: "5_15", intervals: "sometimes", raceResult: "none" }), 0);
 
@@ -339,18 +355,20 @@ async function main() {
       const out = testOutcome(a, HEALTH_NONE);
       assert.equal(out.kind, "result", `отказ на пути ${codes.join(",")}`);
       if (out.kind !== "result") continue;
-      assert.ok(out.weeklyRuns === 2 || out.weeklyRuns === 3);
+      assert.ok(out.weeklyRuns === 2 || out.weeklyRuns === 3 || (out.weeklyRuns === 4 && out.startRung === null), "4 только у бегуна");
       if (out.startRung === null) {
         runners += 1;
         assert.ok(isRunnerTrack(a));
         const week = buildRunnerWeek(runnerInputFor(a)!);
         assert.equal(week.length, out.weeklyRuns, codes.join(","));
-        const easy = week[0];
         const long = week.at(-1)!;
-        assert.ok(easy.kind === "easy" && long.kind === "long" && long.minutes > easy.minutes, codes.join(","));
+        assert.ok(long.kind === "long", codes.join(","));
+        for (const x of week) if (x.kind === "easy") assert.ok(long.minutes > x.minutes, `длительная длиннее лёгкой: ${codes.join(",")}`);
         for (const x of week) if (x.kind !== "intervals") assert.ok(x.minutes >= 25 && x.minutes <= 110, codes.join(","));
         const q = week.filter((x) => x.kind === "intervals");
-        assert.equal(q.length, out.weeklyRuns === 3 && a.injury !== "now" ? 1 : 0, `интервалы: одна при 3 и без дискомфорта (${codes.join(",")})`);
+        // [29.10.2026] было: интервалы только при 3 пробежках. Теперь при любом числе, кроме дискомфорта.
+        assert.equal(q.length, a.injury !== "now" ? 1 : 0, `интервалы: ровно одни без дискомфорта, ноль с ним (${codes.join(",")})`);
+        if (a.goal === "race" && q[0]?.kind === "intervals") assert.ok(q[0].step <= 3, `старт: не выше 6 x 4 (${codes.join(",")})`);
       } else {
         ladders += 1;
         assert.ok(out.startRung >= 1 && out.startRung <= 7);
@@ -377,7 +395,7 @@ async function main() {
   // ── неделя ─────────────────────────────────────────────────────────────────
   // 2026-11-02 — понедельник.
   assert.equal(isoWeekday("2026-11-02"), 1);
-  for (const [code, p] of Object.entries(DAY_PATTERNS)) {
+  for (const [code, p] of Object.entries(ALL_DAY_PATTERNS)) {
     for (let shift = 0; shift < 7; shift++) {
       const today = new Date(Date.UTC(2026, 10, 2 + shift)).toISOString().slice(0, 10);
       const w = buildWeek(today, code)!; // без времени: как после 14:00, сегодня не берём
@@ -491,7 +509,7 @@ async function main() {
 
   // ── кнопки ─────────────────────────────────────────────────────────────────
   const allKbs: T.Keyboard[] = [
-    T.INTRO_KB, T.NUDGE_KB, T.HEALTH_KB, T.OFFER_WEEK_KB, T.DECLINED_KB, T.chooseDaysKb(Object.keys(DAY_PATTERNS)),
+    T.INTRO_KB, T.NUDGE_KB, T.HEALTH_KB, T.OFFER_WEEK_KB, T.DECLINED_KB, T.chooseDaysKb(Object.keys(ALL_DAY_PATTERNS)),
     T.eveningKb(1), T.eveningKb(3), T.day4Kb("https://igorp.run/baza"), T.BASE_KB, T.BASE_YES_KB, T.FOLLOWUP_KB, T.CHANNEL_KB, T.TEXT_HINT_KB,
     ...Object.values(QUESTIONS).map((q) => T.questionKb(q)),
   ];
@@ -514,7 +532,20 @@ async function main() {
   assert.equal(parseTrialCallback("tr:a:goal:4"), null);
   assert.equal(parseTrialCallback("tr:a:nope:0"), null);
   assert.equal(parseTrialCallback("tr:a:__proto__:0"), null);
-  assert.equal(parseTrialCallback("tr:ci:4:ok"), null);
+  // Код ведёт до 4 тренировок, значит в базе обязана быть миграция, расширяющая check-ограничения.
+  // Выкатываются вместе: без неё запись 4-й тренировки упадёт на trial_bot_sessions_idx_check.
+  {
+    const mig = readFileSync(path.join(process.cwd(), "supabase/migrations/20261115000100_trial_bot_four_runs.sql"), "utf8");
+    assert.ok(mig.includes("check (weekly_runs in (2, 3, 4))"), "миграция: weekly_runs до 4");
+    assert.ok(mig.includes("check (idx between 1 and 4)"), "миграция: idx до 4");
+    assert.equal(Math.max(...Object.values(ALL_DAY_PATTERNS).map((p) => p.runs)), 4, "наборы дней не длиннее, чем разрешает миграция");
+    // Контракт с английской неделей: в DAY_PATTERNS только 2 и 3 дня, 4 живут в DAY_PATTERNS_4.
+    assert.deepEqual([...new Set(Object.values(DAY_PATTERNS).map((p) => p.runs))].sort(), [2, 3]);
+  }
+  // [29.10.2026] было: 4-й тренировки не бывает, «tr:ci:4:ok» не разбиралась. Теперь до 4, пятой нет.
+  assert.deepEqual(parseTrialCallback("tr:ci:4:ok"), { kind: "checkin", idx: 4, value: "ok" });
+  assert.equal(parseTrialCallback("tr:ci:5:ok"), null);
+  assert.equal(parseTrialCallback("tr:ci:0:ok"), null);
   assert.equal(parseTrialCallback("tr:ci:1:great"), null);
   assert.equal(parseTrialCallback("iv:new:1"), null);
   assert.equal(T.day4Kb(null).flat().some((b) => "url" in b), false, "без TRIAL_BASE_LANDING_URL кнопки «Подробнее» нет");
@@ -813,22 +844,25 @@ async function main() {
     assert.equal(u.stage, "result", "не already_runner");
     assert.equal(u.result_type, "too_fast");
     assert.equal(u.start_rung, null, "лестница не нужна");
-    assert.equal(u.weekly_runs, 3, "«4 и больше»: бот ведёт 3 главные");
+    assert.equal(u.weekly_runs, 4, "«4 и больше»: бот ведёт 4 (было 3)");
     const card = env.out.find((o) => o.text.startsWith("Твой результат: Всё в одном темпе"))!;
     assert.ok(card, "карточка результата");
-    assert.ok(card.text.includes("Твоя неделя:\n1. Лёгкий бег 40 минут\n2. Интервалы 5 x 3 мин через минуту шагом\n3. Длительная 75 минут\n"), card.text);
-    assert.ok(card.text.includes("Я веду 3 главные тренировки недели. Если бегаешь чаще, в остальные дни только спокойный лёгкий бег."));
+    assert.ok(card.text.includes("Твоя неделя:\n1. Лёгкий бег 40 минут\n2. Интервалы 5 x 3 мин через минуту шагом\n3. Лёгкий бег 40 минут\n4. Длительная 75 минут\n"), card.text);
+    assert.ok(card.text.includes("Я веду 4 главные тренировки недели. Если бегаешь чаще, в остальные дни только спокойный лёгкий бег."));
     assert.ok(card.text.includes("Первая тренировка: Лёгкий бег 40 минут\nОсновная часть: 40 минут лёгкого бега."), card.text);
     assert.equal(env.out.at(-1)!.text, T.OFFER_WEEK);
     assert.ok(!env.out.some((o) => /не нужна|для начинающих/.test(o.text)));
 
     await press(env, "tr:wk:y");
-    await press(env, "tr:days:m3b"); // вт 3, чт 5, сб 7
+    assert.deepEqual(env.out.at(-1)!.kb!.flat().map((b) => b.text), ["Вт Чт Сб Вс", "Пн Ср Пт Вс", "Вт Ср Пт Вс"], "наборы на 4 дня, те же дни, что у английской недели");
+    await press(env, "tr:days:m3b"); // набор на 3 при недели на 4: игнор
+    assert.equal(env.mem.users.get(USER.id)!.stage, "choose_days");
+    await press(env, "tr:days:m4b"); // Пн Ср Пт Вс: ср 4, пт 6, вс 8, пн 9
     const rows = env.mem.sessions.get(USER.id)!;
-    assert.deepEqual(rows.map((r) => [r.scheduled_date, r.preset_code, r.rung]), [
-      ["2026-11-03", "easy_continuous", null], ["2026-11-05", "int_walk_5x3", null], ["2026-11-07", "long_aerobic", null],
-    ], "план недели записан заранее");
-    for (const [d, idx, c] of [["2026-11-03", 1, "easy"], ["2026-11-05", 2, "hard"], ["2026-11-07", 3, "ok"]] as const) {
+    assert.deepEqual(rows.map((r) => [r.idx, r.scheduled_date, r.preset_code, r.rung]), [
+      [1, "2026-11-04", "easy_continuous", null], [2, "2026-11-06", "int_walk_5x3", null], [3, "2026-11-08", "easy_continuous", null], [4, "2026-11-09", "long_aerobic", null],
+    ], "план недели записан заранее, 4 тренировки");
+    for (const [d, idx, c] of [["2026-11-04", 1, "easy"], ["2026-11-06", 2, "hard"], ["2026-11-08", 3, "ok"], ["2026-11-09", 4, "ok"]] as const) {
       env.setNow(msk(d, "08:11"));
       await env.bot.runTick();
       env.setNow(msk(d, "19:11"));
@@ -836,21 +870,23 @@ async function main() {
       await press(env, `tr:ci:${idx}:${c}`);
     }
     const mornings = env.out.filter((o) => o.text.startsWith("Доброе утро!")).map((o) => o.text);
-    assert.equal(mornings.length, 3);
+    assert.equal(mornings.length, 4);
     assert.ok(mornings[0].startsWith("Доброе утро! Сегодня тренировка: Лёгкий бег 40 минут.") && mornings[0].endsWith(T.EASY_RULE));
     assert.ok(mornings[1].startsWith("Доброе утро! Сегодня тренировка: Интервалы 5 x 3 мин через минуту шагом."), mornings[1]);
     assert.ok(mornings[1].includes("Разминка: 12 минут лёгкого бега") && mornings[1].includes("Основная часть: 5 отрезков по 3 минуты, усилие 6 из 10") && mornings[1].includes("Заминка: 10 минут"), mornings[1]);
     assert.ok(mornings[1].endsWith(T.INTERVALS_RULE), "у интервалов своё правило");
     assert.equal(mornings[1].match(/усилие/g)?.length, 1, "«усилие» один раз: в отрезке");
     assert.ok(!mornings[1].includes("2-4"), "под отрезки на 6 из 10 нет «2-4»");
-    // «Тяжело» на интервалах: длительная на пятую часть короче (75 → 60).
-    assert.ok(mornings[2].startsWith("Доброе утро! Сегодня тренировка: Длительная 60 минут."), mornings[2]);
-    assert.equal(env.mem.sessions.get(USER.id)![2].title, "Длительная 60 минут");
-    env.setNow(msk("2026-11-09", "19:11"));
+    // «Тяжело» на интервалах: следующая лёгкая на пятую часть короче (40 → 30, кратно 5);
+    // после «Нормально» длительная снова по плану.
+    assert.ok(mornings[2].startsWith("Доброе утро! Сегодня тренировка: Лёгкий бег 30 минут."), mornings[2]);
+    assert.ok(mornings[3].startsWith("Доброе утро! Сегодня тренировка: Длительная 75 минут."), mornings[3]);
+    assert.equal(env.mem.sessions.get(USER.id)![2].title, "Лёгкий бег 30 минут");
+    env.setNow(msk("2026-11-10", "19:11"));
     await env.bot.runTick();
     const summary = env.out.find((o) => o.text.startsWith("Неделя закончилась."))!;
     assert.ok(summary, "итог дня 7");
-    assert.ok(summary.text.includes("Итог: 3 пробежки, по ощущениям легко 1, нормально 1, тяжело 1. Следующий шаг для тебя: повторить эту неделю без прибавки, чтобы тело её освоило."), summary.text);
+    assert.ok(summary.text.includes("Итог: 4 пробежки, по ощущениям легко 1, нормально 2, тяжело 1. Следующий шаг для тебя: повторить эту неделю без прибавки, чтобы тело её освоило."), summary.text);
   }
   {
     // К старту, 10 км, дискомфорт: интервалов нет совсем, длительная под дистанцию; боль → ходьба.

@@ -163,7 +163,7 @@ export const QUESTIONS: Record<string, Question> = {
     options: [opt("easy_only", "Нет, в основном лёгкий бег"), opt("sometimes", "Иногда были"), opt("regularly", "Да, регулярно"), opt("unknown", "Не знаю, что это")],
   },
   // Дни в неделю: варианты по цели, как getDaysPerWeekOptions в AI-coach. «4 и больше» хранится
-  // как "4"; бот при этом ведёт 3 главные тренировки недели (лестница новичка и так не больше 3).
+  // как "4": у бегуна 4 тренировки, на лестнице бега с шагом 3 (методика новичка: не больше 3).
   d23: { id: "d23", key: "days", text: "Сколько раз в неделю реально получится бегать?", options: [opt("2", "2 раза"), opt("3", "3 раза")] },
   d234: { id: "d234", key: "days", text: "Сколько раз в неделю реально получится бегать?", options: [opt("2", "2 раза"), opt("3", "3 раза"), opt("4", "4 и больше")] },
   d34: { id: "d34", key: "days", text: "Сколько раз в неделю реально получится бегать?", options: [opt("3", "3 раза"), opt("4", "4 и больше")] },
@@ -265,7 +265,7 @@ export type ResultType = "clean_start" | "too_fast" | "no_system" | "comeback";
 
 export type TestOutcome =
   | { kind: "health_stop" }
-  | { kind: "result"; resultType: ResultType; startRung: number | null; weeklyRuns: 2 | 3 };
+  | { kind: "result"; resultType: ResultType; startRung: number | null; weeklyRuns: 2 | 3 | 4 };
 
 /** Бегущий уже с базой: неделя бегуна (лёгкий, интервалы, длительная), а не лестница бега с шагом. */
 export function isRunnerTrack(a: TrialAnswers): boolean {
@@ -308,9 +308,14 @@ export function startRungFor(a: TrialAnswers): number | null {
   return Math.max(1, rung);
 }
 
-/** Сколько тренировок ведёт бот: 2 или 3. «4 и больше» → 3 главные тренировки недели. */
-export function weeklyRunsFor(a: TrialAnswers): 2 | 3 {
-  return a.days === "2" ? 2 : 3;
+/**
+ * Сколько тренировок ведёт бот. «4 и больше»: у бегуна 4 [решение Игоря, 29.10.2026; было 3],
+ * на лестнице 3 (методика новичка и возвращения не больше 3 в неделю).
+ */
+export function weeklyRunsFor(a: TrialAnswers): 2 | 3 | 4 {
+  if (a.days === "2") return 2;
+  if (a.days === "4" && isRunnerTrack(a)) return 4;
+  return 3;
 }
 
 /** Вход для недели бегуна. null, если человек идёт лестницей. */
@@ -351,8 +356,22 @@ export const DAY_PATTERNS: Record<string, { runs: 2 | 3; days: number[]; label: 
   m2b: { runs: 2, days: [3, 7], label: "Ср Вс" },
 };
 
-export function patternsFor(runs: 2 | 3): string[] {
-  return Object.keys(DAY_PATTERNS).filter((k) => DAY_PATTERNS[k].runs === runs);
+/**
+ * 4 тренировки [29.10.2026, «4 и больше» у бегуна]. Отдельной картой, а не в DAY_PATTERNS:
+ * английская неделя (src/features/en-week) разворачивает DAY_PATTERNS у себя и ждёт там только
+ * 2 и 3 дня. Дни те же, что у её r4a/r4b/r4c: длительная в воскресенье, интервалы не рядом с ней.
+ */
+export const DAY_PATTERNS_4: Record<string, { runs: 4; days: number[]; label: string }> = {
+  m4a: { runs: 4, days: [2, 4, 6, 7], label: "Вт Чт Сб Вс" },
+  m4b: { runs: 4, days: [1, 3, 5, 7], label: "Пн Ср Пт Вс" },
+  m4c: { runs: 4, days: [2, 3, 5, 7], label: "Вт Ср Пт Вс" },
+};
+
+/** Все наборы дней пробной недели: на 2, 3 и 4 тренировки. */
+export const ALL_DAY_PATTERNS: Record<string, { runs: 2 | 3 | 4; days: number[]; label: string }> = { ...DAY_PATTERNS, ...DAY_PATTERNS_4 };
+
+export function patternsFor(runs: 2 | 3 | 4): string[] {
+  return Object.keys(ALL_DAY_PATTERNS).filter((k) => ALL_DAY_PATTERNS[k].runs === runs);
 }
 
 export type MskNow = { date: string; minutes: number; weekday: number };
@@ -407,7 +426,7 @@ export function buildWeek(
   patternCode: string,
   nowMinutes: number = 24 * 60,
 ): { weekStart: string; dates: string[]; startsToday: boolean } | null {
-  const pattern = DAY_PATTERNS[patternCode];
+  const pattern = ALL_DAY_PATTERNS[patternCode];
   if (!pattern) return null;
   const startsToday = pattern.days.includes(isoWeekday(today)) && nowMinutes < SAME_DAY_START_BEFORE;
   let start = startsToday ? today : addDays(today, 1);
@@ -696,11 +715,12 @@ export function parseTrialCallback(data: string | null | undefined): TrialCallba
     case "wk":
       return parts[1] === "y" || parts[1] === "n" ? { kind: "week", yes: parts[1] === "y" } : null;
     case "days":
-      return parts[1] && DAY_PATTERNS[parts[1]] ? { kind: "days", pattern: parts[1] } : null;
+      return parts[1] && Object.prototype.hasOwnProperty.call(ALL_DAY_PATTERNS, parts[1]) ? { kind: "days", pattern: parts[1] } : null;
     case "ci": {
       const idx = Number(parts[1]);
       const value = parts[2] as Checkin;
-      return Number.isInteger(idx) && idx >= 1 && idx <= 3 && CHECKINS.includes(value) ? { kind: "checkin", idx, value } : null;
+      // [29.10.2026] было idx 1..3; у бегуна с «4 и больше» четыре тренировки.
+      return Number.isInteger(idx) && idx >= 1 && idx <= 4 && CHECKINS.includes(value) ? { kind: "checkin", idx, value } : null;
     }
     case "d4":
       return parts[1] === "later" ? { kind: "d4later" } : null;

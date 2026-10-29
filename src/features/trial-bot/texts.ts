@@ -5,7 +5,7 @@
 import { SITE_URL } from "@/lib/site";
 
 import {
-  DAY_PATTERNS,
+  ALL_DAY_PATTERNS,
   plural,
   type Checkin,
   type NextStepAdvice,
@@ -98,13 +98,14 @@ const RESULT_ERRORS: Record<ResultType, [string, string, string]> = {
 
 /**
  * Карточка результата. week: план недели бегуна по порядку (у лестницы null: там тренировки
- * растут по отметкам, список заранее был бы неправдой). moreDays: ответ «4 и больше».
+ * растут по отметкам, список заранее был бы неправдой). moreDays: ответ «4 и больше» (бот ведёт
+ * 4 тренировки, остальные дни, если они есть, лёгкие).
  */
 export function resultCard(type: ResultType, first: WorkoutText, week: string[] | null = null, moreDays = false): string {
   const errors = RESULT_ERRORS[type].map((e, i) => `${i + 1}. ${e}`).join("\n");
   const plan = week
     ? `Твоя неделя:\n${week.map((t, i) => `${i + 1}. ${t}`).join("\n")}\n` +
-      (moreDays ? "Я веду 3 главные тренировки недели. Если бегаешь чаще, в остальные дни только спокойный лёгкий бег.\n" : "") +
+      (moreDays ? `Я веду ${week.length} главные тренировки недели. Если бегаешь чаще, в остальные дни только спокойный лёгкий бег.\n` : "") +
       "\n"
     : "";
   return (
@@ -127,12 +128,12 @@ export const DECLINED =
   "Договорились. Первая тренировка у тебя уже есть, сделай её в удобный день. Если захочешь, чтобы я провёл тебя всю неделю, нажми кнопку.";
 export const DECLINED_KB: Keyboard = [[{ text: "Да, веди", data: "tr:wk:y" }]];
 
-export function chooseDaysText(runs: 2 | 3): string {
+export function chooseDaysText(runs: 2 | 3 | 4): string {
   return `${runs} ${plural(runs, "тренировка", "тренировки", "тренировок")} в неделю. В какие дни тебе удобно?`;
 }
 
 export function chooseDaysKb(patterns: string[]): Keyboard {
-  return patterns.map((p) => [{ text: DAY_PATTERNS[p].label, data: `tr:days:${p}` }]);
+  return patterns.map((p) => [{ text: ALL_DAY_PATTERNS[p].label, data: `tr:days:${p}` }]);
 }
 
 const WEEKDAYS_SHORT = ["", "пн", "вт", "ср", "чт", "пт", "сб", "вс"];

@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { createTrialBot } from "@/features/trial-bot/bot";
-import { DAY_PATTERNS, QUESTIONS, mskNow, parseTrialCallback, patternsFor, type Checkin } from "@/features/trial-bot/logic";
+import { ALL_DAY_PATTERNS, QUESTIONS, mskNow, parseTrialCallback, patternsFor, type Checkin } from "@/features/trial-bot/logic";
 import type { Keyboard } from "@/features/trial-bot/texts";
 
 import { memStore } from "./lib/trial-bot-memstore";
@@ -148,7 +148,7 @@ async function runPersona(p: Persona, id: number): Promise<{ log: string[]; coac
       later(1);
       const runs = u.weekly_runs === 2 ? 2 : 3;
       const pattern = p.pattern ?? patternsFor(runs)[0];
-      if (!DAY_PATTERNS[pattern]) throw new Error(pattern);
+      if (!ALL_DAY_PATTERNS[pattern]) throw new Error(pattern);
       await press(`tr:days:${pattern}`);
     } else {
       await press("tr:wk:n");

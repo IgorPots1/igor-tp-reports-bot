@@ -4,11 +4,13 @@
  * Было [до 29.10.2026]: бот отвечал бегающему «неделя для начинающих тебе не нужна» и не давал
  * ничего. Игорь, проверив вживую: продукт НЕ только для новичков, неделю получает каждый.
  *
- * Как строится неделя: по методике тренера из приложения AI-coach (ai-running-coach,
- * src/features/plans/methodology.ts, сегмент run_regularly):
- *   — 2 пробежки: лёгкий бег + более длинный лёгкий, без работы на скорость;
- *   — 3 и больше: лёгкий + одна тренировка с интервалами + длительная;
- *   — боль или дискомфорт сейчас: работы на скорость нет совсем (hasPainCaution → 0 качества).
+ * Как строится неделя [решение Игоря, 29.10.2026, поверх методики AI-coach run_regularly]:
+ *   — 2 пробежки: интервалы + длительная, без лёгкой. Было (по AI-coach): лёгкая + длительная
+ *     без работы; Игорь решил, что бегуну в пробной неделе нужна работа;
+ *   — 3: лёгкий + интервалы + длительная;
+ *   — 4 («4 и больше»): лёгкий + интервалы + лёгкий + длительная. Было: не больше 3;
+ *   — боль или дискомфорт сейчас: работы на скорость нет совсем (hasPainCaution → 0 качества),
+ *     интервалы заменяются лёгким бегом.
  * Интервалы берутся с лестницы коротких форматов через шаг (int_walk_*, та же, по которой
  * генератор Intervals ведёт учеников), усилие 6 из 10 как у пресетов в базе. Длительности
  * лёгкой и длительной выводятся из ответов анкеты: недельный объём и самая длинная пробежка.
@@ -26,6 +28,7 @@ import type { Checkin } from "./logic";
  * Расхождение с оригиналом ловит check:trial-bot. Отдых: на трёхминутках минута шагом,
  * с четырёх минут полторы (миграции 20260918_short_interval_presets и 20260922_int_walk_ladder).
  * Выше 7 x 4 пробная неделя не поднимает: это уже работа, к которой подводят, а не первая неделя.
+ * У цели «старт» потолок первой недели ниже, 6 x 4 (RACE_START_CAP_STEP).
  */
 export const TRIAL_INTERVAL_LADDER: ReadonlyArray<{ code: string; reps: number; workMin: number; restSec: number; labelRu: string }> = [
   { code: "int_walk_3x3", reps: 3, workMin: 3, restSec: 60, labelRu: "3 x 3 мин" },
@@ -37,6 +40,9 @@ export const TRIAL_INTERVAL_LADDER: ReadonlyArray<{ code: string; reps: number; 
 
 /** Следующая ступень после всей лестницы пробной недели: в совете на следующую неделю. */
 export const NEXT_AFTER_TRIAL_LADDER = "6 x 5 мин";
+
+/** Потолок первой недели у цели «Подготовиться к старту»: 6 x 4 [решение Игоря, 29.10.2026]. */
+export const RACE_START_CAP_STEP = 3;
 
 /** Усилие отрезка: rpe_target пресетов int_walk_* в базе. */
 export const INTERVAL_RPE = 6;
@@ -60,8 +66,8 @@ export type RunnerInput = {
   /** null: вопрос не задавали (цель «старт»: длительная выводится из объёма и дистанции). */
   longest: Longest | null;
   intervals: IntervalsExp;
-  /** Сколько пробежек в пробной неделе ведёт бот: 2 или 3 (ответ «4 и больше» тоже 3). */
-  runs: 2 | 3;
+  /** Сколько пробежек в пробной неделе ведёт бот: 2, 3 или 4 («4 и больше»). */
+  runs: 2 | 3 | 4;
   /** Сейчас бывает лёгкий дискомфорт: без работы на скорость. */
   caution: boolean;
   raceDistance: RaceDistance | null;
@@ -117,9 +123,10 @@ export const LONG_CAP_BY_RACE: Record<RaceDistance, number> = { "5k": 70, "10k":
  *   иногда → 4 x 3, при объёме от 15 км в неделю 5 x 3;
  *   регулярно → 5 x 3, от 15 км 6 x 4, от 30 км 7 x 4;
  *   у цели «старт» лучший результат сдвигает на ступень: быстрые две трети шкалы (t1, t2)
- *   на одну вверх, если интервалы уже были, медленная (t4) и «стартов не было» на одну вниз.
+ *   на одну вверх, если интервалы уже были, медленная (t4) и «стартов не было» на одну вниз;
+ *   у цели «старт» не выше 6 x 4 (raceDistance задан).
  */
-export function startIntervalStep(input: Pick<RunnerInput, "weeklyKm" | "intervals" | "raceResult">): number {
+export function startIntervalStep(input: Pick<RunnerInput, "weeklyKm" | "intervals" | "raceResult"> & { raceDistance?: RaceDistance | null }): number {
   const big = input.weeklyKm === "15_30" || input.weeklyKm === "30_50" || input.weeklyKm === "50_plus";
   const huge = input.weeklyKm === "30_50" || input.weeklyKm === "50_plus";
   let step = 0;
@@ -129,6 +136,7 @@ export function startIntervalStep(input: Pick<RunnerInput, "weeklyKm" | "interva
     if (input.intervals === "sometimes" || input.intervals === "regularly") step += 1;
   }
   if (input.raceResult === "t4" || input.raceResult === "none") step -= 1;
+  if (input.raceDistance) step = Math.min(step, RACE_START_CAP_STEP);
   return clampStep(step);
 }
 
@@ -143,7 +151,10 @@ export type RunnerSession =
   | { kind: "intervals"; step: number }
   | { kind: "long"; minutes: number };
 
-/** Порядок недели: лёгкий → работа → длительная. Первая лёгкая заодно показывает, как человек переносит нагрузку. */
+/**
+ * Порядок недели: лёгкий → работа → (лёгкий) → длительная. Первая лёгкая заодно показывает, как
+ * человек переносит нагрузку. При двух пробежках лёгкой нет: работа и длительная.
+ */
 export function buildRunnerWeek(input: RunnerInput): RunnerSession[] {
   const easy = EASY_MINUTES[input.weeklyKm];
   let long = input.longest ? LONG_MINUTES_BY_LONGEST[input.longest] : LONG_MINUTES_BY_WEEKLY[input.weeklyKm];
@@ -151,12 +162,10 @@ export function buildRunnerWeek(input: RunnerInput): RunnerSession[] {
   // 3-5 км» противоречат друг другу, и тогда верим объёму.
   long = Math.max(long, easy + 10);
   if (input.raceDistance) long = Math.min(long, LONG_CAP_BY_RACE[input.raceDistance]);
-  const out: RunnerSession[] = [{ kind: "easy", minutes: easy }];
-  if (input.runs === 3) {
-    out.push(input.caution ? { kind: "easy", minutes: easy } : { kind: "intervals", step: startIntervalStep(input) });
-  }
-  out.push({ kind: "long", minutes: long });
-  return out;
+  const work: RunnerSession = input.caution ? { kind: "easy", minutes: easy } : { kind: "intervals", step: startIntervalStep(input) };
+  if (input.runs === 2) return [work, { kind: "long", minutes: long }];
+  if (input.runs === 3) return [{ kind: "easy", minutes: easy }, work, { kind: "long", minutes: long }];
+  return [{ kind: "easy", minutes: easy }, work, { kind: "easy", minutes: easy }, { kind: "long", minutes: long }];
 }
 
 // ── поправки внутри недели ───────────────────────────────────────────────────
