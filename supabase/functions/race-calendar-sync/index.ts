@@ -7,7 +7,7 @@ import { buildExpected, findNextEdition, FOREIGN, parsePastProbeg, probegPastUrl
 import { findMatch, isSwimOnly } from "./match.ts";
 import { textDayInRange } from "./dates.ts";
 import { fillRegion, type GeoSubjectRow } from "./geo.ts";
-import { parseRuncEvent, parseRuncMenu, runcCity } from "./runc.ts";
+import { collectRunc, feedFetcher } from "./runc.ts";
 
 const UA = "igorp.run race calendar (+https://igorp.run)";
 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -797,31 +797,12 @@ async function russiarunning(today: Date, horizon: Date, maxRequests = 300): Pro
 
 // ---------- link checking ----------
 // ---------- runc.run (Беговое сообщество), подробности и проверка разрешений — в ./runc.ts ----------
-async function runc(today: Date, horizon: Date): Promise<Race[]> {
-  // Ноль предстоящих — норма зимой (сезон прошёл, следующий не выложен), а не тревога. Тревога —
-  // если не разобралось само меню или ни у одного события нет даты: значит, сменилась вёрстка.
-  const menu = parseRuncMenu(await get("https://runc.run/"));
-  if (!menu.length) throw new Error("runc.run: меню событий не разобрано (сменилась вёрстка?)");
-  const out: Race[] = [];
-  let dated = 0;
-  for (const m of menu) {
-    await sleep(1500); // поддомены — один сервер: вежливая пауза между страницами
-    let ev;
-    try { ev = parseRuncEvent(await get(m.url), m.label); } catch { continue; }
-    if (ev) dated++;
-    if (!ev || ev.date_end < iso(today) || ev.date_start > iso(horizon)) continue;
-    const city = runcCity(m.host);
-    const id = `${m.host}-${ev.date_start.slice(0, 4)}`;
-    const dist_km = ev.distances.map(distToKm).filter((x): x is number => x !== null);
-    const { race_type, tags } = classify(m.name, ev.distances, "", false);
-    out.push({
-      id: `runc:${id}`, source: "runc", source_id: id, source_url: m.url, name: m.name,
-      date_start: ev.date_start, date_end: ev.date_end, date_text: m.label, city, region: city, location: city,
-      distances: ev.distances, dist_km, race_type, tags, site_url: m.url, reg_url: null, vk_url: null,
-    });
-  }
-  if (!dated) throw new Error(`runc.run: ни у одного из ${menu.length} событий не разобрана дата (сменилась вёрстка?)`);
-  return out;
+// С 29.10.2026 страницы скачивает мак и присылает пакетом (pages): runc.run не отвечает адресам
+// облака Supabase — TLS проходит, ответа нет и за 30 с, и прогон падал по пределу функции.
+function runc(today: Date, horizon: Date, pages?: unknown): Promise<Race[]> {
+  const fed = pages === undefined ? null : feedFetcher(pages);
+  if (pages !== undefined && !fed) throw new Error("runc.run: пакет страниц с мака не разобран");
+  return collectRunc(fed ?? get, today, horizon, { classify, distToKm, pauseMs: fed ? 0 : 1500 });
 }
 
 async function checkLinks(limit: number) {
@@ -857,13 +838,13 @@ async function checkLinks(limit: number) {
 // russiarunning - последним: новый источник не меняет уже сложившиеся склейки остальных.
 // russiarunning в бою с 12.10.2026: cron race-calendar-scrape-russiarunning, воскресенье 22:29 UTC.
 const SECONDARY = ["marathonec", "ironstar", "orgeo", "where2run", "myrace", "sportsauce", "racetime", "regplace", "otime", "heroleague", "russiarunning", "runc"];
-const SCRAPERS: Record<string, (today: Date, horizon: Date) => Promise<Race[]>> = {
+const SCRAPERS: Record<string, (today: Date, horizon: Date, pages?: unknown) => Promise<Race[]>> = {
   probeg: (t, h) => probeg(t, h), marathonec: (t, h) => marathonec(t, h), ironstar: (t, h) => ironstar(t, h),
   orgeo: (t, h) => orgeo(t, h), where2run: (t, h) => where2run(t, h), myrace: (t, h) => myrace(t, h),
   sportsauce: (t, h) => sportsauce(t, h), racetime: (t, h) => racetime(t, h), regplace: (t) => regplace(t),
   otime: (t) => otime(t), heroleague: (t, h) => heroleague(t, h),
   russiarunning: (t, h) => russiarunning(t, h),
-  runc: (t, h) => runc(t, h),
+  runc: (t, h, p) => runc(t, h, p),
 };
 
 // Субъекты городов (race_geo): пустой region строки заполняется субъектом, city не меняется.
@@ -878,14 +859,14 @@ async function loadGeoSubjects(): Promise<GeoSubjectRow[]> {
   }
 }
 
-async function scrapeStage(sources: string[], today: Date, horizon: Date, stats: Record<string, unknown>) {
+async function scrapeStage(sources: string[], today: Date, horizon: Date, stats: Record<string, unknown>, pages?: unknown) {
   const geoRows = await loadGeoSubjects();
   for (const src of sources) {
     const fn = SCRAPERS[src];
     if (!fn) { stats[src] = "unknown source"; continue; }
     const t0 = new Date();
     let rows: Race[];
-    try { rows = (await fn(today, horizon)).map((r) => fillRegion(r, geoRows)); }
+    try { rows = (await fn(today, horizon, src === "runc" ? pages : undefined)).map((r) => fillRegion(r, geoRows)); }
     catch (e) { stats[src] = `error: ${String(e).slice(0, 200)}`; continue; }
     const now = new Date().toISOString();
     // new rows start unmerged; existing rows keep their merge fields until the merge stage recomputes them
@@ -1041,6 +1022,11 @@ Deno.serve(async (req) => {
   const params = new URL(req.url).searchParams;
   const stage = params.get("stage") || (params.get("links") === "1" ? "links" : "scrape");
   const sources = (params.get("sources") || "").split(",").filter(Boolean);
+  // Пакет страниц с мака (POST {pages}) — только для сбора runc: см. runc() выше.
+  let pages: unknown = undefined;
+  if (req.method === "POST" && stage === "scrape" && sources.length === 1 && sources[0] === "runc") {
+    try { pages = ((await req.json()) as { pages?: unknown }).pages; } catch { return new Response("bad feed", { status: 400 }); }
+  }
   const { data: run } = await sb.from("race_sync_runs").insert({ stats: { stage, sources } }).select("id").single();
   const started = new Date();
   const stats: Record<string, unknown> = { stage, sources };
@@ -1048,7 +1034,7 @@ Deno.serve(async (req) => {
     const today = new Date(Date.UTC(started.getUTCFullYear(), started.getUTCMonth(), started.getUTCDate()));
     // rolling horizon: today .. end of next calendar year
     const horizon = new Date(Date.UTC(today.getUTCFullYear() + 1, 11, 31));
-    if (stage === "scrape") await scrapeStage(sources.length ? sources : ["probeg"], today, horizon, stats);
+    if (stage === "scrape") await scrapeStage(sources.length ? sources : ["probeg"], today, horizon, stats, pages);
     else if (stage === "merge") await mergeStage(today, stats);
     else if (stage === "links") stats.links = await checkLinks(Number(params.get("limit") || 150));
     else if (stage === "expected") await expectedStage(today, stats);

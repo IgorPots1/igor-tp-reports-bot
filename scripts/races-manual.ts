@@ -22,6 +22,7 @@
  *   npx tsx scripts/races-manual.ts list                     активные ручные старты с датой от сегодня
  *   npx tsx scripts/races-manual.ts read <url>               текст страницы из настоящего браузера
  *   npx tsx scripts/races-manual.ts gateway-check [--no-notify]  шлюз жив? (браузер открывает известную страницу; нет — Telegram тренеру, код 3)
+ *   npx tsx scripts/races-manual.ts runc-feed [--apply]     runc.run с мака → облачная стадия сбора и склейка (облаку runc.run не отвечает)
  *   npx tsx scripts/races-manual.ts dup <proposal.json>      проверка дублей для вставок
  *   npx tsx scripts/races-manual.ts dedupe [--apply]         ручные, появившиеся в основном потоке, и только плавание → removed
  *   npx tsx scripts/races-manual.ts recheck                  старты «под вопросом» (race_overrides), у которых подошла перепроверка
@@ -65,6 +66,7 @@ import { nameKey } from "../supabase/functions/race-calendar-sync/expected";
 import { isSwimOnly } from "../supabase/functions/race-calendar-sync/match";
 import { subjectFor, type GeoSubjectRow } from "../supabase/functions/race-calendar-sync/geo";
 import { assertRobotsAllowed, politeFetch } from "./lib/polite-fetch";
+import { collectRunc, compactPage } from "../supabase/functions/race-calendar-sync/runc";
 
 export const MAX_INSERTS = 40;
 export const MAX_UPDATES = 60;
@@ -1048,6 +1050,51 @@ async function cmdRead(url: string) {
  */
 export const GATEWAY_CHECK_URLS = ["https://probeg.org/", "https://igorp.run/races"];
 
+/**
+ * runc.run с мака (решение 29.10.2026): облако Supabase до runc.run не достаёт — TLS проходит, ответа
+ * нет и за 30 с, — а с мака страницы открываются за секунду. Мак скачивает главную и страницы
+ * событий (polite-fetch: robots.txt, пауза, наш User-Agent) и отдаёт их пакетом в race-calendar-sync,
+ * стадия scrape&sources=runc. Разбор, запись, снятие пропавших и журнал прогона — те же, что у
+ * облачного сбора; затем стадия склейки, иначе новые строки runc неделю ждали бы воскресной.
+ * Без --apply — только скачать и показать разбор. Ключ синхронизации читается из race_sync_config
+ * и нигде не печатается.
+ */
+export async function cmdRuncFeed(apply: boolean): Promise<number> {
+  const pages: Record<string, string> = {};
+  const fetchPage = async (url: string) => {
+    const res = await politeFetch(url, { headers: { "Accept-Language": "ru" }, signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new Error(`${res.status} ${url}`);
+    const html = await res.text();
+    pages[url] = compactPage(html, url);
+    return html;
+  };
+  const today = new Date(new Date().toISOString().slice(0, 10));
+  const horizon = new Date(Date.UTC(today.getUTCFullYear() + 1, 11, 31));
+  // Тип и метки здесь не нужны — их ставит облачная стадия своим classify.
+  const rows = await collectRunc(fetchPage, today, horizon, { classify: () => ({ race_type: "road", tags: [] }), distToKm: () => null, pauseMs: 0 });
+  const kb = Math.round(JSON.stringify(pages).length / 1024);
+  console.log(`runc.run: страниц ${Object.keys(pages).length} (${kb} КБ), предстоящих ${rows.length}`);
+  for (const r of rows) console.log(`  ${r.date_start} ${r.name} · ${r.city} · ${r.distances.join(", ") || "—"}`);
+  if (!apply) {
+    console.log("холостой прогон: в облако не отправлено (запись — с --apply)");
+    return 0;
+  }
+  const sb = db();
+  const { data: cfg, error: cfgErr } = await sb.from("race_sync_config").select("value").eq("key", "sync_key").single();
+  if (cfgErr || !cfg?.value) throw new Error("нет ключа синхронизации в race_sync_config");
+  const headers = { "x-sync-key": String(cfg.value) };
+  const scrape = await sb.functions.invoke("race-calendar-sync?stage=scrape&sources=runc", { method: "POST", headers, body: { pages } });
+  if (scrape.error) throw new Error(`сбор runc в облаке: ${String(scrape.error.message ?? scrape.error)}`);
+  console.log(`сбор: ${JSON.stringify((scrape.data as { runc?: unknown })?.runc ?? scrape.data)}`);
+  const stat = (scrape.data as { runc?: unknown })?.runc;
+  if (typeof stat === "string") return 1; // «error: …» — стадия записала ошибку в журнал прогона
+  const merge = await sb.functions.invoke("race-calendar-sync?stage=merge", { method: "POST", headers, body: {} });
+  if (merge.error) throw new Error(`склейка: ${String(merge.error.message ?? merge.error)}`);
+  const m = merge.data as { rows?: number; merged?: number; changed?: number };
+  console.log(`склейка: строк ${m.rows}, склеено ${m.merged}, изменено ${m.changed}`);
+  return 0;
+}
+
 async function cmdGatewayCheck(notify: boolean) {
   loadScriptEnv();
   const local = path.join(process.cwd(), "tools/trainingpeaks-export/node_modules/playwright");
@@ -2005,8 +2052,9 @@ async function main() {
   if (cmd === "cities-seed") return cmdCitiesSeed(apply);
   if (cmd === "vk") return cmdVk(rawArg, process.argv.slice(4).join(" "));
   if (cmd === "gateway-check") return cmdGatewayCheck(!process.argv.includes("--no-notify"));
+  if (cmd === "runc-feed") { process.exitCode = await cmdRuncFeed(apply); return; }
   if (cmd === "vk-sweep") return void (await cmdVkSweep(arg));
-  console.error("команды: list | read <url> | dup <proposal.json> | dedupe [--apply] | recheck | tracks-due | details-due | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
+  console.error("команды: list | read <url> | runc-feed [--apply] | dup <proposal.json> | dedupe [--apply] | recheck | tracks-due | details-due | announce <exp=race,…> [--apply] | apply <proposal.json> [--apply] | sources [all] | sources-seed [--apply] | sources-tiers [--apply] | suggestions | cities [n] | cities-seed [--apply] | vk <groups.search|newsfeed.search> <запрос>");
   process.exit(2);
 }
 

@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 
-import { labelStart, parseRuncEvent, parseRuncMenu, runcCity } from "../supabase/functions/race-calendar-sync/runc";
+import { collectRunc, compactPage, feedFetcher, labelStart, parseRuncEvent, parseRuncMenu, runcCity, RUNC_HOME } from "../supabase/functions/race-calendar-sync/runc";
 import { robotHealth, ROBOTS } from "./races-manual";
 
 const item = (label: string, host: string, name: string) =>
@@ -67,5 +67,37 @@ assert.match(broken[0].alert ?? "", /меню событий не разобра
 // упал по пределу функции: runc.run не отвечает адресам облака, и строка прогона осталась без итога.
 const hung = robotHealth(["runc"], [{ started_at: "2026-11-01T22:25:00Z", stats: { stage: "scrape", sources: ["runc"] }, error: null }], "2026-11-02");
 assert.match(hung[0].alert ?? "", /прогон не завершился/, "зависший прогон — тревога");
+
+// Сбор с мака (29.10.2026): облако получает пакет страниц вместо сети. Тот же разбор, те же строки.
+{
+  const EVENT = (d: string) => `<html><script>var x="1 января 2020"</script><style>.a{}</style><h1>${d} 2026</h1><p>42,2 км 10 км</p></html>`;
+  const pages: Record<string, string> = {
+    [RUNC_HOME]: MENU,
+    "https://moscowhalf.runc.run/": EVENT("25 апреля - 26 апреля"),
+    "https://wnmarathon.runc.run/": EVENT("4 июля"),
+    "https://moscowmarathon.runc.run/": EVENT("26 сентября - 27 сентября"),
+  };
+  const compact = Object.fromEntries(Object.entries(pages).map(([u, h]) => [u, compactPage(h, u)]));
+  assert.ok(!/<script|<style/.test(Object.values(compact).join("")), "в пакет не едут скрипты и стили");
+  const deps = { classify: () => ({ race_type: "road", tags: [] as string[] }), distToKm: () => null, pauseMs: 0 };
+  const today = new Date("2026-01-10"), horizon = new Date("2027-12-31");
+  const net = await collectRunc(async (u) => pages[u], today, horizon, deps);
+  const fed = await collectRunc(feedFetcher(compact)!, today, horizon, deps);
+  assert.deepEqual(fed, net, "пакет с мака даёт ровно те же строки, что сеть");
+  assert.deepEqual(fed.map((r) => [r.id, r.date_start, r.date_end, r.city]), [
+    ["runc:moscowhalf-2026", "2026-04-25", "2026-04-26", "Москва"],
+    ["runc:wnmarathon-2026", "2026-07-04", "2026-07-04", "Санкт-Петербург"],
+    ["runc:moscowmarathon-2026", "2026-09-26", "2026-09-27", "Москва"],
+  ]);
+  // В облако с пакетом проходят только страницы runc.run: чужой адрес или не строка — отказ целиком.
+  assert.equal(feedFetcher({ "https://evil.example/": "x" }), null);
+  assert.equal(feedFetcher({ "https://runc.run.evil.example/": "x" }), null);
+  assert.equal(feedFetcher({ [RUNC_HOME]: 5 }), null);
+  assert.equal(feedFetcher([]), null);
+  assert.equal(feedFetcher(null), null);
+  await assert.rejects(feedFetcher({ [RUNC_HOME]: MENU })!("https://moscowhalf.runc.run/"), /нет страницы в пакете/);
+  // Пакет без страниц событий: меню есть, дат нет — тревога «сменилась вёрстка», а не тихий ноль.
+  await assert.rejects(collectRunc(feedFetcher({ [RUNC_HOME]: MENU })!, today, horizon, deps), /ни у одного из 3 событий/);
+}
 
 console.log("check:races-runc ok");

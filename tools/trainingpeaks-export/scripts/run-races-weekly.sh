@@ -35,6 +35,13 @@ if ! "${GATE[@]}" list > "$WORK/manual.json"; then
   npm --prefix "$REPO/tools/trainingpeaks-export" run --silent tp-heartbeat -- --job=races_weekly --status=failed || true
   exit 1
 fi
+# runc.run (Московский марафон и др.) собирается отсюда, с мака: облаку Supabase сайт не отвечает
+# (29.10.2026). Сбой не останавливает прогон: отчёт недели покажет его в «здоровье роботов».
+if "${GATE[@]}" runc-feed --apply > "$WORK/runc-feed.log" 2>&1; then
+  echo "runc.run: $(grep -m1 '^сбор:' "$WORK/runc-feed.log")"
+else
+  echo "runc.run: сбор с мака не прошёл, см. $WORK/runc-feed.log"
+fi
 "${GATE[@]}" sources > "$WORK/sources.json" || echo "[]" > "$WORK/sources.json"
 # Заявки с сайта (разбираются первыми) и точки обхода недели.
 "${GATE[@]}" suggestions > "$WORK/suggestions.json" || echo "[]" > "$WORK/suggestions.json"
