@@ -221,21 +221,19 @@ export const supabaseStore: BotStore = {
     q = raceId === null ? q.is("race_id", null) : q.eq("race_id", raceId);
     fail("releaseSend", (await q).error);
   },
+  // Тик читает всех постранично: PostgREST отдаёт не больше 1000 строк. Было (до 29.10.2026): один запрос,
+  // и при 1057 активных тик видел 1000 — полсотни человек каждый час не получали напоминаний и подборок.
   async listActiveUsers() {
-    const { data, error } = await createSupabaseServerClient().from("race_bot_users").select(USER_COLS).eq("blocked", false);
-    fail("listActiveUsers", error);
-    return (data as unknown as BotUser[]) ?? [];
+    return pageAll<BotUser>("listActiveUsers", (sb, a, b) => sb.from("race_bot_users").select(USER_COLS).eq("blocked", false).order("tg_id").range(a, b));
   },
   async listAllFollows() {
-    const { data, error } = await createSupabaseServerClient().from("race_bot_follows").select(FOLLOW_COLS);
-    fail("listAllFollows", error);
-    return (data as unknown as BotFollow[]) ?? [];
+    return pageAll<BotFollow>("listAllFollows", (sb, a, b) => sb.from("race_bot_follows").select(FOLLOW_COLS).order("tg_id").order("race_id").range(a, b));
   },
   async listSentKeys() {
-    const { data, error } = await createSupabaseServerClient().from("race_bot_sends").select("tg_id,kind,race_id").not("race_id", "is", null);
-    fail("listSentKeys", error);
+    const data = await pageAll<{ tg_id: number; kind: string; race_id: string }>("listSentKeys", (sb, a, b) =>
+      sb.from("race_bot_sends").select("tg_id,kind,race_id").not("race_id", "is", null).order("id").range(a, b));
     const out = new Map<number, Set<string>>();
-    for (const r of (data as { tg_id: number; kind: string; race_id: string }[]) || []) {
+    for (const r of data) {
       if (!out.has(r.tg_id)) out.set(r.tg_id, new Set());
       out.get(r.tg_id)!.add(`${r.kind}:${r.race_id}`);
     }
@@ -405,6 +403,20 @@ export async function loadMergedInto(ids: string[]): Promise<Map<string, string>
     for (const row of (data as { id: string; merged_into: string }[]) || []) out.set(row.id, row.merged_into);
   }
   return out;
+}
+
+type Sb = ReturnType<typeof createSupabaseServerClient>;
+/** Все строки запроса страницами по 1000 (стабильный порядок обязателен — иначе строки выпадают и двоятся). */
+async function pageAll<T>(what: string, page: (sb: Sb, from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<T[]> {
+  const sb = createSupabaseServerClient();
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await page(sb, from, from + 999);
+    fail(what, error);
+    const rows = (data as T[]) ?? [];
+    out.push(...rows);
+    if (rows.length < 1000) return out;
+  }
 }
 
 export function productionBot() {
