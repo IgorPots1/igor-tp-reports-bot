@@ -14,6 +14,7 @@ import { toExpected } from "@/app/races/expected";
 import {
   buildExpected,
   findNextEdition,
+  isForeignPlace,
   keyTokens,
   nameKey,
   nameScore,
@@ -64,6 +65,18 @@ assert.equal(findNextEdition({ name: "XIII Московский Марафон",
 assert.equal(nameKey("Всероссийский полумарафон «ЗаБег.РФ»"), "всероссийский забег полумарафон рф");
 assert.equal(nameKey("Всероссийский полумарафон «ЗаБег.РФ» 2027"), nameKey("Всероссийский полумарафон «ЗаБег.РФ»"));
 assert.equal(buildExpected([moscow("71439", "2026-05-23", "Всероссийский полумарафон «ЗаБег.РФ»")], []).expected.length, 1, "ЗаБег.РФ — в ожидаемых");
+
+// Заграница в ожидаемых — по месту и с начала слова. Было (до 29.10.2026): не отсеивалась вовсе. Подстрочный
+// FOREIGN тут не годится: режет Россию (Наро-Фоминск — «минск», Шербакуль — «баку», Черногорск — «черногор»).
+const at = (sid: string, name: string, city: string, region: string | null): PastRace => ({ ...moscow(sid, "2026-06-01", name), city, region });
+assert.equal(buildExpected([at("80001", "8 Зимний трейлмарафон «Самопревосхождение»", "Казахстан", null)], []).expected.length, 0, "Казахстан — не ожидаемый");
+assert.equal(buildExpected([at("80002", "Забег «Минск»", "Минск", null)], []).expected.length, 0, "Минск — не ожидаемый");
+assert.equal(buildExpected([at("80003", "Забег", "Сухум", "Республика Абхазия")], []).expected.length, 0, "Абхазия — не ожидаемый");
+assert.equal(isForeignPlace("Париж", "Челябинская область"), false, "село Париж Челябинской области — Россия");
+assert.equal(isForeignPlace("Наро-Фоминск", "Московская область"), false);
+assert.equal(isForeignPlace("Шербакуль", "Омская область"), false);
+assert.equal(isForeignPlace("Черногорск", null), false, "кусок слова — не заграница");
+assert.equal(buildExpected([at("80004", "X Парижский полумарафон", "Париж", "Челябинская область")], []).expected.length, 1, "Парижский полумарафон — российский");
 
 // Ключ: без года, римских и порядковых номеров и служебных слов.
 assert.equal(nameKey("XIII Казанский марафон 2026"), nameKey("XIV Казанский марафон 2027"));

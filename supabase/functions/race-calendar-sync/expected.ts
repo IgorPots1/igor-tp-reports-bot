@@ -184,6 +184,23 @@ export function findNextEdition(p: { name: string; city: string; date: string; r
   return best?.row ?? null;
 }
 
+/** Заграница: общий фильтр сборщиков (index.ts) — по подстроке в названии и месте. */
+export const FOREIGN = /ереван|дилижан|енокаван|гюмри|цахкадзор|армени|грузи|тбилиси|батуми|кыргыз|киргиз|бишкек|каджи-сай|бостери|чолпон|иссык|issyk|kyrgyz|казахстан|алматы|астана|шымкент|минск|беларус|брест|гомель|гродн|могил[её]в|витебск|ташкент|узбекистан|самарканд|баку|азербайджан|душанбе|париж|египет|шарм|хургад|дубай|оаэ|турци|анталь|стамбул|сербия|белград|таиланд|пхукет|вьетнам|китай|абхаз|сухум|гагр|пицунд|черногор|кипр|мальдив|шри-ланк|бали|монголи|улан-батор|dilijan|yerevan|egypt|armenia|georgia/i;
+
+// Целое слово: основа из FOREIGN плюс разве что падежное окончание («Абхазия», «Минск»), не «Черногорск».
+const FOREIGN_WORD = new RegExp(`(?:^|[^а-яёa-z])(?:${FOREIGN.source})(?:ия|ии|ой|ей|а|я|и|е|у|ы)?(?![а-яёa-z])`, "i");
+/**
+ * Заграница по месту, а не по названию и не по куску слова: FOREIGN подстрокой ловит и Россию —
+ * «Наро-Фоминск» (минск), «Шербакуль» (баку), «Черногорск» (черногор), «Кипрея trail» (кипр).
+ * Поэтому — целое слово места, и регион России есть — старт российский: «Парижский полумарафон» идёт в селе Париж Челябинской
+ * области. Без региона смотрим город с начала слова («Казахстан», «Минск»).
+ * Было (до 29.10.2026): в ожидаемых заграницу не отсеивали вовсе.
+ */
+export function isForeignPlace(city: string | null | undefined, region: string | null | undefined): boolean {
+  if (region) return FOREIGN_WORD.test(region);
+  return FOREIGN_WORD.test(city || "");
+}
+
 const JUNK = /онлайн|online|виртуал|челлендж|тренировк|забег обещаний|parkrun|паркран|5 в[её]рст|скандинавск|ходьб|лыж|велос|плаван|заплыв|эстафета школ|школьн|детск|первенство (школ|дюсш)|спартакиад/i;
 
 export function classifyType(name: string, distances: string[]): string {
@@ -202,6 +219,7 @@ export function buildExpected(past: PastRace[], future: FutureRow[]): { expected
   // Свежие первыми: если старт проводился дважды за год, ожидаем по последнему проведению.
   for (const p of [...past].sort((a, b) => b.date.localeCompare(a.date))) {
     if (JUNK.test(p.name)) continue;
+    if (isForeignPlace(p.city, p.region)) continue;
     const type = classifyType(p.name, p.distances);
     if (type === "track") continue;
     const key = nameKey(p.name);

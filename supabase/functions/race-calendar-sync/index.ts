@@ -3,7 +3,7 @@
 // Runs weekly (pg_cron). Protected by x-sync-key header.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
-import { buildExpected, findNextEdition, parsePastProbeg, probegPastUrl, weekWindows, type FutureRow, type PastRace } from "./expected.ts";
+import { buildExpected, findNextEdition, FOREIGN, parsePastProbeg, probegPastUrl, weekWindows, type FutureRow, type PastRace } from "./expected.ts";
 import { findMatch, isSwimOnly } from "./match.ts";
 import { textDayInRange } from "./dates.ts";
 import { fillRegion, type GeoSubjectRow } from "./geo.ts";
@@ -109,7 +109,6 @@ function classify(name: string, dists: string[], extra: string, probegTrail: boo
 }
 
 // ---------- shared filters ----------
-const FOREIGN = /ереван|дилижан|енокаван|гюмри|цахкадзор|армени|грузи|тбилиси|батуми|кыргыз|киргиз|бишкек|каджи-сай|бостери|чолпон|иссык|issyk|kyrgyz|казахстан|алматы|астана|шымкент|минск|беларус|брест|гомель|гродн|могил[её]в|витебск|ташкент|узбекистан|самарканд|баку|азербайджан|душанбе|париж|египет|шарм|хургад|дубай|оаэ|турци|анталь|стамбул|сербия|белград|таиланд|пхукет|вьетнам|китай|абхаз|сухум|гагр|пицунд|черногор|кипр|мальдив|шри-ланк|бали|монголи|улан-батор|dilijan|yerevan|egypt|armenia|georgia/i;
 const JUNK = /абонемент|экскурс|fashion|рейв|стояни[ея] в воде|онлайн|online|виртуал|челлендж|тренировк|лагер[ья]|\bcamp\b|кемп|сборы|мастер-класс|трансфер|кубок акватлона.*дети|велогонк/i;
 // Только плавание (X-WATERS, заплывы) — не беговой старт: isSwimOnly в match.ts.
 const okRace = (name: string, city: string) => !FOREIGN.test(`${name} ${city}`) && !JUNK.test(name) && !isSwimOnly(name);
