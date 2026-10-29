@@ -148,6 +148,8 @@ export type BotDeps = {
   details?: (raceId: string) => Promise<FullRow[]>;
   /** Отменённые вручную старты (race_overrides.status = cancelled): в «Моих стартах» с пометкой. */
   cancelled?: () => Promise<Set<string>>;
+  /** Куда склеены строки (race_events.merged_into) — для подписок, чья строка пропала из календаря. */
+  mergedInto?: (ids: string[]) => Promise<Map<string, string>>;
   /** Работа после ответа (события статистики): в бою — after() из next/server, в тестах нет — ждём сразу. */
   defer?: (fn: () => Promise<unknown>) => void;
   /** Писать замер каждого нажатия событием perf (в бою — да; в тестах — только где проверяется сам замер). */
@@ -1196,6 +1198,41 @@ export function createBot(deps: BotDeps) {
     return guarded(u.tg_id, () => send(u.tg_id, T.unknownInput(u.city)));
   }
 
+  /**
+   * Склейка спрятала строку, на которую подписан человек: старт тот же, просто его первым нашёл другой
+   * источник (heroleague → probeg). Подписку молча переносим на основную строку вместе с отметками уже
+   * отправленного. Было (до 29.10.2026): бот считал это отменой — «пропал из календаря», подписка снята;
+   * 26.10 так ушло сообщение подписчику «Забега 2030», который уже нажимал «регистрация».
+   */
+  async function moveMergedFollows(follows: BotFollow[], racesById: Map<string, BotRace>, sentByUser: Map<number, Set<string>>): Promise<number> {
+    if (!deps.mergedInto) return 0;
+    const missing = [...new Set(follows.filter((f) => !racesById.has(f.race_id)).map((f) => f.race_id))];
+    if (!missing.length) return 0;
+    const into = await deps.mergedInto(missing);
+    let moved = 0;
+    for (const f of follows) {
+      // цепочка склеек (вторичный → оставленный вторичный → probeg) — не длиннее трёх шагов
+      let to = into.get(f.race_id);
+      for (let i = 0; to && !racesById.has(to) && i < 2; i++) to = into.get(to) ?? (await deps.mergedInto([to])).get(to);
+      const r = to ? racesById.get(to) : undefined;
+      if (!r) continue;
+      const from = f.race_id;
+      await store.addFollow(f.tg_id, r);
+      const sent = sentByUser.get(f.tg_id) ?? new Set<string>();
+      for (const key of [...sent]) {
+        const [kind, ...rest] = key.split(":");
+        if (rest.join(":") !== from) continue;
+        await store.claimSend(f.tg_id, kind, r.id);
+        sent.add(`${kind}:${r.id}`);
+      }
+      await store.removeFollow(f.tg_id, from);
+      Object.assign(f, { race_id: r.id, race_name: r.name, race_date: r.ds, race_end: r.de, race_city: r.city || null });
+      console.log(`[races-bot] подписка перенесена со склеенной строки: ${from} → ${r.id}`);
+      moved += 1;
+    }
+    return moved;
+  }
+
   /** Почасовой тик: что пора, тому и шлём. Повторов нет: claimSend до отправки, releaseSend при сбое. */
   async function runTick(): Promise<Record<string, number>> {
     const t = now();
@@ -1207,12 +1244,17 @@ export function createBot(deps: BotDeps) {
     ]);
     const racesById = new Map(races.map((r) => [r.id, r]));
     const cancelled = deps.cancelled ? await deps.cancelled().catch(() => new Set<string>()) : new Set<string>();
+    const counts0: Record<string, number> = {};
+    counts0.moved = await moveMergedFollows(follows, racesById, sentByUser).catch((e) => {
+      console.error(`[races-bot] склейка подписок: ${e instanceof Error ? e.message : String(e)}`);
+      return 0;
+    });
     const byUser = new Map<number, BotFollow[]>();
     for (const f of follows) {
       if (!byUser.has(f.tg_id)) byUser.set(f.tg_id, []);
       byUser.get(f.tg_id)!.push(f);
     }
-    const counts: Record<string, number> = { users: users.length, sent: 0, blocked: 0, errors: 0, announced: 0 };
+    const counts: Record<string, number> = { users: users.length, sent: 0, blocked: 0, errors: 0, announced: 0, ...counts0 };
     await store.pruneSeen().catch((e) => console.error(`[races-bot] pruneSeen: ${e instanceof Error ? e.message : String(e)}`));
     counts.weekly = await sendWeekly(t).catch((e) => {
       counts.errors += 1;

@@ -394,6 +394,17 @@ export async function nominatimCity(lat: number, lon: number): Promise<string | 
   return a.city || a.town || a.village || a.municipality || a.state || null;
 }
 
+/** Куда склеены строки календаря (race_events.merged_into): подписка на спрятанную склейкой строку. */
+export async function loadMergedInto(ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await createSupabaseServerClient().from("race_events").select("id,merged_into").in("id", ids.slice(i, i + 200)).not("merged_into", "is", null);
+    if (error) throw new Error(`race_events merged_into: ${error.message}`);
+    for (const row of (data as { id: string; merged_into: string }[]) || []) out.set(row.id, row.merged_into);
+  }
+  return out;
+}
+
 export function productionBot() {
   return createBot({
     store: supabaseStore,
@@ -401,6 +412,7 @@ export function productionBot() {
     races: loadBotRaces,
     details: loadRaceDetails,
     cancelled: loadCancelledRaceIds,
+    mergedInto: loadMergedInto,
     expected: loadBotExpected,
     coachUsername: coachUsername(),
     reverseGeocode: nominatimCity,

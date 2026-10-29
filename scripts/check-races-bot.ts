@@ -77,6 +77,8 @@ const EXTRA = Array.from({ length: 6 }, (_, i) =>
 let RACES: BotRace[] = [HALF, TRAIL, KAZAN, SHORT, ...EXTRA];
 /** race_overrides.status = cancelled — старты, отменённые вручную. */
 const CANCELLED = new Set<string>();
+/** race_events.merged_into: вторичная строка → основная (склейка календаря). */
+const MERGED = new Map<string, string>();
 
 // Ожидаемые: прошлогодние без даты. ANNOUNCED — какие уже объявили дату (id ожидаемого → race_id).
 const EXP_NIGHT: ExpectedItem = { id: "probeg:2", name: "Ночной забег", city: "Москва", region: "Москва", type: "road", distances: ["10 км"], km: [10], lastMonth: 6, lastDate: "2026-06-20", lastUrl: "https://probeg.org/event/2/", site: "" };
@@ -129,6 +131,7 @@ const bot = createBot({
   weather: async () => ({ tMax: 14.4, tMin: 6.2, rainProb: 30, windMax: 4.1 }),
   goLink: (tg, r, kind) => `https://igorp.run/go/${kind}${raceCode(r.id)}-${tg.toString(36)}-0123456789`,
   cancelled: async () => CANCELLED,
+  mergedInto: async (ids) => new Map(ids.filter((i) => MERGED.has(i)).map((i) => [i, MERGED.get(i)!])),
   details: async (id) => DETAILS.get(id) ?? [],
 });
 
@@ -539,6 +542,33 @@ async function main() {
   await bot.runTick();
   assert.ok(!texts(501).some((t) => t.includes("пропал из календаря")), "об отмене один раз");
   RACES = [...RACES, KAZAN];
+
+  // Склейка — не отмена. Подписан на строку heroleague, робот probeg нашёл тот же старт, склейка спрятала
+  // heroleague под probeg. Было (до 29.10.2026): «пропал из календаря» и подписка снята (26.10 так ушло
+  // подписчику «Забега 2030»). Теперь подписка молча переезжает на основную строку вместе с отметками
+  // отправленного, и сообщения нет.
+  {
+    NOW = new Date("2026-10-12T10:00:00Z");
+    const SEC = race("heroleague:zabeg2030_2027", "Забег 2030", "2027-08-07", "Москва", "road", [10]);
+    const PRI = race("probeg:86287", "Легкоатлетический забег «Забег 2030»", "2027-08-07", "Москва", "road", [10]);
+    RACES = [...RACES, SEC];
+    await bot.handleUpdate(cb(USER, `f:${raceCode(SEC.id)}`));
+    await store.claimSend(501, "w12", SEC.id); // напоминание за 12 недель уже уходило
+    RACES = [...RACES.filter((r) => r.id !== SEC.id), PRI];
+    MERGED.set(SEC.id, PRI.id);
+    reset();
+    await bot.runTick();
+    assert.ok(!texts(501).some((t) => t.includes("пропал из календаря") || t.includes("Забег 2030")), `склейка — без сообщения: ${texts(501).join(" | ")}`);
+    assert.ok(store.follows.some((f) => f.tg_id === 501 && f.race_id === PRI.id), "подписка на основной строке");
+    assert.ok(!store.follows.some((f) => f.race_id === SEC.id), "со спрятанной строки снята");
+    assert.ok(store.sends.some((x) => x.kind === "w12" && x.race_id === PRI.id), "отметка «уже отправляли» переехала — без повтора");
+    reset();
+    await bot.runTick();
+    assert.ok(!texts(501).some((t) => t.includes("Забег 2030")), "и на следующем тике тишина");
+    await bot.handleUpdate(cb(USER, `u:${raceCode(PRI.id)}`));
+    RACES = RACES.filter((r) => r.id !== PRI.id);
+    MERGED.clear();
+  }
 
   // Отмена ПОДТВЕРЖДЕНА (race_overrides.status = cancelled, решение Игоря 15.10.2026). Выше —
   // старт просто пропал: «снял с отслеживания» остаётся. Подтверждённая отмена иначе: старт НЕ
