@@ -829,6 +829,10 @@ export function robotHealth(robots: string[], runs: RobotRun[], todayIso: string
     let alert: string | null = null;
     if (ranAt < addDays(todayIso, -8)) alert = `не собирался с ${ranAt}`;
     else if (last.error || typeof st === "string") alert = `ошибка: ${String(last.error || st).slice(0, 160)}`;
+    // Прогон начался, а итога по роботу нет: функцию остановил предел (150 с) или она упала до записи.
+    // Было (до 29.10.2026): такой прогон у сезонного робота читался как «всё спокойно» — 29.10 первый
+    // прогон runc повис (runc.run не отвечает облаку Supabase), и отчёт промолчал бы.
+    else if (st === undefined || st === null) alert = "прогон не завершился: итога нет (предел времени функции или падение)";
     else if (SEASONAL_ROBOTS.has(robot)) alert = null;
     else if (rows === 0) alert = "0 строк";
     else if (rows !== null && prevRows && rows < prevRows * 0.5) alert = `строк ${rows} против ${prevRows} в прошлый раз (падение больше 50%)`;

@@ -63,4 +63,9 @@ assert.equal(health.find((h) => h.robot === "otime")!.alert, "0 строк", "у
 const broken = robotHealth(["runc"], [{ ...run(0), stats: { sources: ["runc"], runc: "error: runc.run: меню событий не разобрано (сменилась вёрстка?)" } }], "2026-11-03");
 assert.match(broken[0].alert ?? "", /меню событий не разобрано/, "сломанная вёрстка — тревога");
 
+// Повисший прогон (стадия начата, итога нет) — тревога, а не «сезонный ноль». 29.10.2026 первый прогон runc
+// упал по пределу функции: runc.run не отвечает адресам облака, и строка прогона осталась без итога.
+const hung = robotHealth(["runc"], [{ started_at: "2026-11-01T22:25:00Z", stats: { stage: "scrape", sources: ["runc"] }, error: null }], "2026-11-02");
+assert.match(hung[0].alert ?? "", /прогон не завершился/, "зависший прогон — тревога");
+
 console.log("check:races-runc ok");
