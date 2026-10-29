@@ -132,25 +132,33 @@ async function probeg(from: Date, to: Date): Promise<Race[]> {
       const f = iso(new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), a)));
       const t = iso(new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), b)));
       // Таблица probeg режется на 100 строках («Показаны записи с 1 по 100»), и не по дате: срезаются
-      // строки из середины окна. Упёрлись — то же окно по дням. Было (до 29.10.2026): без проверки, и
-      // с мая по сентябрь (16–30.09.2026 — больше сотни) часть стартов молча не доходила до календаря.
-      if (takeProbegPage(await get(probegUrl(f, t)), out, trailIds, triIds) >= PROBEG_PAGE_CAP) {
-        capped.push(`${f}..${t}`);
-        for (let d = Math.max(Date.parse(f), from.getTime()); d <= Date.parse(t); d += 864e5) {
-          await sleep(1200);
-          const day = iso(new Date(d));
-          if (takeProbegPage(await get(probegUrl(day, day)), out, trailIds, triIds) >= PROBEG_PAGE_CAP) capped.push(day);
-        }
-      }
+      // строки из середины окна. Упёрлись — окно пополам, пока страница не меньше сотни (2–4 запроса,
+      // а не 15 по дням: в сезон таких окон с десяток, а вызов функции ограничен по времени).
+      // Было (до 29.10.2026): без проверки, и с мая по сентябрь (16–30.09.2026 — больше сотни) часть
+      // стартов молча не доходила до календаря.
+      await takeProbegWindow(f, t, iso(from), out, trailIds, triIds, capped);
       await sleep(1200);
     }
     cur.setUTCMonth(cur.getUTCMonth() + 1);
   }
-  if (capped.length) console.warn(`probeg: окна на пределе 100 строк: ${capped.join(", ")}`);
+  if (capped.length) console.warn(`probeg: дни на пределе 100 строк: ${capped.join(", ")}`);
   return [...out.values()];
 }
 
 const PROBEG_PAGE_CAP = 100;
+
+/** Окно probeg целиком; упёрлось в 100 строк — две половины (не раньше floor). Один день на пределе — в capped. */
+async function takeProbegWindow(f: string, t: string, floor: string, out: Map<string, Race>, trailIds: Set<string>, triIds: Set<string>, capped: string[]): Promise<void> {
+  if (takeProbegPage(await get(probegUrl(f, t)), out, trailIds, triIds) < PROBEG_PAGE_CAP) return;
+  if (f === t) { capped.push(f); return; }
+  const a = f < floor && floor <= t ? floor : f; // прошедшие дни окна дробить незачем
+  const days = Math.round((Date.parse(t) - Date.parse(a)) / 864e5);
+  const mid = iso(new Date(Date.parse(a) + Math.floor(days / 2) * 864e5));
+  const next = iso(new Date(Date.parse(mid) + 864e5));
+  await sleep(1200);
+  await takeProbegWindow(a, mid, floor, out, trailIds, triIds, capped);
+  if (next <= t) { await sleep(1200); await takeProbegWindow(next, t, floor, out, trailIds, triIds, capped); }
+}
 const probegUrl = (f: string, t: string) =>
   `https://probeg.org/races/?date_region=0&country=RU&date_from=${f}&date_to=${t}&hide_parkruns=on&btnSearchSubmit=1`;
 
