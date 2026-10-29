@@ -1018,7 +1018,7 @@ async function expectedStage(today: Date, stats: Record<string, unknown>) {
     if (error) throw new Error(`upsert expected: ${error.message}`);
   }
   // Объявленные: и из прохода, и среди уже ожидаемых строк, которых в проходе нет.
-  const toAnnounce = new Map(announced.filter((a) => existing.get(a.id)?.status === "expected").map((a) => [a.id, a.race_id]));
+  const toAnnounce = new Map(announced.filter((a) => existing.get(a.id)?.status === "expected" && !existing.get(a.id)?.race_id).map((a) => [a.id, a.race_id]));
   for (const r of existingRows) {
     if (r.status !== "expected" || r.race_id || toAnnounce.has(r.id)) continue;
     const next = findNextEdition({ name: r.name, city: r.city || "", date: r.last_date, race_type: r.race_type }, future);
