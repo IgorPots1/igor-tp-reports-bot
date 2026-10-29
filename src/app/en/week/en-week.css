@@ -1,0 +1,117 @@
+/* Free training week (/en/week). Same tokens as /breakdown (the @runnigor pages).
+ * Scoped to .ew-root: globals.css has bare main{}, h1{}, .btn. Phone first: Instagram in-app browser. */
+.ew-root{
+  --bg:#F6F4EF;--surface:#FFFFFF;--ink:#191712;--ink-2:#4D483F;--muted:#857F73;
+  --line:#E7E1D5;--line-2:#D8D0C0;--accent:#E5480E;--accent-ink:#B53707;--accent-bg:#FCEBE3;
+  --green:#2E7D45;--green-bg:#EAF3EC;--amber:#9A6200;--amber-bg:#FFF4DC;
+}
+.ew-root *{box-sizing:border-box;margin:0;padding:0}
+.ew-root{background:var(--bg);color:var(--ink);font-family:var(--font-onest),system-ui,sans-serif;font-size:16.5px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column;overflow-x:hidden}
+.ew-root .wrap{width:100%;max-width:560px;margin:0 auto;padding:0 16px}
+
+.ew-root header{position:sticky;top:0;z-index:5;background:rgba(246,244,239,.94);backdrop-filter:blur(10px);padding-top:env(safe-area-inset-top)}
+.ew-root .hbar{display:flex;align-items:center;justify-content:space-between;height:54px;gap:12px}
+.ew-root .who{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;letter-spacing:-.01em}
+.ew-root .ava{width:30px;height:30px;border-radius:50%;object-fit:cover;background:var(--line)}
+.ew-root .count{font-family:var(--font-jetbrains),monospace;font-size:12px;color:var(--muted)}
+.ew-root .prog{display:flex;gap:5px;padding-bottom:10px}
+.ew-root .prog i{flex:1;height:4px;border-radius:4px;background:var(--line);transition:background .25s}
+.ew-root .prog i.on{background:var(--accent)}
+
+.ew-root main{flex:1;padding:22px 0 28px}
+.ew-root .step{animation:ew-in .28s ease}
+@keyframes ew-in{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.ew-root .step{animation:none}}
+.ew-root .eyebrow{font-family:var(--font-jetbrains),monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.ew-root h1{font-size:clamp(25px,6.6vw,32px);font-weight:800;letter-spacing:-.025em;line-height:1.1;margin:10px 0 8px}
+.ew-root h1:focus{outline:none}
+.ew-root h2{font-size:20px;font-weight:750;letter-spacing:-.015em;line-height:1.2;margin:28px 0 10px}
+.ew-root .lede{color:var(--ink-2);font-size:15.5px;margin-bottom:22px}
+.ew-root .hint{font-size:13.5px;color:var(--muted);margin-top:12px}
+
+.ew-root .opts{display:grid;gap:10px}
+.ew-root .opt{display:flex;align-items:center;gap:14px;width:100%;min-height:56px;text-align:left;background:var(--surface);border:1.5px solid var(--line);border-radius:16px;padding:15px 16px;font:inherit;font-weight:620;color:inherit;cursor:pointer;transition:border-color .15s,background .15s,transform .1s;-webkit-tap-highlight-color:transparent}
+.ew-root .opt:active{transform:scale(.985)}
+.ew-root .opt:focus-visible,.ew-root .btn:focus-visible,.ew-root .ci button:focus-visible,.ew-root summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.ew-root .opt.sel{border-color:var(--accent);background:var(--accent-bg)}
+.ew-root .opt.none{border-style:dashed}
+.ew-root .opt .tx b{display:block;font-weight:inherit}
+.ew-root .opt .tx span{display:block;font-size:13.5px;font-weight:500;color:var(--muted);margin-top:1px}
+.ew-root .grid2 .opt .tx b{font-family:var(--font-onest),system-ui,sans-serif;font-size:16.5px;font-weight:650}
+.ew-root .step h2{font-size:16px;margin:22px 0 10px}
+.ew-root .f{margin-top:18px}
+.ew-root .f label{display:block;font-weight:600;font-size:15px;margin-bottom:8px}
+.ew-root .f input,.ew-root .f select{width:100%;background:var(--surface);border:1.5px solid var(--line);border-radius:13px;padding:14px 15px;font:inherit;font-size:16px;color:var(--ink);outline:none;-webkit-appearance:none;appearance:none}
+.ew-root .f input:focus,.ew-root .f select:focus{border-color:var(--accent)}
+.ew-root .f.bad input{border-color:var(--accent)}
+.ew-root .emsg{margin-top:7px;font-size:13.5px;color:var(--accent-ink);font-weight:600}
+.ew-root .facts{list-style:none;display:grid;gap:6px;margin-top:12px;background:var(--surface);border:1.5px solid var(--line);border-radius:14px;padding:13px 15px;font-size:14.5px;color:var(--ink-2)}
+.ew-root .facts li b{color:var(--ink)}
+.ew-root .grid2{grid-template-columns:1fr 1fr}
+.ew-root .grid2 .opt{justify-content:center;font-family:var(--font-jetbrains),monospace;font-size:24px;font-weight:700}
+
+.ew-root .intro{display:grid;gap:10px;margin:18px 0 6px}
+.ew-root .intro div{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--ink-2)}
+.ew-root .intro div i{font-style:normal;width:26px;height:26px;border-radius:8px;background:var(--green-bg);color:var(--green);display:grid;place-items:center;font-size:14px;font-weight:800;flex:0 0 auto}
+.ew-root .free{display:inline-block;font-family:var(--font-jetbrains),monospace;font-size:12px;font-weight:700;color:var(--green);background:var(--green-bg);padding:4px 10px;border-radius:999px}
+
+.ew-root .bar{position:sticky;bottom:0;background:linear-gradient(rgba(246,244,239,0),var(--bg) 30%);padding:18px 0 calc(16px + env(safe-area-inset-bottom))}
+.ew-root .bar .wrap{display:flex;gap:10px}
+.ew-root .btn{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;border:none;cursor:pointer;font:inherit;font-weight:650;font-size:16.5px;background:var(--accent);color:#fff;padding:16px 22px;border-radius:999px;text-decoration:none;text-align:center;transition:background .15s,opacity .15s;-webkit-tap-highlight-color:transparent}
+.ew-root .btn:disabled{opacity:.45;cursor:default}
+.ew-root .btn.ghost{flex:0 0 auto;background:transparent;color:var(--ink);border:1.5px solid var(--line-2);padding:16px 18px}
+.ew-root .btn.wa{background:#1F8F4E}
+.ew-root .err{margin-top:12px;background:#FFF1EC;border:1.5px solid #F3D9C9;border-radius:12px;padding:12px 14px;font-size:14px;color:var(--accent-ink)}
+.ew-root .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+
+/* plan */
+.ew-root .note{background:var(--surface);border:1.5px solid var(--line);border-radius:14px;padding:13px 15px;font-size:14.5px;color:var(--ink-2);margin-top:12px}
+.ew-root .note b{color:var(--ink)}
+.ew-root .rule{background:var(--green-bg);border-color:transparent;color:#1F4D2C}
+.ew-root .card .tag2{display:inline-block;margin:4px 0 0;font-size:11px;font-weight:700;color:var(--accent-ink);background:var(--accent-bg);border-radius:999px;padding:2px 8px;letter-spacing:.04em;text-transform:uppercase}
+.ew-root .cards{display:grid;gap:12px;margin-top:6px}
+.ew-root .card{background:var(--surface);border:1.5px solid var(--line);border-radius:18px;padding:16px}
+.ew-root .card.today{border-color:var(--accent)}
+.ew-root .card .when{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--font-jetbrains),monospace;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.ew-root .card .when .tag{color:var(--accent);font-weight:700}
+.ew-root .card h3{font-size:18px;font-weight:750;letter-spacing:-.015em;line-height:1.25;margin:6px 0 2px}
+.ew-root .card .min{font-size:14px;color:var(--muted)}
+.ew-root details{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.ew-root summary{cursor:pointer;font-weight:620;font-size:15px;color:var(--accent-ink);padding:6px 0;list-style:none}
+.ew-root summary::-webkit-details-marker{display:none}
+.ew-root summary::after{content:" +"}
+.ew-root details[open] summary::after{content:" \2212"}
+.ew-root details ol{padding-left:20px;display:grid;gap:4px;font-size:15px;color:var(--ink-2);margin:4px 0 8px}
+.ew-root details p{font-size:14px;color:var(--muted)}
+.ew-root .ci{margin-top:12px}
+.ew-root .ci .q{font-size:14px;font-weight:650;margin-bottom:8px}
+.ew-root .ci .row{display:flex;flex-wrap:wrap;gap:8px}
+.ew-root .ci button{flex:1 1 auto;min-height:44px;min-width:72px;border:1.5px solid var(--line-2);background:var(--bg);border-radius:999px;padding:9px 14px;font:inherit;font-size:14.5px;font-weight:620;color:var(--ink);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.ew-root .ci button[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#fff}
+.ew-root .ci button:disabled{opacity:.55;cursor:default}
+.ew-root .done-tag{display:inline-block;margin-top:10px;font-size:13.5px;font-weight:650;color:var(--green);background:var(--green-bg);border-radius:999px;padding:4px 11px}
+.ew-root .reply{margin-top:10px;font-size:14.5px;color:var(--ink-2);background:var(--amber-bg);border-radius:12px;padding:10px 12px}
+.ew-root .case{background:var(--surface);border:1.5px solid var(--line);border-radius:16px;overflow:hidden;font-size:15px;color:var(--ink-2);margin-top:12px}
+.ew-root .case img{display:block;width:100%;height:auto;max-height:480px;object-fit:cover;object-position:center 35%;background:var(--line)}
+.ew-root .case figcaption{padding:14px 16px 16px}
+.ew-root .case figcaption p+p{margin-top:8px}
+.ew-root .case b{display:block;color:var(--ink);margin-bottom:4px}
+.ew-root .offer{background:var(--ink);color:#F6F4EF;border-radius:20px;padding:20px 18px;margin-top:22px}
+.ew-root .offer h2{color:#fff;margin:0 0 8px}
+.ew-root .offer p{font-size:15px;color:#D9D4CA;margin-bottom:16px}
+.ew-root .offer .btn{width:100%}
+.ew-root .summary{background:var(--accent-bg);border-radius:18px;padding:16px;font-size:15.5px;white-space:pre-line;margin-top:6px}
+.ew-root .copy{margin-top:10px;background:none;border:none;color:var(--accent-ink);font:inherit;font-weight:650;font-size:14.5px;cursor:pointer;padding:6px 0}
+.ew-root .soon{text-align:center;padding:60px 0}
+
+/* screenshots */
+.ew-root .shots{margin-top:12px}
+.ew-root .thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.ew-root .thumb{position:relative;width:76px;height:96px;border-radius:12px;overflow:hidden;border:1.5px solid var(--line);background:var(--bg)}
+.ew-root .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.ew-root .thumb button{position:absolute;top:4px;right:4px;width:26px;height:26px;border-radius:50%;border:none;background:rgba(25,23,18,.72);color:#fff;font-size:16px;line-height:1;cursor:pointer}
+.ew-root .upload{display:inline-flex;align-items:center;gap:8px;min-height:44px;border:1.5px dashed var(--line-2);border-radius:999px;padding:9px 16px;font-size:14.5px;font-weight:620;color:var(--ink);cursor:pointer;background:var(--surface)}
+.ew-root .upload input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.ew-root .upload:focus-within{outline:3px solid var(--accent);outline-offset:2px}
+.ew-root .upload.busy{opacity:.6}
+.ew-root .shint{font-size:12.5px;color:var(--muted);margin-top:6px}

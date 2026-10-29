@@ -24,6 +24,7 @@ export const CONSULT_TOOL_LABELS: Record<string, string> = {
   "en-plan": "EN: pace calculator",
   "en-dress": "EN: what-to-wear calculator",
   "en-nutrition": "EN: fuel calculator",
+  "en-week": "EN: free training week",
   other: "Другое",
 };
 

@@ -409,6 +409,8 @@
     "check:trial-bot": "npx tsx scripts/check-trial-bot.ts",
     "trial-bot:simulate": "npx tsx scripts/simulate-trial-bot.ts",
     "trial-bot:cron-key": "npx tsx --env-file=.env.local scripts/trial-bot-cron-key.ts",
+    "check:en-week": "npx tsx scripts/check-en-week.ts",
+    "en-week:simulate": "npx tsx scripts/simulate-en-week.ts",
     "check:races-expected": "npx tsx scripts/check-races-expected.ts",
     "check:race-course": "npx tsx scripts/check-race-course.ts",
     "check:race-details": "npx tsx scripts/check-race-details.ts",

@@ -28,6 +28,8 @@ export const CONSULT_TOOLS = [
   "en-marathon",
   "en-calendar",
   "en-nutrition",
+  // Бесплатная неделя для @runnigor (igorp.run/en/week): кнопка «Message Igor on WhatsApp».
+  "en-week",
 ] as const;
 export type ConsultTool = (typeof CONSULT_TOOLS)[number] | "other";
 
