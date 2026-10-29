@@ -7,28 +7,30 @@
 
 import {
   DAY_PATTERNS,
-  QUESTION_COUNT,
   buildWeek,
   dueActions,
   isDone,
   mskNow,
   optionAt,
+  pathLength,
   patternsFor,
   planNext,
-  questionByNumber,
+  questionAt,
+  runnerInputFor,
   testOutcome,
   weekAdvice,
   withAnswer,
   WALK_PRESET,
   type Checkin,
   type DueAction,
-  type PlannedSession,
+  type TrialPlanned,
   type Stage,
   type TrialAnswers,
   type TrialCallback,
 } from "./logic";
+import { buildRunnerWeek, planRunnerSession, runnerFromPreset, runnerWeekAdvice, type RunnerSession } from "./runner-week";
 import * as T from "./texts";
-import { WALK_WORKOUT, workoutFor, type LibraryRows, type WorkoutText } from "./workouts";
+import { WALK_WORKOUT, runnerTitle, workoutFor, type LibraryRows, type WorkoutText } from "./workouts";
 
 // ── типы хранилища ───────────────────────────────────────────────────────────
 
@@ -82,7 +84,6 @@ export type TrialEventKind =
   | "test_completed"
   | "health_stop"
   | "already_student"
-  | "already_runner"
   | "week_opted"
   | "week_declined"
   | "days_chosen"
@@ -195,13 +196,44 @@ export function createTrialBot(deps: TrialDeps) {
       .map((s) => ({ planned: plannedOf(s), checkin: s.checkin }));
   }
 
-  function plannedOf(s: TrialSession): PlannedSession {
+  function plannedOf(s: TrialSession): TrialPlanned {
     if (s.preset_code === WALK_PRESET) return { kind: "walk" };
-    return { kind: "rung", rung: s.rung ?? 1 };
+    return runnerFromPreset(s.preset_code, null) ?? { kind: "rung", rung: s.rung ?? 1 };
+  }
+
+  /**
+   * Неделя бегуна по ответам, или null, если человек идёт лестницей бега с шагом. Лестница
+   * узнаётся по start_rung: он есть у всех, кто прошёл старый тест, и у новичков и возвращающихся
+   * нового. Неделя бегуна не хранится отдельно: она детерминирована ответами анкеты.
+   */
+  function runnerBase(u: TrialUser): RunnerSession[] | null {
+    if (u.start_rung !== null && u.start_rung !== undefined) return null;
+    const input = runnerInputFor(u.answers ?? {});
+    return input ? buildRunnerWeek(input) : null;
+  }
+
+  /** Что давать на тренировке idx по истории до сегодняшнего дня. */
+  function plannedFor(u: TrialUser, idx: number, history: Array<{ planned: TrialPlanned; checkin: Checkin | null }>): TrialPlanned {
+    const base = runnerBase(u);
+    if (base) {
+      return planRunnerSession(
+        base,
+        idx,
+        history.filter((h): h is { planned: RunnerSession | { kind: "walk" }; checkin: Checkin | null } => h.planned.kind !== "rung"),
+      );
+    }
+    return planNext(u.start_rung ?? 1, history);
   }
 
   async function firstWorkout(u: TrialUser): Promise<WorkoutText> {
-    return workoutFor({ kind: "rung", rung: u.start_rung ?? 1 }, await deps.library());
+    const base = runnerBase(u);
+    return workoutFor(base ? base[0] : { kind: "rung", rung: u.start_rung ?? 1 }, await deps.library());
+  }
+
+  function sendQuestion(chatId: number, messageId: number | null, answers: TrialAnswers, n: number) {
+    const q = questionAt(answers, n)!;
+    const text = T.questionText(q, n, pathLength(answers));
+    return messageId === null ? tg.send(chatId, text, T.questionKb(q)) : tg.edit(chatId, messageId, text, T.questionKb(q));
   }
 
   // ── вход ───────────────────────────────────────────────────────────────────
@@ -289,20 +321,24 @@ export function createTrialBot(deps: TrialDeps) {
         await tg.answer(callbackQueryId);
         await store.saveUser({ ...touch, stage: "test", test_q: 1, answers: {}, test_started_at: iso() });
         await store.logEvent(u.telegram_user_id, "test_started");
-        const q = questionByNumber(1)!;
-        await tg.edit(chatId, messageId, T.questionText(q), T.questionKb(q));
+        await sendQuestion(chatId, messageId, {}, 1);
         return;
       }
       case "cont": {
         await tg.answer(callbackQueryId);
         if (u.stage !== "test" || !u.test_q) return;
+        // Анкета старого вида (до 29.10.2026, без цели) по новому пути не читается: начинаем с цели.
+        if (!questionAt(u.answers ?? {}, u.test_q)) {
+          await store.saveUser({ ...touch, test_q: 1, answers: {} });
+          await sendQuestion(chatId, null, {}, 1);
+          return;
+        }
         await store.saveUser(touch);
-        const q = questionByNumber(u.test_q)!;
-        await tg.send(chatId, T.questionText(q), T.questionKb(q));
+        await sendQuestion(chatId, null, u.answers ?? {}, u.test_q);
         return;
       }
       case "answer":
-        return onAnswer(u, touch, input, cb.n, cb.index);
+        return onAnswer(u, touch, input, cb.qid, cb.index);
       case "week": {
         await tg.answer(callbackQueryId);
         if (u.stage !== "result" && u.stage !== "declined") return;
@@ -326,22 +362,27 @@ export function createTrialBot(deps: TrialDeps) {
         const nowMsk = mskNow(deps.now());
         const week = buildWeek(nowMsk.date, cb.pattern, nowMsk.minutes);
         if (!week) return;
-        const startRung = u.start_rung ?? 1;
-        const first = workoutFor({ kind: "rung", rung: startRung }, await deps.library());
+        // Заранее пишется план без поправок; утром тренировка пересчитывается по отметкам.
+        const lib = await deps.library();
+        const base = runnerBase(u);
+        const startRung = base ? null : u.start_rung ?? 1;
         await store.replaceSessions(
           u.telegram_user_id,
-          week.dates.map((d, i) => ({
-            telegram_user_id: u.telegram_user_id,
-            idx: i + 1,
-            scheduled_date: d,
-            rung: startRung,
-            preset_code: first.presetCode,
-            title: first.title,
-            body: first.body,
-            checkin: null,
-            checkin_at: null,
-            morning_sent_at: null,
-          })),
+          week.dates.map((d, i) => {
+            const w = workoutFor(base ? base[Math.min(i, base.length - 1)] : { kind: "rung", rung: startRung ?? 1 }, lib);
+            return {
+              telegram_user_id: u.telegram_user_id,
+              idx: i + 1,
+              scheduled_date: d,
+              rung: startRung,
+              preset_code: w.presetCode,
+              title: w.title,
+              body: w.body,
+              checkin: null,
+              checkin_at: null,
+              morning_sent_at: null,
+            };
+          }),
         );
         await store.saveUser({
           ...touch,
@@ -409,30 +450,32 @@ export function createTrialBot(deps: TrialDeps) {
     u: TrialUser,
     touch: Partial<TrialUser> & { telegram_user_id: number },
     input: { chatId: number; messageId: number; callbackQueryId: string },
-    n: number,
+    qid: string,
     index: number,
   ): Promise<void> {
     const { chatId, messageId, callbackQueryId } = input;
-    // Старая кнопка (вопрос уже отвечен или тест не идёт): ничего не меняем.
-    if (u.stage !== "test" || u.test_q !== n) {
+    const answersBefore = u.answers ?? {};
+    const current = u.stage === "test" && u.test_q ? questionAt(answersBefore, u.test_q) : null;
+    // Старая кнопка (вопрос уже отвечен, тест не идёт или кнопка с другого пути): ничего не меняем.
+    if (!current || current.id !== qid) {
       await tg.answer(callbackQueryId, T.STALE_BUTTON);
       return;
     }
-    const option = optionAt(n, index)!;
+    const option = optionAt(qid, index)!;
     await tg.answer(callbackQueryId);
+    const n = u.test_q!;
 
-    if (n < QUESTION_COUNT) {
-      const answers = withAnswer(u.answers ?? {}, n, option.code);
+    if (current.key !== "health") {
+      const answers = withAnswer(answersBefore, qid, option.code);
       await store.saveUser({ ...touch, answers, test_q: n + 1 });
-      await store.logEvent(u.telegram_user_id, "answer", { n, code: option.code });
-      const q = questionByNumber(n + 1)!;
-      await tg.edit(chatId, messageId, T.questionText(q), T.questionKb(q));
+      await store.logEvent(u.telegram_user_id, "answer", { q: qid, code: option.code });
+      if (!questionAt(answers, n + 1)) throw new Error(`[trial-bot] путь анкеты оборвался после ${qid}`);
+      await sendQuestion(chatId, messageId, answers, n + 1);
       return;
     }
 
-    // Шестой вопрос: в базу и в события идёт ТОЛЬКО флаг, не то, что именно отмечено.
-    const outcome = testOutcome(u.answers ?? {}, option.code);
-    const healthFlag = outcome.kind === "health_stop";
+    // Вопрос про здоровье (всегда последний): в базу и в события идёт ТОЛЬКО флаг, не то, что именно отмечено.
+    const outcome = testOutcome(answersBefore, option.code);
     await tg.edit(chatId, messageId, T.TEST_DONE);
 
     if (outcome.kind === "health_stop") {
@@ -442,14 +485,8 @@ export function createTrialBot(deps: TrialDeps) {
       await notifyCoach(T.coachHealth(whoOf(u)));
       return;
     }
-    if (outcome.kind === "already_runner") {
-      await store.saveUser({ ...touch, stage: "already_runner", test_q: null, health_flag: healthFlag, test_completed_at: iso() });
-      await store.logEvent(u.telegram_user_id, "already_runner");
-      await tg.send(chatId, T.ALREADY_RUNNER, T.ALREADY_KB);
-      return;
-    }
 
-    const updated: TrialUser = { ...u, start_rung: outcome.startRung };
+    const updated: TrialUser = { ...u, answers: answersBefore, start_rung: outcome.startRung, weekly_runs: outcome.weeklyRuns };
     await store.saveUser({
       ...touch,
       stage: "result",
@@ -460,8 +497,17 @@ export function createTrialBot(deps: TrialDeps) {
       weekly_runs: outcome.weeklyRuns,
       test_completed_at: iso(),
     });
-    await store.logEvent(u.telegram_user_id, "test_completed", { result_type: outcome.resultType, start_rung: outcome.startRung });
-    await tg.send(chatId, T.resultCard(outcome.resultType, await firstWorkout(updated)));
+    await store.logEvent(u.telegram_user_id, "test_completed", {
+      result_type: outcome.resultType,
+      goal: answersBefore.goal ?? null,
+      start_rung: outcome.startRung,
+      weekly_runs: outcome.weeklyRuns,
+    });
+    const base = runnerBase(updated);
+    await tg.send(
+      chatId,
+      T.resultCard(outcome.resultType, await firstWorkout(updated), base ? base.map(runnerTitle) : null, answersBefore.days === "4"),
+    );
     await tg.send(chatId, T.OFFER_WEEK, T.OFFER_WEEK_KB);
   }
 
@@ -588,17 +634,16 @@ export function createTrialBot(deps: TrialDeps) {
         return r;
       }
       case "morning": {
-        const startRung = u.start_rung ?? 1;
-        const planned = planNext(startRung, historyBefore(sessions, today));
+        const planned = plannedFor(u, a.idx, historyBefore(sessions, today));
         const w = planned.kind === "walk" ? WALK_WORKOUT : workoutFor(planned, await deps.library());
         await store.updateSession(id, a.idx, {
-          rung: planned.kind === "rung" ? planned.rung : sessions.find((s) => s.idx === a.idx)?.rung ?? startRung,
+          rung: planned.kind === "rung" ? planned.rung : sessions.find((s) => s.idx === a.idx)?.rung ?? u.start_rung,
           preset_code: w.presetCode,
           title: w.title,
           body: w.body,
           morning_sent_at: deps.now().toISOString(),
         });
-        const r = await send(planned.kind === "walk" ? T.MORNING_WALK : T.morningText(w, a.immediate === true));
+        const r = await send(planned.kind === "walk" ? T.MORNING_WALK : T.morningText(w, a.immediate === true, planned.kind === "intervals"));
         if (r === true) await store.logEvent(id, "morning_sent", { idx: a.idx, preset: w.presetCode });
         return r;
       }
@@ -633,14 +678,27 @@ export function createTrialBot(deps: TrialDeps) {
         const done = doneRows.length;
         const counts: Partial<Record<Checkin, number>> = {};
         for (const s of sorted) if (s.checkin) counts[s.checkin] = (counts[s.checkin] ?? 0) + 1;
-        const startRung = u.start_rung ?? 1;
-        const advice = weekAdvice(startRung, history);
-        const lib = await deps.library();
-        const nextTitle = workoutFor({ kind: "rung", rung: done === 0 ? startRung : advice.rung }, lib).title;
-        const r = await send(T.day7Text(done - walks, walks, counts, advice, nextTitle), T.BASE_KB);
+        const base = runnerBase(u);
+        let step: string;
+        let adviceKind: string;
+        if (base) {
+          const advice = runnerWeekAdvice(
+            base,
+            history.filter((h): h is { planned: RunnerSession | { kind: "walk" }; checkin: Checkin | null } => h.planned.kind !== "rung"),
+          );
+          adviceKind = advice.kind;
+          step = done === 0 ? "начать заново с этой же недели" : T.runnerAdviceText(advice);
+        } else {
+          const startRung = u.start_rung ?? 1;
+          const advice = weekAdvice(startRung, history);
+          adviceKind = advice.kind;
+          const nextTitle = workoutFor({ kind: "rung", rung: done === 0 ? startRung : advice.rung }, await deps.library()).title;
+          step = done === 0 ? T.restartStep(nextTitle) : T.adviceText(advice, nextTitle);
+        }
+        const r = await send(T.day7Text(done - walks, walks, counts, step), T.BASE_KB);
         if (r === true) {
           await store.saveUser({ telegram_user_id: id, day7_at: deps.now().toISOString() });
-          await store.logEvent(id, "day7_sent", { done, advice: advice.kind });
+          await store.logEvent(id, "day7_sent", { done, advice: adviceKind });
         }
         return r;
       }

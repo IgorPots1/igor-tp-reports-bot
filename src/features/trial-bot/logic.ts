@@ -1,12 +1,24 @@
 /* Пробная неделя в основном боте (вход из рилсов): чистая логика без сети и без базы.
  *
- * Здесь: разбор deep link, вопросы теста, классификация результата, сборка недели,
- * прогрессия по отметкам «как прошло» и решение «что отправить сейчас». Всё
+ * Здесь: разбор deep link, анкета по цели, классификация результата, сборка недели,
+ * прогрессия по отметкам «как прошло» и решение «что отправить сейчас». Неделя бегуна
+ * (лёгкий, интервалы, длительная) отдельно, в runner-week.ts. Всё
  * детерминировано и проверяется в scripts/check-trial-bot.ts на тестовых датах.
  *
  * Время: Москва (Europe/Moscow). Все окна отправки ниже заданы в московском времени. */
 
 import { BEGINNER_LADDER, FIRST_STEP, LAST_STEP, decideNextStep, type SessionFeedback } from "@/features/methodology/beginner";
+
+import {
+  hasRunnerBase,
+  type IntervalsExp,
+  type Longest,
+  type RaceDistance,
+  type RaceResult,
+  type RunnerInput,
+  type RunnerSession,
+  type WeeklyKm,
+} from "./runner-week";
 
 // ── вход ─────────────────────────────────────────────────────────────────────
 
@@ -31,163 +43,298 @@ export function isTrialEnabled(env: Record<string, string | undefined> = process
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-// ── тест ─────────────────────────────────────────────────────────────────────
+// ── анкета ───────────────────────────────────────────────────────────────────
+//
+// [29.10.2026, правка Игоря после живого теста] Было: один тест «для начинающих» из шести
+// вопросов, и бегающему больше 30 минут бот отвечал «неделя для начинающих тебе не нужна».
+// Отменено: продукт не только для новичков, никому не отказываем, неделю получает каждый.
+//
+// Теперь анкета как онбординг приложения AI-coach (ai-running-coach,
+// src/features/onboarding/types.ts и onboarding-form.tsx): сначала цель, потом вопросы своей
+// ветки, дни в неделю, травмы и последним прежний вопрос про здоровье (его обработка не
+// менялась: плана нет, к врачу, Игорю уведомление без подробностей).
 
-export type Q1 = "no" | "quit" | "regular";
-export type Q2 = "lt5" | "5_15" | "15_30" | "gt30";
-export type Q3 = "breath" | "knees" | "time" | "progress" | "never";
-export type Q4 = "2" | "3";
-export type Q5 = "regular" | "5k" | "shape" | "return";
+export type Goal = "start" | "return" | "regular" | "race";
 
 /** Ответы БЕЗ вопроса про здоровье: по нему хранится только флаг, а не что именно отмечено. */
-export type TrialAnswers = { q1?: Q1; q2?: Q2; q3?: Q3; q4?: Q4; q5?: Q5 };
+export type TrialAnswers = {
+  goal?: Goal;
+  // «начать бегать»
+  now_running?: "rarely" | "sometimes" | "weekly";
+  can_run?: "lt5" | "5_15" | "15_30" | "gt30";
+  // «вернуться после перерыва»
+  last_run?: "recent" | "3_6m" | "6m_plus";
+  prev_level?: "3k" | "5k" | "10k";
+  // «подготовиться к старту»
+  race_distance?: RaceDistance;
+  race_result?: RaceResult;
+  // «бегать регулярно» и «старт»
+  weekly_km?: WeeklyKm;
+  longest?: Longest;
+  intervals?: IntervalsExp;
+  // все
+  days?: "2" | "3" | "4";
+  injury?: "none" | "past" | "now";
+};
+
+export type AnswerKey = keyof TrialAnswers;
 
 export type QuestionOption = { code: string; label: string };
-export type Question = { n: number; key: "q1" | "q2" | "q3" | "q4" | "q5" | "q6"; text: string; options: QuestionOption[] };
+/** id короткий: уходит в callback_data «tr:a:<id>:<вариант>». */
+export type Question = { id: string; key: AnswerKey | "health"; text: string; options: QuestionOption[] };
 
-/** Код ответа «Ничего из этого» на шестом вопросе. Любой другой код = health_flag. */
+/** Код ответа «Ничего из этого» на вопросе про здоровье. Любой другой код = health_flag. */
 export const HEALTH_NONE = "none";
 
-export const QUESTIONS: Question[] = [
-  {
-    n: 1,
-    key: "q1",
-    text: "Бегаешь сейчас?",
-    options: [
-      { code: "no", label: "Нет, хочу начать" },
-      { code: "quit", label: "Были попытки, но не пошло" },
-      { code: "regular", label: "Да, регулярно" },
-    ],
-  },
-  {
-    n: 2,
-    key: "q2",
-    text: "Сколько сейчас можешь пробежать без остановки?",
-    options: [
-      { code: "lt5", label: "Меньше 5 минут" },
-      { code: "5_15", label: "5-15 минут" },
-      { code: "15_30", label: "15-30 минут" },
-      { code: "gt30", label: "Больше 30 минут" },
-    ],
-  },
-  {
-    n: 3,
-    key: "q3",
-    text: "Что чаще всего мешало раньше?",
-    options: [
-      { code: "breath", label: "Задыхаюсь, тяжело" },
-      { code: "knees", label: "Болят колени или голени" },
-      { code: "time", label: "Не хватает времени" },
-      { code: "progress", label: "Не вижу прогресса" },
-      { code: "never", label: "Опыта ещё нет" },
-    ],
-  },
-  {
-    n: 4,
-    key: "q4",
-    text: "Сколько раз в неделю реально получится бегать?",
-    options: [
-      { code: "2", label: "2 раза" },
-      { code: "3", label: "3 раза" },
-    ],
-  },
-  {
-    n: 5,
-    key: "q5",
-    text: "Какая цель на ближайшие 2-3 месяца?",
-    options: [
-      { code: "regular", label: "Просто бегать регулярно" },
-      { code: "5k", label: "Пробежать 5 км без остановки" },
-      { code: "shape", label: "Прийти в форму" },
-      { code: "return", label: "Вернуться после перерыва" },
-    ],
-  },
-  {
-    n: 6,
-    key: "q6",
-    text: "Последний вопрос, важный. Есть ли что-то из этого?",
-    options: [
-      { code: "heart", label: "Сердце или давление" },
-      { code: "chest", label: "Боль в груди, головокружение" },
-      { code: "injury", label: "Травма или боль сейчас" },
-      { code: "pregnant", label: "Беременность" },
-      { code: HEALTH_NONE, label: "Ничего из этого" },
-    ],
-  },
+const opt = (code: string, label: string): QuestionOption => ({ code, label });
+const raceResultOptions = (t1: string, t2: string, t3: string, t4: string): QuestionOption[] => [
+  opt("t1", t1),
+  opt("t2", t2),
+  opt("t3", t3),
+  opt("t4", t4),
+  opt("none", "Стартов ещё не было"),
 ];
 
-export const QUESTION_COUNT = QUESTIONS.length;
+export const QUESTIONS: Record<string, Question> = {
+  goal: {
+    id: "goal",
+    key: "goal",
+    text: "Какая у тебя цель?",
+    options: [opt("start", "Начать бегать"), opt("return", "Вернуться после перерыва"), opt("regular", "Бегать регулярно"), opt("race", "Подготовиться к старту")],
+  },
+  nowrun: {
+    id: "nowrun",
+    key: "now_running",
+    text: "Как сейчас с бегом?",
+    options: [opt("rarely", "Почти не бегаю"), opt("sometimes", "Бывает, но без режима"), opt("weekly", "Бегаю 1-2 раза в неделю")],
+  },
+  canrun: {
+    id: "canrun",
+    key: "can_run",
+    text: "Сколько сейчас можешь пробежать без остановки?",
+    options: [opt("lt5", "Меньше 5 минут"), opt("5_15", "5-15 минут"), opt("15_30", "15-30 минут"), opt("gt30", "Больше 30 минут")],
+  },
+  brk: {
+    id: "brk",
+    key: "last_run",
+    text: "Сколько длится перерыв в беге?",
+    options: [opt("recent", "Меньше 2 месяцев"), opt("3_6m", "3-6 месяцев"), opt("6m_plus", "Больше полугода")],
+  },
+  prev: {
+    id: "prev",
+    key: "prev_level",
+    text: "Сколько получалось пробежать до перерыва?",
+    options: [opt("3k", "Несколько километров"), opt("5k", "Около 5 км"), opt("10k", "10 км и больше")],
+  },
+  dist: {
+    id: "dist",
+    key: "race_distance",
+    text: "К какому старту готовишься?",
+    options: [opt("5k", "5 км"), opt("10k", "10 км"), opt("21k", "Полумарафон"), opt("42k", "Марафон")],
+  },
+  rr5k: { id: "rr5k", key: "race_result", text: "Твой лучший результат на 5 км?", options: raceResultOptions("Быстрее 22 минут", "22-27 минут", "27-33 минуты", "Медленнее 33 минут") },
+  rr10k: { id: "rr10k", key: "race_result", text: "Твой лучший результат на 10 км?", options: raceResultOptions("Быстрее 45 минут", "45-55 минут", "55-65 минут", "Медленнее 65 минут") },
+  rr21k: { id: "rr21k", key: "race_result", text: "Твой лучший результат на полумарафоне?", options: raceResultOptions("Быстрее 1:40", "1:40-2:00", "2:00-2:20", "Медленнее 2:20") },
+  rr42k: { id: "rr42k", key: "race_result", text: "Твой лучший результат на марафоне?", options: raceResultOptions("Быстрее 3:30", "3:30-4:00", "4:00-4:45", "Медленнее 4:45") },
+  wkm: {
+    id: "wkm",
+    key: "weekly_km",
+    text: "Сколько обычно набегаешь за неделю?",
+    options: [opt("0_5", "До 5 км"), opt("5_15", "5-15 км"), opt("15_30", "15-30 км"), opt("30_50", "30-50 км"), opt("50_plus", "Больше 50 км"), opt("unknown", "Не знаю")],
+  },
+  long: {
+    id: "long",
+    key: "longest",
+    text: "Самая длинная пробежка за последний месяц?",
+    options: [
+      opt("up_to_3", "До 3 км"),
+      opt("3_5", "3-5 км"),
+      opt("5_10", "5-10 км"),
+      opt("10_15", "10-15 км"),
+      opt("15_21", "15-21 км"),
+      opt("21_plus", "Больше 21 км"),
+      opt("unknown", "Не знаю"),
+    ],
+  },
+  intv: {
+    id: "intv",
+    key: "intervals",
+    text: "Были в твоих тренировках интервалы или темповые?",
+    options: [opt("easy_only", "Нет, в основном лёгкий бег"), opt("sometimes", "Иногда были"), opt("regularly", "Да, регулярно"), opt("unknown", "Не знаю, что это")],
+  },
+  // Дни в неделю: варианты по цели, как getDaysPerWeekOptions в AI-coach. «4 и больше» хранится
+  // как "4"; бот при этом ведёт 3 главные тренировки недели (лестница новичка и так не больше 3).
+  d23: { id: "d23", key: "days", text: "Сколько раз в неделю реально получится бегать?", options: [opt("2", "2 раза"), opt("3", "3 раза")] },
+  d234: { id: "d234", key: "days", text: "Сколько раз в неделю реально получится бегать?", options: [opt("2", "2 раза"), opt("3", "3 раза"), opt("4", "4 и больше")] },
+  d34: { id: "d34", key: "days", text: "Сколько раз в неделю реально получится бегать?", options: [opt("3", "3 раза"), opt("4", "4 и больше")] },
+  inj: {
+    id: "inj",
+    key: "injury",
+    text: "Были травмы или боль от бега?",
+    options: [opt("none", "Не было"), opt("past", "Были раньше, сейчас нет"), opt("now", "Бывает лёгкий дискомфорт")],
+  },
+  // Вопрос про здоровье: формулировка и варианты прежние, обработка прежняя.
+  health: {
+    id: "health",
+    key: "health",
+    text: "Последний вопрос, важный. Есть ли что-то из этого?",
+    options: [
+      opt("heart", "Сердце или давление"),
+      opt("chest", "Боль в груди, головокружение"),
+      opt("injury", "Травма или боль сейчас"),
+      opt("pregnant", "Беременность"),
+      opt(HEALTH_NONE, "Ничего из этого"),
+    ],
+  },
+};
 
-export function questionByNumber(n: number): Question | null {
-  return QUESTIONS.find((q) => q.n === n) ?? null;
+/**
+ * Путь вопросов по ответам. Ветка становится известна после цели, вопрос о результате после
+ * дистанции, поэтому номер текущего вопроса в пути не сдвигается от новых ответов.
+ *   начать бегать:   цель, как сейчас с бегом, сколько без остановки, дни, травмы, здоровье (6)
+ *   вернуться:       цель, перерыв, уровень до перерыва, дни, травмы, здоровье (6)
+ *   регулярно:       цель, объём, самая длинная, интервалы, дни, травмы, здоровье (7)
+ *   к старту:        цель, дистанция, результат, объём, интервалы, дни, травмы, здоровье (8)
+ * У старта нет вопроса про самую длинную: длительная выводится из объёма и дистанции, иначе
+ * путь выходит в 9 нажатий.
+ */
+export function questionPath(a: TrialAnswers): Question[] {
+  const q = QUESTIONS;
+  const tail = [q.inj, q.health];
+  switch (a.goal) {
+    case "start":
+      return [q.goal, q.nowrun, q.canrun, q.d23, ...tail];
+    case "return":
+      return [q.goal, q.brk, q.prev, q.d234, ...tail];
+    case "regular":
+      return [q.goal, q.wkm, q.long, q.intv, q.d234, ...tail];
+    case "race": {
+      const rr = a.race_distance ? q[`rr${a.race_distance}`] : null;
+      return rr ? [q.goal, q.dist, rr, q.wkm, q.intv, q.d34, ...tail] : [q.goal, q.dist];
+    }
+    default:
+      return [q.goal];
+  }
 }
 
-/** Ответ из кнопки: номер вопроса и индекс варианта. null, если такой кнопки нет. */
-export function optionAt(n: number, index: number): QuestionOption | null {
-  const q = questionByNumber(n);
+/** Сколько вопросов будет у этой цели (для «Вопрос 2 из 7»). null, пока цель не выбрана. */
+export function pathLength(a: TrialAnswers): number | null {
+  if (!a.goal) return null;
+  if (a.goal === "race") return 8;
+  return questionPath(a).length;
+}
+
+/** Вопрос номер n (1..) на пути этих ответов. null, если такого нет (старая анкета, сбитый номер). */
+export function questionAt(a: TrialAnswers, n: number): Question | null {
+  if (!Number.isInteger(n) || n < 1) return null;
+  return questionPath(a)[n - 1] ?? null;
+}
+
+export function questionById(id: string): Question | null {
+  return Object.prototype.hasOwnProperty.call(QUESTIONS, id) ? QUESTIONS[id] : null;
+}
+
+/** Ответ из кнопки: вопрос и индекс варианта. null, если такой кнопки нет. */
+export function optionAt(id: string, index: number): QuestionOption | null {
+  const q = questionById(id);
   if (!q || !Number.isInteger(index) || index < 0 || index >= q.options.length) return null;
   return q.options[index];
 }
 
-/** Записать ответ на вопросы 1-5. Шестой сюда не попадает никогда. */
-export function withAnswer(answers: TrialAnswers, n: number, code: string): TrialAnswers {
-  const q = questionByNumber(n);
-  if (!q || q.key === "q6") return answers;
+/** Записать ответ. Вопрос про здоровье сюда не попадает никогда. */
+export function withAnswer(answers: TrialAnswers, id: string, code: string): TrialAnswers {
+  const q = questionById(id);
+  if (!q || q.key === "health") return answers;
   if (!q.options.some((o) => o.code === code)) return answers;
   return { ...answers, [q.key]: code };
 }
 
 // ── результат ────────────────────────────────────────────────────────────────
 
+/**
+ * Значения те же, что разрешает check в trial_bot_users.result_type (миграции не нужно),
+ * смысл по цели:
+ *   clean_start  начать бегать;
+ *   comeback     вернуться после перерыва;
+ *   too_fast     уже бегает, но интервалов не было или «не знаю», «иногда»: почти всё в одном
+ *                среднем темпе (на карточке «Всё в одном темпе»);
+ *   no_system    уже бегает и интервалы регулярно, или бегает совсем мало (до 5 км в неделю):
+ *                нагрузка держится на настроении, а не на плане.
+ */
 export type ResultType = "clean_start" | "too_fast" | "no_system" | "comeback";
 
 export type TestOutcome =
   | { kind: "health_stop" }
-  | { kind: "already_runner" }
-  | { kind: "result"; resultType: ResultType; startRung: number; weeklyRuns: 2 | 3 };
+  | { kind: "result"; resultType: ResultType; startRung: number | null; weeklyRuns: 2 | 3 };
 
-/**
- * ТИП РЕЗУЛЬТАТА. Правило по порядку, первое совпадение побеждает:
- *   1. Q1 «Нет, хочу начать»                         → Чистый старт
- *   2. Q3 «Задыхаюсь, тяжело»                        → Слишком быстро
- *   3. Q5 «Вернуться после перерыва» или Q3 «колени» → Возвращение
- *   4. Q3 «Не хватает времени» или «Не вижу прогресса» → Нет системы
- *   5. Q1 «Были попытки, но не пошло» и Q2 меньше 15 минут → Слишком быстро
- *   6. иначе                                         → Нет системы
- * Названная человеком причина (Q3) важнее выведенной из цифр (п.5), поэтому п.5 ниже.
- */
+/** Бегущий уже с базой: неделя бегуна (лёгкий, интервалы, длительная), а не лестница бега с шагом. */
+export function isRunnerTrack(a: TrialAnswers): boolean {
+  if (a.goal !== "regular" && a.goal !== "race") return false;
+  return hasRunnerBase(a.weekly_km ?? "unknown", a.goal === "regular" ? a.longest ?? "unknown" : null);
+}
+
 export function classifyResult(a: TrialAnswers): ResultType {
-  if (a.q1 === "no") return "clean_start";
-  if (a.q3 === "breath") return "too_fast";
-  if (a.q5 === "return" || a.q3 === "knees") return "comeback";
-  if (a.q3 === "time" || a.q3 === "progress") return "no_system";
-  if (a.q1 === "quit" && (a.q2 === "lt5" || a.q2 === "5_15")) return "too_fast";
-  return "no_system";
+  if (a.goal === "start") return "clean_start";
+  if (a.goal === "return") return "comeback";
+  if (!isRunnerTrack(a)) return "no_system";
+  return a.intervals === "regularly" ? "no_system" : "too_fast";
 }
 
 /**
- * СТУПЕНЬ ПЕРВОЙ НЕДЕЛИ по Q2 (лестница новичка, src/features/methodology/beginner.ts):
- *   меньше 5 минут → ступень 1 (rw_5x4_2walk)
- *   5-15 минут     → ступень 3 (rw_5x5_90walk)
- *   15-30 и больше → ступень 6 (rw_continuous_25, 25 минут лёгкого непрерывного бега).
- * Почему ступень 6, а не пресет easy_continuous: у easy_continuous в библиотеке нет
- * текста (длительность берётся из объёмного конверта атлета), а у ступени 6 есть
- * готовое описание тренера ровно про 25 минут лёгкого непрерывного бега.
+ * Ступени возвращения (лестница новичка): по перерыву и уровню до него. Чем дольше перерыв и
+ * ниже был уровень, тем ниже ступень. Даже недавний перерыв при 10 км не даёт интервалов:
+ * методика возвращения первые недели без работы на скорость.
  */
-export function startRungFor(q2: Q2 | undefined): number {
-  if (q2 === "lt5") return 1;
-  if (q2 === "5_15") return 3;
-  return 6;
+const RETURN_RUNG: Record<NonNullable<TrialAnswers["last_run"]>, Record<NonNullable<TrialAnswers["prev_level"]>, number>> = {
+  recent: { "3k": 5, "5k": 6, "10k": 7 },
+  "3_6m": { "3k": 3, "5k": 4, "10k": 5 },
+  "6m_plus": { "3k": 1, "5k": 2, "10k": 3 },
+};
+
+/**
+ * СТУПЕНЬ ПЕРВОЙ НЕДЕЛИ на лестнице бега с шагом (src/features/methodology/beginner.ts).
+ * null: человек идёт неделей бегуна, лестница не нужна.
+ *   начать бегать: меньше 5 минут → 1, 5-15 → 3, 15-30 → 6 (25 минут непрерывно), больше 30 → 7;
+ *   вернуться: таблица RETURN_RUNG;
+ *   регулярно или старт без базы (до 5 км в неделю или самая длинная до 3 км) → 6;
+ *   «бывает лёгкий дискомфорт» → ступенью ниже (не ниже первой).
+ */
+export function startRungFor(a: TrialAnswers): number | null {
+  if (isRunnerTrack(a)) return null;
+  let rung = 6;
+  if (a.goal === "start") rung = a.can_run === "lt5" ? 1 : a.can_run === "5_15" ? 3 : a.can_run === "gt30" ? 7 : 6;
+  if (a.goal === "return") rung = RETURN_RUNG[a.last_run ?? "6m_plus"][a.prev_level ?? "3k"];
+  if (a.injury === "now") rung -= 1;
+  return Math.max(1, rung);
 }
 
+/** Сколько тренировок ведёт бот: 2 или 3. «4 и больше» → 3 главные тренировки недели. */
+export function weeklyRunsFor(a: TrialAnswers): 2 | 3 {
+  return a.days === "2" ? 2 : 3;
+}
+
+/** Вход для недели бегуна. null, если человек идёт лестницей. */
+export function runnerInputFor(a: TrialAnswers): RunnerInput | null {
+  if (!isRunnerTrack(a)) return null;
+  return {
+    weeklyKm: a.weekly_km ?? "unknown",
+    longest: a.goal === "regular" ? a.longest ?? "unknown" : null,
+    intervals: a.intervals ?? "unknown",
+    runs: weeklyRunsFor(a),
+    caution: a.injury === "now",
+    raceDistance: a.goal === "race" ? a.race_distance ?? null : null,
+    raceResult: a.goal === "race" ? a.race_result ?? null : null,
+  };
+}
+
+/** Итог анкеты. Здоровье раньше всего; больше никаких отказов: неделю получает каждый. */
 export function testOutcome(answers: TrialAnswers, healthCode: string): TestOutcome {
   if (healthCode !== HEALTH_NONE) return { kind: "health_stop" };
-  if (answers.q1 === "regular" && answers.q2 === "gt30") return { kind: "already_runner" };
   return {
     kind: "result",
     resultType: classifyResult(answers),
-    startRung: startRungFor(answers.q2),
-    weeklyRuns: answers.q4 === "2" ? 2 : 3,
+    startRung: startRungFor(answers),
+    weeklyRuns: weeklyRunsFor(answers),
   };
 }
 
@@ -285,7 +432,14 @@ export function isDone(c: Checkin | null | undefined): boolean {
 
 export const WALK_PRESET = "brisk_walk_30";
 
+/**
+ * Сессия лестницы бега с шагом: ступень или ходьба после боли. Контракт прежний: им же
+ * пользуется английская неделя (src/features/en-week), поэтому сессии недели бегуна сюда не
+ * добавлены, а живут в TrialPlanned.
+ */
 export type PlannedSession = { kind: "rung"; rung: number } | { kind: "walk" };
+/** Любая сессия пробной недели: лестница или неделя бегуна (runner-week.ts). */
+export type TrialPlanned = PlannedSession | RunnerSession;
 
 /**
  * ЧТО ДАВАТЬ НА СЛЕДУЮЩЕЙ ТРЕНИРОВКЕ, по отметкам предыдущих (по порядку).
@@ -299,7 +453,7 @@ export type PlannedSession = { kind: "rung"; rung: number } | { kind: "walk" };
  *     не меняется; после ходьбы возвращаемся на ту же ступень;
  *   «Не получилось» и молчание → ничего не меняют.
  */
-export function planNext(startRung: number, history: Array<{ planned: PlannedSession; checkin: Checkin | null }>): PlannedSession {
+export function planNext(startRung: number, history: Array<{ planned: TrialPlanned; checkin: Checkin | null }>): PlannedSession {
   let rung = clampRung(startRung);
   let sessionsAtRung = 0;
   let recent: SessionFeedback[] = [];
@@ -310,8 +464,9 @@ export function planNext(startRung: number, history: Array<{ planned: PlannedSes
       walkNext = true;
       continue;
     }
-    if (h.planned.kind === "walk") {
+    if (h.planned.kind !== "rung") {
       // Ходьба была (с любой отметкой, кроме новой боли выше): ступень та же, дальше снова бег.
+      // Сессий недели бегуна у человека на лестнице не бывает; если встретятся, ступень не двигают.
       walkNext = false;
       continue;
     }
@@ -347,7 +502,7 @@ export function presetForRung(rung: number): string {
 /** Совет на следующую неделю по всей истории недели. */
 export type NextStepAdvice = { kind: "up"; rung: number } | { kind: "same"; rung: number } | { kind: "careful"; rung: number };
 
-export function weekAdvice(startRung: number, history: Array<{ planned: PlannedSession; checkin: Checkin | null }>): NextStepAdvice {
+export function weekAdvice(startRung: number, history: Array<{ planned: TrialPlanned; checkin: Checkin | null }>): NextStepAdvice {
   const next = planNext(startRung, history);
   const lastRungSession = [...history].reverse().find((h) => h.planned.kind === "rung");
   const currentRung = lastRungSession && lastRungSession.planned.kind === "rung" ? lastRungSession.planned.rung : clampRung(startRung);
@@ -517,7 +672,7 @@ export const CB = "tr:";
 export type TrialCallback =
   | { kind: "go" }
   | { kind: "cont" }
-  | { kind: "answer"; n: number; index: number }
+  | { kind: "answer"; qid: string; index: number }
   | { kind: "week"; yes: boolean }
   | { kind: "days"; pattern: string }
   | { kind: "checkin"; idx: number; value: Checkin }
@@ -533,9 +688,10 @@ export function parseTrialCallback(data: string | null | undefined): TrialCallba
     case "cont":
       return parts.length === 1 ? { kind: "cont" } : null;
     case "a": {
-      const n = Number(parts[1]);
+      // [29.10.2026] было «tr:a:<номер вопроса>:<вариант>»: вопросы шли одним списком. Теперь путь
+      // зависит от цели, и номер на чужом пути значил бы другой вопрос, поэтому в кнопке id вопроса.
       const index = Number(parts[2]);
-      return parts.length === 3 && optionAt(n, index) ? { kind: "answer", n, index } : null;
+      return parts.length === 3 && optionAt(parts[1], index) ? { kind: "answer", qid: parts[1], index } : null;
     }
     case "wk":
       return parts[1] === "y" || parts[1] === "n" ? { kind: "week", yes: parts[1] === "y" } : null;

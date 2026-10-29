@@ -11,7 +11,16 @@
 
 import { BEGINNER_LADDER, stepByIndex, stepDescriptionRu } from "@/features/methodology/beginner";
 
-import { WALK_PRESET, presetForRung, type PlannedSession } from "./logic";
+import { WALK_PRESET, plural, presetForRung, type TrialPlanned } from "./logic";
+import {
+  INTERVAL_COOLDOWN_MIN,
+  INTERVAL_RPE,
+  INTERVAL_WARMUP_MIN,
+  TRIAL_INTERVAL_LADDER,
+  clampStep,
+  presetForRunner,
+  type RunnerSession,
+} from "./runner-week";
 
 export type WorkoutText = { presetCode: string; title: string; body: string };
 
@@ -78,8 +87,9 @@ export function fallbackWorkout(rung: number): WorkoutText {
   return { presetCode: step.presetCode, title: step.labelRu, body: toBotVoice(stepDescriptionRu(step)) };
 }
 
-export function workoutFor(planned: PlannedSession, library: LibraryRows): WorkoutText {
+export function workoutFor(planned: TrialPlanned, library: LibraryRows): WorkoutText {
   if (planned.kind === "walk") return WALK_WORKOUT;
+  if (planned.kind !== "rung") return runnerWorkout(planned, library);
   const code = presetForRung(planned.rung);
   const fb = fallbackWorkout(planned.rung);
   const row = library.get(code);
@@ -90,6 +100,98 @@ export function workoutFor(planned: PlannedSession, library: LibraryRows): Worko
     title: title ? toBotVoice(title) : fb.title,
     body: body ? toBotVoice(body) : fb.body,
   };
+}
+
+// ── неделя бегуна: лёгкий, интервалы, длительная ─────────────────────────────
+
+/**
+ * ТЕКСТЫ ШАГОВ НЕДЕЛИ БЕГУНА. Источник: эталоны тренера (intervals_step_text_etalons, по ключу
+ * шага, тот же словарь, что у генератора Intervals: src/features/intervals/step-texts/keys.ts).
+ * Запасной текст здесь: тексты генератора (autoplanner-week.ts: treadmillText лёгкой и
+ * длительной, effortText(6) у отрезка, «Заминка: спокойный бег или шаг»), сразу на «ты».
+ *
+ * Эталон берётся, только если после toBotVoice в нём не осталось обращения на «вы» (эталоны
+ * пишутся для страницы плана, бот говорит как Игорь на «ты») и нет цифр: числа в шаге ставит
+ * бот, а не текст. Не прошёл: запасной текст, не полу-переведённый эталон.
+ *
+ * interval_rest намеренно не из эталона: у генератора это «Просто идти. С дорожки не сходить.»,
+ * про дорожку, а человек из рилса бегает где угодно.
+ */
+export const RUNNER_STEP_KEYS = ["warmup_easy", "easy_main_street", "long_main_street", "interval_work", "cooldown"] as const;
+export type RunnerStepKey = (typeof RUNNER_STEP_KEYS)[number];
+
+export const RUNNER_STEP_FALLBACK: Record<RunnerStepKey, string> = {
+  warmup_easy: "спокойно, дыхание ровное.",
+  easy_main_street: "Разговорный темп: можешь говорить предложениями. Если тяжело дышать, сбавь или перейди на шаг.",
+  long_main_street: "Спокойнее обычной лёгкой. Задача не быстрее, а ровно до конца: к концу должно оставаться ощущение, что можешь ещё.",
+  interval_work: "дышать заметно чаще, говорить можно предложениями. Все отрезки ровно, не на максимум.",
+  cooldown: "спокойный бег или шаг.",
+};
+
+/** Ключ строки эталона в LibraryRows: «step:<ключ шага>» рядом с пресетами. */
+export const stepRowKey = (k: RunnerStepKey) => `step:${k}`;
+
+const FORMAL_YOU = /(^|[^А-Яа-яЁё])(вы|вас|вам|вами|ваш\p{L}*)(?=[^А-Яа-яЁё]|$)|\p{L}+(ете|ите|йте|ьте)(?=[^А-Яа-яЁё]|$)/iu;
+
+/** Эталон годится боту: на «ты», без цифр. Иначе null. */
+export function usableEtalon(raw: string | null | undefined): string | null {
+  const t = raw?.trim();
+  if (!t) return null;
+  const voiced = toBotVoice(t);
+  if (FORMAL_YOU.test(voiced) || /\d/.test(voiced)) return null;
+  return voiced;
+}
+
+/** Разминка, отрезок и заминка встают после запятой: там эталон начинается со строчной. */
+const AFTER_COMMA: ReadonlySet<RunnerStepKey> = new Set(["warmup_easy", "interval_work", "cooldown"]);
+
+function stepText(key: RunnerStepKey, library: LibraryRows): string {
+  const t = usableEtalon(library.get(stepRowKey(key))?.body) ?? RUNNER_STEP_FALLBACK[key];
+  const ended = /[.!?]$/.test(t) ? t : `${t}.`;
+  return AFTER_COMMA.has(key) ? ended.charAt(0).toLowerCase() + ended.slice(1) : ended;
+}
+
+const minutesWord = (m: number) => `${m} ${plural(m, "минута", "минуты", "минут")}`;
+const minutesGen = (m: number) => `${m} ${plural(m, "минуту", "минуты", "минут")}`;
+
+/** «через минуту шагом» / «через 1:30 шагом». */
+function restLabel(sec: number): string {
+  return sec === 60 ? "минуту" : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+}
+
+export function intervalsTitle(step: number): string {
+  const r = TRIAL_INTERVAL_LADDER[clampStep(step)];
+  return `Интервалы ${r.labelRu} через ${restLabel(r.restSec)} шагом`;
+}
+
+export function runnerTitle(s: RunnerSession): string {
+  if (s.kind === "easy") return `Лёгкий бег ${minutesWord(s.minutes)}`;
+  if (s.kind === "long") return `Длительная ${minutesWord(s.minutes)}`;
+  return intervalsTitle(s.step);
+}
+
+/**
+ * Тело в формате карточек тренера: блоки «Разминка / Основная часть / Заминка», каждый с новой
+ * строки, у шага минуты и короткая подсказка. Название пресета из базы для лёгкой и длительной не
+ * берётся («Длительный аэробный» человеку из рилса ничего не говорит); у интервалов название
+ * составлено из той же лестницы, что пресеты int_walk_*.
+ */
+export function runnerWorkout(s: RunnerSession, library: LibraryRows): WorkoutText {
+  const presetCode = presetForRunner(s);
+  if (s.kind === "easy") {
+    return { presetCode, title: runnerTitle(s), body: `Основная часть: ${minutesWord(s.minutes)} лёгкого бега. ${stepText("easy_main_street", library)}` };
+  }
+  if (s.kind === "long") {
+    return { presetCode, title: runnerTitle(s), body: `Основная часть: ${minutesWord(s.minutes)} ровного лёгкого бега. ${stepText("long_main_street", library)}` };
+  }
+  const r = TRIAL_INTERVAL_LADDER[clampStep(s.step)];
+  const rest = r.restSec === 60 ? "1 минута" : "1:30";
+  const body =
+    `Разминка: ${minutesWord(INTERVAL_WARMUP_MIN)} лёгкого бега, ${stepText("warmup_easy", library)}\n` +
+    `Основная часть: ${r.reps} ${plural(r.reps, "отрезок", "отрезка", "отрезков")} по ${minutesGen(r.workMin)}, усилие ${INTERVAL_RPE} из 10, ${stepText("interval_work", library)} ` +
+    `Между отрезками ${rest} шагом: просто идти, не стоять.\n` +
+    `Заминка: ${minutesWord(INTERVAL_COOLDOWN_MIN)}, ${stepText("cooldown", library)}`;
+  return { presetCode, title: runnerTitle(s), body };
 }
 
 export const TRIAL_PRESET_CODES = BEGINNER_LADDER.map((s) => s.presetCode);
@@ -118,6 +220,22 @@ export async function loadLibrary(): Promise<LibraryRows> {
     }
   } catch (e) {
     console.warn(`[trial-bot] библиотека тренировок недоступна, беру запасной текст: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  // Эталоны текстов шагов для недели бегуна. Отдельной попыткой: их сбой не должен лишать
+  // новичка текстов лестницы, и наоборот.
+  try {
+    const { createSupabaseServerClient } = await import("@/features/supabase/server");
+    const { data, error } = await createSupabaseServerClient()
+      .from("intervals_step_text_etalons")
+      .select("step_key, text")
+      .in("step_key", [...RUNNER_STEP_KEYS])
+      .is("retired_at", null);
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ step_key: RunnerStepKey; text: string | null }>) {
+      rows.set(stepRowKey(r.step_key), { title: null, body: r.text });
+    }
+  } catch (e) {
+    console.warn(`[trial-bot] эталоны шагов недоступны, беру запасной текст: ${e instanceof Error ? e.message : String(e)}`);
   }
   return rows;
 }
