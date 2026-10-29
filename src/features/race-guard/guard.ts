@@ -3,8 +3,11 @@
  * Счётчик и журнал — в Supabase (race_guard_hit / race_guard_log_add, только service_role).
  * Сбой базы или таймаут — запрос ПРОПУСКАЕТСЯ: защита не должна ронять сайт. */
 
-/** Лимиты на IP. Поисковики и превью мессенджеров — отдельно, с запасом: обход Googlebot с одного
- *  адреса бывает плотнее 60 в минуту, а User-Agent можно подделать, поэтому не безлимит. */
+import { AI_ASSISTANT_BOTS, AI_TRAINING_BOTS } from "./ai-bots";
+import { verifiedBot } from "./verify-bot";
+
+/** Лимиты на IP. Поисковики — отдельно, с запасом: обход Googlebot с одного адреса бывает плотнее
+ *  60 в минуту. Запас — только подтверждённым по адресу (verify-bot.ts): User-Agent подделывается. */
 export const LIMITS = {
   human: { perMin: 60, perHour: 600 },
   bot: { perMin: 600, perHour: 10000 },
@@ -60,6 +63,22 @@ export function maskIp(ip: string): string {
   return "unknown";
 }
 
+/** ИИ-сборщик по User-Agent (списки — ai-bots.ts): на календарь — 403. robots.txt им уже закрыл
+ *  /races, но это просьба; правило Vercel Firewall «AI Bots» на 29.10.2026 не включено (GPTBot,
+ *  ClaudeBot, Bytespider, CCBot, PerplexityBot получали 200), поэтому замок здесь. */
+export function aiBot(ua: string): string | null {
+  const low = ua.toLowerCase();
+  return AI_BOT_TOKENS.find((t) => low.includes(t)) ?? null;
+}
+const AI_BOT_TOKENS = [...AI_TRAINING_BOTS, ...AI_ASSISTANT_BOTS].map((t) => t.toLowerCase());
+
+export function forbidden(): Response {
+  return new Response(JSON.stringify({ ok: false, error: "forbidden", message: COPYRIGHT_TEXT }), {
+    status: 403,
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...COPYRIGHT_HEADERS },
+  });
+}
+
 export type Decision = { allowed: boolean; nMin: number; nHour: number; limit: { perMin: number; perHour: number } };
 
 /** Решение по счётчикам: отдельной функцией, чтобы проверка шла без базы. */
@@ -100,9 +119,16 @@ export async function hitBucket(bucket: string, kind: LimitKind, fetchImpl: type
   }
 }
 
-/** Счётчик по IP: у поисковиков и превью (по User-Agent) — свой, с запасом. */
-export async function hit(ip: string, ua: string, fetchImpl: typeof fetch = fetch): Promise<Decision> {
-  const kind: LimitKind = goodBot(ua) !== null ? "bot" : "human";
+/** Счётчик по IP. Запас поисковика — если User-Agent поисковика И адрес его (verify-bot.ts).
+ *  Было (до 29.10.2026): по одному User-Agent, и «Googlebot» с обычного IP получал 600 в минуту. */
+export async function hit(
+  ip: string,
+  ua: string,
+  fetchImpl: typeof fetch = fetch,
+  verify: (token: string, ip: string) => Promise<boolean> = verifiedBot,
+): Promise<Decision> {
+  const token = goodBot(ua);
+  const kind: LimitKind = token !== null && ip !== "unknown" && (await verify(token, ip).catch(() => false)) ? "bot" : "human";
   if (ip === "unknown") return decide(0, 0, kind);
   return hitBucket(`${kind === "bot" ? "bot" : "ip"}:${ip}`, kind, fetchImpl);
 }

@@ -52,7 +52,8 @@ export function toCyrillic(s: string): string {
   return out;
 }
 
-export type AliasEntry = { aliases: string[]; targets: string[]; event: string; source: string };
+// Источники и цитаты — в aliases-sources.json: этот модуль едет в браузер, им там не место.
+export type AliasEntry = { aliases: string[]; targets: string[]; event: string };
 
 export const ALIASES: AliasEntry[] = (aliasData as { entries: AliasEntry[] }).entries.map((e) => ({
   ...e,

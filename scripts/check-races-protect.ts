@@ -5,8 +5,9 @@
  *   npm run check:races-protect
  *
  * Что держит:
- *  - поисковики и превью (Googlebot, YandexBot, bingbot, TelegramBot, facebookexternalhit, Twitterbot)
- *    не получают 429 и не закрыты в robots.txt;
+ *  - поисковики с подтверждённого адреса (Google, Bing, Telegram — по спискам, Яндекс — по DNS) не
+ *    получают 429 и не закрыты в robots.txt; тот же User-Agent с чужого адреса — обычный лимит;
+ *  - ИИ-сборщики по User-Agent — 403 на календарь;
  *  - скрипт на 200 запросов в минуту с одного IP получает 429 начиная с 61-го;
  *  - адреса мини-приложения без подписи, с чужой или суточной давности подписью — 401;
  *  - в HTML /races нет ссылок на страницы-источники, прошлые проведения, «Важного»;
@@ -25,7 +26,8 @@ import robots from "@/app/robots";
 import { publicRace, toRace, type RaceRow } from "@/app/races/races-logic";
 import { publicExpected, expectedDate, expectedDateMd, type ExpectedItem } from "@/features/races-bot/core";
 import { AI_ASSISTANT_BOTS, AI_TRAINING_BOTS } from "@/features/race-guard/ai-bots";
-import { COPYRIGHT_HEADERS, COPYRIGHT_TEXT, LIMITS, clientIp, decide, goodBot, maskIp } from "@/features/race-guard/guard";
+import { COPYRIGHT_HEADERS, COPYRIGHT_TEXT, LIMITS, aiBot, clientIp, decide, goodBot, maskIp } from "@/features/race-guard/guard";
+import { RANGE_LISTS, botFamily, createBotVerifier, inCidr, ipToBig, parseCidr, parseRanges } from "@/features/race-guard/verify-bot";
 import { checkInitData, requireMiniapp } from "@/features/race-guard/miniapp-auth";
 import { copyLines, guardSummary, isOwnUrl, subnetOf } from "@/features/race-guard/weekly";
 import phrases from "@/features/race-guard/copy-phrases.json";
@@ -63,6 +65,8 @@ function installFakeDb() {
   process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-test";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    const bot = fakeBotNet(url);
+    if (bot) return bot;
     const body = JSON.parse(String(init?.body ?? "{}"));
     if (url.endsWith("/rpc/race_guard_hit")) {
       const m = `${body.p_bucket}|m`;
@@ -77,6 +81,31 @@ function installFakeDb() {
     }
     return new Response("unexpected", { status: 500 });
   }) as typeof fetch;
+}
+
+/* Списки адресов поисковиков и DNS-over-HTTPS — образцы настоящих форматов (29.10.2026). */
+const GOOGLE_IP = "66.249.66.1"; // из googlebot.json
+const BING_IP = "157.55.39.10";
+const TELEGRAM_IP = "149.154.161.7";
+const YANDEX_IP = "5.255.253.1"; // PTR spider-5-255-253-1.yandex.com → A обратно на него же
+const YANDEX_LIAR_IP = "198.51.100.40"; // PTR врёт «yandex.com», а прямой DNS ведёт на другой адрес
+function fakeBotNet(url: string): Response | null {
+  if (url === RANGE_LISTS.google[0]) return Response.json({ creationTime: "2026-10-29", prefixes: [{ ipv6Prefix: "2001:4860:4801:10::/64" }, { ipv4Prefix: "66.249.64.0/19" }] });
+  if (url === RANGE_LISTS.google[1]) return Response.json({ prefixes: [{ ipv4Prefix: "66.249.90.0/24" }] });
+  if (url === RANGE_LISTS.bing[0]) return Response.json({ prefixes: [{ ipv4Prefix: "157.55.39.0/24" }] });
+  if (url === RANGE_LISTS.telegram[0]) return new Response("91.108.4.0/22\n149.154.160.0/20\n2001:b28:f23d::/48\n");
+  if (url.startsWith("https://cloudflare-dns.com/dns-query")) {
+    const q = new URL(url).searchParams;
+    const ans: Record<string, string> = {
+      "PTR 1.253.255.5.in-addr.arpa": "spider-5-255-253-1.yandex.com.",
+      "A spider-5-255-253-1.yandex.com": YANDEX_IP,
+      "PTR 40.100.51.198.in-addr.arpa": "spider-1.yandex.com.",
+      "A spider-1.yandex.com": "5.255.253.99",
+    };
+    const data = ans[`${q.get("type")} ${q.get("name")}`];
+    return Response.json({ Status: 0, Answer: data ? [{ data }] : [] });
+  }
+  return null;
 }
 
 const waitUntil: Promise<unknown>[] = [];
@@ -140,10 +169,73 @@ async function main() {
     assert.equal(decodeURIComponent(res.headers.get("x-copyright-ru") ?? ""), COPYRIGHT_TEXT);
   });
 
-  await check("Googlebot, YandexBot, bingbot, TelegramBot, facebookexternalhit, Twitterbot: 200 запросов в минуту без единого 429", async () => {
-    for (const [k, ua] of Object.entries({ googlebot: UA.googlebot, yandex: UA.yandex, bing: UA.bing, telegram: UA.telegram, facebook: UA.facebook, twitter: UA.twitter })) {
-      for (let i = 0; i < 200; i++) assert.equal(await hitPage("/races", `198.51.100.${Object.keys(UA).indexOf(k) + 1}`, ua), 200, `${k}, запрос ${i + 1}`);
+  // Было (20.10.2026): «Googlebot, YandexBot, bingbot, TelegramBot, facebookexternalhit, Twitterbot — 200
+  // запросов в минуту без 429» с ЛЮБОГО адреса. Отменено 29.10.2026: проверка на боевом сайте показала,
+  // что скрипт с обычного IP, назвавшись Googlebot, обходил лимит (600 в минуту вместо 60). Теперь запас
+  // только с адреса поисковика, а подделка получает ровно тот же лимит, что python-requests.
+  await check("поисковик с подтверждённого адреса (Google, Bing, Telegram — список, Яндекс — DNS): 200 запросов в минуту без 429", async () => {
+    for (const [k, ua, ip] of [["googlebot", UA.googlebot, GOOGLE_IP], ["bing", UA.bing, BING_IP], ["telegram", UA.telegram, TELEGRAM_IP], ["yandex", UA.yandex, YANDEX_IP]] as const) {
+      for (let i = 0; i < 200; i++) assert.equal(await hitPage("/races", ip, ua), 200, `${k} с ${ip}, запрос ${i + 1}`);
     }
+  });
+
+  await check("тот же User-Agent поисковика или превью с чужого адреса — обычный лимит: 60 проходят, с 61-го 429", async () => {
+    const fakes = { googlebot: UA.googlebot, yandex: UA.yandex, bing: UA.bing, telegram: UA.telegram, facebook: UA.facebook, twitter: UA.twitter };
+    for (const [k, ua] of Object.entries(fakes)) {
+      const ip = `198.51.100.${Object.keys(UA).indexOf(k) + 1}`;
+      const codes: number[] = [];
+      for (let i = 0; i < 70; i++) codes.push(await hitPage("/races/probeg%3A82247", ip, ua));
+      assert.ok(codes.slice(0, 60).every((c) => c === 200) && codes.slice(60).every((c) => c === 429), `${k} с ${ip}: отказ ровно с 61-го, было ${codes.join(",")}`);
+    }
+    const liar: number[] = [];
+    for (let i = 0; i < 61; i++) liar.push(await hitPage("/races", YANDEX_LIAR_IP, UA.yandex));
+    assert.equal(liar[60], 429, "обратный DNS «yandex.com» без прямого подтверждения — не Яндекс");
+  });
+
+  await check("адреса и подсети: IPv4, IPv6 с ::, списки Google (JSON) и Telegram (текст)", () => {
+    assert.ok(inCidr("66.249.66.1", parseCidr("66.249.64.0/19")!));
+    assert.ok(!inCidr("66.249.96.1", parseCidr("66.249.64.0/19")!));
+    assert.ok(inCidr("2001:4860:4801:10::1a", parseCidr("2001:4860:4801:10::/64")!));
+    assert.ok(!inCidr("2001:4860:4801:11::1", parseCidr("2001:4860:4801:10::/64")!));
+    assert.ok(!inCidr("66.249.66.1", parseCidr("2001:4860:4801:10::/64")!), "v4 в v6-подсети — нет");
+    assert.equal(ipToBig("1.2.3.256"), null);
+    assert.equal(ipToBig("unknown"), null);
+    assert.equal(ipToBig("::1")?.n, BigInt(1));
+    assert.equal(parseRanges('{"prefixes":[{"ipv4Prefix":"1.2.3.0/24"},{"ipv6Prefix":"2a00::/16"}]}').length, 2);
+    assert.equal(parseRanges("91.108.4.0/22\n\nмусор\n2001:b28:f23d::/48").length, 2);
+    assert.equal(botFamily("Googlebot"), "google");
+    assert.equal(botFamily("facebookexternalhit"), null, "превью без списка адресов — без запаса");
+  });
+
+  await check("список поисковика не скачался — без запаса (обычный лимит), а не ошибка; старый список живёт сутки", async () => {
+    let up = true;
+    let t = 0;
+    const v = createBotVerifier(async (u) => {
+      if (!up) throw new Error("сеть");
+      return fakeBotNet(u) ?? new Response("", { status: 404 });
+    }, () => t);
+    assert.equal(await v.verified("Googlebot", GOOGLE_IP), true);
+    up = false;
+    t = 23 * 3600 * 1000;
+    assert.equal(await v.verified("Googlebot", GOOGLE_IP), true, "в пределах суток — по кэшу");
+    t = 25 * 3600 * 1000;
+    assert.equal(await v.verified("Googlebot", GOOGLE_IP), true, "обновление упало — старый список, не пустой");
+    const cold = createBotVerifier(async () => {
+      throw new Error("сеть");
+    });
+    assert.equal(await cold.verified("Googlebot", GOOGLE_IP), false, "списка нет вовсе — без запаса");
+    assert.equal(await cold.verified("YandexBot", YANDEX_IP), false, "DNS не ответил — без запаса");
+  });
+
+  await check("ИИ-сборщики по User-Agent — 403 на календарь и API, строка в журнал; поисковики и браузер — нет", async () => {
+    for (const ua of [UA.gptbot, "ClaudeBot/1.0", "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com)", "CCBot/2.0", "PerplexityBot/1.0", "ChatGPT-User/1.0", "Scrapy/2.11"]) {
+      for (const p of ["/races", "/races/probeg%3A82247", "/api/races/list"]) assert.equal(await hitPage(p, "203.0.113.90", ua), 403, `${ua} ${p}`);
+    }
+    // 403 раньше подписи мини-приложения: заголовок initData не открывает дверь сборщику.
+    assert.equal(await hitPage("/api/races/details", "203.0.113.90", UA.gptbot, { "x-telegram-init-data": "auth_date=1&hash=0" }), 403);
+    await Promise.all(waitUntil);
+    assert.ok(logged.some((l) => l.p_kind === "forbidden" && l.p_ua === UA.gptbot), "отказ ИИ-сборщику в журнале");
+    for (const k of ["googlebot", "yandex", "bing", "telegram", "facebook", "twitter", "chrome", "python"] as const) assert.equal(aiBot(UA[k]), null, `${k} — не ИИ-сборщик`);
   });
 
   await check("разные IP считаются отдельно: соседний адрес не страдает от чужого скрейпера", async () => {

@@ -27,6 +27,7 @@ import {
   type BotRace,
 } from "@/features/races-bot/core";
 import aliasData from "@/features/race-search/aliases.json";
+import aliasSources from "@/features/race-search/aliases-sources.json";
 import { ALIASES, aliasesFor, matchesQuery, queryWords, searchText, toCyrillic, toLatin } from "@/features/race-search/search";
 
 const TODAY = "2026-10-29";
@@ -114,12 +115,17 @@ check("п.1: короткое слово — только с начала сло
 });
 
 check("п.1: таблица народных названий — 50 строк, у каждой источник и цель", () => {
-  const entries = (aliasData as { entries: { aliases: string[]; targets: string[]; source: string }[] }).entries;
+  // Источник и цитата — в aliases-sources.json по event (29.10.2026): aliases.json едет в бандл
+  // браузера, и раньше ссылки с цитатами раздавались всем мимо лимита. Строка без источника — провал.
+  const entries = (aliasData as { entries: Record<string, unknown>[] }).entries;
+  const sources = (aliasSources as { entries: Record<string, { source?: string }> }).entries;
   assert.equal(entries.length, 50);
   for (const e of entries) {
-    assert.ok(e.aliases.length && e.targets.length, JSON.stringify(e));
-    assert.match(e.source, /^https?:\/\//, `источник: ${e.aliases[0]}`);
+    assert.deepEqual(Object.keys(e).sort(), ["aliases", "event", "targets"], `в публичном файле только поиск: ${String(e.event)}`);
+    assert.ok((e.aliases as string[]).length && (e.targets as string[]).length, JSON.stringify(e));
+    assert.match(sources[e.event as string]?.source ?? "", /^https?:\/\//, `источник: ${String(e.event)}`);
   }
+  assert.equal(Object.keys(sources).length, entries.length, "источники без строки поиска — лишние");
   assert.ok(ALIASES.some((e) => e.aliases.includes("мм")) && ALIASES.some((e) => e.aliases.includes("мпм")), "ММ и МПМ из наряда");
 });
 
