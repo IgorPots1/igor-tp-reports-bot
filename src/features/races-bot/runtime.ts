@@ -318,6 +318,8 @@ export async function loadBotExpected(): Promise<ExpectedItem[]> {
       .from("race_expected")
       .select("id,name,city,region,race_type,distances,last_month,last_date,last_url,site_url,last_finishers")
       .eq("status", "expected")
+      // без order страницы не стабильны: строки выпадают и задваиваются (с 29.10.2026 ожидаемых больше 1000)
+      .order("id")
       .range(from, from + 999);
     fail("race_expected", error);
     items.push(...((data as Parameters<typeof toExpected>[0][]) || []).map((r) => withGeo(toExpected(r), geo)));

@@ -993,16 +993,25 @@ async function expectedStage(today: Date, stats: Record<string, unknown>) {
     .eq("status", "active").is("merged_into", null).gte("date_start", iso(new Date(today.getTime() - 60 * 864e5))).lt("date_start", iso(today));
   if (rErr) throw new Error(`recent: ${rErr.message}`);
   future.push(...((recent || []) as FutureRow[]));
-  const { data: existingRows, error: exErr } = await sb.from("race_expected").select("id,name,city,last_date,race_type,status");
-  if (exErr) throw new Error(`race_expected: ${exErr.message}`);
-  const existing = new Map((existingRows || []).map((r) => [r.id as string, r]));
+  // Постранично: PostgREST отдаёт не больше 1000 строк. Было (до 29.10.2026): один запрос, и при ~1900
+  // строках «объявленные» за пределами первой тысячи считались новыми и переписывались обратно в
+  // «ожидаемые» — 29.10 так откатились 17 объявлений, 13 из них утверждены тренером тем же утром.
+  const existingRows: { id: string; name: string; city: string | null; last_date: string; race_type: string | null; status: string; race_id: string | null }[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data, error: exErr } = await sb.from("race_expected").select("id,name,city,last_date,race_type,status,race_id").order("id").range(f, f + 999);
+    if (exErr) throw new Error(`race_expected: ${exErr.message}`);
+    existingRows.push(...((data || []) as typeof existingRows));
+    if (!data || data.length < 1000) break;
+  }
+  const existing = new Map(existingRows.map((r) => [r.id, r]));
   const { expected: built, announced } = buildExpected([...past.values()], future);
   const geoRows = await loadGeoSubjects();
   const expected = built.map((e) => fillRegion(e, geoRows));
   const now = new Date().toISOString();
   // Новые и ещё ожидаемые — обновить; announced/dropped не трогать.
   const upserts = expected
-    .filter((e) => !existing.has(e.id) || existing.get(e.id)!.status === "expected")
+    // строка с уже найденным проведением (race_id) — объявленная, её не трогаем, даже если статус сбит
+    .filter((e) => !existing.has(e.id) || (existing.get(e.id)!.status === "expected" && !existing.get(e.id)!.race_id))
     .map((e) => ({ ...e, status: "expected", seen_at: now, updated_at: now }));
   for (let i = 0; i < upserts.length; i += 300) {
     const { error } = await sb.from("race_expected").upsert(upserts.slice(i, i + 300), { onConflict: "id" });
@@ -1010,10 +1019,10 @@ async function expectedStage(today: Date, stats: Record<string, unknown>) {
   }
   // Объявленные: и из прохода, и среди уже ожидаемых строк, которых в проходе нет.
   const toAnnounce = new Map(announced.filter((a) => existing.get(a.id)?.status === "expected").map((a) => [a.id, a.race_id]));
-  for (const r of existingRows || []) {
-    if (r.status !== "expected" || toAnnounce.has(r.id as string)) continue;
-    const next = findNextEdition({ name: r.name as string, city: (r.city as string) || "", date: r.last_date as string, race_type: r.race_type as string | null }, future);
-    if (next) toAnnounce.set(r.id as string, next.id);
+  for (const r of existingRows) {
+    if (r.status !== "expected" || r.race_id || toAnnounce.has(r.id)) continue;
+    const next = findNextEdition({ name: r.name, city: r.city || "", date: r.last_date, race_type: r.race_type }, future);
+    if (next) toAnnounce.set(r.id, next.id);
   }
   for (const [id, race_id] of toAnnounce) {
     const { error } = await sb.from("race_expected").update({ status: "announced", race_id, announced_at: now, updated_at: now }).eq("id", id).eq("status", "expected");
