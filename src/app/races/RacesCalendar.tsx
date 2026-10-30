@@ -4,46 +4,32 @@ import { nbsp } from "@/lib/typography";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import {
-  FEW_CITY_RACES,
   NEARBY_KM,
-  areaRaces,
   citySlug,
-  expectedCities,
   expectedDateMd,
   inCity,
-  inUserCity,
-  placeFromQuery,
-  placePoint,
-  placeSubject,
   raceCode,
   seasons,
-  sortCityExpected,
   usuallyIn,
   type PublicExpected,
 } from "@/features/races-bot/core";
-import { searchText, matchesQuery, queryWords } from "@/features/race-search/search";
 
 import {
   DISTS,
   NO_FILTERS,
   TYPES,
   TYPE_LABEL,
-  applyFilters,
   dateStub,
   dayMonth,
-  distMatch,
   distPills,
   filtersFromSearch,
   filtersToSearch,
-  groupByMonth,
   MONTHS,
-  norm,
   plural,
-  inRange,
-  subjectsOf,
   type Filters,
   type Race,
 } from "./races-logic";
+import { queryParams, type AreaItem, type Meta, type Page, type Summary } from "./race-query";
 import DetailsSections, { type CourseRef } from "./DetailsSections";
 import SuggestRace from "./SuggestRace";
 import type { FullDetails } from "@/features/race-details/full";
@@ -390,11 +376,18 @@ function PinnedHead({
   );
 }
 
-/** Месяц «Ожидаемых»: старты рисуются только в раскрытом (их больше 1500 — список тормозил). */
-function LazyMonth({ summary, children }: { summary: ReactNode; children: () => ReactNode }) {
+/** Месяц «Ожидаемых»: старты рисуются и запрашиваются только в раскрытом (их больше 1500). */
+function LazyMonth({ summary, onOpen, children }: { summary: ReactNode; onOpen: () => void; children: () => ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
-    <details className={styles.month} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+    <details
+      className={styles.month}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen(now);
+        if (now) onOpen();
+      }}
+    >
       {summary}
       {open ? children() : null}
     </details>
@@ -403,35 +396,52 @@ function LazyMonth({ summary, children }: { summary: ReactNode; children: () => 
 
 const BANNER_KEY = "races_tg_city_banner_closed";
 
+/** Порция, уже показанная в месяце / блоке, и откуда брать следующую. */
+type Chunk<T> = { items: T[]; next: number | null; total: number; loading?: boolean };
+
+/** Ответы сервера в памяти страницы: туда-обратно по фильтрам — без повторного запроса и без
+ *  лишнего счёта в лимит частоты. Ключ — адрес запроса и то, мини-приложение ли это. */
+const answers = new Map<string, Promise<unknown>>();
+
+function chunkOf<T>(p: Page<T>): Chunk<T> {
+  return { items: p.items, next: p.next, total: p.total };
+}
+
 export default function RacesCalendar({
-  races: racesIn,
+  meta,
+  initial,
   failed,
   botUsername,
-  expected = [],
 }: {
-  races: Race[];
+  meta: Meta;
+  initial: Summary | null;
   failed: boolean;
   botUsername: string | null;
-  expected?: PublicExpected[];
 }) {
   const [f, setF] = useState<Filters>(NO_FILTERS);
   const [query, setQuery] = useState("");
   /* Месяцы, которые человек раскрыл или свернул сам. Пока он ничего не
      трогал, открыт ближайший месяц (при поиске два первых). */
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  /* Внутри Telegram (мини-апп бота): initData есть, звёздочка вместо ссылки в бота. */
+  /* Внутри Telegram (мини-апп бота): initData есть, звёздочка вместо ссылки в бота. С подписью сервер
+     добавляет к стартам «Важное» и число полей выжимки. */
   const [initData, setInitData] = useState<string | null>(null);
-  /* «Важное» и число полей выжимки — только в мини-приложении, из /api/races/list по initData
-     (20.10.2026: в HTML страницы их больше нет). До ответа список без них. */
-  const [extras, setExtras] = useState<Record<string, [string | null, number]> | null>(null);
-  const races = useMemo(
-    () => (extras ? racesIn.map((r) => (extras[r.id] ? { ...r, important: extras[r.id][0], detailsN: extras[r.id][1] } : r)) : racesIn),
-    [racesIn, extras],
-  );
   const [saved, setSaved] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [onlyMine, setOnlyMine] = useState(false);
   const [bannerClosed, setBannerClosed] = useState(true);
+
+  // Сводка по фильтрам и порции: месяцы, ожидаемые, «ожидаются в городе», «рядом».
+  const [sum, setSum] = useState<Summary | null>(initial);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<"" | "limit" | "net">("");
+  const [months, setMonths] = useState<Record<string, Chunk<Race>>>(() =>
+    initial?.first ? { [initial.first.month]: chunkOf(initial.first) } : {},
+  );
+  const [exMonths, setExMonths] = useState<Record<number, Chunk<PublicExpected>>>({});
+  const [cityExp, setCityExp] = useState<Chunk<PublicExpected> | null>(() => (initial ? chunkOf(initial.cityExpected) : null));
+  const [area, setArea] = useState<Chunk<AreaItem> | null>(() => (initial ? chunkOf(initial.area) : null));
+  const gen = useRef(0);
 
   // Внутри Telegram страница открывается с #tgWebAppData=…: только тогда подключаем скрипт
   // Telegram (обычным посетителям сторонний скрипт не нужен) и ждём его несколько секунд.
@@ -508,16 +518,6 @@ export default function RacesCalendar({
     if (initData) void miniapp("list");
   }, [initData, miniapp]);
 
-  useEffect(() => {
-    if (!initData) return;
-    void fetch("/api/races/list", { headers: { "X-Telegram-Init-Data": initData } })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((j: { ok?: boolean; details?: Record<string, [string | null, number]> } | null) => {
-        if (j?.ok && j.details) setExtras(j.details);
-      })
-      .catch(() => undefined);
-  }, [initData]);
-
   async function toggle(r: Race) {
     const on = !saved.has(r.id);
     setBusy(r.id);
@@ -550,7 +550,7 @@ export default function RacesCalendar({
     setQuery(init.q);
   }, []);
 
-  // Поиск с задержкой 250 мс (16.10.2026; было 120): список не перерисовывается на каждую букву.
+  // Поиск с задержкой 250 мс (16.10.2026; было 120): запрос к серверу не на каждую букву.
   useEffect(() => {
     const t = window.setTimeout(() => {
       setF((prev) => (prev.q === query ? prev : { ...prev, q: query }));
@@ -589,98 +589,109 @@ export default function RacesCalendar({
     }
   }, [f]);
 
+  // ── запросы к серверу ───────────────────────────────────────────────────────
+  const q = useMemo(() => ({ ...f, ids: onlyMine ? [...saved].sort() : null }), [f, onlyMine, saved]);
+  const qKey = queryParams(q);
+  const qRef = useRef(q);
+  qRef.current = q;
 
-
-  // Сезоны вкладками сверху — те же, что в боте: Ближайшие, три сезона, Все.
-  const today = useMemo(() => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date()), []);
-  const seasonTabs = useMemo(() => seasons(today), [today]);
-  const season = seasonTabs.find((s) => s.key === f.season && s.key !== "all") ?? null;
-  const cities = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const r of races) if (r.city) counts.set(r.city, (counts.get(r.city) || 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-  }, [races]);
-  // «Страница города» (29.10.2026): запрос — ровно город, в том числе без своих стартов, только с
-  // ожидаемыми (Иваново, Владимир), или его сокращение. Тогда в списке старты самого города, а
-  // соседние — блоком «Рядом» ниже (было: «Владимир» находил всю Владимирскую область по слову в
-  // регионе, а «Иваново» — «ничего не нашлось»).
-  const placeCities = useMemo(() => [...new Set([...cities, ...expectedCities(expected)])], [cities, expected]);
-  const place = useMemo(() => placeFromQuery(f.q, placeCities), [f.q, placeCities]);
-  const filt = useCallback(
-    (rs: Race[], skip?: "type" | "dist") => (place ? applyFilters(rs, { ...f, q: "" }, skip).filter((r) => inUserCity(r, place)) : applyFilters(rs, f, skip)),
-    [f, place],
-  );
-  const list = useMemo(() => {
-    const base = filt(races).filter((r) => !season || inRange(r, season.from, season.to));
-    return onlyMine ? base.filter((r) => saved.has(r.id)) : base;
-  }, [races, filt, onlyMine, saved, season]);
-  // Ожидаемые самого города наверху, развёрнутыми, если стартов с датой мало: крупные первыми,
-  // потом по дате, с плашкой «дата 2027 ещё не объявлена, в 2026 было 16 августа».
-  // Сколько у города своих стартов с датой — без вкладки сезона: «мало» про город, а не про вкладку.
-  const cityCount = useMemo(() => (place ? filt(races).length : 0), [place, filt, races]);
-  const cityExpected = useMemo(() => {
-    if (!place || onlyMine || cityCount >= FEW_CITY_RACES) return [];
-    const c = norm(place);
-    const xs = expected.filter(
-      (e) =>
-        (norm(e.city) === c || norm(e.region) === c) &&
-        (f.type === "all" || e.type === f.type) &&
-        (f.dist === "all" || distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)),
-    );
-    return sortCityExpected(xs, (e) => e.big, (e) => expectedDateMd(e.md, today));
-  }, [place, onlyMine, cityCount, expected, f.type, f.dist, today]);
-  const months = useMemo(() => groupByMonth(list), [list]);
-  // Ожидаемые: те же поиск и фильтры, что у стартов (дистанции — по километрам из строк).
-  const expectedByMonth = useMemo(() => {
-    if (onlyMine) return [];
-    const words = queryWords(f.q);
-    const top = new Set(cityExpected.map((e) => e.id));
-    const shown = expected.filter((e) => {
-      if (top.has(e.id)) return false;
-      if (f.type !== "all" && e.type !== f.type) return false;
-      if (f.dist !== "all" && !distMatch({ km: e.km, tags: [] } as unknown as Race, f.dist)) return false;
-      if (f.region && e.subject !== f.region) return false;
-      if (season) {
-        const d = expectedDateMd(e.md, today);
-        if (d < season.from || d > season.to) return false;
+  const api = useCallback(
+    async <T,>(params: string): Promise<T> => {
+      const key = `${initData ? "tg" : "web"}|${params}`;
+      let p = answers.get(key) as Promise<T> | undefined;
+      if (!p) {
+        p = fetch(`/api/races/query?${params}`, { headers: initData ? { "X-Telegram-Init-Data": initData } : {} }).then(async (res) => {
+          if (res.status === 429) throw new Error("limit");
+          const j = (await res.json().catch(() => null)) as ({ ok?: boolean } & T) | null;
+          if (!res.ok || !j?.ok) throw new Error("net");
+          return j as T;
+        });
+        answers.set(key, p);
+        if (answers.size > 200) answers.delete(answers.keys().next().value as string);
+        p.catch(() => answers.delete(key)); // сбой не запоминаем
       }
-      return matchesQuery(searchText(e.name, e.city, e.region, e.subject), words);
-    });
-    const by = new Map<number, PublicExpected[]>();
-    for (const e of shown) by.set(e.lastMonth, [...(by.get(e.lastMonth) || []), e]);
-    // С ближайшего месяца: сейчас октябрь — сначала ноябрь, декабрь, потом весна.
-    const startM = new Date().getMonth() + 1;
-    return [...by.entries()].sort((a, b) => ((a[0] - startM + 12) % 12) - ((b[0] - startM + 12) % 12));
-  }, [expected, f, onlyMine, season, today, cityExpected]);
-  const expectedCount = expectedByMonth.reduce((n, [, xs]) => n + xs.length, 0);
-  const typeBase = useMemo(() => filt(races, "type"), [races, filt]);
-  const distBase = useMemo(() => filt(races, "dist"), [races, filt]);
+      return p;
+    },
+    [initData],
+  );
 
+  // Сводка по фильтрам. Первый показ без фильтров уже в HTML; внутри Telegram — повторно, с «Важным».
+  const initialKey = useRef(queryParams({ ...NO_FILTERS, ids: null }));
+  useEffect(() => {
+    if (failed) return;
+    if (!initData && qKey === initialKey.current && gen.current === 0) return;
+    const my = ++gen.current;
+    setLoading(true);
+    api<Summary>(qKey)
+      .then((s) => {
+        if (my !== gen.current) return;
+        setError("");
+        setSum(s);
+        setMonths(s.first ? { [s.first.month]: chunkOf(s.first) } : {});
+        setExMonths({});
+        setCityExp(chunkOf(s.cityExpected));
+        setArea(chunkOf(s.area));
+      })
+      .catch((e: Error) => {
+        if (my === gen.current) setError(e.message === "limit" ? "limit" : "net");
+      })
+      .finally(() => {
+        if (my === gen.current) setLoading(false);
+      });
+  }, [qKey, initData, api, failed]);
+
+  /** Следующая порция блока: месяц списка, месяц ожидаемых, «ожидаются в городе», «рядом». */
+  const more = useCallback(
+    <T,>(params: Record<string, string | number>, set: (fn: (c: Chunk<T> | undefined) => Chunk<T>) => void, offset: number) => {
+      const my = gen.current;
+      set((c) => ({ items: c?.items ?? [], next: c?.next ?? null, total: c?.total ?? 0, loading: true }));
+      api<Page<T>>(queryParams(qRef.current, { ...params, offset }))
+        .then((p) => {
+          if (my !== gen.current) return;
+          setError("");
+          set((c) => ({ items: [...(offset ? c?.items ?? [] : []), ...p.items], next: p.next, total: p.total }));
+        })
+        .catch((e: Error) => {
+          if (my !== gen.current) return;
+          setError(e.message === "limit" ? "limit" : "net");
+          set((c) => ({ items: c?.items ?? [], next: c?.next ?? offset, total: c?.total ?? 0 }));
+        });
+    },
+    [api],
+  );
+  const moreMonth = useCallback(
+    (key: string, offset: number) => more<Race>({ view: "month", month: key }, (fn) => setMonths((all) => ({ ...all, [key]: fn(all[key]) })), offset),
+    [more],
+  );
+  const moreExpected = (m: number, offset: number) =>
+    more<PublicExpected>({ view: "expected", m }, (fn) => setExMonths((all) => ({ ...all, [m]: fn(all[m]) })), offset);
+
+  // Раскрытый месяц без своих стартов — запросить первую порцию.
   const searching = f.q.trim() !== "";
-  const nCities = new Set(races.map((r) => r.city).filter(Boolean)).size;
-  const listCities = new Set(list.map((r) => r.city).filter(Boolean)).size;
+  const monthList = sum?.months ?? [];
+  const openKeys = monthList.filter(([k], i) => open[k] ?? (searching ? i < 2 : i === 0)).map(([k]) => k);
+  const openKey = openKeys.join(",");
+  useEffect(() => {
+    for (const k of openKey ? openKey.split(",") : []) if (!months[k]) moreMonth(k, 0);
+  }, [openKey, months, moreMonth]);
+
+  const today = meta.today || new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Moscow" }).format(new Date());
+  const seasonTabs = useMemo(() => seasons(today), [today]);
+  const place = sum?.place ?? null;
+  const cityCount = sum?.cityCount ?? 0;
   const dirty = f.q !== "" || f.type !== "all" || f.dist !== "all" || f.region !== "" || !!f.season;
-  const subjects = useMemo(() => subjectsOf(races), [races]);
   const inTg = initData !== null;
   // Плашка подписки — когда в поиске ровно город из календаря.
   const bannerCity = place;
-  // Страница города (в поиске ровно город): блок «Рядом в области» — та же область и 150 км,
-  // ближайшие первыми, «Старица, 71 км». Тип и дистанция применяются, поиск и область — нет.
-  const [areaShown, setAreaShown] = useState(8);
-  const area = useMemo(() => {
-    if (!bannerCity || onlyMine) return { subject: "", items: [] as { race: Race; km: number | null }[] };
-    // Город без своих стартов (Иваново): точка и область — по его ожидаемым.
-    const a = areaRaces(races, bannerCity, [], [], placePoint(races, expected, bannerCity), placeSubject(races, expected, bannerCity));
-    return { subject: a.subject, items: a.items.filter(({ race }) => applyFilters([race], { ...f, q: "", region: "" }).length > 0) };
-  }, [bannerCity, races, expected, f, onlyMine]);
-  useEffect(() => setAreaShown(8), [bannerCity]);
-  // Счётчик на вкладке сезона: те же фильтры, без самого сезона.
-  const seasonBase = useMemo(() => filt(races), [races, filt]);
-  const seasonCount = (s: { from: string; to: string } | null) => (s ? seasonBase.filter((r) => inRange(r, s.from, s.to)).length : seasonBase.length);
   const onRaceAct = (a: "open" | "reg" | "site", r: Race) => act(a, null, r.id);
   const onDetails = (r: Race) => act("details", null, r.id);
   const followUi = (r: Race): FollowUi =>
     inTg ? { mode: "tg", saved: saved.has(r.id), busy: busy === r.id, onToggle: toggle } : { mode: "site", bot: botUsername };
+  const listCount = sum?.listCount ?? 0;
+  const listCities = sum?.listCities ?? 0;
+  const areaItems = area?.items ?? [];
+  const areaTotal = area?.total ?? 0;
+  const cityExpItems = cityExp?.items ?? [];
 
   function reset() {
     setQuery("");
@@ -695,13 +706,13 @@ export default function RacesCalendar({
           Шоссе, трейлы, ультра и триатлон. Введите город, и забеги разложатся по месяцам. У каждого
           старта ссылка на сайт организатора и регистрацию.
         </p>
-        {races.length ? (
+        {meta.total ? (
           <p className={styles.stats}>
             <span>
-              <b>{races.length}</b> {plural(races.length, "старт", "старта", "стартов")}
+              <b>{meta.total}</b> {plural(meta.total, "старт", "старта", "стартов")}
             </span>
             <span>
-              <b>{nCities}</b> {plural(nCities, "город", "города", "городов")}
+              <b>{meta.nCities}</b> {plural(meta.nCities, "город", "города", "городов")}
             </span>
           </p>
         ) : null}
@@ -722,7 +733,7 @@ export default function RacesCalendar({
           onChange={(e) => setQuery(e.target.value)}
         />
         <datalist id="races-cities">
-          {cities.map((c) => (
+          {meta.cities.map((c) => (
             <option key={c} value={c} />
           ))}
         </datalist>
@@ -743,7 +754,7 @@ export default function RacesCalendar({
         <div className={styles.seasons} role="tablist" aria-label="Сезон">
           {seasonTabs.map((s) => {
             const on = (f.season || "all") === s.key;
-            const n = seasonCount(s.key === "all" ? null : s);
+            const n = sum?.counts.season[s.key] ?? 0;
             if (!n && s.key !== "all") return null;
             return (
               <button
@@ -778,7 +789,7 @@ export default function RacesCalendar({
               }}
             >
               {label}
-              <span className={styles.n}>{v === "all" ? typeBase.length : typeBase.filter((r) => r.type === v).length}</span>
+              <span className={styles.n}>{sum?.counts.type[v] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -796,11 +807,11 @@ export default function RacesCalendar({
               }}
             >
               {label}
-              <span className={styles.n}>{distBase.filter((r) => distMatch(r, v)).length}</span>
+              <span className={styles.n}>{sum?.counts.dist[v] ?? 0}</span>
             </button>
           ))}
         </div>
-        {subjects.length ? (
+        {meta.subjects.length ? (
           <div className={styles.chiprow}>
             <label className={styles.lbl} htmlFor="races-region">
               Область
@@ -815,7 +826,7 @@ export default function RacesCalendar({
               }}
             >
               <option value="">Все области</option>
-              {subjects.map(({ subject, n }) => (
+              {meta.subjects.map(({ subject, n }) => (
                 <option key={subject} value={subject}>
                   {allLabel(subject)} · {n}
                 </option>
@@ -824,9 +835,9 @@ export default function RacesCalendar({
           </div>
         ) : null}
         <p className={styles.resultLine} aria-live="polite">
-          {list.length ? (
+          {listCount ? (
             <>
-              <b>{list.length}</b> {plural(list.length, "старт", "старта", "стартов")}
+              <b>{listCount}</b> {plural(listCount, "старт", "старта", "стартов")}
               {searching ? ` · ${listCities} ${plural(listCities, "населённый пункт", "населённых пункта", "населённых пунктов")}` : ""}
             </>
           ) : null}
@@ -836,13 +847,21 @@ export default function RacesCalendar({
 
       {/* Плашка всегда на одном месте (16.10.2026): раньше при пустом промежуточном результате поиска
           она переезжала внутрь сообщения «ничего не нашлось» и монтировалась заново — мигала. */}
-      {races.length ? (
+      {meta.total ? (
         <div className={styles.suggestBar}>
           <SuggestRace />
         </div>
       ) : null}
 
-      {cityExpected.length && place ? (
+      {error ? (
+        <div className={styles.state} role="status">
+          {error === "limit"
+            ? "Слишком много запросов подряд. Подождите минуту, и календарь снова ответит."
+            : "Не получилось загрузить. Проверьте связь и попробуйте ещё раз."}
+        </div>
+      ) : null}
+
+      {cityExpItems.length && place ? (
         <section className={styles.expected} aria-label="Ожидаются в городе">
           <h2 className={styles.expectedTitle}>{nbsp(`Ожидаются ${inCity(place)}`)}</h2>
           <p className={styles.expectedLede}>
@@ -852,27 +871,37 @@ export default function RacesCalendar({
             Эти проходят каждый год, а дату следующего ещё не объявили. «Следить» — напишем в Telegram, когда объявят.
           </p>
           <ol className={styles.races}>
-            {cityExpected.map((e) => (
+            {cityExpItems.map((e) => (
               <ExpectedTopItem key={e.id} e={e} today={today} bot={botUsername} />
             ))}
           </ol>
+          {cityExp?.next != null ? (
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={cityExp.loading}
+              onClick={() => more<PublicExpected>({ view: "cityexp" }, (fn) => setCityExp((c) => fn(c ?? undefined)), cityExp.next ?? 0)}
+            >
+              Показать ещё {Math.min(30, cityExp.total - cityExpItems.length)}
+            </button>
+          ) : null}
         </section>
       ) : null}
 
-      <div ref={listTop} className={styles.months}>
+      <div ref={listTop} className={styles.months} aria-busy={loading} style={loading ? { opacity: 0.55 } : undefined}>
         {failed ? (
           <div className={styles.state}>Не получилось загрузить календарь. Обновите страницу через минуту.</div>
-        ) : !races.length ? (
+        ) : !meta.total ? (
           <div className={styles.state}>Календарь пока пуст. Данные появятся после ближайшего обновления.</div>
-        ) : !list.length && place ? (
+        ) : !sum ? null : !listCount && place ? (
           <div className={styles.state}>
             <p>
               {`${inCity(place).replace(/^в/, "В")} пока нет стартов с датой`}
-              {area.items.length ? `. Ниже ближайшие в радиусе ${NEARBY_KM} км` : ""}
+              {areaTotal ? `. Ниже ближайшие в радиусе ${NEARBY_KM} км` : ""}
               {f.type !== "all" || f.dist !== "all" ? " с этими фильтрами" : ""}.
             </p>
           </div>
-        ) : !list.length ? (
+        ) : !listCount ? (
           <div className={styles.state}>
             <p>
               Ничего не нашлось{f.q ? ` по запросу «${f.q}»` : ""}. Попробуйте область вместо города или
@@ -883,35 +912,47 @@ export default function RacesCalendar({
             </button>
           </div>
         ) : (
-          months.map((m, i) => {
-            const isOpen = open[m.key] ?? (searching ? i < 2 : i === 0);
+          monthList.map(([key, n], i) => {
+            const isOpen = open[key] ?? (searching ? i < 2 : i === 0);
+            const [y, m] = key.split("-").map(Number);
+            const chunk = months[key];
             return (
               <details
-                key={m.key}
+                key={key}
                 className={styles.month}
                 open={isOpen}
                 onToggle={(e) => {
                   const now = (e.currentTarget as HTMLDetailsElement).open;
-                  if (now !== isOpen) setOpen((o) => ({ ...o, [m.key]: now }));
+                  if (now !== isOpen) setOpen((o) => ({ ...o, [key]: now }));
                 }}
               >
                 <summary className={styles.summary}>
                   <span className={styles.mName}>
-                    {m.name} {m.year}
+                    {MONTHS[m - 1]} {y}
                   </span>
                   <span className={styles.mCount}>
-                    <b>{m.races.length}</b> {plural(m.races.length, "старт", "старта", "стартов")}
+                    <b>{n}</b> {plural(n, "старт", "старта", "стартов")}
                   </span>
                   <span className={styles.caret} aria-hidden="true" />
                 </summary>
-                {/* Закрытый месяц стартов не рисует (16.10.2026): на «Все» это 474 блока в DOM,
-                    прокрутка на iPhone дёргалась. */}
+                {/* Закрытый месяц стартов не рисует и не запрашивает; раскрытый — порциями по 30. */}
                 {isOpen ? (
-                  <ol className={styles.races}>
-                    {m.races.map((r) => (
-                      <RaceItem key={r.id} r={r} follow={followUi(r)} onAct={onRaceAct} onDetails={inTg ? onDetails : undefined} />
-                    ))}
-                  </ol>
+                  <>
+                    {chunk?.items.length ? (
+                      <ol className={styles.races}>
+                        {chunk.items.map((r) => (
+                          <RaceItem key={r.id} r={r} follow={followUi(r)} onAct={onRaceAct} onDetails={inTg ? onDetails : undefined} />
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className={styles.moreWait}>Загружаю…</p>
+                    )}
+                    {chunk && chunk.next != null ? (
+                      <button type="button" className={styles.btn} disabled={chunk.loading} onClick={() => moreMonth(key, chunk.next ?? 0)}>
+                        {chunk.loading ? "Загружаю…" : `Показать ещё ${Math.min(30, n - chunk.items.length)}`}
+                      </button>
+                    ) : null}
+                  </>
                 ) : null}
               </details>
             );
@@ -919,15 +960,15 @@ export default function RacesCalendar({
         )}
       </div>
 
-      {area.items.length ? (
+      {areaItems.length ? (
         <section className={styles.expected} aria-label="Рядом в области">
           <h2 className={styles.expectedTitle}>{cityCount ? "Рядом в области" : `Ближайшие старты в радиусе ${NEARBY_KM} км`}</h2>
           <p className={styles.expectedLede}>
-            {area.subject ? `${area.subject} и` : "В"} радиусе {NEARBY_KM} км от города {bannerCity}: {area.items.length}{" "}
-            {plural(area.items.length, "старт", "старта", "стартов")}, ближайшие первыми.
+            {sum?.area.subject ? `${sum.area.subject} и` : "В"} радиусе {NEARBY_KM} км от города {bannerCity}: {areaTotal}{" "}
+            {plural(areaTotal, "старт", "старта", "стартов")}, ближайшие первыми.
           </p>
           <ol className={styles.races}>
-            {area.items.slice(0, areaShown).map(({ race, km }) => (
+            {areaItems.map(({ race, km }) => (
               <RaceItem
                 key={race.id}
                 r={race}
@@ -938,9 +979,14 @@ export default function RacesCalendar({
               />
             ))}
           </ol>
-          {area.items.length > areaShown ? (
-            <button type="button" className={styles.btn} onClick={() => setAreaShown((n) => n + 8)}>
-              Показать ещё {Math.min(8, area.items.length - areaShown)}
+          {area?.next != null ? (
+            <button
+              type="button"
+              className={styles.btn}
+              disabled={area.loading}
+              onClick={() => more<AreaItem>({ view: "area", limit: 8 }, (fn) => setArea((c) => fn(c ?? undefined)), area.next ?? 0)}
+            >
+              Показать ещё {Math.min(8, areaTotal - areaItems.length)}
             </button>
           ) : null}
         </section>
@@ -953,65 +999,79 @@ export default function RacesCalendar({
         </div>
       ) : null}
 
-      {expectedCount ? (
+      {sum?.expectedTotal ? (
         <section className={styles.expected} aria-label="Ожидаемые старты">
           <h2 className={styles.expectedTitle}>Ожидаются, дата 2027 пока не объявлена</h2>
           <p className={styles.expectedLede}>
-            Прошли в прошлом сезоне, а даты следующего проведения ещё нет. {expectedCount}{" "}
-            {plural(expectedCount, "старт", "старта", "стартов")}, по месяцу прошлого проведения.
+            Прошли в прошлом сезоне, а даты следующего проведения ещё нет. {sum.expectedTotal}{" "}
+            {plural(sum.expectedTotal, "старт", "старта", "стартов")}, по месяцу прошлого проведения.
           </p>
-          {expectedByMonth.map(([m, xs]) => (
+          {sum.expectedMonths.map(([m, n]) => (
             <LazyMonth
-              key={m}
+              key={`${qKey}|${m}`}
+              onOpen={() => {
+                if (!exMonths[m]) moreExpected(m, 0);
+              }}
               summary={
                 <summary className={styles.summary}>
                   <span className={styles.mName}>{MONTHS[m - 1]}</span>
                   <span className={styles.mCount}>
-                    <b>{xs.length}</b> ожидается
+                    <b>{n}</b> ожидается
                   </span>
                   <span className={styles.caret} aria-hidden="true" />
                 </summary>
               }
             >
-              {() => (
-              <ol className={styles.races}>
-                {xs.map((e) => (
-                  <li key={e.id} className={`${styles.race} ${styles.expectedItem}`}>
-                    <div className={styles.stub}>
-                      <div className={styles.d}>?</div>
-                      <div className={styles.w}>{MONTHS[m - 1].slice(0, 3).toLowerCase()}</div>
-                    </div>
-                    <div className={styles.body}>
-                      <div className={styles.title}>{e.name}</div>
-                      <div className={styles.where}>
-                        <b>{e.city || "место уточняется"}</b>
-                        {e.region && e.region !== e.city ? `, ${e.region}` : null} · {usuallyIn(m)}
-                      </div>
-                      <div className={styles.meta}>
-                        <span className={`${styles.pill} ${styles.expectedPill}`}>ожидается</span>
-                        {e.distances.slice(0, 5).map((d, i) => (
-                          <span key={`${d}-${i}`} className={`${styles.pill} ${styles.dist}`}>
-                            {d}
-                          </span>
-                        ))}
-                      </div>
-                      <div className={styles.links}>
-                        {e.site ? (
-                          <a className={styles.btn} href={e.site} target="_blank" rel="noopener noreferrer">
-                            Организатор
-                          </a>
-                        ) : null}
-                        {botUsername ? (
-                          <a className={styles.btn} href={tgLink(botUsername, `e_${raceCode(e.id)}`)} target="_blank" rel="noopener noreferrer">
-                            Сообщить, когда объявят дату
-                          </a>
-                        ) : null}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-              )}
+              {() => {
+                const chunk = exMonths[m];
+                if (!chunk?.items.length) return <p className={styles.moreWait}>Загружаю…</p>;
+                return (
+                  <>
+                    <ol className={styles.races}>
+                      {chunk.items.map((e) => (
+                        <li key={e.id} className={`${styles.race} ${styles.expectedItem}`}>
+                          <div className={styles.stub}>
+                            <div className={styles.d}>?</div>
+                            <div className={styles.w}>{MONTHS[m - 1].slice(0, 3).toLowerCase()}</div>
+                          </div>
+                          <div className={styles.body}>
+                            <div className={styles.title}>{e.name}</div>
+                            <div className={styles.where}>
+                              <b>{e.city || "место уточняется"}</b>
+                              {e.region && e.region !== e.city ? `, ${e.region}` : null} · {usuallyIn(m)}
+                            </div>
+                            <div className={styles.meta}>
+                              <span className={`${styles.pill} ${styles.expectedPill}`}>ожидается</span>
+                              {e.distances.slice(0, 5).map((d, i) => (
+                                <span key={`${d}-${i}`} className={`${styles.pill} ${styles.dist}`}>
+                                  {d}
+                                </span>
+                              ))}
+                            </div>
+                            <div className={styles.links}>
+                              {e.site ? (
+                                <a className={styles.btn} href={e.site} target="_blank" rel="noopener noreferrer">
+                                  Организатор
+                                </a>
+                              ) : null}
+                              {botUsername ? (
+                                <a className={styles.btn} href={tgLink(botUsername, `e_${raceCode(e.id)}`)} target="_blank" rel="noopener noreferrer">
+                                  Сообщить, когда объявят дату
+                                </a>
+                              ) : null}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                    {chunk.next != null ? (
+                      <button type="button" className={styles.btn} disabled={chunk.loading} onClick={() => moreExpected(m, chunk.next ?? 0)}>
+                        {chunk.loading ? "Загружаю…" : `Показать ещё ${Math.min(30, n - chunk.items.length)}`}
+                      </button>
+                    ) : null}
+                  </>
+                );
+              }}
             </LazyMonth>
           ))}
         </section>

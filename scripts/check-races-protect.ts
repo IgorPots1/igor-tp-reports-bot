@@ -17,7 +17,7 @@
 
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { NextRequest } from "next/server";
@@ -229,7 +229,7 @@ async function main() {
 
   await check("ИИ-сборщики по User-Agent — 403 на календарь и API, строка в журнал; поисковики и браузер — нет", async () => {
     for (const ua of [UA.gptbot, "ClaudeBot/1.0", "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com)", "CCBot/2.0", "PerplexityBot/1.0", "ChatGPT-User/1.0", "Scrapy/2.11"]) {
-      for (const p of ["/races", "/races/probeg%3A82247", "/api/races/list"]) assert.equal(await hitPage(p, "203.0.113.90", ua), 403, `${ua} ${p}`);
+      for (const p of ["/races", "/races/probeg%3A82247", "/api/races/query"]) assert.equal(await hitPage(p, "203.0.113.90", ua), 403, `${ua} ${p}`);
     }
     // 403 раньше подписи мини-приложения: заголовок initData не открывает дверь сборщику.
     assert.equal(await hitPage("/api/races/details", "203.0.113.90", UA.gptbot, { "x-telegram-init-data": "auth_date=1&hash=0" }), 403);
@@ -243,7 +243,7 @@ async function main() {
   });
 
   await check("обычный ответ несёт запрет сбора в заголовке (латиницей и по-русски)", async () => {
-    const req = new NextRequest("https://igorp.run/api/races/list", { headers: { "x-forwarded-for": "192.0.2.50", "user-agent": UA.chrome } });
+    const req = new NextRequest("https://igorp.run/api/races/query", { headers: { "x-forwarded-for": "192.0.2.50", "user-agent": UA.chrome } });
     const res = await middleware(req, event);
     assert.equal(res.headers.get("x-copyright"), COPYRIGHT_HEADERS["X-Copyright"]);
     assert.ok(/^[\x20-\x7e]+$/.test(COPYRIGHT_HEADERS["X-Copyright"]) && /^[\x20-\x7e]+$/.test(COPYRIGHT_HEADERS["X-Copyright-Ru"]), "в заголовке только ASCII");
@@ -288,13 +288,13 @@ async function main() {
     const before = logged.length;
     const bare = await requireMiniapp(new Request("https://igorp.run/api/races/details?id=x", { headers: { "x-forwarded-for": "192.0.2.10", "user-agent": UA.python } }));
     assert.ok(bare instanceof Response && bare.status === 401, "без initData — 401");
-    const bad = await requireMiniapp(new Request("https://igorp.run/api/races/list", { headers: { "x-forwarded-for": "192.0.2.10", "user-agent": UA.python, "x-telegram-init-data": "user=%7B%22id%22%3A1%7D&hash=deadbeef" } }));
+    const bad = await requireMiniapp(new Request("https://igorp.run/api/races/query", { headers: { "x-forwarded-for": "192.0.2.10", "user-agent": UA.python, "x-telegram-init-data": "user=%7B%22id%22%3A1%7D&hash=deadbeef" } }));
     assert.ok(bad instanceof Response && bad.status === 401, "плохая подпись — 401");
     assert.deepEqual(logged.slice(before).map((l) => [l.p_kind, l.p_ip_masked, l.p_path]), [
       ["no_init_data", "192.0.2.x", "/api/races/details"],
-      ["bad_init_data", "192.0.2.x", "/api/races/list"],
+      ["bad_init_data", "192.0.2.x", "/api/races/query"],
     ]);
-    const ok = await requireMiniapp(new Request("https://igorp.run/api/races/list", { headers: { "x-forwarded-for": "192.0.2.11", "x-telegram-init-data": signedInitData(TOKEN, 42, now) } }));
+    const ok = await requireMiniapp(new Request("https://igorp.run/api/races/query", { headers: { "x-forwarded-for": "192.0.2.11", "x-telegram-init-data": signedInitData(TOKEN, 42, now) } }));
     assert.deepEqual(ok, { userId: 42 });
   });
 
@@ -354,10 +354,17 @@ async function main() {
     assert.equal(pe.md, "-06-20");
     assert.equal(expectedDateMd(pe.md, "2026-10-20"), expectedDate(e, "2026-10-20"), "дата ожидаемого та же, что по полной дате");
     assert.equal(expectedDateMd("-11-15", "2026-10-20"), "2026-11-15");
+    // Было (до 30.10.2026): page.tsx сам отдавал браузеру весь список через publicRace(r) и
+    // expected.map(publicExpected). Отменено вторым этапом защиты: публичные поля режет race-data.ts
+    // (единственный источник и для HTML, и для /api/races/query), а страница передаёт только сводку
+    // и первую порцию — проверка сильнее: списка стартов в page.tsx нет вовсе.
+    const data = readFileSync("src/app/races/race-data.ts", "utf8");
+    assert.match(data, /publicRace\(r\)/);
+    assert.match(data, /expected\.map\(publicExpected\)/);
     const page = readFileSync("src/app/races/page.tsx", "utf8");
-    assert.match(page, /publicRace\(r\)/);
-    assert.match(page, /expected\.map\(publicExpected\)/);
-    assert.doesNotMatch(page, /loadDetailsIndex|loadListExtras/, "выжимка списка в HTML не грузится");
+    assert.doesNotMatch(page, /loadRaces|loadExpected|races=\{|expected=\{/, "весь список в HTML не уезжает");
+    assert.match(page, /summary\(ctx, \{ \.\.\.NO_FILTERS, ids: null \}\)/, "в HTML — сводка без фильтров");
+    assert.doesNotMatch(page, /loadDetailsIndex|loadListExtras|detailsIndex/, "выжимка списка в HTML не грузится");
     const cal = readFileSync("src/app/races/RacesCalendar.tsx", "utf8");
     assert.doesNotMatch(cal, /lastUrl|r\.src\b|srcName/, "календарь не показывает источник и прошлый старт");
   });
@@ -369,12 +376,21 @@ async function main() {
   });
 
   await check("адреса мини-приложения: проверка подписи и без кэша CDN", () => {
-    for (const f of ["src/app/api/races/details/route.ts", "src/app/api/races/list/route.ts"]) {
+    // Было (до 30.10.2026): /api/races/list — «Важное» и число полей выжимки сразу по всем стартам
+    // (~500). Отменено: ни один ответ не несёт больше 50 стартов, «Важное» едет в порциях
+    // /api/races/query. Адреса больше нет — и проверяется, что он не вернулся.
+    assert.ok(!existsSync("src/app/api/races/list/route.ts"), "/api/races/list (всё «Важное» разом) удалён");
+    for (const f of ["src/app/api/races/details/route.ts", "src/app/api/races/query/route.ts"]) {
       const s = readFileSync(f, "utf8");
       assert.match(s, /requireMiniapp\(request\)/, `${f}: проверка initData`);
       assert.match(s, /"private, no-store"/, `${f}: не кэшируется`);
       assert.doesNotMatch(s, /s-maxage/, `${f}: закэшированный ответ достался бы запросу без подписи`);
     }
+    // С заголовком подписи middleware IP не считает: маршрут обязан проверить подпись всегда, когда
+    // заголовок есть, иначе любой «X-Telegram-Init-Data: x» снимал бы лимит.
+    const query = readFileSync("src/app/api/races/query/route.ts", "utf8");
+    assert.match(query, /if \(request\.headers\.get\(INIT_DATA_HEADER\)\) \{\s*const auth = await requireMiniapp\(request\);\s*if \(auth instanceof Response\) return auth;/);
+    assert.match(query, /itemCount\(result\) > MAX_ITEMS/, "потолок стартов в ответе проверяется и на выходе");
     assert.match(readFileSync("src/app/races/RacesCalendar.tsx", "utf8"), /"X-Telegram-Init-Data": initData/);
   });
 

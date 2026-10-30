@@ -4,13 +4,11 @@ import { publicPageMetadata } from "@/lib/site";
 import SiteHeader from "@/components/SiteHeader";
 import { jetbrains, onest } from "@/lib/fonts";
 
-import { publicExpected } from "@/features/races-bot/core";
-
 import RacesCalendar from "./RacesCalendar";
 import RacesFooter from "./RacesFooter";
-import { loadExpected } from "./expected";
-import { loadDateFixed, loadRaces } from "./load";
-import { publicRace } from "./races-logic";
+import { raceContext } from "./race-data";
+import { metaOf, summary } from "./race-query";
+import { NO_FILTERS } from "./races-logic";
 import "./races-page.css";
 import styles from "./races.module.css";
 
@@ -31,19 +29,20 @@ export const viewport: Viewport = {
 export const revalidate = 3600;
 
 export default async function RacesPage() {
-  // В HTML — только то, что показывается (наряд 20.10.2026, защита от выкачивания): предстоящие
-  // старты (прошедшие отсекает prepare) и ожидаемые, без ссылок на страницы-источники и прошлые
-  // проведения. «Важное» и число полей выжимки мини-приложение берёт из /api/races/list по initData.
-  const [loaded, expected, dateFixed] = await Promise.all([loadRaces(), loadExpected(), loadDateFixed()]);
-  const races = (loaded ?? []).map((r) => ({ ...publicRace(r), dateFixed: dateFixed.has(r.id) }));
+  // В HTML — сводка и первая порция ближайшего месяца (наряд 30.10.2026, второй этап защиты): весь
+  // список больше не уезжает браузеру одним документом. Остальное — /api/races/query порциями, под
+  // лимитом частоты. Источники, «Важное» и прошлые проведения не отдаются с 20.10.2026 (race-data.ts).
+  const ctx = await raceContext();
+  const meta = ctx ? metaOf(ctx) : { total: 0, nCities: 0, subjects: [], cities: [], today: "" };
+  const initial = ctx ? summary(ctx, { ...NO_FILTERS, ids: null }) : null;
 
   return (
     <div className={`${onest.variable} ${jetbrains.variable} ${styles.page}`}>
       <SiteHeader />
       <RacesCalendar
-        races={races}
-        failed={loaded === null}
-        expected={expected.map(publicExpected)}
+        meta={meta}
+        initial={initial}
+        failed={ctx === null}
         botUsername={(process.env.RACES_BOT_USERNAME || "ruruns_bot").trim().replace(/^@/, "") || null}
       />
       <RacesFooter />
