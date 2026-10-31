@@ -39,6 +39,8 @@ import {
 
 /** Порция списка. */
 export const PAGE = 30;
+/** Порция ожидаемых (наряд 01.11.2026): их 1843 из ~2360 строк календаря — порции мельче, выкачка дороже. */
+export const EXPECTED_PAGE = 20;
 /** Потолок стартов (с датой и ожидаемых вместе) в одном ответе. */
 export const MAX_ITEMS = 50;
 /** Ожидаемые города наверху и «Рядом» в сводке: первые, остальные — «Показать ещё». */
@@ -208,12 +210,12 @@ export function expectedPage(ctx: Ctx, q: Query, m: number, offset: number, limi
   const { place, filt, season } = base(ctx, q);
   const cityCount = place ? filt(ctx.races).length : 0;
   const top = new Set(cityExpectedOf(ctx, q, place, cityCount).map((e) => e.id));
-  return page(expectedShown(ctx, q, top, season).filter((e) => e.lastMonth === m), offset, limit);
+  return page(expectedShown(ctx, q, top, season).filter((e) => e.lastMonth === m), offset, Math.min(limit, EXPECTED_PAGE));
 }
 
 export function cityExpectedPage(ctx: Ctx, q: Query, offset: number, limit = PAGE): Page<PublicExpected> {
   const { place, filt } = base(ctx, q);
-  return page(cityExpectedOf(ctx, q, place, place ? filt(ctx.races).length : 0), offset, limit);
+  return page(cityExpectedOf(ctx, q, place, place ? filt(ctx.races).length : 0), offset, Math.min(limit, EXPECTED_PAGE));
 }
 
 export function areaPage(ctx: Ctx, q: Query, offset: number, limit = PAGE): { subject: string } & Page<AreaItem> {

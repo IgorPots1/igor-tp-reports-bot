@@ -17,7 +17,8 @@ import path from "node:path";
 import process from "node:process";
 
 import { createSupabaseServerClient } from "@/features/supabase/server";
-import { copyLines, guardSummary, type CopyHit, type GuardLogRow } from "@/features/race-guard/weekly";
+import { QUERY_LIMIT_MARK } from "@/features/race-guard/guard";
+import { copyLines, guardSummary, scrapeSuspects, type CopyHit, type GuardLogRow } from "@/features/race-guard/weekly";
 import phrases from "@/features/race-guard/copy-phrases.json";
 
 import { loadScriptEnv, resolveSupabaseEnv } from "./lib/load-script-env";
@@ -73,8 +74,11 @@ async function main() {
   const now = new Date();
   const stamp = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Belgrade", dateStyle: "short", timeStyle: "short" }).format(now);
   let guard: string;
+  let suspects: string[] = [];
   try {
-    guard = guardSummary(await loadLog(new Date(now.getTime() - 7 * 86400_000)));
+    const log = await loadLog(new Date(now.getTime() - 7 * 86400_000));
+    guard = guardSummary(log);
+    suspects = scrapeSuspects(log, QUERY_LIMIT_MARK);
   } catch (e) {
     guard = `Защита: журнал не прочитан (${e instanceof Error ? e.message : String(e)}).`;
   }
@@ -82,6 +86,7 @@ async function main() {
     `Дата: ${stamp}`,
     "Задача: еженедельный итог защиты календаря забегов (/races) от выкачивания",
     guard,
+    ...suspects,
     ...copyLines(loadCopies(arg("copies")), phrases.own),
     await purgeOldHits(now),
     "Блокировки — только по «да» Игоря (Vercel → Firewall → правило Deny по IP/подсети).",

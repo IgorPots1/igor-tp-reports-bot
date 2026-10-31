@@ -6,7 +6,7 @@
 
 import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 
-import { COPYRIGHT_HEADERS, aiBot, clientIp, forbidden, hit, logRefusal, tooManyRequests } from "@/features/race-guard/guard";
+import { COPYRIGHT_HEADERS, QUERY_LIMIT_MARK, QUERY_PATH, aiBot, clientIp, forbidden, hit, hitBucket, logRefusal, tooManyRequests } from "@/features/race-guard/guard";
 
 export async function middleware(req: NextRequest, event: NextFetchEvent) {
   // ИИ-сборщики — 403 до всего остального (29.10.2026: правило Vercel «AI Bots» не включено).
@@ -24,10 +24,17 @@ export async function middleware(req: NextRequest, event: NextFetchEvent) {
     return res;
   }
   const ip = clientIp(req.headers);
-  const d = await hit(ip, ua);
+  // Порции календаря — ещё и свой счётчик (200 в час на IP, LIMITS.query), параллельно с общим:
+  // лишнего ожидания на смене фильтра нет (наряд 01.11.2026).
+  const isQuery = req.nextUrl.pathname === QUERY_PATH && ip !== "unknown";
+  const [d, dq] = await Promise.all([hit(ip, ua), isQuery ? hitBucket(`q:${ip}`, "query") : null]);
   if (!d.allowed) {
     event.waitUntil(logRefusal("rate_limit", ip, ua, req.nextUrl.pathname));
     return tooManyRequests(d);
+  }
+  if (dq && !dq.allowed) {
+    event.waitUntil(logRefusal("rate_limit", ip, ua, QUERY_LIMIT_MARK));
+    return tooManyRequests(dq);
   }
   const res = NextResponse.next();
   for (const [k, v] of Object.entries(COPYRIGHT_HEADERS)) res.headers.set(k, v);

@@ -29,6 +29,7 @@ import {
 } from "@/features/races-bot/core";
 import { matchesQuery, queryWords, searchText } from "@/features/race-search/search";
 import {
+  EXPECTED_PAGE,
   MAX_ITEMS,
   PAGE,
   itemCount,
@@ -279,6 +280,8 @@ async function main() {
       const r = runQuery(ctx, new URLSearchParams(s));
       assert.ok(itemCount(r) <= MAX_ITEMS, `${s}: ${itemCount(r)} стартов`);
       if (r.view !== "summary") assert.ok(r.items.length <= PAGE, `${s}: порция больше ${PAGE}`);
+      // ожидаемые (1843 из ~2360 строк) — порциями по 20 (наряд 01.11.2026)
+      if (r.view === "expected" || r.view === "cityexp") assert.ok(r.items.length <= EXPECTED_PAGE, `${s}: ожидаемых ${r.items.length} > ${EXPECTED_PAGE}`);
     }
     // сводка «страницы города» с ожидаемыми и «рядом» — тоже в бюджете
     for (const c of CASES) {
@@ -299,6 +302,17 @@ async function main() {
     const allIds = new Set(races.map((r) => r.id));
     const leaked = [...json.matchAll(/"id":"(t:\d+)"/g)].map((m) => m[1]).filter((id) => allIds.has(id));
     assert.ok(new Set(leaked).size <= MAX_ITEMS, `в HTML ${new Set(leaked).size} стартов`);
+  });
+
+  await check("ожидаемые порциями по 20: полная порция ровно 20, хвост собирается без потерь", () => {
+    assert.equal(EXPECTED_PAGE, 20);
+    const big = runQuery(ctx, new URLSearchParams("view=expected&m=6&limit=30"));
+    assert.equal(big.view, "expected");
+    if (big.view === "expected") {
+      assert.ok(big.total > EXPECTED_PAGE, "в фикстуре месяц больше одной порции");
+      assert.equal(big.items.length, EXPECTED_PAGE);
+      assert.equal(big.next, EXPECTED_PAGE);
+    }
   });
 
   await check("адрес: мусор не роняет, «Мои» ограничены по числу id", () => {

@@ -14,6 +14,11 @@ export const LIMITS = {
   // Мини-приложение с проверенной подписью: считается по пользователю Telegram, не по IP. Выжимка
   // предзагружается при прокрутке списка, и честная прокрутка даёт больше 60 запросов в минуту.
   miniapp: { perMin: 300, perHour: 3000 },
+  // Порции календаря /api/races/query с сайта (наряд 01.11.2026): отдельный счётчик по IP поверх
+  // общего. Весь календарь — ~100 порций, и под общими 600 в час один IP уносил его за две минуты
+  // (тест-атака 30.10.2026: 60 запросов = 1468 из 2359 строк). 200 в час живому человеку хватает с
+  // запасом: сессия с фильтрами и «Показать ещё» — 20–60 запросов.
+  query: { perMin: 60, perHour: 200 },
 } as const;
 export type LimitKind = keyof typeof LIMITS;
 
@@ -132,6 +137,11 @@ export async function hit(
   if (ip === "unknown") return decide(0, 0, kind);
   return hitBucket(`${kind === "bot" ? "bot" : "ip"}:${ip}`, kind, fetchImpl);
 }
+
+/** Адрес порций календаря и отметка отказа по его часовому лимиту в журнале (путь, а не новый kind:
+ *  проверка kind в race_guard_log не меняется). По отметке понедельничный итог ищет выкачку. */
+export const QUERY_PATH = "/api/races/query";
+export const QUERY_LIMIT_MARK = `${QUERY_PATH}#200h`;
 
 export type RefusalKind = "rate_limit" | "no_init_data" | "bad_init_data" | "forbidden";
 

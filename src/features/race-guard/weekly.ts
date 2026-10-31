@@ -53,6 +53,25 @@ export function guardSummary(rows: GuardLogRow[]): string {
   return `Защита: отказов ${total} (${kinds}), топ-5 источников: ${top5}; предложить заблокировать: ${block.length ? block.join(", ") : "никого"}.`;
 }
 
+/** «Подозрение на выкачку» (наряд 01.11.2026): упирался в часовой лимит порций календаря
+ *  (/api/races/query, 200 в час) больше SCRAPE_MIN_HOURS раз за неделю. Раз — отдельный час с отказом:
+ *  упёршийся сборщик получает 429 до конца часа, и минуты внутри одного часа — один упор. */
+export const SCRAPE_MIN_HOURS = 3;
+
+export function scrapeSuspects(rows: GuardLogRow[], mark: string): string[] {
+  const hours = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (r.kind !== "rate_limit" || r.path !== mark) continue;
+    const set = hours.get(r.ip_masked) ?? new Set<string>();
+    set.add(r.minute.slice(0, 13));
+    hours.set(r.ip_masked, set);
+  }
+  return [...hours.entries()]
+    .filter(([, h]) => h.size > SCRAPE_MIN_HOURS)
+    .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
+    .map(([ip, h]) => `Подозрение на выкачку: ${ip} (подсеть ${subnetOf(ip)}) упирался в лимит порций календаря ${h.size} раз за неделю.`);
+}
+
 export type CopyHit = { url: string; phrase: string };
 
 /** Свой ли адрес: igorp.run и его копии на Vercel, сам бот. Сравнение без схемы и www. */

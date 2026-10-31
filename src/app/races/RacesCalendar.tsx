@@ -882,7 +882,7 @@ export default function RacesCalendar({
               disabled={cityExp.loading}
               onClick={() => more<PublicExpected>({ view: "cityexp" }, (fn) => setCityExp((c) => fn(c ?? undefined)), cityExp.next ?? 0)}
             >
-              Показать ещё {Math.min(30, cityExp.total - cityExpItems.length)}
+              Показать ещё {Math.min(20, cityExp.total - cityExpItems.length)}
             </button>
           ) : null}
         </section>
@@ -1066,7 +1066,7 @@ export default function RacesCalendar({
                     </ol>
                     {chunk.next != null ? (
                       <button type="button" className={styles.btn} disabled={chunk.loading} onClick={() => moreExpected(m, chunk.next ?? 0)}>
-                        {chunk.loading ? "Загружаю…" : `Показать ещё ${Math.min(30, n - chunk.items.length)}`}
+                        {chunk.loading ? "Загружаю…" : `Показать ещё ${Math.min(20, n - chunk.items.length)}`}
                       </button>
                     ) : null}
                   </>

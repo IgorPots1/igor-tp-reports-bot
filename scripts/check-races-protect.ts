@@ -26,10 +26,10 @@ import robots from "@/app/robots";
 import { publicRace, toRace, type RaceRow } from "@/app/races/races-logic";
 import { publicExpected, expectedDate, expectedDateMd, type ExpectedItem } from "@/features/races-bot/core";
 import { AI_ASSISTANT_BOTS, AI_TRAINING_BOTS } from "@/features/race-guard/ai-bots";
-import { COPYRIGHT_HEADERS, COPYRIGHT_TEXT, LIMITS, aiBot, clientIp, decide, goodBot, maskIp } from "@/features/race-guard/guard";
+import { COPYRIGHT_HEADERS, COPYRIGHT_TEXT, LIMITS, QUERY_LIMIT_MARK, aiBot, clientIp, decide, goodBot, maskIp } from "@/features/race-guard/guard";
 import { RANGE_LISTS, botFamily, createBotVerifier, inCidr, ipToBig, parseCidr, parseRanges } from "@/features/race-guard/verify-bot";
 import { checkInitData, requireMiniapp } from "@/features/race-guard/miniapp-auth";
-import { copyLines, guardSummary, isOwnUrl, subnetOf } from "@/features/race-guard/weekly";
+import { SCRAPE_MIN_HOURS, copyLines, guardSummary, isOwnUrl, scrapeSuspects, subnetOf } from "@/features/race-guard/weekly";
 import phrases from "@/features/race-guard/copy-phrases.json";
 import { middleware } from "@/middleware";
 
@@ -177,6 +177,53 @@ async function main() {
     for (const [k, ua, ip] of [["googlebot", UA.googlebot, GOOGLE_IP], ["bing", UA.bing, BING_IP], ["telegram", UA.telegram, TELEGRAM_IP], ["yandex", UA.yandex, YANDEX_IP]] as const) {
       for (let i = 0; i < 200; i++) assert.equal(await hitPage("/races", ip, ua), 200, `${k} с ${ip}, запрос ${i + 1}`);
     }
+  });
+
+  await check("порции календаря: 200 в час на IP сверх общего лимита, 201-я — 429 на час и отметка в журнале; страницы не задеты", async () => {
+    assert.deepEqual(LIMITS.query, { perMin: 60, perHour: 200 });
+    const ip = "203.0.113.150";
+    const newMinute = () => {
+      for (const k of [...counters.keys()]) if (k.endsWith("|m")) counters.set(k, 0);
+    };
+    logged.length = 0;
+    // 200 порций за час, по 50 в «минуту» — общий лимит (60/мин, 600/ч) не мешает
+    for (let i = 0; i < 4; i++) {
+      newMinute();
+      for (let j = 0; j < 50; j++) assert.equal(await hitPage("/api/races/query?view=month&month=2026-11", ip, UA.chrome), 200, `порция ${i * 50 + j + 1}`);
+    }
+    newMinute();
+    const req = new NextRequest("https://igorp.run/api/races/query", { headers: { "x-forwarded-for": ip, "user-agent": UA.chrome } });
+    const res = await middleware(req, event);
+    assert.equal(res.status, 429, "201-я порция за час");
+    assert.equal(res.headers.get("retry-after"), "3600", "ждать — до конца часа, а не минуту");
+    await Promise.all(waitUntil);
+    assert.ok(logged.some((l) => l.p_path === QUERY_LIMIT_MARK && l.p_kind === "rate_limit" && l.p_ip_masked === "203.0.113.x"), "отказ по часовому лимиту порций — с отметкой пути");
+    // страница календаря с того же IP — по общему лимиту (201 < 600 в час), не по лимиту порций
+    assert.equal(await hitPage("/races", ip, UA.chrome), 200);
+    assert.equal(await hitPage("/races/probeg%3A1", ip, UA.chrome), 200);
+    // мини-приложение с подписью IP-счётчики не трогает: лимит по пользователю в маршруте
+    assert.equal(await hitPage("/api/races/query", ip, UA.chrome, { "x-telegram-init-data": "x" }), 200);
+  });
+
+  await check("итог недели: «подозрение на выкачку» — больше 3 разных часов с упором в лимит порций", () => {
+    const row = (ip: string, minute: string, path = QUERY_LIMIT_MARK, kind = "rate_limit") => ({ kind, ip_masked: ip, ua: "python-requests/2.31", path, n: 5, minute });
+    const rows = [
+      // 4 разных часа — подозрение
+      ...["2026-10-26T10", "2026-10-26T11", "2026-10-27T03", "2026-10-28T22"].map((h) => row("198.51.100.x", `${h}:15:00+00:00`)),
+      // ровно 3 часа, зато много минут внутри — НЕ подозрение (один упор = один час)
+      ...Array.from({ length: 40 }, (_, i) => row("203.0.113.x", `2026-10-26T1${i % 3}:${String(i).padStart(2, "0")}:00+00:00`)),
+      // общий 429 и чужие пути не считаются
+      ...["2026-10-26T10", "2026-10-26T11", "2026-10-27T03", "2026-10-28T22", "2026-10-29T01"].map((h) => row("192.0.2.x", `${h}:00:00+00:00`, "/api/races/query")),
+      ...["2026-10-26T10", "2026-10-26T11", "2026-10-27T03", "2026-10-28T22", "2026-10-29T01"].map((h) => row("192.0.2.x", `${h}:00:00+00:00`, QUERY_LIMIT_MARK, "bad_init_data")),
+    ];
+    assert.equal(SCRAPE_MIN_HOURS, 3);
+    assert.deepEqual(scrapeSuspects(rows, QUERY_LIMIT_MARK), [
+      "Подозрение на выкачку: 198.51.100.x (подсеть 198.51.100.0/24) упирался в лимит порций календаря 4 раз за неделю.",
+    ]);
+    assert.deepEqual(scrapeSuspects([], QUERY_LIMIT_MARK), []);
+    const weekly = readFileSync("scripts/races-protect-weekly.ts", "utf8");
+    assert.match(weekly, /scrapeSuspects\(log, QUERY_LIMIT_MARK\)/, "строка уходит в понедельничный итог");
+    assert.match(weekly, /\.\.\.suspects,/);
   });
 
   await check("тот же User-Agent поисковика или превью с чужого адреса — обычный лимит: 60 проходят, с 61-го 429", async () => {
