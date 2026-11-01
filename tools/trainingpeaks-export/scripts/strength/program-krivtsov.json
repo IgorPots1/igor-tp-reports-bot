@@ -1,0 +1,919 @@
+{
+ "doc": "Программа «Силовая на ноги и корпус» для Александра Кривцова 6552486 (Игорь 01.11). 1 раз в неделю, 8 недель, классика, без веса, порядок задан Игорем (совпадает с классами). Силовых в истории нет. Прогрессия: +2 повтора на 3 и 5–7, боковая планка +5 с; разгрузки 4 и 8 как неделя 1. Обращение на «ты».",
+ "custom": {},
+ "programs": [
+  {
+   "id": "krivtsov_legs_core",
+   "title": "Силовая на ноги и корпус",
+   "formats": {
+    "circuit": [],
+    "classic": [
+     {
+      "week": 1,
+      "phase": "start",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": null,
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 2,
+      "phase": "start",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": null,
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 3,
+      "phase": "step",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": "Повторов на 2 больше, в боковой планке на 5 секунд дольше.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "35",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 4,
+      "phase": "deload",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": "Разгрузочная неделя: повторы как на неделе 1.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 5,
+      "phase": "step",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": "Повторов на 2 больше, чем на неделях 1–2, в боковой планке на 5 секунд дольше.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "35",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 6,
+      "phase": "step",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": "Повторов на 2 больше, чем на неделях 1–2, в боковой планке на 5 секунд дольше.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "35",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 7,
+      "phase": "step",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": "Повторов на 2 больше, чем на неделях 1–2, в боковой планке на 5 секунд дольше.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "14",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "17",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "35",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "week": 8,
+      "phase": "deload",
+      "workoutTitle": "Силовая на ноги и корпус",
+      "instructions": "Разгрузочная неделя: повторы как на неделе 1.",
+      "blocks": [
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "876",
+          "title": "Step Up with Knee Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "1140",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "443",
+          "title": "Body Weight Bulgarian Split Squat",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "707",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "156",
+          "title": "Single Leg Romanian Deadlift",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "144",
+          "sets": 3,
+          "prescribedValue": "10",
+          "coachNotes": "Без веса"
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "81",
+          "title": "Single Leg Glute Bridge",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "143",
+          "sets": 3,
+          "prescribedValue": "12",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "26",
+          "title": "Single Leg Calf Raise",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "88",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "528",
+          "title": "DeadBug",
+          "parameter": "RepsPerSide",
+          "libraryParameterId": "792",
+          "sets": 3,
+          "prescribedValue": "15",
+          "coachNotes": null
+         }
+        ]
+       },
+       {
+        "blockType": "SingleExercise",
+        "coachNotes": null,
+        "prescriptions": [
+         {
+          "exerciseId": "79",
+          "title": "Side Plank",
+          "parameter": "Duration",
+          "libraryParameterId": "249",
+          "sets": 3,
+          "prescribedValue": "30",
+          "coachNotes": "На каждую сторону"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}
