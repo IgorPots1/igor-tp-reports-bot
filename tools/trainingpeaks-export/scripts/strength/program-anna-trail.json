@@ -1,5 +1,5 @@
 {
- "doc": "Программа «Силовая для трейла» для Анны Денисовой 5488703 (Игорь 26.10, вариант В с правками). Пн и Пт, 8 недель с 26.10, классика. Тяги и сгибание ног: 1–2 3×12, 3 3×14, 4 3×12 и вес −10%, 5–7 3×10 тяжелее, 8 3×10 и вес −10% от 7. Упражнения со своим весом: +2 повтора на 3 и 5–7, на разгрузках как неделя 1. Резинки, тибиалис, корпус и стойка без прогрессии; планка 45 с с недели 5, на 8 снова 30 с. С недели 5 в Пн первым сшагивание 2×6 на ногу. Исключено из-за травм: стульчик (колено), боковая планка и мостики (спина), выпады и зашагивания (колено, голеностоп), наклоны больше 5 кг (спина), прыжки (надкостница, голеностоп). Обращение на «ты». Правка 26.10: тяга верхнего блока узким хватом (своё упражнение, в библиотеке нет), старт перенесён на 26.10.",
+ "doc": "Программа «Силовая для трейла» для Анны Денисовой 5488703 (Игорь 26.10, вариант В с правками). Пн и Пт, 8 недель с 26.10, классика. Тяги и сгибание ног: 1–2 3×12, 3 3×14, 4 3×12 и вес −10%, 5–7 3×10 тяжелее, 8 3×10 и вес −10% от 7. Упражнения со своим весом: +2 повтора на 3 и 5–7, на разгрузках как неделя 1. Резинки, тибиалис, корпус и стойка без прогрессии; планка 45 с с недели 5, на 8 снова 30 с. С недели 5 в Пн первым сшагивание 2×6 на ногу. Исключено из-за травм: стульчик (колено), боковая планка и мостики (спина), выпады и зашагивания (колено, голеностоп), наклоны больше 5 кг (спина), прыжки (надкостница, голеностоп). Обращение на «ты». Правка 26.10: тяга верхнего блока узким хватом (своё упражнение, в библиотеке нет), старт перенесён на 26.10. Правки 01.11 с недели 2 (Пн 02.11): румынская на одной с гантелью 4 кг; тяга узким хватом 22,5 кг (разгрузка 4 — 20, недели 5–7 — 25, неделя 8 — 22,5); подъём таза на ступеньке заменён на отведение лёжа на боку 3×15/н (30.10 боль в позвонке на 3-м подходе подъёма таза); Bird Dog без резинки; стойка на полусфере; планка 45 с; тяга горизонтального блока — упор ногами в платформу.",
  "custom": {
   "custom:hip_hike": {
    "title": "Подъём таза стоя на ступеньке",
@@ -18,6 +18,12 @@
    "parameters": [
     "Reps",
     "WeightKg"
+   ]
+  },
+  "custom:side_lying_abduction": {
+   "title": "Отведение ноги лёжа на боку",
+   "parameters": [
+    "RepsPerSide"
    ]
   }
  },
@@ -166,7 +172,14 @@
           "libraryParameterId": "912",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "Без веса, 3 секунды вниз"
+          "coachNotes": "Гантель 4 кг, 3 секунды вниз",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "4"
+           }
+          ]
          }
         ]
        },
@@ -181,13 +194,12 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Тянешь локтями вниз к рёбрам, кисти как крючки, руки не сжимают",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "",
-            "allowEmpty": true
+            "prescribedValue": "22.5"
            }
           ]
          }
@@ -287,7 +299,14 @@
           "libraryParameterId": "912",
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "Без веса, 3 секунды вниз"
+          "coachNotes": "Гантель 4 кг, 3 секунды вниз",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "4"
+           }
+          ]
          }
         ]
        },
@@ -302,13 +321,12 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "14",
-          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Тянешь локтями вниз к рёбрам, кисти как крючки, руки не сжимают",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "",
-            "allowEmpty": true
+            "prescribedValue": "22.5"
            }
           ]
          }
@@ -408,7 +426,14 @@
           "libraryParameterId": "912",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "Без веса, 3 секунды вниз"
+          "coachNotes": "Гантель 4 кг, 3 секунды вниз",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "4"
+           }
+          ]
          }
         ]
        },
@@ -423,13 +448,12 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Тянешь локтями вниз к рёбрам, кисти как крючки, руки не сжимают",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "",
-            "allowEmpty": true
+            "prescribedValue": "20"
            }
           ]
          }
@@ -544,7 +568,14 @@
           "libraryParameterId": "912",
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "Без веса, 3 секунды вниз"
+          "coachNotes": "Гантель 4 кг, 3 секунды вниз",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "4"
+           }
+          ]
          }
         ]
        },
@@ -559,13 +590,12 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Тянешь локтями вниз к рёбрам, кисти как крючки, руки не сжимают",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "",
-            "allowEmpty": true
+            "prescribedValue": "25"
            }
           ]
          }
@@ -680,7 +710,14 @@
           "libraryParameterId": "912",
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "Без веса, 3 секунды вниз"
+          "coachNotes": "Гантель 4 кг, 3 секунды вниз",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "4"
+           }
+          ]
          }
         ]
        },
@@ -695,13 +732,12 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Тянешь локтями вниз к рёбрам, кисти как крючки, руки не сжимают",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "",
-            "allowEmpty": true
+            "prescribedValue": "25"
            }
           ]
          }
@@ -816,7 +852,14 @@
           "libraryParameterId": "912",
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "Без веса, 3 секунды вниз"
+          "coachNotes": "Гантель 4 кг, 3 секунды вниз",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "4"
+           }
+          ]
          }
         ]
        },
@@ -831,13 +874,12 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Тянешь локтями вниз к рёбрам, кисти как крючки, руки не сжимают",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "",
-            "allowEmpty": true
+            "prescribedValue": "25"
            }
           ]
          }
@@ -952,7 +994,14 @@
           "libraryParameterId": "912",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "Без веса, 3 секунды вниз"
+          "coachNotes": "Гантель 4 кг, 3 секунды вниз",
+          "extra": [
+           {
+            "parameter": "WeightKg",
+            "libraryParameterId": null,
+            "prescribedValue": "4"
+           }
+          ]
          }
         ]
        },
@@ -967,13 +1016,12 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Тянешь локтями вниз к рёбрам, кисти как крючки, руки не сжимают",
           "extra": [
            {
             "parameter": "WeightKg",
             "libraryParameterId": null,
-            "prescribedValue": "",
-            "allowEmpty": true
+            "prescribedValue": "22.5"
            }
           ]
          }
@@ -1220,13 +1268,13 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "custom:hip_hike",
-          "title": "Подъём таза стоя на ступеньке",
+          "exerciseId": "custom:side_lying_abduction",
+          "title": "Отведение ноги лёжа на боку",
           "parameter": "RepsPerSide",
           "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+          "prescribedValue": "15",
+          "coachNotes": "Таз не заваливается назад, носок смотрит вперёд"
          }
         ]
        },
@@ -1264,7 +1312,7 @@
           "libraryParameterId": "1030",
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Упор ногами в платформу, спина ровная. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
           "extra": [
            {
             "parameter": "WeightKg",
@@ -1287,7 +1335,7 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "30",
-          "coachNotes": "На каждую ногу"
+          "coachNotes": "На каждую ногу, на полусфере"
          }
         ]
        },
@@ -1326,10 +1374,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "5203",
-          "title": "Banded Bird Dog",
+          "exerciseId": "440",
+          "title": "Bird Dog",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "8422",
+          "libraryParameterId": "704",
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": null
@@ -1346,7 +1394,7 @@
           "parameter": "Duration",
           "libraryParameterId": "1785",
           "sets": 3,
-          "prescribedValue": "30",
+          "prescribedValue": "45",
           "coachNotes": null
          }
         ]
@@ -1364,13 +1412,13 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "custom:hip_hike",
-          "title": "Подъём таза стоя на ступеньке",
+          "exerciseId": "custom:side_lying_abduction",
+          "title": "Отведение ноги лёжа на боку",
           "parameter": "RepsPerSide",
           "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "14",
-          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+          "prescribedValue": "15",
+          "coachNotes": "Таз не заваливается назад, носок смотрит вперёд"
          }
         ]
        },
@@ -1408,7 +1456,7 @@
           "libraryParameterId": "1030",
           "sets": 3,
           "prescribedValue": "14",
-          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Упор ногами в платформу, спина ровная. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
           "extra": [
            {
             "parameter": "WeightKg",
@@ -1431,7 +1479,7 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "30",
-          "coachNotes": "На каждую ногу"
+          "coachNotes": "На каждую ногу, на полусфере"
          }
         ]
        },
@@ -1470,10 +1518,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "5203",
-          "title": "Banded Bird Dog",
+          "exerciseId": "440",
+          "title": "Bird Dog",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "8422",
+          "libraryParameterId": "704",
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": null
@@ -1490,7 +1538,7 @@
           "parameter": "Duration",
           "libraryParameterId": "1785",
           "sets": 3,
-          "prescribedValue": "30",
+          "prescribedValue": "45",
           "coachNotes": null
          }
         ]
@@ -1508,13 +1556,13 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "custom:hip_hike",
-          "title": "Подъём таза стоя на ступеньке",
+          "exerciseId": "custom:side_lying_abduction",
+          "title": "Отведение ноги лёжа на боку",
           "parameter": "RepsPerSide",
           "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+          "prescribedValue": "15",
+          "coachNotes": "Таз не заваливается назад, носок смотрит вперёд"
          }
         ]
        },
@@ -1552,7 +1600,7 @@
           "libraryParameterId": "1030",
           "sets": 3,
           "prescribedValue": "12",
-          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Упор ногами в платформу, спина ровная. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
           "extra": [
            {
             "parameter": "WeightKg",
@@ -1575,7 +1623,7 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "30",
-          "coachNotes": "На каждую ногу"
+          "coachNotes": "На каждую ногу, на полусфере"
          }
         ]
        },
@@ -1614,10 +1662,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "5203",
-          "title": "Banded Bird Dog",
+          "exerciseId": "440",
+          "title": "Bird Dog",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "8422",
+          "libraryParameterId": "704",
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": null
@@ -1634,7 +1682,7 @@
           "parameter": "Duration",
           "libraryParameterId": "1785",
           "sets": 3,
-          "prescribedValue": "30",
+          "prescribedValue": "45",
           "coachNotes": null
          }
         ]
@@ -1652,13 +1700,13 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "custom:hip_hike",
-          "title": "Подъём таза стоя на ступеньке",
+          "exerciseId": "custom:side_lying_abduction",
+          "title": "Отведение ноги лёжа на боку",
           "parameter": "RepsPerSide",
           "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "14",
-          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+          "prescribedValue": "15",
+          "coachNotes": "Таз не заваливается назад, носок смотрит вперёд"
          }
         ]
        },
@@ -1696,7 +1744,7 @@
           "libraryParameterId": "1030",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Упор ногами в платформу, спина ровная. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
           "extra": [
            {
             "parameter": "WeightKg",
@@ -1719,7 +1767,7 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "30",
-          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+          "coachNotes": "На каждую ногу, на полусфере"
          }
         ]
        },
@@ -1758,10 +1806,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "5203",
-          "title": "Banded Bird Dog",
+          "exerciseId": "440",
+          "title": "Bird Dog",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "8422",
+          "libraryParameterId": "704",
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": null
@@ -1796,13 +1844,13 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "custom:hip_hike",
-          "title": "Подъём таза стоя на ступеньке",
+          "exerciseId": "custom:side_lying_abduction",
+          "title": "Отведение ноги лёжа на боку",
           "parameter": "RepsPerSide",
           "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "14",
-          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+          "prescribedValue": "15",
+          "coachNotes": "Таз не заваливается назад, носок смотрит вперёд"
          }
         ]
        },
@@ -1840,7 +1888,7 @@
           "libraryParameterId": "1030",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Упор ногами в платформу, спина ровная. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
           "extra": [
            {
             "parameter": "WeightKg",
@@ -1863,7 +1911,7 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "30",
-          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+          "coachNotes": "На каждую ногу, на полусфере"
          }
         ]
        },
@@ -1902,10 +1950,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "5203",
-          "title": "Banded Bird Dog",
+          "exerciseId": "440",
+          "title": "Bird Dog",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "8422",
+          "libraryParameterId": "704",
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": null
@@ -1940,13 +1988,13 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "custom:hip_hike",
-          "title": "Подъём таза стоя на ступеньке",
+          "exerciseId": "custom:side_lying_abduction",
+          "title": "Отведение ноги лёжа на боку",
           "parameter": "RepsPerSide",
           "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "14",
-          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+          "prescribedValue": "15",
+          "coachNotes": "Таз не заваливается назад, носок смотрит вперёд"
          }
         ]
        },
@@ -1984,7 +2032,7 @@
           "libraryParameterId": "1030",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Упор ногами в платформу, спина ровная. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
           "extra": [
            {
             "parameter": "WeightKg",
@@ -2007,7 +2055,7 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "30",
-          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+          "coachNotes": "На каждую ногу, на полусфере"
          }
         ]
        },
@@ -2046,10 +2094,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "5203",
-          "title": "Banded Bird Dog",
+          "exerciseId": "440",
+          "title": "Bird Dog",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "8422",
+          "libraryParameterId": "704",
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": null
@@ -2084,13 +2132,13 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "custom:hip_hike",
-          "title": "Подъём таза стоя на ступеньке",
+          "exerciseId": "custom:side_lying_abduction",
+          "title": "Отведение ноги лёжа на боку",
           "parameter": "RepsPerSide",
           "libraryParameterId": null,
           "sets": 3,
-          "prescribedValue": "12",
-          "coachNotes": "Стоишь на одной ноге на ступеньке, вторая свисает: опускаешь и поднимаешь таз, колено опорной прямое"
+          "prescribedValue": "15",
+          "coachNotes": "Таз не заваливается назад, носок смотрит вперёд"
          }
         ]
        },
@@ -2128,7 +2176,7 @@
           "libraryParameterId": "1030",
           "sets": 3,
           "prescribedValue": "10",
-          "coachNotes": "С упором грудью. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
+          "coachNotes": "Упор ногами в платформу, спина ровная. Вес бери такой, чтобы оставалось 2–3 повтора в запасе, спина не должна напрягаться. Запиши, с каким работала",
           "extra": [
            {
             "parameter": "WeightKg",
@@ -2151,7 +2199,7 @@
           "libraryParameterId": null,
           "sets": 3,
           "prescribedValue": "30",
-          "coachNotes": "На каждую ногу, на подушке или с закрытыми глазами"
+          "coachNotes": "На каждую ногу, на полусфере"
          }
         ]
        },
@@ -2190,10 +2238,10 @@
         "coachNotes": null,
         "prescriptions": [
          {
-          "exerciseId": "5203",
-          "title": "Banded Bird Dog",
+          "exerciseId": "440",
+          "title": "Bird Dog",
           "parameter": "RepsPerSide",
-          "libraryParameterId": "8422",
+          "libraryParameterId": "704",
           "sets": 3,
           "prescribedValue": "10",
           "coachNotes": null
@@ -2210,7 +2258,7 @@
           "parameter": "Duration",
           "libraryParameterId": "1785",
           "sets": 3,
-          "prescribedValue": "30",
+          "prescribedValue": "45",
           "coachNotes": null
          }
         ]
