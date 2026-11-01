@@ -17,7 +17,9 @@ export const MAP: Record<string, string> = { "664210": "https://www.youtube.com/
   // Ирина 6701419, выбор Игоря 25.10 — вариант 1 у всех трёх.
   "670278": "https://www.youtube.com/watch?v=HUWWm1_CZxA", "670279": "https://www.youtube.com/watch?v=pdP0uJXvc44", "670280": "https://www.youtube.com/watch?v=sBww6q9Zybs",
   // Анна 5488703, 26.10: подъём таза (MedBridge), стойка на одной ноге (Center For Total Back Care) — выбор Игоря; тяга узким хватом (PureGym) — подобрано, Игорь проверит.
-  "671464": "https://www.youtube.com/watch?v=yYM5uW3RXjI", "671465": "https://www.youtube.com/watch?v=FjwiVMhBhw0", "671542": "https://www.youtube.com/watch?v=IjoFCmLX7z0" };
+  "671464": "https://www.youtube.com/watch?v=yYM5uW3RXjI", "671465": "https://www.youtube.com/watch?v=FjwiVMhBhw0", "671542": "https://www.youtube.com/watch?v=IjoFCmLX7z0",
+  // Анна 01.11: отведение ноги лёжа на боку (Baptist Health), выбор Игоря.
+  "678438": "https://www.youtube.com/watch?v=g9FtnmsIYgI" };
 const tp = await import(`${REPO}/src/features/trainingpeaks/tp-api-client.ts`) as {
   getTpApiJsonRaw: (h: "strength", p: string) => Promise<{ status: number; body: unknown }>;
   newStrengthExerciseModel: () => Promise<Record<string, unknown>>; createStrengthExercise: (m: Record<string, unknown>) => Promise<Record<string, unknown>>;
