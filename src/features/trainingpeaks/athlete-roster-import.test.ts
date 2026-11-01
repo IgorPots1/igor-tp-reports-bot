@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  parseAthleteIdFromUrl,
   buildImportPlan,
   extractRosterFromUsersV3Body,
   type DiscoveredAthlete,
@@ -217,5 +218,17 @@ describe("buildImportPlan", () => {
     assert.equal(plan.summary.would_insert, 0);
     assert.equal(plan.supabase_not_in_tp.length, 1);
     assert.equal(plan.supabase_not_in_tp[0].student_id, "only-db");
+  });
+});
+
+// Этим разбором insertTrainingPeaksStudent пишет trainingpeaks_athlete_id (до 01.11 колонку
+// никто не писал). Маркер интервалов — не атлет TP, id из него браться не должен.
+describe("parseAthleteIdFromUrl", () => {
+  test("ссылка TP → id атлета", () => {
+    assert.equal(parseAthleteIdFromUrl("https://app.trainingpeaks.com/#calendar/athletes/6552486"), 6552486);
+  });
+  test("маркер интервалов и мусор → null", () => {
+    assert.equal(parseAthleteIdFromUrl("intervals://athlete/12345"), null);
+    assert.equal(parseAthleteIdFromUrl("https://app.trainingpeaks.com/#calendar"), null);
   });
 });

@@ -8,7 +8,7 @@ import {
 import { chunkIds, fetchAllInChunks, fetchAllRows, SUPABASE_MAX_ROWS } from "@/features/supabase/paginate";
 import { detectWeakConfirmation, normalizeObserverText } from "@/features/trainingpeaks/report-detector";
 import { ATHLETE_VISIBLE_CACHE_ROWS_OR_FILTER } from "@/features/trainingpeaks/coach-strength-visibility";
-import type { ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
+import { parseAthleteIdFromUrl, type ExistingStudentRowForImport } from "@/features/trainingpeaks/athlete-roster-import";
 import {
   buildTelegramContextTextPreview,
   sha256TelegramContextText,
@@ -1968,6 +1968,12 @@ function getTrainingPeaksStudentConflictReason(error: {
     return "trainingpeaks_athlete_url";
   }
 
+  // Тот же атлет под другим написанием ссылки: уникальный индекс по id атлета. Раньше такая
+  // ошибка проваливалась в «student_id» ниже и звучала как «такой ученик уже есть по slug».
+  if (haystack.includes("trainingpeaks_students_athlete_id_key")) {
+    return "trainingpeaks_athlete_url";
+  }
+
   if (haystack.includes("student_id")) {
     return "student_id";
   }
@@ -2019,6 +2025,10 @@ export async function insertTrainingPeaksStudent(
       student_id: input.studentId,
       student_name: input.studentName,
       trainingpeaks_athlete_url: input.trainingPeaksAthleteUrl,
+      // Колонка заведена миграцией 20260916000000 и заполнена бэкфиллом, но писателя у неё не было:
+      // все, кого завели после 16.09 (импорт ростера, форма «добавить ученика»), приходили с null
+      // (на 01.11 — 34 строки). Пишем из того же URL; не разобрался — null, как раньше.
+      trainingpeaks_athlete_id: parseAthleteIdFromUrl(input.trainingPeaksAthleteUrl),
       is_active: input.isActive ?? true,
       weekly_report_enabled: input.weeklyReportEnabled ?? true,
       telegram_chat_id: input.telegramChatId ?? null,
